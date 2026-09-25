@@ -1,11 +1,13 @@
 /**
  * The named renderers of a custom series, in two twins.
  *
- * The chart runtime draws an interval and a violin outline through a `custom` series, and such a series
- * takes a `renderItem` function. The option rides to the page as inline JSON, thus it holds no function.
- * The derivation writes the name of a renderer as a string, and each consumer binds the name to its
- * function before the option reaches the chart runtime: the page bootstrap through the source text below,
- * and the server export through the TypeScript functions.
+ * The chart runtime draws an interval, a violin outline, an oncoprint cell, and a lollipop stem through a
+ * `custom` series. The option rides to the page as inline JSON, thus it holds no function. The derivation
+ * writes the name of a renderer as the `renderItem` string, and the chart runtime finds the function under
+ * that name in its own registry. Each consumer registers each renderer with `registerCustomSeries` before it
+ * draws: the page bootstrap through the source text below, and the server export through the TypeScript
+ * functions. A series that needs parameters beyond its items carries them as JSON in `itemPayload`, and the
+ * renderer reads them from its first argument.
  *
  * The two twins hold one rule each. A shared test vector runs both over one set of items with a stub of the
  * runtime, and it compares the elements that they give. Thus the two cannot drift in silence.
@@ -18,13 +20,34 @@
  * draws each PNG through it.
  */
 
-import { CHART_INK, CHART_PAGE_TEXT_PX, COLOR_SCALE_BAND_PCT } from "./design.js";
+import { CHART_INK, CHART_PAGE_TEXT_PX, COLOR_SCALE_BAND_PCT, GUIDE_LINE_COLOR } from "./design.js";
 
 /** The renderer name of an interval: an error bar, a confidence interval, or the inner mark of a violin. */
 export const INTERVAL_RENDERER = "interval";
 
 /** The renderer name of a violin outline. */
 export const OUTLINE_RENDERER = "outline";
+
+/** The renderer name of one oncoprint cell: the gray ground and the glyph of its alteration class. */
+export const CELL_GLYPH_RENDERER = "cell-glyph";
+
+/** The renderer name of one lollipop mutation: a stem from zero and a head at its count. */
+export const STEM_RENDERER = "stem";
+
+/** The gap between two oncoprint cells, in pixels. */
+export const CELL_GAP_PX = 1;
+
+/**
+ * The largest share of one cell band that the gap takes. A cohort of some hundred samples at a column width
+ * gives a band near one pixel, and a full pixel of gap would erase each cell.
+ */
+const CELL_GAP_MAX_SHARE = 0.25;
+
+/** The share of the ground height that the glyph of a class covers. The gray ground shows above and below it. */
+export const CELL_GLYPH_SHARE = 0.6;
+
+/** The radius of the head of a lollipop stem, in pixels. */
+export const STEM_HEAD_RADIUS_PX = 3.5;
 
 /** The count of grid points of one violin outline. Each item of an outline holds one pair for each point. */
 export const VIOLIN_GRID_POINTS = 64;
@@ -46,6 +69,11 @@ const INNER_POINT_FILL = "#ffffff";
 
 /** The opacity of a violin outline. The quartile line inside it stays readable. */
 const OUTLINE_OPACITY = 0.75;
+
+/** The first argument of a renderer: the JSON parameters that the series carries in `itemPayload`. */
+export interface RenderParams {
+    readonly itemPayload?: Readonly<Record<string, unknown>>;
+}
 
 /** The part of the chart runtime that a renderer reads. */
 export interface RenderApi {
@@ -76,7 +104,7 @@ function segment(x1: number, y1: number, x2: number, y2: number, width: number):
  * grouped chart. `mark` is `0` for an error bar with two caps, and `1` for the inner mark of a violin: a
  * thick quartile line and one point at the median, which is the anchor `y`.
  */
-export function intervalRenderer(_params: unknown, api: RenderApi): RenderedElement {
+export function intervalRenderer(_params: RenderParams, api: RenderApi): RenderedElement {
     const x = api.value(0);
     const y = api.value(1);
     const low = api.value(2);
@@ -128,7 +156,7 @@ export function intervalRenderer(_params: unknown, api: RenderApi): RenderedElem
  * moves a grouped violin inside its band. Each pair is a half-width in band fractions and its grid value.
  * The outline runs up the right side and down the left side, thus the polygon closes on itself.
  */
-export function outlineRenderer(_params: unknown, api: RenderApi): RenderedElement {
+export function outlineRenderer(_params: RenderParams, api: RenderApi): RenderedElement {
     const category = api.value(0);
     const band = api.size([1, 0])[0];
     const center = api.value(3) * band;
@@ -148,46 +176,119 @@ export function outlineRenderer(_params: unknown, api: RenderApi): RenderedEleme
     };
 }
 
-/** The function of one renderer name, or `undefined` for a name that no renderer holds. */
-function rendererOf(name: unknown): ((params: unknown, api: RenderApi) => RenderedElement) | undefined {
-    if (name === INTERVAL_RENDERER) return intervalRenderer;
-    if (name === OUTLINE_RENDERER) return outlineRenderer;
-    return undefined;
+/**
+ * Draw one oncoprint cell.
+ *
+ * An item is `[x, y, class]`. `x` and `y` are the places of the sample and the gene on the two category axes,
+ * and `class` is the place of the alteration class in the `colors` list of the payload, or `-1` for a cell
+ * with no alteration. Each cell draws the `ground` color of the payload over its band less one gap. An altered
+ * cell adds one glyph in the color of its class: the width of the ground and a share of its height, centered.
+ */
+export function cellGlyphRenderer(params: RenderParams, api: RenderApi): RenderedElement {
+    const payload = params.itemPayload ?? {};
+    const colors = Array.isArray(payload.colors) ? payload.colors : [];
+    const ground = typeof payload.ground === "string" ? payload.ground : CHART_INK;
+    const center = api.coord([api.value(0), api.value(1)]);
+    const klass = api.value(2);
+    const band = api.size([1, 1]);
+    const width = band[0] - Math.min(CELL_GAP_PX, band[0] * CELL_GAP_MAX_SHARE);
+    const height = band[1] - Math.min(CELL_GAP_PX, band[1] * CELL_GAP_MAX_SHARE);
+    const children: RenderedElement[] = [
+        { type: "rect", shape: { x: center[0] - width / 2, y: center[1] - height / 2, width, height }, style: { fill: ground } },
+    ];
+    if (klass >= 0 && klass < colors.length) {
+        const glyph = height * CELL_GLYPH_SHARE;
+        children.push({ type: "rect", shape: { x: center[0] - width / 2, y: center[1] - glyph / 2, width, height: glyph }, style: { fill: colors[klass] } });
+    }
+    return { type: "group", children };
 }
 
 /**
- * Bind each renderer name of one option to its function.
+ * Draw one lollipop mutation.
  *
- * The bind copies each series that it changes and the option around them. Thus the caller keeps the option
- * as data, and a second bind of the same option reads the names again.
+ * An item is `[x, y]`: the amino-acid position and the count. The stem is a thin gray line from the value `0`
+ * to the count, and the head is one circle at the count in the color of the series.
  */
-export function bindRenderers(option: Record<string, unknown>): Record<string, unknown> {
-    const series = option.series;
-    if (!Array.isArray(series)) {
-        return option;
-    }
-    const bound = series.map((entry: unknown) => {
-        if (typeof entry !== "object" || entry === null) return entry;
-        const renderer = rendererOf((entry as Record<string, unknown>).renderItem);
-        return renderer === undefined ? entry : { ...(entry as Record<string, unknown>), renderItem: renderer };
-    });
-    return { ...option, series: bound };
+export function stemRenderer(_params: RenderParams, api: RenderApi): RenderedElement {
+    const x = api.value(0);
+    const floor = api.coord([x, 0]);
+    const head = api.coord([x, api.value(1)]);
+    return {
+        type: "group",
+        children: [
+            { type: "line", shape: { x1: floor[0], y1: floor[1], x2: head[0], y2: head[1] }, style: { stroke: GUIDE_LINE_COLOR, lineWidth: 1 } },
+            {
+                type: "circle",
+                shape: { cx: head[0], cy: head[1], r: STEM_HEAD_RADIUS_PX },
+                style: { fill: api.visual("color"), stroke: CHART_INK, lineWidth: 0.5 },
+            },
+        ],
+    };
 }
 
-/** One axis, or one list of axes, with each name gap scaled to the text size of an export. */
+/** One renderer function: the parameters of its series and the part of the runtime that it reads. */
+export type ChartRenderer = (params: RenderParams, api: RenderApi) => RenderedElement;
+
+/**
+ * One registered renderer: the name that a derived series states, the TypeScript function that the export
+ * registers, and the name of the page twin in `CHART_RENDERERS_SOURCE` that the bootstrap registers.
+ */
+export interface ChartRendererEntry {
+    readonly name: string;
+    readonly render: ChartRenderer;
+    readonly pageFunction: string;
+}
+
+/**
+ * The registered renderers. A renderer joins by one entry here, beside its TypeScript function and its page
+ * twin, and each consumer registers it under the same name.
+ */
+export const CHART_RENDERERS: readonly ChartRendererEntry[] = [
+    { name: INTERVAL_RENDERER, render: intervalRenderer, pageFunction: "reportIntervalRenderer" },
+    { name: OUTLINE_RENDERER, render: outlineRenderer, pageFunction: "reportOutlineRenderer" },
+    { name: CELL_GLYPH_RENDERER, render: cellGlyphRenderer, pageFunction: "reportCellGlyphRenderer" },
+    { name: STEM_RENDERER, render: stemRenderer, pageFunction: "reportStemRenderer" },
+];
+
+/** The part of the chart runtime that holds the registry of the named renderers. */
+export interface RendererRegistry {
+    registerCustomSeries(name: string, render: ChartRenderer): void;
+}
+
+/**
+ * Register each renderer with the chart runtime. A second registration of one name replaces the first with
+ * the same function, thus a caller registers before each draw and the runtime holds one function per name.
+ */
+export function registerChartRenderers(runtime: RendererRegistry): void {
+    for (const entry of CHART_RENDERERS) {
+        runtime.registerCustomSeries(entry.name, entry.render);
+    }
+}
+
+/**
+ * One axis, or one list of axes, with each gap that clears its text scaled to the text size of an export: the
+ * name gap, and the offset of an axis past a column of text.
+ */
 function scaledAxes(axes: unknown, scale: number): unknown {
     if (Array.isArray(axes)) return axes.map((axis) => scaledAxes(axis, scale));
     if (typeof axes !== "object" || axes === null) return axes;
-    const axis = axes as Record<string, unknown>;
-    return typeof axis.nameGap === "number" ? { ...axis, nameGap: axis.nameGap * scale } : axis;
+    const axis = { ...(axes as Record<string, unknown>) };
+    if (typeof axis.nameGap === "number") axis.nameGap = axis.nameGap * scale;
+    if (typeof axis.offset === "number") axis.offset = axis.offset * scale;
+    return axis;
 }
 
-/** One graphic element with its text scaled to the text size of an export. A facet panel label is such an element. */
+/**
+ * One graphic element with its text scaled to the text size of an export, and the text of each child of a
+ * group. A facet panel label is such an element, and the size legend is such a group.
+ */
 function scaledGraphic(element: unknown, scale: number): unknown {
     if (typeof element !== "object" || element === null) return element;
-    const style = (element as Record<string, unknown>).style as Record<string, unknown> | undefined;
-    if (style === undefined || typeof style.fontSize !== "number") return element;
-    return { ...(element as Record<string, unknown>), style: { ...style, fontSize: style.fontSize * scale } };
+    const out = { ...(element as Record<string, unknown>) };
+    const style = out.style as Record<string, unknown> | undefined;
+    if (style !== undefined && typeof style.fontSize === "number") out.style = { ...style, fontSize: style.fontSize * scale };
+    if (Array.isArray(out.children)) out.children = out.children.map((child: unknown) => scaledGraphic(child, scale));
+    return out;
 }
 
 /** The width of one character of the chart text, as a share of the text size. The export guesses a label width with it. */
@@ -269,26 +370,26 @@ function fittedAxes(axes: unknown, grid: unknown, textPx: number, widthPx: numbe
 }
 
 /**
- * One continuous color map of an export, with its ends as static text and no handle.
+ * One continuous color map of an export, with its title wrapped into the band of the scale.
  *
- * A handle serves a reader on the page. In a still figure its value labels stand on the ends of the scale,
- * thus the export prints the title and the upper end over the scale and the lower end under it. The title
- * wraps into the band of the scale. The scale starts at the top of the plot and stays short, thus its lower
- * end never meets the labels of the x axis.
+ * The page prints the title and the upper end over the scale, one line each, and the lower end under it. The
+ * export keeps the two ends and wraps the title into the band of the scale. The scale starts at the top of the
+ * plot and stays short, thus its lower end never meets the labels of the x axis. A map that shows nothing, or
+ * that prints no end, passes through.
  */
 function stillScale(map: unknown, textPx: number, widthPx: number): unknown {
     if (typeof map !== "object" || map === null) return map;
     const fields = map as Record<string, unknown>;
-    if (fields.calculable !== true || typeof fields.min !== "number" || typeof fields.max !== "number") return map;
-    const digits = typeof fields.precision === "number" ? fields.precision : 0;
-    const title =
-        Array.isArray(fields.text) && typeof fields.text[0] === "string" && fields.text[0] !== "" ? `${wrappedTitle(fields.text[0], textPx, widthPx)}\n` : "";
+    const text = fields.text;
+    if (fields.show === false || !Array.isArray(text) || typeof text[0] !== "string" || typeof text[1] !== "string") return map;
+    const lines = text[0].split("\n");
+    const upper = lines[lines.length - 1];
+    const title = lines.slice(0, -1).join(" ");
     return {
         ...fields,
-        calculable: false,
         top: STILL_SCALE_TOP,
         itemHeight: STILL_SCALE_LINES * textPx,
-        text: [`${title}${fields.max.toFixed(digits)}`, fields.min.toFixed(digits)],
+        text: [title === "" ? upper : `${wrappedTitle(title, textPx, widthPx)}\n${upper}`, text[1]],
     };
 }
 
@@ -298,6 +399,98 @@ const STILL_SCALE_LINES = 8;
 
 /** The height of the legend band of an export, in lines of its text. */
 const LEGEND_BAND_LINES = 2.5;
+
+/** The outer bounds mode of a facet panel: the labels of the panel stay inside the box of its grid. */
+const PANEL_BOUNDS_MODE = "same";
+
+/** The item gap of the legend in the theme, in pixels. Two lines of a legend that wraps stand one gap apart. */
+const LEGEND_ITEM_GAP_PX = 16;
+
+/** The line pitch of the legend text, and the height of the x title of a facet, as a share of the text size. */
+const LEGEND_LINE_SHARE = 1.25;
+const FACET_TITLE_SHARE = 1.6;
+
+/** The padding of the legend box at each side, in pixels: the default of the chart runtime. */
+const LEGEND_PADDING_PX = 5;
+
+/**
+ * The count of lines of a horizontal legend at one width. An entry is the icon of the text size, the gap of
+ * five pixels to its text, and the text. The entries fill each line in order, one item gap apart. The names
+ * are the data of the legend, or else the name of each series in order of first appearance.
+ */
+function legendLines(option: Record<string, unknown>, textPx: number, widthPx: number): number {
+    const legend = option.legend as Record<string, unknown>;
+    const names: string[] = [];
+    if (Array.isArray(legend.data)) {
+        for (const entry of legend.data) {
+            const name = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>).name : entry;
+            if (typeof name === "string") names.push(name);
+        }
+    } else if (Array.isArray(option.series)) {
+        for (const series of option.series) {
+            const name = typeof series === "object" && series !== null ? (series as Record<string, unknown>).name : undefined;
+            if (typeof name === "string" && name !== "" && names.indexOf(name) < 0) names.push(name);
+        }
+    }
+    const room = widthPx - 2 * LEGEND_PADDING_PX;
+    let lines = names.length === 0 ? 0 : 1;
+    let used = 0;
+    for (const name of names) {
+        const entry = textPx + 5 + name.length * textPx * CHARACTER_SHARE;
+        if (used > 0 && used + LEGEND_ITEM_GAP_PX + entry > room) {
+            lines += 1;
+            used = entry;
+        } else {
+            used = used > 0 ? used + LEGEND_ITEM_GAP_PX + entry : entry;
+        }
+    }
+    return lines;
+}
+
+/**
+ * A facet with its lowest row of panels and its x title held above the band of a bottom legend.
+ *
+ * The page reserves the legend band in percent of its body, and a narrow export wraps the legend into more
+ * lines than that band holds. Each panel of the lowest row then ends its box over the x title, and the x title
+ * sits on the band. A panel keeps its top, thus its label stays in place, and the labels of a panel stay
+ * inside its box.
+ */
+function facetOverLegend(option: Record<string, unknown>, textPx: number, widthPx: number, heightPx: number): void {
+    const grids = option.grid as unknown[];
+    const band = Math.round(legendLines(option, textPx, widthPx) * (textPx * LEGEND_LINE_SHARE + LEGEND_ITEM_GAP_PX) + textPx);
+    const floor = ((heightPx - band - Math.round(textPx * FACET_TITLE_SHARE)) / heightPx) * 100;
+    let lowest = 0;
+    for (const grid of grids) lowest = Math.max(lowest, panelBottom(grid));
+    option.grid = grids.map((grid: unknown) => {
+        const bottom = panelBottom(grid);
+        if (bottom < lowest || bottom <= floor) return grid;
+        const fields = grid as Record<string, unknown>;
+        const top = Number.parseFloat(String(fields.top));
+        return { ...fields, height: `${Math.round((floor - top) * 1e4) / 1e4}%` };
+    });
+    if (Array.isArray(option.graphic)) {
+        option.graphic = option.graphic.map((element: unknown) =>
+            typeof element === "object" && element !== null && (element as Record<string, unknown>).bottom !== undefined
+                ? { ...(element as Record<string, unknown>), bottom: band }
+                : element,
+        );
+    }
+}
+
+/** The bottom edge of one facet panel, in percent of the chart, or 0 for a grid that is no facet panel. */
+function panelBottom(grid: unknown): number {
+    if (typeof grid !== "object" || grid === null) return 0;
+    const fields = grid as Record<string, unknown>;
+    if (fields.outerBoundsMode !== PANEL_BOUNDS_MODE || typeof fields.top !== "string" || typeof fields.height !== "string") return 0;
+    return Number.parseFloat(fields.top) + Number.parseFloat(fields.height);
+}
+
+/** True when an option lays out facet panels over a bottom legend. */
+function holdsFacetLegend(option: Record<string, unknown>): boolean {
+    const legend = option.legend as Record<string, unknown> | undefined;
+    const bottom = typeof legend === "object" && legend !== null && legend.show !== false && legend.bottom !== undefined;
+    return bottom && Array.isArray(option.grid) && option.grid.some((grid: unknown) => panelBottom(grid) > 0);
+}
 
 /** True when an option draws a legend along the bottom edge of a grid of one panel. */
 function holdsBottomLegend(option: Record<string, unknown>): boolean {
@@ -314,10 +507,11 @@ function holdsBottomLegend(option: Record<string, unknown>): boolean {
  * with the text. The copy leaves the input as it is, thus the page keeps its own option.
  *
  * A column export is short and narrow. Thus the grid of a chart with a bottom legend holds its labels and its
- * names above a band of the legend height. The category labels turn where they do not fit the width, and a
- * color scale prints its ends as static text. A grid that contains its labels contains its names too.
+ * names above a band of the legend height, and the panels of a facet end over the band of the legend lines
+ * that the export width gives. The category labels turn where they do not fit the width, and a color scale
+ * prints its ends as static text. A grid that contains its labels contains its names too.
  */
-export function exportOption(option: Record<string, unknown>, textPx: number, widthPx: number): Record<string, unknown> {
+export function exportOption(option: Record<string, unknown>, textPx: number, widthPx: number, heightPx: number): Record<string, unknown> {
     const scale = textPx / CHART_PAGE_TEXT_PX;
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(option)) {
@@ -339,11 +533,12 @@ export function exportOption(option: Record<string, unknown>, textPx: number, wi
         const grid = typeof out.grid === "object" && out.grid !== null ? (out.grid as Record<string, unknown>) : {};
         out.grid = { ...grid, outerBoundsMode: "auto", outerBounds: { left: 0, right: 0, top: 0, bottom: Math.round(textPx * LEGEND_BAND_LINES) } };
     }
+    if (holdsFacetLegend(out)) facetOverLegend(out, textPx, widthPx, heightPx);
     return out;
 }
 
 /**
- * The page twin of the two renderers, of the bind step, and of the export option, as browser source text.
+ * The page twin of each renderer, of the bind step, and of the export option, as browser source text.
  *
  * Each function holds the rule of its TypeScript twin in the same order of operations. Thus the two give
  * the same numbers for one item, and the shared test vector compares them exactly.
@@ -413,31 +608,36 @@ function reportOutlineRenderer(params, api) {
     style: { fill: color, stroke: color, lineWidth: 1, opacity: ${OUTLINE_OPACITY} }
   };
 }
-function reportRendererOf(name) {
-  if (name === ${JSON.stringify(INTERVAL_RENDERER)}) {
-    return reportIntervalRenderer;
+function reportCellGlyphRenderer(params, api) {
+  var payload = params.itemPayload || {};
+  var colors = Array.isArray(payload.colors) ? payload.colors : [];
+  var ground = typeof payload.ground === "string" ? payload.ground : ${JSON.stringify(CHART_INK)};
+  var center = api.coord([api.value(0), api.value(1)]);
+  var klass = api.value(2);
+  var band = api.size([1, 1]);
+  var width = band[0] - Math.min(${CELL_GAP_PX}, band[0] * ${CELL_GAP_MAX_SHARE});
+  var height = band[1] - Math.min(${CELL_GAP_PX}, band[1] * ${CELL_GAP_MAX_SHARE});
+  var children = [{ type: "rect", shape: { x: center[0] - width / 2, y: center[1] - height / 2, width: width, height: height }, style: { fill: ground } }];
+  if (klass >= 0 && klass < colors.length) {
+    var glyph = height * ${CELL_GLYPH_SHARE};
+    children.push({ type: "rect", shape: { x: center[0] - width / 2, y: center[1] - glyph / 2, width: width, height: glyph }, style: { fill: colors[klass] } });
   }
-  if (name === ${JSON.stringify(OUTLINE_RENDERER)}) {
-    return reportOutlineRenderer;
-  }
-  return undefined;
+  return { type: "group", children: children };
 }
-function reportBindRenderers(option) {
-  var series = option.series;
-  if (!Array.isArray(series)) {
-    return option;
-  }
-  var bound = [];
-  for (var s = 0; s < series.length; s++) {
-    var entry = series[s];
-    var renderer = entry && typeof entry === "object" ? reportRendererOf(entry.renderItem) : undefined;
-    if (renderer === undefined) {
-      bound.push(entry);
-      continue;
-    }
-    bound.push(Object.assign({}, entry, { renderItem: renderer }));
-  }
-  return Object.assign({}, option, { series: bound });
+function reportStemRenderer(params, api) {
+  var x = api.value(0);
+  var floor = api.coord([x, 0]);
+  var head = api.coord([x, api.value(1)]);
+  return {
+    type: "group",
+    children: [
+      { type: "line", shape: { x1: floor[0], y1: floor[1], x2: head[0], y2: head[1] }, style: { stroke: ${JSON.stringify(GUIDE_LINE_COLOR)}, lineWidth: 1 } },
+      { type: "circle", shape: { cx: head[0], cy: head[1], r: ${STEM_HEAD_RADIUS_PX} }, style: { fill: api.visual("color"), stroke: ${JSON.stringify(CHART_INK)}, lineWidth: 0.5 } }
+    ]
+  };
+}
+function reportRegisterRenderers(runtime) {
+${CHART_RENDERERS.map((entry) => `  runtime.registerCustomSeries(${JSON.stringify(entry.name)}, ${entry.pageFunction});`).join("\n")}
 }
 function reportScaledAxes(axes, scale) {
   if (Array.isArray(axes)) {
@@ -450,17 +650,116 @@ function reportScaledAxes(axes, scale) {
   if (typeof axes !== "object" || axes === null) {
     return axes;
   }
-  return typeof axes.nameGap === "number" ? Object.assign({}, axes, { nameGap: axes.nameGap * scale }) : axes;
+  var axis = Object.assign({}, axes);
+  if (typeof axis.nameGap === "number") {
+    axis.nameGap = axis.nameGap * scale;
+  }
+  if (typeof axis.offset === "number") {
+    axis.offset = axis.offset * scale;
+  }
+  return axis;
 }
 function reportScaledGraphic(element, scale) {
   if (typeof element !== "object" || element === null) {
     return element;
   }
-  var style = element.style;
-  if (style === undefined || typeof style.fontSize !== "number") {
-    return element;
+  var out = Object.assign({}, element);
+  var style = out.style;
+  if (style !== undefined && typeof style.fontSize === "number") {
+    out.style = Object.assign({}, style, { fontSize: style.fontSize * scale });
   }
-  return Object.assign({}, element, { style: Object.assign({}, style, { fontSize: style.fontSize * scale }) });
+  if (Array.isArray(out.children)) {
+    var children = [];
+    for (var c = 0; c < out.children.length; c++) {
+      children.push(reportScaledGraphic(out.children[c], scale));
+    }
+    out.children = children;
+  }
+  return out;
+}
+function reportLegendLines(option, textPx, widthPx) {
+  var legend = option.legend;
+  var names = [];
+  if (Array.isArray(legend.data)) {
+    for (var d = 0; d < legend.data.length; d++) {
+      var entry = legend.data[d];
+      var entryName = typeof entry === "object" && entry !== null ? entry.name : entry;
+      if (typeof entryName === "string") {
+        names.push(entryName);
+      }
+    }
+  } else if (Array.isArray(option.series)) {
+    for (var s = 0; s < option.series.length; s++) {
+      var series = option.series[s];
+      var seriesName = typeof series === "object" && series !== null ? series.name : undefined;
+      if (typeof seriesName === "string" && seriesName !== "" && names.indexOf(seriesName) < 0) {
+        names.push(seriesName);
+      }
+    }
+  }
+  var room = widthPx - 2 * ${LEGEND_PADDING_PX};
+  var lines = names.length === 0 ? 0 : 1;
+  var used = 0;
+  for (var n = 0; n < names.length; n++) {
+    var width = textPx + 5 + names[n].length * textPx * ${CHARACTER_SHARE};
+    if (used > 0 && used + ${LEGEND_ITEM_GAP_PX} + width > room) {
+      lines += 1;
+      used = width;
+    } else {
+      used = used > 0 ? used + ${LEGEND_ITEM_GAP_PX} + width : width;
+    }
+  }
+  return lines;
+}
+function reportPanelBottom(grid) {
+  if (typeof grid !== "object" || grid === null) {
+    return 0;
+  }
+  if (grid.outerBoundsMode !== ${JSON.stringify(PANEL_BOUNDS_MODE)} || typeof grid.top !== "string" || typeof grid.height !== "string") {
+    return 0;
+  }
+  return Number.parseFloat(grid.top) + Number.parseFloat(grid.height);
+}
+function reportHoldsFacetLegend(option) {
+  var legend = option.legend;
+  var bottom = typeof legend === "object" && legend !== null && legend.show !== false && legend.bottom !== undefined;
+  if (!bottom || !Array.isArray(option.grid)) {
+    return false;
+  }
+  for (var g = 0; g < option.grid.length; g++) {
+    if (reportPanelBottom(option.grid[g]) > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+function reportFacetOverLegend(option, textPx, widthPx, heightPx) {
+  var grids = option.grid;
+  var band = Math.round(reportLegendLines(option, textPx, widthPx) * (textPx * ${LEGEND_LINE_SHARE} + ${LEGEND_ITEM_GAP_PX}) + textPx);
+  var floor = ((heightPx - band - Math.round(textPx * ${FACET_TITLE_SHARE})) / heightPx) * 100;
+  var lowest = 0;
+  for (var g = 0; g < grids.length; g++) {
+    lowest = Math.max(lowest, reportPanelBottom(grids[g]));
+  }
+  var placed = [];
+  for (var p = 0; p < grids.length; p++) {
+    var bottom = reportPanelBottom(grids[p]);
+    if (bottom < lowest || bottom <= floor) {
+      placed.push(grids[p]);
+      continue;
+    }
+    var top = Number.parseFloat(String(grids[p].top));
+    placed.push(Object.assign({}, grids[p], { height: Math.round((floor - top) * 1e4) / 1e4 + "%" }));
+  }
+  option.grid = placed;
+  if (Array.isArray(option.graphic)) {
+    var graphic = [];
+    for (var e = 0; e < option.graphic.length; e++) {
+      var element = option.graphic[e];
+      graphic.push(typeof element === "object" && element !== null && element.bottom !== undefined ? Object.assign({}, element, { bottom: band }) : element);
+    }
+    option.graphic = graphic;
+  }
 }
 function reportHoldsBottomLegend(option) {
   var legend = option.legend;
@@ -537,19 +836,20 @@ function reportStillScale(map, textPx, widthPx) {
   if (typeof map !== "object" || map === null) {
     return map;
   }
-  if (map.calculable !== true || typeof map.min !== "number" || typeof map.max !== "number") {
+  var text = map.text;
+  if (map.show === false || !Array.isArray(text) || typeof text[0] !== "string" || typeof text[1] !== "string") {
     return map;
   }
-  var digits = typeof map.precision === "number" ? map.precision : 0;
-  var title = Array.isArray(map.text) && typeof map.text[0] === "string" && map.text[0] !== "" ? reportWrappedTitle(map.text[0], textPx, widthPx) + "\\n" : "";
+  var lines = text[0].split("\\n");
+  var upper = lines[lines.length - 1];
+  var title = lines.slice(0, -1).join(" ");
   return Object.assign({}, map, {
-    calculable: false,
     top: ${JSON.stringify(STILL_SCALE_TOP)},
     itemHeight: ${STILL_SCALE_LINES} * textPx,
-    text: [title + map.max.toFixed(digits), map.min.toFixed(digits)]
+    text: [title === "" ? upper : reportWrappedTitle(title, textPx, widthPx) + "\\n" + upper, text[1]]
   });
 }
-function reportExportOption(option, textPx, widthPx) {
+function reportExportOption(option, textPx, widthPx, heightPx) {
   var scale = textPx / ${CHART_PAGE_TEXT_PX};
   var out = {};
   var keys = Object.keys(option);
@@ -591,6 +891,9 @@ function reportExportOption(option, textPx, widthPx) {
   if (reportHoldsBottomLegend(out)) {
     var grid = typeof out.grid === "object" && out.grid !== null ? out.grid : {};
     out.grid = Object.assign({}, grid, { outerBoundsMode: "auto", outerBounds: { left: 0, right: 0, top: 0, bottom: Math.round(textPx * ${LEGEND_BAND_LINES}) } });
+  }
+  if (reportHoldsFacetLegend(out)) {
+    reportFacetOverLegend(out, textPx, widthPx, heightPx);
   }
   return out;
 }`;

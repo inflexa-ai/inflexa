@@ -1,15 +1,19 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+    CHART_BODY_PX,
+    CHART_EXPORT_SIZES,
     CHART_INK,
     CHART_PAGE_TEXT_PX,
     CHART_PALETTE,
     CHART_PRINT_TEXT_PX,
     CHART_SLIDE_TEXT_PX,
     CHART_THEMES,
+    CHART_WIDE_PALETTE,
     chartTheme,
     ECHARTS_THEME,
     ECHARTS_THEME_NAME,
+    exportSizeFor,
     FOCUS_CHART_COLOR,
 } from "./design.js";
 
@@ -68,5 +72,35 @@ describe("the publication theme", () => {
         expect(asObj(asObj(slide.valueAxis).axisLabel).fontSize).toBe(CHART_SLIDE_TEXT_PX);
         expect(asObj(asObj(slide.legend).textStyle).fontSize).toBe(CHART_SLIDE_TEXT_PX);
         expect(chartTheme(CHART_PAGE_TEXT_PX)).toEqual(ECHARTS_THEME);
+    });
+});
+
+describe("the figure rules of the design source", () => {
+    it("sets the export text at 7 points at the column width, at 96 pixels for each inch", () => {
+        expect(CHART_PRINT_TEXT_PX).toBeCloseTo((7 * 96) / 72, 2);
+    });
+
+    it("holds 24 distinct hues past eight categories, and opens with the Okabe-Ito set in its order", () => {
+        expect(CHART_WIDE_PALETTE).toHaveLength(24);
+        expect(new Set(CHART_WIDE_PALETTE).size).toBe(24);
+        expect(CHART_WIDE_PALETTE.slice(0, 8)).toEqual([...CHART_PALETTE]);
+        for (const color of CHART_WIDE_PALETTE) expect(color).toMatch(/^#[0-9a-f]{6}$/);
+    });
+});
+
+describe("the export size of a tall chart body", () => {
+    it("keeps each size for the default body", () => {
+        expect(exportSizeFor(CHART_EXPORT_SIZES.single, CHART_BODY_PX)).toBe(CHART_EXPORT_SIZES.single);
+    });
+
+    it("keeps the column width, and grows the height in the ratio of the body", () => {
+        const grown = exportSizeFor(CHART_EXPORT_SIZES.single, 1.5 * CHART_BODY_PX);
+        expect([grown.widthPx, grown.widthMm, grown.heightPx, grown.heightMm]).toEqual([336, 89, 380, 101]);
+    });
+
+    it("stops the height at 170 mm, the journal maximum, and keeps the slide box", () => {
+        const grown = exportSizeFor(CHART_EXPORT_SIZES.double, 4 * CHART_BODY_PX);
+        expect([grown.widthPx, grown.heightPx, grown.heightMm]).toEqual([692, 642, 170]);
+        expect(exportSizeFor(CHART_EXPORT_SIZES.slide, 4 * CHART_BODY_PX)).toBe(CHART_EXPORT_SIZES.slide);
     });
 });

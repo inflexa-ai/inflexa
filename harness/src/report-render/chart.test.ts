@@ -5,13 +5,17 @@ import { renderChart } from "./views/chart-view.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, transformColumn, type ChartDataSource, type ChartRow, type EchartOption } from "./chart.js";
 import { MANHATTAN_P_THRESHOLD, VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "./chart-presets.js";
 import {
+    CHART_INK,
     CHART_INLINE_OPTION_BOUND,
+    CHART_PALETTE,
     DESIGN_CSS,
+    GUIDE_LINE_COLOR,
     MUTED_CHART_COLOR,
     SCATTER_CROWD_OPACITY,
     SCATTER_CROWD_SYMBOL_SIZE,
     SCATTER_HOVER_SYMBOL_SIZE,
 } from "./design.js";
+import { POINT_NAMES } from "./figures/dense.js";
 import { CHART_SERIES_BUILDER } from "./page.js";
 import { ReferenceLedger } from "./references.js";
 
@@ -85,13 +89,14 @@ describe("deriveChartOption bar", () => {
     ];
     const block = chartBlock("bar", { x: "day", y: "count", group: "cohort" });
 
-    it("derives the axes from the encoding", () => {
+    it("derives the axes from the encoding, and titles the value axis alone", () => {
         const option = derive(block, rows);
         const xAxis = asObj(option.xAxis);
         const yAxis = asObj(option.yAxis);
         expect(xAxis.type).toBe("category");
         expect(xAxis.data).toEqual(["Mon", "Tue"]);
-        expect(xAxis.name).toBe("day");
+        // The category names state what the axis holds, thus the raw column name adds no title.
+        expect("name" in xAxis).toBe(false);
         expect(yAxis.type).toBe("value");
         expect(yAxis.name).toBe("count");
     });
@@ -113,10 +118,16 @@ describe("deriveChartOption bar", () => {
         ]);
     });
 
-    it("sets no title and carries the bottom legend that the normalizer adds for two series", () => {
+    it("sets no title and carries the bottom legend that the normalizer adds for two series, with a square icon for each bar", () => {
         const option = derive(block, rows);
         expect("title" in option).toBe(false);
-        expect(option.legend).toEqual({ bottom: 0 });
+        expect(option.legend).toEqual({
+            bottom: 0,
+            data: [
+                { name: "A", icon: "rect" },
+                { name: "B", icon: "rect" },
+            ],
+        });
     });
 
     it("orders the categories by first appearance, not by sort", () => {
@@ -194,6 +205,9 @@ describe("the bar orientation", () => {
         expect(asObj(option.yAxis).name).toBe("Gene set");
         // An x axis takes the centered name, thus the value title clears the right margin of the grid.
         expect(asObj(option.xAxis).nameLocation).toBe("middle");
+        // The declared category title turns upright in the middle beside its axis, as every y title does.
+        expect(asObj(option.yAxis).nameLocation).toBe("middle");
+        expect(asObj(option.yAxis).nameRotate).toBe(90);
     });
 
     it("states the fault of an orientation beside a type that is not a bar", () => {
@@ -213,12 +227,17 @@ describe("the bar orientation", () => {
                 xAxis: {
                     type: "category",
                     data: ["HALLMARK_HYPOXIA", "HALLMARK_G2M_CHECKPOINT", "HALLMARK_GLYCOLYSIS"],
-                    name: "set",
-                    nameLocation: "middle",
-                    nameGap: 34,
                     axisLabel: { interval: 0 },
                 },
-                yAxis: { type: "value", boundaryGap: ["15%", "15%"], name: "nes", axisLabel: { interval: 0 } },
+                yAxis: {
+                    type: "value",
+                    boundaryGap: ["15%", "15%"],
+                    name: "nes",
+                    nameLocation: "middle",
+                    nameRotate: 90,
+                    nameGap: 10,
+                    axisLabel: { interval: 0 },
+                },
                 series: [
                     {
                         type: "bar",
@@ -253,9 +272,10 @@ describe("the bar orientation", () => {
         expect(asObj(yAxis.axisLabel).interval).toBe(0);
         expect(asObj(option.grid).containLabel).toBe(true);
         expect(asObj(option.xAxis).type).toBe("value");
-        // An annotation names a rendered axis, thus the zero of a horizontal bar stands on `x`.
+        // An annotation names a rendered axis, thus the zero of a horizontal bar stands on `x`. A guide with
+        // no text shows no label, because a bare constant beside a line reads as a plotted value.
         const marks = asArr(asObj(asObj(asArr(option.series)[0]).markLine).data);
-        expect(marks).toEqual([{ xAxis: 0, label: { position: "start" } }]);
+        expect(marks).toEqual([{ xAxis: 0, label: { show: false } }]);
     });
 
     it("swaps the pairs of a composition bar too, and keeps the category name on a named point", () => {
@@ -451,22 +471,25 @@ describe("deriveChartOption box", () => {
     ];
     const block = chartBlock("box", { x: "cat", y: "val" });
 
-    it("computes the type-7 five-number summary and pairs the outlier scatter", () => {
+    it("computes the type-7 five-number summary, and a small category draws its outlier as one of its points", () => {
         const option = derive(block, rows);
         const series = asArr(option.series);
         const boxData = asArr(asObj(series[0]).data);
         // The seven values [1..6, 20] give Q1 = 2.5, median = 4, Q3 = 5.5, whiskers [1, 6], and 20 outlies.
         expect(boxData[0]).toEqual([1, 2.5, 4, 5.5, 6]);
-        // A category with four values renders an empty box.
+        // A category with four values holds no box, thus it draws its median as a short line on the slot axis.
         expect(boxData[1]).toBe("-");
+        // Each category holds 200 values or fewer, thus one point series draws every value, and no outlier mark repeats one.
+        expect(series).toHaveLength(3);
         expect(asObj(series[1]).type).toBe("scatter");
-        expect(asObj(series[1]).symbolSize).toBe(4);
-        expect(asObj(series[1]).data).toEqual([[0, 20]]);
+        expect(asObj(series[1]).data).toContainEqual([0, 20]);
+        expect(asObj(series[2]).xAxisIndex).toBe(1);
+        expect(asArr(asObj(asObj(series[2]).markLine).data)).toEqual([[{ coord: [0.8, 11.5] }, { coord: [1.2, 11.5] }]]);
     });
 
     it("names the category axis from the x column", () => {
         const option = derive(block, rows);
-        expect(asObj(option.xAxis).data).toEqual(["A", "B"]);
+        expect(asObj(asArr(option.xAxis)[0]).data).toEqual(["A", "B"]);
     });
 });
 
@@ -520,6 +543,14 @@ describe("deriveChartOption pie", () => {
         ]);
     });
 
+    it("refuses a pie with no group, and states that a pie reads no x and names its slices with group", () => {
+        const rows: ChartRow[] = [{ strata: "A", n: 10 }];
+        const problem = deriveChartOption(chartBlock("pie", { x: "strata", value: "n" }, { id: "pie1" }), rows)._unsafeUnwrapErr();
+        expect(problem.detail).toBe(
+            'The pie chart reads no "x" and no "y". It names its slices with the "group" column and sizes them with the "value" column. Give a column for the "group" channel.',
+        );
+    });
+
     it("refuses a repeated category", () => {
         const rows: ChartRow[] = [
             { cat: "X", n: 10 },
@@ -547,13 +578,17 @@ describe("deriveChartOption refusals", () => {
 });
 
 describe("the axis name placement", () => {
-    /** Each chart type that names its x axis, with the rows and the encoding that give it a name. */
-    const namedX: Array<{ chartType: ChartType; encoding: Encoding; rows: ChartRow[] }> = [
-        { chartType: "bar", encoding: { x: "day", y: "count" }, rows: [{ day: "Mon", count: 1 }] },
+    /**
+     * Each chart type that names its x axis, with the rows and the encoding that give it a name. A category
+     * axis shows a declared title alone, thus each such entry declares the label of its x column.
+     */
+    const namedX: Array<{ chartType: ChartType; encoding: Encoding; rows: ChartRow[]; labels?: Labels }> = [
+        { chartType: "bar", encoding: { x: "day", y: "count" }, rows: [{ day: "Mon", count: 1 }], labels: { day: "Weekday" } },
         { chartType: "line", encoding: { x: "t", y: "v" }, rows: [{ t: 1, v: 2 }] },
         { chartType: "scatter", encoding: { x: "t", y: "v" }, rows: [{ t: 1, v: 2 }] },
-        { chartType: "box", encoding: { x: "cat", y: "val" }, rows: [{ cat: "A", val: 1 }] },
-        { chartType: "heatmap", encoding: { x: "r", y: "c", value: "v" }, rows: [{ r: "A", c: "P", v: 1 }] },
+        { chartType: "box", encoding: { x: "cat", y: "val" }, rows: [{ cat: "A", val: 1 }], labels: { cat: "Arm" } },
+        { chartType: "heatmap", encoding: { x: "r", y: "c", value: "v" }, rows: [{ r: "A", c: "P", v: 1 }], labels: { r: "Sample" } },
+        { chartType: "histogram", encoding: { x: "n" }, rows: [{ n: 1 }, { n: 2 }] },
     ];
 
     /** The ECharts default `nameGap`. A centered name at this gap sits on top of the axis labels. */
@@ -561,8 +596,11 @@ describe("the axis name placement", () => {
 
     for (const entry of namedX) {
         it(`centers the x axis name of a ${entry.chartType} chart under its axis`, () => {
-            const xAxis = asObj(derive(chartBlock(entry.chartType, entry.encoding), entry.rows).xAxis);
-            expect(xAxis.name).toBe(entry.encoding.x);
+            const derived = derive(chartBlock(entry.chartType, entry.encoding, { labels: entry.labels }), entry.rows).xAxis;
+            // A box of a thin category adds the hidden slot axis after its category axis.
+            const xAxis = asObj(Array.isArray(derived) ? derived[0] : derived);
+            const column = String(entry.encoding.x);
+            expect(xAxis.name).toBe(entry.labels?.[column] ?? column);
             // The ECharts default `nameLocation` of `"end"` puts the name at the right end of the axis, past
             // the right grid margin that the shared normalizer sets. The panel then clips the name. The
             // assertion also proves that the normalizer carries both fields through untouched.
@@ -572,19 +610,48 @@ describe("the axis name placement", () => {
         });
     }
 
-    it("keeps the y axis name at the default placement, which the panel does not clip", () => {
-        const yAxis = asObj(derive(chartBlock("bar", { x: "day", y: "count" }), [{ day: "Mon", count: 1 }]).yAxis);
-        expect(yAxis.name).toBe("count");
-        // A measurement of the rendered fixture puts the y axis name inside the container at the default
-        // `"end"` location. Thus the y axis needs no move, and the derivation adds no field.
-        expect("nameLocation" in yAxis).toBe(false);
-        expect("nameGap" in yAxis).toBe(false);
+    /** Each chart type whose y axis draws values, with the rows and the encoding that give it a title. */
+    const valueY: Array<{ chartType: ChartType; encoding: Encoding; rows: ChartRow[] }> = [
+        { chartType: "bar", encoding: { x: "day", y: "count" }, rows: [{ day: "Mon", count: 1 }] },
+        { chartType: "line", encoding: { x: "t", y: "v" }, rows: [{ t: 1, v: 2 }] },
+        { chartType: "scatter", encoding: { x: "t", y: "v" }, rows: [{ t: 1, v: 2 }] },
+        { chartType: "box", encoding: { x: "cat", y: "val" }, rows: [{ cat: "A", val: 1 }] },
+        { chartType: "violin", encoding: { x: "cat", y: "val" }, rows: [{ cat: "A", val: 1 }] },
+        { chartType: "histogram", encoding: { x: "n" }, rows: [{ n: 1 }, { n: 2 }] },
+    ];
+
+    for (const entry of valueY) {
+        it(`turns the y title of a ${entry.chartType} chart upright in the middle beside its axis`, () => {
+            const yAxis = asObj(derive(chartBlock(entry.chartType, entry.encoding), entry.rows).yAxis);
+            expect(typeof yAxis.name).toBe("string");
+            expect(yAxis.nameLocation).toBe("middle");
+            expect(yAxis.nameRotate).toBe(90);
+            expect(typeof yAxis.nameGap).toBe("number");
+        });
+    }
+
+    it("turns the y title of a composition upright, and a declared axes title takes the same place", () => {
+        const option = derive(composedBlock({ series: [{ form: "line", encoding: { x: "t", y: "v" } }], axes: { y: { title: "Signal" } } }), [{ t: 1, v: 2 }]);
+        expect(asObj(option.yAxis)).toEqual(expect.objectContaining({ name: "Signal", nameLocation: "middle", nameRotate: 90 }));
     });
 
-    it("adds no name field to the unnamed histogram x axis", () => {
-        const xAxis = asObj(derive(chartBlock("histogram", { x: "n" }), [{ n: 1 }, { n: 2 }]).xAxis);
-        expect("name" in xAxis).toBe(false);
-        expect("nameLocation" in xAxis).toBe(false);
+    it("shows no raw column name on a category axis, and shows a declared label or axes title there", () => {
+        const rows: ChartRow[] = [{ cluster: "B cells", n: 3 }];
+        const bare = derive(chartBlock("bar", { x: "cluster", y: "n" }), rows);
+        expect("name" in asObj(bare.xAxis)).toBe(false);
+        const labeled = derive(chartBlock("bar", { x: "cluster", y: "n" }, { labels: { cluster: "Cell type" } }), rows);
+        expect(asObj(labeled.xAxis).name).toBe("Cell type");
+        const titled = derive(composedBlock({ series: [{ form: "bar", encoding: { x: "cluster", y: "n" } }], axes: { x: { title: "Cluster" } } }), rows);
+        expect(asObj(titled.xAxis).name).toBe("Cluster");
+        const untitled = derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "cluster", y: "n" } }] }), rows);
+        expect(asObj(untitled.xAxis).type).toBe("category");
+        expect("name" in asObj(untitled.xAxis)).toBe(false);
+    });
+
+    it("hides the raw names on both category axes of a heatmap", () => {
+        const option = derive(chartBlock("heatmap", { x: "sample", y: "gene", value: "z" }), [{ sample: "S1", gene: "TP53", z: 1.2 }]);
+        expect("name" in asObj(option.xAxis)).toBe(false);
+        expect("name" in asObj(option.yAxis)).toBe(false);
     });
 });
 
@@ -755,10 +822,13 @@ describe("the declared column labels", () => {
         expect(asObj(option.yAxis).name).toBe("Cells counted");
     });
 
-    it("keeps the raw column name on an axis whose column declares no label", () => {
+    it("keeps the raw column name on a value axis whose column declares no label, and no name on a category axis", () => {
         const option = derive(chartBlock("scatter", { x: "day", y: "count" }, { labels: { count: "Cells counted" } }), rows);
-        expect(asObj(option.xAxis).name).toBe("day");
+        expect(asObj(option.xAxis).type).toBe("category");
+        expect("name" in asObj(option.xAxis)).toBe(false);
         expect(asObj(option.yAxis).name).toBe("Cells counted");
+        const numeric = derive(chartBlock("scatter", { x: "count", y: "count" }, { labels: {} }), rows);
+        expect(asObj(numeric.xAxis).name).toBe("count");
     });
 
     it("names a composition axis with the declared label", () => {
@@ -774,7 +844,7 @@ describe("the declared column labels", () => {
         expect(asObj(derive(block, rows).yAxis).name).toBe("Cells per well");
     });
 
-    it("keeps the transformed name on an axis whose source column declares a label", () => {
+    it("titles a transformed axis with the declared label of its source column inside the transform", () => {
         const transformed: ChartRow[] = [
             { gene: "A", p: 0.01 },
             { gene: "B", p: 0.1 },
@@ -783,8 +853,8 @@ describe("the declared column labels", () => {
             { series: [{ form: "scatter", encoding: { x: "gene", y: { column: "p", transform: "neg_log10" } } }] },
             { labels: { p: "Adjusted p-value" } },
         );
-        // The axis states the plotted quantity, and the plotted quantity is the transform of the column.
-        expect(asObj(derive(block, transformed).yAxis).name).toBe("neg_log10(p)");
+        // The axis states the plotted quantity, and the plotted quantity is the transform of the labeled column.
+        expect(asObj(derive(block, transformed).yAxis).name).toBe("−log10(Adjusted p-value)");
     });
 
     it("names the series fallback with the declared label, thus the series and the axis agree", () => {
@@ -801,12 +871,12 @@ describe("the declared column labels", () => {
         expect(xAxis.nameLocation).toBe("middle");
     });
 
-    it("keeps the bare histogram axis of a column that declares no label", () => {
+    it("names the histogram axis with the raw column of a column that declares no label, because a value axis names its quantity", () => {
         const counts: ChartRow[] = [{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }];
-        const bare = { type: "value", scale: true, axisLabel: { interval: 0 } };
-        expect(JSON.stringify(derive(chartBlock("histogram", { x: "n" }), counts).xAxis)).toBe(JSON.stringify(bare));
+        const named = { type: "value", scale: true, name: "n", nameLocation: "middle", nameGap: 34, axisLabel: { interval: 0 } };
+        expect(JSON.stringify(derive(chartBlock("histogram", { x: "n" }), counts).xAxis)).toBe(JSON.stringify(named));
         // A zero-row histogram takes the same axis, thus the empty container states the same quantity.
-        expect(JSON.stringify(derive(chartBlock("histogram", { x: "n" }), []).xAxis)).toBe(JSON.stringify(bare));
+        expect(JSON.stringify(derive(chartBlock("histogram", { x: "n" }), [], ["n"]).xAxis)).toBe(JSON.stringify(named));
     });
 
     it("ignores a label that names no column, thus the derivation gives the same bytes", () => {
@@ -885,7 +955,9 @@ describe("the composition annotations", () => {
         );
         const series = asObj(asArr(option.series)[0]);
         expect(asObj(series.markLine).silent).toBe(true);
-        expect(asArr(asObj(series.markLine).data)).toEqual([{ yAxis: 6, label: { formatter: "cut" } }]);
+        // A guide is a thin gray dash, and its label sits inside the plot at the far end of the line.
+        expect(asObj(series.markLine).lineStyle).toEqual({ color: GUIDE_LINE_COLOR, width: 1, type: "dashed" });
+        expect(asArr(asObj(series.markLine).data)).toEqual([{ yAxis: 6, label: { show: true, position: "insideEndTop", formatter: "cut", color: CHART_INK } }]);
         // A vertical band labels at its inside bottom edge, thus the text sits at the axis and not on the title.
         expect(asArr(asObj(series.markArea).data)).toEqual([[{ xAxis: -1, label: { position: "insideBottom" } }, { xAxis: 1 }]]);
     });
@@ -1019,16 +1091,22 @@ describe("the preset expansion", () => {
 
     it("derives a volcano as a scatter over the effect and the transformed p, with the guide lines", () => {
         const option = derive(chartBlock("volcano", { x: "lfc", y: "p", label: "gene" }), rows);
-        // The classification splits the rows, and the up category holds the one significant row.
+        // The classification splits the rows, and the up category holds the one significant row. The row is
+        // among the most significant signal rows, thus its name draws in the series of the point names.
         const up = asObj(asArr(option.series)[1]);
         expect(up.type).toBe("scatter");
         expect(asArr(up.data)[0]).toEqual({ value: [2.94, 3], name: "CA9" });
+        const names = asObj(asArr(option.series).at(-1));
+        expect([names.name, asArr(names.data).map((item) => asObj(item).name)]).toEqual([POINT_NAMES, ["CA9"]]);
         // The up category holds a point, thus it carries the guides and the empty down category does not.
         expect(asArr(asObj(up.markLine).data)).toEqual([
-            { yAxis: -Math.log10(VOLCANO_P_THRESHOLD), label: { formatter: `p ${VOLCANO_P_THRESHOLD}` } },
-            // A vertical guide labels at the axis end, thus its value reads clear of the y-axis title.
-            { xAxis: -VOLCANO_EFFECT_THRESHOLD, label: { position: "start" } },
-            { xAxis: VOLCANO_EFFECT_THRESHOLD, label: { position: "start" } },
+            {
+                yAxis: -Math.log10(VOLCANO_P_THRESHOLD),
+                label: { show: true, position: "insideEndTop", formatter: `p ${VOLCANO_P_THRESHOLD}`, color: CHART_INK },
+            },
+            // An effect guide carries no text, thus it shows no label and no bare constant covers a tick.
+            { xAxis: -VOLCANO_EFFECT_THRESHOLD, label: { show: false } },
+            { xAxis: VOLCANO_EFFECT_THRESHOLD, label: { show: false } },
         ]);
         // The preset knows its own quantities, thus each axis reads them in words.
         expect(asObj(option.xAxis).name).toBe("log2 fold change");
@@ -1051,19 +1129,23 @@ describe("the preset expansion", () => {
         const option = derive(chartBlock("km", { x: "time", y: "survival" }), timeRows);
         // A CSV gives each cell as text. A code-unit order would put "10" between "1" and "2".
         expect(asObj(asArr(option.series)[0]).data).toEqual([
-            ["1", "0.9"],
-            ["2", "0.8"],
-            ["10", "0.5"],
-            ["11", "0.4"],
+            [0, 1],
+            [1, 0.9],
+            [2, 0.8],
+            [10, 0.5],
+            [11, 0.4],
         ]);
     });
 
-    it("derives a manhattan with the genome-wide guide line and one series per chromosome", () => {
+    it("derives a manhattan with the genome-wide and the suggestive guide lines and one series per chromosome", () => {
         const option = derive(chartBlock("manhattan", { x: "position", y: "p", group: "chrom" }), rows);
         const series = asArr(option.series);
-        expect(series.map((entry) => asObj(entry).name)).toEqual(["1", "2"]);
+        // The chromosome names ride one series after the points.
+        expect(series.map((entry) => asObj(entry).name)).toEqual(["1", "2", "Chromosome names"]);
         expect(asArr(asObj(asObj(series[0]).markLine).data)).toEqual([
-            { yAxis: -Math.log10(MANHATTAN_P_THRESHOLD), label: { formatter: `p ${MANHATTAN_P_THRESHOLD}` } },
+            // The genome-wide label sits under its line, clear of the lead names above it.
+            { yAxis: -Math.log10(MANHATTAN_P_THRESHOLD), label: { show: true, position: "insideEndTop", formatter: "p 5 × 10⁻⁸", color: CHART_INK } },
+            { yAxis: 5, label: { show: false } },
         ]);
     });
 
@@ -1075,16 +1157,7 @@ describe("the preset expansion", () => {
             [40, 2.94],
             [60, -2.41],
         ]);
-        expect(asArr(asObj(series.markLine).data)).toEqual([{ yAxis: 0 }]);
-    });
-
-    it("derives a survival plot as one step series for each arm, and it estimates nothing", () => {
-        const option = derive(chartBlock("km", { x: "time", y: "survival", group: "arm" }), rows);
-        const series = asArr(option.series);
-        expect(series.map((entry) => asObj(entry).name)).toEqual(["A", "B"]);
-        expect(asObj(series[0]).step).toBe("end");
-        expect(asObj(series[0]).data).toEqual([[1, 0.9]]);
-        expect("markLine" in asObj(series[0])).toBe(false);
+        expect(asArr(asObj(series.markLine).data)).toEqual([{ yAxis: 0, label: { show: false } }]);
     });
 
     it("names the missing demanded channel of a preset", () => {
@@ -1106,10 +1179,10 @@ describe("the volcano classification", () => {
 
     it("gives three series, and it mutes the null series alone", () => {
         const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", label: "gene" }), rows).series);
-        expect(series.map((entry) => asObj(entry).name)).toEqual(["Down", "Up", "Not significant"]);
-        expect("itemStyle" in asObj(series[0])).toBe(false);
-        expect("itemStyle" in asObj(series[1])).toBe(false);
-        expect(asObj(series[2]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
+        expect(series.map((entry) => asObj(entry).name)).toEqual(["Down (1)", "Up (1)", "Not significant (3)", POINT_NAMES]);
+        expect(asObj(asObj(series[0]).itemStyle).color).toBe(CHART_PALETTE[0]);
+        expect(asObj(asObj(series[1]).itemStyle).color).toBe(CHART_PALETTE[1]);
+        expect(asObj(asObj(series[2]).itemStyle).color).toBe(MUTED_CHART_COLOR);
     });
 
     it("classifies each row against the guide pair, and a point on a guide states no finding", () => {
@@ -1132,9 +1205,9 @@ describe("the volcano classification", () => {
         expect(names(series[2])).toEqual(["CA9", "TP53", "ACTB", "ONLINE"]);
         // The guides read the same pair, thus the split lands on the drawn lines.
         expect(asArr(asObj(asObj(series[1]).markLine).data)).toEqual([
-            { yAxis: -Math.log10(0.5), label: { formatter: "p 0.5" } },
-            { xAxis: -3, label: { position: "start" } },
-            { xAxis: 3, label: { position: "start" } },
+            { yAxis: -Math.log10(0.5), label: { show: true, position: "insideEndTop", formatter: "p 0.5", color: CHART_INK } },
+            { xAxis: -3, label: { show: false } },
+            { xAxis: 3, label: { show: false } },
         ]);
     });
 
@@ -1146,14 +1219,13 @@ describe("the volcano classification", () => {
         expect(asArr(asObj(asObj(series[1]).markLine).data).length).toBe(3);
     });
 
-    it("keeps a declared group channel over the classification", () => {
+    it("refuses a group channel, because the figure splits its rows by the cuts", () => {
         const grouped: ChartRow[] = [
             { gene: "A", lfc: 2.9, p: 0.001, arm: "tumor" },
             { gene: "B", lfc: -2.4, p: 0.002, arm: "normal" },
         ];
-        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", group: "arm" }), grouped).series);
-        // The author asked for the split, thus the preset draws no split of its own beside it.
-        expect(series.map((entry) => asObj(entry).name)).toEqual(["tumor", "normal"]);
+        const problem = deriveChartOption(chartBlock("volcano", { x: "lfc", y: "p", group: "arm" }), grouped)._unsafeUnwrapErr();
+        expect(problem.detail).toBe('The volcano chart takes no "group" channel.');
     });
 
     it("refuses a thresholds member beside a chart type that reads none", () => {
@@ -1285,27 +1357,20 @@ describe("the chart text", () => {
         expect(asObj(option.yAxis).name).toBe("−log10(p)");
     });
 
-    it("titles the manhattan y axis, and keeps the position column on its x axis", () => {
+    it("titles the manhattan axes with the chromosome and the transformed p", () => {
         const positions: ChartRow[] = [
             { position: 10, p: 0.001, chrom: "1" },
             { position: 20, p: 0.5, chrom: "2" },
         ];
-        const option = derive(chartBlock("manhattan", { x: "position", y: "p" }), positions);
+        const option = derive(chartBlock("manhattan", { x: "position", y: "p", group: "chrom" }), positions);
         expect(asObj(option.yAxis).name).toBe("−log10(p)");
-        expect(asObj(option.xAxis).name).toBe("position");
+        // The axis shows the chromosome names under their points, thus it names the chromosome.
+        expect(asObj(option.xAxis).name).toBe("Chromosome");
     });
 
     it("keeps a declared column label over the preset title", () => {
         const option = derive(chartBlock("volcano", { x: "lfc", y: "p" }, { labels: { lfc: "Fold change (log2)" } }), rows);
         expect(asObj(option.xAxis).name).toBe("Fold change (log2)");
-    });
-
-    it("mutes the null category of a preset, and leaves each other series on the palette", () => {
-        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", group: "sig" }), rows).series);
-        expect(series.map((entry) => asObj(entry).name)).toEqual(["up in nonresponders", "ns"]);
-        expect(asObj(series[1]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
-        // The palette assigns a color by the series order, thus a series that names none keeps its place.
-        expect("itemStyle" in asObj(series[0])).toBe(false);
     });
 
     it("mutes the null category of an authored composition too, because the value reads as the null token", () => {
@@ -1344,7 +1409,7 @@ describe("the chart text", () => {
         expect(asObj(series[1]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
     });
 
-    it("labels a vertical guide at the axis end, and keeps a horizontal guide at the right edge", () => {
+    it("labels each guide inside the plot at the far end of its line, thus no label covers a tick", () => {
         const option = derive(
             composedBlock({
                 series: [{ form: "scatter", encoding: { x: "lfc", y: "p" } }],
@@ -1356,19 +1421,20 @@ describe("the chart text", () => {
             rows,
         );
         const marks = asArr(asObj(asObj(asArr(option.series)[0]).markLine).data);
-        expect(marks[0]).toEqual({ xAxis: 1, label: { formatter: "effect", position: "start" } });
-        expect(marks[1]).toEqual({ yAxis: 0.05, label: { formatter: "p" } });
+        // A vertical line ends at the top of the plot, and a horizontal line ends at the right edge.
+        expect(marks[0]).toEqual({ xAxis: 1, label: { show: true, position: "insideEndTop", formatter: "effect", color: CHART_INK } });
+        expect(marks[1]).toEqual({ yAxis: 0.05, label: { show: true, position: "insideEndTop", formatter: "p", color: CHART_INK } });
     });
 
     it("names a group-less preset series with the preset title, thus the tooltip reads no machine text", () => {
-        const positions: ChartRow[] = [
-            { position: 10, p: 0.001 },
-            { position: 20, p: 0.5 },
+        const quantiles: ChartRow[] = [
+            { expected: 0.3, observed: 0.31 },
+            { expected: 2, observed: 2.4 },
         ];
-        // A manhattan splits its rows by no rule of its own, thus one series takes the name of the y channel.
-        const series = asArr(derive(chartBlock("manhattan", { x: "position", y: "p" }), positions).series);
+        // A QQ plot splits its rows by no rule of its own, thus one series takes the name of the y channel.
+        const series = asArr(derive(chartBlock("qq", { x: "expected", y: "observed" }), quantiles).series);
         // The `{a}` of the tooltip template reads this name, and the y axis reads the same text.
-        expect(asObj(series[0]).name).toBe("−log10(p)");
+        expect(asObj(series[0]).name).toBe("Observed −log10(p)");
     });
 
     it("keeps a declared label over the preset title in the series name too", () => {
@@ -1377,13 +1443,23 @@ describe("the chart text", () => {
         expect(asObj(option.yAxis).name).toBe("Adjusted p-value");
     });
 
+    /** A scatter split by an agent-derived column, with three guide lines. */
+    const threeGuides: ChartComposition = {
+        series: [{ form: "scatter", encoding: { x: "lfc", y: "p", group: "sig" } }],
+        annotations: [
+            { kind: "reference-line", axis: "y", value: 2 },
+            { kind: "reference-line", axis: "x", value: -1 },
+            { kind: "reference-line", axis: "x", value: 1 },
+        ],
+    };
+
     it("puts the guide lines on a series that no muted color paints", () => {
         // The null category appears first, thus the carrier of the marks is not the first emitted series.
         const nsFirst: ChartRow[] = [
             { gene: "B", lfc: -2.4, p: 0.5, sig: "ns" },
             { gene: "A", lfc: 2.9, p: 0.001, sig: "up_in_nonresponders" },
         ];
-        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", group: "sig" }), nsFirst).series);
+        const series = asArr(derive(composedBlock(threeGuides), nsFirst).series);
         expect(asObj(series[0]).name).toBe("ns");
         expect(asObj(series[0]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
         // The runtime strokes a guide in the item color of its carrier, thus a muted carrier greys each guide.
@@ -1396,7 +1472,7 @@ describe("the chart text", () => {
             { gene: "B", lfc: -2.4, p: 0.5, sig: "ns" },
             { gene: "C", lfc: 0.1, p: 0.9, sig: "ns" },
         ];
-        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", group: "sig" }), allNull).series);
+        const series = asArr(derive(composedBlock(threeGuides), allNull).series);
         // No series can carry a guide clear of the muted color, thus each guide still reaches the page.
         expect(asArr(asObj(asObj(series[0]).markLine).data).length).toBe(3);
     });
@@ -1434,7 +1510,7 @@ describe("the chart text", () => {
             JSON.stringify({
                 tooltip: { trigger: "item", formatter: "{a}: {c}" },
                 xAxis: { type: "value", scale: true, name: "lfc", nameLocation: "middle", nameGap: 34, axisLabel: { interval: 0 } },
-                yAxis: { type: "value", scale: true, name: "p", axisLabel: { interval: 0 } },
+                yAxis: { type: "value", scale: true, name: "p", nameLocation: "middle", nameRotate: 90, nameGap: 10, axisLabel: { interval: 0 } },
                 series: [
                     {
                         type: "scatter",
@@ -1470,6 +1546,25 @@ describe("the quick-path transform", () => {
             ["A", 2],
             ["C", 3],
         ]);
+    });
+
+    it("titles a transformed axis with the declared label of its column inside the transform", () => {
+        const rows: ChartRow[] = [
+            { gene: "Kal1", count: 1341, condition: "treated" },
+            { gene: "Kal1", count: 1237, condition: "untreated" },
+        ];
+        const box = derive(
+            chartBlock("box", { x: "gene", y: { column: "count", transform: "log10" }, group: "condition" }, { labels: { count: "Normalized count" } }),
+            rows,
+        );
+        expect(asObj(box.yAxis).name).toBe("log10(Normalized count)");
+        const scatter = derive(
+            chartBlock("scatter", { x: "count", y: { column: "count", transform: "neg_log10" }, label: "gene" }, { labels: { count: "Normalized count" } }),
+            rows,
+        );
+        expect(asObj(scatter.yAxis).name).toBe("−log10(Normalized count)");
+        // A column with no declared label keeps the derived name.
+        expect(asObj(derive(chartBlock("box", { x: "gene", y: { column: "count", transform: "log10" } }), rows).yAxis).name).toBe("log10(count)");
     });
 
     it("refuses a transform over a column that no row holds", () => {
@@ -1623,7 +1718,8 @@ describe("the dense chart reads the shared payload", () => {
         // The inline form of this chart is the fault that the rule exists for.
         expect(JSON.stringify(inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        for (const series of asArr(render.option.series)) {
+        // The point names keep their few rows inline, and every point reads the payload.
+        for (const series of asArr(render.option.series).filter((entry) => asObj(entry).name !== POINT_NAMES)) {
             expect(asObj(series).data).toEqual([]);
         }
         const json = JSON.stringify(render.option);
@@ -1641,7 +1737,7 @@ describe("the dense chart reads the shared payload", () => {
         expect(source?.rule).toEqual({ kind: "volcano", cut: -Math.log10(VOLCANO_P_THRESHOLD), effect: VOLCANO_EFFECT_THRESHOLD });
         expect(source?.series.map((entry) => entry.category)).toEqual([0, 1, 2]);
         for (const entry of source?.series ?? []) {
-            expect(entry.x).toEqual({ column: 1 });
+            expect(entry.x).toEqual({ column: 1, numeric: true });
             expect(entry.y).toEqual({ column: 2, transform: "neg_log10" });
             expect(entry.label).toBe(0);
         }
@@ -1698,8 +1794,8 @@ describe("the dense chart reads the shared payload", () => {
         const source = sourceOf(render.option);
         expect(source?.payload).toBe("c1");
         expect(source?.series.map((entry) => entry.value)).toEqual(["a", "b"]);
-        expect(source?.series[0].x).toEqual({ column: 1 });
-        expect(source?.series[0].y).toEqual({ column: 2 });
+        expect(source?.series[0].x).toEqual({ column: 1, numeric: true });
+        expect(source?.series[0].y).toEqual({ column: 2, numeric: true });
     });
 
     it("keeps a quick path under the bound on the bytes of its base rule", () => {

@@ -362,6 +362,34 @@ export function holdsADriftedExponent(text: string): boolean {
 }
 
 /**
+ * One scientific form inside a text: a coefficient with its sign, and an exponent. The coefficient stands
+ * alone, thus a name such as `rs1e5` holds no scientific form.
+ */
+const SCIENTIFIC_IN_TEXT = /(?<![\w.])([−-]?\d+(?:\.\d+)?)e([+-]?\d+)(?![\w.])/g;
+
+/** The superscript form of each decimal digit, in digit order. */
+const SUPERSCRIPT_DIGITS = ["⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"] as const;
+
+/** The superscript minus of a negative exponent. */
+const SUPERSCRIPT_MINUS = "⁻";
+
+/**
+ * The text of a figure with each scientific form as a power of ten, for example `1.3 × 10⁻³` from `1.3e-3`.
+ *
+ * A publication figure prints the power of ten, and a table cell and a metric card keep the short form that
+ * `formatNumberCell` gives. Thus the chart canvas and the export read this, and the page text does not. The
+ * rewrite reads the shown text, thus each kind and each bound keeps its digits, and a text with no exponent
+ * stays as it is.
+ */
+export function typographicExponent(text: string): string {
+    return text.replace(SCIENTIFIC_IN_TEXT, (_form, coefficient: string, exponent: string) => {
+        const power = Number(exponent);
+        const digits = [...String(Math.abs(power))].map((digit) => SUPERSCRIPT_DIGITS[Number(digit)]).join("");
+        return `${shownMinus(coefficient)} × 10${power < 0 ? SUPERSCRIPT_MINUS : ""}${digits}`;
+    });
+}
+
+/**
  * The bound of a stored zero, as one significant digit that rounds up, for example `4e-4` from `0.00036`.
  *
  * The rounding reads the decimal text and never the binary value. `toExponential` gives the shortest text
@@ -437,7 +465,7 @@ function formatValue(value: number, kind: Exclude<NumberKind, "identifier" | "be
  * The shown form then no longer parses back to the value, thus the caller carries the raw cell in the full
  * form. A negative always names its stored digits beside the glyph.
  */
-function shownMinus(text: string): string {
+export function shownMinus(text: string): string {
     return text.startsWith("-") ? TYPOGRAPHIC_MINUS + text.slice(1) : text;
 }
 

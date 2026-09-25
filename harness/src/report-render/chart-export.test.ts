@@ -14,7 +14,33 @@ import {
     COLOR_SCALE_BAND_PCT,
     SCATTER_CROWD_ROWS,
 } from "./design.js";
-import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
+
+/** The eight cell types of the Kang composition, one bar series each. */
+const KANG_TYPES = ["B cells", "CD14+ Monocytes", "CD4 T cells", "CD8 T cells", "Dendritic cells", "FCGR3A+ Monocytes", "Megakaryocytes", "NK cells"];
+
+/** A facet of two panels over eight donors, with the bottom legend of eight cell types and the x title of the facet. */
+const FACETED_LEGEND: EchartOption = {
+    grid: [
+        { left: "5%", top: "10%", width: "44%", height: "70%", outerBoundsMode: "same", outerBoundsContain: "all" },
+        { left: "52%", top: "10%", width: "44%", height: "70%", outerBoundsMode: "same", outerBoundsContain: "all" },
+    ],
+    xAxis: [0, 1].map((gridIndex) => ({ type: "category", gridIndex, data: ["patient_101", "patient_1015"], axisLabel: { interval: 0, rotate: 45 } })),
+    yAxis: [0, 1].map((gridIndex) => ({ type: "value", gridIndex })),
+    graphic: [
+        { type: "text", left: "5%", top: "3%", style: { text: "control", fontSize: CHART_PAGE_TEXT_PX } },
+        { type: "text", left: "center", bottom: "8%", style: { text: "Donor", fontSize: CHART_PAGE_TEXT_PX } },
+    ],
+    legend: { bottom: 0 },
+    series: KANG_TYPES.flatMap((name) => [0, 1].map((index) => ({ type: "bar", name, xAxisIndex: index, yAxisIndex: index, data: [1, 2] }))),
+};
+
+/**
+ * The height of the band of a bottom legend of some lines in an export: one line pitch of the text and the
+ * item gap of the theme for each line, and one text size of room under the lowest line.
+ */
+function legendBandPx(lines: number, textPx: number): number {
+    return Math.round(lines * (textPx * 1.25 + 16) + textPx);
+}
 
 /** A line whose area fills with a gradient. The grid clips the line, thus the SVG holds a gradient and a clip path. */
 const GRADIENT_OPTION: EchartOption = {
@@ -48,6 +74,12 @@ function svgOf(option: EchartOption, size: "single" | "double" = "single"): stri
 }
 
 describe("the SVG export", () => {
+    it("sets the text at 7 points at the column width", () => {
+        const svg = svgOf({ xAxis: { type: "category", data: ["a", "b"] }, yAxis: { type: "value", name: "Count" }, series: [{ type: "bar", data: [1, 2] }] });
+        expect(svg).toContain(`${CHART_PRINT_TEXT_PX}px`);
+        expect(CHART_PRINT_TEXT_PX).toBeCloseTo((7 * 96) / 72, 2);
+    });
+
     it("gives byte-identical files for one option, whatever the chart runtime drew before", () => {
         const first = svgOf(GRADIENT_OPTION);
         // A render in between moves the instance counter and the class counter of the chart runtime.
@@ -117,6 +149,22 @@ describe("the SVG export", () => {
     });
 });
 
+describe("the seeded sequence of one export", () => {
+    it("puts the original Math.random back after a render that the chart runtime refuses", () => {
+        const original = Math.random;
+        // The registry holds no renderer under this name, thus the chart runtime throws inside the render.
+        const broken = { xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "custom", renderItem: "no-such-renderer", data: [[1, 2]] }] };
+        expect(renderChartSvg(broken, CHART_EXPORT_SIZES.single).isErr()).toBe(true);
+        expect(Math.random).toBe(original);
+    });
+
+    it("puts the original Math.random back after a render that succeeds", () => {
+        const original = Math.random;
+        expect(renderChartSvg(GRADIENT_OPTION, CHART_EXPORT_SIZES.single).isOk()).toBe(true);
+        expect(Math.random).toBe(original);
+    });
+});
+
 describe("the SVG assets of one chart", () => {
     it("gives two content-addressed names, one for each column size, and the same names over two renders", () => {
         const first = chartSvgAssets("c1", GRADIENT_OPTION)._unsafeUnwrap();
@@ -156,7 +204,7 @@ describe("the SVG assets of one chart", () => {
     });
 
     it("refuses an option that the chart runtime cannot draw, and names the block", () => {
-        // A renderer name that no renderer holds stays a string, and the chart runtime calls it as a function.
+        // The registry holds no renderer under this name, thus the chart runtime calls the string as a function.
         const broken = { xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "custom", renderItem: "no-such-renderer", data: [[1, 2]] }] };
         const problem = chartSvgAssets("c9", broken)._unsafeUnwrapErr();
         expect(problem.blockId).toBe("c9");
@@ -170,6 +218,7 @@ describe("the export option", () => {
         option: EchartOption,
         textPx: number,
         widthPx: number,
+        heightPx: number,
     ) => EchartOption;
 
     const VECTOR: readonly EchartOption[] = [
@@ -181,7 +230,7 @@ describe("the export option", () => {
             grid: { containLabel: true },
             xAxis: { type: "category", data: ["Hypoxia", "Glycolysis", "Angiogenesis", "p53 pathway", "G2M checkpoint", "Apoptosis"] },
             yAxis: { type: "value" },
-            visualMap: { type: "continuous", min: -1.6, max: 1.6, precision: 1, calculable: true, text: ["Mito reads of each library (%)", ""] },
+            visualMap: { type: "continuous", min: -1.6, max: 1.6, calculable: false, text: ["Mito reads of each library (%)\n1.6", "−1.6"] },
             series: [],
         },
         {
@@ -210,36 +259,105 @@ describe("the export option", () => {
             ],
             series: [],
         },
+        {
+            xAxis: { type: "log", name: "Hazard ratio", nameGap: 34 },
+            yAxis: [
+                { type: "category", data: ["Karnofsky score\n(physician)"] },
+                { type: "category", position: "right", offset: 120, data: ["1.02 (1.00–1.04)"] },
+            ],
+            series: [],
+        },
+        {
+            xAxis: { type: "category", data: ["B cells"] },
+            yAxis: { type: "value" },
+            graphic: [
+                {
+                    type: "group",
+                    right: 8,
+                    top: 20,
+                    children: [
+                        { type: "text", x: 0, y: 0, style: { text: "Count", fontSize: CHART_PAGE_TEXT_PX } },
+                        { type: "circle", shape: { cx: 3, cy: 20, r: 3 } },
+                        { type: "group", children: [{ type: "text", x: 12, y: 20, style: { text: "10", fontSize: CHART_PAGE_TEXT_PX } }] },
+                    ],
+                },
+            ],
+            series: [],
+        },
+        FACETED_LEGEND,
     ];
 
+    it("scales the text of each child of a graphic group, thus a size legend prints at the export text size", () => {
+        const print = exportOption(VECTOR[8], CHART_PRINT_TEXT_PX, 336, 253);
+        const group = (print.graphic as EchartOption[])[0];
+        const [title, circle, inner] = group.children as EchartOption[];
+        expect((title.style as EchartOption).fontSize).toBe(CHART_PRINT_TEXT_PX);
+        expect(circle).toEqual({ type: "circle", shape: { cx: 3, cy: 20, r: 3 } });
+        expect(((inner.children as EchartOption[])[0].style as EchartOption).fontSize as number).toBe(CHART_PRINT_TEXT_PX);
+    });
+
+    it("holds the lowest row of facet panels and the x title above the band of a legend that wraps at the column width", () => {
+        const print = exportOption(FACETED_LEGEND, CHART_PRINT_TEXT_PX, 336, 253);
+        const grids = print.grid as EchartOption[];
+        // The eight names of the legend take three lines at the single column.
+        const band = legendBandPx(3, CHART_PRINT_TEXT_PX);
+        const room = 253 - band - Math.round(CHART_PRINT_TEXT_PX * 1.6);
+        for (const grid of grids) {
+            // Each panel keeps its labels inside its own box, and the box ends over the title and the legend.
+            expect(grid.outerBoundsMode).toBe("same");
+            expect(grid.top).toBe("10%");
+            expect(((Number.parseFloat(String(grid.top)) + Number.parseFloat(String(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
+        }
+        const title = (print.graphic as EchartOption[]).find((element) => element.bottom !== undefined);
+        expect(title?.bottom).toBe(band);
+        // The slide holds the eight names on one line, and its panels keep their boxes.
+        const slide = exportOption(FACETED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080);
+        expect((slide.grid as EchartOption[])[0].height).toBe("70%");
+        expect(((slide.graphic as EchartOption[])[1] as EchartOption).bottom).toBe(legendBandPx(1, CHART_SLIDE_TEXT_PX));
+    });
+
     it("drops the tooltip and the toolbox, stops the animation, and scales the name gap and the panel labels", () => {
-        const slide = exportOption(VECTOR[5], CHART_SLIDE_TEXT_PX, 1920);
+        const slide = exportOption(VECTOR[5], CHART_SLIDE_TEXT_PX, 1920, 1080);
         expect(slide.animation).toBe(false);
         expect((slide.xAxis as EchartOption[])[0].nameGap).toBe(68);
         expect(((slide.graphic as EchartOption[])[0].style as EchartOption).fontSize).toBe(CHART_SLIDE_TEXT_PX);
-        const print = exportOption(VECTOR[1], CHART_PRINT_TEXT_PX, 336);
+        const print = exportOption(VECTOR[1], CHART_PRINT_TEXT_PX, 336, 253);
         expect(print.tooltip).toBeUndefined();
         expect(print.toolbox).toBeUndefined();
         // The input stays as it is, thus the page keeps its own option.
         expect(VECTOR[1].tooltip).toEqual({ trigger: "item" });
     });
 
+    it("scales the offset of an axis with the text, thus a column of text keeps its room", () => {
+        const scale = CHART_PRINT_TEXT_PX / CHART_PAGE_TEXT_PX;
+        const [terms, estimates] = exportOption(VECTOR[7], CHART_PRINT_TEXT_PX, 336, 253).yAxis as EchartOption[];
+        expect(terms.offset).toBeUndefined();
+        expect(estimates.offset).toBe(120 * scale);
+        expect(((exportOption(VECTOR[7], CHART_SLIDE_TEXT_PX, 1920, 1080).yAxis as EchartOption[])[1] as EchartOption).offset).toBe(240);
+        expect(((VECTOR[7].yAxis as EchartOption[])[1] as EchartOption).offset).toBe(120);
+    });
+
     it("holds the labels and the names of a short export above the band of a bottom legend", () => {
-        const print = exportOption(VECTOR[2], CHART_PRINT_TEXT_PX, 336);
-        expect(print.grid).toEqual({ top: "8%", bottom: "20%", outerBoundsMode: "auto", outerBounds: { left: 0, right: 0, top: 0, bottom: 25 } });
+        const print = exportOption(VECTOR[2], CHART_PRINT_TEXT_PX, 336, 253);
+        expect(print.grid).toEqual({
+            top: "8%",
+            bottom: "20%",
+            outerBoundsMode: "auto",
+            outerBounds: { left: 0, right: 0, top: 0, bottom: Math.round(CHART_PRINT_TEXT_PX * 2.5) },
+        });
         // A hidden legend takes no band, and a facet keeps the boxes of its panels.
-        expect(exportOption(VECTOR[3], CHART_PRINT_TEXT_PX, 336).grid).toEqual({ top: "8%" });
-        expect(Array.isArray(exportOption(VECTOR[5], CHART_PRINT_TEXT_PX, 336).grid)).toBe(true);
+        expect(exportOption(VECTOR[3], CHART_PRINT_TEXT_PX, 336, 253).grid).toEqual({ top: "8%" });
+        expect(Array.isArray(exportOption(VECTOR[5], CHART_PRINT_TEXT_PX, 336, 253).grid)).toBe(true);
     });
 
     it("gives the same export option on the page as on the server, for each text size", () => {
         for (const option of VECTOR) {
-            for (const [size, width] of [
-                [CHART_PRINT_TEXT_PX, 336],
-                [CHART_PRINT_TEXT_PX, 692],
-                [CHART_SLIDE_TEXT_PX, 1920],
+            for (const [size, width, height] of [
+                [CHART_PRINT_TEXT_PX, 336, 253],
+                [CHART_PRINT_TEXT_PX, 692, 348],
+                [CHART_SLIDE_TEXT_PX, 1920, 1080],
             ]) {
-                expect(JSON.stringify(exportOnThePage(option, size, width))).toBe(JSON.stringify(exportOption(option, size, width)));
+                expect(JSON.stringify(exportOnThePage(option, size, width, height))).toBe(JSON.stringify(exportOption(option, size, width, height)));
             }
         }
     });
@@ -305,13 +423,42 @@ describe("the bar of an interval through the server render", () => {
             { arm: "b", dose: "high", mean: 5, lo: 4, hi: 6 },
         ];
         const svg = svgOf(barOption({ x: "arm", y: "mean", group: "dose", low: "lo", high: "hi" }, rows), "double");
-        const centers = [...boxesOf(svg, CHART_PALETTE[0]), ...boxesOf(svg, CHART_PALETTE[1])].map((box) => (box[0] + box[2]) / 2);
+        // The legend draws a filled square of the text size for each group, thus a bar is each wider box.
+        const bars = [...boxesOf(svg, CHART_PALETTE[0]), ...boxesOf(svg, CHART_PALETTE[1])].filter((box) => box[2] - box[0] > CHART_PRINT_TEXT_PX + 1);
+        const centers = bars.map((box) => (box[0] + box[2]) / 2);
         const whiskers = verticalInk(svg).filter((segment) => segment[2] - segment[1] > 5);
         expect(centers.length).toBe(4);
         expect(whiskers.length).toBe(4);
         for (const whisker of whiskers) {
             expect(Math.min(...centers.map((center) => Math.abs(center - whisker[0])))).toBeLessThan(0.6);
         }
+    });
+});
+
+describe("the title of a category axis in an export", () => {
+    it("draws the title of a horizontal bar clear of its longest term", () => {
+        const term = "proteasomal ubiquitin-independent protein catabolic process (GO:0010499)";
+        const rows: ChartRow[] = [
+            { term, nes: 1.9 },
+            { term: "cell-cell junction assembly (GO:0007043)", nes: -1.2 },
+        ];
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "nes",
+            binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:00", columnLabels: { term: "GO biological process" } },
+            chartType: "bar",
+            orientation: "horizontal",
+            encoding: { x: "term", y: "nes" },
+        };
+        const svg = svgOf(deriveChartRender(block, rows, undefined, { key: "nes", columns: [] })._unsafeUnwrap().inline, "double");
+        // The title turns 90 degrees, thus its transform names its x as the fifth member of the matrix.
+        const title = /transform="matrix\(0,-1,1,0,(-?[\d.]+),[^)]*\)"[^>]*>GO biological process</.exec(svg);
+        const label = new RegExp(`text-anchor="end"[^>]*transform="translate\\((-?[\\d.]+) [^)]*\\)"[^>]*>${term.replace(/[()]/g, "\\$&")}<`).exec(svg);
+        expect(title).not.toBeNull();
+        expect(label).not.toBeNull();
+        // The label ends at its anchor and runs left at half the text size for each character at least.
+        const labelLeft = Number(label?.[1]) - term.length * CHART_PRINT_TEXT_PX * 0.45;
+        expect(Number(title?.[1])).toBeLessThan(labelLeft);
     });
 });
 
@@ -328,28 +475,28 @@ describe("the export option at a column width", () => {
     it("turns the category labels that do not fit the width of the export", () => {
         const names = ["Hypoxia", "Glycolysis", "Angiogenesis", "p53 pathway", "G2M checkpoint", "Apoptosis"];
         const option = { xAxis: { type: "category", data: names, axisLabel: { interval: 0 } }, yAxis: { type: "value" }, series: [] };
-        const single = exportOption(option, CHART_PRINT_TEXT_PX, CHART_EXPORT_SIZES.single.widthPx);
-        const slide = exportOption(option, CHART_SLIDE_TEXT_PX, CHART_EXPORT_SIZES.slide.widthPx);
+        const single = exportOption(option, CHART_PRINT_TEXT_PX, CHART_EXPORT_SIZES.single.widthPx, CHART_EXPORT_SIZES.single.heightPx);
+        const slide = exportOption(option, CHART_SLIDE_TEXT_PX, CHART_EXPORT_SIZES.slide.widthPx, CHART_EXPORT_SIZES.slide.heightPx);
         expect(((single.xAxis as EchartOption).axisLabel as EchartOption).rotate).toBe(45);
         expect(((slide.xAxis as EchartOption).axisLabel as EchartOption).rotate).toBeUndefined();
         // An authored rotation stays.
         const turned = { ...option, xAxis: { ...option.xAxis, axisLabel: { interval: 0, rotate: 90 } } };
-        expect(((exportOption(turned, CHART_PRINT_TEXT_PX, 336).xAxis as EchartOption).axisLabel as EchartOption).rotate).toBe(90);
+        expect(((exportOption(turned, CHART_PRINT_TEXT_PX, 336, 253).xAxis as EchartOption).axisLabel as EchartOption).rotate).toBe(90);
     });
 
-    it("prints the ends of a color scale as static text, with no handle", () => {
+    it("wraps the title of a color scale into its band, and keeps the two ends that the page prints", () => {
         const option = {
             xAxis: { type: "value" },
             yAxis: { type: "value" },
             visualMap: [
-                { type: "continuous", min: 0.0001, max: 0.13, precision: 5, calculable: true, text: ["Adjusted p", ""] },
+                { type: "continuous", min: 0.0001, max: 0.13, calculable: false, text: ["Adjusted p\n0.13", "1e-4"] },
                 { type: "continuous", show: false, min: 1, max: 2 },
             ],
             series: [],
         };
-        const maps = exportOption(option, CHART_PRINT_TEXT_PX, 336).visualMap as EchartOption[];
-        // A title wider than the scale band wraps at its spaces.
-        expect(maps[0]).toEqual(expect.objectContaining({ calculable: false, text: ["Adjusted\np\n0.13000", "0.00010"] }));
+        const maps = exportOption(option, CHART_PRINT_TEXT_PX, 336, 253).visualMap as EchartOption[];
+        // A title wider than the scale band wraps at its spaces, and the upper end stays the last line.
+        expect(maps[0]).toEqual(expect.objectContaining({ calculable: false, text: ["Adjusted\np\n0.13", "1e-4"] }));
         // The scale starts at the top of the plot and stays short, thus its lower end never meets the x labels.
         expect(maps[0]).toEqual(expect.objectContaining({ top: "8%", itemHeight: 8 * CHART_PRINT_TEXT_PX }));
         expect(maps[1]).toEqual(option.visualMap[1]);
@@ -362,7 +509,7 @@ describe("the export option at a column width", () => {
             yAxis: { type: "category", data: ["a"], name: "Biopsy" },
             series: [],
         };
-        expect(exportOption(option, CHART_PRINT_TEXT_PX, 336).grid).toEqual({
+        expect(exportOption(option, CHART_PRINT_TEXT_PX, 336, 253).grid).toEqual({
             containLabel: false,
             left: "10%",
             outerBoundsMode: "auto",
@@ -423,12 +570,11 @@ describe("the title of a color scale in the column export", () => {
                     dimension: 2,
                     min: 4,
                     max: 9.9,
-                    precision: 1,
-                    calculable: true,
+                    calculable: false,
                     orient: "vertical",
                     right: 0,
                     top: "middle",
-                    text: [TITLE, ""],
+                    text: [`${TITLE}\n9.9`, "4"],
                 },
             ],
             series: [
@@ -442,16 +588,27 @@ describe("the title of a color scale in the column export", () => {
             ],
         };
         expectClear(svgOf(option));
-        // The page keeps its handles and its title as they are.
-        expect(option.visualMap[0].text).toEqual([TITLE, ""]);
+        // The page keeps its title as it is.
+        expect(option.visualMap[0].text).toEqual([`${TITLE}\n9.9`, "4"]);
     });
 
-    it("keeps the title of the faceted fixture chart clear of its rightmost panel", () => {
-        const block = FIXTURE_DOCUMENT.sections.flatMap((section) => section.blocks).find((entry) => entry.id === "chart-batches");
-        if (block === undefined || block.kind !== "chart") throw new Error("The fixture holds no faceted chart.");
-        const value = FIXTURE_VALUES["chart-batches"];
-        if (value.type !== "table") throw new Error("The faceted chart binds no table.");
-        const inline = deriveChartRender(block, value.rows, value.columns, { key: block.id, columns: [] })._unsafeUnwrap().inline;
+    it("keeps the title of a faceted scatter clear of its rightmost panel", () => {
+        // Four panels of twelve libraries each, colored on one scale by the share of mitochondrial reads.
+        const rows: ChartRow[] = [];
+        for (const [b, batch] of ["Batch 1", "Batch 2", "Batch 3", "Batch 4"].entries()) {
+            for (let index = 0; index < 12; index += 1) {
+                const depth = 30 + (((b * 12 + index) * 7) % 25);
+                rows.push({ batch, depth_m: depth, genes_k: 12 + depth * 0.12, mito_pct: 4 + ((index * 5 + b) % 60) / 10 });
+            }
+        }
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "batches",
+            binding: { kind: "artifact-table", path: "libraries.csv", hash: "sha256:00", columnLabels: { mito_pct: TITLE } },
+            chartType: "scatter",
+            encoding: { x: "depth_m", y: "genes_k", color: "mito_pct", facet: "batch" },
+        };
+        const inline = deriveChartRender(block, rows, undefined, { key: block.id, columns: [] })._unsafeUnwrap().inline;
         expectClear(svgOf(inline));
     });
 });
@@ -473,7 +630,7 @@ describe("the export of a faceted chart", () => {
     }
 
     it("turns the category labels of each panel against the width of its own grid", () => {
-        const exported = exportOption(facetedBars(), CHART_PRINT_TEXT_PX, CHART_EXPORT_SIZES.single.widthPx);
+        const exported = exportOption(facetedBars(), CHART_PRINT_TEXT_PX, CHART_EXPORT_SIZES.single.widthPx, CHART_EXPORT_SIZES.single.heightPx);
         const axes = exported.xAxis as EchartOption[];
         expect(axes.length).toBe(3);
         for (const axis of axes) expect([45, 90]).toContain((axis.axisLabel as EchartOption).rotate);

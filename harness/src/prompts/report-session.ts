@@ -94,12 +94,17 @@ exists for that shape.
 
 A figure block is the last choice. It serves a picture that no table can carry:
 a microscopy image, a schematic, or a genome browser track. Each other plot of a
-run is a chart block over the table that made it: a volcano, a heatmap, a dot plot,
-a violin, an embedding, a forest plot, a stacked composition, and a radar. The chart
-grammar draws each one, with a continuous color, a size, an interval, small multiples,
-a category order, and a focus on the categories of the finding. When the pinned
+run is a chart block over the table that made it, and the block schema of \`add_block\`
+names each chart type and each preset that the chart grammar draws. When the pinned
 evidence holds the table of such a plot, or a derivation can give it, bind the chart
 and leave the run figure out of the report.
+
+A plot of a field takes its preset, and the preset draws the canonical figure of
+that field from one table. A statistic that the figure prints, such as the p-value
+of a test or the area under a curve, binds as a statistic of the chart block, and
+each statistic reads one cell of the pinned evidence. A second table that the
+figure draws beside its table, such as the domains of a protein, binds as the track
+of the chart block.
 
 A run writes statistical tables, and not plot-ready ones. When a real reshaping
 stands between the evidence and the block, \`derive_table\` runs your Python script

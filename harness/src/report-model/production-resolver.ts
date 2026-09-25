@@ -383,7 +383,7 @@ function parseRecords(text: string, delimiter: string): string[][] | undefined {
  * Parse a delimited file into rows. The first record is the header. A ragged record and a repeated header
  * name are structural doubt, thus each gives back `undefined` and the file falls through.
  */
-function parseDelimited(text: string, delimiter: string): Row[] | undefined {
+export function parseDelimited(text: string, delimiter: string): Row[] | undefined {
     const records = parseRecords(text, delimiter);
     if (records === undefined) {
         return undefined;

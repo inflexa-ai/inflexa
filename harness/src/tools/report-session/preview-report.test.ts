@@ -754,6 +754,157 @@ describe("the unresolved reference", () => {
     });
 });
 
+describe("the slots of a chart", () => {
+    const CHART_PATH = "runs/r1/output/km.csv";
+    const TRACK_PATH = "runs/r1/output/domains.csv";
+    const STATS_PATH = "runs/r1/output/logrank.csv";
+    const HASH = "sha256:ddd";
+
+    /** A snapshot of the curve, the track table, and the statistics table. */
+    const slotSnapshot: ReportSnapshot = {
+        artifacts: {
+            [CHART_PATH]: { hash: HASH, fileType: "output", rows: [{ time: 0, survival: 1, arm: "A" }] },
+            [TRACK_PATH]: { hash: HASH, fileType: "output", rows: [{ start: 1, end: 90, domain: "PWWP" }] },
+            [STATS_PATH]: { hash: HASH, fileType: "output", rows: [{ pvalue: 0.0013 }] },
+        },
+    };
+
+    /** A draft of one survival chart with one statistic at the given row, and a track where the draft asks for one. */
+    function slotDoc(statisticRow: number, withTrack: boolean): DraftDocument {
+        return {
+            title: "Survival",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Survival",
+                    blocks: [
+                        {
+                            kind: "chart",
+                            id: "km1",
+                            binding: { kind: "artifact-table", path: CHART_PATH, hash: HASH },
+                            chartType: "km",
+                            encoding: { x: "time", y: "survival", group: "arm" },
+                            ...(withTrack
+                                ? { track: { binding: { kind: "artifact-table", path: TRACK_PATH, hash: HASH }, start: "start", end: "end", label: "domain" } }
+                                : {}),
+                            statistics: [
+                                {
+                                    label: "Log-rank p",
+                                    value: { kind: "artifact-value", path: STATS_PATH, hash: HASH, locator: { column: "pvalue", row: statisticRow } },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    it("names the block and the slot of a statistic that does not resolve, and no page lands", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: slotDoc(5, true), snapshot: slotSnapshot });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("unresolved-references");
+        if (result.outcome === "unresolved-references") {
+            expect(result.unresolved.map((entry) => [entry.blockId, entry.slot, entry.failure.reason])).toEqual([
+                ["km1", "statistic:0", "locator-out-of-range"],
+            ]);
+        }
+        expect(existsSync(join(root, "report-sessions"))).toBe(false);
+    });
+
+    it("resolves and bridges the statistic, and the page prints it in the number format of its column as a power of ten", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: slotDoc(0, false), snapshot: slotSnapshot });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            const content = await readFile(result.pagePath, "utf8");
+            expect(content).toContain("Log-rank p = 1.3 × 10⁻³");
+        }
+    });
+});
+
+describe("the track of a chart", () => {
+    const CHART_PATH = "runs/r1/output/lollipop_DNMT3A.csv";
+    const TRACK_PATH = "runs/r1/output/domains_DNMT3A.csv";
+    const HASH = "sha256:eee";
+
+    /** A snapshot of the mutations of one gene and of its domain table. */
+    const trackSnapshot: ReportSnapshot = {
+        artifacts: {
+            [CHART_PATH]: {
+                hash: HASH,
+                fileType: "output",
+                rows: [
+                    { aa_position: 882, protein_change: "p.R882H", variant_classification: "Missense_Mutation", count: 19 },
+                    { aa_position: 320, protein_change: "p.R320*", variant_classification: "Nonsense_Mutation", count: 1 },
+                ],
+            },
+            [TRACK_PATH]: { hash: HASH, fileType: "output", rows: [{ start: 634, end: 912, name: "SAM-dependent MTase C5-type", protein_length: 912 }] },
+        },
+    };
+
+    /** A draft of one lollipop over the mutations, with the domains as its track. */
+    function trackDoc(): DraftDocument {
+        return {
+            title: "Mutations",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "DNMT3A",
+                    blocks: [
+                        {
+                            kind: "chart",
+                            id: "lolli",
+                            binding: { kind: "artifact-table", path: CHART_PATH, hash: HASH },
+                            chartType: "lollipop",
+                            encoding: { x: "aa_position", y: "count", group: "variant_classification", label: "protein_change" },
+                            track: {
+                                binding: { kind: "artifact-table", path: TRACK_PATH, hash: HASH },
+                                start: "start",
+                                end: "end",
+                                label: "name",
+                                length: "protein_length",
+                            },
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    it("resolves the track through the fixture resolver, and the page draws its domains under the axis", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: trackDoc(), snapshot: trackSnapshot });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            const content = await readFile(result.pagePath, "utf8");
+            // The domain box and the protein length come from the track table alone.
+            expect(content).toContain('"name":"SAM-dependent MTase C5-type"');
+            expect(content).toContain('"max":912');
+            // The appendix lists the binding and the track.
+            expect(content).toContain(CHART_PATH);
+            expect(content).toContain(TRACK_PATH);
+        }
+    });
+});
+
 describe("the session refusal", () => {
     it("refuses a call whose scope carries no thread id", async () => {
         const root = await makeRoot();

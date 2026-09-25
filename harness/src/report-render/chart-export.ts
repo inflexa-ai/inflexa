@@ -15,8 +15,17 @@ import * as echarts from "echarts";
 import { err, ok, type Result } from "neverthrow";
 
 import type { EchartOption } from "./chart.js";
-import { bindRenderers, exportOption, OUTLINE_RENDERER } from "./chart-renderers.js";
-import { CHART_EXPORT_SIZES, CHART_PRINT_THEME_NAME, CHART_PRINT_TEXT_PX, chartTheme, SCATTER_CROWD_ROWS, type ChartExportSize } from "./design.js";
+import { exportOption, OUTLINE_RENDERER, registerChartRenderers } from "./chart-renderers.js";
+import {
+    CHART_BODY_PX,
+    CHART_EXPORT_SIZES,
+    CHART_PRINT_THEME_NAME,
+    CHART_PRINT_TEXT_PX,
+    chartTheme,
+    exportSizeFor,
+    SCATTER_CROWD_ROWS,
+    type ChartExportSize,
+} from "./design.js";
 import type { DataAsset } from "./table-data.js";
 import type { RenderProblem } from "./types.js";
 
@@ -42,22 +51,52 @@ export interface ChartSvgs {
 /**
  * Render one option to SVG text at one column size.
  *
- * The export registers the print theme before it draws, and each registration of one name gives the same
- * theme. The chart runtime is code outside the harness, thus its throw becomes the message of an `err`. The
- * instance is disposed in every case, thus no render leaves a timer behind.
+ * The export registers the print theme and each named renderer before it draws, and each registration of
+ * one name gives the same theme or the same function. The chart runtime is code outside the harness, thus its
+ * throw becomes the message of an `err`. The instance is disposed in every case, thus no render leaves a timer
+ * behind.
  */
 export function renderChartSvg(option: EchartOption, size: ChartExportSize): Result<string, string> {
     echarts.registerTheme(CHART_PRINT_THEME_NAME, chartTheme(CHART_PRINT_TEXT_PX));
+    registerChartRenderers({
+        // The runtime types each item dimension as a string or a number. Each item that the derivation writes
+        // for a named renderer holds numbers alone, thus the renderer reads a number at each dimension.
+        registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, render as unknown as echarts.CustomSeriesRenderItem),
+    });
     let chart: ReturnType<typeof echarts.init> | undefined;
+    // The axis jitter of the chart runtime places a point that finds no free place with `Math.random`. The
+    // render below runs to its end in one synchronous call, thus the seeded sequence serves this render alone,
+    // and the same option gives the same points and the same bytes. The finally block puts the global back.
+    const random = Math.random;
+    Math.random = seededRandom(EXPORT_RANDOM_SEED);
     try {
         chart = echarts.init(null, CHART_PRINT_THEME_NAME, { renderer: "svg", ssr: true, width: size.widthPx, height: size.heightPx });
-        chart.setOption(bindRenderers(exportOption(option, CHART_PRINT_TEXT_PX, size.widthPx)));
+        chart.setOption(exportOption(option, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx));
         return ok(finishedSvg(chart.renderToSVGString(), size));
     } catch (cause) {
         return err(cause instanceof Error ? cause.message : String(cause));
     } finally {
+        Math.random = random;
         chart?.dispose();
     }
+}
+
+/** The seed of the sequence that stands for `Math.random` during one export. Any fixed value serves. */
+const EXPORT_RANDOM_SEED = 0x2f6b1e35;
+
+/**
+ * A deterministic sequence of numbers in `[0, 1)` from one seed: the mulberry32 generator. Each call of the
+ * returned function gives the next number.
+ */
+function seededRandom(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+        state = (state + 0x6d2b79f5) >>> 0;
+        let t = state;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
 }
 
 /**
@@ -148,16 +187,21 @@ function svgAsset(bytes: string, size: ChartExportSize): DataAsset {
  * The option is the chart with every row inline. A chart whose plotted point count passes the crowd row
  * count gets no SVG, and the card states that the PNG serves it. An option that the chart runtime cannot
  * draw refuses, and the refusal names the block.
+ *
+ * `bodyPx` is the height of the page chart body. A taller body draws each column at a taller height, thus a
+ * row of the figure keeps its share of the height.
  */
-export function chartSvgAssets(blockId: string, option: EchartOption): Result<ChartSvgs | undefined, RenderProblem> {
+export function chartSvgAssets(blockId: string, option: EchartOption, bodyPx: number = CHART_BODY_PX): Result<ChartSvgs | undefined, RenderProblem> {
     if (plottedPoints(option) > SCATTER_CROWD_ROWS) {
         return ok(undefined);
     }
-    const single = renderChartSvg(option, CHART_EXPORT_SIZES.single);
+    const singleSize = exportSizeFor(CHART_EXPORT_SIZES.single, bodyPx);
+    const doubleSize = exportSizeFor(CHART_EXPORT_SIZES.double, bodyPx);
+    const single = renderChartSvg(option, singleSize);
     if (single.isErr()) return err(exportProblem(blockId, single.error));
-    const double = renderChartSvg(option, CHART_EXPORT_SIZES.double);
+    const double = renderChartSvg(option, doubleSize);
     if (double.isErr()) return err(exportProblem(blockId, double.error));
-    return ok({ single: svgAsset(single.value, CHART_EXPORT_SIZES.single), double: svgAsset(double.value, CHART_EXPORT_SIZES.double) });
+    return ok({ single: svgAsset(single.value, singleSize), double: svgAsset(double.value, doubleSize) });
 }
 
 /** The refusal of an option that the chart runtime refused to draw. */

@@ -23,16 +23,32 @@ import type { DraftBlock } from "./draft.js";
 export type AnyBlock = Block | DraftBlock;
 
 /**
+ * The place of one reference inside a chart block: the binding, the track, or the statistic at one index of
+ * the block, for example `statistic:0`.
+ */
+export type ChartSlot = "binding" | "track" | `statistic:${number}`;
+
+/** The slot of the statistic at one index of a chart block. */
+export function statisticSlot(index: number): ChartSlot {
+    return `statistic:${index}`;
+}
+
+/**
  * One reference that the walk met, tied to the block that carries it.
  *
- * `encodingColumns` is present for a `chart` only. A chart names its columns as free strings, thus the
- * names must be matched against the table that the binding resolves to. Nothing else can catch a chart
- * that plots a column which does not exist. The field carries every column that the chart grammar names,
- * thus the structural tier and the value tier match the same set.
+ * `slot` is present for a `chart` only, because a chart is the one kind that binds more than one reference of
+ * different roles. A failure names the block and the slot, and the resolution files each value under its slot.
+ *
+ * `encodingColumns` is present for the binding and the track of a `chart`. A chart names its columns as free
+ * strings, thus the names must be matched against the table that the reference resolves to. Nothing else can
+ * catch a chart that plots a column which does not exist. The binding carries every column that the chart
+ * grammar names, and the track carries each column that the track names, thus the structural tier and the
+ * value tier match the same set.
  */
 export interface CollectedReference {
     blockId: string;
     reference: Reference;
+    slot?: ChartSlot;
     encodingColumns?: string[];
 }
 
@@ -168,6 +184,13 @@ function chartColumns(block: ChartBlock): string[] {
         addChannel(encoding.low);
         addChannel(encoding.high);
         addChannel(encoding.facet);
+        addChannel(encoding.shape);
+        addChannel(encoding.p);
+        addChannel(encoding.censor);
+        addChannel(encoding.risk);
+        addChannel(encoding.hit);
+        addChannel(encoding.metric);
+        for (const column of encoding.tracks ?? []) add(column);
     }
 
     const composition = block.composition;
@@ -189,6 +212,26 @@ function chartColumns(block: ChartBlock): string[] {
         addChannel(composition.facet);
     }
     return columns;
+}
+
+/** Each column of its own table that the track of a chart names: the start, the end, the label, and the length. */
+function trackColumns(track: NonNullable<ChartBlock["track"]>): string[] {
+    return [track.start, track.end, track.label, ...(track.length !== undefined ? [track.length] : [])];
+}
+
+/**
+ * The references of one chart block, in the order of the block: the binding, the track, and each statistic.
+ * Each one carries its slot.
+ */
+function chartReferences(block: ChartBlock): CollectedReference[] {
+    const references: CollectedReference[] = [{ blockId: block.id, reference: block.binding, slot: "binding", encodingColumns: chartColumns(block) }];
+    if (block.track !== undefined) {
+        references.push({ blockId: block.id, reference: block.track.binding, slot: "track", encodingColumns: trackColumns(block.track) });
+    }
+    for (const [index, statistic] of (block.statistics ?? []).entries()) {
+        references.push({ blockId: block.id, reference: statistic.value, slot: statisticSlot(index) });
+    }
+    return references;
 }
 
 /**
@@ -233,7 +276,7 @@ export function walkBlocks(blocks: readonly AnyBlock[]): BlockWalk {
                 references.push({ blockId: block.id, reference: block.value });
                 return;
             case "chart":
-                references.push({ blockId: block.id, reference: block.binding, encodingColumns: chartColumns(block) });
+                references.push(...chartReferences(block));
                 return;
             case "table":
             case "figure":

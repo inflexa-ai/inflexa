@@ -35,6 +35,7 @@
     "scripts": {
         "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
         "design:fixture": "bun scripts/render-fixture.ts",
+        "design:gallery": "bun scripts/render-gallery.ts",
         "format": "prettier --write src/",
         "format:file": "prettier --write",
         "lint": "eslint .",

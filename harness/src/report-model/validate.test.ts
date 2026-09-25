@@ -5,7 +5,7 @@ import { parseReference, serializeReference, type Reference } from "../contracts
 import { valuesMatch } from "./assert-rules.js";
 import { createFixtureResolver } from "./fixture-resolver.js";
 import type { ReferenceResolver, ReportSnapshot } from "./reference-resolver.js";
-import { validateReport, type ReportValidation } from "./validate.js";
+import { resolveDocumentReferences, validateReport, type ReportValidation } from "./validate.js";
 
 const TABLE_A_PATH = "runs/run-1/step-a/output/de.csv";
 const TABLE_B_PATH = "runs/run-1/step-b/output/counts.csv";
@@ -807,6 +807,74 @@ describe("validateReport — a chart encoding", () => {
 
     it("validates an encoding with no channel at all", async () => {
         expectValid(await validateReport(reportWith(chartWith("chart-bare", {})), snapshot, resolver));
+    });
+});
+
+describe("resolveDocumentReferences — the slots of a chart", () => {
+    /** A chart over table B, with a track over table A and two statistics, and the given overrides. */
+    function slottedChart(overrides: Partial<Extract<Block, { kind: "chart" }>> = {}): Block {
+        return {
+            kind: "chart",
+            id: "chart-slots",
+            binding: { kind: "artifact-table", run: "run-1", path: TABLE_B_PATH, hash: TABLE_B_HASH },
+            chartType: "lollipop",
+            encoding: { x: "sample", y: "value" },
+            track: {
+                binding: { kind: "artifact-table", run: "run-1", path: TABLE_A_PATH, hash: TABLE_A_HASH },
+                start: "log2FoldChange",
+                end: "padj",
+                label: "gene",
+            },
+            statistics: [
+                { label: "Top value", value: { kind: "artifact-value", path: TABLE_B_PATH, hash: TABLE_B_HASH, locator: { column: "value", row: 0 } } },
+                { label: "Delta", value: { kind: "artifact-value", path: FLOAT_PATH, hash: FLOAT_HASH, locator: { column: "value", row: 2 } } },
+            ],
+            ...overrides,
+        };
+    }
+
+    it("resolves the binding, the track, and each statistic, and files each value under its slot", async () => {
+        const { resolvedByBlock, resolvedBySlot, failures } = await resolveDocumentReferences(reportWith(slottedChart()).sections, snapshot, resolver);
+        expect(failures).toEqual([]);
+        // The binding keeps its place in the block map, thus every reader of a binding value reads the table.
+        expect(resolvedByBlock.get("chart-slots")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_B_PATH].rows ?? [] });
+        const slots = resolvedBySlot.get("chart-slots");
+        expect(slots?.get("track")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH].rows ?? [] });
+        expect(slots?.get("statistic:0")).toEqual({ type: "scalar", value: 10 });
+        expect(slots?.get("statistic:1")).toEqual({ type: "scalar", value: 1.05 });
+    });
+
+    it("names the block and the slot of a statistic that does not resolve", async () => {
+        const chart = slottedChart({
+            statistics: [{ label: "Absent", value: { kind: "artifact-value", path: TABLE_B_PATH, hash: TABLE_B_HASH, locator: { column: "value", row: 9 } } }],
+        });
+        const { failures } = await resolveDocumentReferences(reportWith(chart).sections, snapshot, resolver);
+        expect(failures.map((failure) => [failure.blockId, failure.slot, failure.failure.reason])).toEqual([
+            ["chart-slots", "statistic:0", "locator-out-of-range"],
+        ]);
+    });
+
+    it("names the block and the slot of a track column that the track table does not hold", async () => {
+        const chart = slottedChart({
+            track: {
+                binding: { kind: "artifact-table", run: "run-1", path: TABLE_A_PATH, hash: TABLE_A_HASH },
+                start: "log2FoldChange",
+                end: "invented_end",
+                label: "gene",
+            },
+        });
+        const { failures } = await resolveDocumentReferences(reportWith(chart).sections, snapshot, resolver);
+        expect(failures).toHaveLength(1);
+        expect(failures[0]).toEqual(expect.objectContaining({ blockId: "chart-slots", slot: "track" }));
+        expect(failures[0].failure.detail).toBe("the track names column invented_end, which the track table does not hold");
+    });
+
+    it("refuses the same statistic at the record gate, with its slot", async () => {
+        const chart = slottedChart({
+            statistics: [{ label: "Stale", value: { kind: "artifact-value", path: TABLE_B_PATH, hash: WRONG_HASH, locator: { column: "value", row: 0 } } }],
+        });
+        const invalid = expectInvalid(await validateReport(reportWith(chart), snapshot, resolver));
+        expect((invalid.resolutionFailures ?? []).map((failure) => [failure.slot, failure.failure.reason])).toEqual([["statistic:0", "hash-mismatch"]]);
     });
 });
 

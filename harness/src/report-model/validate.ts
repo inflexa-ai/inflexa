@@ -11,7 +11,7 @@
 import { ReportDocumentSchema } from "../contracts/report-blocks.js";
 import type { UnresolvedReference } from "../contracts/report-reference.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
-import { walkBlocks, type AnyBlock, type CollectedReference, type ReportWarning } from "./block-walk.js";
+import { walkBlocks, type AnyBlock, type ChartSlot, type CollectedReference, type ReportWarning } from "./block-walk.js";
 import { columnsHeldByNoRow, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
 
 export type { ReportWarning };
@@ -30,9 +30,13 @@ export interface SchemaIssue {
     message: string;
 }
 
-/** One reference that did not resolve, tied to the block that carries it. */
+/**
+ * One reference that did not resolve, tied to the block that carries it. `slot` names the place of the
+ * reference inside a chart block, thus a reviewer tells a failed track or statistic from a failed binding.
+ */
 export interface ResolutionFailure {
     blockId: string;
+    slot?: ChartSlot;
     failure: UnresolvedReference;
 }
 
@@ -52,10 +56,10 @@ export type ReportValidation =
       };
 
 /**
- * Match each column that a chart encoding names against the table that its binding resolved to.
+ * Match each column that a chart names against the table that its binding or its track resolved to.
  *
- * The binding schema admits a table reference only, thus a resolved value of another type means that the
- * bound resolver broke its own contract. That is reported and never ignored, because a chart with no
+ * The binding and the track schema admit a table reference only, thus a resolved value of another type means
+ * that the bound resolver broke its own contract. That is reported and never ignored, because a chart with no
  * table behind it renders nothing and a silent skip would pass it as grounded.
  */
 export function checkChartEncoding(entry: CollectedReference, value: ResolvedValue): UnresolvedReference | undefined {
@@ -63,8 +67,9 @@ export function checkChartEncoding(entry: CollectedReference, value: ResolvedVal
     if (encodingColumns === undefined || encodingColumns.length === 0) {
         return undefined;
     }
+    const role = entry.slot === "track" ? "track" : "binding";
     if (value.type !== "table") {
-        return { reference: entry.reference, reason: "locator-out-of-range", detail: `the chart binding resolved to a ${value.type} and not to a table` };
+        return { reference: entry.reference, reason: "locator-out-of-range", detail: `the chart ${role} resolved to a ${value.type} and not to a table` };
     }
     const absent = columnsHeldByNoRow(value.rows, encodingColumns);
     if (absent.length === 0) {
@@ -73,14 +78,19 @@ export function checkChartEncoding(entry: CollectedReference, value: ResolvedVal
     return {
         reference: entry.reference,
         reason: "locator-out-of-range",
-        detail: `the encoding names column ${absent.join(", ")}, which the bound table does not hold`,
+        detail: `the ${role === "track" ? "track" : "encoding"} names column ${absent.join(", ")}, which the ${role === "track" ? "track" : "bound"} table does not hold`,
     };
 }
 
 /** The resolved values and the failures of one resolution pass over the references of a block tree. */
 export interface ReferenceResolution {
-    /** The resolved value of each block whose reference resolved, keyed by its block id. */
+    /** The resolved value of the binding of each block whose binding resolved, keyed by its block id. */
     resolvedByBlock: Map<string, ResolvedValue>;
+    /**
+     * The resolved value of each other slot of a chart, keyed by the block id and then by the slot: the track
+     * and each statistic. A chart that binds neither holds no entry.
+     */
+    resolvedBySlot: Map<string, Map<ChartSlot, ResolvedValue>>;
     /** Each reference that did not resolve, or whose chart encoding named an absent column. */
     failures: ResolutionFailure[];
 }
@@ -89,10 +99,11 @@ export interface ReferenceResolution {
  * Resolve each reference of a block tree under the concurrency bound, and run the chart-encoding match.
  *
  * The walk collects each reference one time, `allWithConcurrency` bounds the fan-out, and
- * `checkChartEncoding` catches a chart that plots a column which the bound table does not hold. The record
- * gate and the preview share this one pass, thus the two refuse the same references. A value-bearing block
- * whose reference resolved carries its value in the map. A claim or a citation reference reads no value
- * from the map. The walk collects every failure, thus a reviewer sees each block that broke.
+ * `checkChartEncoding` catches a chart that plots a column which the bound table or the track does not hold.
+ * The record gate and the preview share this one pass, thus the two refuse the same references. A
+ * value-bearing block whose binding resolved carries its value in the map, and the track and each statistic
+ * of a chart carry their values under their slots. A claim or a citation reference reads no value from the
+ * map. The walk collects every failure, thus a reviewer sees each block and each slot that broke.
  */
 export async function resolveDocumentReferences(
     sections: readonly AnyBlock[],
@@ -117,19 +128,27 @@ export async function resolveDocumentReferences(
 
     const failures: ResolutionFailure[] = [];
     const resolvedByBlock = new Map<string, ResolvedValue>();
+    const resolvedBySlot = new Map<string, Map<ChartSlot, ResolvedValue>>();
     for (const { entry, result } of resolved) {
+        const slot = entry.slot !== undefined ? { slot: entry.slot } : {};
         if (result.isErr()) {
-            failures.push({ blockId: entry.blockId, failure: result.error });
+            failures.push({ blockId: entry.blockId, ...slot, failure: result.error });
             continue;
         }
         const encodingFailure = checkChartEncoding(entry, result.value);
         if (encodingFailure !== undefined) {
-            failures.push({ blockId: entry.blockId, failure: encodingFailure });
+            failures.push({ blockId: entry.blockId, ...slot, failure: encodingFailure });
             continue;
         }
-        resolvedByBlock.set(entry.blockId, result.value);
+        if (entry.slot === undefined || entry.slot === "binding") {
+            resolvedByBlock.set(entry.blockId, result.value);
+            continue;
+        }
+        const slots = resolvedBySlot.get(entry.blockId) ?? new Map<ChartSlot, ResolvedValue>();
+        slots.set(entry.slot, result.value);
+        resolvedBySlot.set(entry.blockId, slots);
     }
-    return { resolvedByBlock, failures };
+    return { resolvedByBlock, resolvedBySlot, failures };
 }
 
 /** Resolve each reference, collect the schema conformance and the resolution outcomes, and warn on prose. */

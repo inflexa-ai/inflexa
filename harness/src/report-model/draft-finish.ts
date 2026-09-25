@@ -28,7 +28,7 @@
 
 import { ReportDocumentSchema, type ReportDocument } from "../contracts/report-blocks.js";
 import type { UnresolvedReference } from "../contracts/report-reference.js";
-import { referencedPaths, walkBlocks, type CollectedReference, type ReportWarning, type UnusedDerivationWarning } from "./block-walk.js";
+import { referencedPaths, walkBlocks, type ChartSlot, type CollectedReference, type ReportWarning, type UnusedDerivationWarning } from "./block-walk.js";
 import type { DraftDocument } from "./draft.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
 import { validateReferenceStructure } from "./structural-validation.js";
@@ -46,10 +46,14 @@ export interface DuplicateIdGap {
     id: string;
 }
 
-/** An unresolved reference gap. It ties the block that carries the reference to the reason it did not resolve. */
+/**
+ * An unresolved reference gap. It ties the block that carries the reference to the reason it did not resolve.
+ * `slot` names the place of the reference inside a chart block: the binding, the track, or one statistic.
+ */
 export interface UnresolvedReferenceGap {
     kind: "unresolved-reference";
     blockId: string;
+    slot?: ChartSlot;
     failure: UnresolvedReference;
 }
 
@@ -124,7 +128,12 @@ export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot, deri
     for (const entry of references) {
         const result = validateReferenceStructure(entry.reference, snapshot, entry.encodingColumns);
         if (result.isErr()) {
-            gaps.push({ kind: "unresolved-reference", blockId: entry.blockId, failure: result.error });
+            gaps.push({
+                kind: "unresolved-reference",
+                blockId: entry.blockId,
+                ...(entry.slot !== undefined ? { slot: entry.slot } : {}),
+                failure: result.error,
+            });
         }
     }
 

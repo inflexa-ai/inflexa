@@ -54,9 +54,9 @@ import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import { referencedPaths, walkBlocks } from "../../report-model/block-walk.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
-import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
+import type { ReferenceResolver, ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
-import { bridgeValues, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
+import { bridgeValues, collectResolutions, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
 import { resolvePageAssetFromInstallation } from "../../report-render/asset-lookup.js";
 import { ASSETS_DIR, DEPS_DIR, derivationScriptName, PAGE_ASSETS, stagedSource, tableSidecarName } from "../../report-render/assets.js";
 import type { DerivationChain } from "../../report-render/references.js";
@@ -156,52 +156,6 @@ function figureSourcePolicy(file: ResolvedFile): string {
 }
 
 /**
- * Pair each block with the resolved value of its binding, in document order.
- *
- * A value-bearing kind carries the resolved value of its one reference, looked up by the block id from
- * the map that the resolution pass filled. A no-value kind carries none. Where a reference sits in a
- * block is the knowledge of `block-walk.ts`, thus this walk reads the block id alone and never a binding
- * field.
- *
- * The switch is exhaustive over the eight block kinds. A ninth kind reaches the end with no return, and
- * the declared return type fails the build. Thus the walk cannot drop a kind in silence. A value-bearing
- * block reaches here only when its reference resolved, because an unresolved reference short-circuits
- * before this walk.
- */
-function collectResolutions(blocks: readonly Block[], resolvedByBlock: ReadonlyMap<string, ResolvedValue>): BlockResolution[] {
-    const resolutions: BlockResolution[] = [];
-    const visit = (block: Block): void => {
-        switch (block.kind) {
-            case "section":
-                resolutions.push({ blockId: block.id, kind: "section" });
-                for (const child of block.blocks) {
-                    visit(child);
-                }
-                return;
-            case "text":
-            case "claim":
-            case "citation":
-                resolutions.push({ blockId: block.id, kind: block.kind });
-                return;
-            case "metric":
-            case "table":
-            case "chart":
-            case "figure": {
-                const resolved = resolvedByBlock.get(block.id);
-                if (resolved !== undefined) {
-                    resolutions.push({ blockId: block.id, kind: block.kind, resolved });
-                }
-                return;
-            }
-        }
-    };
-    for (const block of blocks) {
-        visit(block);
-    }
-    return resolutions;
-}
-
-/**
  * One staged copy of the raw bytes of a table: the staged name, the analysis-relative path of the pinned
  * artifact, and the block whose card links it.
  */
@@ -298,11 +252,11 @@ async function resolveDocument(
     resolver: ReferenceResolver,
     snapshot: ReportSnapshot,
 ): Promise<{ resolutions: BlockResolution[]; unresolved: ResolutionFailure[] }> {
-    const { resolvedByBlock, failures } = await resolveDocumentReferences(document.sections, snapshot, resolver);
+    const { resolvedByBlock, resolvedBySlot, failures } = await resolveDocumentReferences(document.sections, snapshot, resolver);
     if (failures.length > 0) {
         return { resolutions: [], unresolved: failures };
     }
-    return { resolutions: collectResolutions(document.sections, resolvedByBlock), unresolved: [] };
+    return { resolutions: collectResolutions(document.sections, resolvedByBlock, resolvedBySlot), unresolved: [] };
 }
 
 /**

@@ -112,7 +112,7 @@ const SPY_BOTTOM_MARGIN_PERCENT = 70;
  *
  * The fragment writes its own constants, because a page script reads no module binding. Each rule here is
  * the twin of one rule of the server derivation: the number read of a cell, the four transforms, the
- * competition rank, the compare of a sort, the three-way classification of a preset, and the item that adds
+ * competition rank, the compare of a sort, the classification of a preset, and the item that adds
  * the member of a continuous color and of a size after the pair. A shared test vector runs the transforms
  * and the items of both sides over one set of cells, thus the two cannot drift in silence.
  *
@@ -197,7 +197,17 @@ function reportColumn(payload, index) {
 }
 function reportChannel(payload, spec) {
   var cells = reportColumn(payload, spec.column);
-  return spec.transform === undefined ? cells : reportTransform(cells, spec.transform);
+  if (spec.transform !== undefined) {
+    return reportTransform(cells, spec.transform);
+  }
+  if (spec.numeric !== true) {
+    return cells;
+  }
+  var numbers = [];
+  for (var c = 0; c < cells.length; c++) {
+    numbers.push(cells[c] === null ? null : reportNumber(cells[c]));
+  }
+  return numbers;
 }
 function reportCompare(a, b) {
   var left = reportNumber(a);
@@ -212,13 +222,20 @@ function reportCompare(a, b) {
   }
   return x > y ? 1 : 0;
 }
-function reportCategory(rule, xValue, yValue) {
+function reportCategory(rule, xValue, yValue, pValue) {
   // The rule gives the place of the category, and the descriptor of a series names the same place. Thus
   // the two sides compare numbers and no category name rides the page.
   var x = reportNumber(xValue);
   var y = reportNumber(yValue);
   if (!rule || x === null || y === null) {
     return -1;
+  }
+  if (rule.kind === "ma") {
+    if (x <= 0) {
+      return -1;
+    }
+    var p = reportNumber(pValue);
+    return p !== null && p < rule.cut ? 0 : 1;
   }
   if (y <= rule.cut) {
     return 2;
@@ -235,6 +252,7 @@ function reportSeriesData(payload, source, rule) {
   var size = source.size === undefined ? null : reportChannel(payload, source.size);
   var group = source.group === undefined ? null : reportChannel(payload, source.group);
   var labels = source.label === undefined ? null : reportColumn(payload, source.label);
+  var ruleCells = rule && rule.kind === "ma" ? reportColumn(payload, payload.columns.indexOf(rule.column)) : null;
   var flags = Object.create(null);
   var declared = source.flags || [];
   for (var f = 0; f < declared.length; f++) {
@@ -248,7 +266,7 @@ function reportSeriesData(payload, source, rule) {
     if (group !== null && group[r] !== source.value) {
       continue;
     }
-    if (source.category !== undefined && reportCategory(rule, x[r], y[r]) !== source.category) {
+    if (source.category !== undefined && reportCategory(rule, x[r], y[r], ruleCells === null ? null : ruleCells[r]) !== source.category) {
       continue;
     }
     var shade = color === null ? null : reportNumber(color[r]);
@@ -261,6 +279,10 @@ function reportSeriesData(payload, source, rule) {
   if (source.sort) {
     points.sort(function (a, b) {
       return reportCompare(a.x, b.x);
+    });
+  } else if (source.rise) {
+    points.sort(function (a, b) {
+      return a.color - b.color;
     });
   }
   var data = [];
@@ -311,20 +333,27 @@ const PNG_EXPORT_SIZES = Object.fromEntries(
  * The page-side script that wires each chart. It finds every chart container, reads the option JSON from
  * the sibling `<script type="application/json">` element, and initializes ECharts with the registered
  * theme. The skeleton registers the theme before this script runs. A resize handler keeps each chart
- * fit to the window.
+ * fit to the window. It draws a chart again only when the container of the chart changes size. A capture past
+ * the viewport resizes the window and keeps each container, and a redraw there restarts the chunked render of
+ * a dense chart.
  *
- * A custom series names its renderer as a string, because the option is JSON. The script binds each name to
- * its function before `setOption`, and it keeps the unbound option under the container id.
+ * A custom series names its renderer as a string, because the option is JSON. The script registers each named
+ * renderer with the chart runtime before the first chart initializes, and it keeps the option under the
+ * container id.
  *
  * A click on a PNG control of a chart card draws the kept option again on a detached element, at the CSS
- * size of the export and its pixel ratio, in the theme of its text size. Then the script reads the PNG and
+ * size of the export and its pixel ratio, in the theme of its text size. The control states the height of its
+ * export, because a taller chart body grows the height of a column export. Then the script reads the PNG and
  * downloads it through an anchor. A control that names no kept chart, or no export size, draws nothing.
  *
  * An option that carries the data-source member holds no row. The script then reads the registered payload
  * of the artifact and builds the data of each series from the descriptors. A mount whose payload the
  * registry does not hold keeps its empty card, and the walk continues.
  *
- * The script signals readiness when the bootstrap completes, and immediately when no chart exists. It sets
+ * The script signals readiness when each chart that it set fires its first `finished` event, and immediately
+ * when no chart exists. A dense scatter draws in chunks over some frames, and the runtime fires `finished`
+ * after the last chunk. Thus a capture that keys on the signal sees each point. A chart whose option throws
+ * counts as finished, thus one fault never withholds the signal. It sets
  * the `window.__inflexaThemeReady` sentinel and dispatches the `inflexa-theme-ready` event on the document.
  * A reader that captures the page keys on this signal, thus the capture returns when the page is ready and
  * not at a timeout. The sentinel guards a listener that registers after the dispatch, thus a late listener
@@ -355,6 +384,29 @@ export const CHART_BOOTSTRAP = `(function () {
     whenRevealed(signalReady);
     return;
   }
+  reportRegisterRenderers(echarts);
+  var pending = 0;
+  var walked = false;
+  var signalled = false;
+  function settle() {
+    if (!signalled && walked && pending === 0) {
+      signalled = true;
+      whenRevealed(signalReady);
+    }
+  }
+  function track(chart) {
+    var done = false;
+    pending += 1;
+    function finish() {
+      if (!done) {
+        done = true;
+        pending -= 1;
+        settle();
+      }
+    }
+    chart.on("finished", finish);
+    return finish;
+  }
   var registry = window.${TABLE_DATA_GLOBAL};
   var kept = window.${CHART_OPTIONS_GLOBAL} = window.${CHART_OPTIONS_GLOBAL} || Object.create(null);
   var containers = document.querySelectorAll("[data-echarts-id]");
@@ -381,7 +433,13 @@ export const CHART_BOOTSTRAP = `(function () {
       }
       var chart = echarts.init(container, ${JSON.stringify(ECHARTS_THEME_NAME)});
       kept[container.getAttribute("id") || ""] = option;
-      chart.setOption(reportBindRenderers(option));
+      var finish = track(chart);
+      try {
+        chart.setOption(option);
+      } catch (fault) {
+        finish();
+        throw fault;
+      }
     } catch (cause) {
       console.error("chart bootstrap failed for " + (container.getAttribute("data-echarts-id") || "(no id)") + ": " + (cause && cause.message ? cause.message : cause));
     }
@@ -390,7 +448,7 @@ export const CHART_BOOTSTRAP = `(function () {
     var nodes = document.querySelectorAll("[data-echarts-id]");
     for (var j = 0; j < nodes.length; j++) {
       var instance = echarts.getInstanceByDom(nodes[j]);
-      if (instance) {
+      if (instance && (instance.getWidth() !== nodes[j].clientWidth || instance.getHeight() !== nodes[j].clientHeight)) {
         instance.resize();
       }
     }
@@ -403,10 +461,11 @@ export const CHART_BOOTSTRAP = `(function () {
       return;
     }
     var size = exportSizes[kind];
+    var height = Number(control.getAttribute("data-height")) || size.height;
     var host = document.createElement("div");
-    var offscreen = echarts.init(host, size.theme, { renderer: "canvas", width: size.width, height: size.height, devicePixelRatio: size.pixelRatio });
+    var offscreen = echarts.init(host, size.theme, { renderer: "canvas", width: size.width, height: height, devicePixelRatio: size.pixelRatio });
     try {
-      offscreen.setOption(reportBindRenderers(reportExportOption(kept[chartId], size.textPx, size.width)));
+      offscreen.setOption(reportExportOption(kept[chartId], size.textPx, size.width, height));
       var link = document.createElement("a");
       link.href = offscreen.getDataURL({ type: "png", pixelRatio: size.pixelRatio, backgroundColor: "#ffffff" });
       link.download = control.getAttribute("data-file") || "chart.png";
@@ -424,7 +483,8 @@ export const CHART_BOOTSTRAP = `(function () {
       reportExportPng(control);
     }
   });
-  whenRevealed(signalReady);
+  walked = true;
+  settle();
 })();`;
 
 /**

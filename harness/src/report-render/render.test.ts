@@ -1,12 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import { load } from "cheerio";
+import { ok } from "neverthrow";
 
 import type { Block, ChartBlock, CitationBlock, FigureBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
 import { AG_GRID_ASSET, ASSETS_DIR, DEPS_DIR, ECHARTS_ASSET, PAGE_ASSETS, TSPROV_ASSET, tableSidecarName } from "./assets.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption } from "./chart.js";
 import {
+    CHART_BODY_PX,
+    CHART_EXPORT_SIZES,
     CHART_INLINE_OPTION_BOUND,
     DESIGN_CSS,
+    exportSizeFor,
+    FACET_ROW_PX,
     SCATTER_CROWD_ROWS,
     GRID_HEADER_BORDER_PX,
     GRID_HEADER_HEIGHT_PX,
@@ -36,6 +41,8 @@ import {
 import { formatTableCell } from "./number-format.js";
 import { REPORT_PROVENANCE_GLOBAL } from "./provenance-data.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
+import type { FigureMember, FigureModule } from "./figures/index.js";
+import { statisticsGraphic } from "./figures/common.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
 import { LINEAGE_BLOCK_ATTRIBUTE, LINEAGE_CONTROL_CLASS, LINEAGE_KEY_ATTRIBUTE, LINEAGE_KEYS_ATTRIBUTE } from "./views/lineage.js";
@@ -1750,6 +1757,65 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(page("li#ref-1").text()).toContain(PINNED);
     });
 
+    it("marks the track and each statistic of a chart on its title line, and lists each one in the appendix", () => {
+        const TRACK = "runs/run-1/step-c/output/domains.csv";
+        const STATS = "runs/run-1/step-c/output/logrank.csv";
+        const chart: ChartBlock = {
+            kind: "chart",
+            id: "cht",
+            title: "DNMT3A",
+            binding: { kind: "artifact-table", path: PINNED, hash: PINNED_HASH },
+            chartType: "lollipop",
+            encoding: { x: "day", y: "count" },
+            track: { binding: { kind: "artifact-table", path: TRACK, hash: PINNED_HASH }, start: "start", end: "end", label: "domain" },
+            statistics: [
+                { label: "Log-rank p", value: { kind: "artifact-value", path: STATS, hash: PINNED_HASH, locator: { column: "pvalue", row: 0 } } },
+                { label: "HR", value: { kind: "artifact-value", path: STATS, hash: PINNED_HASH, locator: { column: "hr", row: 0 } } },
+            ],
+        };
+        // A test module draws the chart, and it prints each statistic through the shared statistics text.
+        const figure: FigureModule = {
+            reads: new Set<FigureMember>(["x", "y", "track", "statistics"]),
+            derive: (_block, rows, context) =>
+                ok({
+                    xAxis: { type: "value" },
+                    yAxis: { type: "value" },
+                    series: [{ type: "scatter", name: "count", data: rows.map((row) => [row.day, row.count]) }],
+                    graphic: statisticsGraphic(context.statistics, "top-right"),
+                }),
+        };
+        const values: RenderValues = {
+            cht: {
+                type: "table",
+                rows: [{ day: 1, count: 2 }],
+                track: { rows: [{ start: 1, end: 90, domain: "PWWP" }] },
+                statistics: [
+                    { label: "Log-rank p", value: 0.0013 },
+                    { label: "HR", value: 0.53 },
+                ],
+            },
+        };
+        const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [chart] }] };
+        const rendered = renderReportPage(document, values, { chart: { figures: { lollipop: figure } } })._unsafeUnwrap();
+        const page = load(rendered.html);
+
+        // The title line carries the binding, the track, and each statistic, in block order.
+        const markers = page(".report-chart-title .report-marker a")
+            .toArray()
+            .map((node) => page(node).attr("href"));
+        expect(markers).toEqual(["#ref-1", "#ref-2", "#ref-3", "#ref-4"]);
+        expect(page("ol.report-references li").length).toBe(4);
+        expect(page("li#ref-1").text()).toContain(PINNED);
+        expect(page("li#ref-2").text()).toContain(TRACK);
+        expect(page("li#ref-3").text()).toContain(STATS);
+        expect(page("li#ref-3").text()).toContain("pvalue");
+        expect(page("li#ref-4").text()).toContain("hr");
+        // The option prints each statistic in the number format of its column.
+        const option = JSON.parse(page(".report-chart script[type='application/json']").text()) as Record<string, unknown>;
+        const graphic = (option.graphic as Array<{ style: { text: string } }>)[0];
+        expect(graphic.style.text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
+    });
+
     it("gives one number to a table and a chart over one artifact", () => {
         const html = pageOf([tableBlock(PINNED, PINNED_HASH), chartBlock(PINNED, PINNED_HASH)], oneRow);
         const page = load(html);
@@ -2481,6 +2547,86 @@ describe("renderReportPage readiness signal", () => {
     });
 });
 
+describe("the chart bootstrap waits for each chart to finish", () => {
+    /** One fake chart of the runtime: it keeps its listeners, and a test fires the `finished` event itself. */
+    interface FakeChart {
+        readonly listeners: Map<string, () => void>;
+        width: number;
+        height: number;
+        resized: number;
+    }
+
+    /**
+     * Run the emitted bootstrap over fake containers of the given CSS sizes. Give the readiness flag, each
+     * fake chart, and the resize listener of the window.
+     */
+    function boot(sizes: ReadonlyArray<{ width: number; height: number }>): { ready: () => boolean; charts: FakeChart[]; resize: () => void } {
+        const win: Record<string, unknown> = {};
+        let onResize: () => void = () => undefined;
+        win.addEventListener = (event: string, listener: () => void) => {
+            if (event === "resize") onResize = listener;
+        };
+        const containers = sizes.map((size, index) => ({
+            clientWidth: size.width,
+            clientHeight: size.height,
+            getAttribute: () => `chart-${index}`,
+            nextElementSibling: { getAttribute: () => "application/json", textContent: "{}" },
+        }));
+        const charts: FakeChart[] = [];
+        const byContainer = new Map<unknown, FakeChart>();
+        const doc = { querySelectorAll: () => containers, dispatchEvent: () => true, addEventListener: () => undefined };
+        const echarts = {
+            init: (container: { clientWidth: number; clientHeight: number }) => {
+                const chart: FakeChart = { listeners: new Map(), width: container.clientWidth, height: container.clientHeight, resized: 0 };
+                charts.push(chart);
+                byContainer.set(container, chart);
+                return {
+                    on: (event: string, listener: () => void) => chart.listeners.set(event, listener),
+                    setOption: () => undefined,
+                    getWidth: () => chart.width,
+                    getHeight: () => chart.height,
+                    resize: () => {
+                        chart.resized += 1;
+                    },
+                };
+            },
+            getInstanceByDom: (container: unknown) => {
+                const chart = byContainer.get(container);
+                return chart === undefined ? undefined : { getWidth: () => chart.width, getHeight: () => chart.height, resize: () => (chart.resized += 1) };
+            },
+            registerCustomSeries: () => undefined,
+        };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        expect(errors).toEqual([]);
+        return { ready: () => win.__inflexaThemeReady === true, charts, resize: () => onResize() };
+    }
+
+    it("signals readiness after the last chart finishes its render, and not before", () => {
+        // A dense chart draws in chunks over some frames. A capture that keys on the signal must see each chunk.
+        const { ready, charts } = boot([
+            { width: 600, height: 400 },
+            { width: 600, height: 400 },
+        ]);
+        expect(ready()).toBe(false);
+        charts[0].listeners.get("finished")?.();
+        expect(ready()).toBe(false);
+        charts[1].listeners.get("finished")?.();
+        expect(ready()).toBe(true);
+    });
+
+    it("draws a chart again on a window resize only when its container changes size", () => {
+        // A capture past the viewport resizes the window and keeps each container. A redraw there would restart
+        // the chunked render of a dense chart, and the capture would show its first chunk alone.
+        const { charts, resize } = boot([{ width: 600, height: 400 }]);
+        resize();
+        expect(charts[0].resized).toBe(0);
+        charts[0].width = 500;
+        resize();
+        expect(charts[0].resized).toBe(1);
+    });
+});
+
 describe("the chart bootstrap under a broken chart", () => {
     /** One chart container beside its option script, the pair that the bootstrap walks. */
     function fakeContainer(id: string): unknown {
@@ -2502,7 +2648,7 @@ describe("the chart bootstrap under a broken chart", () => {
             dispatchEvent: () => true,
             addEventListener: () => undefined,
         };
-        const echarts = { init, getInstanceByDom: () => undefined };
+        const echarts = { init, getInstanceByDom: () => undefined, registerCustomSeries: () => undefined };
         const pageConsole = { error: (line: string) => errors.push(line) };
         // The bootstrap is browser source text. Each global arrives as a parameter, thus the fake console
         // of the page is the one that the script writes to.
@@ -2517,7 +2663,7 @@ describe("the chart bootstrap under a broken chart", () => {
                 throw new Error("bad option");
             }
             good.push("init");
-            return { setOption: () => undefined };
+            return { on: (_event: string, listener: () => void) => listener(), setOption: () => undefined };
         });
 
         // The readiness signal still fires, thus a capture returns on the event and not at its timeout.
@@ -2531,10 +2677,20 @@ describe("the chart bootstrap under a broken chart", () => {
     });
 });
 
-describe("the chart bootstrap binds the named renderers", () => {
-    /** Run the emitted bootstrap over one container whose option names two renderers, and give the set option. */
-    function bootOne(option: Record<string, unknown>): { applied: Record<string, unknown>[]; win: Record<string, unknown> } {
+describe("the chart bootstrap registers the named renderers", () => {
+    /**
+     * Run the emitted bootstrap over one container whose option names two renderers. Give the set option, the
+     * page globals, and each call to the chart runtime in order.
+     */
+    function bootOne(option: Record<string, unknown>): {
+        applied: Record<string, unknown>[];
+        win: Record<string, unknown>;
+        calls: string[];
+        registered: Map<string, unknown>;
+    } {
         const applied: Record<string, unknown>[] = [];
+        const calls: string[] = [];
+        const registered = new Map<string, unknown>();
         const win: Record<string, unknown> = { addEventListener: () => undefined };
         const container = {
             getAttribute: () => "violin-1",
@@ -2542,13 +2698,20 @@ describe("the chart bootstrap binds the named renderers", () => {
         };
         const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
         const echarts = {
-            init: () => ({ setOption: (given: Record<string, unknown>) => applied.push(given) }),
+            init: () => {
+                calls.push("init");
+                return { on: (_event: string, listener: () => void) => listener(), setOption: (given: Record<string, unknown>) => applied.push(given) };
+            },
             getInstanceByDom: () => undefined,
+            registerCustomSeries: (name: string, render: unknown) => {
+                calls.push(`register ${name}`);
+                registered.set(name, render);
+            },
         };
         const errors: string[] = [];
         new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
         expect(errors).toEqual([]);
-        return { applied, win };
+        return { applied, win, calls, registered };
     }
 
     const option = {
@@ -2560,15 +2723,14 @@ describe("the chart bootstrap binds the named renderers", () => {
         ],
     };
 
-    it("replaces each renderer name with its function before the chart runtime reads the option", () => {
-        const { applied } = bootOne(option);
+    it("registers each renderer function under its name before the first chart initializes", () => {
+        const { applied, calls, registered } = bootOne(option);
+        expect(calls).toEqual(["register interval", "register outline", "register cell-glyph", "register stem", "init"]);
+        expect(typeof registered.get("interval")).toBe("function");
+        expect(typeof registered.get("outline")).toBe("function");
+        // The runtime finds each function by the name, thus the set option keeps the names as strings.
         const series = applied[0].series as Record<string, unknown>[];
-        // The option carries a name, and the runtime takes a function. The bind runs before `setOption`.
-        expect(typeof series[0].renderItem).toBe("function");
-        expect(typeof series[1].renderItem).toBe("function");
-        expect(CHART_BOOTSTRAP).toContain("reportBindRenderers(option)");
-        expect(CHART_BOOTSTRAP).toContain('"interval"');
-        expect(CHART_BOOTSTRAP).toContain('"outline"');
+        expect(series.map((entry) => entry.renderItem)).toEqual(["outline", "interval"]);
     });
 
     it("keeps the option of each chart by its block id, with the renderer names as data", () => {
@@ -2720,7 +2882,9 @@ describe("the shared chart payload", () => {
         // plots the chart, and the grid of the table reads the same rows.
         const json = load(rendered.html)("script[type='application/json']").text();
         const built = bootChart(payloadsOf(rendered), json);
-        expect(built.map((series) => series.data.length).reduce((sum, count) => sum + count, 0)).toBe(page.rows.length);
+        // The last series names the most significant points, thus the points of the table sit in the series before it.
+        const points = built.slice(0, -1);
+        expect(points.map((series) => series.data.length).reduce((sum, count) => sum + count, 0)).toBe(page.rows.length);
     });
 
     it("builds the series of a dense chart on the page, exactly as the inline derivation does", () => {
@@ -2793,11 +2957,13 @@ describe("the shared chart payload", () => {
         const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
         const echarts = {
             init: () => ({
+                on: (_event: string, listener: () => void) => listener(),
                 setOption: (given: Record<string, unknown>) => {
                     applied.push(given);
                 },
             }),
             getInstanceByDom: () => undefined,
+            registerCustomSeries: () => undefined,
         };
         const errors: string[] = [];
         new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
@@ -2903,8 +3069,38 @@ describe("the chart exports", () => {
         const faceted: ChartBlock = { kind: "chart", id: "panels", binding, chartType: "scatter", encoding: { x: "x", y: "y", facet: "sample" } };
         const page = chartPage(faceted, rows);
         const $ = load(renderReportPage(page.document, page.values)._unsafeUnwrap().html);
-        expect($("[data-echarts-id='panels']").attr("class")).toBe("chart-container chart-container-rows-2");
-        expect(DESIGN_CSS).toContain(".chart-container-rows-2");
+        expect($("[data-echarts-id='panels']").attr("class")).toBe("chart-container");
+        expect($("[data-echarts-id='panels']").attr("style")).toBe(`height: ${CHART_BODY_PX + FACET_ROW_PX}px`);
+        // Each column export of the taller body grows its height in the same ratio, and the slide keeps its box.
+        const single = exportSizeFor(CHART_EXPORT_SIZES.single, CHART_BODY_PX + FACET_ROW_PX);
+        expect($("button[data-export='single']").attr("data-height")).toBe(String(single.heightPx));
+        expect($("button[data-export='slide']").attr("data-height")).toBe(String(CHART_EXPORT_SIZES.slide.heightPx));
+    });
+
+    it("narrows the body of a square figure to the width of its block, and centers it in the card", () => {
+        const rows: Record<string, string | number>[] = [
+            { sample: "a", PC1: -2, PC2: 1, condition: "x" },
+            { sample: "b", PC1: 3, PC2: -1, condition: "y" },
+        ];
+        const pca: ChartBlock = { kind: "chart", id: "square", binding, chartType: "pca", encoding: { x: "PC1", y: "PC2", group: "condition" } };
+        const page = chartPage(pca, rows);
+        const $ = load(renderReportPage(page.document, page.values)._unsafeUnwrap().html);
+        expect($("[data-echarts-id='square']").attr("style")).toMatch(/^max-width: \d+px; margin-inline: auto$/);
+        expect($("[data-echarts-id='square']").attr("class")).toBe("chart-container");
+    });
+
+    it("draws the SVG of a taller body at the grown column height", () => {
+        const rows: Record<string, string | number>[] = [];
+        for (const sample of ["s1", "s2", "s3", "s4"]) {
+            for (let index = 0; index < 4; index += 1) rows.push({ sample, x: index, y: index * 2 });
+        }
+        const faceted: ChartBlock = { kind: "chart", id: "tall", binding, chartType: "scatter", encoding: { x: "x", y: "y", facet: "sample" } };
+        const page = chartPage(faceted, rows);
+        const svgs = renderReportPage(page.document, page.values)
+            ._unsafeUnwrap()
+            .dataAssets.filter((asset) => asset.name.endsWith(".svg"));
+        const single = exportSizeFor(CHART_EXPORT_SIZES.single, CHART_BODY_PX + FACET_ROW_PX);
+        expect(svgs.find((asset) => asset.name.endsWith("-89mm.svg"))?.bytes).toContain(`<svg width="89mm" height="${single.heightMm}mm"`);
     });
 
     it("keeps the container of each new form with zero rows, and reports no problem", () => {
@@ -2965,6 +3161,7 @@ describe("the PNG download of the page", () => {
             init: (_dom: unknown, theme: unknown, opts: Record<string, unknown> | undefined) => {
                 init.push({ theme, ...(opts ?? {}) });
                 return {
+                    on: (_event: string, listener: () => void) => listener(),
                     setOption: (given: Record<string, unknown>) => setOption.push(given),
                     getDataURL: (given: Record<string, unknown>) => {
                         dataUrl.push(given);
@@ -2974,6 +3171,7 @@ describe("the PNG download of the page", () => {
                 };
             },
             getInstanceByDom: () => undefined,
+            registerCustomSeries: () => undefined,
         };
         const win: Record<string, unknown> = { addEventListener: () => undefined };
         const errors: string[] = [];
