@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { chartSvgAssets } from "../chart-export.js";
@@ -152,7 +153,7 @@ describe("the sankey labels over the flows", () => {
         const label = sankeySeries(option).label as EchartOption;
         expect(label.formatter).toBe("{box|{b}}");
         expect(label.rich).toEqual({ box: { backgroundColor: "#ffffff", padding: [0, 2] } });
-        for (const svg of Object.values(chartSvgAssets("flows", option)._unsafeUnwrap() ?? {})) {
+        for (const svg of Object.values(chartSvgAssets(echarts, "flows", option)._unsafeUnwrap() ?? {})) {
             const elements = [...svg.bytes.matchAll(/<(path|text)\b([^>]*)>([^<]*)/g)].map((match) => ({
                 tag: match[1],
                 attributes: match[2],

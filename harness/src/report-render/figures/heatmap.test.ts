@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { chartSvgAssets } from "../chart-export.js";
@@ -397,7 +398,7 @@ describe("the dendrograms of the heatmap", () => {
             { key: "h1", columns: [] },
             BOTH,
         )._unsafeUnwrap();
-        const svgs = chartSvgAssets("h1", render.inline, render.bodyPx)._unsafeUnwrap();
+        const svgs = chartSvgAssets(echarts, "h1", render.inline, render.bodyPx)._unsafeUnwrap();
         for (const svg of [svgs?.single.bytes ?? "", svgs?.double.bytes ?? ""]) {
             expect(svg.match(/<polyline /g)?.length).toBe(SAMPLE_TREE.length + GENE_TREE.length);
         }

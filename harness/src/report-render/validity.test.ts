@@ -57,14 +57,14 @@ async function htmlFindings(html: string): Promise<string[]> {
 
 describe("the rendered page validates as HTML and CSS", () => {
     it("passes the offline HTML validation with the recommended preset", async () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
         expect(await htmlFindings(html)).toEqual([]);
     });
 
     it("passes the same validation with the lineage stamp and the controls", async () => {
         // The provenance adds a data attribute to each grounded block and a control beside each marker. Both
         // ride the same gate, thus a misspelled attribute and a control in an illegal place fail here.
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance: FIXTURE_PROVENANCE })._unsafeUnwrap().html;
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance: FIXTURE_PROVENANCE }))._unsafeUnwrap().html;
         expect(await htmlFindings(html)).toEqual([]);
     });
 
@@ -93,7 +93,7 @@ describe("the rendered page validates as HTML and CSS", () => {
                 },
             ],
         };
-        const html = renderReportPage(document, { crowd: { type: "table", columns: ["x", "y"], rows } })._unsafeUnwrap().html;
+        const html = (await renderReportPage(document, { crowd: { type: "table", columns: ["x", "y"], rows } }))._unsafeUnwrap().html;
         expect(html).toContain("data-hybrid");
         expect(await htmlFindings(html)).toEqual([]);
     });
@@ -143,8 +143,8 @@ describe("a raw script sink stays hardened", () => {
         },
     };
 
-    it("keeps the hostile cell escaped in the inline JSON and the page whole", () => {
-        const html = renderReportPage(hostileDocument, hostileValues)._unsafeUnwrap().html;
+    it("keeps the hostile cell escaped in the inline JSON and the page whole", async () => {
+        const html = (await renderReportPage(hostileDocument, hostileValues))._unsafeUnwrap().html;
 
         // The `<` of the hostile cell reaches the inline JSON as the `\u003c` sequence.
         expect(html).toContain("\\u003c/script>\\u003cscript>alert(1)\\u003c/script>");
