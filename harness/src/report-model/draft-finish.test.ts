@@ -111,6 +111,37 @@ describe("finishDraft", () => {
         }
     });
 
+    it("names the slot of a chart statistic and a chart track that the snapshot does not hold", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Survival",
+                    blocks: [
+                        {
+                            kind: "chart",
+                            id: "km1",
+                            binding: { kind: "artifact-table", path: OUTPUT_PATH, hash: OUTPUT_HASH },
+                            chartType: "lollipop",
+                            encoding: { x: "position", y: "count" },
+                            track: { binding: { kind: "artifact-table", path: ABSENT_PATH, hash: ABSENT_HASH }, start: "start", end: "end", label: "domain" },
+                            statistics: [{ label: "Log-rank p", value: valueReference(ABSENT_PATH, ABSENT_HASH) }],
+                        },
+                    ],
+                },
+            ],
+        };
+        const result = finishDraft(draft, snapshot);
+        expect(result.valid).toBe(false);
+        const gaps = result.valid ? [] : result.gaps.filter((gap) => gap.kind === "unresolved-reference");
+        expect(gaps.map((gap) => (gap.kind === "unresolved-reference" ? [gap.blockId, gap.slot, gap.failure.reason] : []))).toEqual([
+            ["km1", "track", "artifact-missing"],
+            ["km1", "statistic:0", "artifact-missing"],
+        ]);
+    });
+
     it("gives the document value for a complete valid draft, and does not change the draft", () => {
         const draft: DraftDocument = {
             title: "Report",

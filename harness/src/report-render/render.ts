@@ -21,7 +21,7 @@ import type { Block, ReportDocument } from "../contracts/report-blocks.js";
 import { serializeReference, type ArtifactTableReference } from "../contracts/report-reference.js";
 import { citationRecordOf, type CitationRecords } from "../report-model/reference-resolver.js";
 import { renderChart } from "./views/chart-view.js";
-import { deriveChartRender } from "./chart.js";
+import { DEFAULT_CHART_OPTS, deriveChartRender, type ChartOpts } from "./chart.js";
 import { chartSvgAssets } from "./chart-export.js";
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
 import type { ViewOptions } from "./views/lineage.js";
@@ -33,16 +33,18 @@ import type { RenderedPage, RenderProblem, RenderValue, RenderValues } from "./t
 import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable, tableColumns, tableDisplay } from "./views/values.js";
 
 /**
- * The optional inputs of one render: the bibliography of the pin, the chains of the session, and the frozen
- * provenance of the analysis.
+ * The optional inputs of one render: the bibliography of the pin, the chains of the session, the frozen
+ * provenance of the analysis, and the options of the chart derivation.
  *
  * Each member is absent on its own, and a caller gives the members that it holds. A positional tail of
- * three optional inputs made a caller of the last one pad the two before it, thus the three ride one bag.
+ * three optional inputs made a caller of the last one pad the two before it, thus the inputs ride one bag.
+ * An absent `chart` member derives each chart with the registered figure modules.
  */
 export interface RenderOptions {
     readonly records?: CitationRecords;
     readonly derivations?: readonly DerivationChain[];
     readonly provenance?: ProvenanceExport;
+    readonly chart?: ChartOpts;
 }
 
 /**
@@ -78,11 +80,11 @@ export interface RenderOptions {
 export function renderReportPage(
     document: ReportDocument,
     values: RenderValues,
-    { records, derivations, provenance }: RenderOptions = {},
+    { records, derivations, provenance, chart = DEFAULT_CHART_OPTS }: RenderOptions = {},
 ): Result<RenderedPage, RenderProblem[]> {
     const problems: RenderProblem[] = [];
     const ledger = new ReferenceLedger();
-    const data: PageData = { payloads: new Map(), mounts: 0, svgs: [], view: { lineage: provenance !== undefined } };
+    const data: PageData = { payloads: new Map(), mounts: 0, svgs: [], view: { lineage: provenance !== undefined }, chart };
 
     const content: string[] = [];
     for (const [index, section] of document.sections.entries()) {
@@ -128,13 +130,15 @@ interface PayloadRegistration {
  * `svgs` holds the SVG files of each chart, in document order.
  *
  * `view` holds the page-wide truths that each view reads. The bag is constant across the whole walk, thus
- * each block of one page decides it alike.
+ * each block of one page decides it alike. `chart` holds the options of the chart derivation, constant in
+ * the same way.
  */
 interface PageData {
     readonly payloads: Map<string, PayloadRegistration>;
     mounts: number;
     readonly svgs: DataAsset[];
     readonly view: ViewOptions;
+    readonly chart: ChartOpts;
 }
 
 /**
@@ -231,7 +235,17 @@ function renderBlock(
             // under two ids. One binding resolves one row set, thus the column places and the row places of
             // the descriptors address the registered payload whichever block encoded it.
             const columns = tableColumns(entry);
-            const derived = deriveChartRender(block, entry.rows, entry.columns, { key: block.id, columns });
+            const derived = deriveChartRender(
+                block,
+                entry.rows,
+                entry.columns,
+                { key: block.id, columns },
+                {
+                    ...(entry.statistics !== undefined ? { statistics: entry.statistics } : {}),
+                    ...(entry.track !== undefined ? { track: entry.track } : {}),
+                },
+                data.chart,
+            );
             if (derived.isErr()) {
                 problems.push(derived.error);
                 return "";
@@ -240,7 +254,7 @@ function renderBlock(
                 registerPayload(data, block.binding, block.id, () => payloadOf(block.binding, entry, columns));
             }
             // The export reads the chart with every row inline, thus a dense chart exports each point.
-            const svgs = chartSvgAssets(block.id, derived.value.inline);
+            const svgs = chartSvgAssets(block.id, derived.value.inline, derived.value.bodyPx);
             if (svgs.isErr()) {
                 problems.push(svgs.error);
                 return "";
@@ -249,7 +263,8 @@ function renderBlock(
                 data.svgs.push(svgs.value.single, svgs.value.double);
             }
             return renderChart(block, ledger, derived.value.option, data.view, {
-                panelRows: derived.value.panelRows,
+                bodyPx: derived.value.bodyPx,
+                ...(derived.value.widthPx !== undefined ? { widthPx: derived.value.widthPx } : {}),
                 ...(svgs.value !== undefined ? { svg: { single: svgs.value.single.name, double: svgs.value.double.name } } : {}),
             });
         }

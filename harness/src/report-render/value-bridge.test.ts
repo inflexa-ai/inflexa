@@ -92,3 +92,53 @@ describe("bridgeValues mismatch refusal", () => {
         expect(ids).toContain("fig");
     });
 });
+
+describe("bridgeValues chart slots", () => {
+    const rows = [{ time: 1, survival: 0.9 }];
+    const domains = [{ start: 1, end: 90, domain: "PWWP" }];
+
+    it("maps the track and each statistic of a chart onto its value, in block order", () => {
+        const resolutions: BlockResolution[] = [
+            {
+                blockId: "cht",
+                kind: "chart",
+                resolved: { type: "table", rows },
+                track: { type: "table", rows: domains, columns: ["start", "end", "domain"] },
+                statistics: [
+                    { label: "Log-rank p", resolved: { type: "scalar", value: 0.0013 } },
+                    { label: "HR", resolved: { type: "scalar", value: "0.53" } },
+                ],
+            },
+        ];
+        const values = bridgeValues(resolutions, stageAsset)._unsafeUnwrap();
+        expect(values.cht).toEqual({
+            type: "table",
+            rows,
+            statistics: [
+                { label: "Log-rank p", value: 0.0013 },
+                { label: "HR", value: "0.53" },
+            ],
+            track: { rows: domains, columns: ["start", "end", "domain"] },
+        });
+    });
+
+    it("refuses a statistic that resolved to a table and a track that resolved to a scalar, and names each slot", () => {
+        const resolutions: BlockResolution[] = [
+            {
+                blockId: "cht",
+                kind: "chart",
+                resolved: { type: "table", rows },
+                track: { type: "scalar", value: 3 },
+                statistics: [
+                    { label: "p", resolved: { type: "scalar", value: 0.01 } },
+                    { label: "AUC", resolved: { type: "table", rows: [] } },
+                ],
+            },
+        ];
+        const mismatches = bridgeValues(resolutions, stageAsset)._unsafeUnwrapErr();
+        expect(mismatches).toEqual([
+            { blockId: "cht", blockKind: "chart", slot: "track", expected: "table", actual: "scalar" },
+            { blockId: "cht", blockKind: "chart", slot: "statistic:1", expected: "scalar", actual: "table" },
+        ]);
+    });
+});
