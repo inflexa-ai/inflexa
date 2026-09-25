@@ -33,7 +33,7 @@ const ShowFileInputSchema = z.object({
         .min(1)
         .max(MAX_FILES)
         .describe(
-            `The related set of files to show together, 1 to ${MAX_FILES} per call; multiple render as ONE gallery card. Pass a related set in a single call — do not make one call per figure.`,
+            `The files to show together, 1 to ${MAX_FILES} per call; multiple render as ONE gallery card. Pass all the figures that one prose section discusses in a single call. Figures for different sections go in separate calls.`,
         ),
 });
 
@@ -47,8 +47,9 @@ export const showFileTool = defineTool({
         "Paths are analysis-rooted (no leading slash, no `..`); discover them with `workspace_search` or `list_files`. " +
         "The tool checks the shape of each path only, not that the file exists, so a wrong path fails only when the user views the card; " +
         "`shown: false` with `invalid_path` means a path has a leading slash or a `..` segment. " +
-        "Up to 10 files per call — pass a related set in ONE call and they render as a gallery, rather than one call per figure. " +
-        "Cards render in call order, so to interleave figures with prose alternate `show_user(markdown)` and `show_file` calls " +
+        "Up to 10 files per call, rendered as one gallery — pass all the figures that one prose section discusses in ONE call. " +
+        "Cards render in call order, so to put figures next to their prose, emit `show_user(markdown)` sections and `show_file` " +
+        "calls in one batch, in reading order: a section, then the `show_file` for its figures, then the next section " +
         "(markdown image syntax pointing at a workspace file does NOT render — this tool is the only way to show one).",
     inputSchema: ShowFileInputSchema,
     // `.min(1)` on `files` makes index 0 total after the parse.
