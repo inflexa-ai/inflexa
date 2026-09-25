@@ -9,6 +9,7 @@
 import { AG_GRID_ASSET, assetSource, ECHARTS_ASSET, TSPROV_ASSET } from "./assets.js";
 import { CHART_SOURCE_MEMBER, POINT_LABEL } from "./chart.js";
 import { CHART_RENDERERS_SOURCE } from "./chart-renderers.js";
+import { CHART_TOOLBOX_SOURCE } from "./chart-toolbox.js";
 import {
     CHART_EXPORT_SIZES,
     ECHARTS_THEME_NAME,
@@ -21,6 +22,7 @@ import {
     GRID_TOOLTIP_DELAY_MS,
     GRID_VISIBLE_ROWS,
 } from "./design.js";
+import { HYBRID_SVG_SOURCE } from "./hybrid-svg.js";
 import { REPORT_PROVENANCE_GLOBAL } from "./provenance-data.js";
 import { scriptJson } from "./script-json.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
@@ -319,15 +321,28 @@ function reportSeriesData(payload, source, rule) {
 export const CHART_OPTIONS_GLOBAL = "__REPORT_CHART_OPTIONS";
 
 /**
- * The PNG sizes that the page draws, keyed by the name of the control: the theme, the text size, the CSS
- * box, and the pixel ratio of each export.
+ * The export sizes that the page draws, keyed by the name of the menu entry: the theme, the text size, the CSS
+ * box, the millimeter box of a column, and the pixel ratio of each export.
  */
-const PNG_EXPORT_SIZES = Object.fromEntries(
+const PAGE_EXPORT_SIZES = Object.fromEntries(
     Object.entries(CHART_EXPORT_SIZES).map(([kind, size]) => [
         kind,
-        { theme: size.theme, textPx: size.textPx, width: size.widthPx, height: size.heightPx, pixelRatio: size.pixelRatio },
+        {
+            theme: size.theme,
+            textPx: size.textPx,
+            width: size.widthPx,
+            height: size.heightPx,
+            ...("widthMm" in size ? { widthMm: size.widthMm, heightMm: size.heightMm } : {}),
+            pixelRatio: size.pixelRatio,
+        },
     ]),
 );
+
+/**
+ * The time that the object URL of a built SVG file stays alive after its download starts, in milliseconds. The
+ * browser reads the URL when the download starts, and the page then frees the text.
+ */
+const DOWNLOAD_URL_LIFETIME_MS = 60_000;
 
 /**
  * The page-side script that wires each chart. It finds every chart container, reads the option JSON from
@@ -341,10 +356,20 @@ const PNG_EXPORT_SIZES = Object.fromEntries(
  * renderer with the chart runtime before the first chart initializes, and it keeps the option under the
  * container id.
  *
- * A click on a PNG control of a chart card draws the kept option again on a detached element, at the CSS
- * size of the export and its pixel ratio, in the theme of its text size. The control states the height of its
- * export, because a taller chart body grows the height of a column export. Then the script reads the PNG and
- * downloads it through an anchor. A control that names no kept chart, or no export size, draws nothing.
+ * The option carries the toolbox of the chart. Each handler of the toolbox is the name of a page function, and
+ * the script binds each function after the parse and before the chart initializes. The download control opens
+ * the download menu of the card. The print hides the toolbox of each chart, because the runtime draws it inside
+ * the chart body, and the end of the print shows it again.
+ *
+ * A click on a PNG entry of the menu draws the kept option again on a detached element, at the CSS size of the
+ * export and its pixel ratio, in the theme of its text size. The entry states the height of its export, because
+ * a taller chart body grows the height of a column export. Then the script reads the PNG and downloads it
+ * through an anchor. An entry that names no kept chart, or no export size, draws nothing.
+ *
+ * A click on a hybrid SVG entry builds the SVG of a dense chart from the kept option: the vector draw, the raster
+ * draw of the point layer at 300 DPI, and the composition. Then the script downloads the text through an anchor.
+ * A build that gives no file keeps the menu open and shows its fault note, thus the reader sees why the entry gave
+ * no file and can take a PNG.
  *
  * An option that carries the data-source member holds no row. The script then reads the registered payload
  * of the artifact and builds the data of each series from the descriptors. A mount whose payload the
@@ -368,6 +393,8 @@ const PNG_EXPORT_SIZES = Object.fromEntries(
 export const CHART_BOOTSTRAP = `(function () {
   ${CHART_SERIES_BUILDER}
   ${CHART_RENDERERS_SOURCE}
+  ${HYBRID_SVG_SOURCE}
+  ${CHART_TOOLBOX_SOURCE}
   function signalReady() {
     window.${THEME_READY_SENTINEL} = true;
     document.dispatchEvent(new Event(${JSON.stringify(THEME_READY_EVENT)}));
@@ -431,6 +458,7 @@ export const CHART_BOOTSTRAP = `(function () {
           series[s].data = reportSeriesData(payload, source.series[s], source.rule);
         }
       }
+      reportBindToolbox(option);
       var chart = echarts.init(container, ${JSON.stringify(ECHARTS_THEME_NAME)});
       kept[container.getAttribute("id") || ""] = option;
       var finish = track(chart);
@@ -453,7 +481,23 @@ export const CHART_BOOTSTRAP = `(function () {
       }
     }
   });
-  var exportSizes = ${JSON.stringify(PNG_EXPORT_SIZES)};
+  function toolboxShown(shown) {
+    var nodes = document.querySelectorAll("[data-echarts-id]");
+    for (var n = 0; n < nodes.length; n++) {
+      var instance = echarts.getInstanceByDom(nodes[n]);
+      if (instance) {
+        instance.setOption({ toolbox: { show: shown } });
+      }
+    }
+  }
+  window.addEventListener("beforeprint", function () {
+    reportCloseExportMenu(false);
+    toolboxShown(false);
+  });
+  window.addEventListener("afterprint", function () {
+    toolboxShown(true);
+  });
+  var exportSizes = ${JSON.stringify(PAGE_EXPORT_SIZES)};
   function reportExportPng(control) {
     var kind = control.getAttribute("data-export") || "";
     var chartId = control.getAttribute("data-chart") || "";
@@ -476,13 +520,52 @@ export const CHART_BOOTSTRAP = `(function () {
       offscreen.dispose();
     }
   }
+  function reportExportHybrid(control) {
+    var kind = control.getAttribute("data-hybrid") || "";
+    var chartId = control.getAttribute("data-chart") || "";
+    if (!Object.prototype.hasOwnProperty.call(exportSizes, kind) || !Object.prototype.hasOwnProperty.call(kept, chartId)) {
+      return true;
+    }
+    var size = Object.assign({}, exportSizes[kind]);
+    size.height = Number(control.getAttribute("data-height")) || size.height;
+    size.heightMm = Number(control.getAttribute("data-height-mm")) || size.heightMm;
+    var svg = null;
+    try {
+      svg = reportHybridSvg(echarts, kept[chartId], size);
+    } catch (cause) {
+      console.error("hybrid svg failed for " + chartId + ": " + (cause && cause.message ? cause.message : cause));
+      return false;
+    }
+    if (svg === null) {
+      console.error("hybrid svg failed for " + chartId + ": the chart holds no point layer inside a grid");
+      return false;
+    }
+    var url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = control.getAttribute("data-file") || "chart.svg";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+    }, ${DOWNLOAD_URL_LIFETIME_MS});
+    return true;
+  }
   document.addEventListener("click", function (event) {
     var target = event.target;
-    var control = target && typeof target.closest === "function" ? target.closest("[data-export]") : null;
+    var control = target && typeof target.closest === "function" ? target.closest("[data-export], [data-hybrid]") : null;
     if (control) {
-      reportExportPng(control);
+      if (control.getAttribute("data-export") !== null) {
+        reportExportPng(control);
+      } else if (reportExportHybrid(control) === false) {
+        reportMenuFault(control);
+        return;
+      }
     }
+    reportMenuClick(event);
   });
+  document.addEventListener("keydown", reportMenuKey);
   walked = true;
   settle();
 })();`;

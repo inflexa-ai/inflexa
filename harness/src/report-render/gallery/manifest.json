@@ -918,5 +918,256 @@
     "script": "derive/tcga_laml.py",
     "derivation": "Read version 226 of the reviewed human UniProtKB entry P36888 for gene FLT3 (the current entry of UniProt release 2026_03), in the flat-file form of the UniSave REST API, and kept the DOMAIN and REGION features (3 found: Ig-like C2-type and Protein kinase domains, plus one Region covering the juxtamembrane autoinhibitory segment 591-597). Canonical sequence length (the SQ line) = 993 aa. Note the juxtamembrane ITD hotspot in lollipop_FLT3.csv (residues ~593-611) falls just outside this single narrow Region feature and between the two Domain features (343-610 has no domain/region annotation), so a chart author should not expect ITDs to land inside a labeled band.",
     "thinning": "None. The copy is the whole derived table."
+  },
+  {
+    "field": "bulk_rnaseq",
+    "table": "tree_top_genes_rows",
+    "path": "data/bulk_rnaseq/tree_top_genes_rows.csv",
+    "rows": 78,
+    "bytes": 2677,
+    "sha256": "00442be06720a0c2053ec958c3a3201db17aed6237bd1b756e7e6de4c5fc9898",
+    "columns": {
+      "parent": "internal node (node_1, node_2, ...) in linkage-merge order, or the root",
+      "child": "a leaf (gene_symbol, matching heatmap_top_genes.csv's row axis) or an internal node",
+      "height": "the Euclidean-distance merge height of parent (scipy linkage column 2)"
+    },
+    "dataset": {
+      "name": "pasilla: Drosophila melanogaster Pasilla RNAi knock-down RNA-seq gene counts",
+      "citation": "Brooks AN, Yang L, Duff MO, Hansen KD, Park JW, Dudoit S, Brenner SE, Graveley BR. Conservation of an RNA regulatory map between Drosophila and mammals. Genome Res. 2011 Feb;21(2):193-202. PMID: 20921232.",
+      "doi_or_url": "https://bioconductor.org/packages/release/data/experiment/html/pasilla.html"
+    },
+    "license": {
+      "name": "LGPL (unversioned, pasilla package)",
+      "url": "https://bioconductor.org/packages/release/data/experiment/html/pasilla.html",
+      "quote": "License: LGPL (from raw/bulk_rnaseq/pasilla/DESCRIPTION, line 21). gene_symbol sourced from FlyBase, CC BY 4.0 (see de_results license note)."
+    },
+    "source_urls": [
+      "https://bioconductor.org/packages/release/data/experiment/src/contrib/pasilla_1.40.0.tar.gz",
+      "https://s3ftp.flybase.org/releases/FB2026_03/precomputed_files/genes/fbgn_annotation_ID_fb_2026_03.tsv.gz"
+    ],
+    "script": "derive/trees_bulk_rnaseq.py",
+    "derivation": "Re-derives the hierarchical clustering behind heatmap_top_genes.csv's gene_order: average linkage (scipy.cluster.hierarchy.linkage(method='average')) on Euclidean distance between the 40 top-DE genes' 7-sample z-score vectors, read back out of heatmap_top_genes.csv (bulk_rnaseq_pasilla.py's own output, not a second pydeseq2 run). The linkage matrix is written as a parent,child,height edge list: node_i is the i-th merge in linkage order, a leaf is named by its gene_symbol, and height is the merge height. This script verifies that a depth-first walk of the tree (children in table order) reproduces heatmap_top_genes.csv's gene_order exactly, and raises if it does not; this run's walk matched all 40 leaves.",
+    "thinning": "None. The copy is the whole derived table."
+  },
+  {
+    "field": "bulk_rnaseq",
+    "table": "tree_top_genes_cols",
+    "path": "data/bulk_rnaseq/tree_top_genes_cols.csv",
+    "rows": 12,
+    "bytes": 436,
+    "sha256": "5557f29433ec595b8dd0fb3c7a7c705845407b155ff279a7bb3f58621e3644c5",
+    "columns": {
+      "parent": "internal node (node_1, node_2, ...) in linkage-merge order, or the root",
+      "child": "a leaf (sample name, matching heatmap_top_genes.csv's column axis) or an internal node",
+      "height": "the Euclidean-distance merge height of parent (scipy linkage column 2)"
+    },
+    "dataset": {
+      "name": "pasilla: Drosophila melanogaster Pasilla RNAi knock-down RNA-seq gene counts",
+      "citation": "Brooks AN, Yang L, Duff MO, Hansen KD, Park JW, Dudoit S, Brenner SE, Graveley BR. Conservation of an RNA regulatory map between Drosophila and mammals. Genome Res. 2011 Feb;21(2):193-202. PMID: 20921232.",
+      "doi_or_url": "https://bioconductor.org/packages/release/data/experiment/html/pasilla.html"
+    },
+    "license": {
+      "name": "LGPL (unversioned, pasilla package)",
+      "url": "https://bioconductor.org/packages/release/data/experiment/html/pasilla.html",
+      "quote": "License: LGPL (from raw/bulk_rnaseq/pasilla/DESCRIPTION, line 21). gene_symbol sourced from FlyBase, CC BY 4.0 (see de_results license note)."
+    },
+    "source_urls": [
+      "https://bioconductor.org/packages/release/data/experiment/src/contrib/pasilla_1.40.0.tar.gz"
+    ],
+    "script": "derive/trees_bulk_rnaseq.py",
+    "derivation": "Re-derives the hierarchical clustering behind heatmap_top_genes.csv's sample_order: average linkage on Euclidean distance between the 7 samples' 40-gene z-score vectors (the same top-40 genes as tree_top_genes_rows.csv), read back out of heatmap_top_genes.csv. Same edge-list encoding as tree_top_genes_rows.csv. This script verifies the depth-first leaf order against heatmap_top_genes.csv's sample_order; this run's walk matched all 7 leaves.",
+    "thinning": "None. The copy is the whole derived table."
+  },
+  {
+    "field": "bulk_rnaseq",
+    "table": "tree_samples",
+    "path": "data/bulk_rnaseq/tree_samples.csv",
+    "rows": 12,
+    "bytes": 434,
+    "sha256": "597d66e8d246debc159d975413659d35eb4eaf18e900aefe17ab9df2436bdf90",
+    "columns": {
+      "parent": "internal node (node_1, node_2, ...) in linkage-merge order, or the root",
+      "child": "a leaf (sample name, matching sample_distances.csv's row_order/col_order) or an internal node",
+      "height": "the Euclidean-distance merge height of parent (scipy linkage column 2)"
+    },
+    "dataset": {
+      "name": "pasilla: Drosophila melanogaster Pasilla RNAi knock-down RNA-seq gene counts",
+      "citation": "Brooks AN, Yang L, Duff MO, Hansen KD, Park JW, Dudoit S, Brenner SE, Graveley BR. Conservation of an RNA regulatory map between Drosophila and mammals. Genome Res. 2011 Feb;21(2):193-202. PMID: 20921232.",
+      "doi_or_url": "https://bioconductor.org/packages/release/data/experiment/html/pasilla.html"
+    },
+    "license": {
+      "name": "LGPL (unversioned, pasilla package)",
+      "url": "https://bioconductor.org/packages/release/data/experiment/html/pasilla.html",
+      "quote": "License: LGPL (from raw/bulk_rnaseq/pasilla/DESCRIPTION, line 21). gene_symbol sourced from FlyBase, CC BY 4.0 (see de_results license note)."
+    },
+    "source_urls": [
+      "https://bioconductor.org/packages/release/data/experiment/src/contrib/pasilla_1.40.0.tar.gz"
+    ],
+    "script": "derive/trees_bulk_rnaseq.py",
+    "derivation": "Re-derives the hierarchical clustering behind sample_distances.csv's row_order and col_order: complete linkage on the full 7x7 VST Euclidean distance matrix, reconstructed from sample_distances.csv's own distance column (the same numbers bulk_rnaseq_pasilla.py's linkage() call used, not a second VST computation). One tree serves both axes of that heatmap. Same edge-list encoding as the other two tree tables. This script verifies the depth-first leaf order against both row_order and col_order; this run's walk matched all 7 leaves for both.",
+    "thinning": "None. The copy is the whole derived table."
+  },
+  {
+    "field": "cancer_mut",
+    "table": "upset_membership",
+    "path": "data/cancer_mut/upset_membership.csv",
+    "rows": 188,
+    "bytes": 3492,
+    "sha256": "71e96e7cef54a132f52db62279a4e921aad3981e4a6fcc5d56a9204ad7d2d1c4",
+    "columns": {
+      "sample": "TCGA Tumor_Sample_Barcode",
+      "gene": "HUGO gene symbol, restricted to the 6 most-frequently-mutated genes by distinct-sample count (non-silent mutations only)"
+    },
+    "dataset": {
+      "name": "TCGA LAML somatic mutations (maftools tcga_laml example MAF)",
+      "citation": "Ley TJ, Miller C, Ding L, et al. Genomic and epigenomic landscapes of adult de novo acute myeloid leukemia. N Engl J Med. 2013;368(22):2059-74.",
+      "doi_or_url": "https://doi.org/10.1056/NEJMoa1301689"
+    },
+    "license": {
+      "name": "MIT License (maftools package, which redistributes this de-identified TCGA MAF as its example dataset)",
+      "url": "https://raw.githubusercontent.com/PoisonAlien/maftools/master/LICENSE",
+      "quote": "MIT License / Copyright (c) 2018 Anand Mayakonda / Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software... The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software."
+    },
+    "source_urls": [
+      "https://raw.githubusercontent.com/PoisonAlien/maftools/master/inst/extdata/tcga_laml.maf.gz",
+      "https://raw.githubusercontent.com/PoisonAlien/maftools/master/LICENSE"
+    ],
+    "script": "derive/upset_cancer_mut.py",
+    "derivation": "Read the same gunzipped MAF as tcga_laml.py (193 distinct Tumor_Sample_Barcode values). Restricted to maftools' own default non-synonymous Variant_Classification set (Frame_Shift_Del, Frame_Shift_Ins, In_Frame_Del, In_Frame_Ins, Missense_Mutation, Nonsense_Mutation, Nonstop_Mutation, Splice_Site, Translation_Start_Site -- excludes Silent, RNA, Intron, IGR, 5'Flank, which this MAF also carries). Ranked genes by number of distinct samples with >=1 non-silent mutation (ties break alphabetically by Hugo_Symbol, as in tcga_laml.py); this is an independent ranking from oncoprint.csv's top-20 (which ranks on all Variant_Classification values including Silent). Top 6: FLT3 (52 samples), DNMT3A (48), NPM1 (33), IDH2 (20), IDH1 (18), TET2 (17). One row per (sample, gene) membership; 115 of the 193 cohort samples carry >=1 non-silent mutation in at least one of the 6 genes and so appear at least once. Row order: gene rank, then sample barcode.",
+    "thinning": "None. The copy is the whole derived table."
+  },
+  {
+    "field": "cancer_mut",
+    "table": "sankey_flows",
+    "path": "data/cancer_mut/sankey_flows.csv",
+    "rows": 19,
+    "bytes": 423,
+    "sha256": "5e687a61fe333c19914cec9d268e6a41e2967d47135baea80d7c2a8d34c20412",
+    "columns": {
+      "source": "the upstream node of one flow: a FAB_classification value (or 'FAB unknown'), or 'FLT3 mutated'/'FLT3 wild type'",
+      "target": "the downstream node of one flow: 'FLT3 mutated'/'FLT3 wild type', or 'Alive'/'Deceased'",
+      "value": "number of cohort patients on this source-to-target edge"
+    },
+    "dataset": {
+      "name": "TCGA LAML somatic mutations and clinical annotation (maftools tcga_laml example MAF and tcga_laml_annot)",
+      "citation": "Ley TJ, Miller C, Ding L, et al. Genomic and epigenomic landscapes of adult de novo acute myeloid leukemia. N Engl J Med. 2013;368(22):2059-74.",
+      "doi_or_url": "https://doi.org/10.1056/NEJMoa1301689"
+    },
+    "license": {
+      "name": "MIT License (maftools package, which redistributes this de-identified TCGA MAF as its example dataset)",
+      "url": "https://raw.githubusercontent.com/PoisonAlien/maftools/master/LICENSE",
+      "quote": "MIT License / Copyright (c) 2018 Anand Mayakonda / Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software... The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software."
+    },
+    "source_urls": [
+      "https://raw.githubusercontent.com/PoisonAlien/maftools/0d61807f9a9863adb9335cb45f4c771b1f4c69e3/inst/extdata/tcga_laml.maf.gz",
+      "https://raw.githubusercontent.com/PoisonAlien/maftools/370258173301700aae282c70d725e5c59c02cdfe/inst/extdata/tcga_laml_annot.tsv",
+      "https://raw.githubusercontent.com/PoisonAlien/maftools/master/LICENSE"
+    ],
+    "script": "derive/sankey_cancer_mut.py",
+    "derivation": "tcga_laml_annot.tsv (maftools' own clinical annotation for this MAF: Tumor_Sample_Barcode, FAB_classification, days_to_last_followup, Overall_Survival_Status) has 200 patients; the example MAF covers 193 of them, so the Sankey cohort is those 193 (the other 7 have no MAF row and so no determinable FLT3 status). FLT3 status is 'FLT3 mutated' for a patient with >=1 MAF row for Hugo_Symbol == FLT3 (52 of 193; none are Silent), else 'FLT3 wild type' (141). Overall_Survival_Status is read as the standard TCGA/cBioPortal OS_STATUS convention, 1 = Deceased (127) / 0 = Alive (66); the file does not spell this out, but this split matches published survival for the cohort and the reverse reading does not. One patient with no recorded FAB_classification gets its own 'FAB unknown' stage-1 node rather than being dropped, so all 193 patients are represented. Two edge groups: FAB (or 'FAB unknown') -> FLT3 status, and FLT3 status -> vital status. Row order: stage 1 (FAB_classification in M0..M7 order, then FAB unknown) before stage 2 (FLT3 mutated before wild type).",
+    "thinning": "None. The copy is the whole derived table."
+  },
+  {
+    "field": "gwas",
+    "table": "locus_fto",
+    "path": "data/gwas/locus_fto.csv",
+    "rows": 813,
+    "bytes": 37746,
+    "sha256": "07a7f3bfea733ca0cd342275d8dd84f31881d4841f622f60b905072f99f74859",
+    "columns": {
+      "variant": "rsID (hm_rsid, harmonised)",
+      "position": "base pair position on GRCh38 (hm_pos, harmonised), same build as manhattan.csv/lead_snps.csv",
+      "pvalue": "association p-value for body mass index (p_value)",
+      "r2": "LD (r-squared) with the lead variant rs1421085, from 1000 Genomes phase-3 EUR haplotypes; empty where no biallelic-SNP match exists in that panel for this position, or where either site is monomorphic in EUR (13 of 813 rows)",
+      "recomb_rate": "recombination rate in cM/Mb at this position, interpolated (local slope between the two bracketing markers) from a HapMap-based genetic map"
+    },
+    "dataset": {
+      "name": "Locke et al. 2015 BMI GWAS (GIANT consortium), GWAS Catalog GCST002783, harmonised summary statistics",
+      "citation": "Locke AE, Kahali B, Berndt SI, et al. Genetic studies of body mass index yield new insights for obesity biology. Nature. 2015 Feb 12;518(7538):197-206. PMID: 25673413.",
+      "doi_or_url": "https://www.ebi.ac.uk/gwas/studies/GCST002783"
+    },
+    "license": {
+      "name": "EBI Terms of Use (this study was submitted in 2015, before the March 2021 CC0 mandate; no study-specific override was found on the study page, the REST API record, or the FTP readme/meta.yaml); r2 additionally uses the 1000 Genomes Project high-coverage callset (public, no-restriction reuse per its data-reuse policy) and recomb_rate uses a HapMap-based genetic map distributed by the Beagle project (Browning lab, GPL)",
+      "url": "https://www.ebi.ac.uk/gwas/docs/faq",
+      "quote": "Summary statistics: GWAS Catalog summary statistics are released under the Creative Commons CC0 1.0 Public Domain Dedication, unless otherwise specified on the individual study page and summary statistics download page. [...] Data submitted before March 2021 remains under the EBI Terms of Use, which already allow open reuse but are less explicit. || 1000 Genomes 2504-high-coverage data-reuse note: \"All cell lines were obtained from the Coriell Institute for Medical Research and were consented for full public release of genomic data... These data were generated at the New York Genome Center with funds provided by NHGRI Grant 3UM1HG008901-03S1.\" (20190405_1000G_2504_high_cov_data_reuse_README.md) || Beagle genetic maps: \"human genetic maps: HapMap GrCh36, GrCh37, and GrCh38 genetic maps with cM units in PLINK format\", listed as a resource of the GPL-licensed Beagle distribution (faculty.washington.edu/browning/beagle/beagle.html)."
+    },
+    "source_urls": [
+      "http://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST002001-GCST003000/GCST002783/harmonised/25673413-GCST002783-EFO_0004340.h.tsv.gz",
+      "https://www.ebi.ac.uk/gwas/studies/GCST002783",
+      "https://www.ebi.ac.uk/gwas/docs/faq",
+      "https://www.ebi.ac.uk/about/terms-of-use/",
+      "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/1kGP_high_coverage_Illumina.chr16.filtered.SNV_INDEL_SV_phased_panel.vcf.gz",
+      "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20130502.ALL.panel",
+      "https://bochet.gcc.biostat.washington.edu/beagle/genetic_maps/plink.GRCh38.map.zip"
+    ],
+    "script": "derive/locuszoom_gwas.py",
+    "derivation": "Every chr16 row of the raw harmonised GWAS file within +/-400kb of the window's own lead variant (813 rows total, unthinned; the lead is the row of smallest p-value in the window, confirmed as rs1421085 at position 53767042, matching the task's named FTO SNP). r2: the Ensembl REST LD endpoint (rest.ensembl.org, GRCh38) returned HTTP 500 on every endpoint tried, including a plain unauthenticated /info/ping with no query parameters, across several retries over ~5 minutes during this run (grch37.rest.ensembl.org, the wrong build, answered fine, so the outage is host-specific) -- a live EBI/Ensembl-side outage, the same kind bulk_rnaseq_pasilla.py's docstring records. r2 is computed directly instead, from the 1000 Genomes high-coverage GRCh38 callset streamed for this window only (remote-tabix bcftools query, chr16:53367042-54167042), restricted to the 503 phase-3 EUR samples (the same '1000GENOMES:phase_3:EUR' panel Ensembl's own endpoint uses): r2 = D^2 / (pA(1-pA)*pB(1-pB)) on phased haplotypes against the lead variant. 800 of 813 GWAS positions matched a biallelic EUR SNP in the 1000G window (16114 such SNPs total; 122 window positions had >1 biallelic SNP record from a split multiallelic site and are treated as ambiguous, r2 left empty there); the remaining gap is 13 rows genuinely monomorphic in EUR. recomb_rate: interpolated from raw/gwas/genetic_map/plink.GRCh38.map.zip's no_chr_in_chrom_field/plink.chr16.GRCh38.map (chrom, marker, cM, bp), local slope (cM[i+1]-cM[i])/(bp[i+1]-bp[i])*1e6 between the two markers bracketing each position.",
+    "thinning": "None. The copy is the whole derived table."
+  },
+  {
+    "field": "gwas",
+    "table": "locus_fto_genes",
+    "path": "data/gwas/locus_fto_genes.csv",
+    "rows": 4,
+    "bytes": 126,
+    "sha256": "a63774a403e5154c373d637cb86b1909c2656a83a3ff4c9501e75a3e49f788f7",
+    "columns": {
+      "start": "gene start, GRCh38 (min RefSeq curated transcript txStart for this gene symbol)",
+      "end": "gene end, GRCh38 (max RefSeq curated transcript txEnd for this gene symbol)",
+      "gene": "HGNC gene symbol",
+      "strand": "+ or -"
+    },
+    "dataset": {
+      "name": "NCBI RefSeq curated gene annotation, hg38/GRCh38 (ncbiRefSeqCurated track), served by the UCSC Genome Browser REST API",
+      "citation": "O'Leary NA, Wright MW, Brister JR, et al. Reference sequence (RefSeq) database at NCBI: current status, taxonomic expansion, and functional annotation. Nucleic Acids Res. 2016;44(D1):D733-45.",
+      "doi_or_url": "https://www.ncbi.nlm.nih.gov/refseq/"
+    },
+    "license": {
+      "name": "NCBI RefSeq (a U.S. Government work, public domain) via the UCSC Genome Browser's data-use conditions",
+      "url": "https://genome.ucsc.edu/conditions.html",
+      "quote": "The sequence and annotation data displayed in the Genome Browser are freely available for any use with the following conditions: [...] Please credit the data contributor when using Genome Browser data in a publication or web page."
+    },
+    "source_urls": [
+      "https://api.genome.ucsc.edu/getData/track?genome=hg38;track=ncbiRefSeqCurated;chrom=chr16;start=53367042;end=54167042",
+      "https://genome.ucsc.edu/conditions.html"
+    ],
+    "script": "derive/locuszoom_gwas.py",
+    "derivation": "The design doc's source for the gene track, Ensembl REST /overlap/region (rest.ensembl.org, GRCh38), was unreachable for the same reason named in locus_fto.csv's derivation (a live host-specific outage). Substituted with the UCSC Genome Browser REST API, track ncbiRefSeqCurated, genome hg38 (GRCh38), one live request for chr16:53367042-54167042 (the same +/-400kb window as locus_fto.csv, centered on lead variant rs1421085). Transcript rows are restricted to the NM_ prefix (RefSeq's protein-coding, curated designation; NR_ non-coding and predicted XM_/XR_ entries are dropped) and collapsed to one row per gene symbol (name2): start = min txStart, end = max txEnd across that gene's NM_ transcripts in the window. This is RefSeq's protein-coding gene set, not Ensembl's, so a boundary can differ slightly from what Ensembl's overlap/region would have given. 4 genes found: RBL2, AKTIP, RPGRIP1L, FTO.",
+    "thinning": "None. The copy is the whole derived table."
+  },
+  {
+    "field": "gwas",
+    "table": "locus_fto_summary",
+    "path": "data/gwas/locus_fto_summary.csv",
+    "rows": 1,
+    "bytes": 169,
+    "sha256": "416262bc55d6f85324777a27a9c980907dab3a5c34f5a69d1d38d0c6c3180f19",
+    "columns": {
+      "lead_variant": "rsID of the smallest-p variant in the window (rs1421085)",
+      "chrom": "chromosome (16)",
+      "window_start": "window start, GRCh38 bp (lead position - 400000)",
+      "window_end": "window end, GRCh38 bp (lead position + 400000)",
+      "ld_panel": "the LD reference panel r2 in locus_fto.csv was computed against",
+      "build": "genome build of every position in locus_fto.csv/locus_fto_genes.csv (GRCh38)"
+    },
+    "dataset": {
+      "name": "Locke et al. 2015 BMI GWAS (GIANT consortium), GWAS Catalog GCST002783, harmonised summary statistics",
+      "citation": "Locke AE, Kahali B, Berndt SI, et al. Genetic studies of body mass index yield new insights for obesity biology. Nature. 2015 Feb 12;518(7538):197-206. PMID: 25673413.",
+      "doi_or_url": "https://www.ebi.ac.uk/gwas/studies/GCST002783"
+    },
+    "license": {
+      "name": "EBI Terms of Use (this study was submitted in 2015, before the March 2021 CC0 mandate; no study-specific override was found on the study page, the REST API record, or the FTP readme/meta.yaml)",
+      "url": "https://www.ebi.ac.uk/gwas/docs/faq",
+      "quote": "Summary statistics: GWAS Catalog summary statistics are released under the Creative Commons CC0 1.0 Public Domain Dedication, unless otherwise specified on the individual study page and summary statistics download page. [...] Data submitted before March 2021 remains under the EBI Terms of Use, which already allow open reuse but are less explicit."
+    },
+    "source_urls": [
+      "http://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST002001-GCST003000/GCST002783/harmonised/25673413-GCST002783-EFO_0004340.h.tsv.gz",
+      "https://www.ebi.ac.uk/gwas/studies/GCST002783",
+      "https://www.ebi.ac.uk/gwas/docs/faq",
+      "https://www.ebi.ac.uk/about/terms-of-use/"
+    ],
+    "script": "derive/locuszoom_gwas.py",
+    "derivation": "One summary row of the same window as locus_fto.csv/locus_fto_genes.csv: lead_variant and the window bounds come from the min-p row of the raw GWAS file on chr16 (+/-400kb); ld_panel and build document how r2 and every position column were computed, for a chart author who has not read the other two tables' derivation text.",
+    "thinning": "None. The copy is the whole derived table."
   }
 ]

@@ -48,7 +48,7 @@ export interface DuplicateIdGap {
 
 /**
  * An unresolved reference gap. It ties the block that carries the reference to the reason it did not resolve.
- * `slot` names the place of the reference inside a chart block: the binding, the track, or one statistic.
+ * `slot` names the place of the reference inside a chart block: the binding, the track, a tree, or one statistic.
  */
 export interface UnresolvedReferenceGap {
     kind: "unresolved-reference";

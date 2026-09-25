@@ -180,3 +180,45 @@ describe("the references of a chart", () => {
         expect([...referencedPaths(walkBlocks([block]).references)].sort()).toEqual([CHART_PATH, STAT_PATH, TRACK_PATH].sort());
     });
 });
+
+describe("the trees of a chart", () => {
+    const binding = { kind: "artifact-table" as const, path: CHART_PATH, hash: HASH };
+    const SAMPLE_TREE = "runs/run-1/step-d/output/sample_tree.csv";
+    const GENE_TREE = "runs/run-1/step-d/output/gene_tree.csv";
+    const tree = (path: string) => ({ binding: { kind: "artifact-table" as const, path, hash: HASH }, parent: "parent", child: "child", height: "height" });
+
+    const block: Block = {
+        kind: "chart",
+        id: "hm1",
+        binding,
+        chartType: "heatmap",
+        encoding: { x: "sample", y: "gene", value: "z" },
+        trees: { y: tree(GENE_TREE), x: tree(SAMPLE_TREE) },
+    };
+
+    it("collects the tree of x before the tree of y, after the binding, each with its slot", () => {
+        const references = walkBlocks([block]).references;
+        expect(references.map((entry) => [entry.slot, entry.reference.kind === "artifact-table" ? entry.reference.path : undefined])).toEqual([
+            ["binding", CHART_PATH],
+            ["tree:x", SAMPLE_TREE],
+            ["tree:y", GENE_TREE],
+        ]);
+    });
+
+    it("matches each tree against its own three columns", () => {
+        const references = walkBlocks([block]).references;
+        expect(references[1].encodingColumns).toEqual(["parent", "child", "height"]);
+        expect(references[2].encodingColumns).toEqual(["parent", "child", "height"]);
+        expect(references[0].encodingColumns).toEqual(["sample", "gene", "z"]);
+    });
+
+    it("puts the trees between the track and the statistics, and names each tree path as a used path", () => {
+        const withAll: Block = {
+            ...block,
+            track: { binding: { kind: "artifact-table", path: "domains.csv", hash: HASH }, start: "s", end: "e", label: "l" },
+            statistics: [{ label: "p", value: { kind: "artifact-value", path: "stats.csv", hash: HASH, locator: { column: "p", row: 0 } } }],
+        };
+        expect(walkBlocks([withAll]).references.map((entry) => entry.slot)).toEqual(["binding", "track", "tree:x", "tree:y", "statistic:0"]);
+        expect([...referencedPaths(walkBlocks([block]).references)].sort()).toEqual([CHART_PATH, GENE_TREE, SAMPLE_TREE].sort());
+    });
+});

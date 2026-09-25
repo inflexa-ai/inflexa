@@ -26,6 +26,7 @@ import {
     SCATTER_CROWD_ROWS,
     type ChartExportSize,
 } from "./design.js";
+import { millimeterRoot } from "./hybrid-svg.js";
 import type { DataAsset } from "./table-data.js";
 import type { RenderProblem } from "./types.js";
 
@@ -118,18 +119,17 @@ function finishedSvg(svg: string, size: ChartExportSize): string {
         }
         return next;
     };
-    const renumbered = svg.replace(TOKEN_PLACES, (place) => place.replace(INSTANCE_TOKEN, renumber));
-    if (size.widthMm === undefined || size.heightMm === undefined) {
-        return renumbered;
-    }
-    return renumbered.replace(`<svg width="${size.widthPx}" height="${size.heightPx}"`, `<svg width="${size.widthMm}mm" height="${size.heightMm}mm"`);
+    return millimeterRoot(
+        svg.replace(TOKEN_PLACES, (place) => place.replace(INSTANCE_TOKEN, renumber)),
+        size,
+    );
 }
 
 /**
  * The count of coordinates that one option draws, summed over its series.
  *
  * The count bounds the export. A cloud of many thousands of points gives an SVG of many megabytes, two times,
- * and a raster serves such a chart better. An empty slot draws nothing, thus it counts nothing. A radar
+ * thus the page builds the SVG of such a chart on a click, with the points as one raster layer. An empty slot draws nothing, thus it counts nothing. A radar
  * polygon draws one coordinate for each indicator, and a violin outline draws two vertices for each grid
  * point, thus each counts every coordinate that it draws.
  */
@@ -185,7 +185,8 @@ function svgAsset(bytes: string, size: ChartExportSize): DataAsset {
  * The two SVG files of one chart, or `undefined` for a chart past the export bound.
  *
  * The option is the chart with every row inline. A chart whose plotted point count passes the crowd row
- * count gets no SVG, and the card states that the PNG serves it. An option that the chart runtime cannot
+ * count gets no staged SVG. The page builds the hybrid SVG of such a chart, or the menu states that the PNG
+ * serves a chart that holds no point layer. An option that the chart runtime cannot
  * draw refuses, and the refusal names the block.
  *
  * `bodyPx` is the height of the page chart body. A taller body draws each column at a taller height, thus a
