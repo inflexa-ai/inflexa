@@ -334,10 +334,10 @@ describe("the gallery document", () => {
 });
 
 describe.skipIf(NO_DATA)(`the gallery render${NEEDS_DATA}`, () => {
-    it("renders each chart with no problem, and two renders give the same bytes", () => {
-        const first = renderReportPage(GALLERY_DOCUMENT, gallery.values);
+    it("renders each chart with no problem, and two renders give the same bytes", async () => {
+        const first = await renderReportPage(GALLERY_DOCUMENT, gallery.values);
         expect(first.isOk() ? [] : first.error).toEqual([]);
-        const second = renderReportPage(GALLERY_DOCUMENT, gallery.values)._unsafeUnwrap();
+        const second = (await renderReportPage(GALLERY_DOCUMENT, gallery.values))._unsafeUnwrap();
         const page = first._unsafeUnwrap();
         expect(second.html).toBe(page.html);
         expect(second.dataAssets).toEqual(page.dataAssets);

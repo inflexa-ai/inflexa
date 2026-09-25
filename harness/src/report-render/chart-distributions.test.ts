@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import * as echarts from "echarts";
 
 import type { ChartBlock } from "../contracts/report-blocks.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "./chart.js";
@@ -108,8 +109,8 @@ describe("the points of a box and of a violin", () => {
         // Two hundred tied values overflow the band of a column export, thus the runtime places some points at random.
         const tied = ["A", "B", "C", "D"].flatMap((cluster) => Array.from({ length: 200 }, () => ({ cluster, pct_counts_mt: 2 })));
         const option = deriveChartOption(block("box", { x: "cluster", y: "pct_counts_mt" }), tied)._unsafeUnwrap();
-        const first = renderChartSvg(option, CHART_EXPORT_SIZES.single)._unsafeUnwrap();
-        const second = renderChartSvg(option, CHART_EXPORT_SIZES.single)._unsafeUnwrap();
+        const first = renderChartSvg(echarts, option, CHART_EXPORT_SIZES.single)._unsafeUnwrap();
+        const second = renderChartSvg(echarts, option, CHART_EXPORT_SIZES.single)._unsafeUnwrap();
         expect(second).toBe(first);
     });
 });

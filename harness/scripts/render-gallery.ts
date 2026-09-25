@@ -32,7 +32,7 @@ const loaded = await loadGallery();
 if (loaded.isErr()) {
     throw new Error(`The gallery did not load: ${JSON.stringify(loaded.error)}`);
 }
-const rendered = renderReportPage(GALLERY_DOCUMENT, loaded.value.values);
+const rendered = await renderReportPage(GALLERY_DOCUMENT, loaded.value.values);
 if (rendered.isErr()) {
     throw new Error(`The gallery did not render: ${JSON.stringify(rendered.error)}`);
 }

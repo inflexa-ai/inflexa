@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { deriveChartOption, type ChartInputs, type ChartOpts, type ChartRow, type EchartOption } from "../chart.js";
@@ -288,7 +289,7 @@ describe("the gsea figure", () => {
         const option = derive(rows);
         const coordinates = list(option, "series").reduce((sum, series) => sum + drawn(series).length, 0);
         expect(coordinates).toBeLessThan(SCATTER_CROWD_ROWS);
-        const svgs = chartSvgAssets("g1", option)._unsafeUnwrap();
+        const svgs = chartSvgAssets(echarts, "g1", option)._unsafeUnwrap();
         expect(svgs).toBeDefined();
         expect(svgs?.single.bytes).toContain("Rank in ordered dataset");
     });
