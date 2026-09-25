@@ -10,6 +10,24 @@
 
 import type { DataAsset } from "./table-data.js";
 
+/** One statistic of a chart: the label of the block, and the value of the cell that the statistic binds. */
+export interface RenderStatistic {
+    label: string;
+    value: string | number;
+}
+
+/** The second table of a chart: the rows of the track binding, and the optional column order. */
+export interface RenderTrack {
+    rows: Array<Record<string, string | number>>;
+    columns?: string[];
+}
+
+/** The trees of the category axes of a chart: the rows of the tree binding of each axis, with its optional column order. */
+export interface RenderTrees {
+    x?: RenderTrack;
+    y?: RenderTrack;
+}
+
 /**
  * The value that one block resolves to, as a closed union. A `scalar` gives one number or one string. A
  * `table` gives the rows and the optional column order. A `figure` gives a ready source string. A
@@ -17,10 +35,21 @@ import type { DataAsset } from "./table-data.js";
  *
  * A `table` carries `total` when a row bound cut the rows of the artifact. The renderer states the shown
  * count against it. A table with no bound carries none, and the row count answers for it.
+ *
+ * The `table` of a chart also carries the value of each statistic, in block order, the track, and the tree of
+ * each axis, where the block declares them. A table block declares none of them.
  */
 export type RenderValue =
     | { type: "scalar"; value: string | number }
-    | { type: "table"; rows: Array<Record<string, string | number>>; columns?: string[]; total?: number }
+    | {
+          type: "table";
+          rows: Array<Record<string, string | number>>;
+          columns?: string[];
+          total?: number;
+          statistics?: RenderStatistic[];
+          track?: RenderTrack;
+          trees?: RenderTrees;
+      }
     | { type: "figure"; src: string }
     | { type: "citation"; id: string };
 
@@ -43,8 +72,8 @@ export type RenderValues = Record<string, RenderValue>;
  * The renderer writes no file. Thus it gives the asset bytes back to the caller, and the caller stages
  * them beside the page. A document with no table gives an empty list, and its page references none.
  *
- * The list holds the provenance assets of the render beside the table payloads, thus one stage writes each
- * file that the page loads and the caller sorts nothing.
+ * The list holds the provenance assets of the render beside the table payloads and the SVG files of each
+ * chart, thus one stage writes each file that the page loads or links, and the caller sorts nothing.
  */
 export interface RenderedPage {
     html: string;

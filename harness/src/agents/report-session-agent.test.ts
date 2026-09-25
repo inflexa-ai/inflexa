@@ -176,6 +176,37 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("a busy category set is not an exemption");
     });
 
+    test("the prompt makes the figure block the last choice, and names the chart plots through the block schema", () => {
+        expect(reportSessionPrompt).toContain("A figure block is the last choice");
+        // The permitted uses are pictures that no table can carry.
+        for (const use of ["a microscopy image", "a schematic", "a genome browser track"]) {
+            expect(reportSessionPrompt).toContain(use);
+        }
+        // The block schema lists each chart type and each preset, thus the prompt keeps no list of its own that
+        // can drift from the schema.
+        expect(reportSessionPrompt.replace(/\s+/g, " ")).toContain("the block schema of `add_block` names each chart type and each preset");
+        for (const plot of ["a volcano", "a dot plot", "an embedding", "a forest plot", "a radar"]) {
+            expect(reportSessionPrompt).not.toContain(plot);
+        }
+        // The anti-pattern entry names the run figure of such a plot.
+        const doNot = reportSessionPrompt.slice(reportSessionPrompt.indexOf("## Do NOT"));
+        expect(doNot).toContain("Use a run figure for a plot that a chart draws");
+    });
+
+    test("the prompt teaches the preset of a field plot, its statistics, its track, and its trees", () => {
+        const rule = reportSessionPrompt.slice(reportSessionPrompt.indexOf("A plot of a field takes its preset"));
+        expect(rule).toStartWith("A plot of a field takes its preset");
+        const paragraph = rule.slice(0, rule.indexOf("\n\n")).replace(/\s+/g, " ");
+        // A printed statistic is grounded, thus it binds one cell as a statistic of the chart block.
+        expect(paragraph).toContain("binds as a statistic of the chart block");
+        // A second table of the figure resolves as the binding does.
+        expect(paragraph).toContain("binds as the track of the chart block");
+        // A clustered heatmap carries its dendrograms, thus the edge table of each clustered axis binds as a tree.
+        expect(paragraph).toContain("binds as the tree of that axis");
+        // The paragraph names the mechanism and no dataset, and it states no count.
+        expect(paragraph).not.toMatch(/\d/);
+    });
+
     test("the prompt teaches the headline derivation", () => {
         // The derivation comes first, and the absence branch is the last resort.
         expect(reportSessionPrompt).toContain("derive the headline table first");

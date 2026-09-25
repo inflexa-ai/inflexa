@@ -9,6 +9,8 @@ import type {
     Reference,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
+import type { ChartBlock } from "../contracts/report-blocks.js";
+import { walkBlocks } from "./block-walk.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
 import { validateReferenceStructure } from "./structural-validation.js";
 
@@ -263,6 +265,98 @@ describe("validateReferenceStructure", () => {
             const failure = failureFor(bounded, rowSnapshot);
             expect(failure?.reason).toBe("locator-out-of-range");
             expect(failure?.detail).toContain("constructor");
+        });
+
+        /** The grammar columns that the walk collects for one chart over the rows artifact. */
+        function walkedColumns(encoding: ChartBlock["encoding"], composition?: ChartBlock["composition"]): string[] {
+            const block: ChartBlock =
+                composition !== undefined
+                    ? { kind: "chart", id: "c1", binding: tableReference(ROWS_PATH, ROWS_HASH), composition }
+                    : { kind: "chart", id: "c1", binding: tableReference(ROWS_PATH, ROWS_HASH), chartType: "scatter", encoding };
+            return walkBlocks([block]).references[0]?.encodingColumns ?? [];
+        }
+
+        it("refuses an invented column in a color channel, a composition facet, and an order column", () => {
+            // Each new member of the grammar names a column. The walk collects it, thus the structural tier
+            // refuses an invented one before the block lands, exactly as it refuses an invented x.
+            const color = columnFailure(walkedColumns({ x: "log2FoldChange", y: "padj", color: "invented_color" }));
+            expect(color?.reason).toBe("locator-out-of-range");
+            expect(color?.detail).toContain("invented_color");
+
+            const facet = columnFailure(
+                walkedColumns(undefined, { series: [{ form: "scatter", encoding: { x: "log2FoldChange", y: "padj" } }], facet: "invented_facet" }),
+            );
+            expect(facet?.reason).toBe("locator-out-of-range");
+            expect(facet?.detail).toContain("invented_facet");
+
+            const order = columnFailure(walkedColumns({ x: { column: "gene", orderBy: "invented_rank" }, y: "padj" }));
+            expect(order?.reason).toBe("locator-out-of-range");
+            expect(order?.detail).toContain("invented_rank");
+        });
+
+        it("refuses an invented column in a channel of the canonical figures and in the track columns", () => {
+            const shape = columnFailure(walkedColumns({ x: "log2FoldChange", y: "padj", shape: "invented_shape" }));
+            expect(shape?.reason).toBe("locator-out-of-range");
+            expect(shape?.detail).toContain("invented_shape");
+
+            const tracks = columnFailure(walkedColumns({ x: "gene", y: "padj", tracks: ["log2FoldChange", "invented_track"] }));
+            expect(tracks?.reason).toBe("locator-out-of-range");
+            expect(tracks?.detail).toContain("invented_track");
+        });
+
+        it("refuses a track column that the track table does not hold, against the rows of the track table", () => {
+            const TRACK_PATH = "runs/run-1/step-d/output/domains.csv";
+            const TRACK_HASH = `sha256:${"8".repeat(64)}`;
+            const withTrack: ReportSnapshot = {
+                artifacts: { ...rowSnapshot.artifacts, [TRACK_PATH]: { hash: TRACK_HASH, fileType: "output", rows: [{ start: 1, end: 90, domain: "PWWP" }] } },
+            };
+            const block: ChartBlock = {
+                kind: "chart",
+                id: "c1",
+                binding: tableReference(ROWS_PATH, ROWS_HASH),
+                chartType: "lollipop",
+                encoding: { x: "log2FoldChange", y: "padj" },
+                track: { binding: tableReference(TRACK_PATH, TRACK_HASH), start: "start", end: "end", label: "domain", length: "invented_length" },
+            };
+            const track = walkBlocks([block]).references.find((entry) => entry.slot === "track");
+            const failure = validateReferenceStructure(track?.reference ?? tableReference(TRACK_PATH, TRACK_HASH), withTrack, track?.encodingColumns).match(
+                () => undefined,
+                (refusal) => refusal,
+            );
+            expect(failure?.reason).toBe("locator-out-of-range");
+            expect(failure?.detail).toContain("invented_length");
+            // The binding of the chart reads its own table, thus the track columns never reach its match.
+            const bound = walkBlocks([block]).references[0];
+            expect(validateReferenceStructure(bound.reference, withTrack, bound.encodingColumns).isOk()).toBe(true);
+        });
+
+        it("refuses a tree column that the tree table does not hold, against the rows of the tree table", () => {
+            const TREE_PATH = "runs/run-1/step-d/output/gene_tree.csv";
+            const TREE_HASH = `sha256:${"9".repeat(64)}`;
+            const withTree: ReportSnapshot = {
+                artifacts: {
+                    ...rowSnapshot.artifacts,
+                    [TREE_PATH]: { hash: TREE_HASH, fileType: "output", rows: [{ parent: "n1", child: "TP53", height: 0.4 }] },
+                },
+            };
+            const block: ChartBlock = {
+                kind: "chart",
+                id: "c1",
+                binding: tableReference(ROWS_PATH, ROWS_HASH),
+                chartType: "heatmap",
+                encoding: { x: "log2FoldChange", y: "padj" },
+                trees: { y: { binding: tableReference(TREE_PATH, TREE_HASH), parent: "parent", child: "child", height: "invented_height" } },
+            };
+            const tree = walkBlocks([block]).references.find((entry) => entry.slot === "tree:y");
+            const failure = validateReferenceStructure(tree?.reference ?? tableReference(TREE_PATH, TREE_HASH), withTree, tree?.encodingColumns).match(
+                () => undefined,
+                (refusal) => refusal,
+            );
+            expect(failure?.reason).toBe("locator-out-of-range");
+            expect(failure?.detail).toContain("invented_height");
+            // The binding of the chart reads its own table, thus the tree columns never reach its match.
+            const bound = walkBlocks([block]).references[0];
+            expect(validateReferenceStructure(bound.reference, withTree, bound.encodingColumns).isOk()).toBe(true);
         });
 
         it("refuses a chart column that names an inherited member of a plain object", () => {

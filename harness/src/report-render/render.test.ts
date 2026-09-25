@@ -1,12 +1,27 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { load } from "cheerio";
+import { ok } from "neverthrow";
 
 import type { Block, ChartBlock, CitationBlock, FigureBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
 import { AG_GRID_ASSET, ASSETS_DIR, DEPS_DIR, ECHARTS_ASSET, PAGE_ASSETS, TSPROV_ASSET, tableSidecarName } from "./assets.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption } from "./chart.js";
 import {
+    chartToolbox,
+    DATA_VIEW_FUNCTION,
+    EXPORT_MENU_FUNCTION,
+    MENU_FAULT_CLASS,
+    MENU_FAULT_SHOWN_CLASS,
+    MENU_OPEN_CLASS,
+    TOOLBOX_ZLEVEL,
+} from "./chart-toolbox.js";
+import {
+    CHART_BODY_PX,
+    CHART_EXPORT_SIZES,
     CHART_INLINE_OPTION_BOUND,
     DESIGN_CSS,
+    exportSizeFor,
+    FACET_ROW_PX,
+    SCATTER_CROWD_ROWS,
     GRID_HEADER_BORDER_PX,
     GRID_HEADER_HEIGHT_PX,
     GRID_MIN_COLUMN_WIDTH_PX,
@@ -18,6 +33,7 @@ import {
 import { FIXTURE_DOCUMENT, FIXTURE_PROVENANCE, FIXTURE_VALUES } from "./fixture.js";
 import {
     CHART_BOOTSTRAP,
+    CHART_OPTIONS_GLOBAL,
     GRID_BOOTSTRAP,
     LINEAGE_COMPLETE_NOTE,
     LINEAGE_NO_ANSWER_NOTE,
@@ -34,9 +50,12 @@ import {
 import { formatTableCell } from "./number-format.js";
 import { REPORT_PROVENANCE_GLOBAL } from "./provenance-data.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
+import type { FigureMember, FigureModule } from "./figures/index.js";
+import { statisticsGraphic } from "./figures/common.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
 import { LINEAGE_BLOCK_ATTRIBUTE, LINEAGE_CONTROL_CLASS, LINEAGE_KEY_ATTRIBUTE, LINEAGE_KEYS_ATTRIBUTE } from "./views/lineage.js";
+import { DOWNLOAD_CONTROL_LABEL, HYBRID_FAULT_NOTE } from "./views/chart-view.js";
 import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS } from "./views/values.js";
 
 /**
@@ -159,9 +178,9 @@ function tableBindingsOf(blocks: readonly Block[]): TableBlock["binding"][] {
 }
 
 describe("renderReportPage assembly", () => {
-    it("gives byte-identical output for the same document and values", () => {
-        const first = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
-        const second = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
+    it("gives byte-identical output for the same document and values", async () => {
+        const first = await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
+        const second = await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
         expect(first.isOk()).toBe(true);
         expect(second.isOk()).toBe(true);
         expect(first._unsafeUnwrap().html).toBe(second._unsafeUnwrap().html);
@@ -169,8 +188,8 @@ describe("renderReportPage assembly", () => {
         expect(first._unsafeUnwrap().dataAssets).toEqual(second._unsafeUnwrap().dataAssets);
     });
 
-    it("renders from in-memory inputs with no directory and no file", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+    it("renders from in-memory inputs with no directory and no file", async () => {
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
         expect(typeof html).toBe("string");
         expect(html.startsWith("<!doctype html>")).toBe(true);
         expect(html).toContain("The cohort holds 48 primary lung adenocarcinoma biopsies.");
@@ -180,12 +199,12 @@ describe("renderReportPage assembly", () => {
 
 describe("renderReportPage text lists", () => {
     /** One page whose section holds the given text block. */
-    function pageOfText(block: TextBlock): ReturnType<typeof load> {
+    async function pageOfText(block: TextBlock): Promise<ReturnType<typeof load>> {
         const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [block] }] };
-        return load(renderReportPage(document, {})._unsafeUnwrap().html);
+        return load((await renderReportPage(document, {}))._unsafeUnwrap().html);
     }
 
-    it("holds the lead paragraph and the ordered list of six items", () => {
+    it("holds the lead paragraph and the ordered list of six items", async () => {
         const items = [
             "The cohort is small.",
             "The batch confounds.",
@@ -194,7 +213,7 @@ describe("renderReportPage text lists", () => {
             "The follow-up is short.",
             "One database.",
         ];
-        const page = pageOfText({ kind: "text", id: "t1", content: { prose: "Six limits bound the reading.", list: { ordered: true, items } } });
+        const page = await pageOfText({ kind: "text", id: "t1", content: { prose: "Six limits bound the reading.", list: { ordered: true, items } } });
 
         expect(page("p.report-prose").text()).toBe("Six limits bound the reading.");
         expect(page("ol.report-list li").length).toBe(6);
@@ -205,8 +224,8 @@ describe("renderReportPage text lists", () => {
         ).toEqual(items);
     });
 
-    it("holds the unordered list alone for a block with an empty prose", () => {
-        const page = pageOfText({ kind: "text", id: "t2", content: { prose: "", list: { ordered: false, items: ["One.", "Two.", "Three."] } } });
+    it("holds the unordered list alone for a block with an empty prose", async () => {
+        const page = await pageOfText({ kind: "text", id: "t2", content: { prose: "", list: { ordered: false, items: ["One.", "Two.", "Three."] } } });
 
         expect(page("ul.report-list li").length).toBe(3);
         // An empty prose gives no paragraph, thus the band holds the list alone.
@@ -266,8 +285,8 @@ describe("the table data assets", () => {
         return registry["tbl"];
     }
 
-    it("holds one empty grid mount, and the payload holds every row", () => {
-        const rendered = renderReportPage(tableDocument(), valuesOf(14201))._unsafeUnwrap();
+    it("holds one empty grid mount, and the payload holds every row", async () => {
+        const rendered = (await renderReportPage(tableDocument(), valuesOf(14201)))._unsafeUnwrap();
         const page = load(rendered.html);
 
         expect(page(`[${GRID_MOUNT_ATTRIBUTE}="tbl"]`).length).toBe(1);
@@ -279,8 +298,8 @@ describe("the table data assets", () => {
         expect(payload.rows.length).toBe(14201);
     });
 
-    it("carries the display of each column beside the rows", () => {
-        const rendered = renderReportPage(tableDocument(), valuesOf(3))._unsafeUnwrap();
+    it("carries the display of each column beside the rows", async () => {
+        const rendered = (await renderReportPage(tableDocument(), valuesOf(3)))._unsafeUnwrap();
         const payload = registeredPayload(rendered.dataAssets[0]) as unknown as { display: { label: string; kind: string; bound?: number }[] };
 
         // The server resolves the label, the kind, and the bound one time for each column. Thus the page
@@ -290,8 +309,8 @@ describe("the table data assets", () => {
         expect(payload.display[1].bound).toBe(1 / 3);
     });
 
-    it("compresses a repeated category into the dictionary of its column", () => {
-        const rendered = renderReportPage(tableDocument(), valuesOf(100))._unsafeUnwrap();
+    it("compresses a repeated category into the dictionary of its column", async () => {
+        const rendered = (await renderReportPage(tableDocument(), valuesOf(100)))._unsafeUnwrap();
         const payload = registeredPayload(rendered.dataAssets[0]);
 
         // The direction column holds two values across one hundred rows, thus the payload names each one
@@ -301,16 +320,16 @@ describe("the table data assets", () => {
         expect(payload.rows[1]).toEqual(["G1", 0.01, 1]);
     });
 
-    it("gives byte-identical assets and one asset name over two renders", () => {
-        const first = renderReportPage(tableDocument(), valuesOf(500))._unsafeUnwrap();
-        const second = renderReportPage(tableDocument(), valuesOf(500))._unsafeUnwrap();
+    it("gives byte-identical assets and one asset name over two renders", async () => {
+        const first = (await renderReportPage(tableDocument(), valuesOf(500)))._unsafeUnwrap();
+        const second = (await renderReportPage(tableDocument(), valuesOf(500)))._unsafeUnwrap();
 
         expect(second.dataAssets).toEqual(first.dataAssets);
         expect(second.html).toBe(first.html);
     });
 
-    it("references each asset from a classic script tag, and decodes after the last of them", () => {
-        const rendered = renderReportPage(tableDocument(), valuesOf(3))._unsafeUnwrap();
+    it("references each asset from a classic script tag, and decodes after the last of them", async () => {
+        const rendered = (await renderReportPage(tableDocument(), valuesOf(3)))._unsafeUnwrap();
         const source = `${ASSETS_DIR}/${rendered.dataAssets[0].name}`;
 
         // A `fetch` is refused on a `file://` page. A classic script loads on any page, thus the data
@@ -320,8 +339,8 @@ describe("the table data assets", () => {
         expect(rendered.html.indexOf(TABLE_DATA_DECODER)).toBeLessThan(rendered.html.indexOf(GRID_BOOTSTRAP));
     });
 
-    it("decodes the payload into plain rows, one time, in the page script", () => {
-        const rendered = renderReportPage(tableDocument(), valuesOf(4))._unsafeUnwrap();
+    it("decodes the payload into plain rows, one time, in the page script", async () => {
+        const rendered = (await renderReportPage(tableDocument(), valuesOf(4)))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
 
         // The asset is browser source text. It arrives as a classic script, thus the global is the whole
@@ -339,7 +358,7 @@ describe("the table data assets", () => {
         expect(registry["tbl"].rows[0]).toEqual({ gene: "G0", padj: 0, direction: "up" });
     });
 
-    it("decodes a column that names a prototype member as an ordinary column", () => {
+    it("decodes a column that names a prototype member as an ordinary column", async () => {
         const document = tableDocument();
         // An object literal sends a `__proto__` key to the prototype. The rows arrive from a parse in the
         // real path, thus the test builds them the same way and the column stays an own key.
@@ -348,7 +367,7 @@ describe("the table data assets", () => {
             string | number
         >[];
         const values: RenderValues = { tbl: { type: "table", columns: ["constructor", "__proto__", "gene"], rows } };
-        const rendered = renderReportPage(document, values)._unsafeUnwrap();
+        const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
 
         new Function("window", rendered.dataAssets[0].bytes)(window);
@@ -364,10 +383,10 @@ describe("the table data assets", () => {
         expect(registry["tbl"].rows[1]["constructor"]).toBe("up");
     });
 
-    it("omits a column that a ragged row does not hold, thus no key reads as an empty value", () => {
+    it("omits a column that a ragged row does not hold, thus no key reads as an empty value", async () => {
         const document = tableDocument();
         const values: RenderValues = { tbl: { type: "table", columns: ["gene", "padj"], rows: [{ gene: "TP53", padj: 0.01 }, { gene: "MYC" }] } };
-        const rendered = renderReportPage(document, values)._unsafeUnwrap();
+        const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
 
         new Function("window", rendered.dataAssets[0].bytes)(window);
@@ -377,20 +396,20 @@ describe("the table data assets", () => {
         expect(registry["tbl"].rows[1]).toEqual({ gene: "MYC" });
     });
 
-    it("links the staged raw bytes of the artifact as the download of the card", () => {
-        const rendered = renderReportPage(tableDocument(), valuesOf(3))._unsafeUnwrap();
+    it("links the staged raw bytes of the artifact as the download of the card", async () => {
+        const rendered = (await renderReportPage(tableDocument(), valuesOf(3)))._unsafeUnwrap();
         const link = load(rendered.html)("a.report-table-download");
 
         expect(link.attr("href")).toBe(`${ASSETS_DIR}/${tableSidecarName(TABLE_HASH, TABLE_PATH)}`);
         expect(link.attr("download")).toBe(tableSidecarName(TABLE_HASH, TABLE_PATH));
     });
 
-    it("stages no data asset for a document with no table, and renders that page as before", () => {
+    it("stages no data asset for a document with no table, and renders that page as before", async () => {
         const document: ReportDocument = {
             title: "T",
             sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "text", id: "t1", content: { prose: "No table here." } }] }],
         };
-        const rendered = renderReportPage(document, {})._unsafeUnwrap();
+        const rendered = (await renderReportPage(document, {}))._unsafeUnwrap();
 
         expect(rendered.dataAssets).toEqual([]);
         // A page with no payload registers no map, and it carries neither the decoder nor the grid boot,
@@ -399,7 +418,7 @@ describe("the table data assets", () => {
         expect(rendered.html).not.toContain(TABLE_DATA_DECODER);
         expect(rendered.html).not.toContain(GRID_BOOTSTRAP);
         expect(rendered.html).not.toContain(".data.js");
-        expect(rendered.html).toBe(renderReportPage(document, {})._unsafeUnwrap().html);
+        expect(rendered.html).toBe((await renderReportPage(document, {}))._unsafeUnwrap().html);
     });
 });
 
@@ -444,10 +463,12 @@ describe("the provenance data assets", () => {
         return (window[REPORT_PROVENANCE_GLOBAL] ?? {}) as { document?: string; attestation?: string };
     }
 
-    it("registers the document and the attestation under one global, byte for byte", () => {
-        const rendered = renderReportPage(pageDocument(), pageValues, {
-            provenance: { document: DOCUMENT, attestation: ATTESTATION },
-        })._unsafeUnwrap();
+    it("registers the document and the attestation under one global, byte for byte", async () => {
+        const rendered = (
+            await renderReportPage(pageDocument(), pageValues, {
+                provenance: { document: DOCUMENT, attestation: ATTESTATION },
+            })
+        )._unsafeUnwrap();
 
         expect(provenanceAssets(rendered.dataAssets).length).toBe(2);
         // The renderer moves the text and never parses it, thus the reader takes the bytes that the source
@@ -455,9 +476,9 @@ describe("the provenance data assets", () => {
         expect(registeredProvenance(rendered.dataAssets)).toEqual({ document: DOCUMENT, attestation: ATTESTATION });
     });
 
-    it("names each asset by the hash of its own bytes, and two renders give one name", () => {
-        const first = renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } })._unsafeUnwrap();
-        const second = renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } })._unsafeUnwrap();
+    it("names each asset by the hash of its own bytes, and two renders give one name", async () => {
+        const first = (await renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } }))._unsafeUnwrap();
+        const second = (await renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } }))._unsafeUnwrap();
 
         const [documentAsset, attestationAsset] = provenanceAssets(first.dataAssets);
         expect(documentAsset.name).toMatch(/^prov-[0-9a-f]{12}\.data\.js$/);
@@ -466,11 +487,13 @@ describe("the provenance data assets", () => {
         expect(second.html).toBe(first.html);
     });
 
-    it("gives a new name for a changed document, and keeps the attestation name", () => {
-        const first = renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } })._unsafeUnwrap();
-        const changed = renderReportPage(pageDocument(), pageValues, {
-            provenance: { document: '{"entity":{"e2":{"prov:type":"file"}}}', attestation: ATTESTATION },
-        })._unsafeUnwrap();
+    it("gives a new name for a changed document, and keeps the attestation name", async () => {
+        const first = (await renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } }))._unsafeUnwrap();
+        const changed = (
+            await renderReportPage(pageDocument(), pageValues, {
+                provenance: { document: '{"entity":{"e2":{"prov:type":"file"}}}', attestation: ATTESTATION },
+            })
+        )._unsafeUnwrap();
 
         // The name carries the hash of the bytes, thus a changed document lands under a new name and the
         // sweep of the stage removes the name that the page does not reference any more.
@@ -478,10 +501,12 @@ describe("the provenance data assets", () => {
         expect(provenanceAssets(changed.dataAssets)[1].name).toBe(provenanceAssets(first.dataAssets)[1].name);
     });
 
-    it("references each asset from a classic script tag, before the table assets and every bootstrap", () => {
-        const rendered = renderReportPage(pageDocument(), pageValues, {
-            provenance: { document: DOCUMENT, attestation: ATTESTATION },
-        })._unsafeUnwrap();
+    it("references each asset from a classic script tag, before the table assets and every bootstrap", async () => {
+        const rendered = (
+            await renderReportPage(pageDocument(), pageValues, {
+                provenance: { document: DOCUMENT, attestation: ATTESTATION },
+            })
+        )._unsafeUnwrap();
         const [documentAsset, attestationAsset] = provenanceAssets(rendered.dataAssets);
         const tableAsset = rendered.dataAssets.find((asset) => asset.name.startsWith("t-"));
 
@@ -498,8 +523,8 @@ describe("the provenance data assets", () => {
         expect(documentAt).toBeLessThan(rendered.html.indexOf(SECTION_SPY));
     });
 
-    it("carries the document alone when the export holds no attestation", () => {
-        const rendered = renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT } })._unsafeUnwrap();
+    it("carries the document alone when the export holds no attestation", async () => {
+        const rendered = (await renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT } }))._unsafeUnwrap();
 
         // An unsigned document still rides the page, thus the reader finds the document and no attestation.
         expect(provenanceAssets(rendered.dataAssets).length).toBe(1);
@@ -507,23 +532,23 @@ describe("the provenance data assets", () => {
         expect(registeredProvenance(rendered.dataAssets)).toEqual({ document: DOCUMENT });
     });
 
-    it("keeps a document that names the script element as data", () => {
+    it("keeps a document that names the script element as data", async () => {
         const hostile = '{"note":"</script><img src=x>"}';
-        const rendered = renderReportPage(pageDocument(), pageValues, { provenance: { document: hostile } })._unsafeUnwrap();
+        const rendered = (await renderReportPage(pageDocument(), pageValues, { provenance: { document: hostile } }))._unsafeUnwrap();
 
         // The text rides as a JSON string, thus a `</script` sequence inside it cannot close the element.
         expect(provenanceAssets(rendered.dataAssets)[0].bytes).not.toContain("</script");
         expect(registeredProvenance(rendered.dataAssets).document).toBe(hostile);
     });
 
-    it("stages no provenance asset for a render that takes none, and that page is what it was", () => {
-        const rendered = renderReportPage(pageDocument(), pageValues)._unsafeUnwrap();
+    it("stages no provenance asset for a render that takes none, and that page is what it was", async () => {
+        const rendered = (await renderReportPage(pageDocument(), pageValues))._unsafeUnwrap();
 
         expect(provenanceAssets(rendered.dataAssets)).toEqual([]);
         expect(rendered.html).not.toContain(`window.${REPORT_PROVENANCE_GLOBAL}`);
         expect(rendered.html).not.toContain("prov-");
         // A page whose only payload is the table renders byte for byte as it did before the seam.
-        expect(rendered.html).toBe(renderReportPage(pageDocument(), pageValues, {})._unsafeUnwrap().html);
+        expect(rendered.html).toBe((await renderReportPage(pageDocument(), pageValues, {}))._unsafeUnwrap().html);
     });
 });
 
@@ -580,8 +605,8 @@ describe("the lineage stamp and the popover control", () => {
     };
 
     /** The page of the grounded document, with a provenance document or without one. */
-    function groundedPage(provenance?: { document: string }): string {
-        return renderReportPage(groundedDocument(), groundedValues, { provenance })._unsafeUnwrap().html;
+    async function groundedPage(provenance?: { document: string }): Promise<string> {
+        return (await renderReportPage(groundedDocument(), groundedValues, { provenance }))._unsafeUnwrap().html;
     }
 
     /** The keys that one block stamped, read back from the container of the block. */
@@ -598,8 +623,8 @@ describe("the lineage stamp and the popover control", () => {
             .map((control) => page(control).attr(LINEAGE_KEY_ATTRIBUTE) ?? "");
     }
 
-    it("stamps the block id and the pin of each grounded kind", () => {
-        const html = groundedPage(PROVENANCE);
+    it("stamps the block id and the pin of each grounded kind", async () => {
+        const html = await groundedPage(PROVENANCE);
 
         // Every grounded kind carries the same stamp, thus one reader of the markup serves them all.
         expect(keysOf(html, "met")).toEqual([{ path: "runs/r1/de.csv", hash: "sha256:aaa" }]);
@@ -608,8 +633,8 @@ describe("the lineage stamp and the popover control", () => {
         expect(keysOf(html, "fig")).toEqual([{ path: filePin.path, hash: filePin.hash }]);
     });
 
-    it("keeps one key for each binding of a claim, in marker order", () => {
-        const html = groundedPage(PROVENANCE);
+    it("keeps one key for each binding of a claim, in marker order", async () => {
+        const html = await groundedPage(PROVENANCE);
 
         // The claim binds an artifact and a paper. The place of a control indexes the bindings, thus the two
         // controls address the two keys in the order of the markers.
@@ -620,13 +645,13 @@ describe("the lineage stamp and the popover control", () => {
         expect(placesOf(html, "clm")).toEqual(["0", "1"]);
     });
 
-    it("stamps the external record of a citation in place of a pin", () => {
+    it("stamps the external record of a citation in place of a pin", async () => {
         // A paper is no artifact, thus no pin addresses it and the record identity answers instead.
-        expect(keysOf(groundedPage(PROVENANCE), "cit")).toEqual([{ idKind: "pmid", id: "12345" }]);
+        expect(keysOf(await groundedPage(PROVENANCE), "cit")).toEqual([{ idKind: "pmid", id: "12345" }]);
     });
 
-    it("gives no key and no control to a binding that pins no file", () => {
-        const html = groundedPage(PROVENANCE);
+    it("gives no key and no control to a binding that pins no file", async () => {
+        const html = await groundedPage(PROVENANCE);
 
         // A derivation computes over two inputs, thus the document holds no node of its own bytes. The place
         // stays in the list, thus the places of the other bindings of a block do not move.
@@ -634,8 +659,8 @@ describe("the lineage stamp and the popover control", () => {
         expect(placesOf(html, "drv")).toEqual([]);
     });
 
-    it("emits one control beside the marker of each stamped key", () => {
-        const page = load(groundedPage(PROVENANCE));
+    it("emits one control beside the marker of each stamped key", async () => {
+        const page = load(await groundedPage(PROVENANCE));
 
         // The document binds eight references over seven blocks. Seven of them give a key, and the
         // derivation gives none. The control sits inside the marker, thus one emission point serves each
@@ -644,31 +669,30 @@ describe("the lineage stamp and the popover control", () => {
         expect(page(`button.${LINEAGE_CONTROL_CLASS}[aria-expanded="false"]`).length).toBe(7);
     });
 
-    it("carries no stamp, no control, and no popover script without a document", () => {
-        const html = groundedPage();
+    it("carries no stamp, no control, and no popover script without a document", async () => {
+        const html = await groundedPage();
 
         // Absence of the document is a normal condition. The page then holds the markup that it holds
         // without the lineage, thus nothing on it opens a panel.
         expect(html).not.toContain("data-lineage");
-        expect(html).not.toContain("<button");
+        // The download control of a chart card and the entries of its menu are the one button kind of a page with no document.
+        expect(load(html)("button").not(".report-chart-menu-item, .report-chart-download").length).toBe(0);
         expect(html).not.toContain(LINEAGE_POPOVER);
         expect(load(html)(`.${LINEAGE_CONTROL_CLASS}`).length).toBe(0);
     });
 
-    it("rides the page as one script for a page that carries a document", () => {
-        expect(groundedPage(PROVENANCE)).toContain(LINEAGE_POPOVER);
+    it("rides the page as one script for a page that carries a document", async () => {
+        expect(await groundedPage(PROVENANCE)).toContain(LINEAGE_POPOVER);
     });
 
-    it("keeps a hostile pin inside its attribute", () => {
+    it("keeps a hostile pin inside its attribute", async () => {
         const hostile: TableBlock["binding"] = { kind: "artifact-table", path: 'x" onclick="alert(1)', hash: "sha256:aaa" };
         const document: ReportDocument = {
             title: "T",
             sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "table", id: "tbl", binding: hostile }] }],
         };
-        const html = renderReportPage(
-            document,
-            { tbl: { type: "table", columns: ["gene"], rows: [{ gene: "TP53" }] } },
-            { provenance: PROVENANCE },
+        const html = (
+            await renderReportPage(document, { tbl: { type: "table", columns: ["gene"], rows: [{ gene: "TP53" }] } }, { provenance: PROVENANCE })
         )._unsafeUnwrap().html;
 
         // The markup runtime escapes each attribute value, thus a hostile path reaches the page as text and
@@ -714,8 +738,8 @@ describe("the lineage stamp and the popover control", () => {
         expect(LINEAGE_POPOVER).toContain('{ name: "inflexa:hash", equals: key.hash }');
     });
 
-    it("references the provenance library on a page that carries a document, and never without one", () => {
-        const html = groundedPage(PROVENANCE);
+    it("references the provenance library on a page that carries a document, and never without one", async () => {
+        const html = await groundedPage(PROVENANCE);
         const tag = `<script src="${ASSETS_DIR}/${TSPROV_ASSET.file}"></script>`;
 
         // The library walks a pin, and a page with no document holds no pin to walk. The popover reads the
@@ -724,7 +748,7 @@ describe("the lineage stamp and the popover control", () => {
         expect(html).toContain(tag);
         expect(html.indexOf(tag)).toBeLessThan(html.indexOf(LINEAGE_POPOVER));
         expect(PAGE_ASSETS).toContain(TSPROV_ASSET);
-        expect(groundedPage()).not.toContain(TSPROV_ASSET.file);
+        expect(await groundedPage()).not.toContain(TSPROV_ASSET.file);
     });
 
     it("builds the rail from the edges of the walk, and never from its node set", () => {
@@ -799,8 +823,8 @@ describe("the lineage stamp and the popover control", () => {
         expect(() => new Function(LINEAGE_POPOVER)).not.toThrow();
     });
 
-    it("holds no popover rule that no emitter writes", () => {
-        const html = groundedPage(PROVENANCE);
+    it("holds no popover rule that no emitter writes", async () => {
+        const html = await groundedPage(PROVENANCE);
         const classes = [...new Set([...DESIGN_CSS.matchAll(/\.(report-lineage[a-z-]*)/g)].map((match) => match[1]))];
 
         expect(classes.length).toBeGreaterThan(1);
@@ -933,8 +957,8 @@ describe("the lineage stamp and the popover control", () => {
         expect(handler).not.toContain("close()");
     });
 
-    it("draws the control as a stroke branch glyph that takes the color of its button", () => {
-        const page = load(groundedPage(PROVENANCE));
+    it("draws the control as a stroke branch glyph that takes the color of its button", async () => {
+        const page = load(await groundedPage(PROVENANCE));
         const glyph = page(`button.${LINEAGE_CONTROL_CLASS} svg.report-lineage-glyph`).first();
 
         // The drawing strokes in the current color, thus the muted color of the button and its primary color
@@ -961,8 +985,8 @@ describe("the lineage stamp and the popover control", () => {
         expect(reduced).toContain("animation: none;");
     });
 
-    it("shows the control on the design fixture, which carries a document", () => {
-        const page = load(renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance: FIXTURE_PROVENANCE })._unsafeUnwrap().html);
+    it("shows the control on the design fixture, which carries a document", async () => {
+        const page = load((await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance: FIXTURE_PROVENANCE }))._unsafeUnwrap().html);
 
         // A person examines the fixture page after an edit of the design. A fixture with no control would
         // keep the panel out of that look.
@@ -972,7 +996,7 @@ describe("the lineage stamp and the popover control", () => {
 
 describe("the page stands alone", () => {
     /** A page whose citation card carries a pinned record, thus the body holds a PubMed navigation. */
-    function pageWithACitation(): string {
+    async function pageWithACitation(): Promise<string> {
         const document: ReportDocument = {
             title: "T",
             sections: [
@@ -984,7 +1008,7 @@ describe("the page stands alone", () => {
                 },
             ],
         };
-        return renderReportPage(document, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } })._unsafeUnwrap().html;
+        return (await renderReportPage(document, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } }))._unsafeUnwrap().html;
     }
 
     /**
@@ -993,7 +1017,7 @@ describe("the page stands alone", () => {
      * The derived file sits beside the page and not under `assets/`, thus this page is the one that proves
      * the containment rule against a page-relative link.
      */
-    function pageWithADerivationChain(): string {
+    async function pageWithADerivationChain(): Promise<string> {
         const document: ReportDocument = {
             title: "T",
             sections: [
@@ -1019,7 +1043,7 @@ describe("the page stands alone", () => {
             scriptSource: `${ASSETS_DIR}/d-bbb.py`,
             outputSource: "derived/counts.csv",
         };
-        return renderReportPage(document, {}, { derivations: [chain] })._unsafeUnwrap().html;
+        return (await renderReportPage(document, {}, { derivations: [chain] }))._unsafeUnwrap().html;
     }
 
     /**
@@ -1050,8 +1074,12 @@ describe("the page stands alone", () => {
         return !value.startsWith("/") && !value.split("/").includes("..");
     }
 
-    it("names a remote host at a navigation anchor and at no other element", () => {
-        for (const html of [renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html, pageWithACitation(), pageWithADerivationChain()]) {
+    it("names a remote host at a navigation anchor and at no other element", async () => {
+        for (const html of [
+            (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html,
+            await pageWithACitation(),
+            await pageWithADerivationChain(),
+        ]) {
             const references = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)];
             expect(references.length).toBeGreaterThan(0);
 
@@ -1073,20 +1101,20 @@ describe("the page stands alone", () => {
         expect(insideThePage(`${ASSETS_DIR}/echarts.min.js`)).toBe(true);
     });
 
-    it("links the derived file of a chain as a page-relative path", () => {
+    it("links the derived file of a chain as a page-relative path", async () => {
         // The chain link is the one reference of the page that names no `assets/` prefix. Thus the fixture
         // holds it, and the containment rule above reads it.
-        const html = pageWithADerivationChain();
+        const html = await pageWithADerivationChain();
         expect(attributeReferences(html)).toContain("derived/counts.csv");
     });
 
-    it("names the brand host one time, thus no second surface fetches it", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+    it("names the brand host one time, thus no second surface fetches it", async () => {
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
         expect(html.split(BRAND_LINK).length - 1).toBe(1);
     });
 
-    it("names a staged file for each asset reference of the page", () => {
-        const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+    it("names a staged file for each asset reference of the page", async () => {
+        const rendered = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap();
         const sidecars = tableBindingsOf(FIXTURE_DOCUMENT.sections).map((binding) => tableSidecarName(binding.hash, binding.path));
         const staged = new Set([...PAGE_ASSETS.map((asset) => asset.file), ...rendered.dataAssets.map((asset) => asset.name), ...sidecars]);
         const prefix = `${ASSETS_DIR}/`;
@@ -1099,8 +1127,8 @@ describe("the page stands alone", () => {
         expect(unstaged).toEqual([]);
     });
 
-    it("names each library and each font under the deps directory, and each report-side file at the root", () => {
-        const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+    it("names each library and each font under the deps directory, and each report-side file at the root", async () => {
+        const rendered = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap();
         const deps = `${ASSETS_DIR}/${DEPS_DIR}/`;
 
         // The shipped libraries and fonts sit apart from what the report produced. The manifest carries the
@@ -1112,7 +1140,13 @@ describe("the page stands alone", () => {
         // A data asset is a file that this render produced, thus it stays at the root of the directory.
         expect(rendered.dataAssets.length).toBeGreaterThan(0);
         expect(rendered.dataAssets.filter((asset) => asset.name.includes("/"))).toEqual([]);
+        // The page loads each payload as a script, and it links each SVG file of a chart. No SVG loads as a script.
         for (const asset of rendered.dataAssets) {
+            if (asset.name.endsWith(".svg")) {
+                expect(rendered.html).toContain(`href="${ASSETS_DIR}/${asset.name}"`);
+                expect(rendered.html).not.toContain(`<script src="${ASSETS_DIR}/${asset.name}"`);
+                continue;
+            }
             expect(rendered.html).toContain(`<script src="${ASSETS_DIR}/${asset.name}"></script>`);
         }
     });
@@ -1198,35 +1232,35 @@ describe("renderReportPage metric grouping", () => {
         };
     }
 
-    it("groups a run of three metrics into one grid of three cards", () => {
-        const html = renderReportPage(pageOf([metric("m1"), metric("m2"), metric("m3")]), scalars("m1", "m2", "m3"))._unsafeUnwrap().html;
+    it("groups a run of three metrics into one grid of three cards", async () => {
+        const html = (await renderReportPage(await pageOf([metric("m1"), metric("m2"), metric("m3")]), scalars("m1", "m2", "m3")))._unsafeUnwrap().html;
         expect(counts(html)).toEqual({ grids: 1, cards: 3, grouped: 3 });
     });
 
-    it("leaves a lone metric between two texts as a bare card", () => {
-        const html = renderReportPage(pageOf([text("t1"), metric("m1"), text("t2")]), scalars("m1"))._unsafeUnwrap().html;
+    it("leaves a lone metric between two texts as a bare card", async () => {
+        const html = (await renderReportPage(await pageOf([text("t1"), metric("m1"), text("t2")]), scalars("m1")))._unsafeUnwrap().html;
         // One metric reads as one statistic, not as a row of statistics. Thus no grid wraps it.
         expect(counts(html)).toEqual({ grids: 0, cards: 1, grouped: 0 });
     });
 
-    it("groups a run of two that ends the section", () => {
-        const html = renderReportPage(pageOf([text("t1"), metric("m1"), metric("m2")]), scalars("m1", "m2"))._unsafeUnwrap().html;
+    it("groups a run of two that ends the section", async () => {
+        const html = (await renderReportPage(await pageOf([text("t1"), metric("m1"), metric("m2")]), scalars("m1", "m2")))._unsafeUnwrap().html;
         expect(counts(html)).toEqual({ grids: 1, cards: 2, grouped: 2 });
     });
 
-    it("groups a run inside a nested section", () => {
+    it("groups a run inside a nested section", async () => {
         const nested: Block = {
             kind: "section",
             id: "inner",
             title: "Inner",
             blocks: [metric("m1"), metric("m2"), text("t1")],
         };
-        const html = renderReportPage(pageOf([text("t0"), nested]), scalars("m1", "m2"))._unsafeUnwrap().html;
+        const html = (await renderReportPage(await pageOf([text("t0"), nested]), scalars("m1", "m2")))._unsafeUnwrap().html;
         expect(counts(html)).toEqual({ grids: 1, cards: 2, grouped: 2 });
     });
 
-    it("reports the missing value of one metric inside a run", () => {
-        const problems = renderReportPage(pageOf([metric("m1"), metric("m2"), metric("m3")]), scalars("m1", "m3"))._unsafeUnwrapErr();
+    it("reports the missing value of one metric inside a run", async () => {
+        const problems = (await renderReportPage(await pageOf([metric("m1"), metric("m2"), metric("m3")]), scalars("m1", "m3")))._unsafeUnwrapErr();
         expect(problems.length).toBe(1);
         expect(problems[0].kind).toBe("missing-value");
         expect(problems[0].blockId).toBe("m2");
@@ -1234,19 +1268,19 @@ describe("renderReportPage metric grouping", () => {
 });
 
 describe("renderReportPage value validation", () => {
-    it("reports a missing metric value and gives no HTML", () => {
+    it("reports a missing metric value and gives no HTML", async () => {
         const document: ReportDocument = {
             title: "T",
             sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "metric", id: "m1", label: "L", value: scalarRef }] }],
         };
         // `_unsafeUnwrapErr` throws on an ok result, thus the direct chain asserts the err case and no HTML.
-        const problems = renderReportPage(document, {})._unsafeUnwrapErr();
+        const problems = (await renderReportPage(document, {}))._unsafeUnwrapErr();
         expect(problems.length).toBe(1);
         expect(problems[0].kind).toBe("missing-value");
         expect(problems[0].blockId).toBe("m1");
     });
 
-    it("reports a wrong shape when a chart gets a scalar", () => {
+    it("reports a wrong shape when a chart gets a scalar", async () => {
         const document: ReportDocument = {
             title: "T",
             sections: [
@@ -1266,7 +1300,7 @@ describe("renderReportPage value validation", () => {
                 },
             ],
         };
-        const problems = renderReportPage(document, { c1: { type: "scalar", value: 1 } })._unsafeUnwrapErr();
+        const problems = (await renderReportPage(document, { c1: { type: "scalar", value: 1 } }))._unsafeUnwrapErr();
         expect(problems.length).toBe(1);
         expect(problems[0].kind).toBe("wrong-shape");
         expect(problems[0].blockId).toBe("c1");
@@ -1274,7 +1308,7 @@ describe("renderReportPage value validation", () => {
         expect(problems[0].detail).toContain("table");
     });
 
-    it("collects both problems when two entries are absent", () => {
+    it("collects both problems when two entries are absent", async () => {
         const document: ReportDocument = {
             title: "T",
             sections: [
@@ -1289,19 +1323,19 @@ describe("renderReportPage value validation", () => {
                 },
             ],
         };
-        const problems = renderReportPage(document, {})._unsafeUnwrapErr();
+        const problems = (await renderReportPage(document, {}))._unsafeUnwrapErr();
         expect(problems.length).toBe(2);
         const ids = problems.map((problem) => problem.blockId);
         expect(ids).toContain("m1");
         expect(ids).toContain("tbl");
     });
 
-    it("renders a claim with no value entry", () => {
+    it("renders a claim with no value entry", async () => {
         const document: ReportDocument = {
             title: "T",
             sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "claim", id: "c1", content: { prose: "A claim." }, bindings: [citation] }] }],
         };
-        const result = renderReportPage(document, {});
+        const result = await renderReportPage(document, {});
         expect(result.isOk()).toBe(true);
         const html = result._unsafeUnwrap().html;
         expect(html).toContain("A claim.");
@@ -1310,7 +1344,7 @@ describe("renderReportPage value validation", () => {
 });
 
 describe("renderReportPage navigation and references", () => {
-    it("targets the three section ids from the navigation", () => {
+    it("targets the three section ids from the navigation", async () => {
         const child: TextBlock = { kind: "text", id: "t", content: { prose: "x" } };
         const document: ReportDocument = {
             title: "T",
@@ -1320,13 +1354,13 @@ describe("renderReportPage navigation and references", () => {
                 { kind: "section", id: "sec-3", title: "Three", blocks: [child] },
             ],
         };
-        const html = renderReportPage(document, {})._unsafeUnwrap().html;
+        const html = (await renderReportPage(document, {}))._unsafeUnwrap().html;
         expect(html).toContain(`href="#sec-1"`);
         expect(html).toContain(`href="#sec-2"`);
         expect(html).toContain(`href="#sec-3"`);
     });
 
-    it("lists one entry for a reference that a claim and a citation share", () => {
+    it("lists one entry for a reference that a claim and a citation share", async () => {
         const shared: CitationBlock["binding"] = { kind: "citation", idKind: "pmid", id: "999", raw: "Shared source" };
         const document: ReportDocument = {
             title: "T",
@@ -1342,14 +1376,14 @@ describe("renderReportPage navigation and references", () => {
                 },
             ],
         };
-        const html = renderReportPage(document, {})._unsafeUnwrap().html;
+        const html = (await renderReportPage(document, {}))._unsafeUnwrap().html;
         // The appendix holds one entry.
         expect(html.split(`<li id="ref-`).length - 1).toBe(1);
         // The claim marker and the citation marker point at the same entry.
         expect(html.split(`href="#ref-1"`).length - 1).toBe(2);
     });
 
-    it("lists one entry for one paper that two blocks name with different display text", () => {
+    it("lists one entry for one paper that two blocks name with different display text", async () => {
         const document: ReportDocument = {
             title: "T",
             sections: [
@@ -1373,7 +1407,7 @@ describe("renderReportPage navigation and references", () => {
                 },
             ],
         };
-        const html = renderReportPage(document, {})._unsafeUnwrap().html;
+        const html = (await renderReportPage(document, {}))._unsafeUnwrap().html;
 
         // The key names the paper, and the raw text is the words of the author. Thus one paper takes one
         // number, and the two markers point at the one entry.
@@ -1416,13 +1450,15 @@ describe("the citation card and its appendix entry", () => {
         ],
     };
 
-    it("shows the marker, the short citation, the note, and the PubMed link of a recorded key", () => {
-        const html = renderReportPage(
-            twoOfEach,
-            {},
-            {
-                records: { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } },
-            },
+    it("shows the marker, the short citation, the note, and the PubMed link of a recorded key", async () => {
+        const html = (
+            await renderReportPage(
+                twoOfEach,
+                {},
+                {
+                    records: { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } },
+                },
+            )
         )._unsafeUnwrap().html;
         const card = load(html)("div.report-citation").last();
 
@@ -1441,15 +1477,15 @@ describe("the citation card and its appendix entry", () => {
         expect(entry.find("div.report-cite-description").text()).toBe("The resistance paper.");
     });
 
-    it("adds no description line to a record that carries none", () => {
-        const html = renderReportPage(twoOfEach, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } })._unsafeUnwrap().html;
+    it("adds no description line to a record that carries none", async () => {
+        const html = (await renderReportPage(twoOfEach, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } }))._unsafeUnwrap().html;
 
         expect(load(html)("li#ref-4").text()).toContain("Hugo et al. 2016");
         expect(load(html)("li#ref-4 div.report-cite-description").length).toBe(0);
     });
 
-    it("shows the key and the note alone for a key that the record map does not hold", () => {
-        const html = renderReportPage(twoOfEach, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } })._unsafeUnwrap().html;
+    it("shows the key and the note alone for a key that the record map does not hold", async () => {
+        const html = (await renderReportPage(twoOfEach, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } }))._unsafeUnwrap().html;
         const card = load(html)("div.report-citation").first();
 
         expect(card.find("a.report-citation-source").length).toBe(0);
@@ -1460,8 +1496,8 @@ describe("the citation card and its appendix entry", () => {
         expect(load(html)("li#ref-3 span.report-cite-source").length).toBe(0);
     });
 
-    it("counts the artifact markers and the citation markers in one ladder", () => {
-        const page = load(renderReportPage(twoOfEach, {})._unsafeUnwrap().html);
+    it("counts the artifact markers and the citation markers in one ladder", async () => {
+        const page = load((await renderReportPage(twoOfEach, {}))._unsafeUnwrap().html);
 
         // Every marker of the page counts in one sequence, in document order.
         expect(
@@ -1479,17 +1515,17 @@ describe("the citation card and its appendix entry", () => {
         ).toEqual(["ref-1", "ref-2", "ref-3", "ref-4"]);
     });
 
-    it("names PubMed as a navigation and never as a loaded resource", () => {
-        const html = renderReportPage(twoOfEach, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } })._unsafeUnwrap().html;
+    it("names PubMed as a navigation and never as a loaded resource", async () => {
+        const html = (await renderReportPage(twoOfEach, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } }))._unsafeUnwrap().html;
         const link = "https://pubmed.ncbi.nlm.nih.gov/26997480/";
 
         // A navigation costs no request when the page opens, thus the page still stands alone.
         expect(referenceSites(html, link)).toEqual(["a[href]"]);
     });
 
-    it("renders a stored pin that holds no record map as it did before", () => {
-        const withNoRecords = renderReportPage(twoOfEach, {})._unsafeUnwrap().html;
-        const withEmptyRecords = renderReportPage(twoOfEach, {}, { records: {} })._unsafeUnwrap().html;
+    it("renders a stored pin that holds no record map as it did before", async () => {
+        const withNoRecords = (await renderReportPage(twoOfEach, {}))._unsafeUnwrap().html;
+        const withEmptyRecords = (await renderReportPage(twoOfEach, {}, { records: {} }))._unsafeUnwrap().html;
 
         expect(withNoRecords).toBe(withEmptyRecords);
         expect(withNoRecords).not.toContain("pubmed.ncbi.nlm.nih.gov");
@@ -1498,7 +1534,10 @@ describe("the citation card and its appendix entry", () => {
 });
 
 describe("the page identity", () => {
-    const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+    let html = "";
+    beforeAll(async () => {
+        html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
+    });
 
     it("closes the page with the Inflexa footer note", () => {
         expect(html).toContain("Powered by Inflexa");
@@ -1548,8 +1587,8 @@ describe("the one content column", () => {
         cht: { type: "table", rows: [{ day: "Mon", count: 1 }] },
     };
 
-    it("holds the prose, the table, and the chart inside the one column", () => {
-        const page = load(renderReportPage(columnDocument, columnValues)._unsafeUnwrap().html);
+    it("holds the prose, the table, and the chart inside the one column", async () => {
+        const page = load((await renderReportPage(columnDocument, columnValues))._unsafeUnwrap().html);
         expect(page(".report-content .report-prose").length).toBe(1);
         expect(page(".report-content .report-table").length).toBe(1);
         expect(page(".report-content .report-chart").length).toBe(1);
@@ -1605,15 +1644,15 @@ describe("the References appendix", () => {
             .map((node) => page(node).text());
     }
 
-    it("titles the one appendix References on a page of artifacts alone", () => {
-        const html = renderReportPage(artifactDocument, {})._unsafeUnwrap().html;
+    it("titles the one appendix References on a page of artifacts alone", async () => {
+        const html = (await renderReportPage(artifactDocument, {}))._unsafeUnwrap().html;
 
         expect(appendixTitles(html)).toEqual(["References"]);
         expect(load(html)("ol.report-references li").length).toBe(1);
     });
 
-    it("titles the one appendix References on a page of papers alone", () => {
-        const html = renderReportPage(citationDocument, {})._unsafeUnwrap().html;
+    it("titles the one appendix References on a page of papers alone", async () => {
+        const html = (await renderReportPage(citationDocument, {}))._unsafeUnwrap().html;
 
         // One notation sends the reader to one list, thus a page of papers wears the same title as a page
         // of artifacts.
@@ -1621,8 +1660,8 @@ describe("the References appendix", () => {
         expect(load(html)("ol.report-references li").length).toBe(1);
     });
 
-    it("holds both kinds in one list, in number order, each under its kind tag", () => {
-        const html = renderReportPage(bothDocument, {})._unsafeUnwrap().html;
+    it("holds both kinds in one list, in number order, each under its kind tag", async () => {
+        const html = (await renderReportPage(bothDocument, {}))._unsafeUnwrap().html;
         const page = load(html);
         const items = page("ol.report-references li").toArray();
 
@@ -1633,19 +1672,19 @@ describe("the References appendix", () => {
         expect(items.map((node) => page(node).find("span.report-ref-kind").first().text())).toEqual(["Artifact value", "Citation"]);
     });
 
-    it("renders no appendix band for a page that binds nothing", () => {
+    it("renders no appendix band for a page that binds nothing", async () => {
         const bare: ReportDocument = {
             title: "T",
             sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "text", id: "t", content: { prose: "Prose." } }] }],
         };
-        const html = renderReportPage(bare, {})._unsafeUnwrap().html;
+        const html = (await renderReportPage(bare, {}))._unsafeUnwrap().html;
 
         expect(appendixTitles(html)).toEqual([]);
         expect(html).not.toContain(">References<");
     });
 
-    it("carries one bracket notation and neither retired heading on the fixture page", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+    it("carries one bracket notation and neither retired heading on the fixture page", async () => {
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
         const page = load(html);
         const markers = page("span.report-marker a")
             .toArray()
@@ -1694,9 +1733,9 @@ describe("the evidentiary bindings in the appendix", () => {
     };
 
     /** One page whose section holds the given blocks. */
-    function pageOf(blocks: Block[], values: RenderValues, derivations?: readonly (typeof chain)[]): string {
+    async function pageOf(blocks: Block[], values: RenderValues, derivations?: readonly (typeof chain)[]): Promise<string> {
         const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] };
-        return renderReportPage(document, values, { derivations })._unsafeUnwrap().html;
+        return (await renderReportPage(document, values, { derivations }))._unsafeUnwrap().html;
     }
 
     /** One block of each evidentiary kind over the given artifact. Each one binds through its own kind. */
@@ -1723,8 +1762,8 @@ describe("the evidentiary bindings in the appendix", () => {
         fig: { type: "figure", src: "assets/plot.png" },
     };
 
-    it("gives a bound table its marker and its appendix entry", () => {
-        const html = pageOf([tableBlock(PINNED, PINNED_HASH)], oneRow);
+    it("gives a bound table its marker and its appendix entry", async () => {
+        const html = await pageOf([tableBlock(PINNED, PINNED_HASH)], oneRow);
         const page = load(html);
 
         // Every evidentiary block ledgers, thus the card carries a marker and the appendix names the path.
@@ -1733,16 +1772,114 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(page("li#ref-1").text()).toContain("Artifact table");
     });
 
-    it("gives a bound chart its marker and its appendix entry", () => {
-        const html = pageOf([chartBlock(PINNED, PINNED_HASH)], oneRow);
+    it("gives a bound chart its marker and its appendix entry", async () => {
+        const html = await pageOf([chartBlock(PINNED, PINNED_HASH)], oneRow);
         const page = load(html);
 
         expect(page(".report-chart-title .report-marker a").attr("href")).toBe("#ref-1");
         expect(page("li#ref-1").text()).toContain(PINNED);
     });
 
-    it("gives one number to a table and a chart over one artifact", () => {
-        const html = pageOf([tableBlock(PINNED, PINNED_HASH), chartBlock(PINNED, PINNED_HASH)], oneRow);
+    it("marks the track and each statistic of a chart on its title line, and lists each one in the appendix", async () => {
+        const TRACK = "runs/run-1/step-c/output/domains.csv";
+        const STATS = "runs/run-1/step-c/output/logrank.csv";
+        const chart: ChartBlock = {
+            kind: "chart",
+            id: "cht",
+            title: "DNMT3A",
+            binding: { kind: "artifact-table", path: PINNED, hash: PINNED_HASH },
+            chartType: "lollipop",
+            encoding: { x: "day", y: "count" },
+            track: { binding: { kind: "artifact-table", path: TRACK, hash: PINNED_HASH }, start: "start", end: "end", label: "domain" },
+            statistics: [
+                { label: "Log-rank p", value: { kind: "artifact-value", path: STATS, hash: PINNED_HASH, locator: { column: "pvalue", row: 0 } } },
+                { label: "HR", value: { kind: "artifact-value", path: STATS, hash: PINNED_HASH, locator: { column: "hr", row: 0 } } },
+            ],
+        };
+        // A test module draws the chart, and it prints each statistic through the shared statistics text.
+        const figure: FigureModule = {
+            reads: new Set<FigureMember>(["x", "y", "track", "statistics"]),
+            derive: (_block, rows, context) =>
+                ok({
+                    xAxis: { type: "value" },
+                    yAxis: { type: "value" },
+                    series: [{ type: "scatter", name: "count", data: rows.map((row) => [row.day, row.count]) }],
+                    graphic: statisticsGraphic(context.statistics, "top-right"),
+                }),
+        };
+        const values: RenderValues = {
+            cht: {
+                type: "table",
+                rows: [{ day: 1, count: 2 }],
+                track: { rows: [{ start: 1, end: 90, domain: "PWWP" }] },
+                statistics: [
+                    { label: "Log-rank p", value: 0.0013 },
+                    { label: "HR", value: 0.53 },
+                ],
+            },
+        };
+        const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [chart] }] };
+        const rendered = (await renderReportPage(document, values, { chart: { figures: { lollipop: figure } } }))._unsafeUnwrap();
+        const page = load(rendered.html);
+
+        // The title line carries the binding, the track, and each statistic, in block order.
+        const markers = page(".report-chart-title .report-marker a")
+            .toArray()
+            .map((node) => page(node).attr("href"));
+        expect(markers).toEqual(["#ref-1", "#ref-2", "#ref-3", "#ref-4"]);
+        expect(page("ol.report-references li").length).toBe(4);
+        expect(page("li#ref-1").text()).toContain(PINNED);
+        expect(page("li#ref-2").text()).toContain(TRACK);
+        expect(page("li#ref-3").text()).toContain(STATS);
+        expect(page("li#ref-3").text()).toContain("pvalue");
+        expect(page("li#ref-4").text()).toContain("hr");
+        // The option prints each statistic in the number format of its column.
+        const option = JSON.parse(page(".report-chart script[type='application/json']").text()) as Record<string, unknown>;
+        const graphic = (option.graphic as Array<{ style: { text: string } }>)[0];
+        expect(graphic.style.text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
+    });
+
+    it("marks the tree of each axis of a chart after its binding, and lists each one in the appendix", async () => {
+        const SAMPLE_TREE = "runs/run-1/step-c/output/sample_tree.csv";
+        const GENE_TREE = "runs/run-1/step-c/output/gene_tree.csv";
+        const tree = (path: string) => ({
+            binding: { kind: "artifact-table" as const, path, hash: PINNED_HASH },
+            parent: "parent",
+            child: "child",
+            height: "height",
+        });
+        const chart: ChartBlock = {
+            kind: "chart",
+            id: "hm",
+            title: "Top genes",
+            binding: { kind: "artifact-table", path: PINNED, hash: PINNED_HASH },
+            chartType: "heatmap",
+            encoding: { x: "day", y: "count" },
+            trees: { y: tree(GENE_TREE), x: tree(SAMPLE_TREE) },
+        };
+        const figure: FigureModule = {
+            reads: new Set<FigureMember>(["x", "y", "trees"]),
+            derive: (_block, rows) =>
+                ok({
+                    xAxis: { type: "value" },
+                    yAxis: { type: "value" },
+                    series: [{ type: "scatter", name: "count", data: rows.map((row) => [row.day, row.count]) }],
+                }),
+        };
+        const edges = [{ parent: "n1", child: "a", height: 1 }];
+        const values: RenderValues = { hm: { type: "table", rows: [{ day: 1, count: 2 }], trees: { x: { rows: edges }, y: { rows: edges } } } };
+        const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [chart] }] };
+        const page = load((await renderReportPage(document, values, { chart: { figures: { heatmap: figure } } }))._unsafeUnwrap().html);
+        const markers = page(".report-chart-title .report-marker a")
+            .toArray()
+            .map((node) => page(node).attr("href"));
+        expect(markers).toEqual(["#ref-1", "#ref-2", "#ref-3"]);
+        expect(page("li#ref-2").text()).toContain(SAMPLE_TREE);
+        expect(page("li#ref-3").text()).toContain(GENE_TREE);
+    });
+
+    it("gives one number to a table and a chart over one artifact", async () => {
+        const html = await pageOf([tableBlock(PINNED, PINNED_HASH), chartBlock(PINNED, PINNED_HASH)], oneRow);
         const page = load(html);
 
         // The two blocks bind one reference. The ledger keeps one identity, thus the appendix holds one
@@ -1751,14 +1888,14 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(page('.report-marker a[href="#ref-1"]').length).toBe(2);
     });
 
-    it("gives a marker and a chain entry to each evidentiary kind over one derived path", () => {
+    it("gives a marker and a chain entry to each evidentiary kind over one derived path", async () => {
         const blocks = [
             metricBlock(DERIVED, DERIVED_HASH),
             tableBlock(DERIVED, DERIVED_HASH),
             chartBlock(DERIVED, DERIVED_HASH),
             figureBlock(DERIVED, DERIVED_HASH),
         ];
-        const page = load(pageOf(blocks, oneRow, [chain]));
+        const page = load(await pageOf(blocks, oneRow, [chain]));
 
         // Each of the four cards carries its marker, each on the line that names the card.
         expect(page(".stat-card-label .report-marker").length).toBe(1);
@@ -1778,8 +1915,8 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(page("ol.report-references li .report-ref-chain").length).toBe(3);
     });
 
-    it("states the chain of a derived chart in its appendix entry", () => {
-        const html = pageOf([chartBlock(DERIVED, DERIVED_HASH)], oneRow, [chain]);
+    it("states the chain of a derived chart in its appendix entry", async () => {
+        const html = await pageOf([chartBlock(DERIVED, DERIVED_HASH)], oneRow, [chain]);
         const entry = load(html)("li#ref-1").text();
 
         // The entry carries each source with the head of its hash, and the head of the script hash.
@@ -1792,13 +1929,13 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(html).not.toContain("a".repeat(13));
     });
 
-    it("renders a document with no derived path byte-identically with the records and without them", () => {
+    it("renders a document with no derived path byte-identically with the records and without them", async () => {
         const blocks = [tableBlock(PINNED, PINNED_HASH), chartBlock(PINNED, PINNED_HASH)];
 
         // The chain names a path that no binding of this document holds. Thus the page is a pure function
         // of the document and the values, exactly as it was before the records rode the call.
-        expect(pageOf(blocks, oneRow, [chain])).toBe(pageOf(blocks, oneRow));
-        expect(load(pageOf(blocks, oneRow))(".report-ref-chain").length).toBe(0);
+        expect(await pageOf(blocks, oneRow, [chain])).toBe(await pageOf(blocks, oneRow));
+        expect(load(await pageOf(blocks, oneRow))(".report-ref-chain").length).toBe(0);
     });
 });
 
@@ -1957,8 +2094,8 @@ describe("the section scrollspy", () => {
         expect(run.active()).toEqual([]);
     });
 
-    it("rides the page beside the other scripts, with its rule in the design source", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+    it("rides the page beside the other scripts, with its rule in the design source", async () => {
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
         expect(html).toContain(SECTION_SPY);
         expect(DESIGN_CSS).toContain(`.${ACTIVE_CLASS}`);
     });
@@ -1987,8 +2124,8 @@ describe("the table grid", () => {
         };
     }
 
-    it("references the grid bundle as a classic script from the staged assets", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+    it("references the grid bundle as a classic script from the staged assets", async () => {
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
 
         // A `file://` page refuses a module request, thus the runtime loads as a classic script. The
         // manifest carries the entry, thus the stage step of the caller writes the file that the tag names.
@@ -1996,7 +2133,7 @@ describe("the table grid", () => {
         expect(PAGE_ASSETS).toContain(AG_GRID_ASSET);
     });
 
-    it("skips the grid runtime and the boot on a page with no table", () => {
+    it("skips the grid runtime and the boot on a page with no table", async () => {
         const document: ReportDocument = {
             title: "T",
             sections: [
@@ -2016,7 +2153,7 @@ describe("the table grid", () => {
                 },
             ],
         };
-        const html = renderReportPage(document, { cht: { type: "table", rows: [{ label: "a", count: 5 }] } })._unsafeUnwrap().html;
+        const html = (await renderReportPage(document, { cht: { type: "table", rows: [{ label: "a", count: 5 }] } }))._unsafeUnwrap().html;
 
         // The bundle weighs about two megabytes, and this page builds no grid. Thus it names neither the
         // runtime nor the boot, and the chart runtime stays.
@@ -2025,8 +2162,8 @@ describe("the table grid", () => {
         expect(html).toContain(`${ASSETS_DIR}/${ECHARTS_ASSET.file}`);
     });
 
-    it("boots after the decode and before the readiness signal", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+    it("boots after the decode and before the readiness signal", async () => {
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
 
         // The boot reads the decoded rows, thus it runs after the decoder. It runs before the chart
         // bootstrap, which signals readiness, thus a capture of the page shows a page whose grids stand.
@@ -2034,9 +2171,9 @@ describe("the table grid", () => {
         expect(html.indexOf(GRID_BOOTSTRAP)).toBeLessThan(html.indexOf(CHART_BOOTSTRAP));
     });
 
-    it("puts one mount and no row on a page of many rows", () => {
+    it("puts one mount and no row on a page of many rows", async () => {
         const over = tablePage(14_201);
-        const page = load(renderReportPage(over.document, over.values)._unsafeUnwrap().html);
+        const page = load((await renderReportPage(over.document, over.values))._unsafeUnwrap().html);
 
         expect(page(`[${GRID_MOUNT_ATTRIBUTE}]`).length).toBe(1);
         expect(page("tr").length).toBe(0);
@@ -2439,8 +2576,8 @@ describe("the grid boot", () => {
 });
 
 describe("the retired table enhancer", () => {
-    it("carries no marker, no filter input, and no cap class on a rendered page", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+    it("carries no marker, no filter input, and no cap class on a rendered page", async () => {
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
 
         // The grid owns the table presentation, thus the page holds one table mechanism and no second one.
         for (const retired of ["report-table-live", "report-table-filter", "report-table-controls", "report-table-toggle", "report-row-hidden"]) {
@@ -2448,8 +2585,8 @@ describe("the retired table enhancer", () => {
         }
     });
 
-    it("holds no rule and no markup of the plain table", () => {
-        const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+    it("holds no rule and no markup of the plain table", async () => {
+        const rendered = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap();
         const page = load(rendered.html);
 
         // The grid renders each cell, thus the page carries one mount for each table and no table markup.
@@ -2463,12 +2600,92 @@ describe("the retired table enhancer", () => {
 });
 
 describe("renderReportPage readiness signal", () => {
-    it("carries the theme-ready dispatch and the sentinel in the page markup", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+    it("carries the theme-ready dispatch and the sentinel in the page markup", async () => {
+        const html = (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html;
         // The bootstrap signals readiness when it completes, thus a capture keys on a real event and returns
         // when the page is ready instead of at a timeout.
         expect(html).toContain("window.__inflexaThemeReady = true");
         expect(html).toContain('document.dispatchEvent(new Event("inflexa-theme-ready"))');
+    });
+});
+
+describe("the chart bootstrap waits for each chart to finish", () => {
+    /** One fake chart of the runtime: it keeps its listeners, and a test fires the `finished` event itself. */
+    interface FakeChart {
+        readonly listeners: Map<string, () => void>;
+        width: number;
+        height: number;
+        resized: number;
+    }
+
+    /**
+     * Run the emitted bootstrap over fake containers of the given CSS sizes. Give the readiness flag, each
+     * fake chart, and the resize listener of the window.
+     */
+    function boot(sizes: ReadonlyArray<{ width: number; height: number }>): { ready: () => boolean; charts: FakeChart[]; resize: () => void } {
+        const win: Record<string, unknown> = {};
+        let onResize: () => void = () => undefined;
+        win.addEventListener = (event: string, listener: () => void) => {
+            if (event === "resize") onResize = listener;
+        };
+        const containers = sizes.map((size, index) => ({
+            clientWidth: size.width,
+            clientHeight: size.height,
+            getAttribute: () => `chart-${index}`,
+            nextElementSibling: { getAttribute: () => "application/json", textContent: "{}" },
+        }));
+        const charts: FakeChart[] = [];
+        const byContainer = new Map<unknown, FakeChart>();
+        const doc = { querySelectorAll: () => containers, dispatchEvent: () => true, addEventListener: () => undefined };
+        const echarts = {
+            init: (container: { clientWidth: number; clientHeight: number }) => {
+                const chart: FakeChart = { listeners: new Map(), width: container.clientWidth, height: container.clientHeight, resized: 0 };
+                charts.push(chart);
+                byContainer.set(container, chart);
+                return {
+                    on: (event: string, listener: () => void) => chart.listeners.set(event, listener),
+                    setOption: () => undefined,
+                    getWidth: () => chart.width,
+                    getHeight: () => chart.height,
+                    resize: () => {
+                        chart.resized += 1;
+                    },
+                };
+            },
+            getInstanceByDom: (container: unknown) => {
+                const chart = byContainer.get(container);
+                return chart === undefined ? undefined : { getWidth: () => chart.width, getHeight: () => chart.height, resize: () => (chart.resized += 1) };
+            },
+            registerCustomSeries: () => undefined,
+        };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        expect(errors).toEqual([]);
+        return { ready: () => win.__inflexaThemeReady === true, charts, resize: () => onResize() };
+    }
+
+    it("signals readiness after the last chart finishes its render, and not before", () => {
+        // A dense chart draws in chunks over some frames. A capture that keys on the signal must see each chunk.
+        const { ready, charts } = boot([
+            { width: 600, height: 400 },
+            { width: 600, height: 400 },
+        ]);
+        expect(ready()).toBe(false);
+        charts[0].listeners.get("finished")?.();
+        expect(ready()).toBe(false);
+        charts[1].listeners.get("finished")?.();
+        expect(ready()).toBe(true);
+    });
+
+    it("draws a chart again on a window resize only when its container changes size", () => {
+        // A capture past the viewport resizes the window and keeps each container. A redraw there would restart
+        // the chunked render of a dense chart, and the capture would show its first chunk alone.
+        const { charts, resize } = boot([{ width: 600, height: 400 }]);
+        resize();
+        expect(charts[0].resized).toBe(0);
+        charts[0].width = 500;
+        resize();
+        expect(charts[0].resized).toBe(1);
     });
 });
 
@@ -2493,7 +2710,7 @@ describe("the chart bootstrap under a broken chart", () => {
             dispatchEvent: () => true,
             addEventListener: () => undefined,
         };
-        const echarts = { init, getInstanceByDom: () => undefined };
+        const echarts = { init, getInstanceByDom: () => undefined, registerCustomSeries: () => undefined };
         const pageConsole = { error: (line: string) => errors.push(line) };
         // The bootstrap is browser source text. Each global arrives as a parameter, thus the fake console
         // of the page is the one that the script writes to.
@@ -2508,7 +2725,7 @@ describe("the chart bootstrap under a broken chart", () => {
                 throw new Error("bad option");
             }
             good.push("init");
-            return { setOption: () => undefined };
+            return { on: (_event: string, listener: () => void) => listener(), setOption: () => undefined };
         });
 
         // The readiness signal still fires, thus a capture returns on the event and not at its timeout.
@@ -2522,31 +2739,156 @@ describe("the chart bootstrap under a broken chart", () => {
     });
 });
 
+describe("the chart bootstrap binds the toolbox", () => {
+    /**
+     * Run the bootstrap over one container whose option carries the toolbox of a scatter. Give the set options, the
+     * window listeners, and the canvas layers of the chart.
+     */
+    function bootToolbox(): {
+        applied: Record<string, unknown>[];
+        listeners: Record<string, () => void>;
+        layers: { zlevel: number; dom: { style: Record<string, string> } }[];
+    } {
+        const applied: Record<string, unknown>[] = [];
+        const listeners: Record<string, () => void> = {};
+        const layers = [0, 1, TOOLBOX_ZLEVEL].map((zlevel) => ({ zlevel, dom: { style: {} as Record<string, string> } }));
+        const win: Record<string, unknown> = {
+            addEventListener: (event: string, listener: () => void) => {
+                listeners[event] = listener;
+            },
+        };
+        const option = { xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "scatter", data: [[1, 2]] }], toolbox: chartToolbox("scatter") };
+        const container = {
+            getAttribute: () => "chart-points",
+            nextElementSibling: { getAttribute: () => "application/json", textContent: JSON.stringify(option) },
+        };
+        const painter = {
+            eachLayer: (visit: (layer: (typeof layers)[number], zlevel: number) => void) => {
+                for (const layer of layers) visit(layer, layer.zlevel);
+            },
+        };
+        const instance = {
+            on: (_event: string, listener: () => void) => listener(),
+            setOption: (given: Record<string, unknown>) => applied.push(given),
+            getZr: () => ({ painter }),
+        };
+        const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
+        const echarts = { init: () => instance, getInstanceByDom: () => instance, registerCustomSeries: () => undefined };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        expect(errors).toEqual([]);
+        return { applied, listeners, layers };
+    }
+
+    it("binds each handler name of the toolbox to its page function before the chart reads the option", () => {
+        const { applied } = bootToolbox();
+        const feature = (applied[0].toolbox as { feature: Record<string, Record<string, unknown>> }).feature;
+        expect(typeof feature.myExport.onclick).toBe("function");
+        expect((feature.myExport.onclick as { name: string }).name).toBe(EXPORT_MENU_FUNCTION);
+        expect((feature.dataView.optionToContent as { name: string }).name).toBe(DATA_VIEW_FUNCTION);
+    });
+
+    it("hides the canvas layer of the toolbox of each chart for the print, and shows it again after the print", () => {
+        const { applied, listeners, layers } = bootToolbox();
+        listeners.beforeprint();
+        // A new option draws each series again, and a dense series then draws in chunks, thus the print sets no option.
+        expect(applied.length).toBe(1);
+        expect(layers.map((layer) => layer.dom.style.visibility)).toEqual([undefined, undefined, "hidden"]);
+        listeners.afterprint();
+        expect(applied.length).toBe(1);
+        expect(layers.map((layer) => layer.dom.style.visibility)).toEqual([undefined, undefined, ""]);
+    });
+});
+
+describe("the chart bootstrap registers the named renderers", () => {
+    /**
+     * Run the emitted bootstrap over one container whose option names two renderers. Give the set option, the
+     * page globals, and each call to the chart runtime in order.
+     */
+    function bootOne(option: Record<string, unknown>): {
+        applied: Record<string, unknown>[];
+        win: Record<string, unknown>;
+        calls: string[];
+        registered: Map<string, unknown>;
+    } {
+        const applied: Record<string, unknown>[] = [];
+        const calls: string[] = [];
+        const registered = new Map<string, unknown>();
+        const win: Record<string, unknown> = { addEventListener: () => undefined };
+        const container = {
+            getAttribute: () => "violin-1",
+            nextElementSibling: { getAttribute: () => "application/json", textContent: JSON.stringify(option) },
+        };
+        const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
+        const echarts = {
+            init: () => {
+                calls.push("init");
+                return { on: (_event: string, listener: () => void) => listener(), setOption: (given: Record<string, unknown>) => applied.push(given) };
+            },
+            getInstanceByDom: () => undefined,
+            registerCustomSeries: (name: string, render: unknown) => {
+                calls.push(`register ${name}`);
+                registered.set(name, render);
+            },
+        };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        expect(errors).toEqual([]);
+        return { applied, win, calls, registered };
+    }
+
+    const option = {
+        xAxis: { type: "category", data: ["a"] },
+        yAxis: { type: "value" },
+        series: [
+            { type: "custom", renderItem: "outline", data: [] },
+            { type: "custom", renderItem: "interval", data: [] },
+        ],
+    };
+
+    it("registers each renderer function under its name before the first chart initializes", () => {
+        const { applied, calls, registered } = bootOne(option);
+        expect(calls).toEqual(["register interval", "register outline", "register cell-glyph", "register stem", "init"]);
+        expect(typeof registered.get("interval")).toBe("function");
+        expect(typeof registered.get("outline")).toBe("function");
+        // The runtime finds each function by the name, thus the set option keeps the names as strings.
+        const series = applied[0].series as Record<string, unknown>[];
+        expect(series.map((entry) => entry.renderItem)).toEqual(["outline", "interval"]);
+    });
+
+    it("keeps the option of each chart by its block id, with the renderer names as data", () => {
+        const { win } = bootOne(option);
+        const kept = (win[CHART_OPTIONS_GLOBAL] as Record<string, Record<string, unknown>>)["violin-1"];
+        // The export draws the chart again from this option, thus it stays plain data and names each renderer.
+        expect((kept.series as Record<string, unknown>[]).map((entry) => entry.renderItem)).toEqual(["outline", "interval"]);
+    });
+});
+
 describe("renderReportPage number format", () => {
     /** A one-section page over one metric block and one table block. */
     function pageOf(blocks: Block[]): ReportDocument {
         return { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] };
     }
 
-    it("shows a long metric value in the short form and the full digits on the title", () => {
-        const document = pageOf([{ kind: "metric", id: "m1", label: "Effect size", value: scalarRef }]);
-        const html = renderReportPage(document, { m1: { type: "scalar", value: -5.7618623255 } })._unsafeUnwrap().html;
+    it("shows a long metric value in the short form and the full digits on the title", async () => {
+        const document = await pageOf([{ kind: "metric", id: "m1", label: "Effect size", value: scalarRef }]);
+        const html = (await renderReportPage(document, { m1: { type: "scalar", value: -5.7618623255 } }))._unsafeUnwrap().html;
         const value = load(html)(".stat-card-value");
         // The card signs the value with the typographic minus, and the raw text stays on the title.
         expect(value.text()).toBe("−5.76");
         expect(value.attr("title")).toBe("-5.7618623255");
     });
 
-    it("gives a metric whose form hides no digit no title attribute", () => {
-        const document = pageOf([{ kind: "metric", id: "m1", label: "Genes tested", value: scalarRef }]);
-        const html = renderReportPage(document, { m1: { type: "scalar", value: 18432 } })._unsafeUnwrap().html;
+    it("gives a metric whose form hides no digit no title attribute", async () => {
+        const document = await pageOf([{ kind: "metric", id: "m1", label: "Genes tested", value: scalarRef }]);
+        const html = (await renderReportPage(document, { m1: { type: "scalar", value: 18432 } }))._unsafeUnwrap().html;
         const value = load(html)(".stat-card-value");
         expect(value.text()).toBe("18,432");
         expect(value.attr("title")).toBeUndefined();
     });
 
-    it("carries each raw table cell into the payload and formats none of them", () => {
-        const document = pageOf([{ kind: "table", id: "tbl", binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" } }]);
+    it("carries each raw table cell into the payload and formats none of them", async () => {
+        const document = await pageOf([{ kind: "table", id: "tbl", binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" } }]);
         const values: RenderValues = {
             tbl: {
                 type: "table",
@@ -2554,7 +2896,7 @@ describe("renderReportPage number format", () => {
                 rows: [{ gene: "TP53", log2FoldChange: -3.089028528355109, padj: 0.0000427777663038, direction: "up" }],
             },
         };
-        const rendered = renderReportPage(document, values)._unsafeUnwrap();
+        const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
         new Function("window", rendered.dataAssets[0].bytes)(window);
         const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: unknown[] }>;
@@ -2583,12 +2925,12 @@ describe("the stat card value style rule", () => {
 });
 
 describe("renderReportPage escaping", () => {
-    it("keeps a script tag in the title as text in the title and the heading", () => {
+    it("keeps a script tag in the title as text in the title and the heading", async () => {
         const document: ReportDocument = {
             title: "Report <script>alert(1)</script>",
             sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "text", id: "t", content: { prose: "x" } }] }],
         };
-        const html = renderReportPage(document, {})._unsafeUnwrap().html;
+        const html = (await renderReportPage(document, {}))._unsafeUnwrap().html;
         expect(html).toContain("<title>Report &lt;script&gt;alert(1)&lt;/script&gt;</title>");
         // The heading content holds the escaped form between its open and close tags.
         expect(html).toContain(">Report &lt;script&gt;alert(1)&lt;/script&gt;<");
@@ -2629,6 +2971,14 @@ describe("the shared chart payload", () => {
         return { document: { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] }, values, rows };
     }
 
+    /**
+     * The table payloads of one render. Each chart also stages its SVG files, and the page loads none of them
+     * as a script, thus a suite about the payload reads the payload assets alone.
+     */
+    function payloadsOf(rendered: { dataAssets: readonly { name: string; bytes: string }[] }): { name: string; bytes: string }[] {
+        return rendered.dataAssets.filter((asset) => asset.name.endsWith(".data.js"));
+    }
+
     /** The registry that the page holds after the assets and the decoder run. */
     function registryOf(assets: readonly { bytes: string }[]): Record<string, { rows: Record<string, string | number>[]; total: number }> {
         const window: Record<string, unknown> = {};
@@ -2639,13 +2989,13 @@ describe("the shared chart payload", () => {
         return window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[]; total: number }>;
     }
 
-    it("holds one payload for one artifact, and a table and a chart both read it", () => {
+    it("holds one payload for one artifact, and a table and a chart both read it", async () => {
         const table: TableBlock = { kind: "table", id: "tbl", binding };
-        const page = pageOf([table, volcanoBlock()]);
-        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        const page = await pageOf([table, volcanoBlock()]);
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
 
-        expect(rendered.dataAssets.length).toBe(1);
-        const registry = registryOf(rendered.dataAssets);
+        expect(payloadsOf(rendered).length).toBe(1);
+        const registry = registryOf(payloadsOf(rendered));
         // One asset registers the rows one time. The second id takes the same object, thus the page carries
         // one copy of the table and each block finds it under its own id.
         expect(Object.keys(registry).sort()).toEqual(["cht", "tbl"]);
@@ -2654,65 +3004,67 @@ describe("the shared chart payload", () => {
         // The table encoded the payload, and the chart reads it under its own id. Thus the shared payload
         // plots the chart, and the grid of the table reads the same rows.
         const json = load(rendered.html)("script[type='application/json']").text();
-        const built = bootChart(rendered.dataAssets, json);
-        expect(built.map((series) => series.data.length).reduce((sum, count) => sum + count, 0)).toBe(page.rows.length);
+        const built = bootChart(payloadsOf(rendered), json);
+        // The last series names the most significant points, thus the points of the table sit in the series before it.
+        const points = built.slice(0, -1);
+        expect(points.map((series) => series.data.length).reduce((sum, count) => sum + count, 0)).toBe(page.rows.length);
     });
 
-    it("builds the series of a dense chart on the page, exactly as the inline derivation does", () => {
-        const page = pageOf([volcanoBlock()]);
-        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+    it("builds the series of a dense chart on the page, exactly as the inline derivation does", async () => {
+        const page = await pageOf([volcanoBlock()]);
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
         const json = load(rendered.html)("script[type='application/json']").text();
 
         // The option holds no row, thus the whole chart costs the page one small element.
         expect(json.length).toBeLessThan(CHART_INLINE_OPTION_BOUND);
         expect(json).not.toContain("G4001");
 
-        const built = bootChart(rendered.dataAssets, json);
+        const built = bootChart(payloadsOf(rendered), json);
         const inline = deriveChartOption(volcanoBlock(), page.rows, COLUMNS)._unsafeUnwrap();
         // The page reads the payload and rebuilds each series. The two forms are the same chart, thus the
         // data of the page and the data of the inline derivation match cell for cell.
         expect(JSON.stringify(built.map((series) => series.data))).toBe(JSON.stringify(asSeries(inline).map((series) => series.data)));
     });
 
-    it("gives byte-identical assets and one page over two renders", () => {
-        const page = pageOf([volcanoBlock()]);
-        const first = renderReportPage(page.document, page.values)._unsafeUnwrap();
-        const second = renderReportPage(page.document, page.values)._unsafeUnwrap();
+    it("gives byte-identical assets and one page over two renders", async () => {
+        const page = await pageOf([volcanoBlock()]);
+        const first = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
+        const second = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
 
         expect(second.dataAssets).toEqual(first.dataAssets);
         expect(second.html).toBe(first.html);
     });
 
-    it("skips the grid runtime and the grid boot on a page whose payload feeds a chart alone", () => {
-        const page = pageOf([volcanoBlock()]);
-        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+    it("skips the grid runtime and the grid boot on a page whose payload feeds a chart alone", async () => {
+        const page = await pageOf([volcanoBlock()]);
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
 
         // The grid bundle weighs about two megabytes, and this page builds no grid. The decoder still rides,
         // because the chart reads the decoded rows.
-        expect(rendered.dataAssets.length).toBe(1);
+        expect(payloadsOf(rendered).length).toBe(1);
         expect(rendered.html).not.toContain(AG_GRID_ASSET.file);
         expect(rendered.html).not.toContain(GRID_BOOTSTRAP);
         expect(rendered.html).toContain(TABLE_DATA_DECODER);
     });
 
-    it("leaves a chart under the bound with its own rows and registers no payload", () => {
-        const page = pageOf([volcanoBlock()], 20);
-        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+    it("leaves a chart under the bound with its own rows and registers no payload", async () => {
+        const page = await pageOf([volcanoBlock()], 20);
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
 
-        expect(rendered.dataAssets).toEqual([]);
+        expect(payloadsOf(rendered)).toEqual([]);
         const json = load(rendered.html)("script[type='application/json']").text();
         expect(json).toContain("G19");
         expect(json).not.toContain(CHART_SOURCE_MEMBER);
     });
 
-    it("keeps two payloads for two bindings of one path, because they resolve different rows", () => {
+    it("keeps two payloads for two bindings of one path, because they resolve different rows", async () => {
         const bounded: TableBlock = { kind: "table", id: "tbl", binding: { ...binding, rowBound: { column: "padj", count: 20, order: "asc" } } };
-        const page = pageOf([bounded, volcanoBlock()]);
-        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        const page = await pageOf([bounded, volcanoBlock()]);
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
 
         // The bound is part of the binding. Two bindings that differ in it name two row sets, thus one
         // payload for both would ship the rows of one block under the id of the other.
-        expect(rendered.dataAssets.length).toBe(2);
+        expect(payloadsOf(rendered).length).toBe(2);
     });
 
     /** The series that the chart bootstrap sets, over the payloads of the page and one option JSON. */
@@ -2728,11 +3080,13 @@ describe("the shared chart payload", () => {
         const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
         const echarts = {
             init: () => ({
+                on: (_event: string, listener: () => void) => listener(),
                 setOption: (given: Record<string, unknown>) => {
                     applied.push(given);
                 },
             }),
             getInstanceByDom: () => undefined,
+            registerCustomSeries: () => undefined,
         };
         const errors: string[] = [];
         new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
@@ -2747,6 +3101,398 @@ describe("the shared chart payload", () => {
     function asSeries(option: Record<string, unknown>): { data: unknown[] }[] {
         return (option.series ?? []) as { data: unknown[] }[];
     }
+});
+
+describe("the chart exports", () => {
+    const binding: TableBlock["binding"] = { kind: "artifact-table", path: "runs/run-1/step-a/output/de.csv", hash: `sha256:${"c".repeat(64)}` };
+
+    /** One page over one chart block, and the rows of its table. */
+    function chartPage(block: ChartBlock, rows: Record<string, string | number>[], columns?: string[]): { document: ReportDocument; values: RenderValues } {
+        return {
+            document: { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [block] }] },
+            values: { [block.id]: { type: "table", rows, ...(columns !== undefined ? { columns } : {}) } },
+        };
+    }
+
+    const bars: ChartBlock = { kind: "chart", id: "bars", title: "Pathway scores", binding, chartType: "bar", encoding: { x: "k", y: "v" } };
+    const barRows = [
+        { k: "a", v: 1 },
+        { k: "b", v: 2 },
+    ];
+
+    it("stages two SVG files for one chart, links both from the card, and loads neither as a script", async () => {
+        const page = chartPage(bars, barRows);
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
+        const svgs = rendered.dataAssets.filter((asset) => asset.name.endsWith(".svg"));
+
+        expect(svgs.map((asset) => asset.name.replace(/c-[0-9a-f]{12}-/, "c-HASH-"))).toEqual(["c-HASH-89mm.svg", "c-HASH-183mm.svg"]);
+        const $ = load(rendered.html);
+        for (const asset of svgs) {
+            expect(asset.bytes.startsWith("<svg ")).toBe(true);
+            expect($(`a[href="${ASSETS_DIR}/${asset.name}"]`).length).toBe(1);
+            expect($(`script[src="${ASSETS_DIR}/${asset.name}"]`).length).toBe(0);
+        }
+        // The download name of a link reads as the chart, and not as a hash.
+        expect($(`a[href="${ASSETS_DIR}/${svgs[0].name}"]`).attr("download")).toBe("pathway-scores-89mm.svg");
+    });
+
+    it("gives the same names and the same bytes over two renders", async () => {
+        const page = chartPage(bars, barRows);
+        const first = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
+        const second = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
+        expect(second.dataAssets).toEqual(first.dataAssets);
+        expect(second.html).toBe(first.html);
+    });
+
+    it("carries a closed download menu after the option script, with the two SVG links and the three PNG entries", async () => {
+        const page = chartPage(bars, barRows);
+        const $ = load((await renderReportPage(page.document, page.values))._unsafeUnwrap().html);
+        // The bootstrap reads the option from the next sibling of the container, thus the menu follows the script.
+        expect($("#chart-bars").next().is("script[type='application/json']")).toBe(true);
+        const menu = $("#chart-bars").next().next();
+        expect(menu.attr("id")).toBe("chart-bars-menu");
+        expect(menu.attr("role")).toBe("menu");
+        expect(menu.attr("aria-label")).toBe("Download the chart");
+        // The design sheet shows a menu that the page marks open, thus the menu of a new page stands closed.
+        expect(menu.attr("class")).toBe("report-chart-menu");
+        const items = menu.find("[role='menuitem']");
+        expect(items.map((_index, element) => $(element).text().trim()).get()).toEqual([
+            "SVG · 89 mm",
+            "SVG · 183 mm",
+            "PNG · 89 mm",
+            "PNG · 183 mm",
+            "PNG · 16:9",
+        ]);
+        // The page moves the focus between the entries, thus no entry takes a place in the tab order.
+        expect(items.map((_index, element) => $(element).attr("tabindex")).get()).toEqual(["-1", "-1", "-1", "-1", "-1"]);
+        expect(menu.find("a[download]").length).toBe(2);
+        const controls = menu.find("button[data-export]");
+        expect(controls.map((_index, element) => $(element).attr("data-export")).get()).toEqual(["single", "double", "slide"]);
+        // Each entry names the container of its chart, thus the bootstrap finds the kept option.
+        expect(controls.first().attr("data-chart")).toBe("chart-bars");
+        expect(controls.first().attr("data-file")).toBe("pathway-scores-89mm.png");
+        expect(controls.first().attr("type")).toBe("button");
+        expect($(".report-chart-card > *").length).toBe(3);
+    });
+
+    it("gives the title line a download control that the keyboard reaches and that opens the menu", async () => {
+        const page = chartPage(bars, barRows);
+        const $ = load((await renderReportPage(page.document, page.values))._unsafeUnwrap().html);
+        // The runtime draws the toolbox icon on the canvas and binds a mouse click alone, thus a keyboard reaches
+        // the menu through this control.
+        const control = $(".report-chart-title > button.report-chart-download");
+        expect(control.length).toBe(1);
+        expect(control.attr("id")).toBe("chart-bars-download");
+        expect(control.attr("type")).toBe("button");
+        expect(control.attr("aria-haspopup")).toBe("menu");
+        expect(control.attr("aria-expanded")).toBe("false");
+        expect(control.attr("aria-controls")).toBe("chart-bars-menu");
+        expect(control.attr("data-chart-menu")).toBe("chart-bars");
+        expect(control.attr("tabindex")).toBeUndefined();
+        expect(control.text()).toBe(DOWNLOAD_CONTROL_LABEL);
+        expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-download \{\s*display: none;/);
+    });
+
+    it("puts the toolbox of the chart type into the page option, with each handler as the name of a page function", async () => {
+        const page = chartPage(bars, barRows);
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
+        const option = JSON.parse(load(rendered.html)("script[type='application/json']").text()) as Record<string, unknown>;
+        expect(option.toolbox).toEqual(chartToolbox("bar"));
+        // Each export removes the toolbox, thus a file never shows it.
+        for (const asset of rendered.dataAssets.filter((entry) => entry.name.endsWith(".svg"))) expect(asset.bytes).not.toContain("Download");
+    });
+
+    it("exports every row of a dense chart, whose page option reads the payload", async () => {
+        const rows: Record<string, string | number>[] = [];
+        // Values with many digits make the inline option pass its bound, thus the page reads the payload.
+        for (let index = 0; index < 6000; index += 1) rows.push({ gene: `G${index}`, x: (index % 400) + 0.123456, y: ((index * 7) % 311) + 0.654321 });
+        const scatter: ChartBlock = { kind: "chart", id: "dense", binding, chartType: "scatter", encoding: { x: "x", y: "y" } };
+        const page = chartPage(scatter, rows, ["gene", "x", "y"]);
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
+
+        expect(load(rendered.html)("script[type='application/json']").text()).toContain(CHART_SOURCE_MEMBER);
+        const single = rendered.dataAssets.find((asset) => asset.name.endsWith("-89mm.svg"));
+        // The export reads the inline option, thus each point of the table is in the file. A dense scatter
+        // draws one path, and each point is one move of it.
+        const cloud = /<path d="([^"]{1000,})"/.exec(single?.bytes ?? "");
+        expect(cloud?.[1].match(/M/g)?.length).toBe(6000);
+    });
+
+    it("stages no SVG for a scatter past the crowd row count, and the menu names the hybrid SVG that the page builds", async () => {
+        const rows: Record<string, string | number>[] = [];
+        for (let index = 0; index <= SCATTER_CROWD_ROWS; index += 1) rows.push({ x: index, y: index % 97 });
+        const scatter: ChartBlock = { kind: "chart", id: "crowd", title: "Crowd", binding, chartType: "scatter", encoding: { x: "x", y: "y" } };
+        const page = chartPage(scatter, rows, ["x", "y"]);
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
+
+        expect(rendered.dataAssets.filter((asset) => asset.name.endsWith(".svg"))).toEqual([]);
+        const $ = load(rendered.html);
+        const hybrid = $("#chart-crowd-menu button[data-hybrid]");
+        expect(hybrid.map((_index, element) => $(element).attr("data-hybrid")).get()).toEqual(["single", "double"]);
+        // The file reads like a staged file: the column size in millimeters, and the name of the chart.
+        expect(hybrid.first().attr("data-height")).toBe(String(CHART_EXPORT_SIZES.single.heightPx));
+        expect(hybrid.first().attr("data-height-mm")).toBe(String(CHART_EXPORT_SIZES.single.heightMm));
+        expect(hybrid.first().attr("data-file")).toBe("crowd-89mm.svg");
+        expect(hybrid.first().attr("data-chart")).toBe("chart-crowd");
+        expect($(".report-chart-menu-note").not(`.${MENU_FAULT_CLASS}`).length).toBe(0);
+        expect($("#chart-crowd-menu button[data-export]").length).toBe(3);
+        // The menu holds a hidden note that the page shows when the build of the file fails.
+        const fault = $(`#chart-crowd-menu .${MENU_FAULT_CLASS}`);
+        expect(fault.text()).toBe(HYBRID_FAULT_NOTE);
+        expect(fault.hasClass(MENU_FAULT_SHOWN_CLASS)).toBe(false);
+        expect(DESIGN_CSS).toMatch(/\.report-chart-menu-fault \{\s*display: none;/);
+        expect(fault.attr("role")).toBe("menuitem");
+        expect(fault.attr("aria-disabled")).toBe("true");
+    });
+
+    it("states that the PNG serves a chart past the crowd row count that holds no point layer", async () => {
+        const rows: Record<string, string | number>[] = [];
+        for (let index = 0; index <= SCATTER_CROWD_ROWS; index += 1) rows.push({ x: index, y: index % 97 });
+        const line: ChartBlock = { kind: "chart", id: "trace", binding, chartType: "line", encoding: { x: "x", y: "y" } };
+        const page = chartPage(line, rows, ["x", "y"]);
+        const $ = load((await renderReportPage(page.document, page.values))._unsafeUnwrap().html);
+
+        expect($("#chart-trace-menu [data-hybrid]").length).toBe(0);
+        expect($("#chart-trace-menu a[download]").length).toBe(0);
+        const note = $("#chart-trace-menu .report-chart-menu-note");
+        expect(note.text()).toContain("PNG");
+        expect(note.attr("aria-disabled")).toBe("true");
+        expect($("#chart-trace-menu button[data-export]").length).toBe(3);
+    });
+
+    it("grows the chart body of a facet of two panel rows", async () => {
+        const rows: Record<string, string | number>[] = [];
+        for (const sample of ["s1", "s2", "s3", "s4"]) {
+            for (let index = 0; index < 4; index += 1) rows.push({ sample, x: index, y: index * 2 });
+        }
+        const faceted: ChartBlock = { kind: "chart", id: "panels", binding, chartType: "scatter", encoding: { x: "x", y: "y", facet: "sample" } };
+        const page = chartPage(faceted, rows);
+        const $ = load((await renderReportPage(page.document, page.values))._unsafeUnwrap().html);
+        expect($("[data-echarts-id='panels']").attr("class")).toBe("chart-container");
+        expect($("[data-echarts-id='panels']").attr("style")).toBe(`height: ${CHART_BODY_PX + FACET_ROW_PX}px`);
+        // Each column export of the taller body grows its height in the same ratio, and the slide keeps its box.
+        const single = exportSizeFor(CHART_EXPORT_SIZES.single, CHART_BODY_PX + FACET_ROW_PX);
+        expect($("button[data-export='single']").attr("data-height")).toBe(String(single.heightPx));
+        expect($("button[data-export='slide']").attr("data-height")).toBe(String(CHART_EXPORT_SIZES.slide.heightPx));
+    });
+
+    it("narrows the body of a square figure to the width of its block, and centers it in the card", async () => {
+        const rows: Record<string, string | number>[] = [
+            { sample: "a", PC1: -2, PC2: 1, condition: "x" },
+            { sample: "b", PC1: 3, PC2: -1, condition: "y" },
+        ];
+        const pca: ChartBlock = { kind: "chart", id: "square", binding, chartType: "pca", encoding: { x: "PC1", y: "PC2", group: "condition" } };
+        const page = chartPage(pca, rows);
+        const $ = load((await renderReportPage(page.document, page.values))._unsafeUnwrap().html);
+        expect($("[data-echarts-id='square']").attr("style")).toMatch(/^max-width: \d+px; margin-inline: auto$/);
+        expect($("[data-echarts-id='square']").attr("class")).toBe("chart-container");
+    });
+
+    it("draws the SVG of a taller body at the grown column height", async () => {
+        const rows: Record<string, string | number>[] = [];
+        for (const sample of ["s1", "s2", "s3", "s4"]) {
+            for (let index = 0; index < 4; index += 1) rows.push({ sample, x: index, y: index * 2 });
+        }
+        const faceted: ChartBlock = { kind: "chart", id: "tall", binding, chartType: "scatter", encoding: { x: "x", y: "y", facet: "sample" } };
+        const page = chartPage(faceted, rows);
+        const svgs = (await renderReportPage(page.document, page.values))._unsafeUnwrap().dataAssets.filter((asset) => asset.name.endsWith(".svg"));
+        const single = exportSizeFor(CHART_EXPORT_SIZES.single, CHART_BODY_PX + FACET_ROW_PX);
+        expect(svgs.find((asset) => asset.name.endsWith("-89mm.svg"))?.bytes).toContain(`<svg width="89mm" height="${single.heightMm}mm"`);
+    });
+
+    it("keeps the container of each new form with zero rows, and reports no problem", async () => {
+        for (const chartType of ["violin", "stacked-bar", "normalized-bar", "radar"] as const) {
+            const block: ChartBlock = { kind: "chart", id: "empty", binding, chartType, encoding: { x: "k", y: "v", group: "g" } };
+            const page = chartPage(block, []);
+            const rendered = await renderReportPage(page.document, page.values);
+            expect(rendered.isOk()).toBe(true);
+            expect(rendered._unsafeUnwrap().html).toContain('data-echarts-id="empty"');
+        }
+    });
+
+    it("hides the download menu in print", () => {
+        expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-menu-open \{\s*display: none;/);
+        // A menu that the page has not opened stands closed.
+        expect(DESIGN_CSS).toMatch(/\.report-chart-menu \{[^}]*display: none;/);
+    });
+});
+
+describe("the PNG download of the page", () => {
+    /** Run the bootstrap over one chart, then click one export control, and give what the page drew. */
+    function clickExport(kind: string): {
+        init: Record<string, unknown>[];
+        setOption: Record<string, unknown>[];
+        downloads: { href: string; download: string }[];
+        dataUrl: Record<string, unknown>[];
+    } {
+        const init: Record<string, unknown>[] = [];
+        const setOption: Record<string, unknown>[] = [];
+        const downloads: { href: string; download: string }[] = [];
+        const dataUrl: Record<string, unknown>[] = [];
+        const listeners: Record<string, (event: unknown) => void> = {};
+        const option = {
+            xAxis: { type: "category", data: ["a"], nameGap: 34 },
+            yAxis: { type: "value" },
+            tooltip: { trigger: "item" },
+            series: [{ type: "bar", data: [1] }],
+        };
+        const container = {
+            getAttribute: (name: string) => (name === "id" ? "chart-bars" : "bars"),
+            nextElementSibling: { getAttribute: () => "application/json", textContent: JSON.stringify(option) },
+        };
+        const body = { appendChild: () => undefined, removeChild: () => undefined };
+        const doc = {
+            body,
+            querySelectorAll: () => [container],
+            dispatchEvent: () => true,
+            addEventListener: (type: string, listener: (event: unknown) => void) => {
+                listeners[type] = listener;
+            },
+            createElement: (tag: string) => {
+                if (tag === "a") {
+                    const anchor = { href: "", download: "", click: () => downloads.push({ href: anchor.href, download: anchor.download }) };
+                    return anchor;
+                }
+                return { style: {} };
+            },
+        };
+        const echarts = {
+            init: (_dom: unknown, theme: unknown, opts: Record<string, unknown> | undefined) => {
+                init.push({ theme, ...(opts ?? {}) });
+                return {
+                    on: (_event: string, listener: () => void) => listener(),
+                    setOption: (given: Record<string, unknown>) => setOption.push(given),
+                    getDataURL: (given: Record<string, unknown>) => {
+                        dataUrl.push(given);
+                        return "data:image/png;base64,AAAA";
+                    },
+                    dispose: () => undefined,
+                };
+            },
+            getInstanceByDom: () => undefined,
+            registerCustomSeries: () => undefined,
+        };
+        const win: Record<string, unknown> = { addEventListener: () => undefined };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        const control = {
+            getAttribute: (name: string) => ({ "data-export": kind, "data-chart": "chart-bars", "data-file": `bars-${kind}.png` })[name] ?? null,
+        };
+        listeners.click({ target: { closest: (selector: string) => (selector === "[data-export], [data-hybrid]" ? control : null) } });
+        expect(errors).toEqual([]);
+        return { init: init.slice(1), setOption: setOption.slice(1), downloads, dataUrl };
+    }
+
+    it("draws the single column offscreen at 300 DPI and the print text size, then downloads the PNG", () => {
+        const drawn = clickExport("single");
+        expect(drawn.init).toEqual([{ theme: "inflexa-print", renderer: "canvas", width: 336, height: 253, devicePixelRatio: 3.125 }]);
+        // 336 CSS pixels at a ratio of 3.125 is 1050 pixels, the width of one journal column at 300 DPI.
+        expect(336 * (drawn.init[0].devicePixelRatio as number)).toBe(1050);
+        expect(drawn.dataUrl).toEqual([{ type: "png", pixelRatio: 3.125, backgroundColor: "#ffffff" }]);
+        expect(drawn.setOption[0].tooltip).toBeUndefined();
+        expect(drawn.setOption[0].animation).toBe(false);
+        // The script reads the PNG in the same task, thus each series draws in one pass and no chunk waits for a later frame.
+        expect((drawn.setOption[0].series as Record<string, unknown>[]).map((entry) => entry.progressive)).toEqual([0]);
+        expect(drawn.downloads).toEqual([{ href: "data:image/png;base64,AAAA", download: "bars-single.png" }]);
+    });
+
+    it("draws the double column and the 16:9 slide at their sizes and their text sizes", () => {
+        expect(clickExport("double").init[0]).toEqual({ theme: "inflexa-print", renderer: "canvas", width: 692, height: 348, devicePixelRatio: 3.125 });
+        const slide = clickExport("slide");
+        expect(slide.init[0]).toEqual({ theme: "inflexa-slide", renderer: "canvas", width: 1920, height: 1080, devicePixelRatio: 1 });
+        // The slide text is twice the page text, thus the gap between the axis and its name doubles.
+        expect((slide.setOption[0].xAxis as Record<string, unknown>).nameGap as number).toBe(68);
+    });
+
+    it("draws nothing for a control that names no kept chart or no size", () => {
+        expect(clickExport("constructor").downloads).toEqual([]);
+    });
+});
+
+describe("the hybrid SVG download of the page", () => {
+    it("keeps the menu open and shows the fault note when the page cannot build the file", () => {
+        const listeners: Record<string, (event: unknown) => void> = {};
+        const downloads: unknown[] = [];
+        const classes = new Set<string>();
+        /** One element of the fake page: its attributes, its children, and the focus of the document. */
+        function element(attributes: Record<string, string>, extra: Record<string, unknown> = {}): Record<string, unknown> {
+            const self: Record<string, unknown> = {
+                ...extra,
+                getAttribute: (name: string) => attributes[name] ?? null,
+                setAttribute: (name: string, value: string) => {
+                    attributes[name] = value;
+                },
+                focus: () => {
+                    doc.activeElement = self;
+                },
+            };
+            return self;
+        }
+        // The kept option holds no point layer, thus the build of the file gives no SVG.
+        const option = { xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "line", data: [[1, 2]] }] };
+        const faultClasses = new Set<string>();
+        const fault = element(
+            { role: "menuitem", "aria-disabled": "true", class: MENU_FAULT_CLASS },
+            { classList: { add: (name: string) => faultClasses.add(name), remove: (name: string) => faultClasses.delete(name) } },
+        );
+        const entry = element({ role: "menuitem", "data-hybrid": "single", "data-chart": "chart-crowd", "data-file": "crowd-89mm.svg" });
+        const menu = element(
+            { role: "menu", id: "chart-crowd-menu" },
+            {
+                id: "chart-crowd-menu",
+                offsetWidth: 140,
+                style: {},
+                classList: { add: (name: string) => classes.add(name), remove: (name: string) => classes.delete(name) },
+                querySelector: (selector: string) => (selector === `.${MENU_FAULT_CLASS}` ? fault : null),
+                querySelectorAll: () => [entry],
+            },
+        );
+        entry.closest = (selector: string) =>
+            selector === "[data-export], [data-hybrid]" || selector === '[role="menuitem"]' ? entry : selector === '[role="menu"]' ? menu : null;
+        const container = element(
+            { id: "chart-crowd" },
+            {
+                id: "chart-crowd",
+                offsetLeft: 0,
+                offsetTop: 0,
+                clientWidth: 600,
+                nextElementSibling: { getAttribute: () => "application/json", textContent: JSON.stringify(option) },
+            },
+        );
+        const control = element({ "data-chart-menu": "chart-crowd", "aria-expanded": "false" });
+        control.closest = (selector: string) => (selector === "[data-chart-menu]" ? control : null);
+        const byId: Record<string, unknown> = { "chart-crowd": container, "chart-crowd-menu": menu, "chart-crowd-download": control };
+        const doc: Record<string, unknown> = {
+            activeElement: null,
+            body: { appendChild: () => undefined, removeChild: () => undefined },
+            querySelectorAll: () => [container],
+            getElementById: (id: string) => byId[id] ?? null,
+            dispatchEvent: () => true,
+            addEventListener: (type: string, listener: (event: unknown) => void) => {
+                listeners[type] = listener;
+            },
+            createElement: () => ({ click: () => downloads.push("download") }),
+        };
+        const echarts = {
+            init: () => ({ on: (_event: string, listener: () => void) => listener(), setOption: () => undefined, dispose: () => undefined }),
+            getInstanceByDom: () => undefined,
+            registerCustomSeries: () => undefined,
+        };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)({ addEventListener: () => undefined }, doc, echarts, {
+            error: (line: string) => errors.push(line),
+        });
+
+        listeners.click({ target: control });
+        expect(classes.has(MENU_OPEN_CLASS)).toBe(true);
+        listeners.click({ target: entry });
+        // The reader sees why the entry gave no file, and the menu stays open with the PNG entries.
+        expect(downloads).toEqual([]);
+        expect(classes.has(MENU_OPEN_CLASS)).toBe(true);
+        expect(faultClasses.has(MENU_FAULT_SHOWN_CLASS)).toBe(true);
+        expect(doc.activeElement).toBe(fault);
+        expect(errors).toEqual(["hybrid svg failed for chart-crowd: the chart holds no point layer inside a grid"]);
+    });
 });
 
 describe("the pre-bound total of a table", () => {
@@ -2764,17 +3510,17 @@ describe("the pre-bound total of a table", () => {
         };
     }
 
-    it("states the shown count against the total in the card footer, with the bound beside it", () => {
+    it("states the shown count against the total in the card footer, with the bound beside it", async () => {
         const page = boundedPage();
-        const card = load(renderReportPage(page.document, page.values)._unsafeUnwrap().html);
+        const card = load((await renderReportPage(page.document, page.values))._unsafeUnwrap().html);
 
         expect(card(`.${GRID_COUNT_CLASS}`).text()).toBe("10 of 14,201 rows");
         expect(card(".report-table-bound").text()).toBe("top 10 by padj");
     });
 
-    it("carries the total on the payload, thus the page states it after a filter", () => {
+    it("carries the total on the payload, thus the page states it after a filter", async () => {
         const page = boundedPage();
-        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
         new Function("window", rendered.dataAssets[0].bytes)(window);
 
@@ -2783,7 +3529,7 @@ describe("the pre-bound total of a table", () => {
         expect(registry["tbl"].rows.length).toBe(10);
     });
 
-    it("takes the row count as the total for a table that no bound cut", () => {
+    it("takes the row count as the total for a table that no bound cut", async () => {
         const document: ReportDocument = {
             title: "T",
             sections: [
@@ -2796,7 +3542,7 @@ describe("the pre-bound total of a table", () => {
             ],
         };
         const values: RenderValues = { tbl: { type: "table", columns: ["gene"], rows: [{ gene: "TP53" }, { gene: "MYC" }] } };
-        const rendered = renderReportPage(document, values)._unsafeUnwrap();
+        const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
         new Function("window", rendered.dataAssets[0].bytes)(window);
 

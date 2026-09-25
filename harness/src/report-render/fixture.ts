@@ -13,6 +13,9 @@
  * Each value is a literal, and the figure source is an inline data URI. Thus the page is a pure function of
  * this module, and the fixture reads no file.
  *
+ * The fixture holds one chart for the coverage of the block kinds. The chart forms live in the figure gallery
+ * (`gallery/gallery.ts`), which draws each chart type from a table of public data.
+ *
  * Only the tests and `scripts/render-fixture.ts` read this module, thus `tsconfig.json` excludes it the same
  * way that it excludes a test file and the build emits no `dist/report-render/fixture.js`. The lint program
  * (`tsconfig.eslint.json`) still holds it.
@@ -206,6 +209,7 @@ export const FIXTURE_DOCUMENT: ReportDocument = {
                     binding: resultsReference,
                     chartType: "bar",
                     encoding: { x: "pathway", y: "nes" },
+                    focus: ["Hypoxia", "Glycolysis"],
                     caption: "Gene set enrichment over the MSigDB hallmark collection. A positive score marks a set that hypoxia raises.",
                 },
                 {

@@ -18,6 +18,9 @@ import { z } from "zod";
 
 import {
     ChartBlockSchema,
+    ChartStatisticSchema,
+    ChartTrackSchema,
+    ChartTreeSchema,
     CitationBlockSchema,
     ClaimBlockSchema,
     FigureBlockSchema,
@@ -62,17 +65,39 @@ const AuthoringReferenceSchema = z.discriminatedUnion("kind", [
 /** The references of the authoring surface that resolve to one scalar value. */
 const AuthoringScalarReferenceSchema = z.discriminatedUnion("kind", [AuthoringValueReferenceSchema, AuthoringDerivationReferenceSchema]);
 
+/** The tree of one heatmap axis on the authoring surface: the contract tree with an authoring binding. */
+function authoringTree() {
+    return ChartTreeSchema.extend({ binding: AuthoringTableReferenceSchema.describe(ChartTreeSchema.shape.binding.description ?? "") });
+}
+
 /**
  * The chart block of the authoring surface.
  *
  * A chart carries a rule over its own fields, and a schema with a rule refuses a replacement of one field.
- * Thus this schema spreads the fields of the contract chart, and it replaces the binding. The rule itself
- * stays out: the core parses each payload with the draft grammar, and that grammar carries the rule. This
- * schema publishes the shape, and it types the read.
+ * Thus this schema spreads the fields of the contract chart, and it replaces each field that carries a pin:
+ * the binding, the value of each statistic, the binding of the track, and the binding of each tree. The rule itself stays out: the core
+ * parses each payload with the draft grammar, and that grammar carries the rule. This schema publishes the
+ * shape, and it types the read.
  */
 const AuthoringChartBlockSchema = z.strictObject({
     ...ChartBlockSchema.shape,
     binding: AuthoringTableReferenceSchema.describe("The whole-table artifact to plot."),
+    statistics: z
+        .array(ChartStatisticSchema.extend({ value: AuthoringValueReferenceSchema.describe(ChartStatisticSchema.shape.value.description ?? "") }))
+        .min(1)
+        .max(4)
+        .optional()
+        .describe(ChartBlockSchema.shape.statistics.description ?? ""),
+    track: ChartTrackSchema.extend({ binding: AuthoringTableReferenceSchema.describe(ChartTrackSchema.shape.binding.description ?? "") })
+        .optional()
+        .describe(ChartBlockSchema.shape.track.description ?? ""),
+    trees: z
+        .strictObject({
+            x: authoringTree().optional().describe("The tree of the `x` categories. It draws above the matrix and above the tracks."),
+            y: authoringTree().optional().describe("The tree of the `y` categories. It draws at the left of the row names."),
+        })
+        .optional()
+        .describe(ChartBlockSchema.shape.trees.description ?? ""),
 });
 
 /**

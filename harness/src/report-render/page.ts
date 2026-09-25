@@ -8,7 +8,10 @@
 
 import { AG_GRID_ASSET, assetSource, ECHARTS_ASSET, TSPROV_ASSET } from "./assets.js";
 import { CHART_SOURCE_MEMBER, POINT_LABEL } from "./chart.js";
+import { CHART_RENDERERS_SOURCE } from "./chart-renderers.js";
+import { CHART_TOOLBOX_SOURCE, TOOLBOX_ZLEVEL } from "./chart-toolbox.js";
 import {
+    CHART_EXPORT_SIZES,
     ECHARTS_THEME_NAME,
     GRID_HEADER_BORDER_PX,
     GRID_HEADER_HEIGHT_PX,
@@ -19,6 +22,7 @@ import {
     GRID_TOOLTIP_DELAY_MS,
     GRID_VISIBLE_ROWS,
 } from "./design.js";
+import { HYBRID_SVG_SOURCE } from "./hybrid-svg.js";
 import { REPORT_PROVENANCE_GLOBAL } from "./provenance-data.js";
 import { scriptJson } from "./script-json.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
@@ -110,8 +114,9 @@ const SPY_BOTTOM_MARGIN_PERCENT = 70;
  *
  * The fragment writes its own constants, because a page script reads no module binding. Each rule here is
  * the twin of one rule of the server derivation: the number read of a cell, the four transforms, the
- * competition rank, the compare of a sort, and the three-way classification of a preset. A shared test
- * vector runs the transforms of both sides over one set of cells, thus the two cannot drift in silence.
+ * competition rank, the compare of a sort, the classification of a preset, and the item that adds
+ * the member of a continuous color and of a size after the pair. A shared test vector runs the transforms
+ * and the items of both sides over one set of cells, thus the two cannot drift in silence.
  *
  * The build reads the decoded rows of the payload. The decoder runs before this script, thus a row is a
  * record and a cell reads by its column name.
@@ -194,7 +199,17 @@ function reportColumn(payload, index) {
 }
 function reportChannel(payload, spec) {
   var cells = reportColumn(payload, spec.column);
-  return spec.transform === undefined ? cells : reportTransform(cells, spec.transform);
+  if (spec.transform !== undefined) {
+    return reportTransform(cells, spec.transform);
+  }
+  if (spec.numeric !== true) {
+    return cells;
+  }
+  var numbers = [];
+  for (var c = 0; c < cells.length; c++) {
+    numbers.push(cells[c] === null ? null : reportNumber(cells[c]));
+  }
+  return numbers;
 }
 function reportCompare(a, b) {
   var left = reportNumber(a);
@@ -209,13 +224,20 @@ function reportCompare(a, b) {
   }
   return x > y ? 1 : 0;
 }
-function reportCategory(rule, xValue, yValue) {
+function reportCategory(rule, xValue, yValue, pValue) {
   // The rule gives the place of the category, and the descriptor of a series names the same place. Thus
   // the two sides compare numbers and no category name rides the page.
   var x = reportNumber(xValue);
   var y = reportNumber(yValue);
   if (!rule || x === null || y === null) {
     return -1;
+  }
+  if (rule.kind === "ma") {
+    if (x <= 0) {
+      return -1;
+    }
+    var p = reportNumber(pValue);
+    return p !== null && p < rule.cut ? 0 : 1;
   }
   if (y <= rule.cut) {
     return 2;
@@ -228,8 +250,11 @@ function reportCategory(rule, xValue, yValue) {
 function reportSeriesData(payload, source, rule) {
   var x = reportChannel(payload, source.x);
   var y = reportChannel(payload, source.y);
+  var color = source.color === undefined ? null : reportChannel(payload, source.color);
+  var size = source.size === undefined ? null : reportChannel(payload, source.size);
   var group = source.group === undefined ? null : reportChannel(payload, source.group);
   var labels = source.label === undefined ? null : reportColumn(payload, source.label);
+  var ruleCells = rule && rule.kind === "ma" ? reportColumn(payload, payload.columns.indexOf(rule.column)) : null;
   var flags = Object.create(null);
   var declared = source.flags || [];
   for (var f = 0; f < declared.length; f++) {
@@ -243,20 +268,35 @@ function reportSeriesData(payload, source, rule) {
     if (group !== null && group[r] !== source.value) {
       continue;
     }
-    if (source.category !== undefined && reportCategory(rule, x[r], y[r]) !== source.category) {
+    if (source.category !== undefined && reportCategory(rule, x[r], y[r], ruleCells === null ? null : ruleCells[r]) !== source.category) {
       continue;
     }
-    points.push({ index: r, x: x[r], y: y[r] });
+    var shade = color === null ? null : reportNumber(color[r]);
+    var weight = size === null ? null : reportNumber(size[r]);
+    if ((color !== null && shade === null) || (size !== null && weight === null)) {
+      continue;
+    }
+    points.push({ index: r, x: x[r], y: y[r], color: shade, size: weight });
   }
   if (source.sort) {
     points.sort(function (a, b) {
       return reportCompare(a.x, b.x);
+    });
+  } else if (source.rise) {
+    points.sort(function (a, b) {
+      return a.color - b.color;
     });
   }
   var data = [];
   for (var p = 0; p < points.length; p++) {
     var point = points[p];
     var pair = source.swap ? [point.y, point.x] : [point.x, point.y];
+    if (point.color !== null) {
+      pair.push(point.color);
+    }
+    if (point.size !== null) {
+      pair.push(point.size);
+    }
     var label = labels === null ? null : labels[point.index];
     var named = label !== null && label !== undefined;
     if (!named && flags[point.index] !== true) {
@@ -273,16 +313,74 @@ function reportSeriesData(payload, source, rule) {
 }`;
 
 /**
+ * The window global that holds the option of each chart, keyed by the id of its container.
+ *
+ * The option is plain data: its rows are built, and each renderer is still a name. The export of a chart
+ * draws it again from this entry, thus the page and each exported file read one option.
+ */
+export const CHART_OPTIONS_GLOBAL = "__REPORT_CHART_OPTIONS";
+
+/**
+ * The export sizes that the page draws, keyed by the name of the menu entry: the theme, the text size, the CSS
+ * box, the millimeter box of a column, and the pixel ratio of each export.
+ */
+const PAGE_EXPORT_SIZES = Object.fromEntries(
+    Object.entries(CHART_EXPORT_SIZES).map(([kind, size]) => [
+        kind,
+        {
+            theme: size.theme,
+            textPx: size.textPx,
+            width: size.widthPx,
+            height: size.heightPx,
+            ...("widthMm" in size ? { widthMm: size.widthMm, heightMm: size.heightMm } : {}),
+            pixelRatio: size.pixelRatio,
+        },
+    ]),
+);
+
+/**
+ * The time that the object URL of a built SVG file stays alive after its download starts, in milliseconds. The
+ * browser reads the URL when the download starts, and the page then frees the text.
+ */
+const DOWNLOAD_URL_LIFETIME_MS = 60_000;
+
+/**
  * The page-side script that wires each chart. It finds every chart container, reads the option JSON from
  * the sibling `<script type="application/json">` element, and initializes ECharts with the registered
  * theme. The skeleton registers the theme before this script runs. A resize handler keeps each chart
- * fit to the window.
+ * fit to the window. It draws a chart again only when the container of the chart changes size. A capture past
+ * the viewport resizes the window and keeps each container, and a redraw there restarts the chunked render of
+ * a dense chart.
+ *
+ * A custom series names its renderer as a string, because the option is JSON. The script registers each named
+ * renderer with the chart runtime before the first chart initializes, and it keeps the option under the
+ * container id.
+ *
+ * The option carries the toolbox of the chart. Each handler of the toolbox is the name of a page function, and
+ * the script binds each function after the parse and before the chart initializes. The download control opens
+ * the download menu of the card. The print hides the canvas layer of the toolbox of each chart, because the
+ * runtime draws the toolbox inside the chart body, and the end of the print shows the layer again. The print sets
+ * no option, because a new option starts the chunked draw of a dense chart again.
+ *
+ * A click on a PNG entry of the menu draws the kept option again on a detached element, at the CSS size of the
+ * export and its pixel ratio, in the theme of its text size. The entry states the height of its export, because
+ * a taller chart body grows the height of a column export. Each series draws in one pass, because the script
+ * reads the PNG in the same task and a chunked draw ends in a later frame. Then the script reads the PNG and
+ * downloads it through an anchor. An entry that names no kept chart, or no export size, draws nothing.
+ *
+ * A click on a hybrid SVG entry builds the SVG of a dense chart from the kept option: the vector draw, the raster
+ * draw of the point layer at 300 DPI, and the composition. Then the script downloads the text through an anchor.
+ * A build that gives no file keeps the menu open and shows its fault note, thus the reader sees why the entry gave
+ * no file and can take a PNG.
  *
  * An option that carries the data-source member holds no row. The script then reads the registered payload
  * of the artifact and builds the data of each series from the descriptors. A mount whose payload the
  * registry does not hold keeps its empty card, and the walk continues.
  *
- * The script signals readiness when the bootstrap completes, and immediately when no chart exists. It sets
+ * The script signals readiness when each chart that it set fires its first `finished` event, and immediately
+ * when no chart exists. A dense scatter draws in chunks over some frames, and the runtime fires `finished`
+ * after the last chunk. Thus a capture that keys on the signal sees each point. A chart whose option throws
+ * counts as finished, thus one fault never withholds the signal. It sets
  * the `window.__inflexaThemeReady` sentinel and dispatches the `inflexa-theme-ready` event on the document.
  * A reader that captures the page keys on this signal, thus the capture returns when the page is ready and
  * not at a timeout. The sentinel guards a listener that registers after the dispatch, thus a late listener
@@ -296,6 +394,9 @@ function reportSeriesData(payload, source, rule) {
  */
 export const CHART_BOOTSTRAP = `(function () {
   ${CHART_SERIES_BUILDER}
+  ${CHART_RENDERERS_SOURCE}
+  ${HYBRID_SVG_SOURCE}
+  ${CHART_TOOLBOX_SOURCE}
   function signalReady() {
     window.${THEME_READY_SENTINEL} = true;
     document.dispatchEvent(new Event(${JSON.stringify(THEME_READY_EVENT)}));
@@ -312,7 +413,31 @@ export const CHART_BOOTSTRAP = `(function () {
     whenRevealed(signalReady);
     return;
   }
+  reportRegisterRenderers(echarts);
+  var pending = 0;
+  var walked = false;
+  var signalled = false;
+  function settle() {
+    if (!signalled && walked && pending === 0) {
+      signalled = true;
+      whenRevealed(signalReady);
+    }
+  }
+  function track(chart) {
+    var done = false;
+    pending += 1;
+    function finish() {
+      if (!done) {
+        done = true;
+        pending -= 1;
+        settle();
+      }
+    }
+    chart.on("finished", finish);
+    return finish;
+  }
   var registry = window.${TABLE_DATA_GLOBAL};
+  var kept = window.${CHART_OPTIONS_GLOBAL} = window.${CHART_OPTIONS_GLOBAL} || Object.create(null);
   var containers = document.querySelectorAll("[data-echarts-id]");
   for (var i = 0; i < containers.length; i++) {
     var container = containers[i];
@@ -335,8 +460,16 @@ export const CHART_BOOTSTRAP = `(function () {
           series[s].data = reportSeriesData(payload, source.series[s], source.rule);
         }
       }
+      reportBindToolbox(option);
       var chart = echarts.init(container, ${JSON.stringify(ECHARTS_THEME_NAME)});
-      chart.setOption(option);
+      kept[container.getAttribute("id") || ""] = option;
+      var finish = track(chart);
+      try {
+        chart.setOption(option);
+      } catch (fault) {
+        finish();
+        throw fault;
+      }
     } catch (cause) {
       console.error("chart bootstrap failed for " + (container.getAttribute("data-echarts-id") || "(no id)") + ": " + (cause && cause.message ? cause.message : cause));
     }
@@ -345,12 +478,114 @@ export const CHART_BOOTSTRAP = `(function () {
     var nodes = document.querySelectorAll("[data-echarts-id]");
     for (var j = 0; j < nodes.length; j++) {
       var instance = echarts.getInstanceByDom(nodes[j]);
-      if (instance) {
+      if (instance && (instance.getWidth() !== nodes[j].clientWidth || instance.getHeight() !== nodes[j].clientHeight)) {
         instance.resize();
       }
     }
   });
-  whenRevealed(signalReady);
+  function toolboxShown(shown) {
+    function place(layer) {
+      if (layer.zlevel === ${TOOLBOX_ZLEVEL} && layer.dom) {
+        layer.dom.style.visibility = shown ? "" : "hidden";
+      }
+    }
+    var nodes = document.querySelectorAll("[data-echarts-id]");
+    for (var n = 0; n < nodes.length; n++) {
+      var instance = echarts.getInstanceByDom(nodes[n]);
+      var painter = instance ? instance.getZr().painter : null;
+      if (painter && typeof painter.eachLayer === "function") {
+        painter.eachLayer(place);
+      }
+    }
+  }
+  window.addEventListener("beforeprint", function () {
+    reportCloseExportMenu(false);
+    toolboxShown(false);
+  });
+  window.addEventListener("afterprint", function () {
+    toolboxShown(true);
+  });
+  var exportSizes = ${JSON.stringify(PAGE_EXPORT_SIZES)};
+  function reportOnePassOption(option) {
+    var out = Object.assign({}, option);
+    var series = reportList(option.series);
+    var drawn = [];
+    for (var s = 0; s < series.length; s++) {
+      drawn.push(Object.assign({}, series[s], { progressive: 0 }));
+    }
+    out.series = drawn;
+    return out;
+  }
+  function reportExportPng(control) {
+    var kind = control.getAttribute("data-export") || "";
+    var chartId = control.getAttribute("data-chart") || "";
+    if (!Object.prototype.hasOwnProperty.call(exportSizes, kind) || !Object.prototype.hasOwnProperty.call(kept, chartId)) {
+      return;
+    }
+    var size = exportSizes[kind];
+    var height = Number(control.getAttribute("data-height")) || size.height;
+    var host = document.createElement("div");
+    var offscreen = echarts.init(host, size.theme, { renderer: "canvas", width: size.width, height: height, devicePixelRatio: size.pixelRatio });
+    try {
+      offscreen.setOption(reportOnePassOption(reportExportOption(kept[chartId], size.textPx, size.width, height)));
+      var link = document.createElement("a");
+      link.href = offscreen.getDataURL({ type: "png", pixelRatio: size.pixelRatio, backgroundColor: "#ffffff" });
+      link.download = control.getAttribute("data-file") || "chart.png";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } finally {
+      offscreen.dispose();
+    }
+  }
+  function reportExportHybrid(control) {
+    var kind = control.getAttribute("data-hybrid") || "";
+    var chartId = control.getAttribute("data-chart") || "";
+    if (!Object.prototype.hasOwnProperty.call(exportSizes, kind) || !Object.prototype.hasOwnProperty.call(kept, chartId)) {
+      return true;
+    }
+    var size = Object.assign({}, exportSizes[kind]);
+    size.height = Number(control.getAttribute("data-height")) || size.height;
+    size.heightMm = Number(control.getAttribute("data-height-mm")) || size.heightMm;
+    var svg = null;
+    try {
+      svg = reportHybridSvg(echarts, kept[chartId], size);
+    } catch (cause) {
+      console.error("hybrid svg failed for " + chartId + ": " + (cause && cause.message ? cause.message : cause));
+      return false;
+    }
+    if (svg === null) {
+      console.error("hybrid svg failed for " + chartId + ": the chart holds no point layer inside a grid");
+      return false;
+    }
+    var url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = control.getAttribute("data-file") || "chart.svg";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+    }, ${DOWNLOAD_URL_LIFETIME_MS});
+    return true;
+  }
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    var control = target && typeof target.closest === "function" ? target.closest("[data-export], [data-hybrid]") : null;
+    if (control) {
+      if (control.getAttribute("data-export") !== null) {
+        reportExportPng(control);
+      } else if (reportExportHybrid(control) === false) {
+        reportMenuFault(control);
+        return;
+      }
+    }
+    reportMenuClick(event);
+  });
+  document.addEventListener("keydown", reportMenuKey);
+  walked = true;
+  settle();
 })();`;
 
 /**

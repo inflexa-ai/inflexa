@@ -92,6 +92,21 @@ derived step table, and that table binds the \`km\` preset. Both cases are
 obligations, and a busy category set is not an exemption, because the horizontal bar
 exists for that shape.
 
+A figure block is the last choice. It serves a picture that no table can carry:
+a microscopy image, a schematic, or a genome browser track. Each other plot of a
+run is a chart block over the table that made it, and the block schema of \`add_block\`
+names each chart type and each preset that the chart grammar draws. When the pinned
+evidence holds the table of such a plot, or a derivation can give it, bind the chart
+and leave the run figure out of the report.
+
+A plot of a field takes its preset, and the preset draws the canonical figure of
+that field from one table. A statistic that the figure prints, such as the p-value
+of a test or the area under a curve, binds as a statistic of the chart block, and
+each statistic reads one cell of the pinned evidence. A second table that the
+figure draws beside its table, such as the domains of a protein, binds as the track
+of the chart block. When a clustering orders an axis of a heatmap, the edge table of
+that clustering binds as the tree of that axis, and the axis takes its leaf order.
+
 A run writes statistical tables, and not plot-ready ones. When a real reshaping
 stands between the evidence and the block, \`derive_table\` runs your Python script
 over the pinned inputs that you declare, and it pins the result to this session. A
@@ -260,6 +275,8 @@ page that the user reads.
 - **Probe for a hash.** Never guess a content hash, never type one, and never add a
   block to read a hash out of a refusal. A reference names the path, and the session
   stamps the hash.
+- **Use a run figure for a plot that a chart draws.** A run PNG has no hover, no
+  export, and not the look of the page, thus the reader loses all three.
 - **Repair a block that the pictures could not show.** The coverage of the look
   names what the pictures hold. Judge what you saw, and leave the rest of
   the draft as it stands.

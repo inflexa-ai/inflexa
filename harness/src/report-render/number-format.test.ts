@@ -7,6 +7,7 @@ import {
     selectColumnKind,
     selectNumberKind,
     smallestPositiveValue,
+    typographicExponent,
     type NumberKind,
 } from "./number-format.js";
 import { TABLE_CELL_FORMATTER } from "./page.js";
@@ -501,5 +502,29 @@ describe("the table cell format", () => {
         const server = VECTOR.map((entry) => formatTableCell(entry.cell, entry.kind, entry.bound));
         const page = VECTOR.map((entry) => formatOnThePage(entry.cell, entry.kind, entry.bound));
         expect(page).toEqual(server);
+    });
+});
+
+describe("typographicExponent", () => {
+    it("prints the exponent of a scientific form as a power of ten with superscript digits", () => {
+        expect(typographicExponent("1.3e-3")).toBe("1.3 × 10⁻³");
+        expect(typographicExponent("4.3e-5")).toBe("4.3 × 10⁻⁵");
+        expect(typographicExponent("1e-10")).toBe("1 × 10⁻¹⁰");
+        expect(typographicExponent("1.5e21")).toBe("1.5 × 10²¹");
+    });
+
+    it("keeps the sign of the coefficient and the bound of a below-resolution form", () => {
+        expect(typographicExponent(formatNumberCell(-0.00012345, "compact-scientific").text)).toBe("−1.2 × 10⁻⁴");
+        expect(typographicExponent(formatNumberCell(0, "below-resolution", 0.00036).text)).toBe("<4 × 10⁻⁴");
+    });
+
+    it("keeps each form that holds no exponent", () => {
+        for (const text of ["0.05", "≈0", "<0.02", "15,235", "−3.09", "rs1e5", "HALLMARK_E2F"]) {
+            expect(typographicExponent(text)).toBe(text);
+        }
+    });
+
+    it("prints each exponent of a text that holds some numbers", () => {
+        expect(typographicExponent("3.6e-4 (1e-5–2.2e-3)")).toBe("3.6 × 10⁻⁴ (1 × 10⁻⁵–2.2 × 10⁻³)");
     });
 });
