@@ -124,6 +124,20 @@ describe("createHttpKnowledgeClient", () => {
         expect(
             RecommendResponseSchema.safeParse({ ...limitAnswer(), procedure: [{ ...de, limit: { ...de.limit, requested_language: "julia" } }] }).success,
         ).toBe(false);
+        // A slot refusal of the rules rides beside the missing requirements.
+        const refused = RecommendResponseSchema.parse({
+            ...limitAnswer(),
+            procedure: [
+                {
+                    ...de,
+                    limit: {
+                        ...de.limit,
+                        skipped: [{ template: "tpl-pydeseq2-two-group@1.0.0", missing: [], refused: "the slot lfc_shrink takes one of apeglm, none" }],
+                    },
+                },
+            ],
+        });
+        expect(refused.procedure[0]!.limit?.skipped[0]?.refused).toBe("the slot lfc_shrink takes one of apeglm, none");
     });
 
     it("parses the render answer with the method and the method of record of a substitute", async () => {

@@ -175,9 +175,15 @@ function stepCaveats(step: ProcedureStep): string[] {
         caveats.push(`${step.method.label} stands in for ${step.substitution.label}`);
     }
     if (step.limit) {
-        // Only two languages exist, thus the named template is in the other one.
+        // Only two languages exist, thus the named template is in the other one. A slot that refuses a value of the
+        // rules is not a fact of the design, thus with a refusal the caveat names the cause of each skipped template.
         const named = step.limit.requested_language === "python" ? "R" : "Python";
-        caveats.push(`the requested language has no template that realizes ${step.method?.label ?? step.step} for this design; the ${named} template is named`);
+        const refused = step.limit.skipped.some((entry) => entry.refused !== undefined);
+        const causes = step.limit.skipped.map((entry) =>
+            entry.refused !== undefined ? `${entry.template}: ${entry.refused}` : `${entry.template} does not honor ${entry.missing.join(", ")}`,
+        );
+        const cause = refused ? `because ${causes.join("; ")}` : "for this design";
+        caveats.push(`the requested language has no template that realizes ${step.method?.label ?? step.step} ${cause}; the ${named} template is named`);
     }
     if (step.unrealized) {
         // The knowledge covers the step and no vetted script does: the plan says so, and it invents no template.
