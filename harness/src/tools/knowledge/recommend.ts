@@ -111,7 +111,7 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
             "set `grounding.status: ungrounded`, keep the snapshot digest, cite no claim, and give the reason for the departure in `grounding.reason`. A departure the plan states is not a fault; a silent one is. " +
             "`match: flag`: a rule changes the outcome (for example no replication, or a batch confounded with the condition); " +
             "the skeleton step carries `status: flagged`, the rule id in its reason, and the flag message as its first caveat; obey the flag `outcome`. " +
-            "`dropped` lists the steps the procedure removed because a flag removed inference; do not plan them. " +
+            "`dropped` lists the steps the procedure removed, because a flag removed inference or because the script of the test runs no such step (the shrinkage of limma and edgeR); do not plan them. " +
             "`unrealized` lists the steps whose method has no vetted script template for this design; the skeleton step keeps the method and the claims, its caveat names the gap, " +
             "and the plan states that the step runs without a vetted template instead of an invented one. " +
             "`match: none`: no rule covers the central step; plan that step from your own knowledge with `status: ungrounded` and the reason, and keep the skeleton steps the answer holds. " +
@@ -121,7 +121,7 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
             "The `alternatives` of a step are also vetted methods; `forbids` names the method ids the rules forbid for the step, and a forbidden method stays forbidden. " +
             "A caveat is one of: a warn flag; a parameter conflict between two rules (the step omits that parameter, so state the value you choose and both rule ids); " +
             "a substitution (the template runs a substitute of the method of record, and the step method, package, and template are the substitute; the plan states it); " +
-            "a language limit (the requested language has no template that realizes the method for this design; the step keeps the named template, and the plan states the limit). " +
+            "a language limit (the requested language has no template that realizes the method for this design, or its template refuses a value of the rules; the step keeps the named template, and the plan states the limit). " +
             "A step carries `environment` when the host bound the stores: `package.present` and its version from the packages installed in the sandbox, and `collection.present` with its path in the reference store. " +
             "That is the environment answer; do not call the listing tools for a package or a collection the answer already reports. " +
             "Call it once per situation; a second call with the same situation gives the same answer.",
