@@ -271,6 +271,34 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.grounding.settings).toEqual([]);
     });
 
+    it("names a slot refusal and a missing requirement in the language limit caveat", async () => {
+        const answer = limitAnswer();
+        const refused = 'the slot lfc_shrink takes one of apeglm, none, and the rules give "ashr"';
+        const procedure = answer.procedure.map((step) =>
+            step.limit
+                ? {
+                      ...step,
+                      limit: {
+                          ...step.limit,
+                          skipped: [
+                              { template: "tpl-pydeseq2-two-group@1.0.0", missing: [], refused },
+                              { template: "tpl-pydeseq2-blocked@1.0.0", missing: ["pairing"] },
+                          ],
+                      },
+                  }
+                : step,
+        );
+        const { client } = fakeKnowledgeClient({ recommend: { ...answer, procedure } });
+        const tool = createKnowledgeRecommendTool({ client });
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute(tool.inputSchema.parse({ ...SITUATION, paired: true, preferred_language: "python" }), ctx))._unsafeUnwrap();
+        if (out.match !== "applicable") throw new Error(out.match);
+        const analysis = out.plan_skeleton.find((step) => step.id === "T1S2")!;
+        expect(analysis.caveats).toEqual([
+            `the requested language has no template that realizes Count-model Wald test with effect shrinkage because tpl-pydeseq2-two-group@1.0.0: ${refused}; tpl-pydeseq2-blocked@1.0.0 does not honor pairing; the R template is named`,
+        ]);
+    });
+
     it("carries no environment when no store is bound, and still folds the skeleton", async () => {
         const { client } = fakeKnowledgeClient();
         const tool = createKnowledgeRecommendTool({ client });

@@ -86,11 +86,14 @@ const ProcedureConflictSchema = z.looseObject({
 /** The step method is a declared substitute: `for` names the method of record it stands in for. */
 const ProcedureSubstitutionSchema = z.looseObject({ for: z.string(), label: z.string(), template: z.string() });
 
-/** No template of the requested language holds for the design; the step keeps the first template that holds. */
+/**
+ * No template of the requested language is eligible; the step keeps the first template that is. A skipped template
+ * lacks a design requirement (`missing`), or its slot refuses a value that the rules give (`refused`).
+ */
 const ProcedureLimitSchema = z.looseObject({
     requested_language: z.enum(["R", "python"]),
     reason: z.string(),
-    skipped: z.array(z.looseObject({ template: z.string(), missing: z.array(z.string()) })),
+    skipped: z.array(z.looseObject({ template: z.string(), missing: z.array(z.string()), refused: z.string().optional() })),
 });
 
 /** The rules select a method for the step, and no template of the method holds: the knowledge covers the step, and no vetted script does. */
