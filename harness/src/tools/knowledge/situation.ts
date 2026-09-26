@@ -66,13 +66,15 @@ export const SituationFieldsSchema = z.object({
         .int()
         .min(1)
         .describe(
-            "The smallest number of biological samples in any group, after technical replicates are summed. 1 means a group has no replication. With a continuous predictor, the number of samples.",
+            "The smallest number of biological samples in any group, after technical replicates are summed. 1 means a group has no replication. In a time course, the smallest number in one group at one time point. With a nested block, the smallest number of blocks (for example animals) in one group. With a continuous predictor, the number of samples.",
         ),
     n_per_group_max: z
         .number()
         .int()
         .min(1)
-        .describe("The largest number of biological samples in any group. With a continuous predictor, the number of samples."),
+        .describe(
+            "The largest number of biological samples in any group. In a time course, the largest number in one group at one time point. With a nested block, the largest number of blocks in one group. With a continuous predictor, the number of samples.",
+        ),
     n_samples: z
         .number()
         .int()
