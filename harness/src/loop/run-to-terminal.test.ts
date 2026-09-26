@@ -6,7 +6,7 @@ import { z } from "zod";
 import { isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
+import { isWrapUpRequest, makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { passthroughStep } from "./run-step.js";
 import { runToTerminal } from "./run-to-terminal.js";
 import type { AgentDefinition, RunStep } from "./types.js";
@@ -119,6 +119,46 @@ describe("runToTerminal", () => {
             { tools: [tool], nudge: NUDGE },
         );
 
+        expect(cell.value).toBe("salvaged");
+    });
+
+    it("salvages a run that the early cap stopped, and the salvage turn ignores the cap", async () => {
+        const cell = { value: null as string | null };
+        const submit = submitTool(cell);
+        const probe = defineTool({
+            id: "probe",
+            description: "A search tool the first run keeps calling.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async () => ok({}),
+        });
+        let probeCalls = 0;
+        const provider = scriptedProvider((i, request) => {
+            const last = request.messages.at(-1);
+            const isSalvage = last?.role === "user" && typeof last.content === "string" && last.content === NUDGE;
+            if (isSalvage) return makeMessage([toolUseBlock("t1", "submit", { answer: "salvaged" })], "tool_use");
+            if (isWrapUpRequest(request)) return makeMessage([textBlock("wrap-up")], "end_turn");
+            probeCalls += 1;
+            return makeMessage([toolUseBlock(`p-${i}`, "probe", {})], "tool_use");
+        });
+
+        const result = await runToTerminal(
+            agentDef([submit, probe], 10),
+            GO,
+            makeSession(),
+            {
+                provider,
+                signal: new AbortController().signal,
+                emit: () => {},
+                runStep: passthroughStep,
+                resolved: () => cell.value !== null,
+                stopWhen: () => probeCalls >= 2,
+            },
+            { tools: [submit], nudge: NUDGE },
+        );
+
+        expect(probeCalls).toBe(2);
+        expect(result.salvage?.firstFinish.reason).toBe("max_iterations");
         expect(cell.value).toBe("salvaged");
     });
 

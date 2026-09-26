@@ -151,6 +151,15 @@ export interface RunAgentOptions {
      */
     readonly toolChoice?: ChatRequest["toolChoice"];
     /**
+     * An early cap. Read at the top of each iteration; when it answers true the
+     * loop leaves the tool phase as if `maxIterations` were reached and takes the
+     * same tool-less wrap-up path, thus a terminal wrapper salvages the run the
+     * same way. A host uses it to end a run that a policy has judged to be a
+     * loop, for example one the call guard refused too many times, without
+     * waiting for the iteration cap or the wall clock.
+     */
+    readonly stopWhen?: () => boolean;
+    /**
      * Optional outcome predicate for loop-driving agents whose result is
      * recorded by a tool into closure state. Checked immediately after each
      * dispatch round, once every sibling tool result has been appended.
@@ -390,6 +399,7 @@ export function openLoop(
 
     let iterations = 0;
     let truncationRecoveries = 0;
+    let stoppedEarly = false;
     // Counted rather than listed: the finish record stays one bounded line for a run of
     // any length, and "50 iterations, 49 tool calls, 47 of them errored" already separates
     // a productive long run from a loop stuck retrying one failing call. The per-iteration
@@ -671,6 +681,13 @@ export function openLoop(
         const names = segment.stepNames;
         if (segment.requestText !== undefined) messages.push(syntheticUserMessage(segment.requestText));
         for (let k = 0; k < segment.maxRequests; k++) {
+            // The early cap ends a segment before the cap as if the cap were reached, thus a run takes its
+            // tool-less wrap-up. The segment that closes a capped run is that wrap-up, and it runs to its end.
+            if (segment.closesCappedRun !== true && opts.stopWhen?.()) {
+                stoppedEarly = true;
+                log.warn("run stopped early by the host policy, taking the wrap-up path", { iterations });
+                return "capped";
+            }
             const index = segment.firstIndex + k;
             // The last request of a segment that closes a capped run ends the run,
             // whatever its reply, thus its `iteration` event is the final one.
@@ -759,6 +776,7 @@ export function openLoop(
                     // abort (user cut the turn) from a plain `max_iterations` cap-out.
                     const reason = reply.finishReason === "aborted" ? "aborted" : "max_iterations";
                     recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
+                    if (stoppedEarly) log.warn("run finished on the early cap", { iterations });
                     logFinish("warn", reason, true);
                     await giveRound();
                     return { messages, finish: { reason, cappedOut: true, truncationRecoveries, ...finishUsage() } };
@@ -798,6 +816,7 @@ export function openLoop(
     const endCapped = async (): Promise<RunAgentResult> => {
         settleTranscript();
         recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
+        if (stoppedEarly) log.warn("run finished on the early cap", { iterations });
         logFinish("warn", "max_iterations", true);
         await giveRound();
         return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };

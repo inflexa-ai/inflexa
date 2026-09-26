@@ -1,0 +1,260 @@
+/**
+ * The plan skeleton: the procedure of the service folded into the steps of a
+ * plan, with the agent, the packages, the dependencies, the caveats, the
+ * alternatives, the disputed sides, the forbidden methods, the environment,
+ * and the grounding of each step filled from the answer. It is
+ * the one representation the planner receives: the procedure itself never
+ * reaches the model, thus nothing the procedure holds may be lost here. A
+ * small model edits a skeleton where it fails to compose a plan from a
+ * procedure; a frontier model pays nothing for it. The skeleton carries only
+ * the fields the answer can fill. The question, the acceptance criteria, the
+ * resources, and the step budget come from the data profile, and the planner
+ * adds them.
+ *
+ * The fold is fixed: one cohort assembly step when the procedure holds one
+ * (the sample exclusions and the sum of technical replicates, before any
+ * other step reads the counts), one QC step, one differential expression
+ * step that holds the filter, the normalization, the design, the test, the
+ * shrinkage, and the multiple testing (the templates cover the same span),
+ * one enrichment step on its own track, and one report step. A group with
+ * no step in the procedure is absent from the skeleton.
+ *
+ * The central step of a group names the method of the skeleton step, and it
+ * gives the alternatives, the template, and the environment: an alternative
+ * of a folded step (a normalization in the differential expression group)
+ * is not a permitted replacement of the step method, and it stays out. The
+ * settings, the caveats, and the forbidden methods come from every step of
+ * the group, each setting with the step it belongs to. A parameter is a
+ * setting of the grounding, never a constraint of the step: the value is the
+ * vetted default, and the agent can state another value with its reason.
+ */
+
+import type { GroundingSetting } from "../../schemas/workflow-state.js";
+import type { RecommendWithEnvironment, StepEnvironment } from "./environment.js";
+
+export interface SkeletonAlternative {
+    readonly method: string;
+    readonly label: string;
+    readonly when: string;
+    readonly rules: readonly string[];
+}
+
+export interface SkeletonStep {
+    readonly id: string;
+    readonly name: string;
+    readonly track: string;
+    readonly step_type: string;
+    readonly agent: string;
+    readonly packages: readonly string[];
+    readonly depends_on: readonly string[];
+    readonly caveats: readonly string[];
+    /** The other permitted methods of the step, from the central procedure step. */
+    readonly alternatives: readonly SkeletonAlternative[];
+    /** A disputed rule of the group with its sides. The planner chooses one side and states the choice. */
+    readonly disputed?: { readonly rule: string; readonly sides: readonly string[] };
+    /** The method ids the rules forbid in the steps of the group. */
+    readonly forbids: readonly string[];
+    /** The environment of the central step, when the host bound the stores: the package in the farm and the collection in the reference store. */
+    readonly environment?: StepEnvironment;
+    readonly grounding: {
+        readonly status: "grounded" | "ungrounded" | "flagged";
+        readonly snapshot: string;
+        readonly claims: readonly string[];
+        readonly template?: string;
+        /** One entry per parameter of the procedure steps of the group, with the step it belongs to. */
+        readonly settings: readonly GroundingSetting[];
+        readonly reason: string;
+    };
+}
+
+type ProcedureStep = RecommendWithEnvironment["procedure"][number];
+
+const GROUPS: readonly {
+    readonly id: string;
+    readonly track: string;
+    readonly step_type: string;
+    readonly agent: string;
+    readonly steps: readonly string[];
+    readonly name: string;
+}[] = [
+    { id: "T0S1", track: "T1", step_type: "data_preparation", agent: "bulk-transcriptomics-agent", steps: ["cohort_assembly"], name: "Cohort assembly" },
+    { id: "T1S1", track: "T1", step_type: "qc", agent: "bulk-transcriptomics-agent", steps: ["qc_sample_structure"], name: "Sample structure QC" },
+    {
+        id: "T1S2",
+        track: "T1",
+        step_type: "analysis",
+        agent: "bulk-transcriptomics-agent",
+        steps: ["filter_low_counts", "normalize", "model_design", "differential_expression", "shrink_lfc", "multiple_testing"],
+        name: "Differential expression",
+    },
+    { id: "T2S1", track: "T2", step_type: "enrichment", agent: "enrichment-agent", steps: ["enrichment"], name: "Gene set enrichment" },
+    {
+        id: "T2S2",
+        track: "T2",
+        step_type: "activity",
+        agent: "enrichment-agent",
+        steps: ["tf_activity", "pathway_activity"],
+        name: "Regulator and pathway activity",
+    },
+    { id: "T1S4", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["variance_partition"], name: "Variance partition" },
+    { id: "T3S1", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["signature_scoring"], name: "Signature scoring" },
+    { id: "T3S2", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["deconvolution"], name: "Cell type deconvolution" },
+    { id: "T3S3", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["coexpression"], name: "Co-expression modules" },
+    { id: "T3S4", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["clustering"], name: "Sample clustering" },
+    { id: "T3S5", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["survival"], name: "Outcome association" },
+    { id: "T1S5", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["transcript_level"], name: "Transcript-level analysis" },
+    { id: "T1S6", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["annotation"], name: "Identifier annotation" },
+    { id: "T1S3", track: "T1", step_type: "report", agent: "bulk-transcriptomics-agent", steps: ["report"], name: "Report" },
+];
+
+/**
+ * The dependencies of each group. The QC depends on the cohort assembly when
+ * one is present, a group depends on the QC, on the differential expression
+ * when its input is a results table, and the report depends on every group
+ * that is present.
+ */
+const DEPENDS: Readonly<Record<string, readonly string[]>> = {
+    T0S1: [],
+    T1S1: ["T0S1"],
+    T1S2: ["T1S1"],
+    T2S1: ["T1S2"],
+    T2S2: ["T1S2", "T1S1"],
+    T1S4: ["T1S1"],
+    T3S1: ["T1S1"],
+    T3S2: ["T1S1"],
+    T3S3: ["T1S1"],
+    T3S4: ["T1S1"],
+    T3S5: ["T3S1", "T1S1"],
+    T1S5: ["T1S1"],
+    T1S6: ["T1S1"],
+    T1S3: ["T1S2", "T2S1", "T2S2", "T1S4", "T3S1", "T3S2", "T3S3", "T3S4", "T3S5", "T1S5", "T1S6"],
+};
+
+/** A parameter value as a setting: a scalar stays, a list becomes a list of strings, anything else its text. */
+function settingValue(value: unknown): GroundingSetting["value"] {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+    if (Array.isArray(value)) return value.map(String);
+    return String(value);
+}
+
+/** The settings of the steps of a group: one entry per parameter, with the step it belongs to. */
+function stepSettings(steps: readonly ProcedureStep[]): GroundingSetting[] {
+    return steps.flatMap((step) =>
+        (step.parameters ?? []).map((parameter) => ({
+            step: step.step,
+            name: parameter.name,
+            value: settingValue(parameter.value),
+            ...(parameter.default_source ? { source: parameter.default_source } : {}),
+        })),
+    );
+}
+
+/** The forbidden method ids of a step. The client schema reads the field through the loose object. */
+function forbidsOf(step: ProcedureStep): readonly string[] {
+    const forbids = (step as { forbids?: unknown }).forbids;
+    return Array.isArray(forbids) ? forbids.filter((method): method is string => typeof method === "string") : [];
+}
+
+/** `a and b`, or `a, b and c` for a longer list. */
+function joinWithAnd(items: readonly string[]): string {
+    if (items.length <= 1) return items.join("");
+    return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/**
+ * The caveats a step carries beside its warn flags. A parameter conflict, a
+ * substitution, and a language limit each render as a caveat, never as a
+ * setting: a setting is a value, and none of the three is a value.
+ */
+function stepCaveats(step: ProcedureStep): string[] {
+    const caveats: string[] = [];
+    for (const conflict of step.conflicts ?? []) {
+        caveats.push(`${step.step}: ${conflict.parameter} conflicts between ${joinWithAnd(conflict.entries.map((entry) => entry.rule))}`);
+    }
+    if (step.substitution && step.method) {
+        caveats.push(`${step.method.label} stands in for ${step.substitution.label}`);
+    }
+    if (step.limit) {
+        // Only two languages exist, thus the named template is in the other one. A slot that refuses a value of the
+        // rules is not a fact of the design, thus with a refusal the caveat names the cause of each skipped template.
+        const named = step.limit.requested_language === "python" ? "R" : "Python";
+        const refused = step.limit.skipped.some((entry) => entry.refused !== undefined);
+        const causes = step.limit.skipped.map((entry) =>
+            entry.refused !== undefined ? `${entry.template}: ${entry.refused}` : `${entry.template} does not honor ${entry.missing.join(", ")}`,
+        );
+        const cause = refused ? `because ${causes.join("; ")}` : "for this design";
+        caveats.push(`the requested language has no template that realizes ${step.method?.label ?? step.step} ${cause}; the ${named} template is named`);
+    }
+    if (step.unrealized) {
+        // The knowledge covers the step and no vetted script does: the plan says so, and it invents no template.
+        const why = step.unrealized.templates.map((entry) => `${entry.template}: ${entry.why}`).join("; ");
+        caveats.push(
+            `no vetted template realizes ${step.method?.label ?? step.step} for this design (${why || "the method lists no template for the step"}); the step runs without a template of the service`,
+        );
+    }
+    return caveats;
+}
+
+/** The present dependencies of a group; a group whose own dependency is absent falls back to the QC, and the two first groups to nothing. */
+function dependsOn(id: string, kept: ReadonlySet<string>): string[] {
+    const present = (DEPENDS[id] ?? []).filter((dependency) => kept.has(dependency));
+    if (present.length > 0) return [...new Set(present)];
+    return id !== "T0S1" && id !== "T1S1" && kept.has("T1S1") ? ["T1S1"] : [];
+}
+
+export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonStep[] {
+    const byStep = new Map<string, ProcedureStep>(answer.procedure.map((step) => [step.step, step]));
+    const present = new Set(answer.procedure.map((step) => step.step));
+    const kept = GROUPS.filter((group) => group.steps.some((step) => present.has(step)));
+    const keptIds = new Set(kept.map((group) => group.id));
+    return kept.map((group) => {
+        const steps = group.steps.map((step) => byStep.get(step)).filter((step): step is ProcedureStep => step !== undefined);
+        const central = steps.find((step) => step.step === "differential_expression") ?? steps.find((step) => step.method !== undefined) ?? steps[0];
+        const flags = steps.flatMap((step) => step.flags ?? []);
+        const hardFlag = flags.find((flag) => flag.severity === "flag");
+        const claims = [...new Set(steps.flatMap((step) => step.rules))];
+        const packages = [
+            ...new Set(steps.map((step) => (step as { package?: { name: string } }).package?.name).filter((name): name is string => name !== undefined)),
+        ];
+        const caveats = [...flags.filter((flag) => flag.severity === "warn").map((flag) => flag.message), ...steps.flatMap(stepCaveats)];
+        const method = central?.method;
+        // A rule covers the group when a step of the group carries one. A method
+        // is not necessary: the report step carries the reporting rules and no
+        // method, and it is grounded by those rules.
+        const covered = method !== undefined || claims.length > 0;
+        const status = hardFlag ? "flagged" : covered ? "grounded" : "ungrounded";
+        const name = method && group.id !== "T1S1" && group.id !== "T1S3" ? method.label : group.name;
+        const alternatives = (central?.alternatives ?? []).map(({ method: id, label, when, rules }) => ({ method: id, label, when, rules }));
+        // One dispute per skeleton step: the central step first, else the first folded step that carries one.
+        const disputed = central?.disputed ?? steps.find((step) => step.disputed !== undefined)?.disputed;
+        const forbids = [...new Set(steps.flatMap(forbidsOf))];
+        return {
+            id: group.id,
+            name,
+            track: group.track,
+            step_type: group.step_type,
+            agent: group.agent,
+            packages,
+            depends_on: dependsOn(group.id, keptIds),
+            caveats: hardFlag ? [hardFlag.message, ...caveats] : caveats,
+            alternatives,
+            ...(disputed ? { disputed: { rule: disputed.rule, sides: disputed.sides } } : {}),
+            forbids,
+            ...(central?.environment ? { environment: central.environment } : {}),
+            grounding: {
+                status,
+                snapshot: answer.snapshot.digest,
+                claims,
+                ...(central?.template ? { template: central.template } : {}),
+                settings: stepSettings(steps),
+                reason: hardFlag
+                    ? `flagged by ${hardFlag.rule}`
+                    : method
+                      ? `${method.label} per ${claims[0] ?? "the procedure"}`
+                      : covered
+                        ? `${group.name} per ${claims[0]}`
+                        : "no rule covers this step",
+            },
+        };
+    });
+}
