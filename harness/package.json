@@ -77,6 +77,7 @@
         "hono": "^4.12.34",
         "hyparquet": "^1.28.1",
         "js-tiktoken": "^1.0.21",
+        "kysely": "^0.29.6",
         "mime": "^4.1.0",
         "nanoid": "^5.1.16",
         "neverthrow": "^8.2.0",

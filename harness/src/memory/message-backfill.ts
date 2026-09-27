@@ -1,6 +1,11 @@
-import type { PoolClient } from "pg";
+import type { QueryResultRow } from "pg";
 
 import { envelopeMessage, legacyAnthropicToModelMessage } from "./ai-sdk-message-storage.js";
+
+/** The query method of a `pg` client, which the migration transaction also supplies. */
+export interface BackfillClient {
+    query<R extends QueryResultRow>(text: string, values?: unknown[]): Promise<{ rows: R[] }>;
+}
 
 interface LegacyRow {
     readonly thread_id: string;
@@ -9,7 +14,7 @@ interface LegacyRow {
     readonly content_jsonb: string | Array<Record<string, unknown>>;
 }
 
-export async function backfillAiSdkMessageEnvelopes(client: PoolClient): Promise<void> {
+export async function backfillAiSdkMessageEnvelopes(client: BackfillClient): Promise<void> {
     // Legacy Anthropic columns (`role`, `content_jsonb`) are temporary and
     // should be removed after the AI SDK message-envelope migration window.
     const { rows } = await client.query<LegacyRow>(

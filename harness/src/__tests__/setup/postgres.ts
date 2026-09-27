@@ -174,6 +174,15 @@ export async function withSchema(testName: string): Promise<{
 }
 
 /**
+ * Make a test schema look like a database from before the versioned migrations:
+ * drop the record of the migrator, thus the next `initCortexState` applies the
+ * baseline again over the tables as they stand.
+ */
+export async function forgetMigrations(pool: Pool): Promise<void> {
+    await pool.query("DROP TABLE cortex_migration, cortex_migration_lock");
+}
+
+/**
  * Best-effort global teardown for the shared container. Only matters when
  * the Bun test runner is configured to invoke this (it isn't by default —
  * containers are reaped by testcontainers' ryuk sidecar).

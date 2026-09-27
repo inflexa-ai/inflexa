@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
-import { withSchema } from "../__tests__/setup/postgres.js";
+import { forgetMigrations, withSchema } from "../__tests__/setup/postgres.js";
 import { initCortexState } from "./init.js";
 
 let pool: Pool;
@@ -47,6 +47,7 @@ describe("messages.message_envelope column type", () => {
         );
         expect(await envelopeColumnType()).toBe("jsonb");
 
+        await forgetMigrations(pool);
         await initCortexState(pool);
 
         expect(await envelopeColumnType()).toBe("json");
@@ -57,13 +58,14 @@ describe("messages.message_envelope column type", () => {
     });
 
     it("leaves the column alone when it is already json", async () => {
-        // The conversion rewrites the whole table, and init runs at every boot —
-        // so re-running it must not re-alter a column already at the target type.
+        // The conversion rewrites the whole table, and the baseline also applies to
+        // a database whose column is already json — so it must not re-alter it.
         await pool.query("INSERT INTO messages (thread_id, seq, message_envelope, tokens) VALUES ('t', 0, $1::json, 1)", [
             JSON.stringify({ kind: "ai-sdk-model-message", aiSdkMajor: 7, message: { role: "user", content: "hi" } }),
         ]);
         const { rows: before } = await pool.query<{ ctid: string }>("SELECT ctid::text FROM messages WHERE thread_id = 't'");
 
+        await forgetMigrations(pool);
         await initCortexState(pool);
 
         expect(await envelopeColumnType()).toBe("json");
