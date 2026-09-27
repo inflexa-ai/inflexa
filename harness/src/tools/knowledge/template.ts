@@ -1,7 +1,7 @@
 /**
  * `knowledge_template` — the model emits slot values, and the tool writes the
  * rendered script and the decision record into the step workspace through
- * the same mutator seam as `write_file`. The script is never output tokens.
+ * the same `WorkspaceMutator` as `write_file`. The script is never output tokens.
  *
  * The installed versions ride from the tool, not from the model: the tool
  * reads the `inflexa.lock` of the farm and the `image-packages.json` of the

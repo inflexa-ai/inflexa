@@ -12,7 +12,7 @@ The answer of the reference listing invited the retry. It said that a store "wil
 - The planner wraps its search tools with the guard on every plan generation. The terminal tools stay outside it.
 - The unavailable answer of the reference listing states that a later call in the run gives the same answer.
 
-No prompt changes. No seam changes. No change to the terminal tools.
+No prompt changes. No change to the interfaces that an embedder binds. No change to the terminal tools.
 
 ## Capabilities
 

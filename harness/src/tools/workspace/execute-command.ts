@@ -110,7 +110,7 @@ export interface ExecuteCommandDeps {
     /** Analysis resource mount root (`/{resourceId}`) — strips frame paths to relative. */
     readonly mountRoot?: string;
     /**
-     * The read seam and the mutator of the step, for the record check of a
+     * The workspace filesystem and the mutator of the step, for the record check of a
      * script the command runs. Both absent (a read-only agent), no record is
      * read or written.
      */
@@ -164,7 +164,7 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
             const effectiveCwd = cwd === undefined ? defaultCwd : cwd.startsWith("/") ? cwd : posixPath.join(defaultCwd, cwd);
 
             // Each script the argv names, as the sandbox resolves it. A relative token resolves against the cwd of the
-            // command, which is a `/{analysisId}/...` path, thus the read seam resolves it the same way.
+            // command, which is a `/{analysisId}/...` path, thus the workspace filesystem resolves it the same way.
             if (deps.workspaceFilesystem && deps.mutator) {
                 for (const token of command.filter((arg) => SCRIPT_EXTENSIONS.test(arg))) {
                     await reconcileScriptRecord({

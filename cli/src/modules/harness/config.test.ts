@@ -439,7 +439,7 @@ describe("resolveKnowledgeConfig", () => {
         writeFileSync(env.configPath, JSON.stringify({ telemetry: false, ...(knowledge === undefined ? {} : { knowledge }) }));
     }
 
-    // `Bun.env` is the sanctioned test seam for an ambient variable (see setup.test.ts); the
+    // `Bun.env` is the sanctioned way for a test to set an ambient variable (see setup.test.ts); the
     // production reader stays `lib/env.ts`.
     beforeEach(() => {
         savedKey = Bun.env[KEY_VAR];

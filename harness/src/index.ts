@@ -158,7 +158,7 @@ export type { RunCanceler, RunCancelerDeps, CancelRunResult } from "./execution/
 
 // Tool primitive.
 export { defineTool, isToolError } from "./tools/define-tool.js";
-// The knowledge plane seam: an embedder binds a client at its composition root
+// The knowledge plane: an embedder binds a client at its composition root
 // (or none), and it can hand `knowledge_recommend` to the conversation agent
 // through `hostTools`.
 export {
