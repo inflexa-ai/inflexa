@@ -1,6 +1,6 @@
 /**
  * Knowledge barrel — the three tools of the knowledge plane and the client
- * seam they share.
+ * interface they share.
  *
  * `createKnowledgeTools` gives the two planner tools when a client is bound,
  * and nothing when it is not. Absence is the default state of the open-source

@@ -8,23 +8,23 @@ Phase 0 of the knowledge plane adds three tools and one plan-step field, and not
 
 ## What Changes
 
-- A `KnowledgeClient` seam in `src/tools/knowledge/client.ts`, with the shipped HTTPS realization. An embedder binds a client at its composition root, or none. Absence is the default state of the open-source host and a normal condition: no tool attaches, and no description of a tool enters the context.
+- A `KnowledgeClient` interface in `src/tools/knowledge/client.ts`, with the shipped HTTPS realization. An embedder binds a client at its composition root, or none. Absence is the default state of the open-source host and a normal condition: no tool attaches, and no description of a tool enters the context.
 - `knowledge_recommend` and `knowledge_check` in the search tools of the planner, attached only when a client is bound.
-- `knowledge_template` in the sandbox allowlist, declared by the bulk transcriptomics agent and the enrichment agent. It attaches only when a client is bound and the agent can write. It writes the rendered script and `output/decision_record.json` through the workspace mutator seam, thus the existing write-file provenance hashes both files.
+- `knowledge_template` in the sandbox allowlist, declared by the bulk transcriptomics agent and the enrichment agent. It attaches only when a client is bound and the agent can write. It writes the rendered script and `output/decision_record.json` through the `WorkspaceMutator`, thus the existing write-file provenance hashes both files.
 - An optional `grounding` object on the plan step, in the persistence schema and in the planner schema. The briefing renders it beside the task fields.
 - `knowledge_template` as a third member of `MutateToolName`, thus a rendered script carries its writer in the provenance record.
 
-No prompt changes. No seam changes. No kernel change.
+No prompt changes. No other change to the interfaces that an embedder binds. No kernel change.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `knowledge-plane-tools`: the client seam, the three tools, their attach conditions, the typed absence, and the grounding field.
+- `knowledge-plane-tools`: the client interface, the three tools, their attach conditions, the typed absence, and the grounding field.
 
 ### Modified Capabilities
 
-- `per-agent-tool-allowlist`: one allowlist member resolves to nothing when its seam is unbound.
+- `per-agent-tool-allowlist`: one allowlist member resolves to nothing when no knowledge client is bound.
 - `planning-enhancements`: the planner search tools gain the two knowledge tools when a client is bound, and the plan step gains the optional grounding field.
 
 ## Impact

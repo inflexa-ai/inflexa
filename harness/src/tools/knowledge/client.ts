@@ -1,5 +1,5 @@
 /**
- * The knowledge service seam of the harness.
+ * The knowledge service interface of the harness.
  *
  * `KnowledgeClient` is the one contract between the harness and the remote
  * knowledge service: four typed operations and the snapshot they answer

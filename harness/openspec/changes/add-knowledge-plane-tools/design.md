@@ -2,9 +2,9 @@
 
 ## Context
 
-The harness is host-agnostic. A capability means the same thing under the CLI and under a managed deployment. Thus the knowledge plane is a seam of the harness, and the CLI binds it. The service is closed and remote. The harness never knows about a license. It sees a client, or it sees nothing.
+The harness is host-agnostic. A capability means the same thing under the CLI and under a managed deployment. Thus the knowledge plane is an interface of the harness, and the CLI binds it. The service is closed and remote. The harness never knows about a license. It sees a client, or it sees nothing.
 
-Three constraints of Phase 0 bind this design: no prompt change, no seam change other than the new optional client, and no kernel change. The grounding rides in one optional field of the plan step and in a written decision record.
+Three constraints of Phase 0 bind this design: no prompt change, no change to the interfaces that an embedder binds other than the new optional client, and no kernel change. The grounding rides in one optional field of the plan step and in a written decision record.
 
 ## Decisions
 

@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: The knowledge client is an optional seam
+### Requirement: The knowledge client is an optional interface
 
 The harness MUST declare a `KnowledgeClient` interface with four operations: `recommend(situation)`, `check(situation, steps)`, `render(template, slots, farm?)`, and `contract(template)`. The `contract` operation MUST read `GET /v1/templates/{id}` of the service, and it MUST answer `{ match: "rejected" }` with the field `template` on a 404. The harness MUST ship `createHttpKnowledgeClient({ baseUrl, apiKey })` as the realization over HTTPS with the retry and timeout policy of the other external tools. An embedder MUST bind a client at its composition root, or none. The harness MUST NOT read a license, a key, or an endpoint from the environment.
 
