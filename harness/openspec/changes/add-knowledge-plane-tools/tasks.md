@@ -1,4 +1,4 @@
-## 1. The client seam
+## 1. The client interface
 
 - [x] 1.1 Declare `KnowledgeClient`, the situation type, and the lenient answer schemas in `src/tools/knowledge/client.ts`.
 - [x] 1.2 Ship `createHttpKnowledgeClient` over `apiFetchValidated`, with `unavailable` and `rejected` as data variants.
