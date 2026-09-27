@@ -1213,7 +1213,7 @@ async function bootHarnessRuntimeOnce(
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove
             // this analysis's inputs in-process (manage_inputs) — the last must be in-process so it
             // mutates under the chat's own lock and its provenance/parity events stay on this bus.
-            // `knowledge_recommend` rides the same seam when the knowledge plane is bound, thus the
+            // `knowledge_recommend` rides the same `hostTools` list when the knowledge plane is bound, thus the
             // conversation agent can orient a method question before it plans, with no harness change.
             hostTools: [
                 createRunInflexaTool(),

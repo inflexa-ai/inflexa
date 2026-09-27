@@ -2,7 +2,7 @@
 
 ## Why
 
-The harness declares a `KnowledgeClient` seam for the knowledge plane, the remote service that grounds a plan in cited rules and tested script templates. The open-source CLI has no access to the service by default. A license, which is the API key, enables it. The CLI is the embedder, thus it gives the values at its composition root: the endpoint from the config and the key from the environment.
+The harness declares a `KnowledgeClient` interface for the knowledge plane, the remote service that grounds a plan in cited rules and tested script templates. The open-source CLI has no access to the service by default. A license, which is the API key, enables it. The CLI is the embedder, thus it gives the values at its composition root: the endpoint from the config and the key from the environment.
 
 ## What Changes
 
@@ -28,4 +28,4 @@ No command changes. No agent policy changes.
 - `src/modules/harness/runtime.ts`, `src/modules/harness/run_deps.ts`: the client on the composition and the deps bags.
 - `src/cli/index.ts`: the help list.
 
-A user without the block sees no change. The harness pin must carry the seam before this change is released.
+A user without the block sees no change. The harness pin must carry the `KnowledgeClient` interface before this change is released.
