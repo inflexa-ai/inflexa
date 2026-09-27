@@ -234,6 +234,31 @@ describe("updateTitle", () => {
     });
 });
 
+describe("setAutoTitle", () => {
+    it("sets the title, and a later automatic title replaces it", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Report 1" }))._unsafeUnwrap();
+
+        expect((await store.setAutoTitle("t1", "Working title"))._unsafeUnwrap()?.title).toBe("Working title");
+        expect((await store.setAutoTitle("t1", "Findings"))._unsafeUnwrap()?.title).toBe("Findings");
+    });
+
+    it("changes nothing after a person renames the thread", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Report 1" }))._unsafeUnwrap();
+        (await store.updateTitle("t1", "QC summary"))._unsafeUnwrap();
+
+        expect((await store.setAutoTitle("t1", "Findings"))._unsafeUnwrap()).toBeNull();
+        expect((await store.getThread("t1"))._unsafeUnwrap()!.title).toBe("QC summary");
+    });
+
+    it("is a no-op on a missing or archived thread", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Report 1" }))._unsafeUnwrap();
+        (await store.archiveThread("t1"))._unsafeUnwrap();
+
+        expect((await store.setAutoTitle("missing", "Findings"))._unsafeUnwrap()).toBeNull();
+        expect((await store.setAutoTitle("t1", "Findings"))._unsafeUnwrap()).toBeNull();
+    });
+});
+
 describe("archiveThread (soft delete)", () => {
     it("excludes the thread from get/list while the row and messages persist (2.2, 2.3)", async () => {
         (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Archived" }))._unsafeUnwrap();

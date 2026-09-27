@@ -147,6 +147,17 @@ describe("prepareChatTurn", () => {
         expect(after!.title).toBe("My Existing Title");
     });
 
+    it("keeps an empty title that a person set", async () => {
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: "t-cleared", analysisId: ANALYSIS_A, title: "Old title" }))._unsafeUnwrap();
+        (await store.updateTitle("t-cleared", ""))._unsafeUnwrap();
+
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-cleared", userInput: "compare the two batches" });
+
+        expect(result.kind).toBe("ok");
+        expect((await store.getThread("t-cleared"))._unsafeUnwrap()!.title).toBe("");
+    });
+
     it("injects analysis-wide running and suspended runs regardless of launching thread", async () => {
         (
             await insertRun(pool, { runId: "run-other-thread", analysisId: ANALYSIS_A, threadId: "other-thread", workflowName: "executeAnalysis" })

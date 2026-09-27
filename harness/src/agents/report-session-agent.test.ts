@@ -26,7 +26,7 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
         gateway: {} as ReportSessionStateGateway,
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
         store: {} as ReportVersionStore,
-        threads: {} as Pick<ThreadStore, "getThread">,
+        threads: {} as Pick<ThreadStore, "getThread" | "setAutoTitle">,
         chrome: {},
         derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
         ...(toolOutputStore ? { toolOutputStore } : {}),

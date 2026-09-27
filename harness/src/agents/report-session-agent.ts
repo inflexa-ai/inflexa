@@ -104,8 +104,8 @@ export interface ReportSessionAgentDeps {
      * Omitted, the tool derives nothing, the same as an absent sandbox client.
      */
     readonly runAuthorizer?: RunAuthorizer;
-    /** Thread reader -- the record tool reads the anchor of the report thread. */
-    readonly threads: Pick<ThreadStore, "getThread">;
+    /** Thread store -- the record tool reads the anchor of the report thread, and the preview tool names it. */
+    readonly threads: Pick<ThreadStore, "getThread" | "setAutoTitle">;
     /** Headless-Chrome config -- the eyes tool opens the rendered page. */
     readonly chrome: ChromeConfig;
     /**
@@ -205,6 +205,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         createPreviewReportTool({
             gateway,
             resolveWorkspaceRoot,
+            threads,
             ...(makeResolver ? { makeResolver } : {}),
             ...(resolvePageAsset ? { resolvePageAsset } : {}),
             ...(makeSessionPages ? { makeSessionPages } : {}),

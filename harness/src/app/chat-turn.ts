@@ -116,7 +116,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
                 observe({ type: "create-session", analysisId, threadId, sessionKind: created.threadType });
             }
         } else if (!existing.title || existing.title.length === 0) {
-            unwrapOrThrow(await store.updateTitle(threadId, deriveThreadTitle(userInput)));
+            unwrapOrThrow(await store.setAutoTitle(threadId, deriveThreadTitle(userInput)));
         }
     } catch (err) {
         logger.warn("title-seed failed (non-fatal)", logger.errorFields(err));
