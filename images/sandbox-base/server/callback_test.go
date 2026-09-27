@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -44,9 +45,9 @@ func TestSignCallback_ChangesWithInputs(t *testing.T) {
 }
 
 func TestCallbackClient_HappyPath(t *testing.T) {
-	var attempts int32
+	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&attempts, 1)
+		attempts.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -56,7 +57,7 @@ func TestCallbackClient_HappyPath(t *testing.T) {
 	if err := c.post(context.Background(), callbackKindEvent, "x1", traceContext{}, []byte(`{}`)); err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
-	if got := atomic.LoadInt32(&attempts); got != 1 {
+	if got := attempts.Load(); got != 1 {
 		t.Fatalf("expected 1 attempt, got %d", got)
 	}
 }
@@ -67,10 +68,10 @@ func TestCallbackClient_HappyPath(t *testing.T) {
 // exceeded the freshness window — retrying forever against a verdict that can
 // never change. Each attempt must carry its own timestamp and signature.
 func TestCallbackClient_ReSignsEveryAttempt(t *testing.T) {
-	var attempts int32
+	var attempts atomic.Int32
 	var firstSig, firstTs string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&attempts, 1)
+		n := attempts.Add(1)
 		if n == 1 {
 			firstSig = r.Header.Get(headerSignature)
 			firstTs = r.Header.Get(headerTimestamp)
@@ -100,7 +101,7 @@ func TestCallbackClient_ReSignsEveryAttempt(t *testing.T) {
 	if err := c.post(context.Background(), callbackKindEvent, "x1", traceContext{}, []byte(`{}`)); err != nil {
 		t.Fatalf("expected success after retry, got %v", err)
 	}
-	if got := atomic.LoadInt32(&attempts); got != 2 {
+	if got := attempts.Load(); got != 2 {
 		t.Fatalf("expected 2 attempts, got %d", got)
 	}
 }
@@ -111,10 +112,13 @@ func TestCallbackClient_EachAttemptSignatureVerifies(t *testing.T) {
 	secret := []byte("topsecret")
 	body := []byte(`{"exitCode":0}`)
 
-	var attempts int32
+	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&attempts, 1)
-		got, _ := io.ReadAll(r.Body)
+		n := attempts.Add(1)
+		got, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("attempt %d: read body: %v", n, err)
+		}
 		ts, err := strconv.ParseInt(r.Header.Get(headerTimestamp), 10, 64)
 		if err != nil {
 			t.Errorf("attempt %d: unparseable timestamp: %v", n, err)
@@ -135,7 +139,7 @@ func TestCallbackClient_EachAttemptSignatureVerifies(t *testing.T) {
 	if err := c.post(context.Background(), callbackKindComplete, "x1", traceContext{}, body); err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
-	if got := atomic.LoadInt32(&attempts); got != 3 {
+	if got := attempts.Load(); got != 3 {
 		t.Fatalf("expected 3 attempts, got %d", got)
 	}
 }
@@ -149,12 +153,15 @@ func TestCallbackClient_DeliveryAfterFreshnessWindowCarriesFreshTimestamp(t *tes
 
 	// A stand-in for Cortex: rejects anything older than its freshness window,
 	// exactly as `verifyCallback` does.
-	var attempts int32
+	var attempts atomic.Int32
 	var accepted bool
 	clock := time.Unix(1_700_000_000, 0)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&attempts, 1)
-		ts, _ := strconv.ParseInt(r.Header.Get(headerTimestamp), 10, 64)
+		n := attempts.Add(1)
+		ts, err := strconv.ParseInt(r.Header.Get(headerTimestamp), 10, 64)
+		if err != nil {
+			t.Errorf("attempt %d: unparseable timestamp: %v", n, err)
+		}
 		if age := clock.Unix() - ts; age > freshnessSec {
 			t.Errorf("attempt %d arrived with a stale timestamp (age %ds) — Cortex would hard-cancel the run", n, age)
 		}
@@ -187,9 +194,9 @@ func TestCallbackClient_DeliveryAfterFreshnessWindowCarriesFreshTimestamp(t *tes
 }
 
 func TestCallbackClient_GivesUpOn4xx(t *testing.T) {
-	var attempts int32
+	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&attempts, 1)
+		attempts.Add(1)
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
@@ -197,22 +204,28 @@ func TestCallbackClient_GivesUpOn4xx(t *testing.T) {
 	c := newCallbackClient(srv.URL, []byte("s"))
 	c.sleep = func(context.Context, time.Duration) {}
 	err := c.post(context.Background(), callbackKindEvent, "x1", traceContext{}, []byte(`{}`))
-	if err == nil || !strings.Contains(err.Error(), "giveup") {
+	if !errors.Is(err, errCallbackGiveup) {
 		t.Fatalf("expected giveup error, got %v", err)
 	}
-	if got := atomic.LoadInt32(&attempts); got != 1 {
+	if got := attempts.Load(); got != 1 {
 		t.Fatalf("expected 1 attempt on 4xx, got %d", got)
 	}
 }
 
 func TestCallbackClient_RetriesOnNetworkError(t *testing.T) {
-	var attempts int32
+	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&attempts, 1)
+		n := attempts.Add(1)
 		if n < 3 {
 			hj, _ := w.(http.Hijacker)
-			conn, _, _ := hj.Hijack()
-			_ = conn.Close()
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Errorf("attempt %d: hijack: %v", n, err)
+				return
+			}
+			if err := conn.Close(); err != nil {
+				t.Errorf("attempt %d: close the hijacked connection: %v", n, err)
+			}
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -224,7 +237,7 @@ func TestCallbackClient_RetriesOnNetworkError(t *testing.T) {
 	if err := c.post(context.Background(), callbackKindEvent, "x1", traceContext{}, []byte(`{}`)); err != nil {
 		t.Fatalf("expected success after network retry, got %v", err)
 	}
-	if got := atomic.LoadInt32(&attempts); got != 3 {
+	if got := attempts.Load(); got != 3 {
 		t.Fatalf("expected 3 attempts, got %d", got)
 	}
 }
@@ -232,7 +245,10 @@ func TestCallbackClient_RetriesOnNetworkError(t *testing.T) {
 func TestCallbackClient_SecretNotInRequest(t *testing.T) {
 	secret := []byte("topsecret-do-not-leak")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
 		if strings.Contains(string(body), string(secret)) {
 			t.Errorf("secret leaked in request body")
 		}
@@ -256,9 +272,9 @@ func TestCallbackClient_SecretNotInRequest(t *testing.T) {
 
 func TestCallbackClient_BackoffGrows(t *testing.T) {
 	var sleeps []time.Duration
-	var attempts int32
+	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&attempts, 1)
+		n := attempts.Add(1)
 		if n < 3 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -292,7 +308,10 @@ func TestCallbackClient_TraceContextLeavesTheSignatureValid(t *testing.T) {
 	trace := traceContext{traceparent: testTraceparent, tracestate: testTracestate}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
 		if r.Header.Get(headerTraceparent) != testTraceparent || r.Header.Get(headerTracestate) != testTracestate {
 			t.Errorf("callback carries traceparent=%q tracestate=%q, want the trace context",
 				r.Header.Get(headerTraceparent), r.Header.Get(headerTracestate))

@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"net"
-	"os"
 	"strings"
 	"testing"
 )
@@ -59,18 +57,20 @@ func TestNewProvenanceTrackerSocketPathBinds(t *testing.T) {
 	if err := pt.Start(); err != nil {
 		t.Fatalf("Start() on a production-shaped id: %v", err)
 	}
-	defer func() {
-		pt.Stop()
-		os.Remove(pt.socketPath)
-	}()
+	// Stop removes the socket file.
+	defer pt.Stop()
 
 	conn, err := net.Dial("unixgram", pt.socketPath)
 	if err != nil {
 		t.Fatalf("dial %s: %v", pt.socketPath, err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("close %s: %v", pt.socketPath, err)
+		}
+	}()
 
-	if _, err := conn.Write([]byte(fmt.Sprintf(`{"t":1,"p":"/x","pid":1,"layer":"test","op":"read"}`))); err != nil {
+	if _, err := conn.Write([]byte(`{"t":1,"p":"/x","pid":1,"layer":"test","op":"read"}`)); err != nil {
 		t.Fatalf("write to %s: %v", pt.socketPath, err)
 	}
 }

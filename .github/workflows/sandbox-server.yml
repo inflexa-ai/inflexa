@@ -1,0 +1,54 @@
+name: Sandbox server
+
+# Checks the Go sandbox server. The path filter keeps this workflow off each
+# change that does not touch the server. Thus it cannot be a required check:
+# a required check with no run on a pull request waits forever.
+on:
+  push:
+    branches: [main]
+    paths:
+      - images/sandbox-base/server/**
+      - .github/workflows/sandbox-server.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - images/sandbox-base/server/**
+      - .github/workflows/sandbox-server.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (sandbox-server)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: images/sandbox-base/server
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # A `uses:` step ignores the working-directory of the job, thus these
+      # paths start at the repository root.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: images/sandbox-base/server/go.mod
+          cache-dependency-path: |
+            images/sandbox-base/server/go.sum
+            images/sandbox-base/server/tools/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Generated lint configuration
+        run: go tool -modfile=tools/go.mod inflexa-lint-config -check
+
+      - name: Lint
+        run: go tool -modfile=tools/go.mod inflexa-lint run ./...
+
+      - name: Test
+        run: go test ./...

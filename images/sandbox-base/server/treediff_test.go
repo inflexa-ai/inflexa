@@ -59,10 +59,14 @@ func TestTreeDiff_DetectsModifiedFile(t *testing.T) {
 func TestTreeDiff_DetectsRemovedFile(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(root, "a.txt")
-	os.WriteFile(p, []byte("x"), 0o644)
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	d := newTreeDiffer(root)
 	d.tick()
-	os.Remove(p)
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
 	delta, changed := d.tick()
 	if !changed {
 		t.Fatalf("expected removal detected")
@@ -74,10 +78,12 @@ func TestTreeDiff_DetectsRemovedFile(t *testing.T) {
 
 func TestTreeDiff_NoEventOnUnchangedTree(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	d := newTreeDiffer(root)
 	d.tick() // baseline
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		_, changed := d.tick()
 		if changed {
 			t.Fatalf("expected no change on identical tree (iteration %d)", i)

@@ -125,8 +125,7 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxExecBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeJSONResponse(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "body too large"})
 			return
 		}
@@ -154,7 +153,7 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	traceID := extractTraceId(r)
+	traceID := extractTraceID(r)
 	trace := inboundTraceContext(r)
 	status, isNew := e.table.reserve(req.ExecID)
 	emitLog(execSubmittedLog{
@@ -167,18 +166,18 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go e.run(req, traceID, trace)
+	//nolint:boundedfanout // the submit returns before the exec ends, and a join at shutdown would wait for each callback retry
+	go e.run(context.WithoutCancel(r.Context()), req, traceID, trace)
 	writeJSONResponse(w, http.StatusAccepted, execSubmitResponse{ExecID: req.ExecID, Status: string(execStatusRunning)})
 }
 
 // run executes the command in the background. It owns the full lifecycle:
 // spawn, structured logs, tree-diff emission, completion callback. Each
 // callback carries trace, the trace context that the exec arrived with.
-func (e *executor) run(req execSubmitRequest, traceID string, trace traceContext) {
+func (e *executor) run(rootCtx context.Context, req execSubmitRequest, traceID string, trace traceContext) {
 	cmdStr := truncateCommand(req.Command, commandMaxLen)
 	startedAt := time.Now()
 
-	rootCtx := context.Background()
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if req.TimeoutSeconds > 0 {
@@ -203,17 +202,17 @@ func (e *executor) run(req execSubmitRequest, traceID string, trace traceContext
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stdout pipe: %s", err), provTracker, provenanceDisabled, trace)
+		e.failBeforeSpawn(ctx, req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stdout pipe: %s", err), provTracker, provenanceDisabled, trace)
 		return
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stderr pipe: %s", err), provTracker, provenanceDisabled, trace)
+		e.failBeforeSpawn(ctx, req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stderr pipe: %s", err), provTracker, provenanceDisabled, trace)
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("sandbox-server: spawn failed: %s", err), provTracker, provenanceDisabled, trace)
+		e.failBeforeSpawn(ctx, req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("sandbox-server: spawn failed: %s", err), provTracker, provenanceDisabled, trace)
 		return
 	}
 
@@ -252,7 +251,7 @@ func (e *executor) run(req execSubmitRequest, traceID string, trace traceContext
 	exitCode := 0
 	timedOut := false
 	if waitErr != nil {
-		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+		if exitErr, ok := errors.AsType[*exec.ExitError](waitErr); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = 1
@@ -314,7 +313,7 @@ func (e *executor) run(req execSubmitRequest, traceID string, trace traceContext
 		})
 	}
 
-	e.postCompletion(req.ExecID, trace, completionPayload{
+	e.postCompletion(ctx, req.ExecID, trace, completionPayload{
 		ExecID:           req.ExecID,
 		ExitCode:         exitCode,
 		Stdout:           stdout,
@@ -330,7 +329,7 @@ func (e *executor) run(req execSubmitRequest, traceID string, trace traceContext
 	})
 }
 
-func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedAt time.Time, errMsg string, tracker *ProvenanceTracker, provenanceDisabled bool, trace traceContext) {
+func (e *executor) failBeforeSpawn(ctx context.Context, execID, traceID, cmdStr, cwd string, startedAt time.Time, errMsg string, tracker *ProvenanceTracker, provenanceDisabled bool, trace traceContext) {
 	durationMs := time.Since(startedAt).Milliseconds()
 	now := nowRFC3339()
 	emitLog(execStartLog{
@@ -349,7 +348,7 @@ func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedA
 	})
 
 	prov := &provenancePayload{Disabled: provenanceDisabled}
-	e.postCompletion(execID, trace, completionPayload{
+	e.postCompletion(ctx, execID, trace, completionPayload{
 		ExecID: execID, ExitCode: 127, Stderr: errMsg, DurationMs: durationMs, Provenance: prov,
 	})
 }
@@ -360,7 +359,7 @@ func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedA
 // `GET /exec/{execId}` and never dials out; callback mode additionally pushes,
 // but a host that was down for the whole retry window can still pull the same
 // bytes (provenance frame included) once it comes back.
-func (e *executor) postCompletion(execID string, trace traceContext, payload completionPayload) {
+func (e *executor) postCompletion(ctx context.Context, execID string, trace traceContext, payload completionPayload) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[completion] marshal failed for %s: %v", execID, err)
@@ -375,7 +374,7 @@ func (e *executor) postCompletion(execID string, trace traceContext, payload com
 	if !e.table.claimCompletionPost(execID) {
 		return
 	}
-	if perr := e.callback.post(context.Background(), callbackKindComplete, execID, trace, body); perr != nil {
+	if perr := e.callback.post(context.WithoutCancel(ctx), callbackKindComplete, execID, trace, body); perr != nil {
 		log.Printf("[completion] post failed for %s: %v", execID, perr)
 		e.table.releaseCompletionPost(execID)
 	}
@@ -390,9 +389,8 @@ func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest, t
 	}
 	d := newTreeDiffer(root)
 	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
+	var wg sync.WaitGroup
+	wg.Go(func() {
 		ticker := time.NewTicker(treeDiffInterval())
 		defer ticker.Stop()
 		for {
@@ -406,20 +404,20 @@ func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest, t
 				if !changed {
 					continue
 				}
-				e.emitTreeEvent(req.ExecID, trace, delta)
+				e.emitTreeEvent(ctx, req.ExecID, trace, delta)
 			}
 		}
-	}()
+	})
 	return func() {
 		close(stop)
-		<-done
+		wg.Wait()
 		if delta, changed := d.tick(); changed {
-			e.emitTreeEvent(req.ExecID, trace, delta)
+			e.emitTreeEvent(ctx, req.ExecID, trace, delta)
 		}
 	}
 }
 
-func (e *executor) emitTreeEvent(execID string, trace traceContext, delta treeDiff) {
+func (e *executor) emitTreeEvent(ctx context.Context, execID string, trace traceContext, delta treeDiff) {
 	body, err := json.Marshal(eventPayload{
 		ExecID:    execID,
 		Kind:      "file-tree",
@@ -435,7 +433,7 @@ func (e *executor) emitTreeEvent(execID string, trace traceContext, delta treeDi
 		e.table.appendEvent(execID, body)
 		return
 	}
-	if perr := e.callback.post(context.Background(), callbackKindEvent, execID, trace, body); perr != nil {
+	if perr := e.callback.post(context.WithoutCancel(ctx), callbackKindEvent, execID, trace, body); perr != nil {
 		log.Printf("[event] post failed for %s: %v", execID, perr)
 	}
 }
@@ -473,6 +471,7 @@ func cleanSnapshotRoot(path string) string {
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
 		return ""
 	}
+	//nolint:gosec // G703: the signed caller names the directory, as treeDiffRootForExec explains.
 	if info, err := os.Stat(cleaned); err == nil && info.IsDir() { // codeql[go/path-injection]
 		return cleaned
 	}
@@ -525,8 +524,10 @@ func buildCommand(ctx context.Context, req execSubmitRequest) *exec.Cmd {
 	// `sh -c` argument (no interpolation into a larger string); the multi-element
 	// form is already the safe explicit-argv exec, with no shell involved.
 	if len(req.Command) == 1 {
+		//nolint:gosec // G204: the server runs the command of the signed caller, as the comment above explains.
 		cmd = exec.CommandContext(ctx, "sh", "-c", req.Command[0]) // codeql[go/command-injection]
 	} else {
+		//nolint:gosec // G204: the server runs the command of the signed caller, as the comment above explains.
 		cmd = exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) // codeql[go/command-injection]
 	}
 	if req.Cwd != "" {
@@ -619,8 +620,8 @@ func capturePipe(pipe io.ReadCloser, kind, traceID, execID string, pid int, buil
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		builder.Write([]byte(line))
-		builder.Write([]byte("\n"))
+		// SAFETY: capturingBuilder writes only to a strings.Builder, whose Write always returns a nil error.
+		_, _ = builder.Write([]byte(line + "\n"))
 		if stderrBuf != nil {
 			stderrBufMu.Lock()
 			stderrBuf.add(line)

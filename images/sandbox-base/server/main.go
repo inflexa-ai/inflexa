@@ -44,6 +44,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -60,6 +61,7 @@ const (
 	defaultPort        = "8765"
 	killEscalationWait = 5 * time.Second
 	shutdownGrace      = 10 * time.Second
+	readHeaderTimeout  = 30 * time.Second
 	timeoutExitCode    = 124
 	stderrTailLines    = 20
 	stderrTailMaxBytes = 2048
@@ -86,15 +88,15 @@ func initLogLevel() {
 		sandboxLogLevel = logLevelDebug
 	default:
 		sandboxLogLevel = logLevelInfo
-		log.Printf("WARNING: invalid SANDBOX_LOG_LEVEL=%q, falling back to info", v)
+		log.Printf("WARNING: invalid SANDBOX_LOG_LEVEL=%q, falling back to info", v) //nolint:gosec // G706: %q quotes the value, thus it cannot inject a log line
 	}
 }
 
 // ── Trace context ───────────────────────────────────────────────────
 
-// extractTraceId parses the W3C traceparent header and returns the 32-char
+// extractTraceID parses the W3C traceparent header and returns the 32-char
 // hex trace ID. Returns "" if the header is absent or malformed.
-func extractTraceId(r *http.Request) string {
+func extractTraceID(r *http.Request) string {
 	tp := r.Header.Get("traceparent")
 	if tp == "" {
 		return ""
@@ -189,22 +191,14 @@ func (pt *processTable) remove(pid int) {
 	delete(pt.entries, pid)
 }
 
-func (pt *processTable) get(pid int) (*processEntry, bool) {
-	pt.mu.Lock()
-	defer pt.mu.Unlock()
-	e, ok := pt.entries[pid]
-	return e, ok
-}
-
 func (pt *processTable) killAll() {
 	pt.mu.Lock()
 	entries := make(map[int]*processEntry, len(pt.entries))
-	for k, v := range pt.entries {
-		entries[k] = v
-	}
+	maps.Copy(entries, pt.entries)
 	pt.mu.Unlock()
 
 	for _, entry := range entries {
+		// SAFETY: Signal fails only for a process that already exited, which needs no signal.
 		_ = entry.cmd.Process.Signal(syscall.SIGTERM)
 	}
 
@@ -212,6 +206,7 @@ func (pt *processTable) killAll() {
 		pt.mu.Lock()
 		defer pt.mu.Unlock()
 		for _, entry := range pt.entries {
+			// SAFETY: Signal fails only for a process that already exited, which needs no signal.
 			_ = entry.cmd.Process.Signal(syscall.SIGKILL)
 		}
 	})
@@ -283,8 +278,11 @@ type logEntry struct {
 
 // emitLog marshals v to JSON and writes it to stdout.
 func emitLog(v any) {
+	// SAFETY: each caller passes a log struct of string, number, and bool
+	// fields, which json.Marshal always encodes.
 	data, _ := json.Marshal(v)
-	fmt.Fprintln(os.Stdout, string(data))
+	// SAFETY: stdout is the log stream, thus a failed log write has no other place to go.
+	_, _ = fmt.Fprintln(os.Stdout, string(data))
 }
 
 // ── Stderr ring buffer ──────────────────────────────────────────────
@@ -340,7 +338,7 @@ func previewHandler(root string) http.HandlerFunc {
 		if strings.Contains(relPath, "..") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"invalid path"}`))
+			writeBody(w, []byte(`{"error":"invalid path"}`))
 			return
 		}
 		w.Header().Set("Content-Security-Policy", previewCSP)
@@ -352,14 +350,14 @@ func previewHandler(root string) http.HandlerFunc {
 func previewNotConfiguredHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write([]byte(`{"error":"preview not configured"}`))
+	writeBody(w, []byte(`{"error":"preview not configured"}`))
 }
 
 // ── Handlers ────────────────────────────────────────────────────────
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
+	writeBody(w, []byte(`{"status":"ok"}`))
 }
 
 // pollResponseBody is the poll-mode body for `GET /exec/{execId}?since={cursor}`:
@@ -433,7 +431,7 @@ func execResultHandler(table *execTable, auth inboundAuth) http.HandlerFunc {
 		w.Header().Set(headerTimestamp, strconv.FormatInt(ts, 10))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
+		writeBody(w, body)
 	}
 }
 
@@ -441,7 +439,7 @@ func execResultHandler(table *execTable, auth inboundAuth) http.HandlerFunc {
 // events past the cursor plus the terminal result if the exec has finished,
 // signed fresh over the whole body.
 func servePollResult(w http.ResponseWriter, r *http.Request, table *execTable, auth inboundAuth, execID string) {
-	// An absent, empty, or unparseable `since` reads as 0 — serve from the start
+	// SAFETY: an absent, empty, or unparseable `since` reads as 0 — serve from the start
 	// of the ring rather than erroring on a cursor the host controls.
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	if since < 0 {
@@ -475,7 +473,7 @@ func servePollResult(w http.ResponseWriter, r *http.Request, table *execTable, a
 	w.Header().Set(headerTimestamp, strconv.FormatInt(ts, 10))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	writeBody(w, body)
 }
 
 // ── Logging middleware ──────────────────────────────────────────────
@@ -494,10 +492,9 @@ func loggingMiddleware(next http.Handler) http.Handler {
 			Path:       r.URL.Path,
 			Status:     rw.statusCode,
 			DurationMs: time.Since(start).Milliseconds(),
-			TraceID:    extractTraceId(r),
+			TraceID:    extractTraceID(r),
 		}
-		data, _ := json.Marshal(entry)
-		fmt.Fprintln(os.Stdout, string(data))
+		emitLog(entry)
 	})
 }
 
@@ -518,11 +515,18 @@ func (rw *responseWriter) WriteHeader(code int) {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 func writeJSONResponse(w http.ResponseWriter, status int, v any) {
+	// SAFETY: each caller passes a string map or a struct of plain fields,
+	// which json.Marshal always encodes.
 	data, _ := json.Marshal(v)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_, _ = w.Write(data)
-	_, _ = w.Write([]byte("\n"))
+	writeBody(w, append(data, '\n'))
+}
+
+func writeBody(w http.ResponseWriter, body []byte) {
+	// SAFETY: the status line is already sent, thus a failed write (a peer that
+	// went away) has no other channel to the peer.
+	_, _ = w.Write(body)
 }
 
 // ── Main ────────────────────────────────────────────────────────────
@@ -568,38 +572,40 @@ func main() {
 
 	previewRoot := os.Getenv("PREVIEW_ROOT")
 	if previewRoot != "" {
-		mux.Handle("/preview/", http.HandlerFunc(previewHandler(previewRoot)))
+		mux.Handle("/preview/", previewHandler(previewRoot))
 	} else {
 		mux.HandleFunc("/preview/", previewNotConfiguredHandler)
 	}
 
 	handler := loggingMiddleware(mux)
 
-	srv := &http.Server{Addr: "0.0.0.0:" + port, Handler: handler}
+	srv := &http.Server{Addr: "0.0.0.0:" + port, Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 
-	go func() {
+	var serveWG sync.WaitGroup
+	serveWG.Go(func() {
 		if previewRoot != "" {
-			log.Printf("sandbox-server listening on :%s (preview: %s)", port, previewRoot)
+			log.Printf("sandbox-server listening on :%s (preview: %s)", port, previewRoot) //nolint:gosec // G706: the image sets the port and the preview root, not a request
 		} else {
-			log.Printf("sandbox-server listening on :%s (preview: disabled)", port)
+			log.Printf("sandbox-server listening on :%s (preview: disabled)", port) //nolint:gosec // G706: the image sets the port, not a request
 		}
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 			log.Fatalf("server error: %v", err)
 		}
-	}()
+	})
 
 	<-stop
 	log.Println("shutting down...")
 
 	pt.killAll()
 
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace) //nolint:forbidigo // main starts the process, thus no caller context exists
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("shutdown error: %v", err)
 	}
+	serveWG.Wait()
 	log.Println("shutdown complete")
 }

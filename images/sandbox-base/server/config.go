@@ -80,7 +80,7 @@ func loadTransport() transportMode {
 	case string(transportCallback):
 		return transportCallback
 	default:
-		log.Printf("WARNING: invalid SANDBOX_TRANSPORT=%q, falling back to poll", raw)
+		log.Printf("WARNING: invalid SANDBOX_TRANSPORT=%q, falling back to poll", raw) //nolint:gosec // G706: %q quotes the value, thus it cannot inject a log line
 		return transportPoll
 	}
 }
@@ -100,8 +100,8 @@ func verifyPrivilegeDrop(firewallFlag string, euid int) error {
 }
 
 func decodeSecret(raw string) ([]byte, error) {
-	if strings.HasPrefix(raw, "base64:") {
-		b, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(raw, "base64:"))
+	if after, ok := strings.CutPrefix(raw, "base64:"); ok {
+		b, err := base64.StdEncoding.DecodeString(after)
 		if err != nil {
 			return nil, errors.New("SANDBOX_CALLBACK_SECRET base64 decode failed")
 		}
