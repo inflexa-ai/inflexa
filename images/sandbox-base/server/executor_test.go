@@ -533,7 +533,7 @@ func TestExecHandler_CallbacksCarryNoTraceContextWithoutAValidTraceparent(t *tes
 }
 
 func TestExecHandler_SubmittedLogDedupHitFlag(t *testing.T) {
-	exe, _, cleanup := newTestExecutor(t, []byte("s"))
+	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
 	defer cleanup()
 
 	rw1 := submit(t, exe, map[string]any{"command": []string{"sh", "-c", "sleep 0.2"}, "execId": "log-dup"})
@@ -541,6 +541,9 @@ func TestExecHandler_SubmittedLogDedupHitFlag(t *testing.T) {
 	if rw1.Code != http.StatusAccepted || rw2.Code != http.StatusAccepted {
 		t.Fatalf("expected 202 on both, got %d / %d", rw1.Code, rw2.Code)
 	}
+	// The completion callback retries until it lands, so closing the receiver
+	// first would leave it retrying against a dead server for the rest of the run.
+	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
 }
 
 // A spawned command must never inherit the callback credentials: whoever holds
