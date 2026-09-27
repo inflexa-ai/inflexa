@@ -25,7 +25,7 @@ func TestCapturingBuilderUnboundedWhenCapZero(t *testing.T) {
 
 func TestCapturingBuilderRetainsOnlyUpToCap(t *testing.T) {
 	b := &capturingBuilder{byteCap: 100}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if _, err := b.Write([]byte(strings.Repeat("y", 50))); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
@@ -90,14 +90,14 @@ func TestCapturingBuilderTrimsPartialRune(t *testing.T) {
 func TestCapturingBuilderConcurrentWrites(t *testing.T) {
 	b := &capturingBuilder{byteCap: 256}
 	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 64; j++ {
-				_, _ = b.Write([]byte("z"))
+	for range 16 {
+		wg.Go(func() {
+			for range 64 {
+				if _, err := b.Write([]byte("z")); err != nil {
+					t.Errorf("write: %v", err)
+				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := b.totalBytes(); got != 16*64 {

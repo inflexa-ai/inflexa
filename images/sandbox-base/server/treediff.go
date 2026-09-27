@@ -15,7 +15,7 @@ const (
 )
 
 type fileMeta struct {
-	Size  int64
+	Size      int64
 	MtimeNano int64
 }
 
@@ -37,6 +37,7 @@ func (d *treeDiffer) snapshot() map[string]fileMeta {
 		return out
 	}
 	count := 0
+	// SAFETY: the callback returns only nil or SkipAll, thus WalkDir returns no error.
 	_ = filepath.WalkDir(d.root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return nil

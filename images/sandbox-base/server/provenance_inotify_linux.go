@@ -48,7 +48,8 @@ func (w *linuxInotifyWatcher) start(watchDirs []string) {
 	for _, dir := range watchDirs {
 		// Strip trailing slash for Walk
 		dirClean := filepath.Clean(dir)
-		filepath.Walk(dirClean, func(path string, info os.FileInfo, err error) error {
+		// SAFETY: the callback returns only nil or SkipDir, thus Walk returns no error.
+		_ = filepath.Walk(dirClean, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info == nil || !info.IsDir() {
 				return nil
 			}
@@ -68,13 +69,11 @@ func (w *linuxInotifyWatcher) start(watchDirs []string) {
 	}
 
 	if watchCount > 0 {
-		w.wg.Add(1)
-		go w.readLoop()
+		w.wg.Go(w.readLoop)
 	}
 }
 
 func (w *linuxInotifyWatcher) readLoop() {
-	defer w.wg.Done()
 	buf := make([]byte, 4096)
 	for {
 		select {
@@ -85,7 +84,10 @@ func (w *linuxInotifyWatcher) readLoop() {
 			n, err := unix.Read(w.fd, buf)
 			if err != nil {
 				if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
-					time.Sleep(10 * time.Millisecond)
+					select {
+					case <-w.stopCh:
+					case <-time.After(10 * time.Millisecond):
+					}
 					continue
 				}
 				return
@@ -101,7 +103,7 @@ func (w *linuxInotifyWatcher) drain(buf []byte) {
 		n, err := unix.Read(w.fd, buf)
 		if err != nil {
 			if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(10 * time.Millisecond) //nolint:forbidigo // the drain runs after the stop, and the deadline of the loop bounds it
 				continue
 			}
 			return
@@ -114,7 +116,7 @@ func (w *linuxInotifyWatcher) parseEvents(buf []byte) {
 	offset := 0
 	const headerSize = 16 // Wd(4) + Mask(4) + Cookie(4) + Len(4)
 	for offset+headerSize <= len(buf) {
-		wd := int(int32(binary.LittleEndian.Uint32(buf[offset:])))
+		wd := int(int32(binary.LittleEndian.Uint32(buf[offset:]))) //nolint:gosec // G115: the kernel writes wd as a C int, thus the cast restores its sign
 		mask := binary.LittleEndian.Uint32(buf[offset+4:])
 		nameLen := int(binary.LittleEndian.Uint32(buf[offset+12:]))
 		nameStart := offset + headerSize
@@ -158,10 +160,9 @@ func (w *linuxInotifyWatcher) stop() {
 	w.wg.Wait()
 
 	if w.fd >= 0 {
-		for wd := range w.wds {
-			unix.InotifyRmWatch(w.fd, uint32(wd))
-		}
-		unix.Close(w.fd)
+		// The close of the inotify descriptor frees each of its watches.
+		// SAFETY: the loop no longer reads the descriptor, and Linux frees it even when close reports an error.
+		_ = unix.Close(w.fd)
 		w.fd = -1
 	}
 }

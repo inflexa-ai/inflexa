@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,7 +36,11 @@ type receivedCallback struct {
 
 func (rec *callbackReceiver) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 		// expected: /sandbox/{execId}/{kind}
 		if len(parts) != 3 || parts[0] != "sandbox" {
@@ -108,11 +113,14 @@ func signInbound(r *http.Request, execID string, body, secret []byte) {
 	r.Header.Set(headerTimestamp, strconv.FormatInt(ts, 10))
 }
 
-func execIDFromBody(b []byte) string {
+func execIDFromBody(t *testing.T, b []byte) string {
+	t.Helper()
 	var m struct {
 		ExecID string `json:"execId"`
 	}
-	_ = json.Unmarshal(b, &m)
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("submit body did not parse: %v", err)
+	}
 	return m.ExecID
 }
 
@@ -125,9 +133,12 @@ func submit(t *testing.T, exe *executor, body any) *httptest.ResponseRecorder {
 // the body only, so the headers have no part in it.
 func submitWithHeader(t *testing.T, exe *executor, body any, header http.Header) *httptest.ResponseRecorder {
 	t.Helper()
-	b, _ := json.Marshal(body)
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal the submit body: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(b))
-	signInbound(req, execIDFromBody(b), b, exe.auth.secret)
+	signInbound(req, execIDFromBody(t, b), b, exe.auth.secret)
 	for name, values := range header {
 		for _, v := range values {
 			req.Header.Add(name, v)
@@ -190,7 +201,10 @@ func TestExecHandler_RejectsUnsignedAndForgedSubmits(t *testing.T) {
 	defer cleanup()
 
 	post := func(sign func(r *http.Request, body []byte)) int {
-		body, _ := json.Marshal(map[string]any{"command": []string{"sh", "-c", "echo pwned"}, "execId": "intruder"})
+		body, err := json.Marshal(map[string]any{"command": []string{"sh", "-c", "echo pwned"}, "execId": "intruder"})
+		if err != nil {
+			t.Fatalf("marshal the submit body: %v", err)
+		}
 		req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(body))
 		sign(req, body)
 		rw := httptest.NewRecorder()
@@ -207,7 +221,10 @@ func TestExecHandler_RejectsUnsignedAndForgedSubmits(t *testing.T) {
 	// A signature over a DIFFERENT body must not authorise this one — the guard
 	// against a captured-then-tampered submit.
 	if code := post(func(r *http.Request, _ []byte) {
-		other, _ := json.Marshal(map[string]any{"command": []string{"true"}, "execId": "intruder"})
+		other, err := json.Marshal(map[string]any{"command": []string{"true"}, "execId": "intruder"})
+		if err != nil {
+			t.Fatalf("marshal the other body: %v", err)
+		}
 		signInbound(r, "intruder", other, []byte("topsecret"))
 	}); code != http.StatusUnauthorized {
 		t.Fatalf("body-tampered submit: expected 401, got %d", code)
@@ -294,7 +311,9 @@ func TestExecHandler_NonZeroExitCarriesCode(t *testing.T) {
 	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
 
 	var p completionPayload
-	_ = json.Unmarshal(rec.lastComplete().Body, &p)
+	if err := json.Unmarshal(rec.lastComplete().Body, &p); err != nil {
+		t.Fatalf("completion did not parse: %v", err)
+	}
 	if p.ExitCode != 7 {
 		t.Fatalf("expected exitCode=7, got %d", p.ExitCode)
 	}
@@ -311,7 +330,9 @@ func TestExecHandler_SpawnFailureProducesCompletion127(t *testing.T) {
 	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
 
 	var p completionPayload
-	_ = json.Unmarshal(rec.lastComplete().Body, &p)
+	if err := json.Unmarshal(rec.lastComplete().Body, &p); err != nil {
+		t.Fatalf("completion did not parse: %v", err)
+	}
 	if p.ExitCode != 127 {
 		t.Fatalf("expected exitCode=127, got %d", p.ExitCode)
 	}
@@ -347,7 +368,10 @@ func TestExecHandler_RetryPreservesSignatureAcrossAttempts(t *testing.T) {
 	var capturedSigs []string
 	var capturedTs []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
 		rec.mu.Lock()
 		capturedSigs = append(capturedSigs, r.Header.Get(headerSignature))
 		capturedTs = append(capturedTs, r.Header.Get(headerTimestamp))
@@ -583,11 +607,14 @@ func TestExecHandler_OversizedBodyRejected(t *testing.T) {
 	defer cleanup()
 
 	pad := strings.Repeat("a", maxExecBodyBytes)
-	body, _ := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"command": []string{"true"},
 		"execId":  "oversized",
 		"env":     map[string]string{"PAD": pad},
 	})
+	if err != nil {
+		t.Fatalf("marshal the submit body: %v", err)
+	}
 	if len(body) <= maxExecBodyBytes {
 		t.Fatalf("test body does not exceed the cap: %d <= %d", len(body), maxExecBodyBytes)
 	}
@@ -609,6 +636,9 @@ func TestExecHandler_OversizedBodyRejected(t *testing.T) {
 // host sizes its sandboxes from. A peak of zero, or an absent frame, means the
 // `wait4` rusage did not reach the executor and the whole measurement is dead.
 func TestExecCompletion_CarriesResourceUsage(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the server reports a resource-usage frame only on Linux")
+	}
 	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
 	defer cleanup()
 

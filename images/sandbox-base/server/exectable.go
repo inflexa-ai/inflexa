@@ -278,7 +278,8 @@ func (t *execTable) size() int {
 // every `interval`. Returns a stop function.
 func (t *execTable) startTTLSweeper(interval, ttl time.Duration) func() {
 	stop := make(chan struct{})
-	go func() {
+	var wg sync.WaitGroup
+	wg.Go(func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -289,6 +290,9 @@ func (t *execTable) startTTLSweeper(interval, ttl time.Duration) func() {
 				t.evictExpired(ttl)
 			}
 		}
-	}()
-	return func() { close(stop) }
+	})
+	return func() {
+		close(stop)
+		wg.Wait()
+	}
 }

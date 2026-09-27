@@ -39,7 +39,7 @@ func TestEventRing_AppendAssignsIncreasingSeq(t *testing.T) {
 func TestEventRing_SinceReturnsOnlyNewer(t *testing.T) {
 	table := newExecTable()
 	table.reserve(testExecID)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		table.appendEvent(testExecID, []byte(`{"n":`+strconv.Itoa(i)+`}`))
 	}
 
@@ -59,7 +59,7 @@ func TestEventRing_OverflowDropsOldestAndMarksTruncated(t *testing.T) {
 	table := newExecTable()
 	table.reserve(testExecID)
 	total := eventRingCapacity + 10
-	for i := 0; i < total; i++ {
+	for range total {
 		table.appendEvent(testExecID, []byte(`{}`))
 	}
 

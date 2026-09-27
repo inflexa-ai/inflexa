@@ -31,20 +31,20 @@ const (
 )
 
 type callbackClient struct {
-	baseURL string
-	secret  []byte
+	baseURL    string
+	secret     []byte
 	httpClient *http.Client
-	now     func() time.Time
-	sleep   func(context.Context, time.Duration)
+	now        func() time.Time
+	sleep      func(context.Context, time.Duration)
 }
 
 func newCallbackClient(baseURL string, secret []byte) *callbackClient {
 	return &callbackClient{
-		baseURL: baseURL,
-		secret:  secret,
+		baseURL:    baseURL,
+		secret:     secret,
 		httpClient: &http.Client{Timeout: callbackHTTPTimeout},
-		now:     time.Now,
-		sleep:   sleepCtx,
+		now:        time.Now,
+		sleep:      sleepCtx,
 	}
 }
 
@@ -61,7 +61,7 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 func signCallback(secret []byte, execID string, ts int64, body []byte) string {
 	bodyHash := sha256.Sum256(body)
 	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(fmt.Sprintf("%s:%d:%s", execID, ts, hex.EncodeToString(bodyHash[:]))))
+	mac.Write(fmt.Appendf(nil, "%s:%d:%s", execID, ts, hex.EncodeToString(bodyHash[:])))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -163,7 +163,11 @@ func (c *callbackClient) send(ctx context.Context, url string, body []byte, ts i
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// SAFETY: the status code is already read, and a failed close only stops the reuse of the connection.
+		_ = resp.Body.Close()
+	}()
+	// SAFETY: the status code decides the result; the drain only lets the client reuse the connection.
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -108,9 +109,11 @@ func NewProvenanceTracker(id string, watchDirs []string) *ProvenanceTracker {
 
 // Start creates the socket, starts the listener, and sets up inotify watches.
 func (pt *ProvenanceTracker) Start() error {
-	// Remove stale socket file
-	os.Remove(pt.socketPath)
-	os.Remove(pt.rlogPath)
+	// SAFETY: the paths hash an ID that holds a nanosecond stamp, thus no file is
+	// there in the normal case. A socket file that stays makes ListenUnixgram fail.
+	_ = os.Remove(pt.socketPath)
+	// SAFETY: see the socket path above.
+	_ = os.Remove(pt.rlogPath)
 
 	// Create DGRAM listener
 	addr := &net.UnixAddr{Name: pt.socketPath, Net: "unixgram"}
@@ -145,22 +148,27 @@ func (pt *ProvenanceTracker) Stop() provenanceResult {
 
 	// Give hooks a moment to send final datagrams
 	if pt.listener != nil {
-		pt.listener.SetReadDeadline(time.Now().Add(provenanceDrainTimeout))
+		// SAFETY: readLoop sets its own drain deadline after stopCh closes.
+		_ = pt.listener.SetReadDeadline(time.Now().Add(provenanceDrainTimeout))
 	}
 	pt.wg.Wait()
 
 	// Close socket
 	if pt.listener != nil {
-		pt.listener.Close()
+		// SAFETY: the reader already returned, and no other code uses the listener.
+		_ = pt.listener.Close()
 	}
-	os.Remove(pt.socketPath)
+	// SAFETY: no process reads the socket file after the close, and Start
+	// removes a file that stays.
+	_ = os.Remove(pt.socketPath)
 
 	// Stop inotify
 	pt.inotify.stop()
 
 	// Read R provenance log file
 	pt.readRlog()
-	os.Remove(pt.rlogPath)
+	// SAFETY: the log is already read, and Start removes a file that stays.
+	_ = os.Remove(pt.rlogPath)
 
 	// Build result
 	pt.mu.Lock()
@@ -232,7 +240,9 @@ func (pt *ProvenanceTracker) readLoop() {
 			// Set a fresh deadline — the default branch's SetReadDeadline
 			// may have overwritten the one from Stop(), leaving an already-
 			// expired deadline that causes ReadFrom to return immediately.
-			pt.listener.SetReadDeadline(time.Now().Add(provenanceDrainTimeout))
+			// SAFETY: SetReadDeadline fails only on a closed listener, and then
+			// ReadFrom returns the error that ends the loop.
+			_ = pt.listener.SetReadDeadline(time.Now().Add(provenanceDrainTimeout))
 			for {
 				n, _, err := pt.listener.ReadFrom(buf)
 				if err != nil {
@@ -241,10 +251,12 @@ func (pt *ProvenanceTracker) readLoop() {
 				pt.parseDatagram(buf[:n])
 			}
 		default:
-			pt.listener.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			// SAFETY: SetReadDeadline fails only on a closed listener, and then
+			// ReadFrom returns the error that ends the loop.
+			_ = pt.listener.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 			n, _, err := pt.listener.ReadFrom(buf)
 			if err != nil {
-				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				if ne, ok := errors.AsType[net.Error](err); ok && ne.Timeout() {
 					continue
 				}
 				return
@@ -360,7 +372,10 @@ func (pt *ProvenanceTracker) readRlog() {
 	if err != nil {
 		return // No R provenance log — R wasn't used
 	}
-	defer f.Close()
+	defer func() {
+		// SAFETY: the file is open only for a read, thus a close loses no data.
+		_ = f.Close()
+	}()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -409,7 +424,7 @@ func provenanceWatchDirs() []string {
 		if !strings.HasSuffix(d, "/") {
 			d += "/"
 		}
-		if info, err := os.Stat(strings.TrimSuffix(d, "/")); err == nil && info.IsDir() {
+		if info, err := os.Stat(strings.TrimSuffix(d, "/")); err == nil && info.IsDir() { //nolint:gosec // G703: the image sets PROVENANCE_WATCH_DIRS, not a request
 			result = append(result, d)
 		}
 	}

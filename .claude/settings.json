@@ -29,6 +29,30 @@
             "statusMessage": "STE check"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Edit(//**/images/sandbox-base/server/**/*.go)",
+            "command": "bun \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/sandbox-server-check.ts\"",
+            "timeout": 300,
+            "statusMessage": "Sandbox server lint"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/sandbox-server-check.ts\"",
+            "timeout": 300,
+            "statusMessage": "Sandbox server check"
+          }
+        ]
       }
     ]
   }
