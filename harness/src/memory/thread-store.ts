@@ -216,10 +216,17 @@ export interface ThreadStore {
     /** The live thread by id, or `null` if absent or archived. */
     getThread(threadId: string): ResultAsync<Thread | null, DbError>;
     /**
-     * Set only the title, bumping `updated_at` forward — never behind the stamp
-     * the row already carries. No-op on a missing/archived row.
+     * A rename by a person. Set the title and `title_set_by_user`, thus no
+     * automatic title replaces it. Bumps `updated_at` forward — never behind the
+     * stamp the row already carries. No-op on a missing/archived row.
      */
     updateTitle(threadId: string, title: string): ResultAsync<Thread | null, DbError>;
+    /**
+     * An automatic title. Set the title only while no person set one, with the
+     * same forward-only bump as `updateTitle`. `null` when the row is missing,
+     * archived, or titled by a person.
+     */
+    setAutoTitle(threadId: string, title: string): ResultAsync<Thread | null, DbError>;
     /**
      * Soft-delete the subtree: stamp `deleted_at` on the named thread and on
      * every descendant reachable through `parent_thread_id`, at any depth, so a
@@ -467,8 +474,20 @@ export function createThreadStore(pool: Pool): ThreadStore {
                 // give that: it reads this transaction's START time, not the moment the
                 // row is actually written.
                 `UPDATE cortex_analysis_threads
-         SET title = $2, updated_at = GREATEST(updated_at, clock_timestamp())
+         SET title = $2, title_set_by_user = true, updated_at = GREATEST(updated_at, clock_timestamp())
          WHERE thread_id = $1 AND deleted_at IS NULL
+         RETURNING ${THREAD_COLUMNS}`,
+                [threadId, title],
+            ),
+        ).map(({ rows }) => (rows[0] ? toThread(rows[0]) : null));
+    }
+
+    function setAutoTitle(threadId: string, title: string): ResultAsync<Thread | null, DbError> {
+        return tryMutation("thread-store.setAutoTitle", () =>
+            pool.query<ThreadRow>(
+                `UPDATE cortex_analysis_threads
+         SET title = $2, updated_at = GREATEST(updated_at, clock_timestamp())
+         WHERE thread_id = $1 AND deleted_at IS NULL AND NOT title_set_by_user
          RETURNING ${THREAD_COLUMNS}`,
                 [threadId, title],
             ),
@@ -668,5 +687,5 @@ export function createThreadStore(pool: Pool): ThreadStore {
         });
     }
 
-    return { createThread, getThread, updateTitle, archiveThread, unarchiveThread, purgeThread, listThreads };
+    return { createThread, getThread, updateTitle, setAutoTitle, archiveThread, unarchiveThread, purgeThread, listThreads };
 }

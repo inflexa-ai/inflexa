@@ -139,6 +139,6 @@ describe("initCortexState and an open transaction on cortex_analysis_threads", (
 
         await initCortexState(pool);
         const { rows } = await pool.query<{ name: string }>("SELECT name FROM cortex_migration");
-        expect(rows.map((row) => row.name)).toEqual(["20260927120000_baseline"]);
+        expect(rows.map((row) => row.name)).toEqual(["20260927120000_baseline", "20260927180000_thread_title_set_by_user"]);
     }, 20_000);
 });

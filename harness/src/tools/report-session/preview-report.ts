@@ -51,6 +51,7 @@ import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeFsError, tryFsWrite, type FsError } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
+import type { ThreadStore } from "../../memory/thread-store.js";
 import { referencedPaths, walkBlocks } from "../../report-model/block-walk.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
@@ -135,6 +136,8 @@ export interface PreviewReportToolDeps {
      * then carries no provenance asset.
      */
     readonly provenance?: ProvenanceSeam;
+    /** Names the report thread after the rendered document. Omitted, the thread keeps its title. */
+    readonly threads?: Pick<ThreadStore, "setAutoTitle">;
     readonly logger?: Logger;
 }
 
@@ -633,6 +636,15 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 const detail = stamped.outcome === "failed" ? stamped.detail : "the session state row is absent";
                 logger.warn("the rendered hash did not stamp", { threadId, analysisId, detail });
                 return ok({ outcome: "stamp-failed", pagePath: written.value, detail });
+            }
+
+            // Before the part, thus a client that reads the thread list on the part reads the new title.
+            const title = document.title.trim();
+            if (deps.threads && title.length > 0) {
+                const named = await deps.threads.setAutoTitle(threadId, title);
+                if (named.isErr()) {
+                    logger.warn("the report title did not reach the thread", { threadId, analysisId, ...defaultErrorFields(named.error.cause) });
+                }
             }
 
             // The part rides the rendered arm only. Each degraded arm shows no

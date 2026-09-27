@@ -20,6 +20,8 @@ import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { DEPS_DIR, derivationScriptName, PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
+import type { DbError } from "../../lib/db-result.js";
+import type { ThreadStore } from "../../memory/thread-store.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
@@ -1251,5 +1253,49 @@ describe("the provenance export", () => {
         const record = logger.records.find((held) => held.msg.includes("the document read of the provenance seam threw"));
         expect(record?.level).toBe("error");
         expect(record?.fields).toMatchObject({ analysisId: DEFAULT_ANALYSIS_ID, err: "the document store is down" });
+    });
+});
+
+const STORE_DOWN: DbError = { type: "mutation_failed", op: "thread-store.setAutoTitle", cause: new Error("down") };
+
+/** A thread store that records each automatic title, and fails each write when `fails`. */
+function recordingThreads(fails = false): { threads: Pick<ThreadStore, "setAutoTitle">; titles: [string, string][] } {
+    const titles: [string, string][] = [];
+    const threads: Pick<ThreadStore, "setAutoTitle"> = {
+        setAutoTitle: (threadId, title) => {
+            titles.push([threadId, title]);
+            return fails ? errAsync(STORE_DOWN) : okAsync(null);
+        },
+    };
+    return { threads, titles };
+}
+
+describe("the thread title", () => {
+    async function render(documentTitle: string, threads: Pick<ThreadStore, "setAutoTitle">): Promise<PreviewReportResult> {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: { ...metricDoc(), title: documentTitle }, snapshot: metricSnapshot });
+        const root = await makeRoot();
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root, threads });
+        return (await tool.execute({}, ctxWithEmitted("t1").ctx))._unsafeUnwrap();
+    }
+
+    it("names the thread after the rendered document", async () => {
+        const { threads, titles } = recordingThreads();
+
+        expect((await render("  Tumor microenvironment findings ", threads)).outcome).toBe("rendered");
+        expect(titles).toEqual([["t1", "Tumor microenvironment findings"]]);
+    });
+
+    it("names nothing for a blank document title", async () => {
+        const { threads, titles } = recordingThreads();
+
+        await render("   ", threads);
+        expect(titles).toEqual([]);
+    });
+
+    it("keeps the render result when the write fails", async () => {
+        const { threads } = recordingThreads(true);
+
+        expect((await render("Findings", threads)).outcome).toBe("rendered");
     });
 });

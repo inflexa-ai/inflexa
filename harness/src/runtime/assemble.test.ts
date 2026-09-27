@@ -260,7 +260,7 @@ function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, ro
         gateway: eyesGateway(),
         resolveWorkspaceRoot: () => root,
         store: {} as ReportVersionStore,
-        threads: {} as Pick<ThreadStore, "getThread">,
+        threads: {} as Pick<ThreadStore, "getThread" | "setAutoTitle">,
         chrome,
         derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
         ...(eyes ? { eyes } : {}),
