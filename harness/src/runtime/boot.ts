@@ -14,8 +14,8 @@
  *   2. `validateAgentSkills(skillsDir, ...)` — pure fs stat, zero external deps.
  *      A `meta.skills` typo or a `skillsDir` / image drift dies in milliseconds,
  *      before any Postgres or DBOS cost is paid (agent-skill-assignment).
- *   3. `initCortexState(pool)` — app tables must exist before launch; recovery
- *      queries them on the first step.
+ *   3. `initCortexState(pool, logger)` — applies the pending schema migrations.
+ *      App tables must exist before launch; recovery queries them on the first step.
  *   4. `assertConnectionBudget(...)` — needs the live pool; gates launch so a
  *      misconfigured pool fails loudly at boot, not under load.
  *   5. `assembleCoreRuntime(core)` — registers the durable-workflow cohort and
@@ -98,7 +98,7 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
 
     validateAgentSkills(skillsDir, SKILL_DECLARING_AGENTS);
 
-    await initCortexState(pool);
+    await initCortexState(pool, logger);
     await assertConnectionBudget({ pool, logger, config: deps.connectionBudget });
 
     const runtime = assembleCoreRuntime(core);

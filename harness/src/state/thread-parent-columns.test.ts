@@ -16,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
-import { withSchema } from "../__tests__/setup/postgres.js";
+import { forgetMigrations, withSchema } from "../__tests__/setup/postgres.js";
 import { initCortexState } from "./init.js";
 
 let pool: Pool;
@@ -58,6 +58,7 @@ describe("cortex_analysis_threads parent and type columns", () => {
         await pool.query("ALTER TABLE cortex_analysis_threads DROP COLUMN parent_seq, DROP COLUMN parent_thread_id, DROP COLUMN thread_type");
         expect(Object.keys(await threadColumns())).not.toContain("thread_type");
 
+        await forgetMigrations(pool);
         await initCortexState(pool);
 
         const columns = await threadColumns();
@@ -91,6 +92,7 @@ describe("cortex_analysis_threads parent and type columns", () => {
         await pool.query("DROP INDEX idx_cortex_analysis_threads_parent_fk");
         await pool.query("CREATE INDEX idx_cortex_analysis_threads_parent ON cortex_analysis_threads(parent_thread_id) WHERE deleted_at IS NULL");
 
+        await forgetMigrations(pool);
         await initCortexState(pool);
 
         const indexes = await threadIndexes();
@@ -108,4 +110,35 @@ describe("cortex_analysis_threads parent and type columns", () => {
         expect(await threadColumns()).toEqual(columns);
         expect(await threadIndexes()).toEqual(indexes);
     });
+});
+
+// A transaction that read the table holds a lock on it until it ends, and an
+// ALTER TABLE waits for that lock. A reader that stays idle in its transaction
+// thus stops an init that runs DDL.
+describe("initCortexState and an open transaction on cortex_analysis_threads", () => {
+    async function withOpenReader(body: () => Promise<void>): Promise<void> {
+        const reader = await pool.connect();
+        try {
+            await reader.query("BEGIN");
+            await reader.query("SELECT count(*) FROM cortex_analysis_threads");
+            await body();
+        } finally {
+            await reader.query("ROLLBACK");
+            reader.release();
+        }
+    }
+
+    it("does not wait for the reader when no migration is pending", async () => {
+        await withOpenReader(() => initCortexState(pool));
+    });
+
+    it("stops a pending migration at the lock timeout, and records nothing", async () => {
+        await forgetMigrations(pool);
+
+        await withOpenReader(() => expect(initCortexState(pool)).rejects.toThrow("lock timeout"));
+
+        await initCortexState(pool);
+        const { rows } = await pool.query<{ name: string }>("SELECT name FROM cortex_migration");
+        expect(rows.map((row) => row.name)).toEqual(["20260927120000_baseline"]);
+    }, 20_000);
 });

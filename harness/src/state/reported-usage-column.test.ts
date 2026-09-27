@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
-import { withSchema } from "../__tests__/setup/postgres.js";
+import { forgetMigrations, withSchema } from "../__tests__/setup/postgres.js";
 import { initCortexState } from "./init.js";
 
 let pool: Pool;
@@ -51,6 +51,7 @@ describe("messages.reported_usage column", () => {
         );
         expect(await reportedUsageColumn()).toBeUndefined();
 
+        await forgetMigrations(pool);
         await initCortexState(pool);
 
         expect((await reportedUsageColumn())?.data_type).toBe("jsonb");
