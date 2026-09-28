@@ -4,7 +4,8 @@
  * The tool renders the current draft of a thread. It runs the finish first, because a mid-composition
  * draft is not a `ReportDocument`. A gap list returns as data, and no render runs. On a pass the tool
  * resolves each reference through the injected resolver, bridges the resolved values into the render model,
- * and renders the page.
+ * and renders the page. The gap list and the rendered page each carry the advisory warnings of the finish,
+ * thus the agent reads them with no separate finish.
  *
  * The renderer writes no file. It gives the page and the data asset of each table, and this tool stages
  * them beside the figures. The tool asks the optional provenance source for the frozen document of the
@@ -52,7 +53,7 @@ import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeFsError, tryFsWrite, type FsError } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
-import { referencedPaths, walkBlocks } from "../../report-model/block-walk.js";
+import { referencedPaths, walkBlocks, type ReportWarning } from "../../report-model/block-walk.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
 import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
@@ -85,11 +86,11 @@ export type SessionPageAccess = { granted: true; url: string; expiresAt: string 
 /**
  * The typed outcome of the preview tool. Each arm is ok-channel data, thus the tool never throws for a
  * degraded condition. `rendered` carries the absolute page path, and the access grant of the hosted view
- * when the composition binds the publisher.
+ * when the composition binds the publisher. `gaps` and `rendered` carry the advisory warnings of the finish.
  */
 export type PreviewReportResult =
     | { outcome: "refused"; refusal: SessionRefusal }
-    | { outcome: "gaps"; gaps: FinishGap[] }
+    | { outcome: "gaps"; gaps: FinishGap[]; warnings: ReportWarning[] }
     | { outcome: "resolver-unavailable" }
     | { outcome: "root-unresolvable"; detail: string }
     | { outcome: "unresolved-references"; unresolved: ResolutionFailure[] }
@@ -98,7 +99,7 @@ export type PreviewReportResult =
     | { outcome: "figure-out-of-scope"; blockId: string; path: string }
     | { outcome: "write-failed"; detail: string }
     | { outcome: "stamp-failed"; pagePath: string; detail: string }
-    | { outcome: "rendered"; pagePath: string; access?: SessionPageAccess };
+    | { outcome: "rendered"; pagePath: string; access?: SessionPageAccess; warnings: ReportWarning[] };
 
 /**
  * The lookup of the source file of one staged asset. It maps the module specifier of a manifest entry
@@ -529,6 +530,7 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             "Render the current draft to an HTML page in the session directory, and give back the page path. " +
             "The page loads its figures, table data, and libraries from an assets directory that the tool stages beside it. " +
             "The tool finishes the draft first: an incomplete draft gives back the gap list, and no page renders. " +
+            "The gap list and the rendered page each carry the advisory warnings of the finish, for example a number typed into the prose. " +
             "On a pass it resolves each reference, stages each bound image beside the page, and writes the page. " +
             "An unresolved reference gives back the block and the binding to repair. " +
             "The outcome resolver-unavailable means that this host gives no reference resolver, and a repeat gives the same outcome. " +
@@ -553,7 +555,7 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
 
             const finished = finishDraft(draft, snapshot, derivations);
             if (!finished.valid) {
-                return ok({ outcome: "gaps", gaps: finished.gaps });
+                return ok({ outcome: "gaps", gaps: finished.gaps, warnings: finished.warnings });
             }
             const document = finished.document;
 
@@ -659,7 +661,7 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             observe({ type: "preview", analysisId, threadId, pagePath: written.value, documentHash: renderedHash });
 
             const access = await mintAccess(deps.makeSessionPages, analysisId, threadId, ctx.session.auth, logger);
-            return ok({ outcome: "rendered", pagePath: written.value, ...(access !== undefined ? { access } : {}) });
+            return ok({ outcome: "rendered", pagePath: written.value, ...(access !== undefined ? { access } : {}), warnings: finished.warnings });
         },
     });
 }

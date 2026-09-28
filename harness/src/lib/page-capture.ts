@@ -5,12 +5,16 @@
  * readiness signal of the page, and gives back base64 screenshots. The eyes tool of a report session reads
  * this module.
  *
+ * The layout resolves at the CSS width of a reader, and the picture renders at half the device scale. A
+ * picture costs tokens in proportion to its area, thus the half scale lets one look hold a whole report.
+ *
  * A short page captures as one full-page shot. A tall page captures as consecutive vertical slices, because
- * one tall picture dies twice on the provider path: a picture past the hard dimension cap rejects the whole
- * request, and a legal tall picture downscales to about 1568 pixels on the long side, which compresses the
- * text past legibility. A slice of about two window heights survives both. The slice budget bounds what one
- * look costs, and a page past the budget truncates with the captured and the total pixels on the coverage,
- * thus the truncation is never silent.
+ * the model reads a picture whole only up to a limit on the long edge, and a taller picture downscales or
+ * refuses the request. The slice budget bounds what one look costs, and a page past the budget truncates
+ * with the captured and the total pixels on the coverage, thus the truncation is never silent.
+ *
+ * A capture can also take one block alone. The renderer marks each block with its id, and the capture clips
+ * the union box of the marked elements with a margin. A page that holds no such mark gives no picture.
  *
  * The readiness contract is the reason for one shared body. The renderer emits the event name and the
  * sentinel name, and `report-render/page.ts` owns both constants together with the two budgets. This module
@@ -29,6 +33,7 @@ import type { Page } from "puppeteer-core";
 
 import { withPage, type ChromeConfig } from "./chrome.js";
 import { PAGE_NAV_TIMEOUT_MS, PAGE_READY_TIMEOUT_MS, THEME_READY_EVENT, THEME_READY_SENTINEL } from "../report-render/page.js";
+import { BLOCK_ID_ATTRIBUTE } from "../report-render/views/block-mark.js";
 
 /** One request that the page could not load, with the reason that the browser gave. */
 export interface FailedRequest {
@@ -49,15 +54,23 @@ export interface CapturedShot {
  * thus `capturedPx < totalPx` says that the slice budget ran out and the tail of the page is absent. `viewport`
  * appears when a screenshot threw and the retry at the window passed, thus the one picture shows the top
  * window alone and a section below the fold is absent from it.
+ *
+ * `block` is the box of one block and its margin; `capturedPx < totalPx` says that the slice budget cut it.
+ * `no-block` means that no element of the page carries the mark of the block, thus no picture exists.
  */
 export type CaptureCoverage =
     | { readonly kind: "full" }
     | { readonly kind: "tiled"; readonly capturedPx: number; readonly totalPx: number }
-    | { readonly kind: "viewport" };
+    | { readonly kind: "viewport" }
+    | { readonly kind: "block"; readonly capturedPx: number; readonly totalPx: number }
+    | { readonly kind: "no-block" };
 
 /** The pictures and the faults of one page capture. */
 export interface PageCapture {
-    /** The pictures in document order: one shot under `full` and `viewport`, the slices under `tiled`. */
+    /**
+     * The pictures in document order: one shot under `full` and `viewport`, the slices under `tiled` and
+     * `block`, and none under `no-block`.
+     */
     screenshots: CapturedShot[];
     coverage: CaptureCoverage;
     consoleErrors: string[];
@@ -69,14 +82,16 @@ export interface PageCapture {
  * speaks the throw protocol, because the chrome connection does. A test injects a seam that reads no
  * browser, thus a tool orchestration runs with no chrome sidecar.
  */
-export type CapturePage = (url: string) => Promise<PageCapture>;
+export type CapturePage = (url: string, options?: CaptureOptions) => Promise<PageCapture>;
 
-/** The extra settle steps that one call site needs. A call site that needs neither passes nothing. */
+/** The extra settle steps and the target of one capture. A call site that needs none passes nothing. */
 export interface CaptureOptions {
     /** A CSS selector to wait for after the readiness signal. The wait is best-effort. */
     readonly waitForSelector?: string;
     /** An extra settle time in milliseconds after the readiness signal, for a late paint. */
     readonly waitMs?: number;
+    /** The id of the one block to capture. Absent, the capture takes the whole document. */
+    readonly blockId?: string;
 }
 
 /** The budget of the optional selector wait. The wait is best-effort, thus a miss captures the page anyway. */
@@ -92,23 +107,25 @@ const VIEWPORT_WIDTH = 1440;
 const VIEWPORT_HEIGHT = 900;
 
 /**
- * The height of one capture slice, in CSS pixels, and the bound of a single-shot page.
- *
- * The provider downscales every picture to about 1568 pixels on the long side before the model reads it. Two
- * window heights survive that downscale with readable text, and a taller picture reaches the model compressed
- * past that. Thus a page at this height or under captures as one full-page shot, and a taller page captures
- * as slices of this height.
+ * The device scale of one capture. The layout keeps the CSS width of a reader, and the picture holds half
+ * the pixels on each side. A picture costs about one token for each 750 pixels of its area.
  */
-const TILE_HEIGHT_PX = VIEWPORT_HEIGHT * 2;
+const DEVICE_SCALE_FACTOR = 0.5;
 
 /**
- * The most slices of one capture.
- *
- * Each slice is one picture on the tool result, and the budget bounds what one look costs the context. A page
- * taller than the budget covers truncates, and the coverage carries the captured and the total pixels, thus
- * the truncation is never silent.
+ * The height of one slice and the bound of a single-shot page, in CSS pixels. At the half scale a slice is
+ * 720 by 2000 pixels, under the long edge of 2576 pixels that the model reads with no downscale.
  */
-const MAX_TILES = 6;
+const TILE_HEIGHT_PX = 4_000;
+
+/**
+ * The most slices of one capture: 20,000 CSS pixels, about 9,600 tokens, thus a report of 16,000 pixels
+ * fits whole. A taller page truncates, and the coverage carries the captured and the total pixels.
+ */
+const MAX_TILES = 5;
+
+/** The margin around the box of one block, in CSS pixels. Content that overflows its box stays in the picture. */
+const BLOCK_MARGIN_PX = 16;
 
 /**
  * The body of the readiness wait, in the browser context. The sentinel arm resolves a page that dispatched
@@ -161,28 +178,78 @@ async function measureTotalHeight(page: Page): Promise<number> {
     return typeof measured === "number" && Number.isFinite(measured) ? measured : 0;
 }
 
+/** A document area of one capture, in CSS pixels: the columns from `x`, and the rows from `fromY` to `toY`. */
+interface CaptureArea {
+    readonly x: number;
+    readonly width: number;
+    readonly fromY: number;
+    readonly toY: number;
+}
+
 /**
- * Capture the slices of one tall page, in document order. Each slice clips {@link TILE_HEIGHT_PX} rows at the
- * reader width, and the last slice ends at the document height or at the budget, whichever comes first.
+ * Capture the rows of one area as slices, in document order. Each slice clips {@link TILE_HEIGHT_PX} rows,
+ * and the last slice ends at the area or at the budget, whichever comes first.
  */
-async function captureTiles(page: Page, totalPx: number): Promise<Shots> {
-    const tileCount = Math.min(Math.ceil(totalPx / TILE_HEIGHT_PX), MAX_TILES);
+async function captureSlices(page: Page, area: CaptureArea): Promise<{ screenshots: CapturedShot[]; capturedPx: number }> {
+    const heightPx = area.toY - area.fromY;
+    const tileCount = Math.min(Math.ceil(heightPx / TILE_HEIGHT_PX), MAX_TILES);
     const screenshots: CapturedShot[] = [];
     for (let index = 0; index < tileCount; index++) {
-        const fromY = index * TILE_HEIGHT_PX;
-        const toY = Math.min(fromY + TILE_HEIGHT_PX, totalPx);
-        const clip = { x: 0, y: fromY, width: VIEWPORT_WIDTH, height: toY - fromY };
+        const fromY = area.fromY + index * TILE_HEIGHT_PX;
+        const toY = Math.min(fromY + TILE_HEIGHT_PX, area.toY);
+        const clip = { x: area.x, y: fromY, width: area.width, height: toY - fromY };
         screenshots.push({ base64: toBase64(await page.screenshot({ encoding: "base64", clip })), range: { fromY, toY } });
     }
-    const capturedPx = Math.min(tileCount * TILE_HEIGHT_PX, totalPx);
-    return { screenshots, coverage: { kind: "tiled", capturedPx, totalPx } };
+    return { screenshots, capturedPx: Math.min(tileCount * TILE_HEIGHT_PX, heightPx) };
+}
+
+/**
+ * The body of the block measure, in the browser context: the union box of the marked elements, with the
+ * margin, or `null`. The body compares each attribute value, thus an id never becomes part of a selector.
+ */
+function measureBlock(attribute: string, blockId: string, margin: number): CaptureArea | null {
+    let left = Number.POSITIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    let right = Number.NEGATIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    for (const node of Array.from(document.querySelectorAll(`[${attribute}]`))) {
+        if (node.getAttribute(attribute) !== blockId) continue;
+        const rect = node.getBoundingClientRect();
+        left = Math.min(left, rect.left + window.scrollX);
+        top = Math.min(top, rect.top + window.scrollY);
+        right = Math.max(right, rect.right + window.scrollX);
+        bottom = Math.max(bottom, rect.bottom + window.scrollY);
+    }
+    if (left === Number.POSITIVE_INFINITY) {
+        return null;
+    }
+    const root = document.documentElement;
+    const x = Math.max(0, Math.floor(left - margin));
+    const fromY = Math.max(0, Math.floor(top - margin));
+    const toX = Math.min(root.scrollWidth, Math.ceil(right + margin));
+    const toY = Math.min(root.scrollHeight, Math.ceil(bottom + margin));
+    // A block of no height still gives a strip, thus the picture shows the empty place of the block.
+    return { x, width: Math.max(1, toX - x), fromY, toY: Math.max(fromY + 1, toY) };
+}
+
+/**
+ * Take the pictures of one block. A refused bitmap propagates, because the window shows the top of the page
+ * and not the block.
+ */
+async function captureBlock(page: Page, blockId: string): Promise<Shots> {
+    const area = await page.evaluate(measureBlock, BLOCK_ID_ATTRIBUTE, blockId, BLOCK_MARGIN_PX);
+    if (area === null) {
+        return { screenshots: [], coverage: { kind: "no-block" } };
+    }
+    const sliced = await captureSlices(page, area);
+    return { screenshots: sliced.screenshots, coverage: { kind: "block", capturedPx: sliced.capturedPx, totalPx: area.toY - area.fromY } };
 }
 
 /**
  * Take the pictures of one settled page.
  *
  * A page at the single-shot bound or under gives one full-page shot. A taller page gives consecutive slices,
- * because the provider path compresses or rejects one tall picture; the module comment carries the account.
+ * because the model downscales or refuses one tall picture; the module comment carries the account.
  *
  * The compositor can refuse a bitmap of either shape while the bitmap of the window is fine. A degraded
  * picture beats a dead look, thus a refusal retries one time at the window. A second throw names a broken
@@ -191,7 +258,10 @@ async function captureTiles(page: Page, totalPx: number): Promise<Shots> {
 async function captureShots(page: Page): Promise<Shots> {
     const totalPx = await measureTotalHeight(page);
     try {
-        if (totalPx > TILE_HEIGHT_PX) return await captureTiles(page, totalPx);
+        if (totalPx > TILE_HEIGHT_PX) {
+            const sliced = await captureSlices(page, { x: 0, width: VIEWPORT_WIDTH, fromY: 0, toY: totalPx });
+            return { screenshots: sliced.screenshots, coverage: { kind: "tiled", capturedPx: sliced.capturedPx, totalPx } };
+        }
         return { screenshots: [{ base64: toBase64(await page.screenshot({ encoding: "base64", fullPage: true })) }], coverage: { kind: "full" } };
     } catch (refused) {
         try {
@@ -213,7 +283,7 @@ async function captureShots(page: Page): Promise<Shots> {
  * The pictures hold the document, and not the window alone. Thus a caller can judge a section that a reader
  * reaches by a scroll. A short page arrives as one full-page shot, and a tall page arrives as consecutive
  * slices in document order. A refused bitmap degrades to the window, and the coverage of the result names
- * what the pictures hold.
+ * what the pictures hold. A capture that names a block holds that block alone.
  *
  * The readiness wait is best-effort. A page that never signals still captures at the readiness budget, thus
  * a broken page gives a picture that shows what broke.
@@ -233,7 +303,7 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
 
         // The size is set before the navigation, because a layout resolves at load time. The connection gives
         // a small default window, and that window collapses each multi-column band of the design.
-        await page.setViewport({ width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT });
+        await page.setViewport({ width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT, deviceScaleFactor: DEVICE_SCALE_FACTOR });
 
         // The preference is active before the navigation, because the page reveals its sections as it loads.
         // A preference that arrives after the load reaches a page that already runs its transitions.
@@ -258,7 +328,7 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
 
         // The pictures must show the whole document at the layout that a reader gets. Thus a defect below the
         // fold is visible, and a question about content that never appeared has an answer.
-        const shots = await captureShots(page);
+        const shots = options.blockId === undefined ? await captureShots(page) : await captureBlock(page, options.blockId);
         return {
             screenshots: shots.screenshots,
             coverage: shots.coverage,

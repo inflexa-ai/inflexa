@@ -13,6 +13,7 @@ import { raw } from "hono/html";
 
 import type { ClaimBlock, SectionBlock, TextBlock, TextList } from "../../contracts/report-blocks.js";
 import type { ReferenceLedger } from "../references.js";
+import { blockMark } from "./block-mark.js";
 import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
 
@@ -45,9 +46,17 @@ function splitParagraphs(prose: string): string[] {
  * One typed list as list markup. The flag selects the element: an ordered list numbers its items, and an
  * unordered one bullets them. Each item is one inline line, thus no item holds a list of its own.
  */
-function TextListView({ list }: { list: TextList }) {
+function TextListView({ list, mark }: { list: TextList; mark: Record<string, string> }) {
     const items = list.items.map((item) => <li class="report-list-item">{item}</li>);
-    return list.ordered ? <ol class={LIST_CLASS}>{items}</ol> : <ul class={LIST_CLASS}>{items}</ul>;
+    return list.ordered ? (
+        <ol class={LIST_CLASS} {...mark}>
+            {items}
+        </ol>
+    ) : (
+        <ul class={LIST_CLASS} {...mark}>
+            {items}
+        </ul>
+    );
 }
 
 /**
@@ -60,12 +69,15 @@ function TextListView({ list }: { list: TextList }) {
 export function renderText(block: TextBlock): string {
     const paragraphs = splitParagraphs(block.content.prose);
     const list = block.content.list;
+    const mark = blockMark(block.id);
     return String(
         <>
             {paragraphs.map((paragraph) => (
-                <p class={PARAGRAPH_CLASS}>{paragraph}</p>
+                <p class={PARAGRAPH_CLASS} {...mark}>
+                    {paragraph}
+                </p>
             ))}
-            {list !== undefined ? <TextListView list={list} /> : null}
+            {list !== undefined ? <TextListView list={list} mark={mark} /> : null}
         </>,
     );
 }
@@ -85,20 +97,32 @@ export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger, view: Vi
     const markers = block.bindings.map((reference, index) => <Marker n={ledger.mark(reference)} lineage={lineagePlace(view.lineage, reference, index)} />);
     const paragraphs = splitParagraphs(block.content.prose);
     const last = paragraphs.length - 1;
+    // Under the lineage a wrapper holds the paragraphs, thus the wrapper alone carries the mark.
+    const mark = view.lineage ? {} : blockMark(block.id);
     const body =
         paragraphs.length === 0 ? (
-            <p class={PARAGRAPH_CLASS}>{markers}</p>
+            <p class={PARAGRAPH_CLASS} {...mark}>
+                {markers}
+            </p>
         ) : (
             <>
                 {paragraphs.map((paragraph, index) => (
-                    <p class={PARAGRAPH_CLASS}>
+                    <p class={PARAGRAPH_CLASS} {...mark}>
                         {paragraph}
                         {index === last ? markers : null}
                     </p>
                 ))}
             </>
         );
-    return String(view.lineage ? <div {...lineageStamp(view.lineage, block.id, block.bindings)}>{body}</div> : body);
+    return String(
+        view.lineage ? (
+            <div {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, block.bindings)}>
+                {body}
+            </div>
+        ) : (
+            body
+        ),
+    );
 }
 
 /** The heading class of a section, by heading level. A heading uses the sans family, never the mono family. */
@@ -115,7 +139,7 @@ export function renderSection(section: SectionBlock, depth: number, childrenHtml
     const level = Math.min(depth + 2, 4);
     const Heading = `h${level}` as "h2" | "h3" | "h4";
     return String(
-        <section id={section.id} class="report-section">
+        <section id={section.id} class="report-section" {...blockMark(section.id)}>
             <Heading class={headingClass(level)}>{section.title}</Heading>
             {raw(childrenHtml)}
         </section>,

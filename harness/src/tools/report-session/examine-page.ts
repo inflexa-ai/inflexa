@@ -5,6 +5,9 @@
  * see: the screenshot, the console errors, and the failed requests. The agent reads the picture and the
  * faults, decides, and repairs. The tool never judges, thus it never blocks the loop.
  *
+ * A look takes the whole page, or one block that the input names, thus a look that confirms a repair pays
+ * for that block alone. The faults arrive as a digest (`page-faults.ts`).
+ *
  * The composition says which URL one look opens, and the URL seam is that answer. Absent the seam, the tool
  * navigates to the page file through a `file://` URL. The page lives at `report-sessions/{threadId}/index.html`
  * under the workspace root, which the preview writes. A missed page means that no preview ran, and it is a
@@ -30,8 +33,9 @@
  * On a capture the tool copies the rendered hash onto the seen hash through the gateway. Thus the look
  * counts, and the record tool lets the current draft record. The copy takes the rendered hash and never the
  * current one, thus a later edit makes the look stale and the record refuses. A partial look — the window
- * alone, or slices that a budget truncated — is a true look at the current document, thus it stamps the same
- * and the coverage of the result is what tells the agent what it saw.
+ * alone, slices that a budget truncated, or one block — is a true look at the current document, thus it
+ * stamps the same and the coverage of the result is what tells the agent what it saw. A block look that
+ * finds no such block took no picture, thus it stamps nothing.
  *
  * The gateway reports whether a rendered hash existed to copy. When the row holds none, no preview stamped
  * one and the look cannot count. The tool then gives a missed-stamp outcome that directs a new preview,
@@ -58,10 +62,11 @@ import type { GateFailure } from "../../lib/hooks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { createStaticEyes, type AcquireEyes, type EyesLease, type EyesScope } from "../../lib/eyes.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
-import { capturePage, type CaptureCoverage, type CapturePage, type FailedRequest, type PageCapture } from "../../lib/page-capture.js";
+import { capturePage, type CaptureCoverage, type CaptureOptions, type CapturePage, type FailedRequest, type PageCapture } from "../../lib/page-capture.js";
 import { reportSessionDir, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolResultImages, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
+import { digestPageFaults, type ConsoleErrorEntry, type FailedRequestEntry } from "./page-faults.js";
 
 // The capture shapes live beside the chrome connection. The tool keeps them on its own surface, thus a
 // consumer of the tool imports one module.
@@ -75,8 +80,14 @@ export type { CaptureCoverage, CapturePage, FailedRequest, PageCapture };
  */
 export type ResolvePageUrl = (args: { pagePath: string; analysisId: string; threadId: string; auth: AuthContext }) => ResultAsync<string, GateFailure>;
 
-/** The empty input. The tool examines the current page of the thread, thus it needs no field. */
-const examinePageInput = z.object({});
+/** The input of one look. Nullish, because under strict function calling a model sends `null` for an unused field. */
+const examinePageInput = z.object({
+    blockId: z
+        .string()
+        .min(1)
+        .nullish()
+        .describe("The id of one block, as the outline gives it. The look then holds that block alone. Leave it out to look at the whole page."),
+});
 
 export type ExaminePageInput = z.infer<typeof examinePageInput>;
 
@@ -89,28 +100,31 @@ export interface ExaminedTile {
 
 /**
  * The typed outcome of the eyes tool. Each arm is ok-channel data, thus the tool never throws for a
- * degraded condition. `examined` carries the coverage of the look, the console errors, the failed
- * requests, and the page path. The coverage names what the agent saw: the whole document in one shot,
- * consecutive slices with the captured and the total pixels, or the window alone when the browser refused
- * the bitmap. A tiled look carries `tiles` — the document range of each slice, in the order of the
- * pictures — thus the model reads which rows each picture holds. The screenshots do not ride the JSON.
+ * degraded condition. `examined` carries the coverage of the look, the digest of the console errors and the
+ * failed requests, and the page path. The coverage names what the agent saw: the whole document in one
+ * shot, consecutive slices with the captured and the total pixels, the window alone when the browser refused
+ * the bitmap, or one block. A sliced look carries `tiles` — the document range of each slice, in the order
+ * of the pictures — thus the model reads which rows each picture holds. The screenshots do not ride the JSON.
  * They ride the image path of the tool result in document order, thus the model sees the pictures and the
- * JSON text holds no bytes. `missed-stamp` means that the row holds no rendered hash, thus no preview
- * stamped one and the agent must run a new preview before the next look. `no-browser` means that the
- * composition gives no browser, thus no look is possible at all and a repeat gives the same answer.
+ * JSON text holds no bytes. `no-block` means that the current page holds no block of the id that the input
+ * named. `missed-stamp` means that the row holds no rendered hash, thus no preview stamped one and the
+ * agent must run a new preview before the next look. `no-browser` means that the composition gives no
+ * browser, thus no look is possible at all and a repeat gives the same answer.
  */
 export type ExaminePageResult =
     | { outcome: "refused"; refusal: SessionRefusal }
     | { outcome: "no-browser"; detail: string }
     | { outcome: "no-page" }
+    | { outcome: "no-block"; blockId: string }
     | { outcome: "missed-stamp" }
     | { outcome: "capture-failed"; detail: string }
     | {
           outcome: "examined";
           coverage: CaptureCoverage;
           tiles?: ExaminedTile[];
-          consoleErrors: string[];
-          failedRequests: FailedRequest[];
+          consoleErrors: ConsoleErrorEntry[];
+          failedRequests: FailedRequestEntry[];
+          omittedFaults?: { consoleErrors: number; failedRequests: number };
           pagePath: string;
       };
 
@@ -293,6 +307,7 @@ async function runLook(args: {
     readonly chrome: ChromeConfig;
     readonly scope: EyesScope;
     readonly url: string;
+    readonly options: CaptureOptions;
     readonly acquireMs: number;
     readonly releaseMs: number;
     readonly logger: Logger;
@@ -300,7 +315,7 @@ async function runLook(args: {
     const { transport } = args;
     if (transport.kind === "capture") {
         try {
-            return ok(await transport.capture(args.url));
+            return ok(await transport.capture(args.url, args.options));
         } catch (cause) {
             return err({ stage: "capture", cause });
         }
@@ -316,7 +331,7 @@ async function runLook(args: {
     }
     const lease = acquired.value;
     try {
-        return ok(await capturePage({ ...args.chrome, browserUrl: lease.browserUrl }, args.url));
+        return ok(await capturePage({ ...args.chrome, browserUrl: lease.browserUrl }, args.url, args.options));
     } catch (cause) {
         return err({ stage: "capture", cause });
     } finally {
@@ -356,20 +371,29 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
         description:
             "Open the rendered report page in a real headless browser, and give back what a reviewer sees: " +
             "one or more screenshots, the coverage of the look, the console errors, and the failed requests. " +
-            "A tall page arrives as consecutive top-to-bottom slices in document order, and the tiles list names the rows of each slice. " +
-            "The coverage says whether the pictures hold the whole page, a truncated top portion of it, or the top window alone. " +
+            "Without `blockId` the look holds the whole page. With `blockId` the look holds that one block alone: a section with its content, or one atom. " +
+            "A tall page or a tall block arrives as consecutive top-to-bottom slices in document order, and the tiles list names the rows of each slice. " +
+            "The coverage says whether the pictures hold the whole page, a truncated top portion of it, the top window alone, or the one block. " +
+            "A look costs about 500 image tokens for each 1,000 pixels of height that it holds, and one look holds at most 20,000 pixels. " +
+            "Each look adds its pictures to the conversation, and each later request of the turn carries them again. " +
+            "Each repeated console error or failed request comes back one time with a count, and a placeholder replaces each inline data. " +
             "Run it after the preview to look at the current page, and to confirm that the layout and the charts read clean. " +
-            "A look at the page of the current draft is what lets record_report_version record. " +
+            "A look at the page of the current draft is what lets record_report_version record, and a block look counts the same as a look at the whole page. " +
+            "The outcome no-block means that the current page holds no block of that id. " +
             "The outcomes no-page and missed-stamp mean that no preview rendered the current page: run preview_report, then look again. " +
             "The outcome no-browser means that this host gives no browser, and a repeat gives the same outcome.",
         inputSchema: examinePageInput,
         executionMode: "inline",
-        describeCall: "none",
+        describeCall: (input): string => {
+            const blockId = input.blockId ?? undefined;
+            return blockId === undefined ? "look at the page" : `look at ${blockId}`;
+        },
         // A look gives a picture, and a picture has no one-line form. Thus the outcome of the look is the
         // whole line: a watcher reads that the eyes saw the page, or that the page was absent, or that the
         // capture failed.
         describeResult: (_input, result): string => result.outcome,
-        execute: async (_input, ctx): Promise<Result<ExaminePageResult, ToolError>> => {
+        execute: async (input, ctx): Promise<Result<ExaminePageResult, ToolError>> => {
+            const blockId = input.blockId ?? undefined;
             // The check runs before every read, thus one clear signal replaces a capture failure for each
             // page. The arm stamps no seen hash, because no eyes saw the page. It also narrows the transport
             // for the look below, thus the acquire needs no assertion.
@@ -431,6 +455,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 chrome: deps.chrome,
                 scope: { analysisId, workspaceRoot: root },
                 url,
+                options: blockId === undefined ? {} : { blockId },
                 acquireMs,
                 releaseMs,
                 logger,
@@ -441,6 +466,10 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 return ok({ outcome: "capture-failed", detail: cause instanceof Error ? cause.message : String(cause) });
             }
             const captured: PageCapture = looked.value;
+            if (blockId !== undefined && captured.coverage.kind === "no-block") {
+                // No picture exists, thus no eyes saw the page and the look stamps nothing.
+                return ok({ outcome: "no-block", blockId });
+            }
 
             const stamped = await deps.gateway.stampSeen(threadId);
             if (stamped.outcome === "no-rendered") {
@@ -459,9 +488,9 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
             }
 
             // The screenshots ride the image path of the tool result in document order, thus the model sees
-            // the pictures. The JSON keeps the faults, the tile ranges, and the page path only, thus the
-            // JSON text holds no bytes. The tiles list mirrors the picture order, thus the model reads which
-            // rows each picture holds.
+            // the pictures. The JSON keeps the digest of the faults, the tile ranges, and the page path only,
+            // thus the JSON text holds no bytes. The tiles list mirrors the picture order, thus the model reads
+            // which rows each picture holds.
             const tiles: ExaminedTile[] = captured.screenshots.flatMap((shot, index) =>
                 shot.range === undefined ? [] : [{ index, fromY: shot.range.fromY, toY: shot.range.toY }],
             );
@@ -471,8 +500,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                         outcome: "examined" as const,
                         coverage: captured.coverage,
                         ...(tiles.length === 0 ? {} : { tiles }),
-                        consoleErrors: captured.consoleErrors,
-                        failedRequests: captured.failedRequests,
+                        ...digestPageFaults(captured.consoleErrors, captured.failedRequests),
                         pagePath: relativePagePath,
                     },
                     captured.screenshots.map((shot) => ({ base64: shot.base64, mediaType: SCREENSHOT_MEDIA_TYPE })),
