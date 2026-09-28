@@ -438,7 +438,7 @@ describe("runChatTurn", () => {
 
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
         expect(replay[1]!.parts).toEqual([
-            { type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok" },
+            { type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok", durationMs: expect.any(Number) },
             { type: "text", text: "the groups differ" },
         ]);
     });

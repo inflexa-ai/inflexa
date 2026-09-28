@@ -98,6 +98,7 @@ const ToolCallDisplaySchema = z.object({
     toolName: z.string(),
     outcome: ToolCallOutcomeSchema,
     detail: z.string().optional(),
+    durationMs: z.number().optional(),
 });
 
 /**

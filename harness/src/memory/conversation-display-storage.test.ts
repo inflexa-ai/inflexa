@@ -111,6 +111,21 @@ describe("a stored display part the vocabulary can no longer render", () => {
     });
 });
 
+describe("a stored tool call", () => {
+    it("reads a row stored with no duration, and gives no duration key", async () => {
+        const call = { toolCallId: "t1", toolName: "read_file", outcome: "ok", detail: "data/counts.csv" };
+        const value = {
+            ...envelopeDisplayMessages(messages),
+            messages: [{ id: "a1", role: "assistant", parts: [{ type: "data-tool-call", id: "t1", data: call }] }],
+        };
+
+        const parts = conversationUIToCortexMessages((await parseStoredDisplayEnvelope(value, "t/0/display")).messages)[0]!.parts;
+
+        expect(parts).toEqual([{ type: "tool-call", ...call }] as never);
+        expect(parts[0]).not.toHaveProperty("durationMs");
+    });
+});
+
 describe("a stored compaction divider", () => {
     it("round-trips a system message with a data-compaction part and reads it back as the part", async () => {
         const figures = { id: "c-1", status: "done" as const, tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
