@@ -26,8 +26,8 @@ import { errAsync, ok, okAsync } from "neverthrow";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 import { z } from "zod";
-import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
-import { isReconciling, type CortexChatPartType } from "@inflexa-ai/harness/contracts/part-registry.js";
+import { ChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
+import { isReconciling, type ChatPartType } from "@inflexa-ai/harness/contracts/part-registry.js";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunSession, SpawnSession } from "../auth/types.js";
@@ -295,7 +295,7 @@ function foldStream(parts: ReadonlyArray<Record<string, unknown>>): Array<Record
     const out: Array<Record<string, unknown>> = [];
     const indexById = new Map<string, number>();
     for (const part of parts) {
-        const type = part.type as CortexChatPartType;
+        const type = part.type as ChatPartType;
         const id = part.id as string | undefined;
         if (id === undefined || !isReconciling(type)) {
             out.push(part);
@@ -337,7 +337,7 @@ describe("sandbox-step data-step-usage part", () => {
             usage: { inputTokens: 120, outputTokens: 34, cacheReadInputTokens: 100, reasoningTokens: 7 },
         });
         // The part rides the same wire contract every other run-event part does.
-        expect(CortexChatPartSchema.safeParse(emitted[0]).success).toBe(true);
+        expect(ChatPartSchema.safeParse(emitted[0]).success).toBe(true);
     });
 
     it("carries the same rollup on the child's durable result, so the parent can aggregate it", async () => {

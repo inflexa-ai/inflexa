@@ -1,16 +1,17 @@
 /**
- * Cortex-native chat-stream events — the harness wire vocabulary.
+ * Chat-stream events — the harness wire vocabulary.
  *
  * Distinct from the 15 `data-*` chat parts (`chat-parts.ts`): those are UI
  * presentation payloads a tool emits; these are the agent-loop stream events
- * the harness chat route frames as Cortex-native SSE. Together they are the
- * sole Cortex↔frontend wire contract — there is no AI SDK UI Message Stream
+ * the host chat route frames as SSE. Together they are the sole
+ * host↔frontend wire contract — there is no AI SDK UI Message Stream
  * Protocol and no translation layer.
  *
  * Every event carries `source` — the agent call chain at the point of
  * emission, derived from the harness `Session.callPath`.
  */
 
+import type { ChatPart } from "./chat-parts.js";
 import type { TokenUsageRollup } from "./usage.js";
 
 /**
@@ -142,5 +143,11 @@ export interface ChatErrorEvent {
     source: EventSource;
 }
 
-/** The discriminated union of all Cortex-native chat-stream events. */
-export type CortexChatEvent = TextDeltaEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent;
+/** The discriminated union of all chat-stream events. */
+export type ChatEvent = TextDeltaEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent;
+
+/** @deprecated Use {@link ChatEvent}. */
+export type CortexChatEvent = ChatEvent;
+
+/** One frame of a chat stream or a run stream: a loop event or a `data-*` part. */
+export type ChatFrame = ChatEvent | ChatPart;

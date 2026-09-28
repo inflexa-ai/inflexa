@@ -1,7 +1,7 @@
 # harness-thread-history Specification
 
 ## Purpose
-Defines the harness `messages` table — the single source of truth for conversation turns — and the `appendTurn` / `loadRecent` / `retractLastTurn` API on top of it. Turns are persisted atomically with a monotonic per-thread `seq`, content is stored as AI SDK model-message envelopes (see the ai-sdk-message-storage spec), and `loadRecent` walks newest-first to a token budget snapping the window to valid turn boundaries (no orphan tool result). Stored AI SDK messages convert to `CortexMessage` parts for the wire.
+Defines the harness `messages` table — the single source of truth for conversation turns — and the `appendTurn` / `loadRecent` / `retractLastTurn` API on top of it. Turns are persisted atomically with a monotonic per-thread `seq`, content is stored as AI SDK model-message envelopes (see the ai-sdk-message-storage spec), and `loadRecent` walks newest-first to a token budget snapping the window to valid turn boundaries (no orphan tool result). Stored AI SDK messages convert to `ChatMessage` parts for the wire.
 
 ## Requirements
 
@@ -289,7 +289,6 @@ They share a unit and neither is a substitute: `tokens` is an offline `js-tiktok
 - **WHEN** `loadRecent` windows by budget
 - **THEN** it selects by the `tokens` count exactly as before
 
-
 ### Requirement: A turn stores the author of its user message
 
 `appendTurn` MUST accept an optional author of the turn, a string that names the identity that sent the user message. The write MUST store it in the same transaction as the messages. The author lands on the first row of the append when that row is a genuine user start, and on no other row. That row is the row that carries the display projection, thus the write and the transcript read use one row. A synthetic message and an assistant row MUST carry no author. A caller that supplies none MUST leave each row without one.
@@ -352,7 +351,7 @@ The model read (`loadRecent`) MUST NOT carry the author, because the provider do
 
 The display read (`loadAll`) MUST return the creation time of each row, and the author of each row that holds one. The creation time is the start time of the transaction that appended the row, thus each row of one append holds the same time. The store gives no order between the times of two appends. The `seq` column orders the rows. The two members MUST be optional on the stored message type, because a fake or a fixture builds one with no row behind it.
 
-The transcript replay MUST set the creation time on each `CortexMessage` of an append, as an ISO 8601 string, from the row that opens that append. It MUST set the author on each `CortexMessage` of the append whose role is `user`, from the same row. The two fields MUST be optional on `CortexMessage`. An absent value MUST have no key on the message, thus an absent value never reads as a real one. An assistant message MUST carry no author.
+The transcript replay MUST set the creation time on each `ChatMessage` of an append, as an ISO 8601 string, from the row that opens that append. It MUST set the author on each `ChatMessage` of the append whose role is `user`, from the same row. The two fields MUST be optional on `ChatMessage`. An absent value MUST have no key on the message, thus an absent value never reads as a real one. An assistant message MUST carry no author.
 
 The author and the creation time ride the message row only. The write MUST NOT copy either one into the display projection, under the same one-copy rule that keeps the rollup out of the projection.
 

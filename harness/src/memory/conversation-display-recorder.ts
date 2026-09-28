@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { DataUIPart, ModelMessage, UIMessagePart } from "ai";
 
 import type { ToolCallOutcome } from "../contracts/chat-events.js";
-import { PART_REGISTRY, type CortexChatPartType } from "../contracts/part-registry.js";
-import { CortexChatPartSchema } from "../contracts/schemas/chat-parts.js";
+import { PART_REGISTRY, type ChatPartType } from "../contracts/part-registry.js";
+import { ChatPartSchema } from "../contracts/schemas/chat-parts.js";
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, type CompactionMarker } from "./ai-sdk-message-storage.js";
 import { conversationDisplayPart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
@@ -39,14 +39,14 @@ function isSubAgent(event: Parameters<EmitFn>[0], topLevelCallPath: readonly str
     return path.length > topLevelCallPath.length && topLevelCallPath.every((entry, index) => path[index] === entry);
 }
 
-function durableConversationType(type: string): type is CortexChatPartType {
+function durableConversationType(type: string): type is ChatPartType {
     if (!Object.hasOwn(PART_REGISTRY, type)) return false;
-    const descriptor = PART_REGISTRY[type as CortexChatPartType];
+    const descriptor = PART_REGISTRY[type as ChatPartType];
     return descriptor.emitter === "conversation" && descriptor.consumer === "conversation" && !descriptor.transient;
 }
 
 function dataPart(event: ChatDataPart): ConversationPart {
-    const parsed = CortexChatPartSchema.safeParse({ type: event.type, ...(event.data as object) });
+    const parsed = ChatPartSchema.safeParse({ type: event.type, ...(event.data as object) });
     if (!parsed.success) throw new Error(`Invalid emitted conversation part ${event.type}: ${parsed.error.message}`);
     const { type, ...data } = parsed.data;
     return {
@@ -149,7 +149,7 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
 
     function recordData(event: ChatDataPart): void {
         if (!durableConversationType(event.type)) return;
-        upsert(dataPart(event), PART_REGISTRY[event.type as CortexChatPartType].reconciling);
+        upsert(dataPart(event), PART_REGISTRY[event.type as ChatPartType].reconciling);
     }
 
     const emit: EmitFn = (event) => {

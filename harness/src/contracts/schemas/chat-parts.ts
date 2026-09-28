@@ -1,5 +1,5 @@
 /**
- * Zod schemas for Cortex chat data parts — validation at boundaries.
+ * Zod schemas for chat data parts — validation at boundaries.
  */
 
 import { z } from "zod";
@@ -368,7 +368,7 @@ export const CompactionPartSchema = z.object({
 
 // ── Union ───────────────────────────────────────────────────────────
 
-export const CortexChatPartSchema = z.discriminatedUnion("type", [
+export const ChatPartSchema = z.discriminatedUnion("type", [
     PresentationPartSchema,
     PlanPartSchema,
     RunCardPartSchema,
@@ -390,3 +390,6 @@ export const CortexChatPartSchema = z.discriminatedUnion("type", [
     ReportRenderedPartSchema,
     CompactionPartSchema,
 ]);
+
+/** @deprecated Use {@link ChatPartSchema}. */
+export const CortexChatPartSchema = ChatPartSchema;

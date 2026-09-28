@@ -397,6 +397,8 @@ export { storedMessagesToCortex } from "./memory/conversation-display-replay.js"
 // cannot write the exhaustive switch that makes a state added later a build
 // failure rather than a silent mis-render.
 export type {
+    ChatEvent,
+    ChatFrame,
     CortexChatEvent,
     TextDeltaEvent,
     ToolStartedEvent,
@@ -409,6 +411,7 @@ export type {
 } from "./contracts/chat-events.js";
 export type { TokenUsageRollup } from "./contracts/usage.js";
 export type {
+    ChatPart,
     CortexChatPart,
     PresentationPart,
     PresentationContent,
@@ -440,7 +443,7 @@ export type {
     CompactionPart,
 } from "./contracts/chat-parts.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./contracts/part-registry.js";
-export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./contracts/part-registry.js";
+export type { ChatPartType, CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./contracts/part-registry.js";
 // The source grammar of a `structure` presentation card — a host re-runs the same parse over a
 // persisted `url` before it fetches, so the rule lives in one place for both sides.
 export { parseStructureUrl, alphafoldEntryUrl, alphafoldPredictionUrl } from "./contracts/structure-source.js";

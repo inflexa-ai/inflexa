@@ -34,7 +34,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 
-import type { CortexChatPart } from "../contracts/chat-parts.js";
+import type { ChatPart } from "../contracts/chat-parts.js";
 import { sleep } from "../lib/async-utils.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { describeDbError } from "../lib/db-result.js";
@@ -75,7 +75,7 @@ export interface RunEventStreamDeps {
  * never invoked concurrently with itself and back-pressure is the caller's to
  * exert by taking its time. A throw is logged and swallowed.
  */
-export type RunEventPartHandler = (part: CortexChatPart) => void | Promise<void>;
+export type RunEventPartHandler = (part: ChatPart) => void | Promise<void>;
 
 /** Call-time parameters of one subscription. */
 export interface RunEventSubscribeOptions {
@@ -154,7 +154,7 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
             // over, which is what spares a mid-run subscriber the superseded
             // intermediates it replayed. The queue is FIFO and the fold keeps
             // survivors in place, so a single stream's write order survives it.
-            const pending: CortexChatPart[] = [];
+            const pending: ChatPart[] = [];
             let delivering = false;
 
             const deliver = async (): Promise<void> => {

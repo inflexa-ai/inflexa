@@ -456,7 +456,7 @@ export interface CompactionPart {
 
 // ── Union ───────────────────────────────────────────────────────────
 
-export type CortexChatPart =
+export type ChatPart =
     | PresentationPart
     | PlanPart
     | RunCardPart
@@ -477,3 +477,6 @@ export type CortexChatPart =
     | ChildSessionStartedPart
     | ReportRenderedPart
     | CompactionPart;
+
+/** @deprecated Use {@link ChatPart}. */
+export type CortexChatPart = ChatPart;

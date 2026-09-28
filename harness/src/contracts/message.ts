@@ -1,5 +1,5 @@
 /**
- * Cortex-owned chat message types — the wire shape, the in-memory shape,
+ * Chat message types — the wire shape, the in-memory shape,
  * and the public API for everything the chat path exchanges.
  *
  * No AI SDK types appear here or anywhere else in the package. The
@@ -8,7 +8,7 @@
  */
 
 import type { ToolCallDetail, ToolCallOutcome } from "./chat-events.js";
-import type { CortexChatPart } from "./chat-parts.js";
+import type { ChatPart } from "./chat-parts.js";
 import type { TokenUsageRollup } from "./usage.js";
 
 /** A plain assistant/user text run. */
@@ -44,13 +44,13 @@ export interface ToolCallPart {
 }
 
 /** The discriminated union of every part the chat path can carry. */
-export type CortexPart = TextPart | ToolCallPart | CortexChatPart;
+export type MessagePart = TextPart | ToolCallPart | ChatPart;
 
 /** A single chat message — user, assistant, or system. */
-export interface CortexMessage {
+export interface ChatMessage {
     id: string;
     role: "user" | "assistant" | "system";
-    parts: CortexPart[];
+    parts: MessagePart[];
     /**
      * Set when this message's production was cut off by a client abort, so the UI
      * can badge it. Absent means not interrupted — the field is optional so every
@@ -95,3 +95,9 @@ export interface CortexMessage {
      */
     createdAt?: string;
 }
+
+/** @deprecated Use {@link MessagePart}. */
+export type CortexPart = MessagePart;
+
+/** @deprecated Use {@link ChatMessage}. */
+export type CortexMessage = ChatMessage;

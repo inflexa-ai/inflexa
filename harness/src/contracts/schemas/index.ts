@@ -27,6 +27,7 @@ export {
     RunCompletedFindingSchema,
     RunCompletedPartSchema,
     RunFailedPartSchema,
+    ChatPartSchema,
     CortexChatPartSchema,
 } from "./chat-parts.js";
 
@@ -37,6 +38,7 @@ export {
     ToolFinishedEventSchema,
     FinishEventSchema,
     ChatErrorEventSchema,
+    ChatEventSchema,
     CortexChatEventSchema,
 } from "./chat-events.js";
 
