@@ -36,6 +36,7 @@ import { REPORT_PROVENANCE_GLOBAL } from "./provenance-data.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
+import { BLOCK_ID_ATTRIBUTE } from "./views/block-mark.js";
 import { LINEAGE_BLOCK_ATTRIBUTE, LINEAGE_CONTROL_CLASS, LINEAGE_KEY_ATTRIBUTE, LINEAGE_KEYS_ATTRIBUTE } from "./views/lineage.js";
 import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS } from "./views/values.js";
 
@@ -219,6 +220,37 @@ describe("renderReportPage text lists", () => {
         // A list reads at the measure of the prose around it, thus no inner width caps it.
         expect(listRules[0]).not.toContain("max-width");
         expect(listRules[0]).toContain("line-height: 1.7");
+    });
+});
+
+describe("the block mark", () => {
+    /** The id of each block of a tree, in document order. */
+    function blockIdsOf(blocks: readonly Block[]): string[] {
+        return blocks.flatMap((block) => [block.id, ...(block.kind === "section" ? blockIdsOf(block.blocks) : [])]);
+    }
+
+    it("marks each block of the page with its id, with the lineage and without it", () => {
+        const ids = blockIdsOf(FIXTURE_DOCUMENT.sections);
+        for (const provenance of [undefined, FIXTURE_PROVENANCE]) {
+            const page = load(renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance })._unsafeUnwrap().html);
+            for (const id of ids) {
+                expect(page(`[${BLOCK_ID_ATTRIBUTE}="${id}"]`).length).toBeGreaterThan(0);
+            }
+        }
+    });
+
+    it("marks each paragraph and the list of a text block, and adds no element", () => {
+        const block: TextBlock = { kind: "text", id: "t1", content: { prose: "One.\n\nTwo.", list: { ordered: false, items: ["A.", "B."] } } };
+        const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [block] }] };
+        const page = load(renderReportPage(document, {})._unsafeUnwrap().html);
+
+        // A text block has no container, thus the capture of the block reads the union of these boxes.
+        expect(
+            page(`[${BLOCK_ID_ATTRIBUTE}="t1"]`)
+                .toArray()
+                .map((node) => node.tagName),
+        ).toEqual(["p", "p", "ul"]);
+        expect(page(`section[${BLOCK_ID_ATTRIBUTE}="s"] > p.report-prose`).length).toBe(2);
     });
 });
 

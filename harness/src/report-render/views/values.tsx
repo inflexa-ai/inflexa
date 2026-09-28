@@ -30,6 +30,7 @@ import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../
 import { declaredForColumn, type ArtifactTableReference } from "../../contracts/report-reference.js";
 import type { CitationRecord } from "../../report-model/reference-resolver.js";
 import { stagedSource, tableSidecarName } from "../assets.js";
+import { blockMark } from "./block-mark.js";
 import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
 import { formatNumberCell, formatTableCell, holdsANumber, selectColumnKind, selectNumberKind, smallestPositiveValue } from "../number-format.js";
@@ -96,7 +97,7 @@ export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value:
     const n = ledger.mark(block.value);
     const shown = formatNumberCell(value.value, selectNumberKind(block.label, value.value));
     return String(
-        <div class="stat-card corner-accents" {...lineageStamp(view.lineage, block.id, [block.value])}>
+        <div class="stat-card corner-accents" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [block.value])}>
             <div class="stat-card-value" title={shown.full}>
                 {shown.text}
             </div>
@@ -255,7 +256,7 @@ export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount
     const download = tableSidecarName(binding.hash, binding.path);
     const bound = boundText(binding);
     return String(
-        <div class="report-table" {...lineageStamp(view.lineage, block.id, [binding])}>
+        <div class="report-table" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [binding])}>
             <div class="report-table-title">
                 {block.title}
                 <Marker n={n} lineage={lineagePlace(view.lineage, binding)} />
@@ -296,7 +297,7 @@ export function renderFigure(block: FigureBlock, ledger: ReferenceLedger, value:
     const n = ledger.mark(block.binding);
     const caption = block.caption;
     return String(
-        <figure class="report-figure corner-accents" {...lineageStamp(view.lineage, block.id, [block.binding])}>
+        <figure class="report-figure corner-accents" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [block.binding])}>
             <img src={value.src} alt={caption !== undefined ? caption : ""} class="report-figure-image" />
             <figcaption class="report-caption">
                 {caption}
@@ -329,7 +330,7 @@ export function renderCitation(block: CitationBlock, ledger: ReferenceLedger, re
     const binding = block.binding;
     const key = citationKeyOf(binding);
     return String(
-        <div class="report-citation corner-accents" {...lineageStamp(view.lineage, block.id, [binding])}>
+        <div class="report-citation corner-accents" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [binding])}>
             <Marker n={n} lineage={lineagePlace(view.lineage, binding)} />
             {record !== undefined ? (
                 <>

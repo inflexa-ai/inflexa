@@ -1,5 +1,5 @@
 /**
- * Unit tests for the settle, the frame, and the slicing of the capture.
+ * Unit tests for the settle, the frame, the slicing, and the block of the capture.
  *
  * The connector seam of the chrome module hands the capture a page that no browser backs. Thus the order of
  * the steps and the arguments of each setter are observable with no sidecar at all.
@@ -11,28 +11,34 @@ import type { Browser, MediaFeature, ScreenshotOptions, Viewport } from "puppete
 import { setBrowserConnector } from "./chrome.js";
 import { capturePage } from "./page-capture.js";
 
-/** The steps that the capture drove, in order, and the arguments that it gave to each of the three setters. */
+/**
+ * The steps that the capture drove, in order, the arguments that it gave to each of the three setters, and
+ * the arguments of each block measure.
+ */
 interface Recorder {
     readonly steps: string[];
     readonly features: MediaFeature[][];
     readonly viewports: Viewport[];
     readonly shots: ScreenshotOptions[];
+    readonly blockMeasures: unknown[][];
 }
 
 /** A recorder with each list empty, for one test. */
 function makeRecorder(): Recorder {
-    return { steps: [], features: [], viewports: [], shots: [] };
+    return { steps: [], features: [], viewports: [], shots: [], blockMeasures: [] };
 }
 
 /**
  * How the page answers the height measure and each screenshot call.
  *
  * `scrollHeight` is what the measure gives; absent, the measure gives no number and the page reads as short.
- * A refusal names the cause that a call raises. Absent, the call gives its picture. Each arm carries a
- * different picture, thus a test reads which call the result came from.
+ * `blockArea` is what the block measure gives; absent, the page holds no mark of the block. A refusal names
+ * the cause that a call raises. Absent, the call gives its picture. Each arm carries a different picture,
+ * thus a test reads which call the result came from.
  */
 interface ShotPlan {
     readonly scrollHeight?: number;
+    readonly blockArea?: { x: number; width: number; fromY: number; toY: number };
     readonly failFullPage?: Error;
     readonly failViewport?: Error;
     readonly failTile?: Error;
@@ -56,11 +62,20 @@ function makeFakeBrowser(recorder: Recorder, plan: ShotPlan = {}): Browser {
         goto: async () => {
             recorder.steps.push("goto");
         },
-        // The readiness wait carries arguments, and the height measure carries none. Thus the fake reads the
-        // arity, and each of the two evaluations gets its own step name and answer.
-        evaluate: async (_body: unknown, ...args: unknown[]) => {
-            recorder.steps.push(args.length === 0 ? "measure" : "evaluate");
-            return args.length === 0 ? plan.scrollHeight : undefined;
+        // Each evaluation of the capture is a named function, thus the fake reads the name, and each
+        // evaluation gets its own step name and answer.
+        evaluate: async (body: { name: string }, ...args: unknown[]) => {
+            if (body.name === "measureScrollHeight") {
+                recorder.steps.push("measure");
+                return plan.scrollHeight;
+            }
+            if (body.name === "measureBlock") {
+                recorder.steps.push("measure-block");
+                recorder.blockMeasures.push(args);
+                return plan.blockArea ?? null;
+            }
+            recorder.steps.push("evaluate");
+            return undefined;
         },
         screenshot: async (options: ScreenshotOptions) => {
             recorder.steps.push("screenshot");
@@ -122,8 +137,9 @@ describe("the framed capture", () => {
         await capturePage({ browserUrl: "http://capture-frame.test:9222" }, "http://page.test/report");
 
         // A narrow window collapses each multi-column band, and a window-sized picture hides each section
-        // below the fold. Thus the two values together make the look checklist answerable.
-        expect(recorder.viewports).toEqual([{ width: 1440, height: 900 }]);
+        // below the fold. Thus the two values together make the look checklist answerable. The half scale
+        // keeps the layout and gives a picture of a quarter of the area.
+        expect(recorder.viewports).toEqual([{ width: 1440, height: 900, deviceScaleFactor: 0.5 }]);
         expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }]);
     });
 });
@@ -131,8 +147,8 @@ describe("the framed capture", () => {
 describe("the tiled capture", () => {
     it("keeps the one full-page shot for a page at the single-shot bound", async () => {
         const recorder = makeRecorder();
-        // Two window heights is the bound. A page at the bound survives the provider downscale in one shot.
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 1800 }));
+        // A page at the bound reaches the model whole in one shot.
+        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 4000 }));
 
         const capture = await capturePage({ browserUrl: "http://capture-bound.test:9222" }, "http://page.test/report");
 
@@ -143,36 +159,46 @@ describe("the tiled capture", () => {
 
     it("slices a tall page into consecutive tiles in document order", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 5000 }));
+        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 10000 }));
 
         const capture = await capturePage({ browserUrl: "http://capture-tall.test:9222" }, "http://page.test/report");
 
-        // Each slice clips two window heights at the reader width, and the last slice ends at the document.
+        // Each slice clips the slice height at the reader width, and the last slice ends at the document.
         expect(recorder.shots).toEqual([
-            { encoding: "base64", clip: { x: 0, y: 0, width: 1440, height: 1800 } },
-            { encoding: "base64", clip: { x: 0, y: 1800, width: 1440, height: 1800 } },
-            { encoding: "base64", clip: { x: 0, y: 3600, width: 1440, height: 1400 } },
+            { encoding: "base64", clip: { x: 0, y: 0, width: 1440, height: 4000 } },
+            { encoding: "base64", clip: { x: 0, y: 4000, width: 1440, height: 4000 } },
+            { encoding: "base64", clip: { x: 0, y: 8000, width: 1440, height: 2000 } },
         ]);
         expect(capture.screenshots).toEqual([
-            { base64: "TILE-0", range: { fromY: 0, toY: 1800 } },
-            { base64: "TILE-1800", range: { fromY: 1800, toY: 3600 } },
-            { base64: "TILE-3600", range: { fromY: 3600, toY: 5000 } },
+            { base64: "TILE-0", range: { fromY: 0, toY: 4000 } },
+            { base64: "TILE-4000", range: { fromY: 4000, toY: 8000 } },
+            { base64: "TILE-8000", range: { fromY: 8000, toY: 10000 } },
         ]);
         // Every pixel is captured, and the coverage says so.
-        expect(capture.coverage).toEqual({ kind: "tiled", capturedPx: 5000, totalPx: 5000 });
+        expect(capture.coverage).toEqual({ kind: "tiled", capturedPx: 10000, totalPx: 10000 });
+    });
+
+    it("covers a long report of 16,000 pixels whole", async () => {
+        const recorder = makeRecorder();
+        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 16000 }));
+
+        const capture = await capturePage({ browserUrl: "http://capture-long.test:9222" }, "http://page.test/report");
+
+        expect(capture.screenshots).toHaveLength(4);
+        expect(capture.coverage).toEqual({ kind: "tiled", capturedPx: 16000, totalPx: 16000 });
     });
 
     it("truncates at the tile budget and reports the captured and the total pixels", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 20000 }));
+        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 30000 }));
 
         const capture = await capturePage({ browserUrl: "http://capture-budget.test:9222" }, "http://page.test/report");
 
-        // Six slices is the budget. The pictures end at the budget, and the coverage carries the honest
+        // Five slices is the budget. The pictures end at the budget, and the coverage carries the honest
         // account: the captured pixels against the total, thus no reader mistakes the look for a whole one.
-        expect(capture.screenshots).toHaveLength(6);
-        expect(capture.screenshots[5]!.range).toEqual({ fromY: 9000, toY: 10800 });
-        expect(capture.coverage).toEqual({ kind: "tiled", capturedPx: 10800, totalPx: 20000 });
+        expect(capture.screenshots).toHaveLength(5);
+        expect(capture.screenshots[4]!.range).toEqual({ fromY: 16000, toY: 20000 });
+        expect(capture.coverage).toEqual({ kind: "tiled", capturedPx: 20000, totalPx: 30000 });
     });
 
     it("retries at the window when a tile bitmap fails, and names the viewport coverage", async () => {
@@ -185,7 +211,7 @@ describe("the tiled capture", () => {
 
         // The retry drops the clip, and it runs on the page that already navigated. Thus one refused slice
         // costs one more screenshot call and no second load.
-        expect(recorder.shots).toEqual([{ encoding: "base64", clip: { x: 0, y: 0, width: 1440, height: 1800 } }, { encoding: "base64" }]);
+        expect(recorder.shots).toEqual([{ encoding: "base64", clip: { x: 0, y: 0, width: 1440, height: 4000 } }, { encoding: "base64" }]);
         expect(capture.screenshots).toEqual([{ base64: VIEWPORT_SHOT }]);
         expect(capture.coverage).toEqual({ kind: "viewport" });
     });
@@ -222,5 +248,63 @@ describe("the degraded capture", () => {
         const thrown = await capture.catch((cause: unknown) => cause);
         expect((thrown as Error).cause).toBe(refusedFullPage);
         expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }, { encoding: "base64" }]);
+    });
+});
+
+describe("the block capture", () => {
+    it("clips the measured box of the block, and names the block coverage", async () => {
+        const recorder = makeRecorder();
+        restoreConnector = setBrowserConnector(async () =>
+            makeFakeBrowser(recorder, { scrollHeight: 16000, blockArea: { x: 300, width: 900, fromY: 5200, toY: 5700 } }),
+        );
+
+        const capture = await capturePage({ browserUrl: "http://capture-block.test:9222" }, "http://page.test/report", { blockId: "sec-results" });
+
+        // The measure reads the mark of the renderer and the margin, and the whole page is never measured.
+        expect(recorder.blockMeasures).toEqual([["data-block", "sec-results", 16]]);
+        expect(recorder.steps).not.toContain("measure");
+        expect(recorder.shots).toEqual([{ encoding: "base64", clip: { x: 300, y: 5200, width: 900, height: 500 } }]);
+        expect(capture.screenshots).toEqual([{ base64: "TILE-5200", range: { fromY: 5200, toY: 5700 } }]);
+        expect(capture.coverage).toEqual({ kind: "block", capturedPx: 500, totalPx: 500 });
+    });
+
+    it("slices a tall block, and cuts it at the budget", async () => {
+        const recorder = makeRecorder();
+        restoreConnector = setBrowserConnector(async () =>
+            makeFakeBrowser(recorder, { scrollHeight: 40000, blockArea: { x: 0, width: 1440, fromY: 1000, toY: 26000 } }),
+        );
+
+        const capture = await capturePage({ browserUrl: "http://capture-block-tall.test:9222" }, "http://page.test/report", { blockId: "s1" });
+
+        expect(capture.screenshots).toHaveLength(5);
+        expect(capture.screenshots[0]!.range).toEqual({ fromY: 1000, toY: 5000 });
+        expect(capture.screenshots[4]!.range).toEqual({ fromY: 17000, toY: 21000 });
+        expect(capture.coverage).toEqual({ kind: "block", capturedPx: 20000, totalPx: 25000 });
+    });
+
+    it("takes no picture when the page holds no mark of the block", async () => {
+        const recorder = makeRecorder();
+        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 5000 }));
+
+        const capture = await capturePage({ browserUrl: "http://capture-no-block.test:9222" }, "http://page.test/report", { blockId: "gone" });
+
+        expect(recorder.shots).toEqual([]);
+        expect(capture.screenshots).toEqual([]);
+        expect(capture.coverage).toEqual({ kind: "no-block" });
+    });
+
+    it("propagates a refused slice of a block, because the window does not show the block", async () => {
+        const recorder = makeRecorder();
+        restoreConnector = setBrowserConnector(async () =>
+            makeFakeBrowser(recorder, {
+                blockArea: { x: 0, width: 1440, fromY: 3000, toY: 3400 },
+                failTile: new Error("the compositor refused the bitmap"),
+            }),
+        );
+
+        const capture = capturePage({ browserUrl: "http://capture-block-fail.test:9222" }, "http://page.test/report", { blockId: "b1" });
+
+        await expect(capture).rejects.toThrow("the compositor refused the bitmap");
+        expect(recorder.shots).toEqual([{ encoding: "base64", clip: { x: 0, y: 3000, width: 1440, height: 400 } }]);
     });
 });

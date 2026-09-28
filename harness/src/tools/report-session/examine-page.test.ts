@@ -356,8 +356,9 @@ describe("the seen-stamp copy", () => {
             expect(result.coverage).toEqual({ kind: "full" });
             // One whole-document shot slices nothing, thus no tiles list rides the JSON.
             expect(result.tiles).toBeUndefined();
-            expect(result.consoleErrors).toEqual(["boom"]);
-            expect(result.failedRequests).toEqual([{ url: "assets/x.png", reason: "net" }]);
+            // The faults ride as a digest: each distinct entry carries its count.
+            expect(result.consoleErrors).toEqual([{ text: "boom", count: 1 }]);
+            expect(result.failedRequests).toEqual([{ url: "assets/x.png", reason: "net", count: 1 }]);
             expect(result.pagePath).toBe(join("report-sessions", threadId, "index.html"));
         }
         // The screenshot rides the image path, thus the model sees the picture.
@@ -435,6 +436,111 @@ describe("the seen-stamp copy", () => {
         expect(JSON.stringify(result)).not.toContain("TILEONE");
         // A truncated look is a true look at the current document, thus it stamps the seen hash the same.
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+});
+
+describe("the fault digest", () => {
+    it("collapses a repeated console error, and replaces its inline data with a placeholder", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const font = `Refused to load the font 'data:font/woff2;base64,${"A".repeat(30_000)}'`;
+        const stub: PageCapture = {
+            screenshots: [{ base64: "BASE64PNG" }],
+            coverage: { kind: "full" },
+            consoleErrors: [font, font, font],
+            failedRequests: [],
+        };
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture: () => Promise.resolve(stub) });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        if (result.outcome === "examined") {
+            expect(result.consoleErrors).toEqual([{ text: "Refused to load the font '[inline font/woff2 data, 30000 chars]'", count: 3 }]);
+        }
+        // The inline bytes never reach the JSON that the agent reads.
+        expect(JSON.stringify(result).length).toBeLessThan(1_000);
+    });
+});
+
+describe("the block look", () => {
+    it("captures the named block, gives its coverage and its rows, and stamps the seen hash as a whole look does", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const asked: (string | undefined)[] = [];
+        const stub: PageCapture = {
+            screenshots: [{ base64: "BLOCKPNG", range: { fromY: 5200, toY: 5700 } }],
+            coverage: { kind: "block", capturedPx: 500, totalPx: 500 },
+            consoleErrors: [],
+            failedRequests: [],
+        };
+        const capture: CapturePage = (_url, options) => {
+            asked.push(options?.blockId);
+            return Promise.resolve(stub);
+        };
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+
+        const result = (await tool.execute({ blockId: "sec-results" }, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(asked).toEqual(["sec-results"]);
+        expect(result.outcome).toBe("examined");
+        if (result.outcome === "examined") {
+            expect(result.coverage).toEqual({ kind: "block", capturedPx: 500, totalPx: 500 });
+            expect(result.tiles).toEqual([{ index: 0, fromY: 5200, toY: 5700 }]);
+        }
+        expect(readToolResultImages(result)).toEqual([{ base64: "BLOCKPNG", mediaType: "image/png" }]);
+        // A block look is a look at the current page, thus the record gate accepts it.
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+
+    it("asks the capture for the whole page when the block id is null", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const asked: (string | undefined)[] = [];
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = (_url, options) => {
+            asked.push(options?.blockId);
+            return Promise.resolve(stub);
+        };
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+
+        const result = (await tool.execute({ blockId: null }, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        expect(asked).toEqual([undefined]);
+    });
+
+    it("gives the no-block outcome when the page holds no such block, and stamps nothing", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const stub: PageCapture = { screenshots: [], coverage: { kind: "no-block" }, consoleErrors: [], failedRequests: [] };
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture: () => Promise.resolve(stub) });
+
+        const result = (await tool.execute({ blockId: "gone" }, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result).toEqual({ outcome: "no-block", blockId: "gone" });
+        // No eyes saw the page, thus the record still refuses.
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+
+    it("names the block in the call detail, and the page when the input names none", () => {
+        const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => "/unused", chrome: {} });
+
+        expect(tool.describeCall).toBeDefined();
+        expect(tool.describeCall!({ blockId: "sec-results" })).toBe("look at sec-results");
+        expect(tool.describeCall!({})).toBe("look at the page");
     });
 });
 

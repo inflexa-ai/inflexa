@@ -51,7 +51,9 @@ describe("renderText", () => {
     it("renders a block with no list exactly as it renders one that never had the field", () => {
         const block: TextBlock = { kind: "text", id: "t4", content: { prose: "First paragraph.\n\nSecond paragraph." } };
 
-        expect(renderText(block)).toBe(`<p class="report-prose">First paragraph.</p><p class="report-prose">Second paragraph.</p>`);
+        expect(renderText(block)).toBe(
+            `<p class="report-prose" data-block="${block.id}">First paragraph.</p><p class="report-prose" data-block="${block.id}">Second paragraph.</p>`,
+        );
     });
 
     it("keeps a script tag in an item as text", () => {

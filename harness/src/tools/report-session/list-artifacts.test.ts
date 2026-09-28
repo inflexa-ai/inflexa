@@ -4,7 +4,8 @@
  * Each test drives the tool through `execute` with a temp directory as the workspace root and an
  * in-memory gateway. The tests cover the order of the listing, the cap of the listing, the columns of a
  * CSV and of a TSV, the extension that carries no header, the cut header line, the quoted header, the
- * absent file, the file type that holds no cell, the pinned citations, and the session refusal.
+ * absent file, the file type that holds no cell, the column count of the listing, the path that the pin
+ * does not hold, the pinned citations, and the session refusal.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -17,7 +18,7 @@ import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
-import { createListPinnedArtifactsTool, type ListPinnedArtifactsResult } from "./list-artifacts.js";
+import { createListPinnedArtifactsTool, type ListPinnedArtifactsResult, type PinnedArtifact } from "./list-artifacts.js";
 
 /** Each root that a test made. The cleanup removes them after the suite. */
 const roots: string[] = [];
@@ -108,8 +109,9 @@ describe("the listing order", () => {
                 "runs/r1/figures/plot.png",
                 "runs/r1/step-b/output/counts.csv",
             ]);
-            expect(result.artifacts.map((artifact) => artifact.hash)).toEqual(["sha256:aaa", "sha256:ccc", "sha256:bbb"]);
             expect(result.artifacts.map((artifact) => artifact.fileType)).toEqual(["output", "figure", "output"]);
+            // A reference names the path alone and the session stamps the hash, thus an entry carries no hash.
+            expect(result.artifacts.every((artifact) => !("hash" in artifact))).toBe(true);
         }
     });
 });
@@ -161,6 +163,11 @@ describe("the listing cap", () => {
 });
 
 describe("the columns", () => {
+    /** The one artifact that a call with its path gives, or `undefined` for another outcome. */
+    async function artifactAt(tool: ReturnType<typeof createListPinnedArtifactsTool>, path: string): Promise<PinnedArtifact | undefined> {
+        const result = (await tool.execute({ path }, ctxForThread("t1")))._unsafeUnwrap();
+        return result.outcome === "artifact" ? result.artifact : undefined;
+    }
     it("splits the header of a CSV on the comma, and trims each name", async () => {
         const root = await makeRoot();
         await writeUnder(root, "runs/r1/step-a/output/de.csv", "gene, padj ,log2fc\nTP53,0.01,2.5\n");
@@ -168,12 +175,9 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/de.csv");
 
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            expect(result.artifacts[0].columns).toEqual(["gene", "padj", "log2fc"]);
-        }
+        expect(artifact?.columns).toEqual(["gene", "padj", "log2fc"]);
     });
 
     it("splits the header of a TSV on the tab", async () => {
@@ -183,12 +187,9 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.tsv": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/de.tsv");
 
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            expect(result.artifacts[0].columns).toEqual(["gene", "padj", "log2fc"]);
-        }
+        expect(artifact?.columns).toEqual(["gene", "padj", "log2fc"]);
     });
 
     it("reads the header of a path whose extension is uppercase", async () => {
@@ -198,12 +199,9 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/DE.CSV": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/DE.CSV");
 
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            expect(result.artifacts[0].columns).toEqual(["gene", "padj"]);
-        }
+        expect(artifact?.columns).toEqual(["gene", "padj"]);
     });
 
     it("reads no header for an extension that carries none, even under an output file type", async () => {
@@ -214,13 +212,10 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/results.json": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/results.json");
 
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            expect(result.artifacts[0].fileType).toBe("output");
-            expect(result.artifacts[0].columns).toBeUndefined();
-        }
+        expect(artifact?.fileType).toBe("output");
+        expect(artifact?.columns).toBeUndefined();
     });
 
     it("gives no columns for a header line that holds a double quote", async () => {
@@ -231,12 +226,9 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/quoted.csv": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/quoted.csv");
 
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            expect(result.artifacts[0].columns).toBeUndefined();
-        }
+        expect(artifact?.columns).toBeUndefined();
     });
 
     it("drops the last name of a header line that the read cut", async () => {
@@ -248,16 +240,13 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/wide.csv": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/wide.csv");
 
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            const columns = result.artifacts[0].columns ?? [];
-            expect(columns[0]).toBe("gene");
-            // Each name that lands is whole, thus a locator that names one addresses a real column.
-            expect(columns.every((name) => name === "gene" || /^col\d{4}$/.test(name))).toBe(true);
-            expect(columns.length).toBeLessThan(names.length);
-        }
+        const columns = artifact?.columns ?? [];
+        expect(columns[0]).toBe("gene");
+        // Each name that lands is whole, thus a locator that names one addresses a real column.
+        expect(columns.every((name) => name === "gene" || /^col\d{4}$/.test(name))).toBe(true);
+        expect(columns.length).toBeLessThan(names.length);
     });
 
     it("gives no columns when the cut leaves no whole name", async () => {
@@ -268,12 +257,9 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/one.csv": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/one.csv");
 
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            expect(result.artifacts[0].columns).toBeUndefined();
-        }
+        expect(artifact?.columns).toBeUndefined();
     });
 
     it("gives no columns for a file whose bytes are absent from the disk", async () => {
@@ -282,15 +268,12 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/gone.csv": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/gone.csv");
 
-        // The path and the hash still list, because the pin is the evidence and the header is orientation.
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            expect(result.artifacts).toHaveLength(1);
-            expect(result.artifacts[0].hash).toBe("sha256:aaa");
-            expect(result.artifacts[0].columns).toBeUndefined();
-        }
+        // The path and the file type still list, because the pin is the evidence and the header is orientation.
+        expect(artifact).toBeDefined();
+        expect(artifact).toMatchObject({ path: "runs/r1/step-a/output/gone.csv", fileType: "output" });
+        expect(artifact?.columns).toBeUndefined();
     });
 
     it("reads no header for a file type that holds no cell", async () => {
@@ -301,13 +284,10 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/figures/plot.png": { hash: "sha256:ccc", fileType: "figure" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "runs/r1/figures/plot.png");
 
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            expect(result.artifacts[0].fileType).toBe("figure");
-            expect(result.artifacts[0].columns).toBeUndefined();
-        }
+        expect(artifact?.fileType).toBe("figure");
+        expect(artifact?.columns).toBeUndefined();
     });
 
     it("gives no columns for a path that escapes the workspace root", async () => {
@@ -317,15 +297,12 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "../../escape.csv": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const artifact = await artifactAt(tool, "../../escape.csv");
 
-        expect(result.outcome).toBe("listed");
-        if (result.outcome === "listed") {
-            expect(result.artifacts[0].columns).toBeUndefined();
-        }
+        expect(artifact?.columns).toBeUndefined();
     });
 
-    it("gives no columns when the workspace root does not resolve, and it still lists each pin", async () => {
+    it("gives no columns when the workspace root does not resolve, and it still gives the pin", async () => {
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({
@@ -335,13 +312,44 @@ describe("the columns", () => {
             },
         });
 
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/de.csv");
+
+        expect(artifact?.path).toBe("runs/r1/step-a/output/de.csv");
+        expect(artifact?.columns).toBeUndefined();
+    });
+
+    it("gives the count of the columns in the listing, and no names", async () => {
+        const root = await makeRoot();
+        await writeUnder(root, "runs/r1/step-a/output/de.csv", "gene,padj,log2fc\nTP53,0.01,2.5\n");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(result.outcome).toBe("listed");
         if (result.outcome === "listed") {
-            expect(result.artifacts[0].hash).toBe("sha256:aaa");
-            expect(result.artifacts[0].columns).toBeUndefined();
+            expect(result.artifacts[0]).toEqual({ path: "runs/r1/step-a/output/de.csv", fileType: "output", columnCount: 3 });
         }
+        expect(await artifactAt(tool, "runs/r1/step-a/output/de.csv")).toEqual({
+            path: "runs/r1/step-a/output/de.csv",
+            fileType: "output",
+            columnCount: 3,
+            columns: ["gene", "padj", "log2fc"],
+        });
+    });
+
+    it("gives not-pinned for a path that the pin does not hold", async () => {
+        const root = await makeRoot();
+        await writeUnder(root, "runs/r1/step-a/output/other.csv", "gene\nTP53\n");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({ path: "runs/r1/step-a/output/other.csv" }, ctxForThread("t1")))._unsafeUnwrap();
+
+        // The file is on disk, but a reference binds to the pinned set alone.
+        expect(result).toEqual({ outcome: "not-pinned", path: "runs/r1/step-a/output/other.csv" });
     });
 });
 

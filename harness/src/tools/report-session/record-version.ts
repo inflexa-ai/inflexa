@@ -41,7 +41,7 @@ import { describeDbError } from "../../lib/db-result.js";
 import { describeFsError, tryFsWrite } from "../../lib/fs-result.js";
 import type { Logger } from "../../lib/logger.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
-import { referencedPaths, walkBlocks } from "../../report-model/block-walk.js";
+import { referencedPaths, walkBlocks, type ReportWarning } from "../../report-model/block-walk.js";
 import { finishDraft, type FinishGap, type SessionDerivation } from "../../report-model/draft-finish.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import type { ReferenceResolver } from "../../report-model/reference-resolver.js";
@@ -61,7 +61,8 @@ export type RecordVersionInput = z.infer<typeof recordVersionInput>;
  * The typed outcome of the record tool. Each arm is ok-channel data, thus the tool never throws for a
  * degraded condition.
  *
- * `gaps` names each completeness gap of the draft. `never-seen` means that no eyes ran on the current draft.
+ * `gaps` names each completeness gap of the draft. `gaps` and `recorded` carry the advisory warnings of the
+ * finish. `never-seen` means that no eyes ran on the current draft.
  * `stale-look` means that the eyes ran, and the agent then changed the draft. `root-unresolvable` means that
  * the resolver construction cannot resolve the workspace root. `invalid` names each gate failure, and a
  * resolution failure carries the block that holds it. `recorded` carries the version id, and `replaced` is
@@ -69,14 +70,14 @@ export type RecordVersionInput = z.infer<typeof recordVersionInput>;
  */
 export type RecordVersionResult =
     | { outcome: "refused"; refusal: SessionRefusal }
-    | { outcome: "gaps"; gaps: FinishGap[] }
+    | { outcome: "gaps"; gaps: FinishGap[]; warnings: ReportWarning[] }
     | { outcome: "never-seen" }
     | { outcome: "stale-look" }
     | { outcome: "resolver-unavailable" }
     | { outcome: "root-unresolvable"; detail: string }
     | { outcome: "invalid"; schemaIssues?: SchemaIssue[]; duplicateIds?: string[]; resolutionFailures?: ResolutionFailure[] }
     | { outcome: "record-failed"; detail: string }
-    | { outcome: "recorded"; versionId: string; replaced: boolean };
+    | { outcome: "recorded"; versionId: string; replaced: boolean; warnings: ReportWarning[] };
 
 /**
  * The construction deps of the record tool.
@@ -196,7 +197,8 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
         description:
             "Record the current draft as one report version. The tool runs the whole gate first: it finishes the draft, " +
             "resolves each reference, matches each chart encoding, and matches each assert. An incomplete draft gives back the gap list, " +
-            "and a failed reference gives back the block that broke. The tool records a version only after examine_page looked at the page of the current draft: " +
+            "and a failed reference gives back the block that broke. The gap list and the recorded version each carry the advisory warnings of the finish. " +
+            "The tool records a version only after examine_page looked at the page of the current draft: " +
             "with no look it gives back never-seen, and after an edit since the look it gives back stale-look. " +
             "A thread holds one version, thus a later record replaces it whole. Amend the draft, look at the page again, and record again. " +
             "After the version lands, the tool removes the file of each derived table that no block of the recorded report binds.",
@@ -220,7 +222,7 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
 
             const finished = finishDraft(draft, snapshot, derivations);
             if (!finished.valid) {
-                return ok({ outcome: "gaps", gaps: finished.gaps });
+                return ok({ outcome: "gaps", gaps: finished.gaps, warnings: finished.warnings });
             }
 
             // The look-before-record rule runs before the resolver and the validation, on the state that the
@@ -293,7 +295,8 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
                 });
             }
             return recorded.match(
-                (ref): Result<RecordVersionResult, ToolError> => ok({ outcome: "recorded", versionId: ref.versionId, replaced: ref.outcome === "replaced" }),
+                (ref): Result<RecordVersionResult, ToolError> =>
+                    ok({ outcome: "recorded", versionId: ref.versionId, replaced: ref.outcome === "replaced", warnings: finished.warnings }),
                 (error): Result<RecordVersionResult, ToolError> => {
                     logger.warn("the version did not record", { threadId, analysisId, reason: error.type });
                     return ok({ outcome: "record-failed", detail: describeRecordFailure(error) });

@@ -204,6 +204,24 @@ describe("the gap return", () => {
         expect(existsSync(join(root, "report-sessions"))).toBe(false);
         assertNoLegacyDirs(root);
     });
+
+    it("carries the advisory warnings of the finish beside the gap list", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        const draft: DraftDocument = {
+            title: "",
+            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "The cohort holds 48 samples." } }] }],
+        };
+        gateway.seed("t1", { document: draft, snapshot: { artifacts: {} } });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("gaps");
+        if (result.outcome === "gaps") {
+            expect(result.warnings).toEqual([{ blockId: "t1", kind: "free-numeral", detail: "48" }]);
+        }
+    });
 });
 
 describe("the pass path", () => {
@@ -225,8 +243,27 @@ describe("the pass path", () => {
             expect(existsSync(result.pagePath)).toBe(true);
             const content = await readFile(result.pagePath, "utf8");
             expect(content).toContain("42");
+            // The metric carries no prose, thus the finish warns about nothing.
+            expect(result.warnings).toEqual([]);
         }
         assertNoLegacyDirs(root);
+    });
+
+    it("carries the advisory warnings of the finish on the rendered page", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        const draft = metricDoc();
+        const intro = draft.sections[0]!;
+        intro.blocks.push({ kind: "text", id: "t1", content: { prose: "The cohort holds 48 samples." } });
+        gateway.seed("t1", { document: draft, snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            expect(result.warnings).toEqual([{ blockId: "t1", kind: "free-numeral", detail: "48" }]);
+        }
     });
 
     it("stages every manifest asset beside the page", async () => {

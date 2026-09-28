@@ -548,9 +548,6 @@ describe("set_title", () => {
 
         const titled = (await tools.finish_draft.execute({}, ctx))._unsafeUnwrap();
         expect("valid" in titled && titled.valid).toBe(true);
-        if ("valid" in titled && titled.valid) {
-            expect(titled.document.title).toBe("Differential expression");
-        }
     });
 });
 
@@ -650,10 +647,10 @@ describe("finish_draft", () => {
         }
     });
 
-    it("gives the document for a complete draft", async () => {
+    it("gives the pass and the warnings for a complete draft, and no document", async () => {
         const complete: DraftDocument = {
             title: "Report",
-            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "hello" } }] }],
+            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "The cohort holds 48 samples." } }] }],
         };
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: complete, snapshot });
@@ -661,10 +658,8 @@ describe("finish_draft", () => {
 
         const value = (await tools.finish_draft.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
-        expect("valid" in value && value.valid).toBe(true);
-        if ("valid" in value && value.valid) {
-            expect(value.document).toEqual(complete);
-        }
+        // The document grows with the report, thus a pass carries the verdict and the warnings alone.
+        expect(value).toEqual({ valid: true, warnings: [{ blockId: "t1", kind: "free-numeral", detail: "48" }] });
     });
 });
 
@@ -906,6 +901,45 @@ describe("the report observation", () => {
         (await tools.add_block.execute({ block: { kind: "section", id: "s2", title: "Results", blocks: [] } }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(events).toEqual([{ type: "add-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "s2", blockKind: "section" }]);
+    });
+
+    it("names each block of a nested add, the section first and then each descendant in document order", async () => {
+        const events: SessionProvenanceEvent[] = [];
+        const { tools } = seeded({ provenance: { emitSessionEvent: (event) => events.push(event) } });
+
+        const section = {
+            kind: "section",
+            id: "s2",
+            title: "Results",
+            blocks: [
+                { kind: "text", id: "t3", content: { prose: "a" } },
+                { kind: "section", id: "s3", title: "Detail", blocks: [{ kind: "text", id: "t4", content: { prose: "b" } }] },
+                { kind: "citation", id: "c1", binding: { kind: "citation", idKind: "pmid", id: "12345", raw: "Doe 2020" } },
+            ],
+        };
+        const value = (await tools.add_block.execute({ block: section }, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(value.applied).toBe(true);
+        // One call landed five blocks, thus the record holds one add event for each of them.
+        expect(events).toEqual([
+            { type: "add-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "s2", blockKind: "section" },
+            { type: "add-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "t3", blockKind: "text" },
+            { type: "add-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "s3", blockKind: "section" },
+            { type: "add-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "t4", blockKind: "text" },
+            { type: "add-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "c1", blockKind: "citation" },
+        ]);
+    });
+
+    it("emits nothing for a refused nested add", async () => {
+        const events: SessionProvenanceEvent[] = [];
+        const { tools } = seeded({ provenance: { emitSessionEvent: (event) => events.push(event) } });
+
+        // The child reuses an id of the draft, thus the whole payload refuses and no block lands.
+        const section = { kind: "section", id: "s2", title: "Results", blocks: [{ kind: "text", id: "t1", content: { prose: "a" } }] };
+        const value = (await tools.add_block.execute({ block: section }, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(value.applied).toBe(false);
+        expect(events).toEqual([]);
     });
 
     it("targets the document with the title event, and that event names no block", async () => {

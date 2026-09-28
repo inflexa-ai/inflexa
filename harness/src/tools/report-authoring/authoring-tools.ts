@@ -40,9 +40,10 @@ import {
     type DraftRefusal,
 } from "../../report-model/draft-operations.js";
 import { buildOutline, childOutline, readBlock, type OutlineEntry, type ReadableBlock } from "../../report-model/draft-read.js";
-import { finishDraft, type FinishResult } from "../../report-model/draft-finish.js";
+import type { ReportWarning } from "../../report-model/block-walk.js";
+import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
 import { AuthoringBlockSchema } from "../../report-model/authoring-grammar.js";
-import type { DraftDocument } from "../../report-model/draft.js";
+import type { DraftBlock, DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
@@ -191,8 +192,12 @@ export type OutlineResult = { outline: OutlineEntry[] } | { refused: SessionRefu
  */
 export type ReadBlockResult = { found: true; block: ReadableBlock } | { found: false } | { refused: SessionRefusal };
 
-/** The result of `finish_draft`. A load that gives no state refuses instead of a finish outcome. */
-export type FinishToolResult = FinishResult | { refused: SessionRefusal };
+/**
+ * The result of `finish_draft`. A pass gives no document, because the document grows with the report and the
+ * preview and the record read it themselves.
+ */
+export type FinishToolResult =
+    { valid: true; warnings: ReportWarning[] } | { valid: false; gaps: FinishGap[]; warnings: ReportWarning[] } | { refused: SessionRefusal };
 
 /** The state of one report thread: the document under composition, and the frozen snapshot. */
 export interface ReportSessionState {
@@ -532,26 +537,48 @@ function holderIdOf(document: DraftDocument, blockId: string): string | undefine
 }
 
 /**
- * The event of one block act, or `undefined` when the document holds no block of that id.
+ * The event of one block act, or no event when the document holds no block of that id.
  *
  * The kind rides beside the id, thus a reader of the record sees what the act touched and it needs no
  * document of its own. The kind comes out of the document that holds the block after the act: the next
- * document for an add, a change, and a move, and the previous one for a remove.
+ * document for a change and a move, and the previous one for a remove.
  *
  * A lookup of a landed operation always finds its block. The absent arm keeps the read total, and it drops
  * the event rather than state a kind that no block carries.
  */
 function blockActOf(
-    type: "add-block" | "change-block" | "remove-block" | "move-block",
+    type: "change-block" | "remove-block" | "move-block",
     scope: { analysisId: string; threadId: string },
     document: DraftDocument,
     blockId: string,
-): SessionProvenanceEvent | undefined {
+): SessionProvenanceEvent[] {
     const kind = locate(document, blockId)?.block.kind;
     if (kind === undefined) {
-        return undefined;
+        return [];
     }
-    return { type, analysisId: scope.analysisId, threadId: scope.threadId, blockId, blockKind: kind };
+    return [{ type, analysisId: scope.analysisId, threadId: scope.threadId, blockId, blockKind: kind }];
+}
+
+/**
+ * The event of each block that one add landed, in document order. A section lands with its children in one
+ * call, and a reader of the record places each block by its own event.
+ */
+function addedActsOf(scope: { analysisId: string; threadId: string }, document: DraftDocument, blockId: string): SessionProvenanceEvent[] {
+    const located = locate(document, blockId);
+    if (located === undefined) {
+        return [];
+    }
+    const events: SessionProvenanceEvent[] = [];
+    const visit = (block: DraftBlock): void => {
+        events.push({ type: "add-block", analysisId: scope.analysisId, threadId: scope.threadId, blockId: block.id, blockKind: block.kind });
+        if (block.kind === "section") {
+            for (const child of block.blocks) {
+                visit(child);
+            }
+        }
+    };
+    visit(located.block);
+    return events;
 }
 
 /** Read the child order of one container out of a document. */
@@ -595,8 +622,8 @@ export interface ReportAuthoringToolDeps {
  * the gateway. Thus one factory serves every thread, and two threads never share one draft. A mutation
  * persists the new document before it reports `applied: true`, thus a reported landing is never lost.
  *
- * A landed mutation emits one observation. The emit sits after the persist, thus a refused operation and a
- * failed persist each emit nothing.
+ * A landed mutation emits one observation, and an add emits one for each block that it landed. The emit
+ * sits after the persist, thus a refused operation and a failed persist each emit nothing.
  */
 export function createReportAuthoringTools(gateway: ReportSessionStateGateway, deps: ReportAuthoringToolDeps = {}): ReportAuthoringTools {
     const observe = bindSessionEmit(deps.provenance, (deps.logger ?? createNoopLogger()).named("report-authoring"));
@@ -621,10 +648,11 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
      * The persist is a compare-and-swap against the token that the load read. A concurrent turn that landed
      * first turns the persist into a conflict, and the tool refuses with `stale-state`.
      *
-     * `event` is the observation of the operation, and it emits after the persist landed. Thus one site owns
-     * the rule, and a refusal, a conflict, and a persist fault each emit nothing. It reads the two documents
-     * for the same reason that `holders` does: a removed block sits in the first alone, and an added block
-     * sits in the second alone. A caller that cannot name the block of its own operation gives no event.
+     * `events` gives the observations of the operation, and they emit after the persist landed. Thus one
+     * site owns the rule, and a refusal, a conflict, and a persist fault each emit nothing. It reads the two
+     * documents for the same reason that `holders` does: a removed block sits in the first alone, and an
+     * added block sits in the second alone. A caller that cannot name the block of its own operation gives
+     * no event.
      */
     const land = async (
         threadId: string,
@@ -632,7 +660,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         previous: DraftDocument,
         result: Result<DraftDocument, DraftRefusal>,
         holders: (previous: DraftDocument, next: DraftDocument) => (string | undefined)[],
-        event: (previous: DraftDocument, next: DraftDocument) => SessionProvenanceEvent | undefined,
+        events: (previous: DraftDocument, next: DraftDocument) => readonly SessionProvenanceEvent[],
     ): Promise<MutationResult> => {
         if (result.isErr()) {
             return { applied: false, refusal: result.error };
@@ -648,8 +676,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         if (persisted.outcome === "failed") {
             return { applied: false, refusal: { reason: "state-unavailable", detail: persisted.detail } };
         }
-        const observed = event(previous, next);
-        if (observed !== undefined) {
+        for (const observed of events(previous, next)) {
             observe(observed);
         }
         // A move inside one container names the same holder two times.
@@ -662,8 +689,10 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
     const add_block = defineTool({
         id: "add_block",
         description:
-            "Add one block to the draft. The `block` schema gives the eight kinds and the fields of each one. " +
-            "You choose the `id` of the block, and it must be unique in the draft. " +
+            "Add one block to the draft. The block can be a section that carries its child blocks, thus one call can add a whole section with its atoms. " +
+            "The `block` schema gives the eight kinds and the fields of each one. " +
+            "You choose the `id` of each block, and each id must be unique in the draft. " +
+            "The validation covers the block and each block under it, and the whole payload lands or no part of it lands. " +
             "Name the destination with `parentId` and one of `place`, `before`, or `after`. " +
             "The root admits a section only, and an atom needs a section as its parent. " +
             "A reference names the path of a pinned artifact, and the session stamps the hash from the pinned evidence.",
@@ -699,7 +728,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
                     (_previous, next) => [addedId === undefined ? undefined : holderIdOf(next, addedId)],
                     // The grammar requires an id on the payload, thus a landed add always names one. A
                     // payload with no id reaches the core, which refuses it, and no event is due.
-                    (_previous, next) => (addedId === undefined ? undefined : blockActOf("add-block", { analysisId, threadId }, next, addedId)),
+                    (_previous, next) => (addedId === undefined ? [] : addedActsOf({ analysisId, threadId }, next, addedId)),
                 ),
             );
         },
@@ -819,12 +848,14 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
                     state.document,
                     ok(setTitle(state.document, input.title)),
                     () => [],
-                    () => ({
-                        type: "set-title",
-                        analysisId,
-                        threadId,
-                        title: input.title,
-                    }),
+                    () => [
+                        {
+                            type: "set-title",
+                            analysisId,
+                            threadId,
+                            title: input.title,
+                        },
+                    ],
                 ),
             );
         },
@@ -872,7 +903,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
     const finish_draft = defineTool({
         id: "finish_draft",
         description:
-            "Finish the draft. The result gives each completeness gap, or the valid report document, and each advisory warning. " +
+            "Finish the draft. The result gives each completeness gap, or a pass, and each advisory warning. " +
+            "A pass gives back no document. " +
+            "preview_report and record_report_version run the same check before they act, thus a finish directly before one of them does that check a second time. " +
             "Use it to make sure that the draft passes the whole document schema, the id rule, and the structural tier.",
         inputSchema: finishDraftInput,
         executionMode: AUTHORING_EXECUTION_MODE,
@@ -883,7 +916,8 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             if (opened.isErr()) {
                 return ok({ refused: opened.error });
             }
-            return ok(finishDraft(opened.value.state.document, opened.value.state.snapshot, opened.value.derivations));
+            const finished = finishDraft(opened.value.state.document, opened.value.state.snapshot, opened.value.derivations);
+            return ok(finished.valid ? { valid: true, warnings: finished.warnings } : finished);
         },
     });
 

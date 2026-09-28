@@ -14,6 +14,7 @@ import { raw } from "hono/html";
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import type { EchartOption } from "../chart.js";
 import type { ReferenceLedger } from "../references.js";
+import { blockMark } from "./block-mark.js";
 import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
@@ -36,7 +37,7 @@ export function renderChart(block: ChartBlock, ledger: ReferenceLedger, option: 
     // element early. The JSON parser reads `\u003c` as `<`, thus the option value stays exact.
     const json = scriptJson(option);
     return String(
-        <div class="report-chart" {...lineageStamp(view.lineage, block.id, [block.binding])}>
+        <div class="report-chart" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [block.binding])}>
             <div class="report-chart-title">
                 {block.title}
                 <Marker n={n} lineage={lineagePlace(view.lineage, block.binding)} />

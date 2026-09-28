@@ -1,10 +1,14 @@
 /**
  * The pinned-artifact listing tool of a report session.
  *
- * The tool reads the frozen snapshot of the thread, and it gives the pinned set: the path, the content
- * hash, the file type, and the header columns of a tabular artifact, plus the pinned citations with the
- * short citation of each. Thus one call orients the agent, and a reference binds to a path or to a
- * citation key of that set.
+ * The tool reads the frozen snapshot of the thread, and it gives the pinned set: the path, the file type,
+ * and the count of the header columns of a tabular artifact, plus the pinned citations with the short
+ * citation of each. Thus one call orients the agent, and a reference binds to a path or to a citation key of
+ * that set. A call with a path gives the header columns of that one artifact.
+ *
+ * A wide table can have hundreds of columns, and the listing stays in the context of each later request.
+ * Thus the listing counts the columns, and the agent reads the names of one artifact when it binds to it.
+ * A reference names the path alone and the session stamps the hash, thus the tool gives no hash.
  *
  * The order is the code-unit order of the path. Two calls over one snapshot give one listing, thus the
  * agent reads a stable set. A snapshot can pin many thousands of staged inputs, thus the listing stops at
@@ -31,21 +35,28 @@ import { citationRecordOf, fileTypeHoldsNoCell } from "../../report-model/refere
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
-/** The empty input. The tool lists the pinned set of the thread, thus it needs no field. */
-const listPinnedArtifactsInput = z.object({});
+/** No path lists the pinned set. A path gives the header columns of that one pinned artifact. */
+const listPinnedArtifactsInput = z.object({
+    path: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("The path of one pinned artifact, as the listing gives it. The result then gives the header columns of that artifact."),
+});
 
 export type ListPinnedArtifactsInput = z.infer<typeof listPinnedArtifactsInput>;
 
 /**
- * One pinned artifact of the listing.
+ * One pinned artifact.
  *
- * `fileType` states a role, and it does not state a data format. `columns` is present only for a header
- * that the read recovered, thus an absent `columns` says nothing about the content of the file.
+ * `fileType` states a role, and it does not state a data format. `columnCount` and `columns` are present
+ * only for a header that the read recovered, thus their absence says nothing about the content of the file.
+ * The listing gives `columnCount`, and a call with a path gives `columns` as well.
  */
 export interface PinnedArtifact {
     path: string;
-    hash: string;
     fileType?: string;
+    columnCount?: number;
     columns?: string[];
 }
 
@@ -73,7 +84,9 @@ export interface PinnedCitation {
  */
 export type ListPinnedArtifactsResult =
     | { outcome: "refused"; refusal: SessionRefusal }
-    | { outcome: "listed"; artifacts: PinnedArtifact[]; total: number; truncated: boolean; citations: PinnedCitation[] };
+    | { outcome: "listed"; artifacts: PinnedArtifact[]; total: number; truncated: boolean; citations: PinnedCitation[] }
+    | { outcome: "artifact"; artifact: PinnedArtifact }
+    | { outcome: "not-pinned"; path: string };
 
 /**
  * The construction deps of the listing tool.
@@ -204,24 +217,29 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
     return defineTool({
         id: "list_pinned_artifacts",
         description:
-            "List the pinned evidence of this session. Each entry gives the path of an artifact, its content hash, its file type, " +
-            "and the header columns of a .csv or a .tsv file. Another extension, a header line that holds a double quote, and a " +
-            "file whose bytes do not read each give no columns. " +
+            "List the pinned evidence of this session. With no path, each entry gives the path of an artifact, its file type, " +
+            'and "columnCount", the count of the header columns of a .csv or a .tsv file. ' +
+            'Give "path" to get that one artifact with "columns", the names of its header columns. A path that the pin does not hold gives not-pinned. ' +
+            "Another extension, a header line that holds a double quote, and a file whose bytes do not read each give no columns. " +
             `The listing gives a maximum of ${LISTING_CAP} entries: "total" gives the size of the pinned set, and "truncated" says that the ` +
             "set holds more artifacts than this listing names. " +
             '"citations" gives the pinned literature of this session. Each entry carries "key", the citation id in the "idKind:id" form, and ' +
             '"citation", the short citation of the paper. A key that the pin recorded no citation for carries no "citation". A citation block ' +
             "binds to a key of this list, thus take a key from here and never from a refusal. " +
             "The pin freezes at the start of the session, thus a reference binds to an artifact of this pinned set. " +
-            "Read it to orient before you bind a block, and to choose the column that a locator names. " +
-            "A reference names the path alone: the session stamps the hash from this evidence.",
+            "Read the listing to orient before you bind a block. Read the columns of one artifact to choose the column that a locator names. " +
+            "A reference names the path alone: the session stamps the hash from this evidence, thus the tool gives no hash.",
         inputSchema: listPinnedArtifactsInput,
         executionMode: "inline",
-        describeCall: "none",
+        describeCall: (input) => input.path ?? "the pinned set",
         // The size of the listing is what a watcher reads, and the cap makes that size differ from the
         // pinned set. Thus a truncated listing names the total beside the count, and a whole listing names
         // the count alone, because a total that equals the count says the same thing two times.
         describeResult: (_input, result): string => {
+            if (result.outcome === "artifact") {
+                const count = result.artifact.columnCount;
+                return count === undefined ? "no columns" : `${count} ${count === 1 ? "column" : "columns"}`;
+            }
             if (result.outcome !== "listed") {
                 return result.outcome;
             }
@@ -229,19 +247,15 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
             const listed = `${count} ${count === 1 ? "artifact" : "artifacts"}`;
             return result.truncated ? `${listed} of ${result.total}` : listed;
         },
-        execute: async (_input, ctx): Promise<Result<ListPinnedArtifactsResult, ToolError>> => {
+        execute: async (input, ctx): Promise<Result<ListPinnedArtifactsResult, ToolError>> => {
             const opened = await openReportThread(deps.gateway, ctx.session.scope);
             if (opened.isErr()) {
                 return ok({ outcome: "refused", refusal: opened.error });
             }
             const { threadId, analysisId, state } = opened.value;
-            const paths = Object.keys(state.snapshot.artifacts).sort();
-            // The cap cuts the tail of the same order, thus a truncated listing is a prefix of the whole
-            // listing and a second call over one snapshot names the same entries.
-            const listed = paths.slice(0, LISTING_CAP);
 
             // The seam signals an unresolvable resource by a throw. The listing still serves the path and
-            // the hash of each entry, thus the fault costs the columns alone and never the whole call.
+            // the file type of each entry, thus the fault costs the columns alone and never the whole call.
             let root: string | undefined;
             try {
                 root = deps.resolveWorkspaceRoot(analysisId);
@@ -249,21 +263,32 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
                 logger.warn("the workspace root did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
             }
 
+            const describe = async (path: string): Promise<{ artifact: PinnedArtifact; columns?: string[] }> => {
+                const fileType = state.snapshot.artifacts[path].fileType;
+                const artifact: PinnedArtifact = { path, ...(typeof fileType === "string" ? { fileType } : {}) };
+                if (root === undefined || fileTypeHoldsNoCell(fileType)) {
+                    return { artifact };
+                }
+                const resolved = resolveWorkspacePath({ workspaceRoot: root, analysisId, path });
+                const columns = resolved.kind === "ok" ? await readHeaderColumns(path, resolved.absolute) : undefined;
+                return columns === undefined ? { artifact } : { artifact: { ...artifact, columnCount: columns.length }, columns };
+            };
+
+            if (input.path !== undefined) {
+                if (!Object.hasOwn(state.snapshot.artifacts, input.path)) {
+                    return ok({ outcome: "not-pinned", path: input.path });
+                }
+                const { artifact, columns } = await describe(input.path);
+                return ok({ outcome: "artifact", artifact: columns === undefined ? artifact : { ...artifact, columns } });
+            }
+
+            const paths = Object.keys(state.snapshot.artifacts).sort();
+            // The cap cuts the tail of the same order, thus a truncated listing is a prefix of the whole
+            // listing and a second call over one snapshot names the same entries.
+            const listed = paths.slice(0, LISTING_CAP);
             const artifacts: PinnedArtifact[] = [];
             for (const path of listed) {
-                const entry = state.snapshot.artifacts[path];
-                const fileType = entry.fileType;
-                const artifact: PinnedArtifact = { path, hash: entry.hash, ...(typeof fileType === "string" ? { fileType } : {}) };
-                if (root !== undefined && !fileTypeHoldsNoCell(fileType)) {
-                    const resolved = resolveWorkspacePath({ workspaceRoot: root, analysisId, path });
-                    if (resolved.kind === "ok") {
-                        const columns = await readHeaderColumns(path, resolved.absolute);
-                        if (columns !== undefined) {
-                            artifact.columns = columns;
-                        }
-                    }
-                }
-                artifacts.push(artifact);
+                artifacts.push((await describe(path)).artifact);
             }
             // The pin stores the citation keys sorted, thus the listing keeps that order. A snapshot that
             // pinned no citation gives an empty list, and an empty list is a complete answer. A key with no

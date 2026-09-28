@@ -273,6 +273,24 @@ describe("createRecordVersionTool", () => {
         expect((await store.getThreadVersion(threadId))._unsafeUnwrap()).toBeNull();
     });
 
+    it("carries the advisory warnings of the finish on the gap list", async () => {
+        const threadId = "thread-gaps-warnings";
+        // The draft has no title, thus the finish gives a gap. The prose types a number, thus it warns too.
+        const doc: DraftDocument = {
+            title: "",
+            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "The cohort holds 48 samples." } }] }],
+        };
+        const tool = makeTool(gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc)));
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("gaps");
+        if (result.outcome === "gaps") {
+            expect(result.warnings).toEqual([{ blockId: "t1", kind: "free-numeral", detail: "48" }]);
+        }
+        expect((await store.getThreadVersion(threadId))._unsafeUnwrap()).toBeNull();
+    });
+
     it("refuses a never-seen page, and records nothing", async () => {
         const threadId = "thread-never-seen";
         const tool = makeTool(gatewayFor(threadId, metricDoc(), metricSnapshot, null));
@@ -354,6 +372,8 @@ describe("createRecordVersionTool", () => {
         if (result.outcome === "recorded") {
             versionId = result.versionId;
             expect(versionId).toBeTruthy();
+            // The metric carries no prose, thus the finish warns about nothing.
+            expect(result.warnings).toEqual([]);
         }
 
         // The store holds one version, and it carries the anchor from the thread row.
