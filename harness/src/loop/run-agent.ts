@@ -26,7 +26,7 @@ import { ResultError, unwrapOrThrow } from "../lib/result.js";
 import { describeZodIssueShapes } from "../lib/zod-issue-shape.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import {
-    dropMarkerMessage,
+    contextRecordOf,
     markCompactionExchange,
     markInterruptedMessage,
     summaryMarkerMessage,
@@ -34,7 +34,7 @@ import {
     withRequestInputTokens,
     type CompactionTrigger,
 } from "../memory/ai-sdk-message-storage.js";
-import { conversationView, isGenuineUserStart, keptTurnsForDrop, measureView, viewTokens } from "../memory/conversation-view.js";
+import { conversationView, lastRequestInputTokens } from "../memory/conversation-view.js";
 import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError, extractStatus, type ProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
@@ -134,6 +134,12 @@ export interface RunAgentOptions {
      * `recordsAfter` reads the database outside a step.
      */
     readonly compaction?: CompactionPolicy;
+    /**
+     * The messages that open the turn of a chat thread: the user message and its context records. The loop appends
+     * them after the turn-start compaction, thus the conversation holds each message in the order that it was sent.
+     * Absent: `initial` holds the whole conversation.
+     */
+    readonly turnInput?: readonly LoopMessage[];
     /**
      * Per-turn user-approval seam threaded into every tool's `ToolContext` as
      * `ctx.ask`. A conversation tool calls it to pause for an explicit user
@@ -236,6 +242,10 @@ export const WRAP_UP_MAX_REQUESTS = 2;
 async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
     const formatStepName = opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER;
     const loop = openLoop(agent, initial, session, opts, agent.id);
+    if (opts.turnInput !== undefined) {
+        const ended = await loop.startTurn(opts.turnInput);
+        if (ended !== undefined) return ended;
+    }
     const task = await loop.runSegment({ mask: opts.toolMask, maxRequests: agent.maxIterations, stepNames: formatStepName, firstIndex: 0, checksBudget: true });
     if (task !== "capped") return task;
 
@@ -279,6 +289,11 @@ export interface LoopSegment {
  * prefix (system prompt, tools, tool choice) as the one before it.
  */
 export interface OpenLoop {
+    /**
+     * Compact the conversation when the last request passed the turn-start budget, and then append the input of the
+     * turn. The result of the run when an abort ends the compaction, or `undefined` when the run continues.
+     */
+    startTurn(input: readonly LoopMessage[]): Promise<RunAgentResult | undefined>;
     /** Run one segment: the result of the run when a reply ends it, or `"capped"` when the segment used its cap. */
     runSegment(segment: LoopSegment): Promise<SegmentResult | "capped">;
     /** End a run after its last segment used its cap. */
@@ -334,7 +349,8 @@ export function openLoop(
     let continuesTruncation = false;
     let compactionStopped = false;
     let compactions = 0;
-    let budgetChecked = false;
+    // The first request after a summary shows if the summary brought the conversation under the budget.
+    let summarizedLast = false;
     // Bound from the same `source` the emitted events carry: one derivation feeding
     // both sinks, so a record and an event cannot disagree about who produced them.
     // `callPath` rides as an array rather than a joined string — the queryable form;
@@ -590,28 +606,19 @@ export function openLoop(
         return { messages, finish: { reason: "error", cappedOut: false, truncationRecoveries, ...finishUsage() }, refusal };
     };
 
-    /**
-     * The result of the run when an abort ends the exchange, or `undefined` when the run continues. The exchange
-     * continues `conversation`, a prefix of the view.
-     */
-    const compact = async (
-        active: CompactionPolicy,
-        tokensBefore: number,
-        index: number,
-        trigger: CompactionTrigger,
-        conversation: readonly LoopMessage[],
-    ): Promise<RunAgentResult | undefined> => {
+    /** The result of the run when an abort ends the exchange, or `undefined` when the run continues. */
+    const compact = async (active: CompactionPolicy, tokensBefore: number, index: number, trigger: CompactionTrigger): Promise<RunAgentResult | undefined> => {
         const id = randomUUID();
         const stepNamespace = `compaction-${compactions++}`;
         const startedAt = performance.now();
         const emitPart = (data: Omit<CompactionPart, "type" | "trigger">) => emit({ type: "data-compaction", source, data: { ...data, trigger } });
         await emitPart({ id, status: "running", tokensBefore });
-        const { onRound: _onRound, compaction: _compaction, ...conversationOptions } = opts;
+        const { onRound: _onRound, compaction: _compaction, turnInput: _turnInput, ...conversationOptions } = opts;
         let settled = false;
         try {
             const exchange = await continueAgent(
                 agent,
-                conversation,
+                viewOf(),
                 {
                     text: active.request,
                     mask: active.mask,
@@ -637,57 +644,58 @@ export function openLoop(
             }
 
             const summary = summaryOf(exchange);
-            // A turn-start summary keeps the one turn that the exchange did not see: the turn of this run.
-            const summaryKeptTurns = trigger === "turn-start" ? 1 : 0;
-            const keptTurns = summary === undefined ? keptTurnsForDrop(messages, viewOptions, active.budget) : summaryKeptTurns;
-            const markerOf = (tokensAfter: number, durationMs: number): LoopMessage =>
-                summary === undefined
-                    ? dropMarkerMessage({ kind: "drop", id, tokensBefore, tokensAfter, durationMs, keptTurns, trigger })
-                    : summaryMarkerMessage(summary, { kind: "summary", id, tokensBefore, tokensAfter, durationMs, keptTurns, trigger });
+            if (summary === undefined) {
+                settled = true;
+                const durationMs = Math.round(performance.now() - startedAt);
+                await emitPart({ id, status: "failed", tokensBefore, durationMs });
+                const refusal = exchange.refusal === undefined ? {} : { status: exchange.refusal.status, providerError: exchange.refusal.message };
+                log.error("compaction gave no summary, thus the run compacts no more", { compactionId: id, trigger, tokensBefore, durationMs, ...refusal });
+                compactionStopped = true;
+                return undefined;
+            }
+            const markerOf = (durationMs: number): LoopMessage => summaryMarkerMessage(summary, { kind: "summary", id, tokensBefore, durationMs, trigger });
             // The figures of a marker do not change the view, thus a draft marker gives the view of the real one.
-            const view = conversationView([...messages, markerOf(0, 0)], viewOptions).messages;
-            const records = await active.recordsAfter(view);
-            const tokensAfter = viewTokens([...view, ...records]);
+            const records = await active.recordsAfter(conversationView([...messages, markerOf(0)], viewOptions).messages);
             const durationMs = Math.round(performance.now() - startedAt);
-            messages.push(markerOf(tokensAfter, durationMs), ...records);
+            messages.push(markerOf(durationMs), ...records);
             await giveRound();
             settled = true;
-            await emitPart({ id, status: summary === undefined ? "failed" : "done", tokensBefore, tokensAfter, durationMs });
-
-            const fields = { compactionId: id, trigger, tokensBefore, tokensAfter, durationMs };
-            if (summary === undefined) {
-                const refusal = exchange.refusal === undefined ? {} : { status: exchange.refusal.status, providerError: exchange.refusal.message };
-                log.warn("compaction gave no summary, thus the oldest turns left the view", { ...fields, keptTurns, ...refusal });
-            } else {
-                log.info("conversation compacted", fields);
-            }
-            if (summary !== undefined && tokensAfter > active.budget) {
-                log.warn("the compacted view still exceeds the budget, thus the run compacts no more", {
-                    compactionId: id,
-                    trigger,
-                    tokensAfter,
-                    budget: active.budget,
-                });
-            }
-            if (summary === undefined || tokensAfter > active.budget) compactionStopped = true;
+            await emitPart({ id, status: "done", tokensBefore, durationMs });
+            log.info("conversation compacted", { compactionId: id, trigger, tokensBefore, durationMs });
+            summarizedLast = true;
             return undefined;
         } finally {
             if (!settled) await emitPart({ id, status: "failed", tokensBefore, durationMs: Math.round(performance.now() - startedAt) });
         }
     };
 
-    const compactOverBudget = async (index: number): Promise<RunAgentResult | undefined> => {
-        const turnStartBudget = budgetChecked ? undefined : policy?.turnStartBudget;
-        budgetChecked = true;
-        if (policy === undefined || continuesTruncation || compactionStopped) return undefined;
-        const tokensBefore = measureView(messages, viewOptions);
-        const view = viewOf();
-        if (turnStartBudget !== undefined && tokensBefore > turnStartBudget) {
-            const turnStart = lastIndexOf(view, isGenuineUserStart);
-            // The view before the turn is the prefix that the last request sent, thus the exchange reads it from the cache.
-            if (turnStart > 0) return compact(policy, tokensBefore, index, "turn-start", view.slice(0, turnStart));
+    const startTurn = async (input: readonly LoopMessage[]): Promise<RunAgentResult | undefined> => {
+        const budget = policy?.turnStartBudget;
+        const tokens = lastRequestInputTokens(messages);
+        if (policy === undefined || budget === undefined || tokens === undefined || tokens <= budget) {
+            messages.push(...input);
+            return undefined;
         }
-        return tokensBefore > policy.budget ? compact(policy, tokensBefore, index, "mid-turn", view) : undefined;
+        const ended = await compact(policy, tokens, 0, "turn-start");
+        if (ended !== undefined) return ended;
+        // The records after a summary give the current context, thus a record of the input would only repeat one.
+        messages.push(...(summarizedLast ? input.filter((message) => contextRecordOf(message) === undefined) : input));
+        return undefined;
+    };
+
+    const compactOverBudget = async (index: number): Promise<RunAgentResult | undefined> => {
+        if (policy === undefined || continuesTruncation || compactionStopped) return undefined;
+        const tokens = lastRequestInputTokens(messages);
+        if (tokens === undefined) return undefined;
+        const afterSummary = summarizedLast;
+        summarizedLast = false;
+        if (tokens <= policy.budget) return undefined;
+        if (afterSummary) {
+            log.warn("the first request after the summary still exceeds the budget, thus the run compacts no more", { tokens, budget: policy.budget });
+            compactionStopped = true;
+            return undefined;
+        }
+        return compact(policy, tokens, index, "mid-turn");
     };
 
     const runSegment = async (segment: LoopSegment): Promise<SegmentResult | "capped"> => {
@@ -841,6 +849,7 @@ export function openLoop(
     };
 
     return {
+        startTurn: (input) => giveRoundBeforeThrow(() => startTurn(input)),
         runSegment: (segment) => giveRoundBeforeThrow(() => runSegment(segment)),
         endCapped: () => giveRoundBeforeThrow(endCapped),
     };
@@ -862,17 +871,10 @@ function summaryOf(exchange: ContinuationResult): string | undefined {
     return text.length > 0 ? text : undefined;
 }
 
-/** The reply whose message holds the input tokens of its request, the anchor of the measure of a later view. */
+/** The reply whose message holds the input tokens of its request, which the budget checks read. */
 function withRequestAnchor(reply: ChatResponse): ChatResponse {
     const tokens = reply.usage?.inputTokens;
     return tokens === undefined ? reply : { ...reply, message: withRequestInputTokens(reply.message, tokens) };
-}
-
-function lastIndexOf<T>(items: readonly T[], matches: (item: T) => boolean): number {
-    for (let index = items.length - 1; index >= 0; index--) {
-        if (matches(items[index]!)) return index;
-    }
-    return -1;
 }
 
 /** What one completed LLM call is accounted under. */

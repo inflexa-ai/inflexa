@@ -13,6 +13,7 @@ import type { ModelMessage } from "ai";
 import type { ToolCallDetail, ToolOutcome } from "../contracts/chat-events.js";
 import type { ChatStreamEvent } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
+import type { CompactionRules } from "./compaction.js";
 
 /**
  * A loop message. The harness's working message array is AI SDK-shaped
@@ -32,6 +33,8 @@ export interface AgentDefinition {
     readonly tools: readonly Tool[];
     /** Runaway guard: at the cap the loop runs up to two masked wrap-up requests, until it gets a text answer. */
     readonly maxIterations: number;
+    /** The compaction rules of an agent that a chat thread runs. Absent: the conversation never compacts. */
+    readonly compaction?: CompactionRules;
 }
 
 /**

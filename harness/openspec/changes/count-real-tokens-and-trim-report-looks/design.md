@@ -21,42 +21,68 @@ Goals:
 
 Non-Goals:
 
-- No tokenizer of the provider in the harness. The measure uses the figure that the provider reports.
-- No change to the drop of a failed compaction.
+- No tokenizer of the provider in the harness. The check uses the figure that the provider reports.
+- No local estimate for the check.
 - No change to the look-before-record rule. A block look is a look at the current document.
 
 ## Decisions
 
-### The measure starts at the input tokens of the latest request
+### The check reads the input tokens of the last request
 
 The provider reports the total input of each request, with the cache reads (`src/providers/types.ts`). That figure holds the system prompt, the tools, and the pictures at the rate of the provider. The loop stores it on the assistant message of the reply, in the harness namespace. Thus the figure survives the store, and the next turn reads it back.
 
-The measure is the latest figure after the latest marker, plus the estimate of that reply and of each later message. A marker changes the prefix, thus a figure from before the marker does not describe the view. Without a figure, the measure is the estimate, as before. Thus a host with no usage report still compacts.
+Before a request, the loop compares the budget with the latest figure. A marker changes the conversation, thus a figure from before the latest marker does not describe it. When no figure comes after the latest marker, the loop makes no check. The next request reports a figure, and the check before the request after it uses that figure.
 
-The rollup of a turn is not a measure. It adds the input of each request of the turn, thus it counts one prefix many times.
+The check sees the tool results of the last round one request late. The budgets are far below the context window, thus a compaction starts at most one request later. A local estimate of that tail must count each picture, and each provider bills a picture at its own rate. Thus the check uses the figure of the provider alone, and the harness keeps no picture count.
 
-### The estimate counts a picture by its area
+The rollup of a turn is not a figure for the check. It adds the input of each request of the turn, thus it counts one prefix many times.
 
-The estimate still decides the tail after the figure, the `tokens` column, and the kept turns of a drop. A picture counts `ceil(width × height / 750)` tokens, the rule that Anthropic publishes. The size comes from the header of the data (PNG, JPEG, GIF, and WebP), and the reader decodes no pixel.
+### The rules belong to the agent
 
-A picture of unknown size counts as 1,600 tokens, about the maximum that Anthropic bills for one picture after its scale-down. A count of 0 hid the pictures, and a count by the bytes made one picture cost tens of thousands of tokens.
+`AgentDefinition.compaction` holds the rules (`CompactionRules`): `budget`, and an optional `turnStartBudget`.
 
-### Two budgets for a conversation thread
-
-| Thread type | Turn-start budget | Budget during a turn |
+| Agent | Turn-start budget | Budget during a turn |
 |-|-|-|
-| `conversation` | 150,000 | 200,000 |
-| `report` | none | 250,000 |
+| `conversation-agent` | 150,000 | 200,000 |
+| `report-session` | none | 250,000 |
 
-At the start of a turn, the view before the user message is the prefix that the previous turn sent. Thus an exchange on that prefix reads it from the cache. The same compaction in the middle of a turn writes a new prefix after the tool results of the turn.
+At the start of a turn, the view is the prefix that the previous turn sent. Thus an exchange on that view reads it from the cache. The same compaction in the middle of a turn writes a new prefix after the tool results of the turn. The higher budget during a turn lets a long turn continue with no compaction in the middle.
 
-The higher budget during a turn lets a long turn continue with no compaction in the middle. `conversationBudget` replaces the budget during a turn. It lowers the turn-start budget only when it is lower, thus the turn-start budget never exceeds the budget during a turn.
+A report session is one long turn that holds page captures. Thus it compacts only during the turn, at a higher budget. The budget depends on what the agent carries, thus the rules are a property of the agent. An agent with no rules never compacts. Only the agents of a chat thread declare rules.
 
-### A turn-start summary keeps the current turn
+The chat turn builds only the mechanism: the provider, the request, the mask, `keepFirstTurn` from the thread type, and the function of the context records. It takes no budget from the host.
 
-The exchange of a turn-start compaction does not see the current turn. Thus the marker carries `keptTurns: 1`, and the view keeps that turn after the summary. The user message then reaches the model in its exact words.
+### The loop appends the input of a turn after the turn-start check
 
-The kept turn loses its context records, because the records after the marker give the current context. It loses its reasoning, because the signature of a reasoning part binds the prefix that the marker changed. The compaction requests ask for the last request of the user, because that request can sit after the summary.
+`runAgent` takes the user message and its context records as `turnInput`. Before it appends the input, the loop compares the latest figure with the turn-start budget. Past that budget, the exchange continues the view before the input, and the marker and its records follow. Then the loop appends the input. The round sink gets it as one round, directly before the first request.
+
+After a turn-start summary, the input drops its context records. The records after the marker restate the current context, thus a second copy only adds tokens. When the exchange gives no summary, no record follows, thus the input keeps its records.
+
+The stored order is the sent order: the history, the exchange, the marker and its records, and then the user message. The summary marker keeps no turn, and the view rule of a summary does not change. The user message comes after the marker in its exact words. The compaction requests ask for the last request of the user, because a turn-start exchange does not see the new request.
+
+### The rows of a turn-start compaction come before the turn
+
+The turn record, the paged read of whole turns, and the tail retract read the user message as the first row of a turn. Thus the chat turn writes the rows of a turn-start compaction with `appendTurn`, before the turn opens. These rows get no turn record, and the turn opens at the user message.
+
+A turn that ends before the loop sent its user message stores no user message and no turn record. An abort during the turn-start compaction is an example. The exchange stays in the store with no marker, and the next turn tries the compaction again.
+
+### A summary that leaves the conversation over the budget stops the compaction
+
+After a summary, the first figure of a request shows the size of the new view. When that figure still exceeds the budget, the run compacts no more, and the loop logs a warning. A second exchange on such a view gives no smaller view.
+
+### A compaction with no summary fails, and it drops nothing
+
+When the exchange gives no summary, the loop writes no marker and no records, and the view does not change. The loop stores the exchange, emits `failed`, and logs at `error` level. Then the run compacts no more, and the next turn tries again. When the context window then refuses a request, the turn fails, and the person continues with a new turn.
+
+Before this change, such a compaction dropped the oldest turns. The drop hid the failure, because the turn continued and no alert saw it. A failed compaction is a defect to fix, not a state to work around. The `error` level lets the log alert "Workload logging errors above last week" see each failure.
+
+The drop also could not make a report session smaller. A drop keeps the newest turn, and the newest turn of a report session is the whole session.
+
+The loop writes no drop marker now. Harness 0.40.0 and later versions wrote drop markers into stored threads. Thus the marker schema keeps the `drop` kind, and the view keeps its rule for a stored drop marker.
+
+### The marker and the part carry the figure of the provider
+
+`tokensBefore` is the latest figure before the compaction. The marker carries the id, `tokensBefore`, the duration, and the trigger. No figure of the new view exists before the next request, thus the marker and the part carry no `tokensAfter`. The field stays optional in the contract only for a part that an older harness stored.
 
 ### The trigger rides the marker, the part, and the log
 
@@ -87,11 +113,13 @@ The prompt now tells the agent to add a whole section in one call. One event for
 
 ## Risks / Trade-offs
 
-- The figure comes from the latest request. A tool result after it counts by the estimate until the next request reports.
-- The picture count uses the rule of Anthropic. A different provider can bill a picture at a different rate. The figure of the next request corrects the measure.
+- The figure comes from the latest request. A large tool result after it can take one request past the budget before the check sees it.
+- A provider that reports no input tokens gives no figure. Thus a conversation on such a provider never compacts.
+- A tail retract of a turn keeps the rows of its turn-start compaction, because they come before the user message. The next turn then starts at that summary.
+- After a failed compaction, the run continues with no compaction. A long turn can then pass the context window, and the turn fails. The `error` record makes each such failure visible.
 - A block look does not show a fault outside the block. The prompt asks for one whole-page look after the first preview that passes.
 - A report page taller than 20,000 CSS pixels still truncates, and the coverage names the unseen tail.
 
 ## Migration Plan
 
-No migration runs. A stored marker with no trigger and no kept turns reads as before. A stored assistant message with no figure gives the estimate.
+No migration runs. A stored marker with no trigger reads as before, and the helper ignores its `tokensAfter`. A stored drop marker still changes the view as before. A stored divider keeps its status and its `tokensAfter`. A thread from before this change has no figure. Its first request reports one, and the check starts at the next request.

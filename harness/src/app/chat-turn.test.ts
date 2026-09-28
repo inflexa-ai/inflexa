@@ -9,6 +9,7 @@ import { forSubAgent } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../loop/__fixtures__/scripted-provider.js";
+import type { CompactionRules } from "../loop/compaction.js";
 import { runAgent } from "../loop/run-agent.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, contextRecordOf, withRequestInputTokens } from "../memory/ai-sdk-message-storage.js";
@@ -31,15 +32,7 @@ import { defineTool, type Tool } from "../tools/define-tool.js";
 import { createUpdateWorkingMemoryTool } from "../tools/memory/update-working-memory.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { suspensionOfFailure } from "../workflows/suspension.js";
-import {
-    CONVERSATION_TURN_BUDGET,
-    DEFAULT_CONVERSATION_BUDGET,
-    openChatTurn,
-    prepareChatTurn,
-    REPORT_TURN_BUDGET,
-    runChatTurn,
-    type RunChatTurnParams,
-} from "./chat-turn.js";
+import { openChatTurn, prepareChatTurn, runChatTurn, type RunChatTurnParams } from "./chat-turn.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -119,15 +112,12 @@ describe("prepareChatTurn", () => {
         // userMessage carries the new input.
         expect(contentText(result.userMessage.content)).toContain("run a differential expression analysis please");
 
-        // messages include the prior turn's history AND the new user input.
-        const joined = result.messages.map((m) => contentText(m.content)).join("\n");
-        expect(joined).toContain("earlier question about PCA");
-        expect(joined).toContain("earlier answer");
-        expect(joined).toContain("run a differential expression analysis please");
-        expect(joined).toContain("[Run Activity]");
-        expect(joined).toContain("No runs are currently running or suspended.");
+        // The history holds the prior turn, and the context records follow the new user input.
+        expect(result.history.map((m) => contentText(m.content))).toEqual(["earlier question about PCA", "earlier answer"]);
+        const records = result.contextRecords.map((m) => contentText(m.content)).join("\n");
+        expect(records).toContain("[Run Activity]");
+        expect(records).toContain("No runs are currently running or suspended.");
         expect(contentText(result.userMessage.content)).not.toContain("[Run Activity]");
-        expect(result.messages.slice(-1 - result.contextRecords.length)).toEqual([result.userMessage, ...result.contextRecords]);
         expect(result.contextRecords.map((record) => contextRecordOf(record)?.kind)).toEqual(["run-activity", "working-memory"]);
     });
 
@@ -185,7 +175,7 @@ describe("prepareChatTurn", () => {
         expect(result.kind).toBe("ok");
         if (result.kind !== "ok") throw new Error("unreachable");
 
-        const joined = result.messages.map((message) => contentText(message.content)).join("\n");
+        const joined = result.contextRecords.map((message) => contentText(message.content)).join("\n");
         expect(joined).toContain("Running:");
         expect(joined).toContain("runId: run-other-thread");
         expect(joined).toContain("Suspended:");
@@ -209,7 +199,7 @@ describe("prepareChatTurn", () => {
         expect(result.kind).toBe("ok");
         if (result.kind !== "ok") throw new Error("unreachable");
 
-        const joined = result.messages.map((message) => contentText(message.content)).join("\n");
+        const joined = result.contextRecords.map((message) => contentText(message.content)).join("\n");
         expect(joined).toContain("Run status is temporarily unavailable.");
         expect(joined).not.toContain("No runs are currently running or suspended.");
     });
@@ -277,11 +267,11 @@ describe("prepareChatTurn", () => {
         expect(result.kind).toBe("ok");
         if (result.kind !== "ok") throw new Error("unreachable");
 
-        const joined = result.messages.map((message) => contentText(message.content)).join("\n");
+        const joined = result.contextRecords.map((message) => contentText(message.content)).join("\n");
         expect(joined).not.toContain("# Working Memory");
         expect(joined).not.toContain("Find the driver genes.");
         expect(joined).toContain("[Run Activity]");
-        expect(joined).toContain("draft the summary");
+        expect(contentText(result.userMessage.content)).toBe("draft the summary");
     });
 
     it("emits one create-session event when it writes a new conversation thread", async () => {
@@ -352,7 +342,7 @@ describe("prepareChatTurn", () => {
         expect(result.kind).toBe("ok");
         if (result.kind !== "ok") throw new Error("unreachable");
 
-        const joined = result.messages.map((message) => contentText(message.content)).join("\n");
+        const joined = result.contextRecords.map((message) => contentText(message.content)).join("\n");
         expect(joined).toContain("# Working Memory");
         expect(joined).toContain("Find the driver genes.");
     });
@@ -744,8 +734,10 @@ describe("runChatTurn", () => {
 describe("runChatTurn — compaction", () => {
     const THREAD = "t-compact";
     const SUMMARY = "The user compares two groups of samples.";
-
-    const big = (n: number): string => Array.from({ length: n }, () => "word").join(" ");
+    /** The input tokens of a request past each budget of the test agents. */
+    const OVER = 5_000;
+    const CONVERSATION_RULES: CompactionRules = { turnStartBudget: 1_000, budget: 1_000 };
+    const REPORT_RULES: CompactionRules = { budget: 1_000 };
 
     function echoTool(): Tool {
         return defineTool({
@@ -764,11 +756,19 @@ describe("runChatTurn — compaction", () => {
             model: "claude-test",
             tools: [echoTool(), createUpdateWorkingMemoryTool(createWorkingMemory(pool), pool)],
             maxIterations: 8,
+            compaction: CONVERSATION_RULES,
         };
     }
 
     function reportAgent(): AgentDefinition {
-        return { id: "report-session-agent", systemPrompt: "You are the test report agent.", model: "claude-test", tools: [echoTool()], maxIterations: 8 };
+        return {
+            id: "report-session-agent",
+            systemPrompt: "You are the test report agent.",
+            model: "claude-test",
+            tools: [echoTool()],
+            maxIterations: 8,
+            compaction: REPORT_RULES,
+        };
     }
 
     const agents: () => ThreadAgentResolver = () => ({
@@ -790,7 +790,8 @@ describe("runChatTurn — compaction", () => {
         });
     }
 
-    const bigCall = (id: string): ChatResponse => makeMessage([toolUseBlock(id, "echo", { label: big(1_500) })], "tool_use");
+    /** A tool call whose request reported input tokens past each budget. */
+    const overCall = (id: string): ChatResponse => makeMessage([toolUseBlock(id, "echo", { label: id })], "tool_use", { inputTokens: OVER });
     const text = (reply: string): ChatResponse => makeMessage([textBlock(reply)], "end_turn");
 
     function params(provider: ChatProvider, overrides: Partial<RunChatTurnParams> = {}): RunChatTurnParams {
@@ -803,7 +804,6 @@ describe("runChatTurn — compaction", () => {
             emit: () => {},
             signal: new AbortController().signal,
             usageRecorder: createNoopUsageRecorder(),
-            conversationBudget: 1_000,
             ...overrides,
         };
     }
@@ -819,8 +819,19 @@ describe("runChatTurn — compaction", () => {
         return contextRecordOf(message)?.kind ?? message.role;
     }
 
+    /** Store an earlier turn whose reply reported `inputTokens` for its request. */
+    async function storeMeasuredTurn(inputTokens: number): Promise<void> {
+        const reply = withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "an earlier answer" }] }, inputTokens);
+        (
+            await createThreadHistory(pool).appendTurn(THREAD, {
+                modelMessages: [{ role: "user", content: "an earlier question" }, reply],
+                displayMessages: [],
+            })
+        )._unsafeUnwrap();
+    }
+
     it("stores the opening, a round, the marked exchange, the marker, the records, and the later rounds", async () => {
-        const provider = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+        const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
 
         const result = await runChatTurn({ pool, agents: agents() }, params(provider));
 
@@ -841,7 +852,7 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("replays the divider between the two assistant messages of the turn, with two ids", async () => {
-        const provider = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+        const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
         await runChatTurn({ pool, agents: agents() }, params(provider));
 
         const replay = storedMessagesToCortex(await storedRows());
@@ -853,8 +864,7 @@ describe("runChatTurn — compaction", () => {
                 type: "data-compaction",
                 id: replay[2]!.id,
                 status: "done",
-                tokensBefore: expect.any(Number),
-                tokensAfter: expect.any(Number),
+                tokensBefore: OVER,
                 durationMs: expect.any(Number),
                 trigger: "mid-turn",
             },
@@ -864,10 +874,10 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("starts the next turn with the summary marker and its records, then the later rounds, then the new opening", async () => {
-        await runChatTurn({ pool, agents: agents() }, params(compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)])));
+        await runChatTurn({ pool, agents: agents() }, params(compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)])));
         const next = scriptedProvider([text("next answer")]);
 
-        await runChatTurn({ pool, agents: agents() }, params(next, { userInput: "and now?", conversationBudget: undefined, promptCache: "off" }));
+        await runChatTurn({ pool, agents: agents() }, params(next, { userInput: "and now?", promptCache: "off" }));
 
         const sent = next.calls[0]!.messages;
         expect(sent.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "assistant", "user"]);
@@ -877,7 +887,7 @@ describe("runChatTurn — compaction", () => {
 
     it("sends no text delta of the exchange to the emit of the host", async () => {
         const deltas: string[] = [];
-        const provider = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+        const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
 
         await runChatTurn(
             { pool, agents: agents() },
@@ -896,7 +906,7 @@ describe("runChatTurn — compaction", () => {
             [toolUseBlock("tu-m", "update_working_memory", { section: "constraint", text: "Use an FDR of 0.01.", origin: "user" })],
             "tool_use",
         );
-        const provider = compactingProvider([bigCall("tu-1"), text("done")], [memoryEdit, text(SUMMARY)]);
+        const provider = compactingProvider([overCall("tu-1"), text("done")], [memoryEdit, text(SUMMARY)]);
 
         await runChatTurn({ pool, agents: agents() }, params(provider));
 
@@ -912,11 +922,11 @@ describe("runChatTurn — compaction", () => {
         (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
         (await createThreadHistory(pool).appendTurn(THREAD, conversationRecordTurn("[Report Brief]\nDraft the methods section.")))._unsafeUnwrap();
         const provider = compactingProvider(
-            [bigCall("tu-1"), text("done")],
+            [overCall("tu-1"), text("done")],
             [makeMessage([toolUseBlock("tu-x", "echo", { label: "x" })], "tool_use"), text(SUMMARY)],
         );
 
-        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: 1_000 }));
+        await runChatTurn({ pool, agents: agents() }, params(provider));
 
         const exchange = provider.calls.filter(isExchangeRequest);
         expect(exchange[0]!.messages.at(-1)!.content).toBe(SUMMARY_COMPACTION_REQUEST);
@@ -929,10 +939,10 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("removes the exchange and the marker of the last turn at a retract, and the next turn starts from the earlier marker", async () => {
-        await runChatTurn({ pool, agents: agents() }, params(compactingProvider([bigCall("tu-1"), text("done")], [text("first summary")])));
+        await runChatTurn({ pool, agents: agents() }, params(compactingProvider([overCall("tu-1"), text("done")], [text("first summary")])));
         await runChatTurn(
             { pool, agents: agents() },
-            params(compactingProvider([bigCall("tu-2"), text("done again")], [text("second summary")]), { userInput: "once more" }),
+            params(compactingProvider([overCall("tu-2"), text("done again")], [text("second summary")]), { userInput: "once more" }),
         );
         expect((await storedRows()).map((row) => compactionMarkerOf(row.message)?.kind).filter((kind) => kind !== undefined)).toEqual(["summary", "summary"]);
 
@@ -948,16 +958,8 @@ describe("runChatTurn — compaction", () => {
         expect(view[0]!.content).toBe("[Conversation Summary]\nfirst summary");
     });
 
-    it("compacts at the turn start when the view passes the budget of the host, and keeps the user message after the summary", async () => {
-        (
-            await createThreadHistory(pool).appendTurn(THREAD, {
-                modelMessages: [
-                    { role: "user", content: big(3_000) },
-                    { role: "assistant", content: "an earlier answer" },
-                ],
-                displayMessages: [],
-            })
-        )._unsafeUnwrap();
+    it("compacts before the user message when the last request passed the turn-start budget, and sends the user message after the summary", async () => {
+        await storeMeasuredTurn(OVER);
         const storedAtRequest: string[][] = [];
         const replies = compactingProvider([text("done")], [text(SUMMARY)]);
         const provider: ScriptedProvider = {
@@ -971,55 +973,95 @@ describe("runChatTurn — compaction", () => {
             },
         };
 
-        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: 2_000 }));
+        await runChatTurn({ pool, agents: agents() }, params(provider));
 
         const [first, task] = replies.calls;
         expect(isExchangeRequest(first!)).toBe(true);
         expect(first!.messages.map(kindOf)).toEqual(["user", "assistant", "user"]);
         expect(first!.messages.at(-1)!.content).toBe(MEMORY_COMPACTION_REQUEST);
-        expect(storedAtRequest[0]).toEqual(["user", "assistant", "user", "run-activity", "working-memory"]);
-        expect(task!.messages.map(kindOf)).toEqual(["summary-marker", "user", "run-activity", "working-memory"]);
-        expect(task!.messages[1]!.content).toBe("compare the two groups");
+        expect(storedAtRequest).toEqual([
+            ["user", "assistant"],
+            ["user", "assistant", "exchange-user", "exchange-assistant", "summary-marker", "run-activity", "working-memory", "user"],
+        ]);
+        expect(task!.messages.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "user"]);
+        expect(task!.messages.at(-1)!.content).toBe("compare the two groups");
+        const marker = (await storedRows()).map((row) => compactionMarkerOf(row.message)).find((found) => found !== undefined);
+        expect(marker).toMatchObject({ kind: "summary", tokensBefore: OVER, trigger: "turn-start" });
     });
 
-    /** Store an earlier turn whose reply reported `inputTokens` for its request. */
-    async function storeMeasuredTurn(inputTokens: number): Promise<void> {
-        const reply = withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "an earlier answer" }] }, inputTokens);
-        (
-            await createThreadHistory(pool).appendTurn(THREAD, {
-                modelMessages: [{ role: "user", content: "an earlier question" }, reply],
-                displayMessages: [],
-            })
-        )._unsafeUnwrap();
-    }
-
-    it("compacts at the turn start of a conversation thread past the default turn-start budget, by the reported input tokens", async () => {
-        await storeMeasuredTurn(DEFAULT_CONVERSATION_BUDGET + 10_000);
+    it("opens the turn record on the user message after a turn-start compaction, and stores the author on that row", async () => {
+        await storeMeasuredTurn(OVER);
         const provider = compactingProvider([text("done")], [text(SUMMARY)]);
 
-        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: undefined }));
+        const result = await runChatTurn({ pool, agents: agents() }, params(provider, { author: "dr.chen@lab.example" }));
 
-        expect(provider.calls.map(isExchangeRequest)).toEqual([true, false]);
-        expect(provider.calls[1]!.messages.map(kindOf)).toEqual(["summary-marker", "user", "run-activity", "working-memory"]);
-        const marker = (await storedRows()).map((row) => compactionMarkerOf(row.message)).find((found) => found !== undefined);
-        expect(marker).toMatchObject({ kind: "summary", keptTurns: 1, trigger: "turn-start" });
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true });
+        const rows = await storedRows();
+        expect(rows.map((row) => kindOf(row.message))).toEqual([
+            "user",
+            "assistant",
+            "exchange-user",
+            "exchange-assistant",
+            "summary-marker",
+            "run-activity",
+            "working-memory",
+            "user",
+            "assistant",
+        ]);
+        expect(rows.flatMap((row) => (row.turn === undefined ? [] : [row.seq]))).toEqual([rows[7]!.seq]);
+        expect(rows[7]!.turn).toMatchObject({ status: "done" });
+        expect(rows[7]!.message.content).toBe("compare the two groups");
+        expect(rows.flatMap((row) => (row.author === undefined ? [] : [[row.seq, row.author]]))).toEqual([[rows[7]!.seq, "dr.chen@lab.example"]]);
+        const replay = storedMessagesToCortex(rows);
+        expect(replay.map((message) => message.role)).toEqual(["system", "user", "assistant"]);
+        expect(replay[0]!.parts).toEqual([
+            { type: "data-compaction", id: replay[0]!.id, status: "done", tokensBefore: OVER, durationMs: expect.any(Number), trigger: "turn-start" },
+        ]);
     });
 
-    it("runs no turn-start compaction on a report thread under its budget during a turn", async () => {
+    it("stores the exchange, and no user message and no turn record, when an abort ends the turn-start compaction", async () => {
+        await storeMeasuredTurn(OVER);
+        const partial: ChatResponse = { message: { role: "assistant", content: "The user compares" }, finishReason: "aborted" };
+        const provider = compactingProvider([], [partial]);
+
+        const result = await runChatTurn({ pool, agents: agents() }, params(provider));
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" }, opened: false });
+        if (result.kind !== "ran") throw new Error("unreachable");
+        expect(result.fallbackText ?? "").toBe("");
+        const rows = await storedRows();
+        expect(rows.map((row) => kindOf(row.message))).toEqual(["user", "assistant", "exchange-user", "exchange-assistant"]);
+        expect(rows.some((row) => row.turn !== undefined)).toBe(false);
+        expect(rows.map((row) => row.message.content)).not.toContain("compare the two groups");
+    });
+
+    it("runs no turn-start compaction at the turn-start budget of the agent", async () => {
+        await storeMeasuredTurn(CONVERSATION_RULES.turnStartBudget!);
+        const provider = compactingProvider([text("done")], []);
+
+        await runChatTurn({ pool, agents: agents() }, params(provider));
+
+        expect(provider.calls.map(isExchangeRequest)).toEqual([false]);
+    });
+
+    it("runs no turn-start compaction on a report thread, and compacts before the first request with the user message in the view", async () => {
         const store = createThreadStore(pool);
         (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
         (await createThreadHistory(pool).appendTurn(THREAD, conversationRecordTurn("[Report Brief]\nDraft the methods section.")))._unsafeUnwrap();
-        await storeMeasuredTurn(REPORT_TURN_BUDGET - 10_000);
-        const provider = compactingProvider([text("done")], []);
+        await storeMeasuredTurn(OVER);
+        const provider = compactingProvider([text("done")], [text(SUMMARY)]);
 
-        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: undefined }));
+        await runChatTurn({ pool, agents: agents() }, params(provider));
 
-        expect(provider.calls.some(isExchangeRequest)).toBe(false);
+        expect(provider.calls.map(isExchangeRequest)).toEqual([true, false]);
+        expect(provider.calls[0]!.messages.map((message) => message.content)).toContain("compare the two groups");
+        const marker = (await storedRows()).map((row) => compactionMarkerOf(row.message)).find((found) => found !== undefined);
+        expect(marker).toMatchObject({ kind: "summary", trigger: "mid-turn" });
     });
 
     it("closes the turn aborted with the stored exchange and no marker when an abort ends the exchange", async () => {
         const partial: ChatResponse = { message: { role: "assistant", content: "The user compares" }, finishReason: "aborted" };
-        const provider = compactingProvider([bigCall("tu-1")], [partial]);
+        const provider = compactingProvider([overCall("tu-1")], [partial]);
 
         const result = await runChatTurn({ pool, agents: agents() }, params(provider));
 
@@ -1039,12 +1081,13 @@ describe("runChatTurn — compaction", () => {
         expect(rows[0]!.turn?.status).toBe("aborted");
     });
 
-    it("runs no exchange under the default budget", async () => {
-        const provider = compactingProvider([bigCall("tu-1"), text("done")], []);
+    it("runs no exchange on a thread whose agent declares no compaction rules", async () => {
+        await storeMeasuredTurn(OVER);
+        const provider = compactingProvider([overCall("tu-1"), text("done")], []);
+        const { compaction: _compaction, ...noRules } = conversationAgent();
 
-        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: undefined }));
+        await runChatTurn({ pool, agents: { forThread: () => ok(noRules) } }, params(provider));
 
-        expect([DEFAULT_CONVERSATION_BUDGET, CONVERSATION_TURN_BUDGET, REPORT_TURN_BUDGET]).toEqual([150_000, 200_000, 250_000]);
         expect(provider.calls.some(isExchangeRequest)).toBe(false);
         expect((await storedRows()).some((row) => compactionMarkerOf(row.message) !== undefined)).toBe(false);
     });
@@ -1057,13 +1100,17 @@ describe("runChatTurn — compaction", () => {
         });
         const delegate = defineTool({
             id: "delegate",
-            description: "Run a sub-agent over a large brief.",
+            description: "Run a sub-agent over a brief whose last request passed the budget.",
             inputSchema: z.object({}),
             describeCall: "none",
             execute: async (_input, ctx) => {
                 const sub = await runAgent(
                     { id: "sub-agent", systemPrompt: SUB_PROMPT, model: "claude-test", tools: [], maxIterations: 2 },
-                    [{ role: "user", content: big(3_000) }],
+                    [
+                        { role: "user", content: "brief" },
+                        withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "noted" }] }, OVER),
+                        { role: "user", content: "go on" },
+                    ],
                     forSubAgent(ctx.session, "sub-agent"),
                     { provider, signal: ctx.signal, emit: ctx.emit, runStep: ctx.runStep },
                 );

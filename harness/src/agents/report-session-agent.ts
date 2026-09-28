@@ -27,6 +27,7 @@ import type { Pool } from "pg";
 
 import type { AuthContext } from "../auth/types.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
+import type { CompactionRules } from "../loop/compaction.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
@@ -69,6 +70,9 @@ export const REPORT_SESSION_AGENT_ID = "report-session" as const;
  * gets the headroom of the report runner (REPORT_AGENT_MAX_STEPS).
  */
 const REPORT_SESSION_MAX_ITERATIONS = 200;
+
+/** A session is one long turn that holds page captures, thus it compacts only during the turn, at a higher budget. */
+const REPORT_SESSION_COMPACTION: CompactionRules = { budget: 250_000 };
 
 /**
  * The shared dependencies of the report agent. The gateway binds the per-session
@@ -242,5 +246,6 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         model,
         tools,
         maxIterations: REPORT_SESSION_MAX_ITERATIONS,
+        compaction: REPORT_SESSION_COMPACTION,
     };
 }

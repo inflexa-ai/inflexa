@@ -2258,12 +2258,18 @@ describe("runAgent — compaction", () => {
     const COMPACT = "Summarize the conversation above.";
     const RECORD = contextRecordMessage("run-activity", "[Run Activity]\nNo runs are currently running or suspended.");
     const SUMMARY = "The user compares two groups of samples.";
+    /** The input tokens of a request past the budget of {@link policyOf}. */
+    const OVER = 5_000;
 
     /** Text of about `n` tokens. */
     const big = (n: number): string => Array.from({ length: n }, () => "word").join(" ");
 
-    const bigCall = (id: string, reasoning?: string): ChatResponse =>
-        makeMessage([...(reasoning === undefined ? [] : [thinkingBlock(reasoning, `SIG-${id}`)]), toolUseBlock(id, "echo", { label: big(1_500) })], "tool_use");
+    /** A tool call whose request reported `inputTokens`. */
+    const callAt = (id: string, inputTokens: number, reasoning?: string): ChatResponse =>
+        makeMessage([...(reasoning === undefined ? [] : [thinkingBlock(reasoning, `SIG-${id}`)]), toolUseBlock(id, "echo", { label: id })], "tool_use", {
+            inputTokens,
+        });
+    const overCall = (id: string, reasoning?: string): ChatResponse => callAt(id, OVER, reasoning);
     const smallCall = (id: string): ChatResponse => makeMessage([toolUseBlock(id, "echo", { label: id })], "tool_use");
     const text = (reply: string, usage?: ChatUsage): ChatResponse => makeMessage([textBlock(reply)], "end_turn", usage);
 
@@ -2313,8 +2319,12 @@ describe("runAgent — compaction", () => {
         cause: { status: 400 },
     };
 
-    function compactionParts(events: readonly Parameters<EmitFn>[0][]): { id: string; status: string; tokensAfter?: number; durationMs?: number }[] {
-        return events.filter((event) => event.type === "data-compaction").map((event) => (event as { data: { id: string; status: string } }).data);
+    function compactionParts(
+        events: readonly Parameters<EmitFn>[0][],
+    ): { id: string; status: string; tokensBefore: number; durationMs?: number; trigger?: string }[] {
+        return events
+            .filter((event) => event.type === "data-compaction")
+            .map((event) => (event as { data: { id: string; status: string; tokensBefore: number } }).data);
     }
 
     function markersOf(messages: readonly ModelMessage[]): string[] {
@@ -2324,33 +2334,34 @@ describe("runAgent — compaction", () => {
         });
     }
 
-    it("sends the transcript and runs no exchange for a run with no policy", async () => {
-        const initial: ModelMessage[] = [{ role: "user", content: big(3_000) }];
-        const { provider, sent } = compactingProvider([smallCall("tu-1"), text("done")], []);
+    function markerIn(messages: readonly ModelMessage[]): ReturnType<typeof compactionMarkerOf> {
+        return messages.map((message) => compactionMarkerOf(message)).find((found) => found !== undefined);
+    }
 
-        const { messages } = await runAgent(agentDef([echoTool()]), initial, makeSession(), opts(provider, { promptCache: "off" }));
+    it("sends the transcript and runs no exchange for a run with no policy", async () => {
+        const { provider, sent } = compactingProvider([overCall("tu-1"), text("done")], []);
+
+        const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { promptCache: "off" }));
 
         expect(sent.map((request) => request.exchange)).toEqual([false, false]);
         expect(sent[1]!.messages).toEqual(messages.slice(0, 3));
         expect(markersOf(messages)).toEqual([]);
     });
 
-    it("runs no exchange for a view within the budget", async () => {
-        const { provider, sent } = compactingProvider([bigCall("tu-1"), text("done")], []);
+    it("runs no exchange for a request at the budget, or for a request with no reported input tokens, whatever the size of the messages", async () => {
+        const huge = (usage?: ChatUsage): ChatResponse => makeMessage([toolUseBlock("tu-1", "echo", { label: big(3_000) })], "tool_use", usage);
+        const atBudget = compactingProvider([huge({ inputTokens: 1_000 }), text("done")], []);
+        const unreported = compactingProvider([huge(), text("done")], []);
 
-        const { messages } = await runAgent(
-            agentDef([echoTool()]),
-            GO,
-            makeSession(),
-            opts(provider, { compaction: policyOf(provider, { budget: 1_000_000 }) }),
-        );
+        await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(atBudget.provider, { compaction: policyOf(atBudget.provider) }));
+        await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(unreported.provider, { compaction: policyOf(unreported.provider) }));
 
-        expect(sent.map((request) => request.exchange)).toEqual([false, false]);
-        expect(markersOf(messages)).toEqual([]);
+        expect(atBudget.sent.map((request) => request.exchange)).toEqual([false, false]);
+        expect(unreported.sent.map((request) => request.exchange)).toEqual([false, false]);
     });
 
     it("runs the exchange after the round that passes the budget, before the next request", async () => {
-        const { provider, sent } = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+        const { provider, sent } = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
 
         const { messages, finish } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider) }));
 
@@ -2364,8 +2375,32 @@ describe("runAgent — compaction", () => {
         expect(messages[6]).toEqual(RECORD);
     });
 
+    it("compacts by the input tokens that the last request reported, with that figure as tokensBefore and the trigger mid-turn", async () => {
+        const events: Parameters<EmitFn>[0][] = [];
+        const { provider, sent } = compactingProvider([callAt("tu-1", 7_500), text("done")], [text(SUMMARY)]);
+
+        const { messages } = await runAgent(
+            agentDef([echoTool()]),
+            GO,
+            makeSession(),
+            opts(provider, {
+                compaction: policyOf(provider),
+                emit: (event) => {
+                    events.push(event);
+                },
+            }),
+        );
+
+        expect(sent.map((request) => request.exchange)).toEqual([false, true, false]);
+        expect(compactionParts(events).map((part) => [part.tokensBefore, part.trigger])).toEqual([
+            [7_500, "mid-turn"],
+            [7_500, "mid-turn"],
+        ]);
+        expect(markerIn(messages)).toMatchObject({ kind: "summary", tokensBefore: 7_500, trigger: "mid-turn" });
+    });
+
     it("sends the tools of the run in the exchange, and starts its messages with the view, byte-identical", async () => {
-        const { provider, sent } = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+        const { provider, sent } = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
 
         const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider), promptCache: "off" }));
 
@@ -2377,7 +2412,7 @@ describe("runAgent — compaction", () => {
     });
 
     it("sends the marker and the records after a summary, and no message of the exchange", async () => {
-        const { provider, sent } = compactingProvider([bigCall("tu-1"), text("done")], [smallCall("tu-m"), text(SUMMARY)]);
+        const { provider, sent } = compactingProvider([overCall("tu-1"), text("done")], [smallCall("tu-m"), text(SUMMARY)]);
 
         await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider) }));
 
@@ -2388,7 +2423,7 @@ describe("runAgent — compaction", () => {
     });
 
     it("marks each message of the exchange with the id of the compaction", async () => {
-        const { provider } = compactingProvider([bigCall("tu-1"), text("done")], [smallCall("tu-m"), text(SUMMARY)]);
+        const { provider } = compactingProvider([overCall("tu-1"), text("done")], [smallCall("tu-m"), text(SUMMARY)]);
 
         const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider) }));
 
@@ -2399,8 +2434,12 @@ describe("runAgent — compaction", () => {
         expect(compactionMarkerOf(messages[7]!)?.id).toBe([...ids][0]!);
     });
 
-    it("compacts before the first request when the initial messages pass the budget", async () => {
-        const initial: ModelMessage[] = [{ role: "user", content: big(3_000) }];
+    it("compacts before the first request when the last request of the initial messages passed the budget", async () => {
+        const initial: ModelMessage[] = [
+            { role: "user", content: "compare the two groups" },
+            withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "Group A is larger." }] }, OVER),
+            { role: "user", content: "and the p-value?" },
+        ];
         const { provider, sent } = compactingProvider([text("done")], [text(SUMMARY)]);
 
         await runAgent(agentDef([echoTool()]), initial, makeSession(), opts(provider, { compaction: policyOf(provider) }));
@@ -2409,8 +2448,11 @@ describe("runAgent — compaction", () => {
         expect(sent[1]!.messages.map((message) => message.content)).toEqual([`[Conversation Summary]\n${SUMMARY}`, RECORD.content]);
     });
 
-    it("starts a second compaction from the first summary marker", async () => {
-        const { provider, sent } = compactingProvider([bigCall("tu-1"), bigCall("tu-2"), text("done")], [text("first summary"), text("second summary")]);
+    it("compacts again from the first summary marker when the first request after the summary is within the budget", async () => {
+        const { provider, sent } = compactingProvider(
+            [overCall("tu-1"), callAt("tu-2", 500), overCall("tu-3"), text("done")],
+            [text("first summary"), text("second summary")],
+        );
 
         const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider) }));
 
@@ -2422,9 +2464,25 @@ describe("runAgent — compaction", () => {
         expect(sent.at(-1)!.messages[0]!.content).toBe("[Conversation Summary]\nsecond summary");
     });
 
+    it("compacts no more, and warns, when the first request after a summary still passes the budget", async () => {
+        const logger = createCapturingLogger();
+        const { provider, sent } = compactingProvider([overCall("tu-1"), overCall("tu-2"), overCall("tu-3"), text("done")], [text(SUMMARY)]);
+
+        const { messages, finish } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider), logger }));
+
+        expect(sent.map((request) => request.exchange)).toEqual([false, true, false, false, false]);
+        expect(markersOf(messages)).toEqual(["summary"]);
+        expect(finish.reason).toBe("stop");
+        const warn = logger.records.find(
+            (record) =>
+                record.level === "warn" && record.msg.includes("the first request after the summary still exceeds the budget, thus the run compacts no more"),
+        );
+        expect(warn?.fields).toMatchObject({ tokens: OVER, budget: 1_000 });
+    });
+
     it("keeps the first turn in front of the marker", async () => {
         const seed = syntheticRecordMessage("[Report Brief]\nDraft the methods section.");
-        const { provider, sent } = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+        const { provider, sent } = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
 
         await runAgent(agentDef([echoTool()]), [seed, ...GO], makeSession(), opts(provider, { compaction: policyOf(provider, { keepFirstTurn: true }) }));
 
@@ -2444,7 +2502,7 @@ describe("runAgent — compaction", () => {
             },
         });
         const { provider } = compactingProvider(
-            [bigCall("tu-1"), text("done")],
+            [overCall("tu-1"), text("done")],
             [makeMessage([toolUseBlock("tu-w", "writer", {})], "tool_use"), text(SUMMARY)],
         );
 
@@ -2456,21 +2514,28 @@ describe("runAgent — compaction", () => {
         expect(String(outputValue(refused!))).toContain("writer is not available for this request");
     });
 
-    it("appends a drop marker when the exchange calls a tool in each of its requests", async () => {
+    it("writes no marker and keeps the view when the exchange calls a tool in each of its requests", async () => {
         const replies = Array.from({ length: COMPACTION_MAX_REQUESTS }, (_, i) => smallCall(`tu-m${i}`));
-        const { provider, sent } = compactingProvider([bigCall("tu-1"), text("done")], replies);
+        const { provider, sent } = compactingProvider([overCall("tu-1"), text("done")], replies);
 
-        const { messages, finish } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider) }));
+        const { messages, finish } = await runAgent(
+            agentDef([echoTool()]),
+            GO,
+            makeSession(),
+            opts(provider, { compaction: policyOf(provider), promptCache: "off" }),
+        );
 
         expect(sent.filter((request) => request.exchange)).toHaveLength(COMPACTION_MAX_REQUESTS);
-        expect(markersOf(messages)).toEqual(["drop"]);
+        expect(markersOf(messages)).toEqual([]);
         expect(finish.reason).toBe("stop");
+        expect(messages.slice(3, -1).every((message) => compactionExchangeOf(message) !== undefined)).toBe(true);
+        expect(JSON.stringify(sent.at(-1)!.messages)).toBe(JSON.stringify(messages.slice(0, 3)));
     });
 
-    it("drops on a 400 refusal of the exchange, warns with the status and the error text, and does not throw", async () => {
+    it("gives no summary on a 400 refusal of the exchange, logs an error with the status and the error text, and does not throw", async () => {
         const logger = createCapturingLogger();
         const events: Parameters<EmitFn>[0][] = [];
-        const task = scriptedProvider([bigCall("tu-1"), text("done")]);
+        const task = scriptedProvider([overCall("tu-1"), text("done")]);
 
         const { messages, finish } = await runAgent(
             agentDef([echoTool()]),
@@ -2486,11 +2551,22 @@ describe("runAgent — compaction", () => {
         );
 
         expect(finish.reason).toBe("stop");
-        expect(markersOf(messages)).toEqual(["drop"]);
-        const warn = logger.records.find((record) => record.level === "warn" && record.msg.includes("compaction gave no summary"));
-        expect(warn?.fields).toMatchObject({ status: 400, providerError: refusal400.message, keptTurns: 1 });
-        expect(compactionParts(events).map((part) => part.status)).toEqual(["running", "failed"]);
-        expect(compactionParts(events)[1]).toMatchObject({ tokensAfter: expect.any(Number), durationMs: expect.any(Number) });
+        expect(markersOf(messages)).toEqual([]);
+        const parts = compactionParts(events);
+        expect(parts.map((part) => part.status)).toEqual(["running", "failed"]);
+        expect(parts[1]).toMatchObject({ id: parts[0]!.id, tokensBefore: OVER, durationMs: expect.any(Number) });
+        expect(parts[1]).not.toHaveProperty("tokensAfter");
+        const error = logger.records.find(
+            (record) => record.level === "error" && record.msg.includes("compaction gave no summary, thus the run compacts no more"),
+        );
+        expect(error?.fields).toMatchObject({
+            compactionId: parts[0]!.id,
+            trigger: "mid-turn",
+            tokensBefore: OVER,
+            durationMs: expect.any(Number),
+            status: 400,
+            providerError: refusal400.message,
+        });
     });
 
     it.each<[string, ProviderError]>([
@@ -2500,7 +2576,7 @@ describe("runAgent — compaction", () => {
     ])("throws %s of the exchange, with no marker and the part failed", async (_label, error) => {
         const events: Parameters<EmitFn>[0][] = [];
         const sink = recordingSink();
-        const task = scriptedProvider([bigCall("tu-1"), text("done")]);
+        const task = scriptedProvider([overCall("tu-1"), text("done")]);
 
         await expect(
             runAgent(
@@ -2522,37 +2598,53 @@ describe("runAgent — compaction", () => {
         expect(compactionParts(events).map((part) => part.status)).toEqual(["running", "failed"]);
     });
 
-    it("keeps the previous summary in front of a drop, and sends no kept reasoning", async () => {
+    it("keeps the previous summary and the reasoning in the view when a later exchange gives no summary", async () => {
         let exchanges = 0;
         const summaryThenRefusal: AgentChat = {
             capabilities: { toolCalling: true },
             chat: () => (exchanges++ === 0 ? okAsync(text("first summary")) : errAsync(refusal400)),
         };
-        const { provider, sent } = compactingProvider([bigCall("tu-1"), bigCall("tu-2", "weighing the second call"), text("done")], []);
+        const { provider, sent } = compactingProvider([overCall("tu-1"), callAt("tu-2", 500), overCall("tu-3", "weighing the third call"), text("done")], []);
 
-        const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(summaryThenRefusal) }));
+        const { messages } = await runAgent(
+            agentDef([echoTool()]),
+            GO,
+            makeSession(),
+            opts(provider, { compaction: policyOf(summaryThenRefusal), promptCache: "off" }),
+        );
 
-        expect(markersOf(messages)).toEqual(["summary", "drop"]);
-        const afterDrop = sent.at(-1)!;
-        expect(afterDrop.messages[0]!.content).toBe("[Conversation Summary]\nfirst summary");
-        const parts = afterDrop.messages.flatMap((message) => (typeof message.content === "string" ? [] : message.content));
-        expect(parts.some((part) => part.type === "reasoning")).toBe(false);
-        expect(parts.some((part) => part.type === "tool-call" && part.toolCallId === "tu-2")).toBe(true);
+        expect(exchanges).toBe(2);
+        expect(markersOf(messages)).toEqual(["summary"]);
+        const [beforeFailure, afterFailure] = sent.slice(-2);
+        expect(afterFailure!.messages[0]!.content).toBe("[Conversation Summary]\nfirst summary");
+        expect(JSON.stringify(afterFailure!.messages.slice(0, beforeFailure!.messages.length))).toBe(JSON.stringify(beforeFailure!.messages));
+        const parts = afterFailure!.messages.flatMap((message) => (typeof message.content === "string" ? [] : message.content));
+        expect(parts.some((part) => part.type === "reasoning")).toBe(true);
+        expect(afterFailure!.messages.some((message) => compactionExchangeOf(message) !== undefined)).toBe(false);
     });
 
-    it("runs no second compaction after a drop", async () => {
-        const { provider, sent } = compactingProvider([bigCall("tu-1"), bigCall("tu-2"), bigCall("tu-3"), text("done")], []);
+    it("runs no second compaction in the run after an exchange gives no summary", async () => {
+        let attempts = 0;
+        const refusing: AgentChat = {
+            capabilities: { toolCalling: true },
+            chat: () => {
+                attempts++;
+                return errAsync(refusal400);
+            },
+        };
+        const { provider, sent } = compactingProvider([overCall("tu-1"), overCall("tu-2"), overCall("tu-3"), text("done")], []);
 
-        const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(failingChat(refusal400)) }));
+        const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(refusing) }));
 
-        expect(markersOf(messages)).toEqual(["drop"]);
+        expect(attempts).toBe(1);
+        expect(markersOf(messages)).toEqual([]);
         expect(sent).toHaveLength(4);
     });
 
     it("ends the run aborted with the exchange and no marker when an abort ends the exchange", async () => {
         const events: Parameters<EmitFn>[0][] = [];
         const aborting: AgentChat = { capabilities: { toolCalling: true }, chat: () => okAsync(abortedReply("a partial summ")) };
-        const task = scriptedProvider([bigCall("tu-1")]);
+        const task = scriptedProvider([overCall("tu-1")]);
 
         const { messages, finish } = await runAgent(
             agentDef([echoTool()]),
@@ -2575,7 +2667,7 @@ describe("runAgent — compaction", () => {
 
     it("gives the sink the exchange as one round and then the marker with its records, and the rounds equal the result", async () => {
         const sink = recordingSink();
-        const { provider } = compactingProvider([bigCall("tu-1"), text("done")], [smallCall("tu-m"), text(SUMMARY)]);
+        const { provider } = compactingProvider([overCall("tu-1"), text("done")], [smallCall("tu-m"), text(SUMMARY)]);
 
         const { messages } = await runAgent(
             agentDef([echoTool()]),
@@ -2591,9 +2683,9 @@ describe("runAgent — compaction", () => {
         expect(sink.rounds[2]![1]).toEqual(RECORD);
     });
 
-    it("emits running and then done under one id, with the source of the run", async () => {
+    it("emits running and then done under one id, with the source of the run, and the figures of the marker", async () => {
         const events: Parameters<EmitFn>[0][] = [];
-        const { provider } = compactingProvider([bigCall("tu-1"), text("done")], [smallCall("tu-m"), text(SUMMARY)]);
+        const { provider } = compactingProvider([overCall("tu-1"), text("done")], [smallCall("tu-m"), text(SUMMARY)]);
         const session = makeSession({ agentId: "conversation-agent", callPath: ["tui-chat"] });
 
         const { messages } = await runAgent(
@@ -2611,13 +2703,10 @@ describe("runAgent — compaction", () => {
         const parts = events.filter((event) => event.type === "data-compaction");
         expect(parts.map((event) => ("source" in event ? event.source?.callPath : undefined))).toEqual([["tui-chat"], ["tui-chat"]]);
         const [running, done] = compactionParts(events);
-        expect(running).toMatchObject({ status: "running", tokensBefore: expect.any(Number) });
-        expect(done).toMatchObject({ id: running!.id, status: "done", tokensAfter: expect.any(Number), durationMs: expect.any(Number) });
-        expect(compactionMarkerOf(messages.find((message) => compactionMarkerOf(message) !== undefined)!)).toMatchObject({
-            id: running!.id,
-            tokensAfter: done!.tokensAfter,
-            durationMs: done!.durationMs,
-        });
+        expect(running).toMatchObject({ status: "running", tokensBefore: OVER });
+        expect(done).toMatchObject({ id: running!.id, status: "done", tokensBefore: OVER, durationMs: expect.any(Number) });
+        expect(done).not.toHaveProperty("tokensAfter");
+        expect(markerIn(messages)).toEqual({ kind: "summary", id: running!.id, tokensBefore: OVER, durationMs: done!.durationMs!, trigger: "mid-turn" });
         const exchangeEvents = events.filter((event) => event.type === "tool-started" && event.toolUseId === "tu-m");
         expect(exchangeEvents.map((event) => ("source" in event ? event.source?.callPath : undefined))).toEqual([["tui-chat", "test-agent-compaction"]]);
     });
@@ -2626,7 +2715,7 @@ describe("runAgent — compaction", () => {
         const records: LlmUsageRecord[] = [];
         const { provider } = compactingProvider(
             [
-                makeMessage([toolUseBlock("tu-1", "echo", { label: big(1_500) })], "tool_use", { inputTokens: 100, outputTokens: 10 }),
+                makeMessage([toolUseBlock("tu-1", "echo", { label: "tu-1" })], "tool_use", { inputTokens: 100, outputTokens: 10 }),
                 text("done", { inputTokens: 20, outputTokens: 2 }),
             ],
             [text(SUMMARY, { inputTokens: 1_000, outputTokens: 50 })],
@@ -2637,7 +2726,7 @@ describe("runAgent — compaction", () => {
             GO,
             makeSession(),
             opts(provider, {
-                compaction: policyOf(provider),
+                compaction: policyOf(provider, { budget: 50 }),
                 usageRecorder: {
                     record: (record) => {
                         records.push(record);
@@ -2661,36 +2750,32 @@ describe("runAgent — compaction", () => {
         expect(requestInputTokensOf(messages[3]!)).toBeUndefined();
     });
 
-    it("measures the view by the input tokens of the latest request, and compacts on that measure", async () => {
-        const measured = makeMessage([toolUseBlock("tu-1", "echo", { label: "tu-1" })], "tool_use", { inputTokens: 5_000 });
-        const { provider, sent } = compactingProvider([measured, text("done")], [text(SUMMARY)]);
-
-        await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider) }));
-
-        expect(sent.map((request) => request.exchange)).toEqual([false, true, false]);
-    });
-
     describe("at the start of a turn", () => {
         const EARLIER: ModelMessage[] = [
             { role: "user", content: "compare the two groups" },
-            withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "Group A is larger." }] }, 5_000),
+            withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "Group A is larger." }] }, OVER),
         ];
         const TURN: ModelMessage[] = [
             { role: "user", content: "and the p-value?" },
             contextRecordMessage("run-activity", "[Run Activity]\nOne run is running."),
         ];
+        const USER_MESSAGE = TURN[0]!;
 
-        it("summarizes the view before the turn, byte-identical, and keeps the user message of the turn after the summary", async () => {
+        /** A policy whose turn-start budget the last request of {@link EARLIER} passed, and whose budget no request passes. */
+        const turnStartPolicy = (provider: AgentChat): CompactionPolicy => policyOf(provider, { budget: 1_000_000, turnStartBudget: 1_000 });
+
+        it("summarizes the view of the initial messages, byte-identical, and sends the user message after the marker and its records", async () => {
             const logger = createCapturingLogger();
             const events: Parameters<EmitFn>[0][] = [];
             const { provider, sent } = compactingProvider([text("p = 0.01")], [text(SUMMARY)]);
 
             const { messages } = await runAgent(
                 agentDef([echoTool()]),
-                [...EARLIER, ...TURN],
+                EARLIER,
                 makeSession(),
                 opts(provider, {
-                    compaction: policyOf(provider, { budget: 1_000_000, turnStartBudget: 1_000 }),
+                    turnInput: TURN,
+                    compaction: turnStartPolicy(provider),
                     promptCache: "off",
                     logger,
                     emit: (event) => {
@@ -2703,45 +2788,154 @@ describe("runAgent — compaction", () => {
             expect(exchange!.exchange).toBe(true);
             expect(JSON.stringify(exchange!.messages.slice(0, -1))).toBe(JSON.stringify(EARLIER));
             expect(exchange!.messages.at(-1)).toMatchObject({ role: "user", content: COMPACT });
-            expect(task!.messages.map((message) => message.content)).toEqual([`[Conversation Summary]\n${SUMMARY}`, "and the p-value?", RECORD.content]);
-            const marker = messages.map((message) => compactionMarkerOf(message)).find((found) => found !== undefined);
-            expect(marker).toMatchObject({ kind: "summary", keptTurns: 1, trigger: "turn-start" });
-            expect(compactionParts(events).map((part) => (part as { trigger?: string }).trigger)).toEqual(["turn-start", "turn-start"]);
+            expect(task!.messages.map((message) => message.content)).toEqual([`[Conversation Summary]\n${SUMMARY}`, RECORD.content, "and the p-value?"]);
+            const marker = markerIn(messages);
+            expect(marker).toMatchObject({ kind: "summary", tokensBefore: OVER, trigger: "turn-start" });
+            expect(marker).not.toHaveProperty("keptTurns");
+            expect(compactionParts(events).map((part) => [part.status, part.trigger])).toEqual([
+                ["running", "turn-start"],
+                ["done", "turn-start"],
+            ]);
             const info = logger.records.find((record) => record.msg.endsWith("conversation compacted"));
             expect(info?.fields).toMatchObject({ trigger: "turn-start" });
         });
 
-        it("compacts before a later request by the budget during the turn, with the trigger mid-turn", async () => {
-            const { provider, sent } = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+        it("puts the marker before the user message, and leaves out the context records of the input", async () => {
+            const { provider } = compactingProvider([text("p = 0.01")], [text(SUMMARY)]);
 
             const { messages } = await runAgent(
                 agentDef([echoTool()]),
-                GO,
+                EARLIER,
                 makeSession(),
-                opts(provider, { compaction: policyOf(provider, { turnStartBudget: 1 }) }),
+                opts(provider, { turnInput: TURN, compaction: turnStartPolicy(provider) }),
             );
 
-            expect(sent.map((request) => request.exchange)).toEqual([false, true, false]);
-            const marker = messages.map((message) => compactionMarkerOf(message)).find((found) => found !== undefined);
-            expect(marker).toMatchObject({ kind: "summary", keptTurns: 0, trigger: "mid-turn" });
+            const markerAt = messages.findIndex((message) => compactionMarkerOf(message) !== undefined);
+            expect(markerAt).toBeGreaterThan(-1);
+            expect(messages.indexOf(USER_MESSAGE)).toBeGreaterThan(markerAt);
+            expect(messages).not.toContain(TURN[1]!);
+            expect(messages.slice(markerAt)).toEqual([messages[markerAt]!, RECORD, USER_MESSAGE, expect.objectContaining({ role: "assistant" })]);
         });
 
-        it("runs no turn-start compaction under the turn-start budget", async () => {
+        it("gives the sink the exchange, then the marker with its records, then the user message, each as one round", async () => {
+            const sink = recordingSink();
+            const { provider } = compactingProvider([text("p = 0.01")], [smallCall("tu-m"), text(SUMMARY)]);
+
+            const { messages } = await runAgent(
+                agentDef([echoTool()]),
+                EARLIER,
+                makeSession(),
+                opts(provider, { turnInput: TURN, compaction: turnStartPolicy(provider), onRound: sink.onRound }),
+            );
+
+            expect([...EARLIER, ...sink.rounds.flat()]).toEqual(messages);
+            expect(sink.rounds.map((round) => round.length)).toEqual([4, 2, 1, 1]);
+            expect(sink.rounds[0]!.every((message) => compactionExchangeOf(message) !== undefined)).toBe(true);
+            expect(markersOf(sink.rounds[1]!)).toEqual(["summary"]);
+            expect(sink.rounds[1]![1]).toEqual(RECORD);
+            expect(sink.rounds[2]![0]).toBe(USER_MESSAGE);
+        });
+
+        it("runs no turn-start compaction at the turn-start budget, and gives the whole input as one round", async () => {
+            const sink = recordingSink();
             const { provider, sent } = compactingProvider([text("p = 0.01")], []);
 
             await runAgent(
                 agentDef([echoTool()]),
-                [...EARLIER, ...TURN],
+                EARLIER,
                 makeSession(),
-                opts(provider, { compaction: policyOf(provider, { budget: 1_000_000, turnStartBudget: 1_000_000 }) }),
+                opts(provider, { turnInput: TURN, compaction: policyOf(provider, { budget: 1_000_000, turnStartBudget: OVER }), onRound: sink.onRound }),
+            );
+
+            expect(sent.map((request) => request.exchange)).toEqual([false]);
+            expect(sent[0]!.messages.map((message) => message.content)).toEqual([...EARLIER, ...TURN].map((message) => message.content));
+            expect(sink.rounds[0]).toEqual(TURN);
+        });
+
+        it("runs no turn-start compaction for a policy with no turn-start budget", async () => {
+            const { provider, sent } = compactingProvider([text("p = 0.01")], []);
+
+            await runAgent(
+                agentDef([echoTool()]),
+                EARLIER,
+                makeSession(),
+                opts(provider, { turnInput: TURN, compaction: policyOf(provider, { budget: 1_000_000 }) }),
             );
 
             expect(sent.map((request) => request.exchange)).toEqual([false]);
         });
+
+        it("compacts before a later request by the budget during the turn, with the trigger mid-turn", async () => {
+            const { provider, sent } = compactingProvider([callAt("tu-1", 20_000), text("done")], [text(SUMMARY)]);
+
+            const { messages } = await runAgent(
+                agentDef([echoTool()]),
+                EARLIER,
+                makeSession(),
+                opts(provider, { turnInput: TURN, compaction: policyOf(provider, { budget: 10_000, turnStartBudget: OVER }) }),
+            );
+
+            expect(sent.map((request) => request.exchange)).toEqual([false, true, false]);
+            expect(markerIn(messages)).toMatchObject({ kind: "summary", tokensBefore: 20_000, trigger: "mid-turn" });
+        });
+
+        it("sends the view unchanged and the input with its context records when the turn-start exchange gives no summary", async () => {
+            const logger = createCapturingLogger();
+            const events: Parameters<EmitFn>[0][] = [];
+            const sink = recordingSink();
+            const { provider, sent } = compactingProvider([text("p = 0.01")], []);
+
+            const { messages } = await runAgent(
+                agentDef([echoTool()]),
+                EARLIER,
+                makeSession(),
+                opts(provider, {
+                    turnInput: TURN,
+                    compaction: turnStartPolicy(failingChat(refusal400)),
+                    logger,
+                    onRound: sink.onRound,
+                    emit: (event) => {
+                        events.push(event);
+                    },
+                }),
+            );
+
+            expect(sent.map((request) => request.exchange)).toEqual([false]);
+            expect(sent[0]!.messages.map((message) => message.content)).toEqual([...EARLIER, ...TURN].map((message) => message.content));
+            expect(markersOf(messages)).toEqual([]);
+            expect(messages).toContain(TURN[1]!);
+            expect(sink.rounds.find((round) => round[0] === USER_MESSAGE)).toEqual(TURN);
+            expect(compactionParts(events).map((part) => [part.status, part.trigger])).toEqual([
+                ["running", "turn-start"],
+                ["failed", "turn-start"],
+            ]);
+            const error = logger.records.find((record) => record.level === "error" && record.msg.includes("compaction gave no summary"));
+            expect(error?.fields).toMatchObject({ trigger: "turn-start", tokensBefore: OVER, status: 400 });
+        });
+
+        it("ends the run aborted before the user message joins the conversation when an abort ends the turn-start exchange", async () => {
+            const sink = recordingSink();
+            const aborting: AgentChat = { capabilities: { toolCalling: true }, chat: () => okAsync(abortedReply("a partial summ")) };
+            const task = scriptedProvider([]);
+
+            const { messages, finish } = await runAgent(
+                agentDef([echoTool()]),
+                EARLIER,
+                makeSession(),
+                opts(task, { turnInput: TURN, compaction: turnStartPolicy(aborting), onRound: sink.onRound }),
+            );
+
+            expect(finish.reason).toBe("aborted");
+            expect(task.calls).toHaveLength(0);
+            expect(markersOf(messages)).toEqual([]);
+            expect(messages.map((message) => message.content)).not.toContain("and the p-value?");
+            expect([...EARLIER, ...sink.rounds.flat()]).toEqual(messages);
+            expect(sink.rounds.flat().every((message) => compactionExchangeOf(message) !== undefined)).toBe(true);
+        });
     });
 
     it("runs no exchange before a wrap-up request", async () => {
-        const provider = scriptedProvider((_i, request) => (isWrapUpRequest(request) ? text("where I reached") : bigCall("tu-1")));
+        const provider = scriptedProvider((_i, request) => (isWrapUpRequest(request) ? text("where I reached") : overCall("tu-1")));
 
         const { finish } = await runAgent(agentDef([echoTool()], 1), GO, makeSession(), opts(provider, { compaction: policyOf(provider) }));
 
@@ -2750,7 +2944,7 @@ describe("runAgent — compaction", () => {
     });
 
     it("runs no exchange before the request that continues a truncated reply", async () => {
-        const provider = scriptedProvider([makeMessage([textBlock(big(3_000))], "max_tokens"), text("the end")]);
+        const provider = scriptedProvider([makeMessage([textBlock(big(3_000))], "max_tokens", { inputTokens: OVER }), text("the end")]);
 
         const { finish } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider) }));
 

@@ -259,9 +259,9 @@ export type CompactionPart = {
     /** The id of the compaction — the reconcile key. */
     compactionId: string;
     status: CompactionStatus;
-    /** The estimate of the context before the compaction, in tokens. */
+    /** The input tokens of the last request before the compaction. */
     tokensBefore: number;
-    /** The estimate of the context after the compaction. Absent when the compaction left no marker. */
+    /** Only a part that an older harness stored carries it: the estimate of the context after the compaction. */
     tokensAfter?: number;
     durationMs?: number;
 };

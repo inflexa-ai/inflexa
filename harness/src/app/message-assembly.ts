@@ -42,8 +42,8 @@ export interface AssembleMessagesArgs {
 }
 
 export interface AssembledMessages {
-    /** The full message array for `runAgent`. */
-    readonly messages: LoopMessage[];
+    /** The view of the thread before the turn. */
+    readonly history: LoopMessage[];
     /** The sanitized user input as its own message — the genuine turn start. */
     readonly userMessage: ModelMessage;
     /** The context records after the user message. The turn stores them with the user message. */
@@ -81,7 +81,7 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
     };
 
     const contextRecords = await contextRecordsFor(args, history);
-    return { messages: [...history, userMessage, ...contextRecords], userMessage, contextRecords };
+    return { history, userMessage, contextRecords };
 }
 
 /** The context records of one turn, in the order analysis context, run activity, working memory. */

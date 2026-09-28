@@ -1,15 +1,13 @@
 /**
  * The view of a conversation, which the loop sends and `loadRecent` gives: the head, then the latest
- * summary marker, then the body. An exchange message never joins it. A drop marker keeps the last
- * turns of the body without their reasoning, and a summary marker with kept turns keeps them after
- * the summary, also without their context records. The loop and the reader call this one function,
- * thus the next turn reads back the prefix that the last request sent.
+ * summary marker, then the body. An exchange message never joins it, and a drop marker keeps the last
+ * turns of the body without their reasoning. The loop and the reader call this one function, thus the
+ * next turn reads back the prefix that the last request sent.
  */
 
 import type { ModelMessage } from "ai";
 
-import { compactionExchangeOf, compactionMarkerOf, contextRecordOf, isSyntheticUserMessage, requestInputTokensOf } from "./ai-sdk-message-storage.js";
-import { countTokens } from "./count-tokens.js";
+import { compactionExchangeOf, compactionMarkerOf, isSyntheticUserMessage, requestInputTokensOf } from "./ai-sdk-message-storage.js";
 
 /**
  * A turn starts on a `user` message that a human actually sent. Two kinds of
@@ -92,11 +90,6 @@ function withoutReasoningEntries(entries: readonly ViewEntry[]): ViewEntry[] {
     });
 }
 
-function lastTurns(body: readonly ViewEntry[], count: number): ViewEntry[] {
-    const turns = groupTurns(body, startsTurn);
-    return turns.slice(Math.max(turns.length - count, 0)).flat();
-}
-
 function viewParts(messages: readonly ModelMessage[], options: ConversationViewOptions): ViewParts {
     // The head ends at a marker or an exchange message too, thus the stored rows and a view that
     // starts with the seed and a summary give the same head.
@@ -117,12 +110,11 @@ function viewParts(messages: readonly ModelMessage[], options: ConversationViewO
         const marker = compactionMarkerOf(message);
         if (marker?.kind === "summary") {
             front = { message, source };
-            // The records after the marker give the current context, thus a kept record would only repeat an older copy.
-            const kept = lastTurns(body, marker.keptTurns ?? 0).filter((entry) => contextRecordOf(entry.message) === undefined);
-            body = withoutReasoningEntries(kept);
+            body = [];
         } else if (marker?.kind === "drop") {
             // The drop changes the prefix that the signature of each kept reasoning part binds.
-            body = withoutReasoningEntries(lastTurns(body, marker.keptTurns));
+            const turns = groupTurns(body, startsTurn);
+            body = withoutReasoningEntries(turns.slice(Math.max(turns.length - marker.keptTurns, 0)).flat());
         } else {
             body.push({ message, source });
         }
@@ -144,42 +136,16 @@ export function withoutReasoning(message: ModelMessage): ModelMessage | undefine
     return content.length === 0 ? undefined : { ...message, content };
 }
 
-/** The estimate of the messages, by the count that the store writes to the `tokens` column. */
-export function viewTokens(messages: readonly ModelMessage[]): number {
-    return messages.reduce((sum, message) => sum + countTokens(message.content), 0);
-}
-
 /**
- * The input tokens of the request of the latest assistant message after the latest marker, plus the estimate of that
- * message and each later message. With no such message, the estimate of the view. A marker changes the measured prefix.
+ * The input tokens that the provider reported for the last request of the conversation. A marker changes the
+ * conversation, thus a request before the latest marker gives `undefined`.
  */
-export function measureView(messages: readonly ModelMessage[], options: ConversationViewOptions): number {
-    const view = conversationView(messages, options);
-    let markerSource = -1;
-    for (let source = messages.length - 1; source >= 0; source--) {
-        if (compactionMarkerOf(messages[source]!) !== undefined) {
-            markerSource = source;
-            break;
-        }
+export function lastRequestInputTokens(messages: readonly ModelMessage[]): number | undefined {
+    for (let at = messages.length - 1; at >= 0; at--) {
+        const message = messages[at]!;
+        if (compactionMarkerOf(message) !== undefined) return undefined;
+        const tokens = requestInputTokensOf(message);
+        if (tokens !== undefined) return tokens;
     }
-    for (let at = view.messages.length - 1; at >= 0; at--) {
-        if (view.sources[at]! <= markerSource) continue;
-        const anchor = requestInputTokensOf(view.messages[at]!);
-        if (anchor !== undefined) return anchor + viewTokens(view.messages.slice(at));
-    }
-    return viewTokens(view.messages);
-}
-
-/** The count of the turns that a drop keeps: the newest turn, and each older turn while the view stays within `budget`. */
-export function keptTurnsForDrop(messages: readonly ModelMessage[], options: ConversationViewOptions, budget: number): number {
-    const { head, front, body } = viewParts(messages, options);
-    const turnTokens = groupTurns(body, startsTurn).map((turn) => viewTokens(withoutReasoningEntries(turn).map((entry) => entry.message)));
-    let total = viewTokens([...head, ...(front === undefined ? [] : [front])].map((entry) => entry.message));
-    let kept = 0;
-    for (let t = turnTokens.length - 1; t >= 0; t--) {
-        if (kept > 0 && total + turnTokens[t]! > budget) break;
-        total += turnTokens[t]!;
-        kept++;
-    }
-    return kept;
+    return undefined;
 }

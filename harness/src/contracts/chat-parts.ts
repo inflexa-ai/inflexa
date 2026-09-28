@@ -445,10 +445,12 @@ export interface CompactionPart {
     type: "data-compaction";
     id: string;
     status: "running" | "done" | "failed";
+    /** The input tokens that the provider reported for the last request before the compaction. */
     tokensBefore: number;
+    /** Only a part that an older harness stored carries it: an estimate of the view after the compaction. */
     tokensAfter?: number;
     durationMs?: number;
-    /** Before the first request of a turn, or before a later request. */
+    /** Before the user message of a turn, or before a later request. */
     trigger?: "turn-start" | "mid-turn";
 }
 

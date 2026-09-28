@@ -10,8 +10,7 @@ import {
     syntheticUserMessage,
     withRequestInputTokens,
 } from "./ai-sdk-message-storage.js";
-import { countTokens } from "./count-tokens.js";
-import { conversationView, keptTurnsForDrop, measureView, viewTokens, withoutReasoning } from "./conversation-view.js";
+import { conversationView, lastRequestInputTokens, withoutReasoning } from "./conversation-view.js";
 
 function user(text: string): ModelMessage {
     return { role: "user", content: text };
@@ -40,11 +39,7 @@ function toolResult(id: string): ModelMessage {
 }
 
 function summary(id: string, text: string): ModelMessage {
-    return summaryMarkerMessage(text, { kind: "summary", id, tokensBefore: 100, tokensAfter: 10, durationMs: 5 });
-}
-
-function turnStartSummary(id: string, text: string): ModelMessage {
-    return summaryMarkerMessage(text, { kind: "summary", id, tokensBefore: 100, tokensAfter: 10, durationMs: 5, keptTurns: 1, trigger: "turn-start" });
+    return summaryMarkerMessage(text, { kind: "summary", id, tokensBefore: 100, durationMs: 5 });
 }
 
 function anchored(message: ModelMessage, tokens: number): ModelMessage {
@@ -53,7 +48,7 @@ function anchored(message: ModelMessage, tokens: number): ModelMessage {
 }
 
 function drop(id: string, keptTurns: number): ModelMessage {
-    return dropMarkerMessage({ kind: "drop", id, tokensBefore: 100, tokensAfter: 50, durationMs: 5, keptTurns });
+    return dropMarkerMessage({ kind: "drop", id, tokensBefore: 100, durationMs: 5, keptTurns });
 }
 
 function exchange(id: string): ModelMessage[] {
@@ -158,27 +153,6 @@ describe("conversationView", () => {
         expect(view.sources).toEqual([0, 2]);
     });
 
-    it("keeps the last turns of a summary marker with kept turns after the summary, without their context records and reasoning", () => {
-        const marker = turnStartSummary("c-1", "the talk so far");
-        const messages = [
-            user("u1"),
-            record("r0"),
-            thinking("early", "a1"),
-            user("u2"),
-            record("r1"),
-            thinking("kept", "a2"),
-            ...exchange("c-1"),
-            marker,
-            record("r2"),
-            thinking("later", "a3"),
-        ];
-
-        const view = conversationView(messages, {});
-
-        expect(view.messages).toEqual([marker, user("u2"), assistant("a2"), record("r2"), thinking("later", "a3")]);
-        expect(view.sources).toEqual([messages.indexOf(marker), 3, 5, messages.length - 2, messages.length - 1]);
-    });
-
     it("gives a view whose view is byte-identical", () => {
         const seed = syntheticRecordMessage("[Report Brief]\nThe brief.");
         const messages = [
@@ -201,53 +175,31 @@ describe("conversationView", () => {
             expect(JSON.stringify(conversationView(view, { keepFirstTurn }).messages)).toBe(JSON.stringify(view));
         }
     });
-
-    it("gives a view with kept turns of a summary whose view is byte-identical", () => {
-        const messages = [
-            user("u1"),
-            thinking("t", "a1"),
-            user("u2"),
-            record("r1"),
-            ...exchange("c-1"),
-            turnStartSummary("c-1", "first"),
-            record("r2"),
-            thinking("t2", "a2"),
-        ];
-
-        const view = conversationView(messages, {}).messages;
-
-        expect(JSON.stringify(conversationView(view, {}).messages)).toBe(JSON.stringify(view));
-    });
 });
 
-describe("measureView", () => {
-    it("gives the estimate of the view when no assistant message holds an anchor", () => {
-        const messages = [user("u1"), assistant("a1"), user("u2")];
+describe("lastRequestInputTokens", () => {
+    it("gives the input tokens of the latest assistant message that holds them", () => {
+        const messages = [user("u1"), anchored(assistant("a1"), 40_000), user("u2"), anchored(toolCall("t2"), 50_000), toolResult("t2"), record("r2")];
 
-        expect(measureView(messages, {})).toBe(viewTokens(messages));
+        expect(lastRequestInputTokens(messages)).toBe(50_000);
     });
 
-    it("gives the anchor of the latest assistant message, plus the estimate of that message and each later one", () => {
-        const latest = anchored(toolCall("t2"), 50_000);
-        const messages = [user("u1"), anchored(assistant("a1"), 40_000), user("u2"), latest, toolResult("t2"), record("r2")];
+    it("gives no figure when a marker follows the latest assistant message that holds them", () => {
+        const messages = [user("u1"), anchored(assistant("a1"), 90_000), ...exchange("c-1"), summary("c-1", "first"), record("r1")];
 
-        expect(measureView(messages, {})).toBe(50_000 + viewTokens([latest, toolResult("t2"), record("r2")]));
+        expect(lastRequestInputTokens(messages)).toBeUndefined();
+        expect(lastRequestInputTokens([...messages.slice(0, -2), drop("c-1", 1), record("r1")])).toBeUndefined();
     });
 
-    it("reads no anchor from before the latest marker", () => {
-        const kept = anchored(assistant("a2"), 90_000);
-        const marker = turnStartSummary("c-1", "first");
-        const messages = [user("u1"), anchored(assistant("a1"), 80_000), user("u2"), kept, user("u3"), ...exchange("c-1"), marker, record("r3")];
+    it("gives the input tokens of an assistant message after the marker", () => {
+        const messages = [user("u1"), anchored(assistant("a1"), 90_000), ...exchange("c-1"), drop("c-1", 1), record("r1"), anchored(assistant("a2"), 30_000)];
 
-        expect(measureView(messages, {})).toBe(viewTokens(conversationView(messages, {}).messages));
+        expect(lastRequestInputTokens(messages)).toBe(30_000);
     });
 
-    it("reads no anchor of a turn that a drop kept, and reads an anchor after the drop", () => {
-        const after = anchored(assistant("a3"), 30_000);
-        const messages = [user("u1"), anchored(assistant("a1"), 90_000), ...exchange("c-1"), drop("c-1", 1), record("r1")];
-
-        expect(measureView(messages, {})).toBe(viewTokens(conversationView(messages, {}).messages));
-        expect(measureView([...messages, after], {})).toBe(30_000 + viewTokens([after]));
+    it("gives no figure when no assistant message holds them", () => {
+        expect(lastRequestInputTokens([user("u1"), assistant("a1"), user("u2")])).toBeUndefined();
+        expect(lastRequestInputTokens([])).toBeUndefined();
     });
 });
 
@@ -258,32 +210,5 @@ describe("withoutReasoning", () => {
         expect(withoutReasoning(message)).toBe(message);
         expect(withoutReasoning(toolResult("t1"))).toEqual(toolResult("t1"));
         expect(withoutReasoning(assistant("a1"))).toEqual(assistant("a1"));
-    });
-});
-
-describe("keptTurnsForDrop", () => {
-    const turn = (label: string, words: number): ModelMessage[] => [user(label), assistant(Array.from({ length: words }, () => "word").join(" "))];
-
-    it("keeps the newest turn when that turn alone exceeds the budget", () => {
-        const messages = [...turn("u1", 50), ...turn("u2", 400)];
-
-        expect(keptTurnsForDrop(messages, {}, 10)).toBe(1);
-    });
-
-    it("adds each older turn while the view stays within the budget", () => {
-        const messages = [...turn("u1", 100), ...turn("u2", 100), ...turn("u3", 100)];
-        const lastTwo = viewTokens(messages.slice(2));
-
-        expect(keptTurnsForDrop(messages, {}, lastTwo)).toBe(2);
-        expect(keptTurnsForDrop(messages, {}, lastTwo - 1)).toBe(1);
-        expect(keptTurnsForDrop(messages, {}, viewTokens(messages))).toBe(3);
-    });
-
-    it("counts the summary in front of the kept turns", () => {
-        const marker = summary("c-1", Array.from({ length: 200 }, () => "fact").join(" "));
-        const messages = [user("u0"), ...exchange("c-1"), marker, ...turn("u1", 100), ...turn("u2", 100)];
-        const budget = countTokens(marker.content) + viewTokens(turn("u2", 100)) + 1;
-
-        expect(keptTurnsForDrop(messages, {}, budget)).toBe(1);
     });
 });
