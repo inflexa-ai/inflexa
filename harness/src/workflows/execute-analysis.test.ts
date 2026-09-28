@@ -30,7 +30,7 @@ import { join } from "node:path";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
-import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
+import { ChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
@@ -511,10 +511,10 @@ describe("executeAnalysis body", () => {
         // Every emitted part — including dag-states carrying "skipped" — passes
         // the published wire schema the react-client parser runs.
         for (const part of record.emittedParts) {
-            const parsed = CortexChatPartSchema.safeParse(part);
+            const parsed = ChatPartSchema.safeParse(part);
             expect(
                 parsed.success,
-                `emitted part ${JSON.stringify(part)} does not conform to CortexChatPartSchema: ` + (parsed.success ? "" : JSON.stringify(parsed.error.issues)),
+                `emitted part ${JSON.stringify(part)} does not conform to ChatPartSchema: ` + (parsed.success ? "" : JSON.stringify(parsed.error.issues)),
             ).toBe(true);
         }
     });
@@ -763,7 +763,7 @@ describe("executeAnalysis body", () => {
     // ── Wire-contract conformance ──────────────────────────────────────
     //
     // Guards the run-event stream contract: every part executeAnalysis puts on
-    // the stream MUST validate against the published `CortexChatPartSchema` from
+    // the stream MUST validate against the published `ChatPartSchema` from
     // @inflexa-ai/harness/contracts — the exact schema the react-client consumer's
     // parser runs, which silently drops any part that fails. This catches the whole class of
     // "emitter and wire schema drifted apart" defects (missing/renamed/mistyped
@@ -780,10 +780,10 @@ describe("executeAnalysis body", () => {
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
         for (const part of record.emittedParts) {
-            const result = CortexChatPartSchema.safeParse(part);
+            const result = ChatPartSchema.safeParse(part);
             expect(
                 result.success,
-                `emitted part ${JSON.stringify(part)} does not conform to CortexChatPartSchema: ` + (result.success ? "" : JSON.stringify(result.error.issues)),
+                `emitted part ${JSON.stringify(part)} does not conform to ChatPartSchema: ` + (result.success ? "" : JSON.stringify(result.error.issues)),
             ).toBe(true);
         }
         // The two regressions the sweep found, asserted by intent (not layout):
@@ -837,7 +837,7 @@ describe("executeAnalysis body", () => {
             cacheReadInputTokens: 80,
             reasoningTokens: 9,
         });
-        expect(CortexChatPartSchema.safeParse(completed).success).toBe(true);
+        expect(ChatPartSchema.safeParse(completed).success).toBe(true);
     });
 
     it("run-completed carries no usage when no step reported one", async () => {
@@ -884,7 +884,7 @@ describe("executeAnalysis body", () => {
 
         const failed = record.emittedParts.find((p) => p.type === "data-run-failed");
         expect(failed).toBeDefined();
-        expect(CortexChatPartSchema.safeParse(failed).success).toBe(true);
+        expect(ChatPartSchema.safeParse(failed).success).toBe(true);
         expect(typeof failed?.error).toBe("string");
         expect((failed?.error as string).length).toBeGreaterThan(0);
     });

@@ -15,7 +15,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
-import type { CortexChatPart, StepActivityPart } from "../contracts/chat-parts.js";
+import type { ChatPart, StepActivityPart } from "../contracts/chat-parts.js";
 import { insertStepExecution, queryStepsByRun } from "../state/step-executions.js";
 import { createRunEventStream } from "./run-event-stream.js";
 
@@ -136,9 +136,9 @@ async function settlesWithin<T>(promise: Promise<T>, timeoutMs: number, label: s
     }
 }
 
-const typesOf = (parts: readonly CortexChatPart[]): string[] => parts.map((p) => p.type);
+const typesOf = (parts: readonly ChatPart[]): string[] => parts.map((p) => p.type);
 
-const activitiesOf = (parts: readonly CortexChatPart[]): StepActivityPart[] => parts.filter((p): p is StepActivityPart => p.type === "data-step-activity");
+const activitiesOf = (parts: readonly ChatPart[]): StepActivityPart[] => parts.filter((p): p is StepActivityPart => p.type === "data-step-activity");
 
 // ── Data-profile fixtures ────────────────────────────────────────────
 
@@ -171,7 +171,7 @@ describe("run-event stream — one workflow", () => {
         });
         await handle.getResult();
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         await settlesWithin(
             stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
@@ -193,7 +193,7 @@ describe("run-event stream — one workflow", () => {
         });
         await handle.getResult();
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         await settlesWithin(
             stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
@@ -213,7 +213,7 @@ describe("run-event stream — one workflow", () => {
         });
         await handle.getResult();
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const logger = createCapturingLogger();
         const stream = createRunEventStream({ pool: rig.pool, logger });
         await settlesWithin(
@@ -254,7 +254,7 @@ describe("run-event stream — parent and child fan-in", () => {
         await recordChild(rig.pool, runId, "T1S1", childA);
         await recordChild(rig.pool, runId, "T1S2", childB);
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         await settlesWithin(stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }), 20_000, "fan-in subscription");
 
@@ -274,7 +274,7 @@ describe("run-event stream — parent and child fan-in", () => {
         const parent = await startEmitter(runId, { before: [dagState(runId, ["running"])], after: [runCompleted(runId)], gate: true });
         await DBOS.getEvent<boolean>(runId, "gated", 30);
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         const subscription = stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal });
 
@@ -307,7 +307,7 @@ describe("run-event stream — parent and child fan-in", () => {
         await recordChild(rig.pool, runId, "T1S1", `${runId}-child-absent`);
         await recordChild(rig.pool, runId, "T1S2", goodChild);
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         await settlesWithin(
             stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
@@ -327,7 +327,7 @@ describe("run-event stream — lifecycle", () => {
         const handle = await startEmitter(runId, { before: [], after: [], gate: false });
         await handle.getResult();
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         await settlesWithin(
             stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
@@ -340,7 +340,7 @@ describe("run-event stream — lifecycle", () => {
 
     it("settles for a run id no workflow ever used", async () => {
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         await settlesWithin(
             stream.subscribe({ runId: "run-that-never-existed", onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
             20_000,
@@ -359,7 +359,7 @@ describe("run-event stream — lifecycle", () => {
         });
         await DBOS.getEvent<boolean>(runId, "gated", 30);
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const controller = new AbortController();
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         const subscription = stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: controller.signal });
@@ -392,7 +392,7 @@ describe("run-event stream — lifecycle", () => {
         });
         await DBOS.getEvent<boolean>(runId, "gated", 30);
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         const subscription = stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal });
 
@@ -439,7 +439,7 @@ describe("run-event stream — a data profile", () => {
         // reader keeps enqueuing while a delivery is in flight, so the transitions
         // it read behind the first one arrive as one batch for the fold to collapse
         // rather than as a delivery per transition.
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         const subscription = stream.subscribe({
             runId: workflowId,
@@ -485,7 +485,7 @@ describe("run-event stream — a data profile", () => {
         // the only signal the subscription has to settle on.
         expect((await queryStepsByRun(rig.pool, workflowId))._unsafeUnwrap()).toEqual([]);
 
-        const seen: CortexChatPart[] = [];
+        const seen: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         await settlesWithin(
             stream.subscribe({ runId: workflowId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
@@ -518,8 +518,8 @@ describe("run-event stream — a data profile", () => {
         });
         await Promise.all([DBOS.getEvent<boolean>(alpha, "gated", 30), DBOS.getEvent<boolean>(beta, "gated", 30)]);
 
-        const seenAlpha: CortexChatPart[] = [];
-        const seenBeta: CortexChatPart[] = [];
+        const seenAlpha: ChatPart[] = [];
+        const seenBeta: ChatPart[] = [];
         const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
         const subAlpha = stream.subscribe({ runId: alpha, onPart: (p) => void seenAlpha.push(p), signal: new AbortController().signal });
         const subBeta = stream.subscribe({ runId: beta, onPart: (p) => void seenBeta.push(p), signal: new AbortController().signal });

@@ -352,7 +352,7 @@ its process bootstrap, and any adapter that is not local.
 
 - **Chat data part** — A typed JSON event that a workflow emits. It is persisted
   in the DBOS-backed stream, and there is no separate JSONB blob. A consumer reads
-  the Cortex-native types directly, with no AI SDK mapping.
+  the harness contract types directly, with no AI SDK mapping.
 
 ---
 
@@ -541,8 +541,8 @@ Other facts:
 
 - One DBOS-backed stream for each workflow. A live consumer and a historical
   replay read the same source.
-- No AI SDK format mapping. A consumer reads the Cortex-native typed events
-  directly.
+- No AI SDK format mapping. A consumer reads the typed events of the harness
+  contract directly.
 - Typed UI parts (RunStarted, DagState, StepActivity, StepOutput, RunCompleted,
   and others). **Each event is persisted, and the fold happens on read**: each
   part is written to the one DBOS stream, and a reconciling event is folded

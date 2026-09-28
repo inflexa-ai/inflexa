@@ -6,13 +6,13 @@
 
 import { describe, expect, it } from "bun:test";
 
-import type { CortexChatPart } from "../contracts/chat-parts.js";
+import type { ChatPart } from "../contracts/chat-parts.js";
 import { foldRunEventParts, parseRunEventPart } from "./run-event-parts.js";
 
-const activity = (id: string, phase: string, text: string): CortexChatPart =>
-    ({ type: "data-step-activity", id, runId: "run-1", stepId: "T1S1", phase, activity: text }) as CortexChatPart;
+const activity = (id: string, phase: string, text: string): ChatPart =>
+    ({ type: "data-step-activity", id, runId: "run-1", stepId: "T1S1", phase, activity: text }) as ChatPart;
 
-const summary = (stepId: string, markdown: string): CortexChatPart => ({
+const summary = (stepId: string, markdown: string): ChatPart => ({
     type: "data-step-summary",
     id: `step-summary-run-1-${stepId}`,
     runId: "run-1",
@@ -93,14 +93,14 @@ describe("foldRunEventParts", () => {
     });
 
     it("does not collapse across part types that share an id", () => {
-        const dag = { type: "data-dag-state", id: "shared", runId: "run-1", steps: [] } as CortexChatPart;
-        const ask = { type: "data-ask", id: "shared", title: "t", command: "c", status: "pending" } as CortexChatPart;
+        const dag = { type: "data-dag-state", id: "shared", runId: "run-1", steps: [] } as ChatPart;
+        const ask = { type: "data-ask", id: "shared", title: "t", command: "c", status: "pending" } as ChatPart;
 
         expect(foldRunEventParts([dag, ask])).toEqual([dag, ask]);
     });
 
     it("passes through a reconciling part carrying no id rather than dropping it", () => {
-        const idless = { type: "data-step-activity", runId: "run-1", stepId: "T1S1", phase: "executing", activity: "x" } as CortexChatPart;
+        const idless = { type: "data-step-activity", runId: "run-1", stepId: "T1S1", phase: "executing", activity: "x" } as ChatPart;
 
         expect(foldRunEventParts([idless, idless])).toEqual([idless, idless]);
     });

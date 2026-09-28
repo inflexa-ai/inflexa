@@ -1,6 +1,9 @@
-import type { CortexChatPart } from "./chat-parts.js";
+import type { ChatPart } from "./chat-parts.js";
 
-export type CortexChatPartType = CortexChatPart["type"];
+export type ChatPartType = ChatPart["type"];
+
+/** @deprecated Use {@link ChatPartType}. */
+export type CortexChatPartType = ChatPartType;
 
 export type PartEmitter = "workflow" | "conversation";
 export type PartConsumer = "sidebar" | "conversation";
@@ -16,7 +19,7 @@ export interface PartDescriptor {
     reconciling: boolean;
 }
 
-export const PART_REGISTRY: Record<CortexChatPartType, PartDescriptor> = {
+export const PART_REGISTRY: Record<ChatPartType, PartDescriptor> = {
     "data-presentation": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-plan": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-run-card": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
@@ -39,14 +42,14 @@ export const PART_REGISTRY: Record<CortexChatPartType, PartDescriptor> = {
     "data-compaction": { emitter: "conversation", consumer: "conversation", transient: true, reconciling: true },
 };
 
-export function isTransient(type: CortexChatPartType): boolean {
+export function isTransient(type: ChatPartType): boolean {
     return PART_REGISTRY[type].transient;
 }
 
-export function isReconciling(type: CortexChatPartType): boolean {
+export function isReconciling(type: ChatPartType): boolean {
     return PART_REGISTRY[type].reconciling;
 }
 
-export function isSidebarPart(type: CortexChatPartType): boolean {
+export function isSidebarPart(type: ChatPartType): boolean {
     return PART_REGISTRY[type].consumer === "sidebar";
 }

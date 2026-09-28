@@ -381,8 +381,8 @@ is an embedder concern.
 - **Workflow recovery**: there is no standing component. Each host supplies a
   stable `executorID`. Refer to [`CONTEXT.md`](CONTEXT.md), under
   `Workflow recovery`.
-- **Shared contracts** (`harness/src/contracts/`): the Cortex-native chat-stream
-  event and data-part types (`CortexChatEvent`, `CortexChatPart`, and the part
+- **Shared contracts** (`harness/src/contracts/`): the chat-stream event and
+  data-part types (`ChatEvent`, `ChatPart`, `ChatMessage`, and the part
   registry). `@inflexa-ai/harness` exports them for a consumer that renders the
   stream.
 

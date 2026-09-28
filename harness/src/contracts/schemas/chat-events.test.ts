@@ -1,13 +1,13 @@
 /**
  * These schemas are the only in-repo guard on the chat-event wire vocabulary.
- * `CortexChatEvent` has no consumer in this repository — a host types against
+ * `ChatEvent` has no consumer in this repository — a host types against
  * it — so nothing else would catch the types and the schemas drifting apart.
  */
 
 import { describe, expect, it } from "bun:test";
 import type { z } from "zod";
 
-import { CortexChatEventSchema, ToolFinishedEventSchema, ToolOutcomeSchema, ToolStartedEventSchema } from "./chat-events.js";
+import { ChatEventSchema, ToolFinishedEventSchema, ToolOutcomeSchema, ToolStartedEventSchema } from "./chat-events.js";
 
 type ToolStarted = z.infer<typeof ToolStartedEventSchema>;
 type ToolFinished = z.infer<typeof ToolFinishedEventSchema>;
@@ -85,10 +85,10 @@ describe("ToolFinishedEventSchema", () => {
     });
 });
 
-describe("CortexChatEventSchema", () => {
+describe("ChatEventSchema", () => {
     it("discriminates the tool events by type", () => {
-        const started = CortexChatEventSchema.parse({ type: "tool-started", toolUseId: "tu-1", name: "pubmed", detail: "search BRCA1", source });
-        const finished = CortexChatEventSchema.parse({ type: "tool-finished", toolUseId: "tu-1", name: "pubmed", outcome: "denied", source });
+        const started = ChatEventSchema.parse({ type: "tool-started", toolUseId: "tu-1", name: "pubmed", detail: "search BRCA1", source });
+        const finished = ChatEventSchema.parse({ type: "tool-finished", toolUseId: "tu-1", name: "pubmed", outcome: "denied", source });
 
         expect(started.type).toBe("tool-started");
         expect(finished).toMatchObject({ type: "tool-finished", outcome: "denied" });

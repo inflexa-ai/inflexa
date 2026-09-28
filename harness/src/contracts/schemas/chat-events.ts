@@ -1,5 +1,5 @@
 /**
- * Zod schemas for Cortex-native chat-stream events — validation at boundaries.
+ * Zod schemas for chat-stream events — validation at boundaries.
  */
 
 import { z } from "zod";
@@ -56,10 +56,13 @@ export const ChatErrorEventSchema = z.object({
     source: EventSourceSchema,
 });
 
-export const CortexChatEventSchema = z.discriminatedUnion("type", [
+export const ChatEventSchema = z.discriminatedUnion("type", [
     TextDeltaEventSchema,
     ToolStartedEventSchema,
     ToolFinishedEventSchema,
     FinishEventSchema,
     ChatErrorEventSchema,
 ]);
+
+/** @deprecated Use {@link ChatEventSchema}. */
+export const CortexChatEventSchema = ChatEventSchema;

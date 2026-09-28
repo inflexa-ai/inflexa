@@ -4,7 +4,7 @@
  *
  * AI SDK `UIMessage` is the CONTAINER: it supplies message identity, role,
  * ordering, metadata, and `validateUIMessages` for runtime validation. The PARTS
- * vocabulary is Cortex's own, because ours is the richer one — a `CortexPart`
+ * vocabulary is Cortex's own, because ours is the richer one — a `MessagePart`
  * carries a tool call's four-way outcome and its one-line detail, and AI SDK's
  * `dynamic-tool` part has nowhere to put either. Mapping through `dynamic-tool`
  * would silently drop both on every reload, so every non-text part rides as a
@@ -40,7 +40,7 @@ import {
 } from "../contracts/schemas/chat-parts.js";
 import { ToolCallOutcomeSchema } from "../contracts/schemas/chat-events.js";
 import type { ToolCallOutcome } from "../contracts/chat-events.js";
-import type { CortexMessage, CortexPart, ToolCallPart } from "../contracts/message.js";
+import type { ChatMessage, MessagePart, ToolCallPart } from "../contracts/message.js";
 import type { Logger } from "../lib/logger.js";
 
 export const SUPPORTED_DISPLAY_SCHEMA_VERSION = 1;
@@ -219,12 +219,12 @@ export async function parseStoredDisplayEnvelope(value: unknown, identity: strin
 }
 
 /** The data-part key a Cortex part is stored under — its `type` minus the `data-` prefix. */
-function displayPartType(part: Exclude<CortexPart, { type: "text" }>): `data-${keyof ConversationUIData & string}` {
+function displayPartType(part: Exclude<MessagePart, { type: "text" }>): `data-${keyof ConversationUIData & string}` {
     return (part.type === "tool-call" ? "data-tool-call" : part.type) as `data-${keyof ConversationUIData & string}`;
 }
 
 /** The id a part reconciles on: a tool call by its call id, a card by its own stable id. */
-function displayPartId(part: Exclude<CortexPart, { type: "text" }>): string | undefined {
+function displayPartId(part: Exclude<MessagePart, { type: "text" }>): string | undefined {
     if (part.type === "tool-call") return part.toolCallId;
     return "id" in part && typeof part.id === "string" ? part.id : undefined;
 }
@@ -239,7 +239,7 @@ function displayPartId(part: Exclude<CortexPart, { type: "text" }>): string | un
  * absence resolves to `incomplete` at exactly this boundary — once, where the
  * lifetime changes — rather than at each reader.
  */
-export function conversationDisplayPart(part: Exclude<CortexPart, { type: "text" }>): DataUIPart<ConversationUIData> {
+export function conversationDisplayPart(part: Exclude<MessagePart, { type: "text" }>): DataUIPart<ConversationUIData> {
     const { type: _type, ...rest } = part;
     const data = part.type === "tool-call" ? { ...rest, outcome: part.outcome ?? "incomplete" } : rest;
     return { type: displayPartType(part), id: displayPartId(part), data } as DataUIPart<ConversationUIData>;
@@ -252,10 +252,10 @@ export function conversationDisplayPart(part: Exclude<CortexPart, { type: "text"
  * so nothing here consults a tool name, a registry, or the filesystem. A message
  * whose parts all render empty is dropped so the transcript has no empty bubbles.
  */
-export function conversationUIToCortexMessages(messages: readonly ConversationUIMessage[]): CortexMessage[] {
-    const out: CortexMessage[] = [];
+export function conversationUIToCortexMessages(messages: readonly ConversationUIMessage[]): ChatMessage[] {
+    const out: ChatMessage[] = [];
     for (const message of messages) {
-        const parts: CortexPart[] = [];
+        const parts: MessagePart[] = [];
         for (const part of message.parts) {
             if (part.type === "text") {
                 if (part.text.length > 0) parts.push({ type: "text", text: part.text });
@@ -267,7 +267,7 @@ export function conversationUIToCortexMessages(messages: readonly ConversationUI
             }
             if (part.type.startsWith("data-")) {
                 const data = part as DataUIPart<ConversationUIData>;
-                parts.push({ type: data.type, ...(data.data as object) } as CortexPart);
+                parts.push({ type: data.type, ...(data.data as object) } as MessagePart);
             }
         }
         if (parts.length === 0) continue;

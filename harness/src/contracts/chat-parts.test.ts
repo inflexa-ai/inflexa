@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { PART_REGISTRY } from "./part-registry.js";
-import { CompactionPartSchema, CortexChatPartSchema, PresentationContentSchema, PresentationPartSchema } from "./schemas/chat-parts.js";
+import { CompactionPartSchema, ChatPartSchema, PresentationContentSchema, PresentationPartSchema } from "./schemas/chat-parts.js";
 
 describe("PresentationContentSchema — echart dataPath", () => {
     test("accepts an echart content carrying dataPath and round-trips it (does not strip it)", () => {
@@ -33,7 +33,7 @@ describe("PresentationContentSchema — echart dataPath", () => {
             },
         };
         expect(PresentationPartSchema.parse(part)).toEqual(part);
-        expect(CortexChatPartSchema.parse(part)).toEqual(part);
+        expect(ChatPartSchema.parse(part)).toEqual(part);
     });
 });
 
@@ -50,7 +50,7 @@ describe("PresentationContentSchema — structure", () => {
     test("accepts a normalized structure content and round-trips it", () => {
         expect(PresentationContentSchema.parse(structure)).toEqual(structure);
         const part = { type: "data-presentation" as const, id: "pres-abc123", title: "BRCA1", content: structure };
-        expect(CortexChatPartSchema.parse(part)).toEqual(part);
+        expect(ChatPartSchema.parse(part)).toEqual(part);
     });
 
     test("rejects a structure content missing a derived field", () => {
@@ -67,8 +67,8 @@ describe("CompactionPartSchema", () => {
         const running = { type: "data-compaction" as const, id: "c-1", status: "running" as const, tokensBefore: 162_000 };
         const done = { ...running, status: "done" as const, durationMs: 21_000 };
 
-        expect(CortexChatPartSchema.parse(running)).toEqual(running);
-        expect(CortexChatPartSchema.parse(done)).toEqual(done);
+        expect(ChatPartSchema.parse(running)).toEqual(running);
+        expect(ChatPartSchema.parse(done)).toEqual(done);
     });
 
     test("refuses the status dropped", () => {
