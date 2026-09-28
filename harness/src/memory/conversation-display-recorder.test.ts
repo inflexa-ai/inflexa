@@ -13,7 +13,7 @@ function harness() {
     const forwarded: Parameters<EmitFn>[0][] = [];
     const recorder = createConversationDisplayRecorder({
         userText: "question",
-        topLevelCallPath: TOP.callPath,
+        agentId: TOP.agentId,
         sink: (event) => {
             forwarded.push(event);
         },

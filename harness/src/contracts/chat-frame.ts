@@ -60,12 +60,14 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
     }
 }
 
-/**
- * Apply one frame to the messages of a live turn, with no change to the input. A frame whose `source.callPath` holds
- * more than one entry comes from a sub-agent and changes nothing, because the root agent of a chat turn has `[agent.id]`.
- */
+/** A frame of the root agent of a chat turn, whose call path is `[agent.id]`. A longer path is a sub-agent. */
+export function isRootFrame(frame: ChatFrame): boolean {
+    return frame.source === undefined || frame.source.callPath.length <= 1;
+}
+
+/** Apply one frame to the messages of a live turn, with no change to the input. A frame of a sub-agent changes nothing. */
 export function applyChatFrame(messages: ChatMessage[], frame: ChatFrame, assistantId: string): ApplyFrameResult {
-    if (frame.source !== undefined && frame.source.callPath.length > 1) return { messages, terminal: null };
+    if (!isRootFrame(frame)) return { messages, terminal: null };
     if (frame.type === "finish") {
         return {
             messages: frame.turnUsage === undefined ? messages : stampUsage(messages, assistantId, frame.turnUsage),
@@ -94,17 +96,24 @@ function applyPartFrame(parts: MessagePart[], frame: ChatFrame): MessagePart[] {
                     ...(frame.detail === undefined ? {} : { detail: frame.detail }),
                 } satisfies ToolCallPart,
             ];
-        case "tool-finished":
-            return parts.map((p) =>
-                p.type === "tool-call" && p.toolCallId === frame.toolUseId
-                    ? ({
-                          ...p,
-                          outcome: frame.outcome,
-                          ...(frame.detail === undefined ? {} : { detail: frame.detail }),
-                          ...(frame.durationMs === undefined ? {} : { durationMs: frame.durationMs }),
-                      } satisfies ToolCallPart)
-                    : p,
-            );
+        case "tool-finished": {
+            const finished = {
+                type: "tool-call",
+                toolCallId: frame.toolUseId,
+                toolName: frame.name,
+                outcome: frame.outcome,
+                ...(frame.detail === undefined ? {} : { detail: frame.detail }),
+                ...(frame.durationMs === undefined ? {} : { durationMs: frame.durationMs }),
+            } satisfies ToolCallPart;
+            let started = false;
+            const next = parts.map((p) => {
+                if (p.type !== "tool-call" || p.toolCallId !== frame.toolUseId) return p;
+                started = true;
+                return { ...p, ...finished };
+            });
+            // The stored transcript keeps a call whose start never arrived, thus a live view keeps it too.
+            return started ? next : [...parts, finished];
+        }
         default: {
             // Each remaining frame is a `data-*` part. Its source routes the frame, and it is not a field of the part.
             const { source: _source, ...part } = frame as ChatPartFrame;

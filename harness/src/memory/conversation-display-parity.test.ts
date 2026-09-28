@@ -55,7 +55,7 @@ function live(rounds: readonly Round[], turnUsage?: TokenUsageRollup): ChatMessa
 async function replay(rounds: readonly Round[], facts: RowFacts = {}): Promise<ChatMessage[]> {
     const recorder = createConversationDisplayRecorder({
         userText: USER_TEXT,
-        topLevelCallPath: ROOT.callPath,
+        agentId: ROOT.agentId,
         sink: () => {},
         userMessageId: USER_ID,
         assistantMessageId: ASSISTANT_ID,

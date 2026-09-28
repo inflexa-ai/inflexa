@@ -268,7 +268,7 @@ async function runOpenTurn(
     const history = createThreadHistory(deps.pool, deps.logger);
     const recorder = createConversationDisplayRecorder({
         userText: userTextOf(prepared.userMessage),
-        topLevelCallPath: session.provenance.callPath,
+        agentId: agent.id,
         sink: params.emit,
     });
     // The groups that did not land yet, in the order of the turn. A failed write keeps them for the next write.
