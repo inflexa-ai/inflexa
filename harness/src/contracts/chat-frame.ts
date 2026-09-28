@@ -5,7 +5,7 @@ import type { ChatStreamEvent } from "../providers/types.js";
 import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource } from "./chat-events.js";
 import type { ChatPart } from "./chat-parts.js";
 import type { ChatMessage, MessagePart, TextPart, ToolCallPart } from "./message.js";
-import { isReconciling } from "./part-registry.js";
+import { isReconciling, PART_REGISTRY } from "./part-registry.js";
 import type { TokenUsageRollup } from "./usage.js";
 
 export type TurnTerminal = null | "finish" | { error: ChatErrorEvent };
@@ -128,7 +128,8 @@ function upsertDataPart(parts: MessagePart[], part: ChatPart): MessagePart[] {
 }
 
 function reconcileId(part: ChatPart): string | undefined {
-    if (!isReconciling(part.type)) return undefined;
+    // A frame from a newer emitter can carry a type that this registry does not know. Such a part appends.
+    if (!Object.hasOwn(PART_REGISTRY, part.type) || !isReconciling(part.type)) return undefined;
     return "id" in part && typeof part.id === "string" ? part.id : undefined;
 }
 
