@@ -1,13 +1,14 @@
 /**
  * The view of a conversation, which the loop sends and `loadRecent` gives: the head, then the latest
- * summary marker, then the body. An exchange message never joins it, and a drop marker keeps the last
- * turns of the body without their reasoning. The loop and the reader call this one function, thus the
- * next turn reads back the prefix that the last request sent.
+ * summary marker, then the body. An exchange message never joins it. A drop marker keeps the last
+ * turns of the body without their reasoning, and a summary marker with kept turns keeps them after
+ * the summary, also without their context records. The loop and the reader call this one function,
+ * thus the next turn reads back the prefix that the last request sent.
  */
 
 import type { ModelMessage } from "ai";
 
-import { compactionExchangeOf, compactionMarkerOf, isSyntheticUserMessage } from "./ai-sdk-message-storage.js";
+import { compactionExchangeOf, compactionMarkerOf, contextRecordOf, isSyntheticUserMessage, requestInputTokensOf } from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
 
 /**
@@ -91,6 +92,11 @@ function withoutReasoningEntries(entries: readonly ViewEntry[]): ViewEntry[] {
     });
 }
 
+function lastTurns(body: readonly ViewEntry[], count: number): ViewEntry[] {
+    const turns = groupTurns(body, startsTurn);
+    return turns.slice(Math.max(turns.length - count, 0)).flat();
+}
+
 function viewParts(messages: readonly ModelMessage[], options: ConversationViewOptions): ViewParts {
     // The head ends at a marker or an exchange message too, thus the stored rows and a view that
     // starts with the seed and a summary give the same head.
@@ -111,11 +117,12 @@ function viewParts(messages: readonly ModelMessage[], options: ConversationViewO
         const marker = compactionMarkerOf(message);
         if (marker?.kind === "summary") {
             front = { message, source };
-            body = [];
+            // The records after the marker give the current context, thus a kept record would only repeat an older copy.
+            const kept = lastTurns(body, marker.keptTurns ?? 0).filter((entry) => contextRecordOf(entry.message) === undefined);
+            body = withoutReasoningEntries(kept);
         } else if (marker?.kind === "drop") {
             // The drop changes the prefix that the signature of each kept reasoning part binds.
-            const turns = groupTurns(body, startsTurn);
-            body = withoutReasoningEntries(turns.slice(Math.max(turns.length - marker.keptTurns, 0)).flat());
+            body = withoutReasoningEntries(lastTurns(body, marker.keptTurns));
         } else {
             body.push({ message, source });
         }
@@ -140,6 +147,27 @@ export function withoutReasoning(message: ModelMessage): ModelMessage | undefine
 /** The estimate of the messages, by the count that the store writes to the `tokens` column. */
 export function viewTokens(messages: readonly ModelMessage[]): number {
     return messages.reduce((sum, message) => sum + countTokens(message.content), 0);
+}
+
+/**
+ * The input tokens of the request of the latest assistant message after the latest marker, plus the estimate of that
+ * message and each later message. With no such message, the estimate of the view. A marker changes the measured prefix.
+ */
+export function measureView(messages: readonly ModelMessage[], options: ConversationViewOptions): number {
+    const view = conversationView(messages, options);
+    let markerSource = -1;
+    for (let source = messages.length - 1; source >= 0; source--) {
+        if (compactionMarkerOf(messages[source]!) !== undefined) {
+            markerSource = source;
+            break;
+        }
+    }
+    for (let at = view.messages.length - 1; at >= 0; at--) {
+        if (view.sources[at]! <= markerSource) continue;
+        const anchor = requestInputTokensOf(view.messages[at]!);
+        if (anchor !== undefined) return anchor + viewTokens(view.messages.slice(at));
+    }
+    return viewTokens(view.messages);
 }
 
 /** The count of the turns that a drop keeps: the newest turn, and each older turn while the view stays within `budget`. */

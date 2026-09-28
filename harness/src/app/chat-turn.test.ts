@@ -11,7 +11,7 @@ import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../loop/__fixtures__/scripted-provider.js";
 import { runAgent } from "../loop/run-agent.js";
 import type { AgentDefinition } from "../loop/types.js";
-import { compactionExchangeOf, compactionMarkerOf, contextRecordOf } from "../memory/ai-sdk-message-storage.js";
+import { compactionExchangeOf, compactionMarkerOf, contextRecordOf, withRequestInputTokens } from "../memory/ai-sdk-message-storage.js";
 import { storedMessagesToCortex } from "../memory/conversation-display-replay.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { conversationRecordTurn, createThreadHistory, type StoredMessage } from "../memory/thread-history.js";
@@ -31,7 +31,15 @@ import { defineTool, type Tool } from "../tools/define-tool.js";
 import { createUpdateWorkingMemoryTool } from "../tools/memory/update-working-memory.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { suspensionOfFailure } from "../workflows/suspension.js";
-import { DEFAULT_CONVERSATION_BUDGET, openChatTurn, prepareChatTurn, runChatTurn, type RunChatTurnParams } from "./chat-turn.js";
+import {
+    CONVERSATION_TURN_BUDGET,
+    DEFAULT_CONVERSATION_BUDGET,
+    openChatTurn,
+    prepareChatTurn,
+    REPORT_TURN_BUDGET,
+    runChatTurn,
+    type RunChatTurnParams,
+} from "./chat-turn.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -574,7 +582,10 @@ describe("runChatTurn", () => {
     it("refuses a thread of a different analysis at the open, before any row of the turn", async () => {
         (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_B, title: "Owned by B" }))._unsafeUnwrap();
 
-        const opened = await openChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, { analysisId: ANALYSIS_A, threadId: THREAD, userInput: "hi" });
+        const opened = await openChatTurn(
+            { pool, agents: resolverFor(agentWith([echoTool()])) },
+            { analysisId: ANALYSIS_A, threadId: THREAD, userInput: "hi" },
+        );
 
         expect(opened).toEqual({ kind: "not_found" });
         expect(await storedRows()).toEqual([]);
@@ -845,6 +856,7 @@ describe("runChatTurn — compaction", () => {
                 tokensBefore: expect.any(Number),
                 tokensAfter: expect.any(Number),
                 durationMs: expect.any(Number),
+                trigger: "mid-turn",
             },
         ]);
         expect(JSON.stringify(replay)).not.toContain(SUMMARY);
@@ -936,7 +948,7 @@ describe("runChatTurn — compaction", () => {
         expect(view[0]!.content).toBe("[Conversation Summary]\nfirst summary");
     });
 
-    it("compacts before the first task request when the view passes the budget of the host, after the stored opening", async () => {
+    it("compacts at the turn start when the view passes the budget of the host, and keeps the user message after the summary", async () => {
         (
             await createThreadHistory(pool).appendTurn(THREAD, {
                 modelMessages: [
@@ -961,11 +973,48 @@ describe("runChatTurn — compaction", () => {
 
         await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: 2_000 }));
 
-        const first = replies.calls[0]!;
-        expect(isExchangeRequest(first)).toBe(true);
-        expect(first.messages.slice(-4).map(kindOf)).toEqual(["user", "run-activity", "working-memory", "user"]);
-        expect(first.messages.at(-1)!.content).toBe(MEMORY_COMPACTION_REQUEST);
+        const [first, task] = replies.calls;
+        expect(isExchangeRequest(first!)).toBe(true);
+        expect(first!.messages.map(kindOf)).toEqual(["user", "assistant", "user"]);
+        expect(first!.messages.at(-1)!.content).toBe(MEMORY_COMPACTION_REQUEST);
         expect(storedAtRequest[0]).toEqual(["user", "assistant", "user", "run-activity", "working-memory"]);
+        expect(task!.messages.map(kindOf)).toEqual(["summary-marker", "user", "run-activity", "working-memory"]);
+        expect(task!.messages[1]!.content).toBe("compare the two groups");
+    });
+
+    /** Store an earlier turn whose reply reported `inputTokens` for its request. */
+    async function storeMeasuredTurn(inputTokens: number): Promise<void> {
+        const reply = withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "an earlier answer" }] }, inputTokens);
+        (
+            await createThreadHistory(pool).appendTurn(THREAD, {
+                modelMessages: [{ role: "user", content: "an earlier question" }, reply],
+                displayMessages: [],
+            })
+        )._unsafeUnwrap();
+    }
+
+    it("compacts at the turn start of a conversation thread past the default turn-start budget, by the reported input tokens", async () => {
+        await storeMeasuredTurn(DEFAULT_CONVERSATION_BUDGET + 10_000);
+        const provider = compactingProvider([text("done")], [text(SUMMARY)]);
+
+        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: undefined }));
+
+        expect(provider.calls.map(isExchangeRequest)).toEqual([true, false]);
+        expect(provider.calls[1]!.messages.map(kindOf)).toEqual(["summary-marker", "user", "run-activity", "working-memory"]);
+        const marker = (await storedRows()).map((row) => compactionMarkerOf(row.message)).find((found) => found !== undefined);
+        expect(marker).toMatchObject({ kind: "summary", keptTurns: 1, trigger: "turn-start" });
+    });
+
+    it("runs no turn-start compaction on a report thread under its budget during a turn", async () => {
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
+        (await createThreadHistory(pool).appendTurn(THREAD, conversationRecordTurn("[Report Brief]\nDraft the methods section.")))._unsafeUnwrap();
+        await storeMeasuredTurn(REPORT_TURN_BUDGET - 10_000);
+        const provider = compactingProvider([text("done")], []);
+
+        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: undefined }));
+
+        expect(provider.calls.some(isExchangeRequest)).toBe(false);
     });
 
     it("closes the turn aborted with the stored exchange and no marker when an abort ends the exchange", async () => {
@@ -995,7 +1044,7 @@ describe("runChatTurn — compaction", () => {
 
         await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: undefined }));
 
-        expect(DEFAULT_CONVERSATION_BUDGET).toBe(150_000);
+        expect([DEFAULT_CONVERSATION_BUDGET, CONVERSATION_TURN_BUDGET, REPORT_TURN_BUDGET]).toEqual([150_000, 200_000, 250_000]);
         expect(provider.calls.some(isExchangeRequest)).toBe(false);
         expect((await storedRows()).some((row) => compactionMarkerOf(row.message) !== undefined)).toBe(false);
     });

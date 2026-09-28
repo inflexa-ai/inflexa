@@ -81,4 +81,12 @@ describe("CompactionPartSchema", () => {
         expect(CompactionPartSchema.safeParse({ ...running, status: "paused" }).success).toBe(false);
         expect(CompactionPartSchema.safeParse({ ...running, tokensBefore: -1 }).success).toBe(false);
     });
+
+    test("accepts each trigger, and refuses an unknown trigger", () => {
+        const running = { type: "data-compaction" as const, id: "c-1", status: "running" as const, tokensBefore: 162_000 };
+
+        expect(CompactionPartSchema.parse({ ...running, trigger: "turn-start" })).toEqual({ ...running, trigger: "turn-start" });
+        expect(CompactionPartSchema.parse({ ...running, trigger: "mid-turn" })).toEqual({ ...running, trigger: "mid-turn" });
+        expect(CompactionPartSchema.safeParse({ ...running, trigger: "idle" }).success).toBe(false);
+    });
 });

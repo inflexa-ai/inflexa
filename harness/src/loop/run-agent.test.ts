@@ -13,7 +13,9 @@ import {
     contextRecordMessage,
     isInterruptedMessage,
     isSyntheticUserMessage,
+    requestInputTokensOf,
     syntheticRecordMessage,
+    withRequestInputTokens,
 } from "../memory/ai-sdk-message-storage.js";
 import { NOT_RUN_TOOL_RESULT } from "../memory/tool-call-integrity.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
@@ -2648,6 +2650,94 @@ describe("runAgent — compaction", () => {
         expect(records.map((record) => record.agentId)).toEqual(["conversation-agent", "test-agent-compaction", "conversation-agent"]);
         expect(finish.usage).toMatchObject({ inputTokens: 120, outputTokens: 12 });
         expect(finish.turnUsage).toMatchObject({ inputTokens: 1_120, outputTokens: 62 });
+    });
+
+    it("stores the input tokens of each request on the assistant message of its reply", async () => {
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "echo", { label: "tu-1" })], "tool_use", { inputTokens: 1_234 }), text("done")]);
+
+        const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider));
+
+        expect(requestInputTokensOf(messages[1]!)).toBe(1_234);
+        expect(requestInputTokensOf(messages[3]!)).toBeUndefined();
+    });
+
+    it("measures the view by the input tokens of the latest request, and compacts on that measure", async () => {
+        const measured = makeMessage([toolUseBlock("tu-1", "echo", { label: "tu-1" })], "tool_use", { inputTokens: 5_000 });
+        const { provider, sent } = compactingProvider([measured, text("done")], [text(SUMMARY)]);
+
+        await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { compaction: policyOf(provider) }));
+
+        expect(sent.map((request) => request.exchange)).toEqual([false, true, false]);
+    });
+
+    describe("at the start of a turn", () => {
+        const EARLIER: ModelMessage[] = [
+            { role: "user", content: "compare the two groups" },
+            withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "Group A is larger." }] }, 5_000),
+        ];
+        const TURN: ModelMessage[] = [
+            { role: "user", content: "and the p-value?" },
+            contextRecordMessage("run-activity", "[Run Activity]\nOne run is running."),
+        ];
+
+        it("summarizes the view before the turn, byte-identical, and keeps the user message of the turn after the summary", async () => {
+            const logger = createCapturingLogger();
+            const events: Parameters<EmitFn>[0][] = [];
+            const { provider, sent } = compactingProvider([text("p = 0.01")], [text(SUMMARY)]);
+
+            const { messages } = await runAgent(
+                agentDef([echoTool()]),
+                [...EARLIER, ...TURN],
+                makeSession(),
+                opts(provider, {
+                    compaction: policyOf(provider, { budget: 1_000_000, turnStartBudget: 1_000 }),
+                    promptCache: "off",
+                    logger,
+                    emit: (event) => {
+                        events.push(event);
+                    },
+                }),
+            );
+
+            const [exchange, task] = sent;
+            expect(exchange!.exchange).toBe(true);
+            expect(JSON.stringify(exchange!.messages.slice(0, -1))).toBe(JSON.stringify(EARLIER));
+            expect(exchange!.messages.at(-1)).toMatchObject({ role: "user", content: COMPACT });
+            expect(task!.messages.map((message) => message.content)).toEqual([`[Conversation Summary]\n${SUMMARY}`, "and the p-value?", RECORD.content]);
+            const marker = messages.map((message) => compactionMarkerOf(message)).find((found) => found !== undefined);
+            expect(marker).toMatchObject({ kind: "summary", keptTurns: 1, trigger: "turn-start" });
+            expect(compactionParts(events).map((part) => (part as { trigger?: string }).trigger)).toEqual(["turn-start", "turn-start"]);
+            const info = logger.records.find((record) => record.msg.endsWith("conversation compacted"));
+            expect(info?.fields).toMatchObject({ trigger: "turn-start" });
+        });
+
+        it("compacts before a later request by the budget during the turn, with the trigger mid-turn", async () => {
+            const { provider, sent } = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+
+            const { messages } = await runAgent(
+                agentDef([echoTool()]),
+                GO,
+                makeSession(),
+                opts(provider, { compaction: policyOf(provider, { turnStartBudget: 1 }) }),
+            );
+
+            expect(sent.map((request) => request.exchange)).toEqual([false, true, false]);
+            const marker = messages.map((message) => compactionMarkerOf(message)).find((found) => found !== undefined);
+            expect(marker).toMatchObject({ kind: "summary", keptTurns: 0, trigger: "mid-turn" });
+        });
+
+        it("runs no turn-start compaction under the turn-start budget", async () => {
+            const { provider, sent } = compactingProvider([text("p = 0.01")], []);
+
+            await runAgent(
+                agentDef([echoTool()]),
+                [...EARLIER, ...TURN],
+                makeSession(),
+                opts(provider, { compaction: policyOf(provider, { budget: 1_000_000, turnStartBudget: 1_000_000 }) }),
+            );
+
+            expect(sent.map((request) => request.exchange)).toEqual([false]);
+        });
     });
 
     it("runs no exchange before a wrap-up request", async () => {

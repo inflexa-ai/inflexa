@@ -147,8 +147,14 @@ async function readTurnContext(pool: Pool, analysisId: string): Promise<{ readon
     return { analysisContext: analysisState?.context ?? null, runActivityContext };
 }
 
-/** The root loop of a chat turn compacts its view past this estimate, in tokens. */
+/** The turn-start budget of a `conversation` thread, in the tokens that the provider reports. */
 export const DEFAULT_CONVERSATION_BUDGET = 150_000;
+
+/** The budget during a turn of a `conversation` thread. */
+export const CONVERSATION_TURN_BUDGET = 200_000;
+
+/** The budget during a turn of a `report` thread. A report thread has no turn-start compaction. */
+export const REPORT_TURN_BUDGET = 250_000;
 
 export interface RunChatTurnDeps extends PrepareChatTurnDeps {
     /** The agent of a turn comes from the thread type, which only the preparation knows. */
@@ -184,7 +190,10 @@ export interface RunOpenChatTurnParams {
     readonly startedAtMs?: number;
     /** The cache policy of the root loop. Absent gives {@link CONVERSATION_PROMPT_CACHE}. */
     readonly promptCache?: PromptCachePolicy;
-    /** The budget of the view of the root loop. Absent gives {@link DEFAULT_CONVERSATION_BUDGET}. */
+    /**
+     * The budget during a turn of the root loop. It replaces {@link CONVERSATION_TURN_BUDGET} or {@link REPORT_TURN_BUDGET}.
+     * It changes the turn-start budget ({@link DEFAULT_CONVERSATION_BUDGET}) only when it is lower.
+     */
     readonly conversationBudget?: number;
 }
 
@@ -375,15 +384,17 @@ function compactionPolicy(
     // A report thread reads a frozen copy of the working memory, thus its agent declares no memory tool.
     const remembers = agent.tools.some((tool) => tool.id === WORKING_MEMORY_TOOL_ID);
     const workingMemory = createWorkingMemory(deps.pool);
+    const report = threadType === "report";
+    const budget = params.conversationBudget ?? (report ? REPORT_TURN_BUDGET : CONVERSATION_TURN_BUDGET);
     return {
-        budget: params.conversationBudget ?? DEFAULT_CONVERSATION_BUDGET,
+        budget,
+        ...(report ? {} : { turnStartBudget: Math.min(DEFAULT_CONVERSATION_BUDGET, budget) }),
         // A streaming provider sends each text delta with no source, thus a delta of the summary would show as a reply.
         provider: params.chat((event) => (event.type === "text-delta" ? undefined : emit(event))),
         request: remembers ? MEMORY_COMPACTION_REQUEST : SUMMARY_COMPACTION_REQUEST,
         mask: remembers ? { allow: [WORKING_MEMORY_TOOL_ID] } : "none",
-        keepFirstTurn: threadType === "report",
-        recordsAfter: async (view) =>
-            contextRecordsFor({ threadType, analysisId, workingMemory, ...(await readTurnContext(deps.pool, analysisId)) }, view),
+        keepFirstTurn: report,
+        recordsAfter: async (view) => contextRecordsFor({ threadType, analysisId, workingMemory, ...(await readTurnContext(deps.pool, analysisId)) }, view),
     };
 }
 

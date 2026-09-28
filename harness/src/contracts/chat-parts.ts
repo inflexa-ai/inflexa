@@ -448,6 +448,8 @@ export interface CompactionPart {
     tokensBefore: number;
     tokensAfter?: number;
     durationMs?: number;
+    /** Before the first request of a turn, or before a later request. */
+    trigger?: "turn-start" | "mid-turn";
 }
 
 // ── Union ───────────────────────────────────────────────────────────

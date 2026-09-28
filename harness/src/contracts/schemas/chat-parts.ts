@@ -363,6 +363,7 @@ export const CompactionPartSchema = z.object({
     tokensBefore: z.number().int().nonnegative(),
     tokensAfter: z.number().int().nonnegative().optional(),
     durationMs: z.number().int().nonnegative().optional(),
+    trigger: z.enum(["turn-start", "mid-turn"]).optional(),
 });
 
 // ── Union ───────────────────────────────────────────────────────────

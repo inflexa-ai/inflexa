@@ -31,8 +31,10 @@ import {
     markInterruptedMessage,
     summaryMarkerMessage,
     syntheticUserMessage,
+    withRequestInputTokens,
+    type CompactionTrigger,
 } from "../memory/ai-sdk-message-storage.js";
-import { conversationView, keptTurnsForDrop, viewTokens } from "../memory/conversation-view.js";
+import { conversationView, isGenuineUserStart, keptTurnsForDrop, measureView, viewTokens } from "../memory/conversation-view.js";
 import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError, extractStatus, type ProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
@@ -332,6 +334,7 @@ export function openLoop(
     let continuesTruncation = false;
     let compactionStopped = false;
     let compactions = 0;
+    let budgetChecked = false;
     // Bound from the same `source` the emitted events carry: one derivation feeding
     // both sinks, so a record and an event cannot disagree about who produced them.
     // `callPath` rides as an array rather than a joined string — the queryable form;
@@ -468,7 +471,7 @@ export function openLoop(
         if (!endsOnRequestRefusal) {
             const reply = await resultStep(callStep)(stepName, chat);
             accountForChatCall(reply, { ...accounting, stepName });
-            return reply;
+            return withRequestAnchor(reply);
         }
         // The step gives the `Result` as its value, thus a refusal ends the segment and no step throws for it.
         const result = await callStep(stepName, async () => await chat());
@@ -476,7 +479,7 @@ export function openLoop(
         if (refusal !== undefined) return { refusal };
         const reply = unwrapOrThrow(result);
         accountForChatCall(reply, { ...accounting, stepName });
-        return reply;
+        return withRequestAnchor(reply);
     };
 
     // The user said no. A subsequent model call would only let the agent argue
@@ -587,19 +590,28 @@ export function openLoop(
         return { messages, finish: { reason: "error", cappedOut: false, truncationRecoveries, ...finishUsage() }, refusal };
     };
 
-    /** The result of the run when an abort ends the exchange, or `undefined` when the run continues. */
-    const compact = async (active: CompactionPolicy, tokensBefore: number, index: number): Promise<RunAgentResult | undefined> => {
+    /**
+     * The result of the run when an abort ends the exchange, or `undefined` when the run continues. The exchange
+     * continues `conversation`, a prefix of the view.
+     */
+    const compact = async (
+        active: CompactionPolicy,
+        tokensBefore: number,
+        index: number,
+        trigger: CompactionTrigger,
+        conversation: readonly LoopMessage[],
+    ): Promise<RunAgentResult | undefined> => {
         const id = randomUUID();
         const stepNamespace = `compaction-${compactions++}`;
         const startedAt = performance.now();
-        const emitPart = (data: Omit<CompactionPart, "type">) => emit({ type: "data-compaction", source, data });
+        const emitPart = (data: Omit<CompactionPart, "type" | "trigger">) => emit({ type: "data-compaction", source, data: { ...data, trigger } });
         await emitPart({ id, status: "running", tokensBefore });
         const { onRound: _onRound, compaction: _compaction, ...conversationOptions } = opts;
         let settled = false;
         try {
             const exchange = await continueAgent(
                 agent,
-                viewOf(),
+                conversation,
                 {
                     text: active.request,
                     mask: active.mask,
@@ -625,11 +637,13 @@ export function openLoop(
             }
 
             const summary = summaryOf(exchange);
-            const keptTurns = summary === undefined ? keptTurnsForDrop(messages, viewOptions, active.budget) : 0;
+            // A turn-start summary keeps the one turn that the exchange did not see: the turn of this run.
+            const summaryKeptTurns = trigger === "turn-start" ? 1 : 0;
+            const keptTurns = summary === undefined ? keptTurnsForDrop(messages, viewOptions, active.budget) : summaryKeptTurns;
             const markerOf = (tokensAfter: number, durationMs: number): LoopMessage =>
                 summary === undefined
-                    ? dropMarkerMessage({ kind: "drop", id, tokensBefore, tokensAfter, durationMs, keptTurns })
-                    : summaryMarkerMessage(summary, { kind: "summary", id, tokensBefore, tokensAfter, durationMs });
+                    ? dropMarkerMessage({ kind: "drop", id, tokensBefore, tokensAfter, durationMs, keptTurns, trigger })
+                    : summaryMarkerMessage(summary, { kind: "summary", id, tokensBefore, tokensAfter, durationMs, keptTurns, trigger });
             // The figures of a marker do not change the view, thus a draft marker gives the view of the real one.
             const view = conversationView([...messages, markerOf(0, 0)], viewOptions).messages;
             const records = await active.recordsAfter(view);
@@ -640,7 +654,7 @@ export function openLoop(
             settled = true;
             await emitPart({ id, status: summary === undefined ? "failed" : "done", tokensBefore, tokensAfter, durationMs });
 
-            const fields = { compactionId: id, tokensBefore, tokensAfter, durationMs };
+            const fields = { compactionId: id, trigger, tokensBefore, tokensAfter, durationMs };
             if (summary === undefined) {
                 const refusal = exchange.refusal === undefined ? {} : { status: exchange.refusal.status, providerError: exchange.refusal.message };
                 log.warn("compaction gave no summary, thus the oldest turns left the view", { ...fields, keptTurns, ...refusal });
@@ -650,6 +664,7 @@ export function openLoop(
             if (summary !== undefined && tokensAfter > active.budget) {
                 log.warn("the compacted view still exceeds the budget, thus the run compacts no more", {
                     compactionId: id,
+                    trigger,
                     tokensAfter,
                     budget: active.budget,
                 });
@@ -662,9 +677,17 @@ export function openLoop(
     };
 
     const compactOverBudget = async (index: number): Promise<RunAgentResult | undefined> => {
+        const turnStartBudget = budgetChecked ? undefined : policy?.turnStartBudget;
+        budgetChecked = true;
         if (policy === undefined || continuesTruncation || compactionStopped) return undefined;
-        const tokensBefore = viewTokens(viewOf());
-        return tokensBefore > policy.budget ? compact(policy, tokensBefore, index) : undefined;
+        const tokensBefore = measureView(messages, viewOptions);
+        const view = viewOf();
+        if (turnStartBudget !== undefined && tokensBefore > turnStartBudget) {
+            const turnStart = lastIndexOf(view, isGenuineUserStart);
+            // The view before the turn is the prefix that the last request sent, thus the exchange reads it from the cache.
+            if (turnStart > 0) return compact(policy, tokensBefore, index, "turn-start", view.slice(0, turnStart));
+        }
+        return tokensBefore > policy.budget ? compact(policy, tokensBefore, index, "mid-turn", view) : undefined;
     };
 
     const runSegment = async (segment: LoopSegment): Promise<SegmentResult | "capped"> => {
@@ -837,6 +860,19 @@ function summaryOf(exchange: ContinuationResult): string | undefined {
     if (exchange.finish.reason !== "stop") return undefined;
     const text = finalText(exchange.messages).trim();
     return text.length > 0 ? text : undefined;
+}
+
+/** The reply whose message holds the input tokens of its request, the anchor of the measure of a later view. */
+function withRequestAnchor(reply: ChatResponse): ChatResponse {
+    const tokens = reply.usage?.inputTokens;
+    return tokens === undefined ? reply : { ...reply, message: withRequestInputTokens(reply.message, tokens) };
+}
+
+function lastIndexOf<T>(items: readonly T[], matches: (item: T) => boolean): number {
+    for (let index = items.length - 1; index >= 0; index--) {
+        if (matches(items[index]!)) return index;
+    }
+    return -1;
 }
 
 /** What one completed LLM call is accounted under. */
