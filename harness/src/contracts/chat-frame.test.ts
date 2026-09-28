@@ -349,6 +349,12 @@ describe("applyChatFrame", () => {
         expect(messages[0]!.parts).toHaveLength(2);
     });
 
+    test("a data part of a type the registry does not know appends", () => {
+        const part = { type: "data-from-a-newer-emitter", id: "x-1" } as unknown as Parameters<typeof applyChatFrame>[1];
+        const { messages } = applyMany([], [part, part]);
+        expect(messages[0]!.parts).toHaveLength(2);
+    });
+
     test("creates the assistant message on the first frame", () => {
         const { messages } = applyMany([], [{ type: "text-delta", text: "first", source: SOURCE }]);
         expect(messages).toHaveLength(1);
