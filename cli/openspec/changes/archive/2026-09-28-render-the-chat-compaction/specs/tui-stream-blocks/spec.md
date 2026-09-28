@@ -11,7 +11,7 @@ The label of `done` is `Summarized earlier conversation`, then the tokens before
 
 The block MUST take each color from `theme` and each glyph from `GLYPHS`. It MUST format each token figure with `formatTokens()` and the duration with `Date.formatDuration`. It MUST separate the facts of a label with the shared separator.
 
-An event entry whose only part is a compaction part MUST render the divider with no left rule. Thus the divider spans the transcript, as the mark between the summarized part of the conversation and the rest.
+A `system` message whose only part is a compaction part MUST render the divider with no left rule. Thus the divider spans the transcript, as the mark between the summarized part of the conversation and the rest.
 
 The design gallery MUST carry an exhibit of each form: running, done, failed with a drop, and failed with no drop.
 
@@ -34,7 +34,7 @@ The design gallery MUST carry an exhibit of each form: running, done, failed wit
 
 #### Scenario: The divider of a reload has no event rule
 
-- **GIVEN** an event entry whose only part is a compaction part
+- **GIVEN** a `system` message whose only part is a compaction part
 - **WHEN** `MessageBlock` renders it
 - **THEN** the divider renders with no left rule and no turn marker
 

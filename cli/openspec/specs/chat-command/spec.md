@@ -113,9 +113,11 @@ The command MUST refuse a thread that does not exist, and a thread that belongs 
 The emit sink of the command MUST render these to stdout:
 
 - Accumulated `text-delta` content as it arrives, with no paced or typewriter reveal.
-- A one-line tool chip on `tool-started`, closed on `tool-finished` with the tool name and the outcome.
+- A one-line tool chip on `tool-started`, closed on `tool-finished`. The chip carries the tool name, the call detail of the harness when the tool gives one, and the outcome.
 - The `data-plan` part as text: the plan id, the title, and the step dependency graph. The graph is the same `planToDag` rendering that the TUI plan-card block uses, emitted as plain text. If the plan has no steps, or the graph fails to render, the sink falls back to a per-step list.
 - The `data-run-card` part as text: the run id, the title, and the step count. These are the fields that the harness `RunCardData` contract carries, and it has no run-status field.
+
+The outcome of a chip MUST separate the three harness states: done, error, and denied. Thus a refused approval does not print as a failure. The sink MUST treat the detail as opaque display text, and it MUST NOT parse it.
 
 A text-shaped `data-presentation` part (`markdown`, `code`, `table`) MUST print inline as text. Markdown prints as its source, code prints fenced, and a table prints as aligned text.
 
@@ -136,6 +138,16 @@ Diagnostics go to stderr. Only the conversation goes to stdout.
 
 - **WHEN** the agent calls a tool during a turn
 - **THEN** stdout shows a chip line when the call starts and its outcome when it finishes
+
+#### Scenario: A described call names what it is doing
+
+- **WHEN** the agent calls a tool that declares a call description
+- **THEN** the chip line carries the tool name and its detail, and a tool with no description prints the name alone
+
+#### Scenario: A refused approval is not printed as a failure
+
+- **WHEN** a tool call finishes with the `denied` outcome
+- **THEN** the chip prints `denied`, not the word for an error
 
 #### Scenario: A plan part renders readably
 

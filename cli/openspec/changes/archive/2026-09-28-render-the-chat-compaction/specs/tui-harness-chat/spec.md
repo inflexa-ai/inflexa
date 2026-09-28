@@ -20,12 +20,12 @@ A turn that the user interrupts keeps its stored rounds, and the harness closes 
 
 The emit adapter of the TUI MUST consume the harness `contracts/` vocabulary directly, never the event shapes of the cli bus:
 
-- Text deltas collect in the streaming signal, and they flush into the store when the turn completes.
-- `tool-started` and `tool-finished` become a live tool part.
-- `data-plan` and `data-run-card` become card parts.
+- Each event of the top-level agent goes through `toChatFrame` and `applyChatFrame` of the harness. Thus the assistant message of the turn holds the harness parts that a reload of the turn gives.
+- A text delta changes only the streaming signal. The text part in the store takes the text when a later part arrives, or when the turn completes.
+- `tool-started` and `tool-finished` become one tool-call part. The part carries the call detail of the harness and the outcome of the call: `ok`, `error`, or `denied`. The adapter MUST treat the detail as opaque display text, and it MUST NOT parse it.
 - `data-compaction` becomes one compaction part of the turn. A later emission with the same id replaces that part in place.
-- Each other conversation part renders a tagged mention, thus the adapter hides no part.
-- The adapter drops sub-agent events, whose call path is deeper than the top-level agent.
+- Each other data part stays in the message as the harness gives it. The renderer shows a part with no renderer as a tagged mention, thus the adapter hides no part.
+- A sub-agent event, whose call path is deeper than the top-level agent, becomes the activity line of the running tool call. It never becomes a part.
 
 Each value that crosses into the Solid store MUST be extracted or cloned when it arrives. The emit in the process shares mutable references with the agent loop. The agent session MUST carry the thread id in its scope, thus a run that the chat starts stamps `cortex_runs.thread_id`. Its `callPath` has a length of 1, and it names the TUI surface.
 
@@ -33,7 +33,7 @@ The outcome of the engine MUST also carry the usage rollup of the turn when the 
 
 A turn that returns, the ordinary interrupt included, MUST carry what it spent before it ended. A turn whose run throws produced no finish, thus its outcome MUST carry no rollup. The ledger still holds those tokens, because the loop gives each call to the usage recorder when the call completes.
 
-#### Scenario: A plan is drafted, approved in the conversation, and executed from the TUI
+#### Scenario: A plan is drafted, approved conversationally, and executed from the TUI
 
 - **WHEN** the user asks for a plan, the agent shows it, and the next message of the user approves it
 - **THEN** the transcript shows the plan card, and then the run card of a real run whose `thread_id` is the thread id of the chat
@@ -53,9 +53,19 @@ A turn that returns, the ordinary interrupt included, MUST carry what it spent b
 #### Scenario: Sub-agent traffic stays out of the transcript
 
 - **WHEN** an inner agent, for example the planner or the literature reviewer, emits deltas or tool events during a turn
-- **THEN** none of them render in the stream
+- **THEN** none of them renders as a part of the turn, and only the activity line of the running tool call shows them
 
-#### Scenario: The rollup of the turn includes what its sub-agents spent
+#### Scenario: A described call carries its detail onto the live part
+
+- **WHEN** the loop emits `tool-started` for a tool that declares a call description
+- **THEN** the live tool-call part carries that detail as a copied string, and the chip renders it
+
+#### Scenario: A refused approval reaches the store as denied
+
+- **WHEN** the loop emits `tool-finished` with the `denied` outcome
+- **THEN** the outcome of the live tool-call part is `denied`, not `error`
+
+#### Scenario: The turn's rollup includes what its sub-agents spent
 
 - **WHEN** a turn sends a sub-agent loop that makes its own LLM calls
 - **THEN** the rollup of the outcome covers the calls of both loops, and it is more than the top-level loop alone reported
