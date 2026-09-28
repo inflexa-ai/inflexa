@@ -4,6 +4,7 @@ import type { ModelMessage } from "ai";
 import { createHash } from "node:crypto";
 
 import {
+    COMPACTION_MARKER_KEY,
     compactionExchangeOf,
     compactionMarkerOf,
     contextRecordMessage,
@@ -96,14 +97,8 @@ describe("context records", () => {
 });
 
 describe("compaction marks", () => {
-    const summary = summaryMarkerMessage("The user compares two groups.", {
-        kind: "summary",
-        id: "c-1",
-        tokensBefore: 162_000,
-        tokensAfter: 14_000,
-        durationMs: 21_000,
-    });
-    const drop = dropMarkerMessage({ kind: "drop", id: "c-2", tokensBefore: 170_000, tokensAfter: 90_000, durationMs: 3_000, keptTurns: 4 });
+    const summary = summaryMarkerMessage("The user compares two groups.", { kind: "summary", id: "c-1", tokensBefore: 162_000, durationMs: 21_000 });
+    const drop = dropMarkerMessage({ kind: "drop", id: "c-2", tokensBefore: 170_000, durationMs: 3_000, keptTurns: 4 });
 
     function throughStorage(message: ModelMessage): ModelMessage {
         return parseStoredMessageEnvelope(JSON.parse(JSON.stringify(envelopeMessage(message))) as unknown, "thread/0").message;
@@ -114,31 +109,43 @@ describe("compaction marks", () => {
         const storedDrop = throughStorage(drop);
 
         expect(storedSummary.content).toBe("[Conversation Summary]\nThe user compares two groups.");
-        expect(compactionMarkerOf(storedSummary)).toEqual({ kind: "summary", id: "c-1", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 });
+        expect(compactionMarkerOf(storedSummary)).toEqual({ kind: "summary", id: "c-1", tokensBefore: 162_000, durationMs: 21_000 });
         expect(storedDrop.content).toBe("[Compaction Failed]");
-        expect(compactionMarkerOf(storedDrop)).toEqual({
-            kind: "drop",
-            id: "c-2",
-            tokensBefore: 170_000,
-            tokensAfter: 90_000,
-            durationMs: 3_000,
-            keptTurns: 4,
-        });
+        expect(compactionMarkerOf(storedDrop)).toEqual({ kind: "drop", id: "c-2", tokensBefore: 170_000, durationMs: 3_000, keptTurns: 4 });
     });
 
-    it("round-trips the trigger and the kept turns of a turn-start summary marker", () => {
+    it("round-trips the trigger of a marker", () => {
         const turnStart = summaryMarkerMessage("The user compares two groups.", {
             kind: "summary",
             id: "c-3",
             tokensBefore: 151_000,
-            tokensAfter: 9_000,
             durationMs: 8_000,
-            keptTurns: 1,
             trigger: "turn-start",
         });
 
-        expect(compactionMarkerOf(throughStorage(turnStart))).toMatchObject({ kind: "summary", keptTurns: 1, trigger: "turn-start" });
+        expect(compactionMarkerOf(throughStorage(turnStart))).toEqual({
+            kind: "summary",
+            id: "c-3",
+            tokensBefore: 151_000,
+            durationMs: 8_000,
+            trigger: "turn-start",
+        });
         expect(compactionMarkerOf(throughStorage(summary))).not.toHaveProperty("trigger");
+    });
+
+    it("reads a marker that an older harness stored with tokensAfter, without that figure", () => {
+        const stored: ModelMessage = {
+            role: "user",
+            content: "[Conversation Summary]\nThe user compares two groups.",
+            providerOptions: {
+                [HARNESS_PROVIDER_NAMESPACE]: {
+                    [SYNTHETIC_MESSAGE_KEY]: true,
+                    [COMPACTION_MARKER_KEY]: { kind: "summary", id: "c-4", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
+                },
+            },
+        };
+
+        expect(compactionMarkerOf(throughStorage(stored))).toEqual({ kind: "summary", id: "c-4", tokensBefore: 162_000, durationMs: 21_000 });
     });
 
     it("makes a marker synthetic and no host record", () => {

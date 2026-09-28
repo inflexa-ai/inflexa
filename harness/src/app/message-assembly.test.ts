@@ -57,12 +57,12 @@ function contentText(m: MessageParam): string {
 }
 
 describe("assembleMessages", () => {
-    test("places the user input and then the analysis context, the run activity, and the working memory", async () => {
+    test("gives the view as the history, the user input, and then the analysis context, the run activity, and the working memory", async () => {
         const window: MessageParam[] = [
             { role: "user", content: "earlier question" },
             { role: "assistant", content: "earlier answer" },
         ];
-        const { messages, userMessage } = await assembleMessages({
+        const { history, userMessage, contextRecords } = await assembleMessages({
             threadId: "thread-1",
             threadType: "conversation",
             analysisId: "analysis-1",
@@ -73,17 +73,13 @@ describe("assembleMessages", () => {
             workingMemory: stubWorkingMemory(),
         });
 
-        expect(messages.slice(0, 2)).toEqual(window);
-        expect(messages.length).toBe(6);
-        expect(messages[2]).toEqual(userMessage);
+        expect(history).toEqual(window);
         expect(userMessage.content).toBe("what is BRCA1?");
-        expect(contentText(messages[3]!)).toBe("[Analysis Context]\nRNA-seq of tumor vs normal.");
-        expect(contentText(messages[4]!)).toBe(RUN_ACTIVITY);
-        expect(contentText(messages[5]!)).toBe(`[Working Memory]\n${WM_RENDER}`);
+        expect(contextRecords.map(contentText)).toEqual(["[Analysis Context]\nRNA-seq of tumor vs normal.", RUN_ACTIVITY, `[Working Memory]\n${WM_RENDER}`]);
     });
 
     test("the assembled sequence is a valid Anthropic message sequence", async () => {
-        const { messages } = await assembleMessages({
+        const { history, userMessage, contextRecords } = await assembleMessages({
             threadId: "thread-1",
             threadType: "conversation",
             analysisId: "analysis-1",
@@ -93,6 +89,7 @@ describe("assembleMessages", () => {
             history: stubHistory([]),
             workingMemory: stubWorkingMemory(),
         });
+        const messages = [...history, userMessage, ...contextRecords];
         expect(messages[0]!.role).toBe("user");
         expect(isSyntheticUserMessage(messages[0]!)).toBe(false);
         expect(messages.length).toBe(3);
@@ -131,7 +128,7 @@ describe("assembleMessages", () => {
     });
 
     test("a report thread gets no working-memory record and keeps the other two", async () => {
-        const { messages, userMessage } = await assembleMessages({
+        const { contextRecords } = await assembleMessages({
             threadId: "thread-report",
             threadType: "report",
             analysisId: "analysis-1",
@@ -142,14 +139,13 @@ describe("assembleMessages", () => {
             workingMemory: stubWorkingMemory(),
         });
 
-        expect(messages.length).toBe(3);
-        expect(messages[0]).toEqual(userMessage);
-        expect(contentText(messages[1]!)).toContain("[Analysis Context]");
-        expect(contentText(messages[2]!)).toBe(RUN_ACTIVITY);
+        expect(contextRecords.length).toBe(2);
+        expect(contentText(contextRecords[0]!)).toContain("[Analysis Context]");
+        expect(contentText(contextRecords[1]!)).toBe(RUN_ACTIVITY);
     });
 
     test("a report thread loads a view that keeps the seed", async () => {
-        const { messages } = await assembleMessages({
+        const { history } = await assembleMessages({
             threadId: "thread-report",
             threadType: "report",
             analysisId: "analysis-1",
@@ -160,11 +156,11 @@ describe("assembleMessages", () => {
             workingMemory: stubWorkingMemory(),
         });
 
-        expect(contentText(messages[0]!)).toBe(SEED);
+        expect(contentText(history[0]!)).toBe(SEED);
     });
 
     test("a conversation thread loads a view without the seed", async () => {
-        const { messages } = await assembleMessages({
+        const { history } = await assembleMessages({
             threadId: "thread-conversation",
             threadType: "conversation",
             analysisId: "analysis-1",
@@ -175,11 +171,11 @@ describe("assembleMessages", () => {
             workingMemory: stubWorkingMemory(),
         });
 
-        expect(messages.map(contentText)).not.toContain(SEED);
+        expect(history.map(contentText)).not.toContain(SEED);
     });
 
     test("a conversation thread gets a working-memory record", async () => {
-        const { messages } = await assembleMessages({
+        const { contextRecords } = await assembleMessages({
             threadId: "thread-conversation",
             threadType: "conversation",
             analysisId: "analysis-1",
@@ -190,14 +186,14 @@ describe("assembleMessages", () => {
             workingMemory: stubWorkingMemory(),
         });
 
-        expect(messages.length).toBe(4);
-        expect(messages.map(contentText)).toContain(`[Working Memory]\n${WM_RENDER}`);
+        expect(contextRecords.length).toBe(3);
+        expect(contextRecords.map(contentText)).toContain(`[Working Memory]\n${WM_RENDER}`);
     });
 
     test("sanitization is not applied to history or analysis context", async () => {
         const secret = "AKIAIOSFODNN7EXAMPLE";
         const window: MessageParam[] = [{ role: "user", content: `prior turn mentioned ${secret}` }];
-        const { messages } = await assembleMessages({
+        const { history, contextRecords } = await assembleMessages({
             threadId: "t",
             threadType: "conversation",
             analysisId: "a",
@@ -207,8 +203,8 @@ describe("assembleMessages", () => {
             history: stubHistory(window),
             workingMemory: stubWorkingMemory(),
         });
-        expect(contentText(messages[0]!)).toContain(secret);
-        expect(contentText(messages[2]!)).toContain(secret);
+        expect(contentText(history[0]!)).toContain(secret);
+        expect(contentText(contextRecords[0]!)).toContain(secret);
     });
 
     /** {@link stubHistory} typed over the AI SDK shape, for a window that carries tool parts. */
@@ -251,10 +247,10 @@ describe("assembleMessages", () => {
     test("answers a stored dangling tool call in place and logs the answer", async () => {
         const logger = createCapturingLogger();
 
-        const { messages } = await assembleDangling(logger);
+        const { history } = await assembleDangling(logger);
 
-        expect(messages[1]).toEqual(danglingWindow()[1]!);
-        expect(messages[2]).toEqual({
+        expect(history[1]).toEqual(danglingWindow()[1]!);
+        expect(history[2]).toEqual({
             role: "tool",
             content: [
                 {
@@ -265,7 +261,7 @@ describe("assembleMessages", () => {
                 },
             ],
         });
-        expect(messages[3]).toEqual({ role: "user", content: "and then?" });
+        expect(history[3]).toEqual({ role: "user", content: "and then?" });
         const warn = logger.records.find((r) => r.level === "warn");
         expect(warn?.msg).toContain("unanswered tool calls answered in thread history");
         expect(warn?.fields).toMatchObject({ threadId: "thread-1", toolCallIds: ["tu-x"], tools: ["update_working_memory"] });
@@ -275,7 +271,7 @@ describe("assembleMessages", () => {
         const first = await assembleDangling();
         const second = await assembleDangling();
 
-        expect(JSON.stringify(second.messages)).toBe(JSON.stringify(first.messages));
+        expect(JSON.stringify(second)).toBe(JSON.stringify(first));
     });
 
     test("keeps an answered tool call untouched and logs nothing", async () => {
@@ -286,7 +282,7 @@ describe("assembleMessages", () => {
             { role: "tool", content: [{ type: "tool-result", toolCallId: "tu-1", toolName: "read_file", output: { type: "json", value: {} } }] },
         ];
 
-        const { messages } = await assembleMessages({
+        const { history } = await assembleMessages({
             threadId: "thread-1",
             threadType: "conversation",
             analysisId: "analysis-1",
@@ -298,7 +294,7 @@ describe("assembleMessages", () => {
             logger,
         });
 
-        expect(messages.slice(0, 3)).toEqual(window);
+        expect(history).toEqual(window);
         expect(logger.records).toEqual([]);
     });
 });
@@ -327,20 +323,20 @@ describe("assembleMessages — context records", () => {
     const kindsOf = (records: readonly ModelMessage[]): (string | undefined)[] => records.map((record) => contextRecordOf(record)?.kind);
 
     test("gives each kind after the user message, in order, when the window holds no record", async () => {
-        const { messages, userMessage, contextRecords } = await assembleMessages(argsOver([]));
+        const { history, contextRecords } = await assembleMessages(argsOver([]));
 
         expect(kindsOf(contextRecords)).toEqual(["analysis-context", "run-activity", "working-memory"]);
-        expect(messages).toEqual([userMessage, ...contextRecords]);
+        expect(history).toEqual([]);
         expect(contextRecords.every((record) => isSyntheticUserMessage(record))).toBe(true);
     });
 
     test("gives no record when the window holds the same records", async () => {
         const window = await storedTurn();
 
-        const { messages, userMessage, contextRecords } = await assembleMessages(argsOver(window));
+        const { history, contextRecords } = await assembleMessages(argsOver(window));
 
         expect(contextRecords).toEqual([]);
-        expect(messages).toEqual([...window, userMessage]);
+        expect(history).toEqual(window);
     });
 
     test("gives one working-memory record when the memory changed", async () => {

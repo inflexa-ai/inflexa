@@ -351,7 +351,7 @@ describe("replay of a turn stored in rounds", () => {
 
     function dividerRow(seq: number, status: "done" | "failed"): StoredMessage {
         const data = { id: "c-1", status, tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
-        const marker = summaryMarkerMessage("summary", { kind: "summary", id: "c-1", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 });
+        const marker = summaryMarkerMessage("summary", { kind: "summary", id: "c-1", tokensBefore: 162_000, durationMs: 21_000 });
         return {
             seq,
             envelope: envelopeMessage(marker),

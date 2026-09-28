@@ -374,11 +374,11 @@ function exchangeOf(id: string): ModelMessage[] {
 }
 
 function summaryMarker(id: string, text: string): ModelMessage {
-    return summaryMarkerMessage(text, { kind: "summary", id, tokensBefore: 1_000, tokensAfter: 100, durationMs: 20 });
+    return summaryMarkerMessage(text, { kind: "summary", id, tokensBefore: 1_000, durationMs: 20 });
 }
 
 function dropMarker(id: string, keptTurns: number): ModelMessage {
-    return dropMarkerMessage({ kind: "drop", id, tokensBefore: 1_000, tokensAfter: 500, durationMs: 20, keptTurns });
+    return dropMarkerMessage({ kind: "drop", id, tokensBefore: 1_000, durationMs: 20, keptTurns });
 }
 
 const runRecord = (text: string): ModelMessage => contextRecordMessage("run-activity", `[Run Activity]\n${text}`);

@@ -78,7 +78,6 @@ function compactionDivider(marker: CompactionMarker): ConversationUIMessage {
         id: marker.id,
         status: marker.kind === "summary" ? "done" : "failed",
         tokensBefore: marker.tokensBefore,
-        tokensAfter: marker.tokensAfter,
         durationMs: marker.durationMs,
         ...(marker.trigger === undefined ? {} : { trigger: marker.trigger }),
     });

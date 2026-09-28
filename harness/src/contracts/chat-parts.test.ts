@@ -65,10 +65,22 @@ describe("PresentationContentSchema — structure", () => {
 describe("CompactionPartSchema", () => {
     test("accepts a running part and a done part through the union schema", () => {
         const running = { type: "data-compaction" as const, id: "c-1", status: "running" as const, tokensBefore: 162_000 };
-        const done = { ...running, status: "done" as const, tokensAfter: 14_000, durationMs: 21_000 };
+        const done = { ...running, status: "done" as const, durationMs: 21_000 };
 
         expect(CortexChatPartSchema.parse(running)).toEqual(running);
         expect(CortexChatPartSchema.parse(done)).toEqual(done);
+    });
+
+    test("refuses the status dropped", () => {
+        const dropped = { type: "data-compaction" as const, id: "c-1", status: "dropped", tokensBefore: 162_000, durationMs: 3_000 };
+
+        expect(CompactionPartSchema.safeParse(dropped).success).toBe(false);
+    });
+
+    test("accepts the tokensAfter of a part that an older harness stored", () => {
+        const stored = { type: "data-compaction" as const, id: "c-1", status: "done" as const, tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
+
+        expect(CompactionPartSchema.parse(stored)).toEqual(stored);
     });
 
     test("is a transient reconciling part of the conversation in the registry", () => {

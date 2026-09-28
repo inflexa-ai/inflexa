@@ -8,9 +8,9 @@ import { Sep } from "./separator.tsx";
 export type CompactionBlockProps = {
     /** `running` while the harness summarizes the conversation, then the terminal status. */
     status: "running" | "done" | "failed";
-    /** The estimate of the context before the compaction, in tokens. */
+    /** The input tokens of the last request before the compaction. */
     tokensBefore: number;
-    /** The estimate of the context after the compaction. Absent when the compaction left no marker. */
+    /** Only a part that an older harness stored carries it: the estimate of the context after the compaction. */
     tokensAfter?: number;
     durationMs?: number;
 };

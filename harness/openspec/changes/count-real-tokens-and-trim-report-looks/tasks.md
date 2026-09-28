@@ -1,28 +1,38 @@
 # Tasks
 
-Each path is relative to `harness/`.
+Each path is relative to `harness/`. A path that starts with `../cli/` is in the CLI.
 
 This change builds on `compact-the-chat-thread` and `tile-the-tall-page-capture`. The code of the two changes is on the branch.
 
-## 1. The measure of the view
+## 1. The check on the input tokens of the last request
 
-- [x] 1.1 Add `src/memory/image-dimensions.ts`. It reads the size of a PNG, a JPEG, a GIF, or a WebP picture from its header. It decodes no pixel.
-- [x] 1.2 In `src/memory/count-tokens.ts`, count each picture as `ceil(width × height / 750)`. Count a picture of unknown size as `UNKNOWN_IMAGE_TOKENS` (1,600). Count each other file as 0.
-- [x] 1.3 In `src/memory/ai-sdk-message-storage.ts`, add `REQUEST_INPUT_TOKENS_KEY`, `withRequestInputTokens`, and `requestInputTokensOf`.
-- [x] 1.4 In `src/loop/run-agent.ts`, mark the assistant message of each reply with the input tokens of its request.
-- [x] 1.5 In `src/memory/conversation-view.ts`, add `measureView`. It starts at the latest figure after the latest marker, or it gives the estimate of the view.
-- [x] 1.6 Add the tests: the picture count, the header reader, the round trip of the figure, the measure, and the wire test on the three provider arms.
+- [x] 1.1 In `src/memory/ai-sdk-message-storage.ts`, add `REQUEST_INPUT_TOKENS_KEY`, `withRequestInputTokens`, and `requestInputTokensOf`.
+- [x] 1.2 In `src/loop/run-agent.ts`, mark the assistant message of each reply with the input tokens of its request.
+- [x] 1.3 In `src/memory/conversation-view.ts`, add `lastRequestInputTokens`. It gives the latest figure, or no figure when a marker comes after that figure.
+- [x] 1.4 Remove `measureView`, the picture count of `src/memory/count-tokens.ts`, and `src/memory/image-dimensions.ts`.
+- [x] 1.5 In `src/loop/compaction.ts`, add `CompactionRules` with `budget` and the optional `turnStartBudget`. Make `CompactionPolicy` extend it.
+- [x] 1.6 In `src/loop/types.ts`, add the optional `AgentDefinition.compaction`.
+- [x] 1.7 In `src/agents/`, give the conversation agent a turn-start budget of 150,000 and a budget of 200,000. Give the report session agent a budget of 250,000.
+- [x] 1.8 In `src/app/chat-turn.ts`, build the policy from the rules of the agent, and give no policy to an agent with no rules. Remove `conversationBudget` and `DEFAULT_CONVERSATION_BUDGET`.
+- [x] 1.9 In `compactOverBudget` of `src/loop/run-agent.ts`, make no check without a figure after the latest marker. After a summary, stop the compaction and log a warning when the first figure still exceeds the budget.
+- [x] 1.10 Add the tests of the round trip of the figure, and the wire test on each provider arm.
+- [x] 1.11 Replace the tests of `measureView`, of the picture count, and of `conversationBudget`. Add the tests: `lastRequestInputTokens`, an agent with no rules, and the stop after a summary.
 
-## 2. The turn-start compaction
+## 2. The turn-start compaction and the compaction with no summary
 
-- [x] 2.1 In `src/loop/compaction.ts`, add the optional `turnStartBudget` to `CompactionPolicy`.
-- [x] 2.2 In `src/loop/run-agent.ts`, compare the measure with the turn-start budget before the first request. Run the exchange on the view before the user message of the current turn.
-- [x] 2.3 Give a turn-start summary marker `keptTurns: 1`, and give each marker its `trigger`.
-- [x] 2.4 In `src/memory/conversation-view.ts`, keep the kept turns of a summary marker after the summary, without their context records and their reasoning.
-- [x] 2.5 Carry `trigger` on `CompactionPart`, on its schema, on the divider, and on each log record of a compaction.
-- [x] 2.6 In `src/app/chat-turn.ts`, set the budgets for each thread type: `DEFAULT_CONVERSATION_BUDGET`, `CONVERSATION_TURN_BUDGET`, and `REPORT_TURN_BUDGET`. Apply `conversationBudget`.
-- [x] 2.7 In `src/prompts/compaction.ts`, ask for the last request of the user.
-- [x] 2.8 Add the tests: the turn-start exchange, the kept turn, the trigger, the budgets for each thread type, and the view of a summary with a kept turn.
+- [x] 2.1 In `src/loop/run-agent.ts`, add `RunAgentOptions.turnInput` and `startTurn`. Compare the latest figure with the turn-start budget, compact the history, and then append the input.
+- [x] 2.2 After a turn-start summary, append the input with no context record. After a turn-start exchange with no summary, append the whole input.
+- [x] 2.3 Give each marker its `trigger`. Remove `keptTurns` from the summary marker, and remove `tokensAfter` from each marker.
+- [x] 2.4 In `src/memory/conversation-view.ts`, remove the kept turns of a summary marker. A summary marker empties the body again.
+- [x] 2.5 In `src/app/message-assembly.ts`, give the history and the input of the turn separately.
+- [x] 2.6 In `src/app/chat-turn.ts`, store the user message in the round sink when the loop sends it. Write the rounds of a turn-start compaction with `appendTurn` before the turn opens.
+- [x] 2.7 Carry `trigger` on `CompactionPart`, on its schema, on the divider, and on each log record of a compaction.
+- [x] 2.8 Remove the drop. After an exchange with no summary, write no marker and no records, emit `failed`, log at `error` level, and compact no more in the run.
+- [x] 2.9 Delete `keptTurnsForDrop` and `viewTokens`. Keep the `drop` kind of the marker schema and the view rule for a stored drop marker. Emit no `tokensAfter`.
+- [x] 2.10 In `src/prompts/compaction.ts`, ask for the last request of the user.
+- [x] 2.11 In `../cli/src/types/session.ts` and `../cli/src/tui/components/compaction_block.tsx`, change the doc comments of `tokensBefore` and `tokensAfter`.
+- [x] 2.12 Add the tests: the turn-start exchange, the stored order, the input with and with no records, and a turn that ends before its user message.
+- [x] 2.13 Add the tests of the exchange with no summary and of the trigger. Remove the tests of the kept turn of a summary and of `tokensAfter`.
 
 ## 3. The look of the report agent
 

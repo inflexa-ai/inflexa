@@ -10,12 +10,16 @@ A report session on staging showed two costs of the context that the harness did
 The compaction of the chat thread:
 
 - The loop stores the input tokens that the provider reports for a request on the assistant message of the reply, under the harness key `requestInputTokens`.
-- The loop compares a budget with a measure of the view in the tokens of the provider. The measure is the input tokens of the latest request after the latest marker, plus the estimate of each message from its reply. Without such a request, the measure is the estimate of the whole view.
-- The estimate counts a picture by its pixel area, `ceil(width × height / 750)`, from the image header. A picture of unknown size counts as 1,600 tokens. The `tokens` column uses the same count.
-- A `conversation` thread gets a turn-start budget of 150,000 and a budget of 200,000 during a turn. A `report` thread gets no turn-start compaction, and a budget of 250,000 during a turn.
-- `conversationBudget` replaces the budget during a turn. It lowers the turn-start budget only when it is lower. `CompactionPolicy` gets the optional `turnStartBudget`.
-- A turn-start compaction summarizes the view before the current turn. Its summary marker carries `keptTurns: 1`, and the view keeps that turn after the summary, without its context records and its reasoning. A mid-turn compaction does not change.
+- Before a request, the loop compares a budget with the input tokens of the last request. A marker after the last request gives no figure, thus the loop makes no check until the next request reports one. The loop makes no local estimate for the check.
+- Each agent declares its compaction rules in `AgentDefinition.compaction` (`CompactionRules`): a budget during a turn, and an optional turn-start budget. An agent with no rules never compacts.
+- The conversation agent compacts above 150,000 tokens before the user message of a turn, and above 200,000 tokens during a turn. The report session agent compacts only during a turn, above 250,000 tokens.
+- The chat turn builds only the mechanism of the policy. It no longer takes `conversationBudget`, and the harness no longer exports `DEFAULT_CONVERSATION_BUDGET`.
+- `runAgent` takes the user message and its context records of a turn as `turnInput`. The loop does the turn-start compaction before it appends the input. After a turn-start summary, the input drops its context records.
+- The chat turn stores the user message when the loop sends it. The rows of a turn-start compaction land before the user message, with no turn record. Thus the stored order is the sent order.
+- A summary marker keeps no turn. After a summary, when the first request still reports input tokens over the budget, the run compacts no more.
 - The marker, the `data-compaction` part, and the log records carry `trigger: "turn-start" | "mid-turn"`.
+- The marker and the part carry no `tokensAfter`.
+- A compaction with no summary no longer drops the oldest turns. The loop writes no marker, emits `failed`, logs at `error` level, and compacts no more in the run.
 - The compaction requests ask for the last request of the user.
 
 The report agent:
@@ -36,10 +40,10 @@ None.
 
 ### Modified Capabilities
 
-- `harness-agent-loop`: the measure of the view, the turn-start compaction, the kept turn of a summary, and the trigger on the part and the log.
-- `harness-thread-history`: the kept turns of a summary, the measure and the rollup, the picture count, and the trigger on the divider.
-- `ai-sdk-message-storage`: the trigger and the kept turns of a marker, and the input tokens of a request on an assistant message.
-- `chat-turn`: the budgets for each thread type, and the turn-start compaction of the root loop.
+- `harness-agent-loop`: the budget on the last request, the turn-start compaction, the stop after a summary, the compaction with no summary, and the part.
+- `harness-thread-history`: the three token measurements, and the divider.
+- `ai-sdk-message-storage`: the figures of a marker, the stored drop marker, and the input tokens of a request on an assistant message.
+- `chat-turn`: the rules of the agent, the store of the user message when the loop sends it, and the rows of a turn-start compaction.
 - `report-verification`: the half-scale capture, the slice size and the budget, the block look, and the fault digest.
 - `report-render`: the block mark on each rendered block.
 - `report-authoring`: `finish_draft` gives no document, and the preview and the record give the warnings.
@@ -48,10 +52,17 @@ None.
 
 ## Impact
 
-- Harness source: `src/loop/run-agent.ts`, `src/loop/compaction.ts`, `src/memory/` (the count, the new header reader, the view, the marks, the divider), `src/contracts/`, `src/app/chat-turn.ts`, and `src/prompts/compaction.ts`.
+- Harness source: `src/loop/` (the check, the input of a turn, the rules), `src/memory/` (the marks, the latest figure, the view, the divider), `src/contracts/`, `src/agents/` (the rules of each agent), `src/app/chat-turn.ts`, `src/app/message-assembly.ts`, and `src/prompts/compaction.ts`.
 - Report source: `src/lib/page-capture.ts`, `src/report-render/views/`, `src/tools/report-session/` (the look, the new fault digest, the preview, the record, the listing), `src/tools/report-authoring/authoring-tools.ts`, and `src/prompts/report-session.ts`.
-- `DEFAULT_CONVERSATION_BUDGET` stays 150,000, but it is now the turn-start budget. A host that passes `conversationBudget` now sets the budget during a turn.
-- `CompactionPart` gets the optional `trigger`. A stored marker from before this change has no trigger and keeps no turn.
+- The public API changes for a host:
+  - `CompactionRules`, `AgentDefinition.compaction`, and `RunAgentOptions.turnInput` are new.
+  - `conversationBudget` and `DEFAULT_CONVERSATION_BUDGET` are removed. A host that gives its own agent for a chat thread declares the rules on that agent.
+  - `prepareChatTurn` gives `history` in place of `messages`: the view before the turn, with no user message.
+- `CompactionPart` gets the optional `trigger`. The harness no longer emits `tokensAfter`. The field stays optional in the contract only for a part that an older harness stored. The CLI changes only its doc comments on the two token fields.
+- A stored marker from before this change has no trigger, and the helper ignores its `tokensAfter`. The view still obeys a stored drop marker.
+- A failed compaction logs at `error` level. Thus the log alert on the error lines of a workload sees it.
+- After a failed compaction, a request can pass the context window. The provider then refuses it, and the turn fails. The person continues with a new turn.
+- A provider that reports no input tokens gives no figure. Thus a conversation on such a provider never compacts.
 - The tool results change for a consumer:
   - The listing loses `hash` and the column names.
   - `finish_draft` loses the document.

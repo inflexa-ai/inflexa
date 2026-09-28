@@ -93,6 +93,7 @@ import type { RunLauncher } from "../execution/run-launcher.js";
 import type { ProvenanceSeam } from "../provenance/seam.js";
 import { createStartReportSessionTool } from "../tools/start-report-session.js";
 import type { Logger } from "../lib/logger.js";
+import type { CompactionRules } from "../loop/compaction.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
 import { createResolveCitationTool } from "../tools/research/resolve-citation.js";
@@ -102,6 +103,9 @@ export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
 
 /** Runaway guard — heavy tool-driving turns need generous headroom. */
 const CONVERSATION_MAX_ITERATIONS = 200;
+
+/** Compaction budgets, in the input tokens of a request. */
+const CONVERSATION_COMPACTION: CompactionRules = { turnStartBudget: 150_000, budget: 200_000 };
 
 /**
  * The shared dependencies the composition root explodes apart. The environment
@@ -381,5 +385,6 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         model,
         tools,
         maxIterations: CONVERSATION_MAX_ITERATIONS,
+        compaction: CONVERSATION_COMPACTION,
     };
 }

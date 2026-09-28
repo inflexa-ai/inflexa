@@ -422,7 +422,7 @@ describe("compaction marks on the wire", () => {
         });
         const exchangeRequest = markCompactionExchange(syntheticUserMessage("Reply with the summary."), "c-1");
         const reply = markCompactionExchange({ role: "assistant", content: [{ type: "text", text: "The groups differ." }] }, "c-1");
-        const marker = summaryMarkerMessage("The groups differ.", { kind: "summary", id: "c-1", tokensBefore: 10, tokensAfter: 5, durationMs: 1 });
+        const marker = summaryMarkerMessage("The groups differ.", { kind: "summary", id: "c-1", tokensBefore: 10, durationMs: 1 });
 
         const result = await provider.chat({ ...request, messages: [...request.messages, exchangeRequest, reply, marker] }, makeSession());
 

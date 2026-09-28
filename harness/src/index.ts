@@ -240,7 +240,7 @@ export type { Ask, AskRequest, AskReply, AskApproval } from "./tools/approval/co
 // Agent loop.
 export { runAgent, finalText } from "./loop/run-agent.js";
 export type { RunAgentOptions, RunAgentResult, AgentFinish, AgentRound } from "./loop/run-agent.js";
-export type { CompactionPolicy } from "./loop/compaction.js";
+export type { CompactionPolicy, CompactionRules } from "./loop/compaction.js";
 export type { ToolMask } from "./loop/tool-mask.js";
 export type { AgentDefinition, RunStep, EmitFn, EmitEvent, EventSource } from "./loop/types.js";
 export type { KeptToolOutput, ToolOutputStore } from "./loop/tool-output.js";
@@ -322,7 +322,7 @@ export { createStreamingChat } from "./providers/streaming-chat.js";
 // and gives only its transport values: the harness stores the opening, each round,
 // and the outcome. `appendTurn` stays for a record of a host. `createThreadStore`
 // owns thread metadata (create/list/title).
-export { DEFAULT_CONVERSATION_BUDGET, openChatTurn, prepareChatTurn, runChatTurn } from "./app/chat-turn.js";
+export { openChatTurn, prepareChatTurn, runChatTurn } from "./app/chat-turn.js";
 export type {
     ChatTurnOutcome,
     ChatTurnRan,

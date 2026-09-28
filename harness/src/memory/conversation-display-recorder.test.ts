@@ -106,7 +106,7 @@ describe("conversation display recorder", () => {
         await recorder.emit({
             type: "data-compaction",
             source: TOP,
-            data: { id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
+            data: { id: "c-1", status: "done", tokensBefore: 162_000, durationMs: 21_000 },
         });
 
         expect(recorder.takeRound([])).toEqual([{ id: "a1", role: "assistant", parts: [{ type: "text", text: "before", state: "done" }] }]);
@@ -249,7 +249,7 @@ describe("conversation display recorder — compaction rounds", () => {
         syntheticUserMessage("Reply with the summary."),
         { role: "assistant", content: [{ type: "text", text: "The user compares two groups." }] },
     ].map((message) => markCompactionExchange(message, "c-1"));
-    const figures = { id: "c-1", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
+    const figures = { id: "c-1", tokensBefore: 162_000, durationMs: 21_000 };
 
     it("gives no message for an exchange round, and never takes the text of the exchange", async () => {
         const { recorder } = harness();
@@ -270,9 +270,7 @@ describe("conversation display recorder — compaction rounds", () => {
     it("gives the divider the trigger of the marker", () => {
         const { recorder } = harness();
 
-        const round = recorder.takeRound([
-            summaryMarkerMessage("The user compares two groups.", { kind: "summary", ...figures, keptTurns: 1, trigger: "turn-start" }),
-        ]);
+        const round = recorder.takeRound([summaryMarkerMessage("The user compares two groups.", { kind: "summary", ...figures, trigger: "turn-start" })]);
 
         expect(round[0]!.parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "done", trigger: "turn-start" } }]);
     });

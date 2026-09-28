@@ -4,14 +4,15 @@
 
 The harness MUST mark each message of a compaction exchange with the id of the compaction, in the harness `providerOptions` namespace. It MUST mark a compaction marker with these values in the same namespace:
 
-- the kind, `summary` or `drop`
+- the kind `summary`
 - the id of the compaction
 - the trigger, `turn-start` or `mid-turn`
-- the measure of the view before the compaction, and the estimate of the new view
+- `tokensBefore`, the input tokens of the last request before the compaction
 - the duration of the compaction
-- the count of the turns that the view keeps: on a drop marker, and on a summary marker
 
-A marker from before the trigger has no trigger, and a summary marker from that time has no count of kept turns. The helper MUST still read such a marker. A summary marker with no count keeps no turn.
+A marker carries no figure of the new view, because no request reported one yet. A marker from before this change has no trigger, and it carries an estimate of the new view. The helper MUST still read such a marker, and it MUST ignore that estimate.
+
+The harness writes no drop marker. Harness 0.40.0 and later versions wrote drop markers into stored threads. Thus the helper MUST still read a drop marker with the count of the turns that the view keeps.
 
 A marker and the request of an exchange MUST carry the synthetic marker. Thus no turn-boundary reader reads one of them as a user start. They MUST NOT carry the record marker, because the display shows a marker through its own divider and shows no exchange message.
 
@@ -23,13 +24,19 @@ A pure helper set MUST make each mark and read it back. A message without the ke
 
 - **GIVEN** a summary marker that the store appended
 - **WHEN** the row is read back and the helper reads it
-- **THEN** it gives the kind `summary`, the id, the trigger, the two token figures, the duration, and the count of kept turns
+- **THEN** it gives the kind `summary`, the id, the trigger, `tokensBefore`, and the duration
 
 #### Scenario: An older marker reads with no trigger
 
-- **GIVEN** a stored summary marker with no trigger and no count of kept turns
+- **GIVEN** a stored summary marker with no trigger and with an estimate of the new view
 - **WHEN** the helper reads the row
-- **THEN** it gives a summary marker with no trigger, and the view holds no turn from before the marker
+- **THEN** it gives a summary marker with no trigger and no estimate of the new view
+
+#### Scenario: A stored drop marker still reads
+
+- **GIVEN** a stored drop marker that keeps 4 turns
+- **WHEN** the helper reads the row
+- **THEN** it gives the kind `drop` and 4 kept turns
 
 #### Scenario: A marker opens no turn
 

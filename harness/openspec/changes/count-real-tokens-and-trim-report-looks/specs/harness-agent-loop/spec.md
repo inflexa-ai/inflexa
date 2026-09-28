@@ -1,11 +1,77 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: A failed compaction drops the oldest turns`
+- TO: `### Requirement: A compaction with no summary leaves the view unchanged`
+
 ## MODIFIED Requirements
+
+### Requirement: A compaction with no summary leaves the view unchanged
+
+When the exchange gives no summary, the loop MUST append no marker and no records. The view does not change. The exchange gives no summary in these conditions:
+
+- The exchange gives no text within its cap of 4 requests. The last reply has no text, or it ends with a finish reason other than `stop`.
+- The provider refuses a request of the exchange for its content: a `provider` error with the HTTP status `400` or `413`. A request that is too long for the context window gets such a refusal.
+
+A refusal of the request MUST end the exchange with no summary, and it MUST NOT throw out of the run. The status does not say why, thus the log record MUST give the HTTP status and the error text of the provider.
+
+The loop MUST store the exchange, the same as after a summary. It MUST emit the part with the status `failed`, and it MUST log the failure at `error` level. Thus the log alert on the error lines of a workload sees each failed compaction. Then the loop MUST NOT start a compaction again in the run.
+
+The run continues with the same view. When the context window then refuses a request, the turn fails, and the person continues with a new turn. The next turn tries the compaction again, because the thread holds no new marker.
+
+The loop writes no drop marker. The view still obeys a drop marker that an earlier harness stored (see the harness-thread-history capability).
+
+Each other end of the exchange MUST also leave the view unchanged:
+
+- An abort. When the exchange ends with the finish reason `aborted`, the loop MUST store the exchange and no marker. Then it MUST end the run with the same finish reason.
+- An `auth` error, a `suspend` error, a transient provider error that the retry envelope did not fix, and each other error. The error MUST go up out of the run, the same as an error of a task request, and the loop stores no marker.
+
+#### Scenario: A refused request leaves the view unchanged
+
+- **GIVEN** a run whose view starts at a summary marker, and whose exchange gets a `provider` error with the HTTP status `400`
+- **WHEN** the loop ends the exchange
+- **THEN** the transcript holds no new marker, the next request sends the same view, and the run does not throw
+
+#### Scenario: An exchange with no summary adds no marker
+
+- **GIVEN** an exchange whose model calls `update_working_memory` in each of its 4 replies
+- **WHEN** the exchange reaches its cap
+- **THEN** the loop appends no marker and no record, and the terminal part carries `failed`
+
+#### Scenario: No second compaction after a compaction with no summary
+
+- **GIVEN** a run whose first compaction gave no summary, and whose later request reports input tokens over the budget
+- **WHEN** the loop sends each later request of the run
+- **THEN** no second exchange runs
+
+#### Scenario: A failed compaction logs an error
+
+- **GIVEN** an exchange whose request gets a `provider` error with the HTTP status `400`
+- **WHEN** the exchange ends
+- **THEN** an `error` record carries the status `400` and the error text of the provider as fields
+
+#### Scenario: An abort stores no marker
+
+- **GIVEN** a run whose signal aborts during the exchange
+- **WHEN** the run returns
+- **THEN** `finish.reason` is `"aborted"`, the transcript ends with the messages of the exchange, and it holds no new marker
+
+#### Scenario: An auth error goes up
+
+- **GIVEN** an exchange whose model call gets an `auth` error
+- **WHEN** the loop runs the exchange
+- **THEN** the run throws that error, the transcript holds no new marker, and the part carries `failed`
+
+#### Scenario: A transient error goes up
+
+- **GIVEN** an exchange whose model call gets a retryable `provider` error after the retries of the provider
+- **WHEN** the loop runs the exchange
+- **THEN** the run throws that error, and the transcript holds no new marker
 
 ### Requirement: The loop compacts the conversation when its view exceeds the budget
 
 `RunAgentOptions` MUST accept an optional compaction policy, `compaction`. The policy holds these values:
 
-- the budget of the view, by the measure of the view
-- an optional turn-start budget, for the first request of the run
+- the rules of the agent (`CompactionRules`): the budget during a turn, and an optional turn-start budget, in the input tokens of a request
 - the provider, the request, and the mask of the exchange
 - the choice to keep the first turn in front of each view
 - a function that gives the context records after a new marker
@@ -14,25 +80,21 @@ With a policy, each request of the run MUST send the view of its transcript, by 
 
 The loop MUST store the input tokens that the provider reports for a request on the assistant message of its reply (see the ai-sdk-message-storage capability). The figure is the total input of the request, with the cache reads. A reply with no reported figure carries no mark.
 
-The measure of the view MUST start at an anchor. The anchor is the latest assistant message after the latest marker that carries the input tokens of its request. The measure is that figure, plus the estimate of the anchor and of each later message of the view. When the view holds no anchor, the measure is the estimate of the whole view. The estimate of a message is its `tokens` count (see the harness-thread-history capability).
+The check of a budget MUST read the latest figure of the transcript: the input tokens of the latest assistant message that carries them. A compaction marker after that message gives no figure. With no figure, the loop MUST NOT compact, and it sends the request. The next request reports a figure, and the check before the request after it reads that figure. The loop makes no local estimate for the check.
 
-Thus the measure holds the system prompt, the declared tools, and each picture at the count of the provider. A marker changes the prefix, thus a figure from before the latest marker does not count.
+The figure holds the system prompt, the declared tools, and each picture at the count of the provider. But the check sees the tool results of the last round one request late. The budgets are far below the context window, thus a compaction starts at most one request later.
 
-Before each request of the task segment, the loop MUST measure the view. Then it MUST select the first action of this list that applies:
+Before each request of the task segment, the loop MUST compare the latest figure with the budget. When the figure exceeds the budget, the loop MUST do a mid-turn compaction before it sends the request. The loop compares only before a request. It sends a request only after each tool call of the last reply has its result. Thus a compaction starts between two rounds, and never inside one.
 
-1. A turn-start compaction. It applies only before the first request of the run, when the policy has a turn-start budget, and the measure exceeds that budget. The view must also hold a message before the user message of the current turn.
-2. A mid-turn compaction. It applies when the measure exceeds the budget.
-3. No compaction. The loop sends the request.
+After a summary, the first figure of a request shows if the summary brought the conversation under the budget. When that figure still exceeds the budget, the loop MUST log a `warn` with the figure and the budget. Then it MUST NOT start a compaction again in the run.
 
-The loop measures the view only before a request. It sends a request only after each tool call of the last reply has its result. Thus a compaction starts between two rounds, and never inside one.
-
-The loop MUST NOT start a compaction at these points:
+The loop MUST NOT start a mid-turn compaction at these points:
 
 - before a request of the wrap-up
 - inside a continuation, the exchange of a compaction included
 - before a request that continues a truncated reply
-- after a compaction that failed in the same run
-- after a compaction whose new view still exceeds the budget
+- after a compaction with no summary in the same run
+- after a summary whose first later figure still exceeded the budget
 
 A durable loop MUST pass no policy. The function of the records reads the database outside a step, and a replay runs the loop body again.
 
@@ -42,33 +104,59 @@ A durable loop MUST pass no policy. The function of the records reads the databa
 - **WHEN** the loop sends each request
 - **THEN** the messages of each request are the transcript of the run, and no compaction runs
 
-#### Scenario: A view within the budget does not compact
+#### Scenario: A figure within the budget does not compact
 
-- **GIVEN** a run with a policy whose budget and turn-start budget exceed the measure of each view of the run
+- **GIVEN** a run with a policy whose budget and turn-start budget exceed each figure of the run
 - **WHEN** the run completes
 - **THEN** no exchange ran, and the transcript holds no marker
 
-#### Scenario: A round that passes the budget compacts before the next request
+#### Scenario: A request that passes the budget compacts before the next request
 
-- **GIVEN** a run with a budget of 1,000 tokens, whose first round appends a tool result of 2,000 tokens
+- **GIVEN** a run with a budget of 1,000 tokens, whose first request reports 2,000 input tokens
 - **WHEN** the loop prepares the second request
 - **THEN** the exchange runs after the tool message of the first round, and the second request goes out after the exchange
 
+#### Scenario: A large tool result compacts one request late
+
+- **GIVEN** a run with a budget of 1,000 tokens, whose first request reports 800 input tokens, and whose first round appends a tool result of 2,000 tokens
+- **WHEN** the loop prepares the second request
+- **THEN** no exchange runs, and the second request goes out
+- **AND** when the second request reports more than 1,000 input tokens, the exchange runs before the third request
+
 #### Scenario: The first request can compact
 
-- **GIVEN** a run with no turn-start budget, whose initial messages exceed the budget
+- **GIVEN** a run with no turn-start budget, whose initial messages end after a reply that carries input tokens over the budget
 - **WHEN** the loop prepares its first request
 - **THEN** a mid-turn exchange runs first, and the first request of the task goes out with the new view
 
+#### Scenario: A transcript with no figure does not compact
+
+- **GIVEN** a run with a policy, whose initial messages carry no input tokens of a request
+- **WHEN** the loop prepares its first request
+- **THEN** no exchange runs, and the first request goes out
+
+#### Scenario: A marker after the latest figure stops the check
+
+- **GIVEN** a run whose transcript ends with a summary marker and its records, after a reply that carries 300,000 input tokens
+- **WHEN** the loop prepares the next request
+- **THEN** no exchange runs, and the request goes out
+
+#### Scenario: A summary that leaves the conversation over the budget stops the compaction
+
+- **GIVEN** a run with a budget of 200,000 tokens, whose mid-turn compaction gives a summary, and whose first request after the summary reports 210,000 input tokens
+- **WHEN** the loop prepares the next request
+- **THEN** no exchange runs, and the loop logs a `warn` with the figure and the budget
+- **AND** no later request of the run compacts
+
 #### Scenario: A wrap-up request does not compact
 
-- **GIVEN** a run that reaches its cap with a view over the budget
+- **GIVEN** a run that reaches its cap with a figure over the budget
 - **WHEN** the loop sends the wrap-up requests
 - **THEN** no exchange runs before a wrap-up request
 
 #### Scenario: A request after a truncated reply does not compact
 
-- **GIVEN** a run whose reply is cut at the output limit with prose only, and whose view then exceeds the budget
+- **GIVEN** a run whose reply is cut at the output limit with prose only, and whose request reported input tokens over the budget
 - **WHEN** the loop sends the request that continues the reply
 - **THEN** no exchange runs before that request
 
@@ -78,180 +166,48 @@ A durable loop MUST pass no policy. The function of the records reads the databa
 - **WHEN** the reply of that request lands in the transcript
 - **THEN** the assistant message of the reply carries the figure 12,000 in the harness namespace
 
-#### Scenario: The measure starts at the reported input tokens
-
-- **GIVEN** a view whose last assistant message after the latest marker carries 180,000 input tokens, and a later tool message
-- **WHEN** the loop measures the view
-- **THEN** the measure is 180,000, plus the estimate of that assistant message and the estimate of the tool message
-
-#### Scenario: A view with no reported figure uses the estimate
-
-- **GIVEN** a view whose assistant messages carry no input tokens of a request
-- **WHEN** the loop measures the view
-- **THEN** the measure is the estimate of the whole view
-
-#### Scenario: A figure from before the latest marker does not count
-
-- **GIVEN** a view whose only assistant message with a figure is in a turn that a drop marker kept
-- **WHEN** the loop measures the view
-- **THEN** the measure is the estimate of the whole view
-
-#### Scenario: A turn-start compaction runs before the first request
-
-- **GIVEN** a policy with a turn-start budget of 150,000 and a budget of 200,000, and a view with an earlier turn whose measure is 160,000
-- **WHEN** the loop prepares the first request
-- **THEN** a turn-start compaction runs before the first request
-
-#### Scenario: A view under the turn-start budget does not compact at the turn start
-
-- **GIVEN** a policy with a turn-start budget of 150,000, and a view with an earlier turn whose measure is 140,000
-- **WHEN** the loop prepares the first request
-- **THEN** no exchange runs, and the first request goes out
-
 #### Scenario: A later request compacts at the budget during the turn
 
-- **GIVEN** a policy with a turn-start budget of 150,000 and a budget of 200,000, and a view whose measure is 210,000 after the first round
+- **GIVEN** a policy with a turn-start budget of 150,000 and a budget of 200,000, and a first request that reports 210,000 input tokens
 - **WHEN** the loop prepares the second request
 - **THEN** a mid-turn compaction runs before the second request
-
-#### Scenario: A turn with no earlier message uses the budget during the turn
-
-- **GIVEN** a policy with a turn-start budget, and a view of the current turn alone, whose measure is between the two budgets
-- **WHEN** the loop prepares the first request
-- **THEN** no exchange runs, and the first request goes out
-
-### Requirement: A compaction continues the conversation
-
-A compaction MUST run its exchange as a continuation of a prefix of the current view (see the requirement "A continuation extends an existing conversation of an agent"). A mid-turn exchange continues the whole view. A turn-start exchange continues the view before the user message of the current turn. The previous turn sent that prefix, thus the exchange reads it from the cache.
-
-The exchange MUST send the system prompt, the declared tools, the tool choice, the effort, and the cache policy of the run with no change. Thus the prefix is a cache hit, and each thinking block of the prefix stays valid.
-
-The exchange MUST use these values:
-
-- the provider of the policy
-- the request of the policy, as a synthetic user message
-- the mask of the policy
-- a cap of 4 requests
-- the step namespace `compaction-<n>`, where `<n>` counts the compactions of the run from 0
-- the accounting agent id `<agent id>-compaction`
-
-The provider of the policy is the provider of the conversation with no text stream to the surface. Thus the summary never streams to the surface as a reply. The accounting id gives the usage records and the token counters of the exchange their own agent id. It also gives the events of the exchange a deeper call path, thus a host shows them as sub-agent traffic.
-
-The loop MUST mark each message of the exchange with the id of the compaction (see the ai-sdk-message-storage capability), and it MUST append the messages to its transcript. The summary is the text of the last reply of the exchange. The summary exists only when that reply ends the exchange with the finish reason `stop` and its text is not empty.
-
-#### Scenario: The exchange extends the view
-
-- **GIVEN** a run that does a mid-turn compaction before its third request
-- **WHEN** the exchange sends its first request
-- **THEN** the request carries the system prompt and the tools of the run, and its messages start with each message of the view, byte-identical
-
-#### Scenario: A turn-start exchange extends the view before the turn
-
-- **GIVEN** a run that does a turn-start compaction
-- **WHEN** the exchange sends its first request
-- **THEN** its messages are each message of the view before the user message of the current turn, byte-identical, and then the request of the policy
-
-#### Scenario: The mask refuses a tool outside it
-
-- **GIVEN** a policy whose mask lets only `update_working_memory` run
-- **WHEN** the exchange calls `read_file`
-- **THEN** `read_file` does not run, and the call gets the error result of the mask
-
-#### Scenario: The summary does not stream
-
-- **GIVEN** a policy whose provider drops each text delta
-- **WHEN** the exchange replies with a summary
-- **THEN** the `emit` of the run gets no text delta of the summary
-
-#### Scenario: The exchange counts under its accounting id
-
-- **GIVEN** a compaction of a run of the agent `conversation-agent`
-- **WHEN** a call of the exchange completes with usage
-- **THEN** the usage record and the token counters carry the agent id `conversation-agent-compaction`
-
-#### Scenario: The messages of the exchange carry the mark
-
-- **GIVEN** an exchange of one memory edit and one summary
-- **WHEN** the run returns
-- **THEN** the request, the assistant messages, and the tool message of the exchange carry the id of the compaction
-
-### Requirement: A compaction ends with a summary marker and a new view
-
-When the exchange gives a summary, the loop MUST append a summary marker after the exchange. The marker is a synthetic user message. Its text is the tag `[Conversation Summary]`, a new line, and the summary.
-
-The marker MUST carry the count of the turns that the new view keeps after the summary: 1 for a turn-start compaction, and 0 for a mid-turn compaction. The exchange of a turn-start compaction did not see the current turn. Thus the new view keeps that turn after the summary (see the harness-thread-history capability).
-
-Then the loop MUST call the function of the records with the new view: the head, the marker, and the kept turn. It MUST append the records that the function gives after the marker. The next request MUST send the new view, and each later message joins it.
-
-The loop MUST give the round sink two rounds, in this order:
-
-1. the messages of the exchange, when the exchange ends
-2. the marker and its records
-
-Thus the store holds the marker before a request sends it. The exchange is one round, because no later request sends a message of the exchange.
-
-A second compaction MUST continue the view that starts at the previous summary. Thus the model folds the previous summary into the new summary, and only the latest summary marker counts.
-
-#### Scenario: The view restarts at the marker
-
-- **GIVEN** a run that does a mid-turn compaction before its third request
-- **WHEN** the loop sends the third request
-- **THEN** its messages are the summary marker and then the records, and they hold no message of the exchange or of the first two rounds
-
-#### Scenario: A turn-start summary keeps the user message of the turn
-
-- **GIVEN** a run that does a turn-start compaction with a summary
-- **WHEN** the loop sends the first request of the task
-- **THEN** its messages are the summary marker, the user message of the current turn, and then the records
-- **AND** the marker carries 1 kept turn
-
-#### Scenario: A second compaction continues from the first summary
-
-- **GIVEN** a run that compacts two times
-- **WHEN** the second exchange sends its first request
-- **THEN** its messages start with the first summary marker, and they hold no message of the first exchange
-
-#### Scenario: The rounds and the result agree
-
-- **GIVEN** a run with a round sink that compacts one time
-- **WHEN** the run returns
-- **THEN** the sink got the exchange as one round and then the marker with its records as one round
-- **AND** the initial messages and then each round, in order, equal the messages of the result
-
-#### Scenario: A run that keeps its first turn keeps it in front
-
-- **GIVEN** a policy that keeps the first turn, and a run whose first turn is a seed
-- **WHEN** the loop sends the request after the compaction
-- **THEN** its messages start with the seed, and then the summary marker
 
 ### Requirement: The loop reports each compaction as a data part
 
 The loop MUST emit the progress of each compaction through its `emit`, as a `data-compaction` part with the source of the run. The part carries these fields:
 
 - `id`: one id for each compaction
-- `status`: `running`, `done`, or `failed`
+- `status`: `running`, then `done` or `failed`
 - `trigger`: `turn-start` or `mid-turn`
-- `tokensBefore`: the measure of the view before the compaction
-- `tokensAfter`: the estimate of the new view with its records, when a marker exists
+- `tokensBefore`: the input tokens of the last request before the compaction
 - `durationMs`: the time of the compaction, on a terminal status
 
-The loop MUST emit `running` before the exchange. It MUST emit one terminal status under the same id: `done` after a summary marker, or `failed` after a drop marker, an abort, or a throw out of the exchange. A throw then passes through the loop.
+The loop MUST emit `running` before the exchange. It MUST emit one terminal status under the same id: `done` after a summary marker, or `failed` when the view did not change. The view does not change after an exchange with no summary, an abort, or a throw out of the exchange. A throw then passes through the loop.
+
+The loop MUST NOT emit `tokensAfter`. No figure of the new view exists before the next request. The field stays optional in `CompactionPart` only for a part that an older harness stored.
 
 The part registry MUST list `data-compaction` with the emitter `conversation`, the consumer `conversation`, `transient: true`, and `reconciling: true`. The display recorder does not store a transient part. The stored marker carries the divider (see the harness-thread-history capability).
 
-The loop MUST log each compaction through its `Logger`: at `info` for a summary, and at `warn` for a drop. The record carries the id, the trigger, the two token figures, the duration, and the count of the kept turns of a drop. A drop for a refusal also carries the HTTP status and the error text of the provider. The warn for a new view that still exceeds the budget also carries the trigger.
+The loop MUST log each compaction through its `Logger`: at `info` for a summary, and at `error` for an exchange with no summary. The record carries the id, the trigger, `tokensBefore`, and the duration. A record for a refusal also carries the HTTP status and the error text of the provider.
 
 #### Scenario: A summary emits running and then done
 
 - **GIVEN** a run that compacts one time with a summary
 - **WHEN** the run returns
-- **THEN** the `emit` got one `data-compaction` part with `running` and `tokensBefore`, and then one with `done`, `tokensAfter`, and `durationMs`, under the same id
+- **THEN** the `emit` got one `data-compaction` part with `running` and `tokensBefore`, and then one with `done` and `durationMs`, under the same id
+- **AND** no part carries `tokensAfter`
 
-#### Scenario: A drop emits failed with the tokens after
+#### Scenario: An exchange with no summary emits failed
 
-- **GIVEN** a run whose exchange fails
-- **WHEN** the loop appends the drop marker
-- **THEN** the terminal part carries `failed`, `tokensAfter`, and `durationMs`
+- **GIVEN** a run whose exchange gives no summary
+- **WHEN** the exchange ends
+- **THEN** the terminal part carries `failed` and `durationMs`, and no `tokensAfter`
+
+#### Scenario: An abort emits failed
+
+- **GIVEN** a run whose signal aborts during the exchange
+- **WHEN** the run returns
+- **THEN** the terminal part carries `failed`, and the transcript holds no new marker
 
 #### Scenario: The part and the log name the trigger
 
@@ -270,3 +226,60 @@ The loop MUST log each compaction through its `Logger`: at `info` for a summary,
 
 - **WHEN** a reader reads `PART_REGISTRY["data-compaction"]`
 - **THEN** it gives the emitter `conversation`, the consumer `conversation`, `transient: true`, and `reconciling: true`
+
+## ADDED Requirements
+
+### Requirement: The loop compacts before the input of a turn joins the conversation
+
+`RunAgentOptions` MUST accept an optional `turnInput`: the messages that open the turn of a chat thread, the user message and its context records. Without `turnInput`, the initial messages hold the whole conversation, and no turn-start compaction runs.
+
+With `turnInput`, before the first request, the loop MUST compare the latest figure of the initial messages with the turn-start budget of the policy. When the figure exceeds that budget, the loop MUST do a turn-start compaction. Its exchange continues the view of the initial messages, thus it reads the prefix of the previous turn from the cache. Then the loop MUST append the input. With no policy, no turn-start budget, no figure, or a figure within the budget, the loop appends the input with no compaction.
+
+After a turn-start summary, the loop MUST append the input with no context record. The records after the marker restate the current context, thus a record of the input only repeats one. When the turn-start exchange gives no summary, the input keeps its context records.
+
+The loop MUST give the round sink the input as one round, directly before the first request. Thus the store holds each message in the order that the loop sent it: the history, the exchange, the marker and its records, and then the input.
+
+When an abort ends the turn-start compaction, the run MUST end with the finish reason `aborted`, and the loop appends no input.
+
+#### Scenario: A turn-start compaction runs before the input
+
+- **GIVEN** a policy with a turn-start budget of 150,000 and a budget of 200,000, and initial messages whose last reply carries 160,000 input tokens
+- **WHEN** the run starts with a `turnInput`
+- **THEN** a turn-start compaction runs before the loop appends the input
+- **AND** the first request of the task holds the summary marker, the records, and then the user message
+
+#### Scenario: A turn-start exchange extends the view before the input
+
+- **GIVEN** a run that does a turn-start compaction
+- **WHEN** the exchange sends its first request
+- **THEN** its messages are each message of the view of the initial messages, byte-identical, and then the request of the policy
+
+#### Scenario: A figure under the turn-start budget does not compact at the turn start
+
+- **GIVEN** a policy with a turn-start budget of 150,000, and initial messages whose last reply carries 140,000 input tokens
+- **WHEN** the run starts with a `turnInput`
+- **THEN** no exchange runs, and the first request ends with the user message and its context records
+
+#### Scenario: The input drops its records after a turn-start summary
+
+- **GIVEN** a `turnInput` of a user message and a working-memory record, and a turn-start compaction with a summary
+- **WHEN** the loop sends the first request of the task
+- **THEN** the request holds the working-memory record after the marker, and it holds no record of the input
+
+#### Scenario: The input keeps its records after a turn-start compaction with no summary
+
+- **GIVEN** a `turnInput` of a user message and a working-memory record, and a turn-start exchange that gives no summary
+- **WHEN** the loop sends the first request of the task
+- **THEN** the request ends with the user message and the working-memory record of the input
+
+#### Scenario: The round sink gets the sent order
+
+- **GIVEN** a run with a round sink that does a turn-start compaction
+- **WHEN** the run returns
+- **THEN** the sink got the exchange, then the marker with its records, and then the user message, as three rounds in this order
+
+#### Scenario: An abort during a turn-start compaction appends no input
+
+- **GIVEN** a run whose signal aborts during the turn-start exchange
+- **WHEN** the run returns
+- **THEN** `finish.reason` is `"aborted"`, and the transcript holds no message of the input

@@ -193,20 +193,14 @@ export const COMPACTION_MARKER_KEY = "compactionMarker";
 
 const COMPACTION_TRIGGERS = ["turn-start", "mid-turn"] as const;
 
-/** Where a compaction started: before the first request of a turn, or before a later request. */
+/** Where a compaction started: before the user message of a turn, or before a later request. */
 export type CompactionTrigger = (typeof COMPACTION_TRIGGERS)[number];
 
-// A row from before the trigger and the kept turns of a summary has neither field.
-const compactionFigures = {
-    id: z.string(),
-    tokensBefore: z.number(),
-    tokensAfter: z.number(),
-    durationMs: z.number(),
-    trigger: z.enum(COMPACTION_TRIGGERS).optional(),
-};
+// A row from before the trigger has none.
+const compactionFigures = { id: z.string(), tokensBefore: z.number(), durationMs: z.number(), trigger: z.enum(COMPACTION_TRIGGERS).optional() };
 
 const CompactionMarkerSchema = z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("summary"), ...compactionFigures, keptTurns: z.number().optional() }),
+    z.object({ kind: z.literal("summary"), ...compactionFigures }),
     z.object({ kind: z.literal("drop"), ...compactionFigures, keptTurns: z.number() }),
 ]);
 

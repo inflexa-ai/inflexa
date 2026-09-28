@@ -13,7 +13,7 @@ import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { CompactionPolicy } from "../loop/compaction.js";
-import { finalText, runAgent, type AgentFinish } from "../loop/run-agent.js";
+import { finalText, runAgent, type AgentFinish, type AgentRound } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
 import type { AgentDefinition, EmitFn } from "../loop/types.js";
 import { compactionExchangeOf } from "../memory/ai-sdk-message-storage.js";
@@ -122,19 +122,18 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         logger.warn("title-seed failed (non-fatal)", logger.errorFields(err));
     }
 
-    const history = createThreadHistory(pool);
-    const { messages, userMessage, contextRecords } = await assembleMessages({
+    const assembled = await assembleMessages({
         threadId,
         threadType,
         analysisId,
         userInput,
         ...(await readTurnContext(pool, analysisId)),
-        history,
+        history: createThreadHistory(pool),
         workingMemory: createWorkingMemory(pool),
         ...(deps.logger ? { logger: deps.logger } : {}),
     });
 
-    return { kind: "ok", threadType, messages, userMessage, contextRecords };
+    return { kind: "ok", threadType, ...assembled };
 }
 
 /** The analysis context and the run activity of a turn. A failed read gives the fallback of its kind. */
@@ -146,15 +145,6 @@ async function readTurnContext(pool: Pool, analysisId: string): Promise<{ readon
     );
     return { analysisContext: analysisState?.context ?? null, runActivityContext };
 }
-
-/** The turn-start budget of a `conversation` thread, in the tokens that the provider reports. */
-export const DEFAULT_CONVERSATION_BUDGET = 150_000;
-
-/** The budget during a turn of a `conversation` thread. */
-export const CONVERSATION_TURN_BUDGET = 200_000;
-
-/** The budget during a turn of a `report` thread. A report thread has no turn-start compaction. */
-export const REPORT_TURN_BUDGET = 250_000;
 
 export interface RunChatTurnDeps extends PrepareChatTurnDeps {
     /** The agent of a turn comes from the thread type, which only the preparation knows. */
@@ -190,11 +180,6 @@ export interface RunOpenChatTurnParams {
     readonly startedAtMs?: number;
     /** The cache policy of the root loop. Absent gives {@link CONVERSATION_PROMPT_CACHE}. */
     readonly promptCache?: PromptCachePolicy;
-    /**
-     * The budget during a turn of the root loop. It replaces {@link CONVERSATION_TURN_BUDGET} or {@link REPORT_TURN_BUDGET}.
-     * It changes the turn-start budget ({@link DEFAULT_CONVERSATION_BUDGET}) only when it is lower.
-     */
-    readonly conversationBudget?: number;
 }
 
 /** The values of one whole turn. */
@@ -287,19 +272,15 @@ async function runOpenTurn(
         sink: params.emit,
     });
     // The groups that did not land yet, in the order of the turn. A failed write keeps them for the next write.
-    let pending: ConversationTurn[] = [
-        {
-            modelMessages: [prepared.userMessage, ...prepared.contextRecords],
-            displayMessages: recorder.takeOpening(),
-            ...(params.author === undefined ? {} : { author: params.author }),
-        },
-    ];
+    let pending: ConversationTurn[] = [];
     let startSeq: number | undefined;
     let storeError: DbError | undefined;
+    const opened = (): boolean => startSeq !== undefined || pending.length > 0;
 
     // A store fault never stops the turn: the error rides the result.
     const flush = async (close?: TurnClose): Promise<void> => {
-        if (pending.length === 0 && close === undefined) return;
+        // A turn that ends before its user message was sent has no rows to close.
+        if (!opened() || (pending.length === 0 && close === undefined)) return;
         const closing = close === undefined ? {} : { close };
         const write = startSeq === undefined ? { opening: pending[0]!, rounds: pending.slice(1), ...closing } : { startSeq, rounds: pending, ...closing };
         (await history.writeTurn(turn.threadId, write)).match(
@@ -315,12 +296,35 @@ async function runOpenTurn(
         );
     };
 
-    await flush();
+    const storeRound = async (round: AgentRound): Promise<void> => {
+        if (!opened() && round.messages[0] !== prepared.userMessage) {
+            // A turn-start compaction comes before the user message, thus its rows land before the turn opens. A later
+            // write cannot keep that order, thus a failed write is not tried again, and the next turn compacts again.
+            const appended = await history.appendTurn(turn.threadId, { modelMessages: round.messages, displayMessages: recorder.takeRound(round.messages) });
+            if (appended.isErr()) {
+                logger.warn("chat turn compaction write failed", {
+                    threadId: turn.threadId,
+                    op: appended.error.op,
+                    ...logger.errorFields(appended.error.cause),
+                });
+            }
+            return;
+        }
+        const author = params.author === undefined ? {} : { author: params.author };
+        pending.push(
+            opened()
+                ? { modelMessages: round.messages, displayMessages: recorder.takeRound(round.messages) }
+                : { modelMessages: round.messages, displayMessages: recorder.takeOpening(), ...author },
+        );
+        await flush();
+    };
+
     const { ask } = params;
+    const compaction = compactionPolicy(deps, turn.analysisId, params, prepared.threadType, agent, recorder.emit);
     let outcome: ChatTurnOutcome;
     let fallbackText: string | undefined;
     try {
-        const run = await runAgent(agent, prepared.messages, session, {
+        const run = await runAgent(agent, prepared.history, session, {
             provider: params.chat(recorder.emit),
             signal: params.signal,
             emit: recorder.emit,
@@ -328,17 +332,16 @@ async function runOpenTurn(
             usageRecorder: params.usageRecorder,
             toolOutputStore: createToolOutputStore(deps.pool),
             promptCache: params.promptCache ?? CONVERSATION_PROMPT_CACHE,
-            compaction: compactionPolicy(deps, turn.analysisId, params, prepared.threadType, agent, recorder.emit),
+            turnInput: [prepared.userMessage, ...prepared.contextRecords],
+            ...(compaction === undefined ? {} : { compaction }),
             ...(deps.logger === undefined ? {} : { logger: deps.logger }),
             ...(ask === undefined ? {} : { ask: (request: AskRequest) => ask(request, recorder.emit) }),
-            onRound: async (round) => {
-                pending.push({ modelMessages: round.messages, displayMessages: recorder.takeRound(round.messages) });
-                await flush();
-            },
+            onRound: storeRound,
         });
         outcome = run.finish.reason === "aborted" ? { status: "aborted", finish: run.finish } : { status: "done", finish: run.finish };
         // An abort can end the run inside an exchange, and the text of an exchange is a summary, and no reply.
-        fallbackText = finalText(run.messages.filter((message) => compactionExchangeOf(message) === undefined));
+        // The history ends on the reply of the last turn, thus only the messages of this run can give the text.
+        fallbackText = finalText(run.messages.slice(prepared.history.length).filter((message) => compactionExchangeOf(message) === undefined));
     } catch (cause) {
         // A provider failure that races an abort stays a failure, thus both facts must hold.
         const aborted = params.signal.aborted && cause instanceof Error && cause.name === "AbortError";
@@ -380,20 +383,18 @@ function compactionPolicy(
     threadType: ThreadType,
     agent: AgentDefinition,
     emit: EmitFn,
-): CompactionPolicy {
+): CompactionPolicy | undefined {
+    if (agent.compaction === undefined) return undefined;
     // A report thread reads a frozen copy of the working memory, thus its agent declares no memory tool.
     const remembers = agent.tools.some((tool) => tool.id === WORKING_MEMORY_TOOL_ID);
     const workingMemory = createWorkingMemory(deps.pool);
-    const report = threadType === "report";
-    const budget = params.conversationBudget ?? (report ? REPORT_TURN_BUDGET : CONVERSATION_TURN_BUDGET);
     return {
-        budget,
-        ...(report ? {} : { turnStartBudget: Math.min(DEFAULT_CONVERSATION_BUDGET, budget) }),
+        ...agent.compaction,
         // A streaming provider sends each text delta with no source, thus a delta of the summary would show as a reply.
         provider: params.chat((event) => (event.type === "text-delta" ? undefined : emit(event))),
         request: remembers ? MEMORY_COMPACTION_REQUEST : SUMMARY_COMPACTION_REQUEST,
         mask: remembers ? { allow: [WORKING_MEMORY_TOOL_ID] } : "none",
-        keepFirstTurn: report,
+        keepFirstTurn: threadType === "report",
         recordsAfter: async (view) => contextRecordsFor({ threadType, analysisId, workingMemory, ...(await readTurnContext(deps.pool, analysisId)) }, view),
     };
 }
