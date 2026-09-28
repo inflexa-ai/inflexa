@@ -406,4 +406,18 @@ describe("checkChatPart", () => {
         const frame = { type: "data-from-a-newer-emitter", id: "x-1", anything: 1 };
         expect(checkChatPart(frame as unknown as Frame)).toEqual({ ok: true, frame: frame as unknown as Frame });
     });
+
+    test("refuses a part of a known type whose source is malformed", () => {
+        const frame = { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, source: {} };
+        const checked = checkChatPart(frame as unknown as Frame);
+        expect(checked.ok).toBe(false);
+        if (!checked.ok) expect(checked.error).toContain("callPath");
+    });
+
+    test("refuses a part of a type that the registry does not know whose source is malformed", () => {
+        const frame = { type: "data-from-a-newer-emitter", id: "x-1", source: { agentId: "root" } };
+        const checked = checkChatPart(frame as unknown as Frame);
+        expect(checked.ok).toBe(false);
+        if (!checked.ok) expect(checked.error).toContain("callPath");
+    });
 });

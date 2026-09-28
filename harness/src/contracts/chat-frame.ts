@@ -6,6 +6,7 @@ import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent
 import type { ChatPart } from "./chat-parts.js";
 import type { ChatMessage, MessagePart, TextPart, ToolCallPart } from "./message.js";
 import { isReconciling, PART_REGISTRY } from "./part-registry.js";
+import { EventSourceSchema } from "./schemas/chat-events.js";
 import { ChatPartSchema } from "./schemas/chat-parts.js";
 import type { TokenUsageRollup } from "./usage.js";
 
@@ -67,11 +68,16 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
 
 /**
  * Check a part frame against the schema of its type, one time, where it arrives. The schema drops a field that it
- * does not know. A type that the registry does not know passes unchanged, because a newer emitter can send it.
+ * does not know. A type that the registry does not know passes unchanged, because a newer emitter can send it. The
+ * source is checked for each type, because {@link isRootFrame} reads its call path.
  */
 export function checkChatPart(frame: ChatPartFrame): ChatPartCheck {
-    if (!Object.hasOwn(PART_REGISTRY, frame.type)) return { ok: true, frame };
     const { source, ...part } = frame;
+    if (source !== undefined) {
+        const checkedSource = EventSourceSchema.safeParse(source);
+        if (!checkedSource.success) return { ok: false, error: checkedSource.error.message };
+    }
+    if (!Object.hasOwn(PART_REGISTRY, frame.type)) return { ok: true, frame };
     const parsed = ChatPartSchema.safeParse(part);
     if (!parsed.success) return { ok: false, error: parsed.error.message };
     return { ok: true, frame: source === undefined ? parsed.data : { ...parsed.data, source } };

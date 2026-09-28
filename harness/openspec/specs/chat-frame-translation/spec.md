@@ -124,7 +124,7 @@ When a round closes, the recorder MUST store a call with no outcome as `incomple
 
 ### Requirement: A part frame is checked where it arrives
 
-The harness MUST export `checkChatPart(frame)`. For a type that the registry knows, it MUST check the frame against the schema of that type. It MUST give the parsed part and keep the source, or give the error. A field that the schema does not know MUST NOT stay in the part. A type that the registry does not know MUST pass unchanged, because a newer emitter can send it.
+The harness MUST export `checkChatPart(frame)`. For a type that the registry knows, it MUST check the frame against the schema of that type. It MUST give the parsed part and keep the source, or give the error. A field that the schema does not know MUST NOT stay in the part. A type that the registry does not know MUST pass unchanged, because a newer emitter can send it. For each type, it MUST refuse a frame whose source is not a valid event source, because `isRootFrame` reads the call path of the source.
 
 A consumer MUST check each live part frame one time, where it arrives. After the check, the consumer MUST read the part through its harness type, and not as `unknown`.
 
@@ -139,6 +139,12 @@ A consumer MUST check each live part frame one time, where it arrives. After the
 - **GIVEN** a frame of a type that the registry does not know
 - **WHEN** `checkChatPart` checks it
 - **THEN** the frame passes unchanged
+
+#### Scenario: A part with a malformed source
+
+- **GIVEN** a part frame, of a known or an unknown type, whose source has no call path
+- **WHEN** `checkChatPart` checks it
+- **THEN** the result is an error
 
 ### Requirement: The stored plan card keeps each step field that the card shows
 
