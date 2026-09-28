@@ -12,7 +12,7 @@ describe("recorded conversation display replay", () => {
     it("preserves mixed ordering and every durable conversation data family", async () => {
         const recorder = createConversationDisplayRecorder({
             userText: "show everything",
-            topLevelCallPath: SOURCE.callPath,
+            agentId: SOURCE.agentId,
             sink: () => {},
             userMessageId: "user-display",
             assistantMessageId: "assistant-display",
@@ -71,7 +71,7 @@ describe("recorded conversation display replay", () => {
     it("replays a call's outcome and its detail exactly as shown", async () => {
         const recorder = createConversationDisplayRecorder({
             userText: "run it",
-            topLevelCallPath: SOURCE.callPath,
+            agentId: SOURCE.agentId,
             sink: () => {},
             userMessageId: "u",
             assistantMessageId: "a",
@@ -96,7 +96,7 @@ describe("recorded conversation display replay", () => {
     it("replays a call cut off mid-flight as incomplete, never as a success", async () => {
         const recorder = createConversationDisplayRecorder({
             userText: "run it",
-            topLevelCallPath: SOURCE.callPath,
+            agentId: SOURCE.agentId,
             sink: () => {},
             userMessageId: "u",
             assistantMessageId: "a",

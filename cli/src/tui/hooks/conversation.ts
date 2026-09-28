@@ -424,7 +424,7 @@ type EmitEventArg = Parameters<EmitFn>[0];
  *     `applyChatFrame`: the one translation path of the harness. Thus the live message holds the parts
  *     that the reload of the turn gives, less the differences that the parity test of the harness names;
  *   - `tool-started`/`tool-finished` also open and close the call in `openTools`: the start stamp gives
- *     the fallback duration, and a finish with no start opens its part first, thus the call renders;
+ *     the fallback duration;
  *   - a `data-ask` docks or settles its prompt, and a report spawn pokes the report-children listing;
  *   - `iteration`/`done` give no frame and are dropped.
  *
@@ -461,17 +461,6 @@ export function applyEmitEvent(event: EmitEventArg): void {
         case "tool-finished": {
             const startedAt = openTools.get(frame.toolUseId);
             openTools.delete(frame.toolUseId);
-            // `applyChatFrame` drops a finish whose call never started. The display recorder keeps such a
-            // call, and so does this surface: the start opens the part, thus the finish still renders.
-            if (turnToolCall(id, frame.toolUseId) === undefined) {
-                applyFrame({
-                    type: "tool-started",
-                    toolUseId: frame.toolUseId,
-                    name: frame.name,
-                    ...(frame.detail === undefined ? {} : { detail: frame.detail }),
-                    source: frame.source,
-                });
-            }
             // The harness measures each call around its own dispatch, thus its
             // figure is the only accurate one. This bracket cannot measure a call:
             // the loop emits every start of a round before it dispatches anything,

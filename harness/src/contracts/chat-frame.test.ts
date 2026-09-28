@@ -171,6 +171,20 @@ describe("applyChatFrame", () => {
         expect(messages[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "searchGene", outcome: "ok", detail: "TP53", durationMs: 420 }]);
     });
 
+    test("a finish with no start appends the finished call", () => {
+        const { messages } = applyMany(
+            [],
+            [
+                { type: "text-delta", text: "before", source: SOURCE },
+                { type: "tool-finished", toolUseId: "tu_1", name: "searchGene", outcome: "error", detail: "TP53", durationMs: 9, source: SOURCE },
+            ],
+        );
+        expect(messages[0]!.parts).toEqual([
+            { type: "text", text: "before" },
+            { type: "tool-call", toolCallId: "tu_1", toolName: "searchGene", outcome: "error", detail: "TP53", durationMs: 9 },
+        ]);
+    });
+
     test("an in-flight call carries no outcome until it finishes", () => {
         const { messages } = applyMany([], [{ type: "tool-started", toolUseId: "tu_1", name: "x", source: SOURCE }]);
         expect(messages[0]!.parts[0]).toEqual({
