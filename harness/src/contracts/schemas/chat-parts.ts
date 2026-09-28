@@ -395,6 +395,3 @@ export const ChatPartSchema = z.discriminatedUnion("type", [
     ReportRenderedPartSchema,
     CompactionPartSchema,
 ]);
-
-/** @deprecated Use {@link ChatPartSchema}. */
-export const CortexChatPartSchema = ChatPartSchema;

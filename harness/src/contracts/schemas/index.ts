@@ -28,7 +28,6 @@ export {
     RunCompletedPartSchema,
     RunFailedPartSchema,
     ChatPartSchema,
-    CortexChatPartSchema,
 } from "./chat-parts.js";
 
 export {
@@ -39,7 +38,6 @@ export {
     FinishEventSchema,
     ChatErrorEventSchema,
     ChatEventSchema,
-    CortexChatEventSchema,
 } from "./chat-events.js";
 
 export { TokenUsageRollupSchema } from "./usage.js";
