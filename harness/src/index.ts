@@ -399,6 +399,7 @@ export { storedMessagesToCortex } from "./memory/conversation-display-replay.js"
 export type {
     ChatEvent,
     ChatFrame,
+    ChatPartFrame,
     CortexChatEvent,
     TextDeltaEvent,
     ToolStartedEvent,
@@ -409,6 +410,8 @@ export type {
     FinishEvent,
     ChatErrorEvent,
 } from "./contracts/chat-events.js";
+export { toChatFrame, applyChatFrame } from "./contracts/chat-frame.js";
+export type { TurnTerminal, ApplyFrameResult } from "./contracts/chat-frame.js";
 export type { TokenUsageRollup } from "./contracts/usage.js";
 export type {
     ChatPart,

@@ -49,6 +49,7 @@ export type {
     ChatErrorEvent,
     ChatEvent,
     ChatFrame,
+    ChatPartFrame,
     CortexChatEvent,
 } from "./chat-events.js";
 export type { TokenUsageRollup } from "./usage.js";
@@ -104,6 +105,8 @@ export type {
     ProbeOutcome,
 } from "./profile-vocabulary.js";
 export type { TextPart, ToolCallPart, MessagePart, ChatMessage, CortexPart, CortexMessage } from "./message.js";
+export { toChatFrame, applyChatFrame } from "./chat-frame.js";
+export type { TurnTerminal, ApplyFrameResult } from "./chat-frame.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./part-registry.js";
 export type { ChatPartType, CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./part-registry.js";
 

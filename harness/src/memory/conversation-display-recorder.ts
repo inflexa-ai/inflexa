@@ -124,7 +124,7 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
      * instant, and a turn that ends mid-call needs no closing pass — the calls that
      * never finished are already saying so.
      */
-    function recordToolCall(toolCallId: string, toolName: string, outcome: ToolCallOutcome, detail?: string): void {
+    function recordToolCall(toolCallId: string, toolName: string, outcome: ToolCallOutcome, detail?: string, durationMs?: number): void {
         upsert(
             conversationDisplayPart({
                 type: "tool-call",
@@ -132,6 +132,7 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
                 toolName,
                 outcome,
                 ...(detail === undefined ? {} : { detail }),
+                ...(durationMs === undefined ? {} : { durationMs }),
             }),
             true,
         );
@@ -167,7 +168,7 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
                     recordToolCall(event.toolUseId, event.name, "incomplete", event.detail);
                     break;
                 case "tool-finished":
-                    recordToolCall(event.toolUseId, event.name, event.outcome, event.detail);
+                    recordToolCall(event.toolUseId, event.name, event.outcome, event.detail, event.durationMs);
                     break;
                 case "done":
                 case "iteration":

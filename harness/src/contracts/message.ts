@@ -41,6 +41,8 @@ export interface ToolCallPart {
     outcome?: ToolCallOutcome;
     /** See {@link ToolCallDetail}. Absent when no detail was produced. */
     detail?: ToolCallDetail;
+    /** The time in milliseconds around the dispatch of the call, from `tool-finished`. Absent when no measurement was taken. */
+    durationMs?: number;
 }
 
 /** The discriminated union of every part the chat path can carry. */
