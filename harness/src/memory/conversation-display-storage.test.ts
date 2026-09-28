@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import {
-    conversationUIToCortexMessages,
+    conversationUIToChatMessages,
     envelopeDisplayMessages,
     parseStoredDisplayEnvelope,
     type ConversationUIMessage,
@@ -119,7 +119,7 @@ describe("a stored tool call", () => {
             messages: [{ id: "a1", role: "assistant", parts: [{ type: "data-tool-call", id: "t1", data: call }] }],
         };
 
-        const parts = conversationUIToCortexMessages((await parseStoredDisplayEnvelope(value, "t/0/display")).messages)[0]!.parts;
+        const parts = conversationUIToChatMessages((await parseStoredDisplayEnvelope(value, "t/0/display")).messages)[0]!.parts;
 
         expect(parts).toEqual([{ type: "tool-call", ...call }] as never);
         expect(parts[0]).not.toHaveProperty("durationMs");
@@ -134,6 +134,6 @@ describe("a stored compaction divider", () => {
         const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([divider]))) as unknown, "t/0/display");
 
         expect(parsed.messages).toEqual([divider]);
-        expect(conversationUIToCortexMessages(parsed.messages)).toEqual([{ id: "c-1", role: "system", parts: [{ type: "data-compaction", ...figures }] }]);
+        expect(conversationUIToChatMessages(parsed.messages)).toEqual([{ id: "c-1", role: "system", parts: [{ type: "data-compaction", ...figures }] }]);
     });
 });

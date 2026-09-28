@@ -1,6 +1,6 @@
 /**
- * Cortex chat data parts — custom parts emitted via writer.write() / writer.custom()
- * that flow through the chat stream and are rendered by the frontend.
+ * Chat data parts — the `data-*` parts that a tool or a workflow emits, and that
+ * a surface renders from the chat stream or the run stream.
  *
  * Categories:
  *   Presentation:    data-presentation (agent-synthesized content),
@@ -23,8 +23,13 @@ export interface PlanStep {
     agent: string;
     question: string;
     depends_on: string[];
-    resources?: { cpu: number; memoryGb: number };
+    resources?: { cpu: number; memoryGb: number; gpu?: { count: number } };
     maxSteps: number;
+    track?: string;
+    step_type?: string;
+    acceptance_criteria?: string[];
+    constraints?: string[];
+    caveats?: string[];
 }
 
 export type PresentationContent =

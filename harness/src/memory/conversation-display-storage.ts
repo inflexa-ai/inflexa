@@ -4,14 +4,14 @@
  *
  * AI SDK `UIMessage` is the CONTAINER: it supplies message identity, role,
  * ordering, metadata, and `validateUIMessages` for runtime validation. The PARTS
- * vocabulary is Cortex's own, because ours is the richer one — a `MessagePart`
+ * vocabulary is the harness's own, because ours is the richer one — a `MessagePart`
  * carries a tool call's four-way outcome and its one-line detail, and AI SDK's
  * `dynamic-tool` part has nowhere to put either. Mapping through `dynamic-tool`
  * would silently drop both on every reload, so every non-text part rides as a
- * typed `DataUIPart` whose payload IS the Cortex part minus its discriminant.
+ * typed `DataUIPart` whose payload IS the message part minus its discriminant.
  *
  * The projection is therefore lossless in both directions, and the read path
- * ({@link conversationUIToCortexMessages}) is a near-identity rather than a
+ * ({@link conversationUIToChatMessages}) is a near-identity rather than a
  * reconstruction.
  */
 
@@ -50,7 +50,7 @@ type Payload<T extends { type: string }> = Omit<T, "type">;
 /**
  * The AI SDK custom-data vocabulary persisted for one conversation display.
  *
- * Each key `k` becomes a `data-${k}` part whose payload is the matching Cortex
+ * Each key `k` becomes a `data-${k}` part whose payload is the matching message
  * part without its `type` field, so a stored part and a wire part differ only in
  * where the discriminant lives.
  */
@@ -219,7 +219,7 @@ export async function parseStoredDisplayEnvelope(value: unknown, identity: strin
     }
 }
 
-/** The data-part key a Cortex part is stored under — its `type` minus the `data-` prefix. */
+/** The data-part key a message part is stored under — its `type` minus the `data-` prefix. */
 function displayPartType(part: Exclude<MessagePart, { type: "text" }>): `data-${keyof ConversationUIData & string}` {
     return (part.type === "tool-call" ? "data-tool-call" : part.type) as `data-${keyof ConversationUIData & string}`;
 }
@@ -231,9 +231,9 @@ function displayPartId(part: Exclude<MessagePart, { type: "text" }>): string | u
 }
 
 /**
- * Build the stored form of one non-text Cortex part.
+ * Build the stored form of one non-text message part.
  *
- * A tool call is the one part whose stored payload is not simply the Cortex part
+ * A tool call is the one part whose stored payload is not simply the message part
  * minus its discriminant: `outcome` is optional on the live part (absent means in
  * flight) and required here, because a record is of a call that is no longer
  * running. An in-flight call being recorded is one the turn never saw finish, so
@@ -247,13 +247,13 @@ export function conversationDisplayPart(part: Exclude<MessagePart, { type: "text
 }
 
 /**
- * Read the durable representation back as Cortex display messages.
+ * Read the durable representation back as chat messages.
  *
  * Every part round-trips by moving its discriminant back out of the part type,
  * so nothing here consults a tool name, a registry, or the filesystem. A message
  * whose parts all render empty is dropped so the transcript has no empty bubbles.
  */
-export function conversationUIToCortexMessages(messages: readonly ConversationUIMessage[]): ChatMessage[] {
+export function conversationUIToChatMessages(messages: readonly ConversationUIMessage[]): ChatMessage[] {
     const out: ChatMessage[] = [];
     for (const message of messages) {
         const parts: MessagePart[] = [];

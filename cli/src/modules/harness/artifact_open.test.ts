@@ -13,17 +13,17 @@ import type { OpenTarget } from "../../types/session.ts";
 
 describe("readPresentation", () => {
     test("text-shaped markdown/code/table become inline bodies", () => {
-        expect(readPresentation({ id: "p", title: "T", content: { kind: "markdown", body: "hi" } })).toEqual({
+        expect(readPresentation({ type: "data-presentation", id: "p", title: "T", content: { kind: "markdown", body: "hi" } })).toEqual({
             shape: "inline",
             title: "T",
             body: { kind: "markdown", body: "hi" },
         });
-        expect(readPresentation({ id: "p", content: { kind: "code", code: "x", language: "r" } })).toEqual({
+        expect(readPresentation({ type: "data-presentation", id: "p", content: { kind: "code", code: "x", language: "r" } })).toEqual({
             shape: "inline",
             title: undefined,
             body: { kind: "code", code: "x", language: "r" },
         });
-        expect(readPresentation({ id: "p", content: { kind: "table", headers: ["a"], rows: [["1"]] } })).toEqual({
+        expect(readPresentation({ type: "data-presentation", id: "p", content: { kind: "table", headers: ["a"], rows: [["1"]] } })).toEqual({
             shape: "inline",
             title: undefined,
             body: { kind: "table", headers: ["a"], rows: [["1"]], caption: undefined },
@@ -32,7 +32,12 @@ describe("readPresentation", () => {
 
     test("echart becomes an openable entry carrying the deep-copied spec + pres id + dataPath", () => {
         const spec = { series: [{ type: "scatter" }] };
-        const out = readPresentation({ id: "pres-chart", title: "Volcano", content: { kind: "echart", spec, dataPath: "runs/r/out.csv" } });
+        const out = readPresentation({
+            type: "data-presentation",
+            id: "pres-chart",
+            title: "Volcano",
+            content: { kind: "echart", spec, dataPath: "runs/r/out.csv" },
+        });
         expect(out.shape).toBe("card");
         if (out.shape === "card" && out.entry.target.kind === "echart") {
             expect(out.entry.target.presId).toBe("pres-chart");
@@ -43,16 +48,28 @@ describe("readPresentation", () => {
         }
     });
 
-    test("an unrecognized presentation kind degrades to an inline note (observed, not swallowed)", () => {
-        const out = readPresentation({ id: "p", content: { kind: "hologram" } });
+    test("a structure card, which has no renderer here, degrades to an inline note (observed, not swallowed)", () => {
+        const out = readPresentation({
+            type: "data-presentation",
+            id: "p",
+            content: {
+                kind: "structure",
+                format: "pdb",
+                url: "https://alphafold.ebi.ac.uk/files/AF-P04637-F1-model_v4.pdb",
+                provider: "alphafold",
+                accession: "P04637",
+                version: 4,
+            },
+        });
         expect(out.shape).toBe("inline");
-        if (out.shape === "inline" && out.body.kind === "markdown") expect(out.body.body).toContain("unsupported presentation: hologram");
+        if (out.shape === "inline" && out.body.kind === "markdown") expect(out.body.body).toContain("unsupported presentation: structure");
     });
 });
 
 describe("readFileReference", () => {
     test("each file becomes an openable entry; a multi-file gallery carries its containing folder", () => {
         const out = readFileReference({
+            type: "data-file-reference",
             id: "g",
             title: "Figures",
             files: [{ path: "runs/r/figures/a.png" }, { path: "runs/r/figures/b.png", caption: "heatmap" }],
@@ -64,7 +81,7 @@ describe("readFileReference", () => {
     });
 
     test("a single-file reference carries no folder affordance", () => {
-        const out = readFileReference({ id: "g", files: [{ path: "runs/r/out.csv" }] });
+        const out = readFileReference({ type: "data-file-reference", id: "g", files: [{ path: "runs/r/out.csv" }] });
         expect(out.entries[0]?.name).toBe("out.csv");
         expect(out.folderPath).toBeUndefined();
     });

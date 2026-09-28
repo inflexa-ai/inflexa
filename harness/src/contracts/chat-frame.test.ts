@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { ChatDataPart, EmitEvent } from "../loop/types.js";
 import type { ChatStreamEvent } from "../providers/types.js";
-import { applyChatFrame, toChatFrame } from "./chat-frame.js";
+import { applyChatFrame, checkChatPart, toChatFrame } from "./chat-frame.js";
 import type { ChatMessage } from "./message.js";
 
 const fallback = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
@@ -381,5 +381,29 @@ describe("applyChatFrame", () => {
         const { messages } = applyMany(start, [{ type: "text-delta", text: "reply", source: SOURCE }]);
         expect(messages).toHaveLength(2);
         expect(messages[1]!.id).toBe(ASSISTANT_ID);
+    });
+});
+
+describe("checkChatPart", () => {
+    // Each frame below is loose on purpose: a part frame arrives unchecked, and the check is what types it.
+    type Frame = Parameters<typeof checkChatPart>[0];
+
+    test("gives a valid part without the fields that its schema does not know, and keeps the source", () => {
+        const frame = { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, stale: true, source: topLevel };
+        expect(checkChatPart(frame as unknown as Frame)).toEqual({
+            ok: true,
+            frame: { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, source: topLevel },
+        });
+    });
+
+    test("refuses a part of a known type that its schema rejects", () => {
+        const checked = checkChatPart({ type: "data-ask", id: "a1", title: "Run", command: "ls", status: "maybe" } as unknown as Frame);
+        expect(checked.ok).toBe(false);
+        if (!checked.ok) expect(checked.error).toContain("status");
+    });
+
+    test("gives a part of a type that the registry does not know unchanged", () => {
+        const frame = { type: "data-from-a-newer-emitter", id: "x-1", anything: 1 };
+        expect(checkChatPart(frame as unknown as Frame)).toEqual({ ok: true, frame: frame as unknown as Frame });
     });
 });

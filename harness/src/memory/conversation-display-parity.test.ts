@@ -7,7 +7,7 @@ import type { ChatMessage } from "../contracts/message.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { EmitFn } from "../loop/types.js";
 import { envelopeMessage, markCompactionExchange, summaryMarkerMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
-import { storedMessagesToCortex } from "./conversation-display-replay.js";
+import { storedMessagesToChat } from "./conversation-display-replay.js";
 import { createConversationDisplayRecorder } from "./conversation-display-recorder.js";
 import { envelopeDisplayMessages, parseStoredDisplayEnvelope, type ConversationUIMessage } from "./conversation-display-storage.js";
 import type { StoredMessage, StoredTurnRecord } from "./thread-history.js";
@@ -86,7 +86,7 @@ async function replay(rounds: readonly Round[], facts: RowFacts = {}): Promise<C
             });
         }
     }
-    return storedMessagesToCortex(rows);
+    return storedMessagesToChat(rows);
 }
 
 describe("the live path and the replay of one turn", () => {

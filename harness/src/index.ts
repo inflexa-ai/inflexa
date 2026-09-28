@@ -379,9 +379,9 @@ export type { ConversationDisplayMetadata, ConversationUIData, ConversationUIMes
 // along with the startup backfill that was its only caller. `parseStoredDisplayEnvelope` absorbs the
 // one thing a read can now meet and not understand — a part whose key this vocabulary has retired —
 // by dropping that part, so one stale row cannot fail a whole thread.
-export { storedMessagesToCortex } from "./memory/conversation-display-replay.js";
+export { storedMessagesToChat, storedMessagesToCortex } from "./memory/conversation-display-replay.js";
 
-// Chat wire contracts — the Cortex-native chat-stream vocabulary a consumer
+// Chat wire contracts — the chat-stream vocabulary a consumer
 // rendering the stream types against. Two names are deliberately NOT re-exported
 // here because the main barrel already binds them to other types: `EventSource`
 // (already exported from `loop/types.js`, same `{ agentId, callPath }` shape —
@@ -410,8 +410,9 @@ export type {
     FinishEvent,
     ChatErrorEvent,
 } from "./contracts/chat-events.js";
-export { toChatFrame, applyChatFrame } from "./contracts/chat-frame.js";
-export type { TurnTerminal, ApplyFrameResult } from "./contracts/chat-frame.js";
+export { toChatFrame, applyChatFrame, checkChatPart } from "./contracts/chat-frame.js";
+export type { TextPart, ToolCallPart, MessagePart, ChatMessage } from "./contracts/message.js";
+export type { TurnTerminal, ApplyFrameResult, ChatPartCheck } from "./contracts/chat-frame.js";
 export type { TokenUsageRollup } from "./contracts/usage.js";
 export type {
     ChatPart,
@@ -444,6 +445,9 @@ export type {
     RunCompletedFinding,
     RunFailedPart,
     CompactionPart,
+    AskPart,
+    ChildSessionStartedPart,
+    ReportRenderedPart,
 } from "./contracts/chat-parts.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./contracts/part-registry.js";
 export type { ChatPartType, CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./contracts/part-registry.js";

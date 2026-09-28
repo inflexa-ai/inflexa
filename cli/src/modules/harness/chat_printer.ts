@@ -1,5 +1,4 @@
-import type { CompactionPart, EmitFn, EventSource } from "@inflexa-ai/harness";
-import type { AskPart } from "@inflexa-ai/harness/contracts/chat-parts.js";
+import type { EmitFn, EventSource, PlanPart } from "@inflexa-ai/harness";
 
 import type { PlanCardStepView } from "../../types/session.ts";
 
@@ -8,8 +7,8 @@ import type { PlanCardStepView } from "../../types/session.ts";
 //
 // Two surfaces consume them, and that is the whole reason they sit here rather than inside either
 // one: the TUI (the conversation store `tui/hooks/conversation.ts` and its renderer
-// `tui/layout/message_block.tsx`, which reads each stored harness part through them) and the dev REPL
-// printer (`dev/chat.ts`). Both must narrate the same stream the same way — a plan card the TUI reads
+// `tui/layout/message_block.tsx`, which reads a stored plan card through `readPlanCard`) and the dev
+// REPL printer (`dev/chat.ts`). Both must narrate the same stream the same way — a plan card the TUI reads
 // as three steps and the REPL reads as two would be a difference with no cause behind it — so every
 // reader with two consumers lives here and neither surface re-derives it.
 //
@@ -20,11 +19,11 @@ import type { PlanCardStepView } from "../../types/session.ts";
 // touches that function too.
 //
 // Every reader COPIES what it keeps. An in-process `emit` shares mutable references with the agent
-// loop, so a reader that retained the received `data` object would hand its caller a value the loop
-// can still change underneath it. Each one extracts primitives at receipt and keeps no reference.
+// loop, so a reader that retained the received event would hand its caller a value the loop can
+// still change underneath it.
 //
-// The payloads are external and loop-owned, so every field is read-and-coerced rather than trusted:
-// a missing or mistyped field becomes empty, never a throw. A surface renders what arrived.
+// The event readers read the raw loop event. The part reader takes a part that `checkChatPart`
+// validated where the part arrived, thus it reads each field as the type gives it.
 
 /** Extract the `EventSource` an event carries, if any — only some categories have one. */
 function eventSource(event: Parameters<EmitFn>[0]): EventSource | undefined {
@@ -41,8 +40,8 @@ function eventSource(event: Parameters<EmitFn>[0]): EventSource | undefined {
  * traffic. Events without a `source` (stream text deltas) are never sub-agent, so
  * they always pass. Exported so the TUI adapter shares this exact ruleset instead
  * of re-deriving it. `callPath` is external/loop-owned, so it is
- * guarded with `Array.isArray` (matching every other untrusted read here) — a
- * malformed source lacking the array is treated as top-level rather than throwing.
+ * guarded with `Array.isArray` — a malformed source lacking the array is treated
+ * as top-level rather than throwing.
  */
 export function isSubAgentEvent(event: Parameters<EmitFn>[0]): boolean {
     const src = eventSource(event);
@@ -73,140 +72,28 @@ export function subAgentActivityLabel(event: Parameters<EmitFn>[0]): string | nu
 }
 
 /**
- * Read a plan card's render fields off the `unknown` `data` payload. The wire
- * payload is the harness's `PlanCardData` (flat: `{id, planId, title?, steps}`),
- * but `ChatDataPart.data` is typed `unknown`, so this narrows defensively and
- * copies every field it keeps — no reference to `data` survives the call.
- * Exported so the TUI renderer reads a stored `data-plan` part with this exact
- * reader rather than duplicating the coercion.
+ * Map a plan card to the fields that a surface renders. The receipt check validated the part, thus each
+ * field is read as the type gives it. An absent optional field reads as empty, and each array is copied,
+ * thus the view holds no reference to the part. Exported so the TUI renderer and the REPL printer share
+ * the mapping.
  */
-export function readPlanCard(data: unknown): { planId: string; title: string; steps: PlanCardStepView[] } {
-    // `data` is external/loop-owned; treat it as a loose record and pull only
-    // what renders, coercing missing/mistyped fields to empty rather than throwing.
-    const d = (data ?? {}) as Record<string, unknown>;
-    const rawSteps = Array.isArray(d.steps) ? d.steps : [];
-    const steps = rawSteps.map((s) => {
-        // Same rationale as `d`: each step is untrusted `unknown`, cast to a loose
-        // record so every field below is read-and-coerced, never trusted.
-        const step = (s ?? {}) as Record<string, unknown>;
-        // Nested resource objects come from the same untrusted payload. These loose
-        // records are only read through explicit primitive checks below.
-        const resources = (step.resources ?? {}) as Record<string, unknown>;
-        const gpu = (resources.gpu ?? {}) as Record<string, unknown>;
-        const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
-        const hasResources = typeof resources.cpu === "number" || typeof resources.memoryGb === "number" || typeof gpu.count === "number";
-        return {
-            id: typeof step.id === "string" ? step.id : "",
-            name: typeof step.name === "string" ? step.name : "",
-            agent: typeof step.agent === "string" ? step.agent : "",
-            question: typeof step.question === "string" ? step.question : "",
-            acceptance_criteria: strings(step.acceptance_criteria),
-            constraints: strings(step.constraints),
-            caveats: strings(step.caveats),
-            depends_on: strings(step.depends_on),
-            resources: hasResources
-                ? {
-                      cpu: typeof resources.cpu === "number" ? resources.cpu : 0,
-                      memoryGb: typeof resources.memoryGb === "number" ? resources.memoryGb : 0,
-                      gpuCount: typeof gpu.count === "number" ? gpu.count : 0,
-                  }
-                : null,
-            track: typeof step.track === "string" ? step.track : "",
-            step_type: typeof step.step_type === "string" ? step.step_type : "",
-        };
-    });
+export function readPlanCard(part: PlanPart): { planId: string; title: string; steps: PlanCardStepView[] } {
     return {
-        planId: typeof d.planId === "string" ? d.planId : "",
-        title: typeof d.title === "string" ? d.title : "",
-        steps,
-    };
-}
-
-/**
- * Read a run card's render fields off the `unknown` `data` payload (the
- * harness's `RunCardData`). Note the contract carries NO run status field
- * (`RunCardData`/`RunCardPart` expose `{runId, planId, title, stepCount}`),
- * so this renders identity + step count.
- * Exported alongside {@link readPlanCard} so the TUI renderer shares the reader.
- */
-export function readRunCard(data: unknown): { runId: string; title: string; stepCount: number } {
-    // `data` is external/loop-owned; cast to a loose record and read-and-coerce
-    // every field (missing/mistyped → empty), never trusting the shape.
-    const d = (data ?? {}) as Record<string, unknown>;
-    return {
-        runId: typeof d.runId === "string" ? d.runId : "",
-        title: typeof d.title === "string" ? d.title : "",
-        stepCount: typeof d.stepCount === "number" ? d.stepCount : 0,
-    };
-}
-
-/**
- * Read a child-session spawn's fields off the `unknown` `data` payload (the harness's
- * `ChildSessionStartedPart`: `{threadId, parentThreadId, threadType}`). Narrows defensively and copies
- * the fields it keeps — no reference to `data` survives the call. The parent thread id is not read: the
- * part rides the parent's own transcript, thus the position already states the parent. Exported
- * alongside {@link readPlanCard} so the TUI renderer shares the reader.
- */
-export function readChildSessionStarted(data: unknown): { threadId: string; threadType: string } {
-    // `data` is external/loop-owned; cast to a loose record and read-and-coerce the fields.
-    const d = (data ?? {}) as Record<string, unknown>;
-    return {
-        threadId: typeof d.threadId === "string" ? d.threadId : "",
-        threadType: typeof d.threadType === "string" ? d.threadType : "",
-    };
-}
-
-/** The status an ask can carry: `pending`, then exactly one terminal outcome (latest-wins on re-emit). */
-type AskStatus = AskPart["status"];
-
-/** The recognized ask statuses, as a runtime set for the reader's narrow. Typed `AskStatus[]` so an entry can only be a valid status. */
-const ASK_STATUSES: readonly AskStatus[] = ["pending", "resolved", "rejected", "aborted", "expired"];
-
-/**
- * Read an ask part's render fields off the `unknown` `data` payload (the harness's `AskPart`:
- * `{id, title, command, detail?, status}`). Narrows defensively and copies every field it keeps —
- * no reference to `data` survives the call. An unrecognized or missing `status` maps to `expired`,
- * the SAFE TERMINAL: never `pending`, so a malformed re-emission can never resurrect a live prompt
- * or wedge the pending-asks queue. `id` becomes `askId` (the reconcile/answer key). Exported so the TUI
- * store (which docks the pending prompt) and its renderer read ask fields with this exact reader.
- */
-export function readAskPart(data: unknown): { askId: string; title: string; command: string; detail?: string; status: AskStatus } {
-    // `data` is external/loop-owned; cast to a loose record and read-and-coerce every field.
-    const d = (data ?? {}) as Record<string, unknown>;
-    const status: AskStatus = typeof d.status === "string" && (ASK_STATUSES as readonly string[]).includes(d.status) ? (d.status as AskStatus) : "expired";
-    return {
-        askId: typeof d.id === "string" ? d.id : "",
-        title: typeof d.title === "string" ? d.title : "",
-        command: typeof d.command === "string" ? d.command : "",
-        ...(typeof d.detail === "string" ? { detail: d.detail } : {}),
-        status,
-    };
-}
-
-/** The status of a compaction: `running` while the harness summarizes the conversation, then one terminal status. */
-type CompactionStatus = CompactionPart["status"];
-
-const COMPACTION_STATUSES: readonly CompactionStatus[] = ["running", "done", "failed"];
-
-/**
- * Read a compaction part's fields off the `unknown` `data` payload (the harness's `CompactionPart`), and copy
- * each field that it keeps. An unknown or missing `status` reads as `failed`, the SAFE TERMINAL: a malformed
- * emission never leaves a live line that runs forever. `id` becomes `compactionId`, the reconcile key.
- */
-export function readCompactionPart(data: unknown): {
-    compactionId: string;
-    status: CompactionStatus;
-    tokensBefore: number;
-    tokensAfter?: number;
-    durationMs?: number;
-} {
-    // `data` is external/loop-owned; cast to a loose record and read-and-coerce every field.
-    const d = (data ?? {}) as Record<string, unknown>;
-    return {
-        compactionId: typeof d.id === "string" ? d.id : "",
-        status: COMPACTION_STATUSES.find((status) => status === d.status) ?? "failed",
-        tokensBefore: typeof d.tokensBefore === "number" ? d.tokensBefore : 0,
-        ...(typeof d.tokensAfter === "number" ? { tokensAfter: d.tokensAfter } : {}),
-        ...(typeof d.durationMs === "number" ? { durationMs: d.durationMs } : {}),
+        planId: part.planId,
+        title: part.title ?? "",
+        steps: (part.steps ?? []).map((step) => ({
+            id: step.id,
+            name: step.name,
+            agent: step.agent,
+            question: step.question,
+            acceptance_criteria: [...(step.acceptance_criteria ?? [])],
+            constraints: [...(step.constraints ?? [])],
+            caveats: [...(step.caveats ?? [])],
+            depends_on: [...step.depends_on],
+            resources:
+                step.resources === undefined ? null : { cpu: step.resources.cpu, memoryGb: step.resources.memoryGb, gpuCount: step.resources.gpu?.count ?? 0 },
+            track: step.track ?? "",
+            step_type: step.step_type ?? "",
+        })),
     };
 }

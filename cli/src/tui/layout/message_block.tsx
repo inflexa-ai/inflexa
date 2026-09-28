@@ -1,8 +1,7 @@
 import { For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import { unwrap } from "solid-js/store";
-import type { Thread, ToolCallOutcome } from "@inflexa-ai/harness";
-import type { ChatMessage } from "@inflexa-ai/harness/contracts/message.js";
+import type { ChatMessage, Thread, ToolCallOutcome } from "@inflexa-ai/harness";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { space, GLYPHS, MARKERS, type ThemeColors } from "../../lib/design_system.ts";
@@ -20,7 +19,7 @@ import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { reportChildren } from "../hooks/report_children.ts";
 import { entryDegraded, readFileReference, readPresentation, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
-import { readAskPart, readChildSessionStarted, readCompactionPart, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
+import { readPlanCard } from "../../modules/harness/chat_printer.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
 import { activeRunProgress, runsSnapshot, RUN_STATUS_TERMINAL } from "../hooks/sidebar_live.ts";
 import type { TurnUsage } from "../../modules/harness/turn.ts";
@@ -163,8 +162,8 @@ function MarkdownBody(props: { content: string; paddingLeft: number }): JSX.Elem
 /**
  * One chat turn: a role-colored gutter marker (`>` you / `<` assistant) and label, then each part
  * rendered as its own gutter-marked block under it. This is the bridge from the harness parts to the
- * domain-agnostic block widgets in `components/`: it switches on the part discriminant and reads each
- * card through the shared reader that the REPL printer also uses, thus a live card and its reload
+ * domain-agnostic block widgets in `components/`: it switches on the part discriminant and maps a card
+ * to its view through the shared reader that the REPL printer also uses, thus a live card and its reload
  * render alike. The `never`-typed default makes a new part kind without a renderer a compile error.
  * The streaming text part renders from the live stream accessors and flips to the stored text once
  * the part completes.
@@ -228,10 +227,8 @@ export function MessageBlock(props: MessageBlockProps) {
                         const plan = readPlanCard(part);
                         return <PlanCardBlock planId={plan.planId} title={plan.title} steps={plan.steps} />;
                     }
-                    case "data-run-card": {
-                        const run = readRunCard(part);
-                        return <RunCardBlock runId={run.runId} title={run.title} stepCount={run.stepCount} state={resolveRunCardState(run.runId)} />;
-                    }
+                    case "data-run-card":
+                        return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} state={resolveRunCardState(part.runId)} />;
                     case "data-presentation": {
                         // The reader deep-copies the chart spec, and a store proxy cannot be cloned, thus
                         // the reader gets the plain part that the proxy wraps.
@@ -248,25 +245,21 @@ export function MessageBlock(props: MessageBlockProps) {
                     }
                     case "data-ask":
                         return <AskCard part={part} />;
-                    case "data-child-session-started": {
-                        const started = readChildSessionStarted(part);
-                        return started.threadType === "report" ? (
-                            <ReportSessionEntry threadId={started.threadId} />
+                    case "data-child-session-started":
+                        return part.threadType === "report" ? (
+                            <ReportSessionEntry threadId={part.threadId} />
                         ) : (
                             <MarkdownBody content={mention(part.type)} paddingLeft={bodyPadLeft()} />
                         );
-                    }
-                    case "data-compaction": {
-                        const compaction = readCompactionPart(part);
+                    case "data-compaction":
                         return (
                             <CompactionBlock
-                                status={compaction.status}
-                                tokensBefore={compaction.tokensBefore}
-                                tokensAfter={compaction.tokensAfter}
-                                durationMs={compaction.durationMs}
+                                status={part.status}
+                                tokensBefore={part.tokensBefore}
+                                tokensAfter={part.tokensAfter}
+                                durationMs={part.durationMs}
                             />
                         );
-                    }
                     // The parts that the conversation has no first-class renderer for: the sidebar parts
                     // of a run, and the record of a report render.
                     case "data-report-rendered":
@@ -445,27 +438,24 @@ function askMarker(status: LiveAskPart["status"]): { glyph: string; role: keyof 
 
 /**
  * The ask-card block: a status-colored marker with the approval headline and its status word, the exact
- * command being approved on the line below, and an optional detail line. It renders the harness ask part
- * through `readAskPart`, which gives a status outside the union as `expired`, a terminal status: thus a
- * malformed part never renders as pending. A reload gives the terminal status that the harness closed
- * the ask with, and never the reject feedback, which is live screen state. Co-located with
- * {@link MessageBlock}, its only caller.
+ * command being approved on the line below, and an optional detail line. A reload gives the terminal
+ * status that the harness closed the ask with, and never the reject feedback, which is live screen state.
+ * Co-located with {@link MessageBlock}, its only caller.
  */
 function AskCard(props: { part: LiveAskPart }) {
-    const ask = (): ReturnType<typeof readAskPart> => readAskPart(props.part);
-    const marker = (): { glyph: string; role: keyof ThemeColors } => askMarker(ask().status);
-    const heading = (): string => ask().title || ask().command;
+    const marker = (): { glyph: string; role: keyof ThemeColors } => askMarker(props.part.status);
+    const heading = (): string => props.part.title || props.part.command;
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>
                 <Fg role={marker().role}>{`${marker().glyph} `}</Fg>
                 <Fg role="fg">{heading()}</Fg>
-                <Fg role="fgMuted">{` ${GLYPHS.middot} ${ask().status}`}</Fg>
+                <Fg role="fgMuted">{` ${GLYPHS.middot} ${props.part.status}`}</Fg>
             </text>
             <text paddingLeft={space.md}>
-                <Fg role="fgMuted">{ask().command}</Fg>
+                <Fg role="fgMuted">{props.part.command}</Fg>
             </text>
-            <Show when={ask().detail}>
+            <Show when={props.part.detail}>
                 {(detail: Accessor<string>): JSX.Element => (
                     <text paddingLeft={space.md}>
                         <Fg role="fgSubtle">{detail()}</Fg>
@@ -474,7 +464,7 @@ function AskCard(props: { part: LiveAskPart }) {
             </Show>
             {/* The user's own typed reject feedback, echoed onto the card by the answering surface — quoted
             muted so it reads as their words, not the tool's. Only a rejection carries feedback. */}
-            <Show when={ask().status === "rejected" && props.part.feedback}>
+            <Show when={props.part.status === "rejected" && props.part.feedback}>
                 {(feedback: Accessor<string>): JSX.Element => (
                     <text paddingLeft={space.md}>
                         <Fg role="fgMuted">feedback: </Fg>

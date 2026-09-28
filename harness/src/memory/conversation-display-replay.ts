@@ -7,27 +7,15 @@
  * model transcript would let each later change of a tool or a card rewrite history.
  */
 
-import type { ChatMessage, MessagePart } from "../contracts/message.js";
-import { isReconciling } from "../contracts/part-registry.js";
+import { upsertPart } from "../contracts/chat-frame.js";
+import type { ChatMessage } from "../contracts/message.js";
 import { isSyntheticUserMessage } from "./ai-sdk-message-storage.js";
-import { conversationUIToCortexMessages } from "./conversation-display-storage.js";
+import { conversationUIToChatMessages } from "./conversation-display-storage.js";
 import type { StoredMessage, StoredTurnRecord } from "./thread-history.js";
-
-/** The key that a part reconciles on, or `undefined` for a part that each round adds again. */
-function reconcileKey(part: MessagePart): string | undefined {
-    if (part.type === "tool-call") return `tool-call:${part.toolCallId}`;
-    if (part.type === "text" || !isReconciling(part.type)) return undefined;
-    return "id" in part && typeof part.id === "string" ? `${part.type}:${part.id}` : undefined;
-}
 
 /** Add the parts of a later round to the assistant message of its turn. */
 function mergeRound(target: ChatMessage, round: ChatMessage): void {
-    for (const part of round.parts) {
-        const key = reconcileKey(part);
-        const earlier = key === undefined ? -1 : target.parts.findIndex((candidate) => reconcileKey(candidate) === key);
-        if (earlier >= 0) target.parts[earlier] = part;
-        else target.parts.push(part);
-    }
+    for (const part of round.parts) target.parts = upsertPart(target.parts, part);
 }
 
 function foldTurnRecord(message: ChatMessage | undefined, record: StoredTurnRecord | undefined): void {
@@ -37,7 +25,7 @@ function foldTurnRecord(message: ChatMessage | undefined, record: StoredTurnReco
     if (record.status === "aborted") message.interrupted = true;
 }
 
-export function storedMessagesToCortex(messages: readonly StoredMessage[]): ChatMessage[] {
+export function storedMessagesToChat(messages: readonly StoredMessage[]): ChatMessage[] {
     const out: ChatMessage[] = [];
     // The last message of the group being walked, as `out` holds it.
     let groupLast: ChatMessage | undefined;
@@ -61,7 +49,7 @@ export function storedMessagesToCortex(messages: readonly StoredMessage[]): Chat
             const createdAt = row.createdAt === undefined ? {} : { createdAt: row.createdAt.toISOString() };
             const author = row.author === undefined ? {} : { author: row.author };
             groupLast = undefined;
-            for (const message of conversationUIToCortexMessages(row.displayEnvelope.messages)) {
+            for (const message of conversationUIToChatMessages(row.displayEnvelope.messages)) {
                 const stamped: ChatMessage = { ...message, ...createdAt, ...(message.role === "user" ? author : {}) };
                 const previous = out.at(-1);
                 // The merged message keeps the creation time of its first round.
@@ -86,3 +74,6 @@ export function storedMessagesToCortex(messages: readonly StoredMessage[]): Chat
     foldTurnRecord(turnAssistant, turnRecord);
     return out;
 }
+
+/** @deprecated Use {@link storedMessagesToChat}. */
+export const storedMessagesToCortex = storedMessagesToChat;

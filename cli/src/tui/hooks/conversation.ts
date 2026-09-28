@@ -4,28 +4,30 @@ import { createSignal, untrack } from "solid-js";
 import { createStore, produce, unwrap } from "solid-js/store";
 import {
     applyChatFrame,
+    checkChatPart,
     createStreamingChat,
     createThreadHistory,
-    storedMessagesToCortex,
+    storedMessagesToChat,
     toChatFrame,
+    type ChatEvent,
     type ChatFrame,
+    type ChatMessage,
     type ChatPartFrame,
     type DbError,
     type EmitFn,
+    type MessagePart,
     type Pool,
     type RetractOutcome,
     type ThreadHistory,
+    type ToolCallPart,
 } from "@inflexa-ai/harness";
-// The source of a frame. The barrel binds `EventSource` to the loop type, whose path is read-only.
-import type { EventSource } from "@inflexa-ai/harness/contracts/chat-events.js";
-import type { ChatMessage, MessagePart, ToolCallPart } from "@inflexa-ai/harness/contracts/message.js";
 
 import { describeCause, findAuthCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
 import { readCredentialVerdict } from "../../modules/infra/credential_state.ts";
-import { isSubAgentEvent, readAskPart, readPlanCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
+import { isSubAgentEvent, readPlanCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation } from "../../modules/harness/artifact_open.ts";
 import {
     buildChatSession,
@@ -191,7 +193,7 @@ let deepestSubAgentDepth = 0;
 // wrapper of `send`. `applyChatFrame` reads only the depth of a source, and no part keeps the source of
 // a frame. Thus a path of one entry is the whole of what this value must give, to the frame of a delta
 // and to the two frames that the adapter makes itself: the fallback text and the close of an open call.
-const TOP_LEVEL_SOURCE: EventSource = { agentId: "chat", callPath: ["chat"] };
+const TOP_LEVEL_SOURCE: ChatEvent["source"] = { agentId: "chat", callPath: ["chat"] };
 
 /**
  * Flush the accumulated streamed text into the stored part and clear the streaming buffer. A fresh
@@ -310,9 +312,10 @@ function withScreenState(part: MessagePart, previous: Part): Part {
 
 /**
  * A deep copy of a data frame, taken at receipt. In-process `emit` shares mutable references with the
- * agent loop, and `toChatFrame` copies the top level only, thus the store must own each nested object
- * that the loop can still change. A payload is JSON by the wire contract, and a clone fails only on a
- * value that no JSON holds (a function, a proxy). `cause` is `unknown` because a throw carries anything.
+ * agent loop. `toChatFrame` copies the top level only, and `checkChatPart` copies only the fields that a
+ * schema names, thus the store must own each nested object that the loop can still change. A payload is
+ * JSON by the wire contract, and a clone fails only on a value that no JSON holds (a function, a proxy).
+ * `cause` is `unknown` because a throw carries anything.
  */
 function copyOnReceive(frame: ChatPartFrame): Result<ChatPartFrame, { type: "clone_failed"; cause: unknown }> {
     try {
@@ -425,6 +428,8 @@ type EmitEventArg = Parameters<EmitFn>[0];
  *     that the reload of the turn gives, less the differences that the parity test of the harness names;
  *   - `tool-started`/`tool-finished` also open and close the call in `openTools`: the start stamp gives
  *     the fallback duration;
+ *   - a data frame is checked with `checkChatPart` at receipt: an invalid part of a known type is
+ *     dropped with a warning, and a part of a type that this build does not know passes unchanged;
  *   - a `data-ask` docks or settles its prompt, and a report spawn pokes the report-children listing;
  *   - `iteration`/`done` give no frame and are dropped.
  *
@@ -477,11 +482,18 @@ export function applyEmitEvent(event: EmitEventArg): void {
         case "error":
             // `toChatFrame` gives neither for an emitted event: the outcome of `runChatTurn` ends the turn.
             return;
-        default:
-            copyOnReceive(frame).match(applyDataFrame, (e) =>
+        default: {
+            // The one check of a part: each reader past this point trusts the type of the part.
+            const checked = checkChatPart(frame);
+            if (!checked.ok) {
+                getLogger("chat").warn({ type: frame.type, error: checked.error }, "chat part dropped: it failed the check of its type");
+                return;
+            }
+            copyOnReceive(checked.frame).match(applyDataFrame, (e) =>
                 getLogger("chat").warn({ err: e.cause, type: frame.type }, "chat part dropped: it could not be copied at receipt"),
             );
             return;
+        }
     }
 }
 
@@ -490,13 +502,11 @@ function applyDataFrame(frame: ChatPartFrame): void {
     applyFrame(frame);
     if (frame.type === "data-ask") {
         // The ask part reconciles under one id: `pending` opens the card and docks the prompt; a
-        // terminal re-emission folds latest-wins onto the same card and drains the queue entry. The
-        // reader gives a malformed status as `expired`, a terminal status, thus it never docks a prompt.
-        const ask = readAskPart(frame);
-        if (ask.status === "pending") {
-            pushAsk({ askId: ask.askId, title: ask.title, command: ask.command, ...(ask.detail !== undefined ? { detail: ask.detail } : {}) });
+        // terminal re-emission folds latest-wins onto the same card and drains the queue entry.
+        if (frame.status === "pending") {
+            pushAsk({ askId: frame.id, title: frame.title, command: frame.command, ...(frame.detail !== undefined ? { detail: frame.detail } : {}) });
         } else {
-            settleAsk(ask.askId);
+            settleAsk(frame.id);
         }
     } else if (frame.type === "data-child-session-started" && frame.threadType === "report") {
         // The spawn wrote its thread row BEFORE it emitted this part, thus a read now finds the
@@ -880,13 +890,13 @@ export type LoadSeams = {
      * query, no workspace root to resolve, no tool roster to rebuild a detail from, and nothing that
      * can fail — which is why this seam carries no card/detail resolver and no `Promise`.
      */
-    readonly toCortex: (messages: Parameters<typeof storedMessagesToCortex>[0]) => ChatMessage[];
+    readonly toChat: (messages: Parameters<typeof storedMessagesToChat>[0]) => ChatMessage[];
 };
 
 const realLoadSeams: LoadSeams = {
     runtime: harnessRuntime,
     loadAll: (pool, threadId) => createThreadHistory(pool).loadAll(threadId),
-    toCortex: storedMessagesToCortex,
+    toChat: storedMessagesToChat,
 };
 
 // Monotonic token ordering EVERY asynchronous write to the message store. Two producers write it —
@@ -952,7 +962,7 @@ export async function loadMessages(sessionId: string, seams: LoadSeams = realLoa
     //
     // No error branch: the replay cannot fail. It maps stored projections and touches neither the
     // database nor the filesystem, so the only failure this function still reports is the read's.
-    setMessages(seams.toCortex(res.value.flat()).slice(-MESSAGE_CAP));
+    setMessages(seams.toChat(res.value.flat()).slice(-MESSAGE_CAP));
     loadedSessionId = sessionId;
 }
 

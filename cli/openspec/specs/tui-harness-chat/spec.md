@@ -721,7 +721,7 @@ session are two different facts.
 
 A reloaded tool call MUST show the detail that its live chip showed. This includes a tool that the embedder gives as a host tool. A reloaded call MUST also show its own outcome: a call that failed live renders as failed, and a refused call renders as denied. A reload that shows each call as a success tells the user that a failed call succeeded.
 
-The harness records what a turn displayed when the turn displays it, and `storedMessagesToCortex` replays that record. The store mounts the replayed parts with no change. The reload MUST NOT compute the detail or the outcome again at read time. It MUST NOT read them from the current schema of a tool or from the state of the workspace. Thus the transcript of a past turn does not change with the code of today.
+The harness records what a turn displayed when the turn displays it, and `storedMessagesToChat` replays that record. The store mounts the replayed parts with no change. The reload MUST NOT compute the detail or the outcome again at read time. It MUST NOT read them from the current schema of a tool or from the state of the workspace. Thus the transcript of a past turn does not change with the code of today.
 
 #### Scenario: A reloaded call shows the detail its live chip showed
 

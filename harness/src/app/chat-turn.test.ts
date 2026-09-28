@@ -13,7 +13,7 @@ import type { CompactionRules } from "../loop/compaction.js";
 import { runAgent } from "../loop/run-agent.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, contextRecordOf, withRequestInputTokens } from "../memory/ai-sdk-message-storage.js";
-import { storedMessagesToCortex } from "../memory/conversation-display-replay.js";
+import { storedMessagesToChat } from "../memory/conversation-display-replay.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { conversationRecordTurn, createThreadHistory, type StoredMessage } from "../memory/thread-history.js";
 import { NOT_RUN_TOOL_RESULT } from "../memory/tool-call-integrity.js";
@@ -434,7 +434,7 @@ describe("runChatTurn", () => {
         const provider = scriptedProvider([toolCall("tu-1"), makeMessage([textBlock("the groups differ")], "end_turn")]);
         await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
 
-        const replay = storedMessagesToCortex(await storedRows());
+        const replay = storedMessagesToChat(await storedRows());
 
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
         expect(replay[1]!.parts).toEqual([
@@ -588,7 +588,7 @@ describe("runChatTurn", () => {
 
         await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { userInput: `use the key ${secret}` }));
 
-        const replay = storedMessagesToCortex(await storedRows());
+        const replay = storedMessagesToChat(await storedRows());
         expect(replay[0]!.parts).toEqual([{ type: "text", text: "use the key [REDACTED: OpenAI API Key]" }]);
         expect(JSON.stringify(replay)).not.toContain(secret);
     });
@@ -855,7 +855,7 @@ describe("runChatTurn — compaction", () => {
         const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
         await runChatTurn({ pool, agents: agents() }, params(provider));
 
-        const replay = storedMessagesToCortex(await storedRows());
+        const replay = storedMessagesToChat(await storedRows());
 
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant", "system", "assistant"]);
         expect(replay[1]!.id).not.toBe(replay[3]!.id);
@@ -1012,7 +1012,7 @@ describe("runChatTurn — compaction", () => {
         expect(rows[7]!.turn).toMatchObject({ status: "done" });
         expect(rows[7]!.message.content).toBe("compare the two groups");
         expect(rows.flatMap((row) => (row.author === undefined ? [] : [[row.seq, row.author]]))).toEqual([[rows[7]!.seq, "dr.chen@lab.example"]]);
-        const replay = storedMessagesToCortex(rows);
+        const replay = storedMessagesToChat(rows);
         expect(replay.map((message) => message.role)).toEqual(["system", "user", "assistant"]);
         expect(replay[0]!.parts).toEqual([
             { type: "data-compaction", id: replay[0]!.id, status: "done", tokensBefore: OVER, durationMs: expect.any(Number), trigger: "turn-start" },

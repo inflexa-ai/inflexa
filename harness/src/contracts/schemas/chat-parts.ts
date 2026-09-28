@@ -14,8 +14,13 @@ export const PlanStepSchema = z.object({
     agent: z.string(),
     question: z.string(),
     depends_on: z.array(z.string()),
-    resources: z.object({ cpu: z.number(), memoryGb: z.number() }).optional(),
+    resources: z.object({ cpu: z.number(), memoryGb: z.number(), gpu: z.object({ count: z.number() }).optional() }).optional(),
     maxSteps: z.number(),
+    track: z.string().optional(),
+    step_type: z.string().optional(),
+    acceptance_criteria: z.array(z.string()).optional(),
+    constraints: z.array(z.string()).optional(),
+    caveats: z.array(z.string()).optional(),
 });
 
 export const PresentationContentSchema = z.discriminatedUnion("kind", [
