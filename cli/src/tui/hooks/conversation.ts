@@ -1,33 +1,31 @@
 import { randomUUIDv7 } from "bun";
-import { ResultAsync } from "neverthrow";
+import { err, ok, type Result, ResultAsync } from "neverthrow";
 import { createSignal, untrack } from "solid-js";
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, unwrap } from "solid-js/store";
 import {
+    applyChatFrame,
     createStreamingChat,
     createThreadHistory,
     storedMessagesToCortex,
+    toChatFrame,
+    type ChatFrame,
+    type ChatPartFrame,
     type DbError,
     type EmitFn,
     type Pool,
     type RetractOutcome,
-    type ToolCallOutcome,
     type ThreadHistory,
 } from "@inflexa-ai/harness";
+// The source of a frame. The barrel binds `EventSource` to the loop type, whose path is read-only.
+import type { EventSource } from "@inflexa-ai/harness/contracts/chat-events.js";
+import type { ChatMessage, MessagePart, ToolCallPart } from "@inflexa-ai/harness/contracts/message.js";
 
 import { describeCause, findAuthCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
 import { readCredentialVerdict } from "../../modules/infra/credential_state.ts";
-import {
-    isSubAgentEvent,
-    readAskPart,
-    readCompactionPart,
-    readPlanCard,
-    readChildSessionStarted,
-    readRunCard,
-    subAgentActivityLabel,
-} from "../../modules/harness/chat_printer.ts";
+import { isSubAgentEvent, readAskPart, readPlanCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation } from "../../modules/harness/artifact_open.ts";
 import {
     buildChatSession,
@@ -46,64 +44,30 @@ import { refreshReportChildren } from "./report_children.ts";
 import { notify } from "./notice.ts";
 import { chatStatus, setChatStatus } from "./status.ts";
 import { runTurnWrite } from "./thread_write.ts";
-import type {
-    AskCardPart,
-    CompactionPart,
-    MessageRole,
-    OpenableCardPart,
-    OpenableEntry,
-    Part,
-    PlanCardPart,
-    PresentationPart,
-    TextPart,
-    ToolCallPart,
-} from "../../types/session.ts";
+import type { OpenableEntry, Part, PlanCardStepView } from "../../types/session.ts";
 
 // The chat's hot state — the message list, the in-flight streaming buffer, and the last error —
 // held here (not inside `app.tsx`) so the holder of the state is decoupled from its renderer, the
 // same split as `status.ts`. The `Chat` component (`tui/components/chat.tsx`) renders it and drives
 // the load on session/boot changes; the `Sidebar` reads `messageCount`; `app.tsx` only composes
 // them. The transcript arrives two ways, BOTH writing this store directly (no bus for the harness
-// path): `send` runs one shared turn and feeds every harness event through
-// `applyEmitEvent`, and `loadMessages` replays the pg thread on open. One chat screen is mounted at
-// a time, so a module singleton is correct. The coarse activity state stays in `status.ts`.
+// path): `send` runs one shared turn and feeds every harness event through `applyEmitEvent`, which
+// builds the live message with the shared translation path of the harness, and `loadMessages` mounts
+// the replayed pg thread as the harness gives it. One chat screen is mounted at a time, so a module
+// singleton is correct. The coarse activity state stays in `status.ts`.
 
-/** One chat turn as the UI holds it: the message identity plus its parts. */
-export type UIMessage = {
-    id: string;
-    /**
-     * Who the entry is from. `event` is not a turn: a record of out-of-band work this app appended
-     * to the thread (an analysis run's outcome). It is kept out of `user`/`assistant` deliberately —
-     * a run outcome stored under the `user` role for the wire format would otherwise be rendered as
-     * something the reader said, and offered to them as retractable.
-     */
-    role: MessageRole;
-    parts: Part[];
-    /**
-     * Assistant-only turn duration in ms. Two writers feed one field: the live turn stamps it at
-     * settlement, and a transcript reload reads back what the turn append stored. Absent means that
-     * nothing measured the turn, which a row written before the field became durable also reads as.
-     * A measured zero stays a figure, thus the readers test the field against `undefined`.
-     */
-    durationMs?: number;
-    /**
-     * Assistant-only: what the whole turn consumed, sub-agent loops included, set when the turn
-     * finishes IF any call reported usage. Absent means nothing was reported — never that nothing was
-     * spent — so the meta line renders no figure at all rather than a zero, and a reloaded transcript
-     * (which has no rollup to re-derive; the ledger attributes to a thread, not a turn) simply shows
-     * the message without one.
-     */
-    turnUsage?: TurnUsage;
-    /**
-     * Marker for an aborted turn that streamed output into this assistant message before the user
-     * interrupted it: a message block renders a muted "interrupted" suffix. Set on an interrupted turn
-     * that produced content; never set on a no-output abort (that empty shell is dropped, and an abort
-     * persists no assistant row, so there is nothing to mark). Two sources feed one flag: the live abort
-     * path sets it directly, and a transcript reload re-derives it from the persisted message's
-     * `interrupted` field — so a restarted app renders the same marker the live view showed.
-     */
-    interrupted?: boolean;
-};
+/**
+ * One message as the store holds it: the harness message, whose parts can carry the screen state of
+ * the live turn (see {@link Part}). A reload mounts the replayed harness messages unchanged.
+ *
+ * A `system` message is not a turn: the harness gives that role to a record of out-of-band work that
+ * this app appended to the thread (an analysis run's outcome), and to the divider of a compaction. The
+ * record is stored under the `user` role for the wire format, and it renders as neither party's turn,
+ * because it would otherwise read as something the reader said and be offered to them as retractable.
+ * The live turn writes `durationMs`, `usage`, and `interrupted` at settlement, and a reload reads back
+ * the values that the turn stored.
+ */
+export type UIMessage = Omit<ChatMessage, "parts"> & { parts: Part[] };
 
 // The most-recent MESSAGES the UI mounts. Layout cost scales with mounted message count (the
 // scrollbox clips painting, not layout), so we cap what's mounted rather than virtualize — 200
@@ -199,14 +163,18 @@ function disarmInterrupt(): void {
 }
 
 // Per-turn adapter state. `currentAssistantId` is the message every harness event appends parts to;
-// `currentSessionId` fills the persisted-part ceremony fields; `openTools` pairs a `tool-finished`
-// with its `tool-started` by tool-use id (storing only the start timestamp — a primitive — so the
-// copy-on-receive rule holds by construction). Module-private: only the send lifecycle touches them.
+// `currentSessionId` and `currentAnalysisId` scope the report-children refresh that a spawn pokes;
+// `openTools` pairs a `tool-finished` with its `tool-started` by tool-use id (storing only the start
+// timestamp — a primitive — so the copy-on-receive rule holds by construction). Module-private: only
+// the send lifecycle touches them.
 let currentAssistantId: string | null = null;
 let currentSessionId: string | null = null;
-// The analysis this turn belongs to — stamped onto every openable-card part so its references resolve
-// against the right workspace root at open time (the card stores the reference, never a resolved path).
 let currentAnalysisId: string | null = null;
+// The live turn as the shared translation path builds it: `applyChatFrame` takes it and gives the
+// next one, and it holds harness parts only. The assistant message in the store mirrors it part for
+// part, at the same index, because each frame changes one part in place or appends one. The store
+// adds the screen state, and the text of the streaming part rides `streamText` until the part seals.
+let turnMessages: ChatMessage[] = [];
 const openTools = new Map<string, number>();
 // The deepest sub-agent call depth seen while the current tool call has been open. Only an event at
 // least that deep may write the activity line, which is what "show the INNERMOST sub-agent" means:
@@ -219,6 +187,12 @@ const openTools = new Map<string, number>();
 // anyway.
 let deepestSubAgentDepth = 0;
 
+// A `text-delta` carries no source, and only the top-level loop streams text through the provider
+// wrapper of `send`. `applyChatFrame` reads only the depth of a source, and no part keeps the source of
+// a frame. Thus a path of one entry is the whole of what this value must give, to the frame of a delta
+// and to the two frames that the adapter makes itself: the fallback text and the close of an open call.
+const TOP_LEVEL_SOURCE: EventSource = { agentId: "chat", callPath: ["chat"] };
+
 /**
  * Flush the accumulated streamed text into the stored part and clear the streaming buffer. A fresh
  * object (not an in-place `.text =`) so Solid always reconciles; an equal-value write after the
@@ -230,19 +204,15 @@ let deepestSubAgentDepth = 0;
  * arrives (a handful of coarse proxy chunks per turn), which the parser keeps up with cleanly.
  */
 function commitStream(): void {
-    const pid = streamPartId();
-    if (pid) {
+    const key = streamPartId();
+    if (key !== null) {
         const text = streamText();
         setMessages(
             produce((msgs) => {
                 for (const msg of msgs) {
-                    const idx = msg.parts.findIndex((p) => p.id === pid);
+                    const idx = msg.parts.findIndex((p) => p.type === "text" && p.key === key);
                     if (idx !== -1) {
-                        // `streamPartId` only ever names a text part: `startAssistantTurn` mints it and
-                        // `beginStreamSegment` (the mid-turn remint) re-points it, and both push a
-                        // fresh text part — no other writer touches it. So the found part is a TextPart;
-                        // the spread keeps its id/session/message ceremony and swaps in the sealed text.
-                        msg.parts[idx] = { ...(msg.parts[idx] as TextPart), text };
+                        msg.parts[idx] = { type: "text", text, key };
                         break;
                     }
                 }
@@ -253,118 +223,103 @@ function commitStream(): void {
     setStreamText("");
 }
 
-/**
- * Close the open streaming text segment BEFORE a non-text part (a tool chip, a card, a tagged
- * mention) joins the turn, so the transcript renders in emission order rather than merging post-part
- * prose above the part it followed (mid-turn interleaving). Two cases:
- *
- *   - prose is pending → seal it into its part via {@link commitStream} (which nulls `streamPartId`),
- *     so the interrupting part appends AFTER the sealed prose;
- *   - the buffer is empty but `streamPartId` still names a part → that part is the turn's pre-minted
- *     (or a reopened-but-unwritten) EMPTY text segment. Splice it out and null `streamPartId`, so the
- *     interrupting part is not preceded by an invisible empty part and any resumed prose / ok-fallback
- *     opens a FRESH segment AFTER it.
- *
- * The empty-drop keeps a tool/card-FIRST turn — the agent's most common shape, whose first loop
- * iteration is a bare tool_use — in parity with {@link cortexToUiMessage}'s in-order reload. Without
- * it the pre-minted `parts[0]` survives ahead of the interrupting part and every later delta (and the
- * ok-fallback) lands in it, rendering the prose ABOVE the tool live while a reload (preserving stored
- * row order) renders it below.
- */
-function closeStreamSegment(): void {
-    if (streamText().length > 0) {
-        commitStream();
-        return;
-    }
-    const pid = streamPartId();
-    if (pid === null) return;
-    setStreamPartId(null);
-    const id = currentAssistantId;
-    if (!id) return;
-    setMessages(
-        produce((msgs) => {
-            const msg = msgs.find((m) => m.id === id);
-            if (!msg) return;
-            const idx = msg.parts.findIndex((p) => p.id === pid);
-            if (idx !== -1) msg.parts.splice(idx, 1);
-        }),
-    );
+/** The parts of the live assistant message, as the shared translation path holds them. */
+function turnParts(assistantId: string): readonly MessagePart[] {
+    return turnMessages.find((m) => m.id === assistantId)?.parts ?? [];
 }
 
-/** Append one part to the in-flight assistant message, if a turn is active. */
-function appendPart(part: Part): void {
+/** The tool-call part of the live turn for `toolCallId`, or `undefined` when no `tool-started` opened it. */
+function turnToolCall(assistantId: string, toolCallId: string): ToolCallPart | undefined {
+    for (const part of turnParts(assistantId)) {
+        if (part.type === "tool-call" && part.toolCallId === toolCallId) return part;
+    }
+    return undefined;
+}
+
+/**
+ * Apply one frame to the live turn through the shared translation path of the harness, then copy the
+ * part that the frame changed into the store. `applyChatFrame` changes one part in place or appends
+ * one, and it keeps the identity of each other part, thus an identity check finds the change.
+ *
+ * The last part streams when it is text: a delta changes only `streamText`, never the store, thus a
+ * card beside the text keeps its component state while the text streams. A delta after a card makes
+ * a new text part (the order of the stream), and a part that follows the streaming text part seals
+ * that text into the store before the part lands ({@link appendPart}).
+ */
+function applyFrame(frame: ChatFrame): void {
     const id = currentAssistantId;
-    if (!id) return;
+    if (id === null) return;
+    const before = turnParts(id);
+    turnMessages = applyChatFrame(turnMessages, frame, id).messages;
+    const after = turnParts(id);
+    for (const [index, part] of after.entries()) {
+        if (part === before[index]) continue;
+        const opens = index >= before.length;
+        if (part.type === "text" && index === after.length - 1 && (opens || streamPartId() !== null)) streamLastText(id, part.text, opens);
+        else if (opens) appendPart(id, { ...part });
+        else replacePart(id, index, part);
+    }
+}
+
+/** Write the text of the streaming part. A new text part opens a segment in the store, and the store keeps its text empty until it seals. */
+function streamLastText(assistantId: string, text: string, opens: boolean): void {
+    if (opens) {
+        const key = randomUUIDv7();
+        appendPart(assistantId, { type: "text", text: "", key });
+        setStreamPartId(key);
+    }
+    setStreamText(text);
+}
+
+/** Append a part to the assistant message. A part after the streaming text part seals that text first, thus the transcript keeps the order of the stream. */
+function appendPart(assistantId: string, part: Part): void {
+    if (streamPartId() !== null) commitStream();
     setMessages(
         produce((msgs) => {
-            const msg = msgs.find((m) => m.id === id);
+            const msg = msgs.find((m) => m.id === assistantId);
             if (msg) msg.parts.push(part);
         }),
     );
 }
 
-/**
- * Begin a fresh streaming text segment on the in-flight assistant message and point `streamPartId` at
- * it. Called when a `text-delta` resumes after {@link closeStreamSegment} sealed or dropped the prior
- * segment: the resumed prose becomes its OWN part, appended AFTER the tool/card that
- * interrupted it, so live rendering matches {@link cortexToUiMessage}'s in-order reload. Minted lazily
- * (only on a real delta, never eagerly on flush) so a turn that ends on a card leaves no trailing
- * empty text part.
- */
-function beginStreamSegment(): void {
-    const id = currentAssistantId;
-    if (!id) return;
-    const partId = randomUUIDv7();
-    setStreamPartId(partId);
-    appendPart({ id: partId, sessionId: currentSessionId ?? "", messageId: id, type: "text", text: "", createdAt: Date.now() });
+/** Replace the store part at `index` with the harness part that a frame changed. */
+function replacePart(assistantId: string, index: number, part: MessagePart): void {
+    setMessages(
+        produce((msgs) => {
+            const msg = msgs.find((m) => m.id === assistantId);
+            const previous = msg?.parts[index];
+            if (msg && previous) msg.parts[index] = withScreenState(part, previous);
+        }),
+    );
 }
 
 /**
- * Resolve a live tool part on `tool-finished`: flip its status and stamp the duration. Falls back to
- * appending a finished part when no matching `tool-started` was seen (should not happen, but the
- * transcript stays honest either way). A fresh object so Solid reconciles the status/duration edit.
+ * The store copy of a harness part that replaces `previous`: a fresh object, thus Solid reconciles the
+ * edit. It keeps the screen state that the harness part does not carry: the key of a text part, and the
+ * reject feedback of an ask. Thus the feedback survives a terminal re-emission of its ask, and
+ * {@link noteAskFeedback} spreads the part that it finds, thus the two writes converge in either order.
+ *
+ * The activity line of a tool call is dropped: a call changes when it finishes, and a finished call has
+ * an outcome instead. Leaving it would strand "planner: bash" under a chip that already says `ok · 14ms`.
  */
-function updateToolPart(toolUseId: string, name: string, status: "ok" | "error" | "denied", durationMs: number | undefined, detail: string | undefined): void {
-    const id = currentAssistantId;
-    if (!id) return;
-    setMessages(
-        produce((msgs) => {
-            const msg = msgs.find((m) => m.id === id);
-            if (!msg) return;
-            const idx = msg.parts.findIndex((p) => p.id === toolUseId && p.type === "tool-call");
-            if (idx !== -1) {
-                // The findIndex predicate already matched `type === "tool-call"`, so the part at idx is
-                // a ToolCallPart; the cast only restates that for the spread (findIndex widens it back
-                // to Part). Fresh object so Solid reconciles the status/duration edit.
-                // `activity` is dropped, not carried: it described work in flight, and a finished
-                // call has an outcome instead. Leaving it would strand "planner: bash" under a chip
-                // that already says `ok · 14ms`.
-                // `detail` is applied only when the finish CARRIES one. A tool that describes its own
-                // result names the outcome there — `page …`, `version …` — and that line supersedes
-                // the one the start showed. An absent detail leaves the started line standing, so a
-                // finish can only ever improve the chip and never blank it.
-                msg.parts[idx] = {
-                    ...(msg.parts[idx] as ToolCallPart),
-                    status,
-                    durationMs,
-                    activity: undefined,
-                    ...(detail !== undefined ? { detail } : {}),
-                };
-            } else {
-                msg.parts.push({
-                    id: toolUseId,
-                    sessionId: currentSessionId ?? "",
-                    messageId: id,
-                    type: "tool-call",
-                    name,
-                    ...(detail !== undefined ? { detail } : {}),
-                    status,
-                    durationMs,
-                    createdAt: Date.now(),
-                });
-            }
-        }),
-    );
+function withScreenState(part: MessagePart, previous: Part): Part {
+    if (part.type === "text" && previous.type === "text" && previous.key !== undefined) return { ...part, key: previous.key };
+    if (part.type === "data-ask" && previous.type === "data-ask" && previous.feedback !== undefined) return { ...part, feedback: previous.feedback };
+    return { ...part };
+}
+
+/**
+ * A deep copy of a data frame, taken at receipt. In-process `emit` shares mutable references with the
+ * agent loop, and `toChatFrame` copies the top level only, thus the store must own each nested object
+ * that the loop can still change. A payload is JSON by the wire contract, and a clone fails only on a
+ * value that no JSON holds (a function, a proxy). `cause` is `unknown` because a throw carries anything.
+ */
+function copyOnReceive(frame: ChatPartFrame): Result<ChatPartFrame, { type: "clone_failed"; cause: unknown }> {
+    try {
+        return ok(structuredClone(frame));
+    } catch (cause) {
+        return err({ type: "clone_failed", cause });
+    }
 }
 
 /**
@@ -420,65 +375,12 @@ function applySubAgentActivity(event: EmitEventArg): void {
         produce((msgs) => {
             const msg = msgs.find((m) => m.id === id);
             if (!msg) return;
-            const idx = msg.parts.findIndex((p) => p.id === toolUseId && p.type === "tool-call");
-            if (idx === -1) return;
+            const idx = msg.parts.findIndex((p) => p.type === "tool-call" && p.toolCallId === toolUseId);
+            const part = msg.parts[idx];
             // Fresh object so Solid reconciles the edit — the same rule every other part write here
             // follows. `label` is a fresh string built at receipt, so no reference to the event survives.
-            msg.parts[idx] = { ...(msg.parts[idx] as ToolCallPart), activity: label };
-        }),
-    );
-}
-
-/**
- * Fold a terminal `data-ask` re-emission onto the live transcript: overwrite the existing ask card's
- * status in place (same `askId` — the part re-emits `pending` → a terminal status under one id, so this
- * is latest-wins with no duplicate), or append a fresh terminal card when none exists. The append path
- * covers an answer-side re-emission that arrives with no prior `pending` (e.g. the pending card was
- * dropped when the store reset mid-turn). A fresh object so Solid reconciles the status edit.
- */
-function reconcileAskCard(ask: ReturnType<typeof readAskPart>): void {
-    const id = currentAssistantId;
-    if (!id) return;
-    setMessages(
-        produce((msgs) => {
-            const msg = msgs.find((m) => m.id === id);
-            if (!msg) return;
-            const idx = msg.parts.findIndex((p) => p.type === "ask-card" && p.askId === ask.askId);
-            if (idx !== -1) {
-                // The findIndex predicate already matched `type === "ask-card"`, so the part at idx is an
-                // AskCardPart; the cast only restates that for the spread. Fresh object so Solid reconciles.
-                msg.parts[idx] = { ...(msg.parts[idx] as AskCardPart), status: ask.status };
-            } else {
-                msg.parts.push({
-                    id: randomUUIDv7(),
-                    type: "ask-card",
-                    askId: ask.askId,
-                    title: ask.title,
-                    command: ask.command,
-                    ...(ask.detail !== undefined ? { detail: ask.detail } : {}),
-                    status: ask.status,
-                });
-            }
-        }),
-    );
-}
-
-/**
- * Fold a `data-compaction` emission onto the live transcript: the first emission of an id appends the part,
- * and a later one replaces its status and its figures in place (latest-wins), as {@link reconcileAskCard} does.
- */
-function reconcileCompaction(compaction: ReturnType<typeof readCompactionPart>): void {
-    const id = currentAssistantId;
-    if (!id) return;
-    setMessages(
-        produce((msgs) => {
-            const msg = msgs.find((m) => m.id === id);
-            if (!msg) return;
-            const idx = msg.parts.findIndex((p) => p.type === "compaction" && p.compactionId === compaction.compactionId);
-            // A fresh object on each write, thus Solid reconciles the edit.
-            const part: CompactionPart = { id: msg.parts[idx]?.id ?? randomUUIDv7(), type: "compaction", ...compaction };
-            if (idx === -1) msg.parts.push(part);
-            else msg.parts[idx] = part;
+            // The line is screen state of the store alone: the harness part of the call never holds it.
+            if (part?.type === "tool-call") msg.parts[idx] = { ...part, activity: label };
         }),
     );
 }
@@ -486,12 +388,12 @@ function reconcileCompaction(compaction: ReturnType<typeof readCompactionPart>):
 /**
  * Echo the user's typed reject feedback onto the live ask card so the transcript shows what they said.
  * The ledger and the model-facing denial carry the feedback on their own; this write is presentation
- * only. It SPREADS the existing part and adds `feedback`, so whatever status a terminal re-emit
- * ({@link reconcileAskCard}) already folded in survives — and, symmetrically, that reconcile spreads the
- * existing part and overrides only `status`, so a `feedback` already noted survives it. The two writes
- * therefore converge on the same card regardless of which lands first: the gateway's terminal re-emit
- * (the poll's `data-ask`) and this answer-side echo race, and both are order-independent by construction.
- * A no-op when no card matches — e.g. the pending card was dropped by a mid-turn reset.
+ * only. It SPREADS the existing part and adds `feedback`, so whatever status a terminal re-emit already
+ * folded in survives — and, symmetrically, the store copy of that re-emit ({@link withScreenState})
+ * keeps a `feedback` already noted. The two writes therefore converge on the same card regardless of
+ * which lands first: the gateway's terminal re-emit (the poll's `data-ask`) and this answer-side echo
+ * race, and both are order-independent by construction. A no-op when no card matches — e.g. the
+ * pending card was dropped by a mid-turn reset.
  */
 export function noteAskFeedback(askId: string, feedback: string): void {
     const id = currentAssistantId;
@@ -500,10 +402,10 @@ export function noteAskFeedback(askId: string, feedback: string): void {
         produce((msgs) => {
             const msg = msgs.find((m) => m.id === id);
             if (!msg) return;
-            const idx = msg.parts.findIndex((p) => p.type === "ask-card" && p.askId === askId);
-            // The findIndex predicate already matched `type === "ask-card"`, so the part at idx is an
-            // AskCardPart; the cast only restates that for the spread. Fresh object so Solid reconciles.
-            if (idx !== -1) msg.parts[idx] = { ...(msg.parts[idx] as AskCardPart), feedback };
+            const idx = msg.parts.findIndex((p) => p.type === "data-ask" && p.id === askId);
+            const part = msg.parts[idx];
+            // Fresh object so Solid reconciles.
+            if (part?.type === "data-ask") msg.parts[idx] = { ...part, feedback };
         }),
     );
 }
@@ -512,96 +414,64 @@ export function noteAskFeedback(askId: string, feedback: string): void {
 type EmitEventArg = Parameters<EmitFn>[0];
 
 /**
- * Reduce one harness turn event into the store. This is the TUI's counterpart to the
- * REPL printer: it consumes the harness `contracts/` vocabulary directly (never the cli bus event
- * shapes) and writes the store rather than a terminal.
+ * Reduce one harness turn event into the store. This is the TUI's counterpart to the REPL printer: it
+ * consumes the harness `contracts/` vocabulary directly (never the cli bus event shapes) and writes the
+ * store rather than a terminal.
  *
- *   - sub-agent traffic (deeper `callPath`) is dropped — the shared depth filter;
- *   - `text-delta` accumulates in `streamText`; it seals into its part at turn completion AND whenever
- *     a non-text part interrupts, so prose emitted after a tool/card renders as its own segment BELOW
- *     that part (in-order interleaving). When a tool/card is the turn's FIRST event the pre-minted
- *     empty text part is dropped, so the interrupting part is not preceded by an empty segment and any
- *     later prose opens fresh below it — matching the reload path;
- *   - `tool-started`/`tool-finished` become one live tool part paired by tool-use id, with a
- *     duration and error outcome on finish;
- *   - `data-plan`/`data-run-card` become card parts via the shared readers;
- *   - `data-child-session-started` with threadType `report` becomes a report-session part at its
- *     position, and it pokes the report-children listing so the entry paints inside the turn; any
- *     other threadType renders the tagged mention;
- *   - `data-compaction` becomes one compaction part of the turn, updated in place by its id;
- *   - any other `data-*` part renders a visible tagged mention (observed, not swallowed);
- *   - `iteration`/`done` are dropped.
+ *   - sub-agent traffic (deeper `callPath`) becomes the activity line of the running tool call, before
+ *     any translation — the shared depth filter;
+ *   - each other event becomes a frame through `toChatFrame`, and {@link applyFrame} applies it with
+ *     `applyChatFrame`: the one translation path of the harness. Thus the live message holds the parts
+ *     that the reload of the turn gives, less the differences that the parity test of the harness names;
+ *   - `tool-started`/`tool-finished` also open and close the call in `openTools`: the start stamp gives
+ *     the fallback duration, and a finish with no start opens its part first, thus the call renders;
+ *   - a `data-ask` docks or settles its prompt, and a report spawn pokes the report-children listing;
+ *   - `iteration`/`done` give no frame and are dropped.
  *
- * COPY-ON-RECEIVE: in-process `emit` shares mutable references with the agent loop, so every branch
- * extracts the primitives/fresh objects it stores at receipt and NEVER retains the received event or
- * its `data` (the same hazard the printer guards). The card readers copy every field they keep.
+ * COPY-ON-RECEIVE: in-process `emit` shares mutable references with the agent loop. A tool frame holds
+ * primitives only, and each data frame is deep-copied at receipt ({@link copyOnReceive}), thus the store
+ * never retains the received event or its `data` (the same hazard the printer guards).
  */
 export function applyEmitEvent(event: EmitEventArg): void {
+    // An event outside a turn has no message to land in.
+    const id = currentAssistantId;
+    if (id === null) return;
     // Sub-agent traffic is ROUTED, not discarded. Its iterations and tool calls are far too numerous
     // to become transcript blocks — that would bury the conversation — but dropping it entirely made
     // a long tool call indistinguishable from a wedged one. It becomes one activity line on the tool
-    // block it is running inside, and never reaches the switch below.
+    // block it is running inside, and never reaches the translation below.
     if (isSubAgentEvent(event)) {
         applySubAgentActivity(event);
         return;
     }
 
-    switch (event.type) {
+    const frame = toChatFrame(event, TOP_LEVEL_SOURCE);
+    if (frame === null) return;
+    switch (frame.type) {
         case "text-delta":
-            // A delta with no active streaming part means a preceding non-text part (tool/card) closed
-            // the prior segment (sealing its prose, or dropping an empty one) — begin a fresh text part
-            // so the resumed prose renders AFTER that part, matching the reload path's in-order
-            // interleaving. Lazy: minting only on a real delta leaves no trailing empty part when a
-            // turn ends on a card.
-            if (streamPartId() === null) beginStreamSegment();
-            setStreamText((prev) => prev + event.text);
+            applyFrame(frame);
             return;
-        case "done":
-        case "iteration":
-            // Stream terminal marker / loop iteration boundary — orchestration, not transcript content.
-            // Deliberately NO flush here: the turn's final segment is sealed by finishTurn, not by these.
-            return;
-        case "tool-started": {
-            // Close the open text segment before this chip: seal any prose streamed before it into its
-            // own part, or drop the pre-minted empty part when nothing streamed yet (a tool-first turn),
-            // so the chip renders in emission order and is never preceded by an empty part.
-            closeStreamSegment();
-            // Extract primitives at receipt; never retain the event.
-            const toolUseId = event.toolUseId;
-            const name = event.name;
-            // Opaque display text the harness computed from this call's input via the tool's own
-            // `describeCall`. Copied, never parsed — interpreting it here would rebuild exactly the
-            // schema coupling that hook exists to remove.
-            const detail = event.detail;
-            openTools.set(toolUseId, Date.now());
+        case "tool-started":
+            openTools.set(frame.toolUseId, Date.now());
             // A new call starts with no innermost agent known, so the depth bar drops. Without this
             // reset the first call's deepest nesting would gate every later call's activity line.
             deepestSubAgentDepth = 0;
-            appendPart({
-                id: toolUseId,
-                sessionId: currentSessionId ?? "",
-                messageId: currentAssistantId ?? "",
-                type: "tool-call",
-                name,
-                ...(detail !== undefined ? { detail } : {}),
-                status: "running",
-                createdAt: Date.now(),
-            });
+            applyFrame(frame);
             return;
-        }
         case "tool-finished": {
-            // Close the open text segment before the chip resolves — seals pending prose (matters on
-            // the unpaired-finish path, where updateToolPart appends a fresh finished part that must
-            // land after it) or drops an empty pre-minted part (a tool-first turn).
-            closeStreamSegment();
-            const toolUseId = event.toolUseId;
-            const name = event.name;
-            // The harness outcome maps straight onto the part's status: `denied` stays distinct from
-            // `error` so a refused approval is not reported as a tool failure.
-            const outcome = event.outcome;
-            const detail = event.detail;
-            const startedAt = openTools.get(toolUseId);
-            openTools.delete(toolUseId);
+            const startedAt = openTools.get(frame.toolUseId);
+            openTools.delete(frame.toolUseId);
+            // `applyChatFrame` drops a finish whose call never started. The display recorder keeps such a
+            // call, and so does this surface: the start opens the part, thus the finish still renders.
+            if (turnToolCall(id, frame.toolUseId) === undefined) {
+                applyFrame({
+                    type: "tool-started",
+                    toolUseId: frame.toolUseId,
+                    name: frame.name,
+                    ...(frame.detail === undefined ? {} : { detail: frame.detail }),
+                    source: frame.source,
+                });
+            }
             // The harness measures each call around its own dispatch, thus its
             // figure is the only accurate one. This bracket cannot measure a call:
             // the loop emits every start of a round before it dispatches anything,
@@ -610,150 +480,71 @@ export function applyEmitEvent(event: EmitEventArg): void {
             // observes one identical figure.
             //
             // The bracket stays as the fallback for a harness that sends no
-            // duration, and it still pairs an unmatched finished event to its part.
-            const durationMs = event.durationMs ?? (startedAt !== undefined ? Date.now() - startedAt : undefined);
-            updateToolPart(toolUseId, name, outcome, durationMs, detail);
+            // duration, which is the read that `ToolFinishedEvent` asks a host for.
+            applyFrame(frame.durationMs === undefined && startedAt !== undefined ? { ...frame, durationMs: Date.now() - startedAt } : frame);
             return;
         }
+        case "finish":
+        case "error":
+            // `toChatFrame` gives neither for an emitted event: the outcome of `runChatTurn` ends the turn.
+            return;
         default:
-            // Close the open text segment so the card/mention this becomes renders after it, in
-            // emission order: seals preceding prose or drops an empty pre-minted part (a card-first turn).
-            closeStreamSegment();
-            // Only `ChatDataPart` remains (its `type` is `data-${string}`).
-            renderDataPart(event.type, event.data);
+            copyOnReceive(frame).match(applyDataFrame, (e) =>
+                getLogger("chat").warn({ err: e.cause, type: frame.type }, "chat part dropped: it could not be copied at receipt"),
+            );
             return;
     }
 }
 
-/** Map a harness data part into a card part (via the shared readers) or a visible tagged mention. */
-function renderDataPart(type: `data-${string}`, data: unknown): void {
-    switch (type) {
-        case "data-plan": {
-            const plan = readPlanCard(data);
-            appendPart({ id: randomUUIDv7(), type: "plan-card", planId: plan.planId, title: plan.title, steps: plan.steps });
-            return;
+/** Apply a data frame, then run the side effect of an ask or of a report spawn. */
+function applyDataFrame(frame: ChatPartFrame): void {
+    applyFrame(frame);
+    if (frame.type === "data-ask") {
+        // The ask part reconciles under one id: `pending` opens the card and docks the prompt; a
+        // terminal re-emission folds latest-wins onto the same card and drains the queue entry. The
+        // reader gives a malformed status as `expired`, a terminal status, thus it never docks a prompt.
+        const ask = readAskPart(frame);
+        if (ask.status === "pending") {
+            pushAsk({ askId: ask.askId, title: ask.title, command: ask.command, ...(ask.detail !== undefined ? { detail: ask.detail } : {}) });
+        } else {
+            settleAsk(ask.askId);
         }
-        case "data-run-card": {
-            const run = readRunCard(data);
-            appendPart({ id: randomUUIDv7(), type: "run-card", runId: run.runId, title: run.title, stepCount: run.stepCount });
-            return;
-        }
-        case "data-presentation":
-            appendPart(presentationPart(data, currentAnalysisId ?? ""));
-            return;
-        case "data-file-reference":
-            appendPart(fileReferencePart(data, currentAnalysisId ?? ""));
-            return;
-        case "data-child-session-started": {
-            const started = readChildSessionStarted(data);
-            if (started.threadType !== "report") break;
-            appendPart({ id: randomUUIDv7(), type: "report-session", threadId: started.threadId });
-            // The spawn wrote its thread row BEFORE it emitted this part, thus a read now finds the
-            // row and the entry paints inside the turn. The settle-edge read of `watchReportChildren`
-            // stays the authority for the title, which pg seeds after the child's first message.
-            if (currentAnalysisId !== null && currentSessionId !== null) void refreshReportChildren(currentAnalysisId, currentSessionId);
-            return;
-        }
-        case "data-compaction":
-            reconcileCompaction(readCompactionPart(data));
-            return;
-        case "data-ask": {
-            // The ask part reconciles under one id: `pending` opens the card and docks the prompt; a
-            // terminal re-emission folds latest-wins onto the same card and drains the queue entry.
-            const ask = readAskPart(data);
-            if (ask.status === "pending") {
-                appendPart({
-                    id: randomUUIDv7(),
-                    type: "ask-card",
-                    askId: ask.askId,
-                    title: ask.title,
-                    command: ask.command,
-                    ...(ask.detail !== undefined ? { detail: ask.detail } : {}),
-                    status: "pending",
-                });
-                pushAsk({ askId: ask.askId, title: ask.title, command: ask.command, ...(ask.detail !== undefined ? { detail: ask.detail } : {}) });
-            } else {
-                reconcileAskCard(ask);
-                settleAsk(ask.askId);
-            }
-            return;
-        }
-        default:
-            // Observe an unknown conversation part as a one-line tagged mention — never swallowed.
-            appendPart({
-                id: randomUUIDv7(),
-                sessionId: currentSessionId ?? "",
-                messageId: currentAssistantId ?? "",
-                type: "text",
-                text: `[part:${type}]`,
-                createdAt: Date.now(),
-            });
-            return;
+    } else if (frame.type === "data-child-session-started" && frame.threadType === "report") {
+        // The spawn wrote its thread row BEFORE it emitted this part, thus a read now finds the
+        // row and the entry paints inside the turn. The settle-edge read of `watchReportChildren`
+        // stays the authority for the title, which pg seeds after the child's first message.
+        if (currentAnalysisId !== null && currentSessionId !== null) void refreshReportChildren(currentAnalysisId, currentSessionId);
     }
-}
-
-// The display-card builders — SHARED by the live reducer ({@link applyEmitEvent}) and the reload path
-// ({@link cortexToUiMessage}), so a reloaded transcript renders byte-identical cards to the live turn.
-// Each mints a fresh part id and reads through the `artifact_open` readers, which copy every primitive at
-// receipt (copy-on-receive): the live path passes the harness event's `data`, the reload path passes the
-// flat reconstructed part (the readers narrow off any loose record), and both yield the same part.
-
-/** Build the part for a `data-presentation`: text-shaped → an inline presentation part; `echart`/`svg` → an openable card. */
-function presentationPart(data: unknown, analysisId: string): PresentationPart | OpenableCardPart {
-    const view = readPresentation(data);
-    if (view.shape === "inline") {
-        return { id: randomUUIDv7(), type: "presentation", ...(view.title !== undefined ? { title: view.title } : {}), body: view.body };
-    }
-    return { id: randomUUIDv7(), type: "openable-card", analysisId, ...(view.title !== undefined ? { title: view.title } : {}), entries: [view.entry] };
-}
-
-/** Build the openable-card part for a `data-file-reference` (one entry per file, plus a gallery folder). */
-function fileReferencePart(data: unknown, analysisId: string): OpenableCardPart {
-    const view = readFileReference(data);
-    return {
-        id: randomUUIDv7(),
-        type: "openable-card",
-        analysisId,
-        ...(view.title !== undefined ? { title: view.title } : {}),
-        entries: view.entries,
-        ...(view.folderPath !== undefined ? { folderPath: view.folderPath } : {}),
-    };
 }
 
 /** Push the user's turn as its own message, with its text part, re-enforcing the mount cap. */
-function pushUserMessage(sessionId: string, text: string): void {
-    const id = randomUUIDv7();
+function pushUserMessage(text: string): void {
     setMessages(
         produce((msgs) => {
-            msgs.push({ id, role: "user", parts: [{ id: randomUUIDv7(), sessionId, messageId: id, type: "text", text, createdAt: Date.now() }] });
+            msgs.push({ id: randomUUIDv7(), role: "user", parts: [{ type: "text", text }] });
             while (msgs.length > MESSAGE_CAP) msgs.shift();
         }),
     );
 }
 
 /**
- * Open the assistant turn: mint the assistant message with an empty streaming text part and arm the
- * per-turn adapter state. Streamed deltas accumulate into that text part; tool/card parts append
- * after it as they arrive. Called once at the top of {@link send}, per the design's "mint the
- * assistant message + streaming text part id when the turn starts". Returns the minted assistant id
- * so {@link send} can stamp its duration on finish and pop it on a pre-run failure.
+ * Open the assistant turn: mint the assistant message with no parts and arm the per-turn adapter
+ * state. Each part arrives through {@link applyFrame}, in the order of the stream. Called once at the
+ * top of {@link send}. Returns the minted assistant id so {@link send} can stamp its duration on finish
+ * and pop it on a pre-run failure.
  */
 function startAssistantTurn(sessionId: string): string {
     const assistantId = randomUUIDv7();
-    const textPartId = randomUUIDv7();
     currentAssistantId = assistantId;
     currentSessionId = sessionId;
+    turnMessages = [];
     openTools.clear();
     deepestSubAgentDepth = 0;
-    setStreamPartId(textPartId);
+    setStreamPartId(null);
     setStreamText("");
     setMessages(
         produce((msgs) => {
-            msgs.push({
-                id: assistantId,
-                role: "assistant",
-                parts: [{ id: textPartId, sessionId, messageId: assistantId, type: "text", text: "", createdAt: Date.now() }],
-            });
+            msgs.push({ id: assistantId, role: "assistant", parts: [] });
             while (msgs.length > MESSAGE_CAP) msgs.shift();
         }),
     );
@@ -775,13 +566,15 @@ function reportAppendError(e: DbError | undefined): void {
 }
 
 /**
- * Close every tool part still `running` when a turn ends, then clear the pairing map. A turn that
- * ends before a tool's `tool-finished` arrives (abort mid-tool, or a failure that races the sink)
- * would otherwise strand the chip at `running` forever at idle — the same "close the open chip
- * honestly" the REPL printer does in its own `finishTurn`. `error` is the terminal state (the part
- * status union has no `interrupted`), and the part already carries its name from `tool-started`, so
- * the empty `name` here is never read (`updateToolPart` only uses it on the never-taken append path).
- * The same reasoning covers the absent detail: the part already carries the one `tool-started` set.
+ * Close every tool call still open when a turn ends, then clear the pairing map. A turn that ends
+ * before a tool's `tool-finished` arrives (abort mid-tool, or a failure that races the sink) would
+ * otherwise strand the chip at `running` forever at idle — the same "close the open chip honestly"
+ * the REPL printer does in its own `finishTurn`. The close goes through {@link applyFrame} as a
+ * `tool-finished` with the `error` outcome, the terminal state that the live chip shows. It carries
+ * no detail, thus the part keeps the one `tool-started` set.
+ *
+ * A reload of the same turn gives the call `incomplete`, which the harness records at dispatch. The
+ * live surface keeps `error`, because the chip at idle must not read as running.
  *
  * The duration is absent, and deliberately so. No `tool-finished` arrived, thus no call reported
  * what it took. The elapsed time since the start stamp measures the ROUND, because the loop emits
@@ -790,20 +583,23 @@ function reportAppendError(e: DbError | undefined): void {
  * remove, and an unmeasured call states nothing rather than a number it did not earn.
  */
 function drainOpenTools(): void {
-    for (const [toolUseId] of openTools) {
-        updateToolPart(toolUseId, "", "error", undefined, undefined);
+    const id = currentAssistantId;
+    if (id !== null) {
+        for (const toolUseId of openTools.keys()) {
+            const call = turnToolCall(id, toolUseId);
+            if (call !== undefined) applyFrame({ type: "tool-finished", toolUseId, name: call.toolName, outcome: "error", source: TOP_LEVEL_SOURCE });
+        }
     }
     openTools.clear();
     deepestSubAgentDepth = 0;
 }
 
 /**
- * Stamp what the finished assistant turn COST: its wall-clock duration (fulfilling
- * {@link UIMessage.durationMs}'s promise) and, when the run reported one, its token rollup
- * ({@link UIMessage.turnUsage}). One write for both because they are stamped at the same three
- * moments and read on the same meta line — splitting them would be two `produce` passes over the
- * store for one settlement. Fresh field writes via `produce` so Solid reconciles the edit; no-op if
- * the message is gone.
+ * Stamp what the finished assistant turn COST: its wall-clock duration and, when the run reported
+ * one, its token rollup (the `usage` of the harness message). One write for both because they are
+ * stamped at the same three moments and read on the same meta line — splitting them would be two
+ * `produce` passes over the store for one settlement. Fresh field writes via `produce` so Solid
+ * reconciles the edit; no-op if the message is gone.
  *
  * An absent `turnUsage` is left absent rather than written as `undefined`: nothing reported is not
  * zero spent, and the field's absence is what the meta line reads to render no figure at all.
@@ -815,7 +611,7 @@ function stampTurnCost(assistantId: string, startedAt: number, turnUsage: TurnUs
             const msg = msgs.find((m) => m.id === assistantId);
             if (!msg) return;
             msg.durationMs = durationMs;
-            if (turnUsage) msg.turnUsage = turnUsage;
+            if (turnUsage) msg.usage = turnUsage;
         }),
     );
 }
@@ -823,8 +619,8 @@ function stampTurnCost(assistantId: string, startedAt: number, turnUsage: TurnUs
 /**
  * Remove the just-minted empty assistant bubble on a pre-run failure and clear the streaming signals
  * that pointed at it. `prepare_failed`/`thread_gone`/`agent_unresolved` bail BEFORE `runAgent`, so this
- * assistant message only ever held its empty streaming text part (no deltas, no tools by construction) —
- * leaving it mounted would render a blank assistant turn beneath the error banner.
+ * assistant message never got a part (no deltas, no tools by construction) — leaving it mounted would
+ * render a blank assistant turn beneath the error banner.
  */
 function dropEmptyAssistant(assistantId: string): void {
     setStreamPartId(null);
@@ -855,21 +651,17 @@ function markInterrupted(assistantId: string): void {
 }
 
 /**
- * Whether the in-flight assistant has produced NOTHING yet: no streamed text, no open tool, and its
- * only part is the pre-minted empty text segment {@link startAssistantTurn} mints. The structural half
- * of {@link canRetract}, reused by {@link finishTurn}'s abort branch to decide whether an aborted turn
- * left an empty shell to drop. Reads the reactive `streamText`/`messages`, so it re-evaluates in a
- * tracking scope; `openTools` is a plain read (it only ever changes alongside a store write that has
- * already re-triggered the scope).
+ * Whether the in-flight assistant has produced NOTHING yet: no streamed text, and no part other than
+ * an empty text part. Every tool call and every card lands as a part, and so does an empty delta,
+ * which is the only case of a part with no content. The structural half of {@link canRetract}, reused
+ * by {@link finishTurn}'s abort branch to decide whether an aborted turn left an empty shell to drop.
+ * Reads the reactive `streamText`/`messages`, so it re-evaluates in a tracking scope.
  */
 function isEmptyAssistantShell(assistantId: string | null): boolean {
     if (!assistantId) return false;
     if (streamText() !== "") return false;
-    if (openTools.size > 0) return false;
     const msg = messages.find((m) => m.id === assistantId);
-    if (!msg || msg.parts.length !== 1) return false;
-    const only = msg.parts[0];
-    return only?.type === "text" && only.text === "";
+    return msg !== undefined && msg.parts.every((p) => p.type === "text" && p.text === "");
 }
 
 /**
@@ -948,6 +740,18 @@ function refineProviderFailure(shown: string): void {
 }
 
 /**
+ * Show the engine's `fallbackText` on a turn whose final text never streamed. An empty buffer means
+ * no delta arrived since the last seal, so the FINAL assistant message's text never streamed and
+ * `fallbackText` cannot duplicate anything on screen. (`fallbackText` is `finalText(result.messages)` —
+ * the last assistant message's text — and the buffer empties only when a non-text part follows its
+ * deltas.) The fallback goes through {@link applyFrame} as one delta, thus it lands below the part
+ * that interrupted the prose, in emission order.
+ */
+function applyFallbackText(fallbackText: string): void {
+    if (streamText().length === 0 && fallbackText.trim().length > 0) applyFrame({ type: "text-delta", text: fallbackText, source: TOP_LEVEL_SOURCE });
+}
+
+/**
  * Reduce the engine's {@link TurnOutcome} onto the store for the CURRENT turn (the caller's C1 guard
  * has already dropped a superseded turn's outcome, so `assistantId` still identifies a live message):
  * flush the streamed text (or the engine's `fallbackText` on a delta-less turn), close any open tool
@@ -975,19 +779,7 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
     void import("../../modules/libs/store.ts").then((store) => store.startPendingFlushChild());
     switch (outcome.kind) {
         case "ok":
-            // An empty buffer means no delta arrived since the last seal, so the FINAL assistant
-            // message's text never streamed and `fallbackText` cannot duplicate anything on screen.
-            // (`fallbackText` is `finalText(result.messages)` — the last assistant message's text —
-            // and deltas for it are only cleared by a non-text part arriving after them.)
-            if (streamText().length === 0 && outcome.fallbackText.trim().length > 0) {
-                // `commitStream` writes into the part `streamPartId` names and no-ops when it is null.
-                // A mid-turn `closeStreamSegment` — every tool chip, plan card, run card — nulls it, so
-                // without reopening a segment the fallback would be assigned and immediately discarded.
-                // Reopening also puts it in emission order, below the part that interrupted the prose,
-                // which is where a transcript reload renders it.
-                if (streamPartId() === null) beginStreamSegment();
-                setStreamText(outcome.fallbackText);
-            }
+            applyFallbackText(outcome.fallbackText);
             commitStream();
             drainOpenTools();
             stampTurnCost(assistantId, startedAt, outcome.turnUsage);
@@ -998,10 +790,7 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             // A refusal flushes what it carried the way `ok` does (the reply may hold partial
             // prose), then raises the banner: the turn ended without an answer, and only a
             // model change can unblock it, so the user must see why it stopped.
-            if (streamText().length === 0 && outcome.fallbackText.trim().length > 0) {
-                if (streamPartId() === null) beginStreamSegment();
-                setStreamText(outcome.fallbackText);
-            }
+            applyFallbackText(outcome.fallbackText);
             commitStream();
             drainOpenTools();
             stampTurnCost(assistantId, startedAt, outcome.turnUsage);
@@ -1082,139 +871,11 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
     }
 }
 
-/** One reconstructed transcript message from the pg thread read path. Exported for the load seams. */
-export type CortexMsg = ReturnType<typeof storedMessagesToCortex>[number];
-
-/**
- * The local lifecycle status a replayed call renders as.
- *
- * The harness records a call's whole terminal state in one field, so this is a total mapping with
- * nothing left to infer — which is the point: two hosts reading the same projection cannot disagree
- * about what a call did, and the `never` branch makes a state added later a build failure here
- * rather than a silent mis-render.
- *
- * `incomplete` — the turn was cut off mid-call — maps to `running`, which is what actually happened.
- * It does not read as live because the message carries the interruption badge; the marker and that
- * badge together say "in flight when the turn was cut off", so a renderer must not show one without
- * the other. An absent outcome means a call still in flight, which a REPLAYED part never is; it is
- * handled for the live surface's sake and lands on the same honest `running`.
- */
-function replayedToolStatus(outcome: ToolCallOutcome | undefined): ToolCallPart["status"] {
-    switch (outcome) {
-        case "ok":
-        case "error":
-        case "denied":
-            return outcome;
-        case "incomplete":
-        case undefined:
-            return "running";
-        default: {
-            const unhandled: never = outcome;
-            throw new Error(`unhandled tool call outcome: ${String(unhandled)}`);
-        }
-    }
-}
-
-/**
- * Map a reconstructed {@link CortexMsg} to a {@link UIMessage}: text → text part; a replayed
- * tool-call → a finished tool part; recognized cards (`data-plan`/`data-run-card`) → card parts via
- * the SAME readers the live adapter uses; a `data-child-session-started` with threadType `report` → a
- * report-session part at its stored position; a `data-compaction` divider → a compaction part; anything else the harness resolver kept → a visible tagged mention. The harness resolver already dropped what the UI does not render (reasoning, tool
- * results). Card parts are FLAT on the reconstructed part, and the readers narrow off any object, so
- * the part is passed straight through. A persisted `interrupted` marker re-derives the same live flag
- * so a reloaded transcript renders exactly what the live abort showed.
- */
-export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = ""): UIMessage {
-    // A `system` row is the harness's reconstruction of a host-appended RECORD — a run's outcome,
-    // written into the thread by this app rather than said by anyone. It carries the `user` role in
-    // storage for the wire format, and the harness re-roles it here off its own marker, never off a
-    // guess about its text: a record whose prose happens to read like a question would otherwise be
-    // attributed to the user, which is both a lie about who spoke and a lie about what is retractable.
-    // Rendered as `event` — neither party's turn.
-    const role: MessageRole = m.role === "user" ? "user" : m.role === "system" ? "event" : "assistant";
-    const parts: Part[] = [];
-    for (const part of m.parts) {
-        switch (part.type) {
-            case "text":
-                parts.push({ id: randomUUIDv7(), sessionId, messageId: m.id, type: "text", text: part.text, createdAt: 0 });
-                break;
-            case "tool-call":
-                parts.push({
-                    id: part.toolCallId || randomUUIDv7(),
-                    sessionId,
-                    messageId: m.id,
-                    type: "tool-call",
-                    name: part.toolName,
-                    ...(part.detail !== undefined ? { detail: part.detail } : {}),
-                    status: replayedToolStatus(part.outcome),
-                    createdAt: 0,
-                });
-                break;
-            case "data-plan": {
-                const plan = readPlanCard(part);
-                parts.push({ id: randomUUIDv7(), type: "plan-card", planId: plan.planId, title: plan.title, steps: plan.steps });
-                break;
-            }
-            case "data-run-card": {
-                const run = readRunCard(part);
-                parts.push({ id: randomUUIDv7(), type: "run-card", runId: run.runId, title: run.title, stepCount: run.stepCount });
-                break;
-            }
-            case "data-presentation":
-                // The reconstructed part is FLAT (fields spread under `part.type`); the readers narrow off
-                // any loose record, so the same builders the live path uses map it to a byte-identical card.
-                parts.push(presentationPart(part, analysisId));
-                break;
-            case "data-file-reference":
-                parts.push(fileReferencePart(part, analysisId));
-                break;
-            case "data-child-session-started": {
-                const started = readChildSessionStarted(part);
-                if (started.threadType !== "report") {
-                    parts.push({ id: randomUUIDv7(), sessionId, messageId: m.id, type: "text", text: `[part:${part.type}]`, createdAt: 0 });
-                    break;
-                }
-                parts.push({ id: randomUUIDv7(), type: "report-session", threadId: started.threadId });
-                break;
-            }
-            case "data-compaction":
-                parts.push({ id: randomUUIDv7(), type: "compaction", ...readCompactionPart(part) });
-                break;
-            default:
-                // Observe a reconstructed part the UI has no first-class renderer for as a one-line tagged
-                // mention — never swallowed. (The recognized display cards are handled in the cases above.)
-                parts.push({ id: randomUUIDv7(), sessionId, messageId: m.id, type: "text", text: `[part:${part.type}]`, createdAt: 0 });
-                break;
-        }
-    }
-    // Re-derive the live abort flag from the durable field, set only when true (matching the live path,
-    // which leaves it absent otherwise) — so a restarted app renders the muted marker the live view showed.
-    //
-    // Same treatment for the turn's stored rollup and for its stored duration: the harness stores both
-    // for the turn and hands them back here on its assistant message, so a reloaded transcript
-    // carries the figures the live header showed rather than dropping to the absent state. Each is set
-    // only when present, which keeps the ONE meaning absence has on these fields — nothing recorded a
-    // value — rather than adding a second (this transcript was reloaded).
-    //
-    // The duration reads against `undefined`, and never against falsiness: a turn that settled inside
-    // one millisecond measured zero, and that zero is a figure the header must show. A row that predates
-    // the durable field carries none, and nothing here reconstructs one — the elapsed time of a past turn
-    // is unknowable now, and a fabricated meta value is what the header contract forbids outright.
-    return {
-        id: m.id,
-        role,
-        parts,
-        ...(m.interrupted === true ? { interrupted: true } : {}),
-        ...(m.usage ? { turnUsage: m.usage } : {}),
-        ...(m.durationMs !== undefined ? { durationMs: m.durationMs } : {}),
-    };
-}
-
 /**
  * Injectable edges so {@link loadMessages} is unit-testable offline (no Postgres, no booted runtime)
- * — mirrors {@link SendSeams}. Production callers omit the third argument and get the real booted
- * runtime + `ThreadHistory` page reads + card reconstruction; tests pass fakes whose page loads and
- * card resolution resolve on the test's schedule, so an interleaving of two rapid loads is exercisable.
+ * — mirrors {@link SendSeams}. Production callers omit the second argument and get the real booted
+ * runtime + `ThreadHistory` page reads + the harness replay; tests pass fakes whose page loads resolve
+ * on the test's schedule, so an interleaving of two rapid loads is exercisable.
  */
 export type LoadSeams = {
     /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
@@ -1222,14 +883,15 @@ export type LoadSeams = {
     /** Every turn of the thread. Real: `createThreadHistory(pool).loadAll`. */
     readonly loadAll: (pool: Pool, threadId: string) => ReturnType<ThreadHistory["loadAll"]>;
     /**
-     * Adapt the harness's stored display projections to the local conversation types.
+     * Replay the harness's stored display projections as harness messages, which the store mounts
+     * unchanged.
      *
      * Synchronous, and takes nothing but the rows: the harness records what a turn displayed when it
      * displays it, so replay reads that projection and consults nothing else. There is no pool to
      * query, no workspace root to resolve, no tool roster to rebuild a detail from, and nothing that
-     * can fail — which is why this seam no longer carries the card/detail resolvers or a `Promise`.
+     * can fail — which is why this seam carries no card/detail resolver and no `Promise`.
      */
-    readonly toCortex: (messages: Parameters<typeof storedMessagesToCortex>[0]) => CortexMsg[];
+    readonly toCortex: (messages: Parameters<typeof storedMessagesToCortex>[0]) => ChatMessage[];
 };
 
 const realLoadSeams: LoadSeams = {
@@ -1272,10 +934,13 @@ let loadedSessionId: string | null = null;
  * A missing pg thread (legacy session, or the runtime not yet booted) renders empty — correct and
  * expected: the legacy SQLite transcript is frozen and not shown here.
  *
+ * The store mounts the harness messages of the replay as they are: the renderers read the harness
+ * parts, so a reloaded card renders through the same readers as the live one.
+ *
  * Concurrency: each call claims a {@link loadGeneration} token at entry and re-checks it after every
  * await; a load superseded by a newer swap silently drops rather than writing a stale transcript.
  */
-export async function loadMessages(sessionId: string, analysisId: string, seams: LoadSeams = realLoadSeams): Promise<void> {
+export async function loadMessages(sessionId: string, seams: LoadSeams = realLoadSeams): Promise<void> {
     const runtime = seams.runtime();
     if (!runtime) return;
     const myLoad = ++loadGeneration;
@@ -1298,9 +963,7 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
     //
     // No error branch: the replay cannot fail. It maps stored projections and touches neither the
     // database nor the filesystem, so the only failure this function still reports is the read's.
-    const replayed = seams.toCortex(res.value.flat());
-    const mounted = replayed.map((m) => cortexToUiMessage(m, sessionId, analysisId)).slice(-MESSAGE_CAP);
-    setMessages(mounted);
+    setMessages(seams.toCortex(res.value.flat()).slice(-MESSAGE_CAP));
     loadedSessionId = sessionId;
 }
 
@@ -1357,6 +1020,7 @@ export function resetHotState(): void {
     currentAssistantId = null;
     currentSessionId = null;
     currentAnalysisId = null;
+    turnMessages = [];
     openTools.clear();
     deepestSubAgentDepth = 0;
     // Forget the superseded turn's settlement/duration bases; the send that owns them still resolves
@@ -1391,7 +1055,7 @@ export type SendSeams = {
      * turn's boot-edge submit (see {@link send}). Defaults to {@link loadMessages} with the production
      * load seams; tests inject a fake so the convergent reload is observable offline.
      */
-    readonly reloadTranscript?: (sessionId: string, analysisId: string) => Promise<void>;
+    readonly reloadTranscript?: (sessionId: string) => Promise<void>;
     /**
      * Guarded heal of a pending removal a prior retract left for this thread — retried once before this
      * send appends (see {@link retract}). Defaults to {@link healTailOrphan}, which re-reads the tail and
@@ -1473,9 +1137,9 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
         if (loadGeneration !== myTurnLoad) return;
     }
 
-    pushUserMessage(opts.sessionId, opts.userText);
+    pushUserMessage(opts.userText);
     const assistantId = startAssistantTurn(opts.sessionId);
-    // Stamp the turn's analysis so openable-card parts carry the scope their references resolve against.
+    // The scope of the report-children refresh that a report spawn of this turn pokes.
     currentAnalysisId = opts.analysisId;
     setChatStatus("busy");
     const startedAt = Date.now();
@@ -1570,6 +1234,7 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
     currentAssistantId = null;
     currentSessionId = null;
     currentAnalysisId = null;
+    turnMessages = [];
     turnSettled = null;
     turnStartedAt = 0;
 
@@ -1581,7 +1246,7 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
     // this session (the history is already on screen) — the reload replaces the store wholesale, so
     // re-running it on every turn would needlessly remount and repaint the whole window.
     if (loadedSessionId !== opts.sessionId) {
-        await (seams.reloadTranscript ?? loadMessages)(opts.sessionId, opts.analysisId);
+        await (seams.reloadTranscript ?? loadMessages)(opts.sessionId);
     }
 }
 
@@ -1626,6 +1291,7 @@ function closeTurnState(): void {
     currentAssistantId = null;
     currentSessionId = null;
     currentAnalysisId = null;
+    turnMessages = [];
     openTools.clear();
     deepestSubAgentDepth = 0;
     turnSettled = null;
@@ -1801,35 +1467,48 @@ export async function retract(seedComposer: (text: string) => void, seams: Retra
 export type SessionOpenable = { analysisId: string; entry: OpenableEntry };
 
 /**
+ * The openable entries of one part, read through the shared readers that the card renderer uses: a
+ * pixel-shaped presentation gives one entry, and a file reference gives one entry per file.
+ */
+function openableEntries(part: Part): OpenableEntry[] {
+    switch (part.type) {
+        case "data-presentation": {
+            // The reader deep-copies the chart spec, and a store proxy cannot be cloned, thus the reader
+            // gets the plain part that the proxy wraps.
+            const view = readPresentation(unwrap(part));
+            return view.shape === "card" ? [view.entry] : [];
+        }
+        case "data-file-reference":
+            return readFileReference(part).entries;
+        default:
+            return [];
+    }
+}
+
+/**
  * Every openable card entry currently in the transcript, NEWEST first (latest message + latest-emitted
  * part first), excluding the non-openable `unavailable` entries (a failed preview has nothing to open).
- * The `o` binding opens `[0]` (the most recent); the picker lists them all. Read in a tracking scope —
- * reactive on the message store.
+ * The `o` binding opens `[0]` (the most recent); the picker lists them all. `analysisId` is the analysis
+ * of the open workspace, because the transcript of a session belongs to that analysis, and each entry
+ * resolves against its workspace root. Read in a tracking scope — reactive on the message store.
  */
-export function sessionOpenables(): SessionOpenable[] {
+export function sessionOpenables(analysisId: string): SessionOpenable[] {
     const out: SessionOpenable[] = [];
-    for (let mi = messages.length - 1; mi >= 0; mi--) {
-        const parts = messages[mi]!.parts;
-        for (let pi = parts.length - 1; pi >= 0; pi--) {
-            const part = parts[pi]!;
-            if (part.type !== "openable-card") continue;
-            for (let ei = part.entries.length - 1; ei >= 0; ei--) {
-                const entry = part.entries[ei]!;
-                if (entry.target.kind !== "unavailable") out.push({ analysisId: part.analysisId, entry });
+    for (const message of [...messages].reverse()) {
+        for (const part of [...message.parts].reverse()) {
+            for (const entry of openableEntries(part).reverse()) {
+                if (entry.target.kind !== "unavailable") out.push({ analysisId, entry });
             }
         }
     }
     return out;
 }
 
-/** The most recently emitted plan card in the mounted transcript, or null when none exists. */
-export function latestPlanCard(): PlanCardPart | null {
-    for (let mi = messages.length - 1; mi >= 0; mi--) {
-        const message = messages[mi];
-        if (!message) continue;
-        for (let pi = message.parts.length - 1; pi >= 0; pi--) {
-            const part = message.parts[pi];
-            if (part?.type === "plan-card") return part;
+/** The most recently emitted plan card in the mounted transcript, as the card renders it, or null when none exists. */
+export function latestPlanCard(): { planId: string; title: string; steps: PlanCardStepView[] } | null {
+    for (const message of [...messages].reverse()) {
+        for (const part of [...message.parts].reverse()) {
+            if (part.type === "data-plan") return readPlanCard(part);
         }
     }
     return null;
@@ -1838,8 +1517,8 @@ export function latestPlanCard(): PlanCardPart | null {
 /**
  * The session's own sent prompts, NEWEST first — the entry list the composer's up/down history recall
  * steps through. Walks the mounted transcript for `user` turns, joining each one's text parts in order
- * (a live send makes exactly one; a thread replay through `cortexToUiMessage` can produce several) and
- * skipping any turn whose text comes out empty.
+ * (a live send makes exactly one; a thread replay can give several) and skipping any turn whose text
+ * comes out empty.
  *
  * Runs of identical ADJACENT prompts collapse to a single entry, so re-sending the same text after a
  * failed turn costs one recall step rather than two. Identical prompts separated by a different one stay

@@ -7,8 +7,9 @@ import { GLYPHS } from "../../lib/design_system.ts";
 import { RunCardBlock } from "../components/run_card_block.tsx";
 import { MessageBlock, resolveRunCardState } from "./message_block.tsx";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshSeams } from "../hooks/sidebar_live.ts";
-import { cortexToUiMessage, type CortexMsg } from "../hooks/conversation.ts";
+import { loadMessages, messages, promptHistory, resetHotState } from "../hooks/conversation.ts";
 import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
+import type { ChatMessage } from "@inflexa-ai/harness/contracts/message.js";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Part } from "../../types/session.ts";
 
@@ -210,31 +211,32 @@ describe("resolveRunCardState", () => {
 });
 
 describe("synthetic record entries in the transcript", () => {
-    function cortexMsg(role: CortexMsg["role"], text: string): CortexMsg {
-        return { id: "1", role, parts: [{ type: "text", text }] } as CortexMsg;
+    function chatMessage(id: string, role: ChatMessage["role"], text: string): ChatMessage {
+        return { id, role, parts: [{ type: "text", text }] };
     }
 
-    test("a system-roled record maps to an event entry, not a user turn", () => {
-        const ui = cortexToUiMessage(cortexMsg("system", 'Analysis run "DE" (run-a) completed after 2m30s.'), "s1");
-        expect(ui.role).toBe("event");
+    afterEach(() => resetHotState());
+
+    test("a replayed system record mounts as a system entry, and no party's turn", async () => {
+        // The harness re-roles a record off its own marker, never off the text — so a record whose wording
+        // resembles ordinary user prose ("did the run finish yet?") cannot be mistaken for the user speaking.
+        // The store mounts the role that the harness gives, and a genuine message keeps its own role.
+        const replayed = [
+            chatMessage("u1", "user", "run the plan"),
+            chatMessage("r1", "system", "did the run finish yet?"),
+            chatMessage("a1", "assistant", "on it"),
+        ];
+        await loadMessages("s1", { runtime: () => fakeRuntime, loadAll: () => okAsync([[]]), toCortex: () => replayed });
+
+        expect(messages.map((m) => m.role)).toEqual(["user", "system", "assistant"]);
+        // Not a prompt of the user, thus the history recall never offers it.
+        expect(promptHistory()).toEqual(["run the plan"]);
     });
 
-    test("recognition is structural: prose that reads like a user question is still an event", () => {
-        // The harness re-roles off its own marker, never off the text — so a record whose wording
-        // resembles ordinary user prose cannot be mistaken for the user speaking.
-        const ui = cortexToUiMessage(cortexMsg("system", "did the run finish yet?"), "s1");
-        expect(ui.role).toBe("event");
-    });
-
-    test("a genuine user message is unaffected", () => {
-        expect(cortexToUiMessage(cortexMsg("user", "run the plan"), "s1").role).toBe("user");
-        expect(cortexToUiMessage(cortexMsg("assistant", "on it"), "s1").role).toBe("assistant");
-    });
-
-    test("an event entry renders with NEITHER turn marker and no turn number", async () => {
-        const part: Part = { id: "p1", sessionId: "s1", messageId: "m1", type: "text", text: "RUNOUTCOMEBODY", createdAt: 0 };
+    test("a system entry renders with NEITHER turn marker and no turn number", async () => {
+        const part: Part = { type: "text", text: "RUNOUTCOMEBODY" };
         const frame = await frameWith(
-            () => <MessageBlock index={2} role="event" parts={[part]} streamPartId={() => null} streamText={() => ""} />,
+            () => <MessageBlock index={2} role="system" parts={[part]} streamPartId={() => null} streamText={() => ""} />,
             "RUNOUTCOMEBODY",
         );
         expect(frame).toContain("RUNOUTCOMEBODY");
@@ -245,7 +247,7 @@ describe("synthetic record entries in the transcript", () => {
     });
 
     test("a user turn still renders its marker exactly as before", async () => {
-        const part: Part = { id: "p1", sessionId: "s1", messageId: "m1", type: "text", text: "USERBODY", createdAt: 0 };
+        const part: Part = { type: "text", text: "USERBODY" };
         const frame = await frameWith(() => <MessageBlock index={1} role="user" parts={[part]} streamPartId={() => null} streamText={() => ""} />, "USERBODY");
         expect(frame).toContain("You");
         expect(frame).toContain("#1");

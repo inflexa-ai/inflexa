@@ -2,12 +2,22 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { ok, okAsync, ResultAsync } from "neverthrow";
-import type { AskContext, AskRequest, EmitFn, StoredMessage } from "@inflexa-ai/harness";
+import { unwrap } from "solid-js/store";
+import type {
+    AskContext,
+    AskRequest,
+    CompactionPart,
+    EmitFn,
+    FileReferencePart,
+    PlanPart,
+    PresentationPart,
+    RunCardPart,
+    StoredMessage,
+} from "@inflexa-ai/harness";
+import type { ChatMessage, MessagePart } from "@inflexa-ai/harness/contracts/message.js";
 
 import {
     applyEmitEvent,
-    type CortexMsg,
-    cortexToUiMessage,
     errorMsg,
     lastTurnFailure,
     loadMessages,
@@ -18,6 +28,7 @@ import {
     promptHistory,
     resetHotState,
     send,
+    sessionOpenables,
     streamPartId,
     streamText,
     turnFailureMessage,
@@ -27,14 +38,18 @@ import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { activeAsk, queuedCount } from "./asks.ts";
 import { chatStatus } from "./status.ts";
+import { readFileReference, readPresentation } from "../../modules/harness/artifact_open.ts";
+import { readAskPart, readCompactionPart, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { RunChatTurnArgs, TurnOutcome } from "../../modules/harness/turn.ts";
-import type { AskCardPart, CompactionPart, Part, PlanCardPart, RunCardPart, ToolCallPart } from "../../types/session.ts";
+import type { LiveAskPart, LiveTextPart, LiveToolCallPart, Part } from "../../types/session.ts";
 
 // The conversation state is a module singleton (one chat screen at a time), so reset it between
 // cases. resetHotState() clears messages/stream/error/adapter state and returns status to idle.
 const SID = "s1";
 const AID = "a1";
+// The source of the top-level chat agent: its call path has one entry.
+const ROOT = { agentId: "tui-chat", callPath: ["tui-chat"] };
 
 // A stub runtime whose pool/provider are never dereferenced: the fake engine drives the adapter and
 // returns an outcome without touching them. The chat path reads the CONVERSATION agent's provider, and
@@ -69,6 +84,8 @@ function findPart<T extends Part>(pred: (p: Part) => p is T): T | undefined {
     }
     return undefined;
 }
+
+const isToolCall = (p: Part): p is LiveToolCallPart => p.type === "tool-call";
 
 beforeEach(() => resetHotState());
 afterEach(() => resetHotState());
@@ -133,9 +150,9 @@ describe("send() drives the adapter + engine", () => {
             void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
-        expect(tool?.name).toBe("read_file");
-        expect(tool?.status).toBe("ok");
+        const tool = findPart(isToolCall);
+        expect(tool?.toolName).toBe("read_file");
+        expect(tool?.outcome).toBe("ok");
         expect(tool?.durationMs).toBeGreaterThanOrEqual(0);
         // A start+finish for one id collapses to a single part, not two.
         expect(messages[1]?.parts.filter((p) => p.type === "tool-call").length).toBe(1);
@@ -154,7 +171,7 @@ describe("send() drives the adapter + engine", () => {
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
-        const chips = messages[1]!.parts.filter((p): p is ToolCallPart => p.type === "tool-call");
+        const chips = messages[1]!.parts.filter(isToolCall);
         expect(chips.map((c) => c.durationMs)).toEqual([480, 3]);
     });
 
@@ -169,7 +186,7 @@ describe("send() drives the adapter + engine", () => {
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        const tool = findPart(isToolCall);
         expect(tool?.durationMs).toBe(0);
     });
 
@@ -181,7 +198,7 @@ describe("send() drives the adapter + engine", () => {
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        const tool = findPart(isToolCall);
         expect(typeof tool?.durationMs).toBe("number");
     });
 
@@ -193,8 +210,8 @@ describe("send() drives the adapter + engine", () => {
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
-        expect(tool?.name).toBe("grep");
+        const tool = findPart(isToolCall);
+        expect(tool?.toolName).toBe("grep");
         // There is no start stamp to bracket, thus `||` would yield `undefined` here.
         expect(tool?.durationMs).toBe(0);
     });
@@ -211,8 +228,8 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
-        expect(tool?.status).toBe("error");
+        const tool = findPart(isToolCall);
+        expect(tool?.outcome).toBe("error");
     });
 
     // A denial is the user refusing an approval. Folding it into `error` would report their own
@@ -229,8 +246,8 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
-        expect(tool?.status).toBe("denied");
+        const tool = findPart(isToolCall);
+        expect(tool?.outcome).toBe("denied");
     });
 
     test("a described call carries its detail from tool-started onward", async () => {
@@ -240,9 +257,9 @@ describe("send() drives the adapter + engine", () => {
             void emit({ type: "tool-finished", source: src, toolUseId: "t2", name: "update_working_memory", outcome: "ok", detail: "hypothesis retire h3" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        const tool = findPart(isToolCall);
         expect(tool?.detail).toBe("hypothesis retire h3");
-        expect(tool?.status).toBe("ok");
+        expect(tool?.outcome).toBe("ok");
     });
 
     // A tool that describes its own result names the outcome on the finish — the page it wrote, the
@@ -254,9 +271,9 @@ describe("send() drives the adapter + engine", () => {
             void emit({ type: "tool-finished", source: src, toolUseId: "t4", name: "preview_report", outcome: "ok", detail: "page /w/t4/index.html" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        const tool = findPart(isToolCall);
         expect(tool?.detail).toBe("page /w/t4/index.html");
-        expect(tool?.status).toBe("ok");
+        expect(tool?.outcome).toBe("ok");
     });
 
     // The finish can only improve the chip. A tool that describes no result finishes with no detail,
@@ -268,7 +285,7 @@ describe("send() drives the adapter + engine", () => {
             void emit({ type: "tool-finished", source: src, toolUseId: "t5", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        const tool = findPart(isToolCall);
         expect(tool?.detail).toBe("output/summary.md");
     });
 
@@ -281,9 +298,9 @@ describe("send() drives the adapter + engine", () => {
             void emit({ type: "tool-finished", source: src, toolUseId: "t6", name: "add_block", outcome: "error", detail: 'add section "Summary"' });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        const tool = findPart(isToolCall);
         expect(tool?.detail).toBe('add section "Summary"');
-        expect(tool?.status).toBe("error");
+        expect(tool?.outcome).toBe("error");
     });
 
     test("a call from a tool with no hook carries no detail", async () => {
@@ -293,7 +310,7 @@ describe("send() drives the adapter + engine", () => {
             void emit({ type: "tool-finished", source: src, toolUseId: "t3", name: "search_semantic_scholar", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        const tool = findPart(isToolCall);
         // Absent, never an empty string — the block keys its layout off the field being undefined.
         expect(tool?.detail).toBeUndefined();
     });
@@ -312,7 +329,7 @@ describe("send() drives the adapter + engine", () => {
             let seen: string | undefined;
             const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
                 drive(emit);
-                seen = findPart((p): p is ToolCallPart => p.type === "tool-call")?.activity;
+                seen = findPart(isToolCall)?.activity;
             });
             return send({ sessionId: SID, analysisId: AID, userText: "?" }, seams).then(() => seen);
         }
@@ -329,7 +346,7 @@ describe("send() drives the adapter + engine", () => {
             const tools = messages[1]?.parts.filter((p) => p.type === "tool-call") ?? [];
             // Exactly ONE tool block: the top-level call. The sub-agent's own tool never became one.
             expect(tools.length).toBe(1);
-            expect((tools[0] as ToolCallPart).name).toBe("plan_analysis");
+            expect((tools[0] as LiveToolCallPart).toolName).toBe("plan_analysis");
         });
 
         test("the INNERMOST sub-agent owns the line — a shallower caller does not overwrite it", async () => {
@@ -356,8 +373,8 @@ describe("send() drives the adapter + engine", () => {
             });
             await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
-            const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
-            expect(tool?.status).toBe("ok");
+            const tool = findPart(isToolCall);
+            expect(tool?.outcome).toBe("ok");
             // A finished call has an outcome, which answers the same question better. Leaving the
             // activity would strand "planner: search_papers" under a chip that already says ok.
             expect(tool?.activity).toBeUndefined();
@@ -381,14 +398,14 @@ describe("send() drives the adapter + engine", () => {
             void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "orphan", name: "grep", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
-        expect(tool?.name).toBe("grep");
-        expect(tool?.status).toBe("ok");
+        const tool = findPart(isToolCall);
+        expect(tool?.toolName).toBe("grep");
+        expect(tool?.outcome).toBe("ok");
         // No matching tool-started → no start timestamp, so the duration is honestly unknown.
         expect(tool?.durationMs).toBeUndefined();
     });
 
-    test("data-plan becomes a plan-card via readPlanCard", async () => {
+    test("data-plan lands as the harness part, and the card reads it through readPlanCard", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-plan",
@@ -397,16 +414,19 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const plan = findPart((p): p is PlanCardPart => p.type === "plan-card");
-        expect(plan?.planId).toBe("plan-1");
-        expect(plan?.title).toBe("DE analysis");
-        expect(plan?.steps[0]?.id).toBe("s1");
-        expect(plan?.steps[0]?.name).toBe("QC");
-        expect(plan?.steps[0]?.agent).toBe("prep");
-        expect(plan?.steps[0]?.depends_on).toEqual([]);
+        const part = findPart((p): p is PlanPart => p.type === "data-plan");
+        // The source of a frame routes the frame, and it is not a field of the part.
+        expect(part).toEqual({ type: "data-plan", planId: "plan-1", title: "DE analysis", steps: [{ id: "s1", name: "QC", agent: "prep" }] } as PlanPart);
+        const plan = readPlanCard(part);
+        expect(plan.planId).toBe("plan-1");
+        expect(plan.title).toBe("DE analysis");
+        expect(plan.steps[0]?.id).toBe("s1");
+        expect(plan.steps[0]?.name).toBe("QC");
+        expect(plan.steps[0]?.agent).toBe("prep");
+        expect(plan.steps[0]?.depends_on).toEqual([]);
     });
 
-    test("data-run-card becomes a run-card via readRunCard", async () => {
+    test("data-run-card lands as the harness part, and the card reads it through readRunCard", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-run-card",
@@ -415,23 +435,22 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const run = findPart((p): p is RunCardPart => p.type === "run-card");
-        expect(run?.runId).toBe("run-1");
-        expect(run?.title).toBe("DE run");
-        expect(run?.stepCount).toBe(3);
+        const run = readRunCard(findPart((p): p is RunCardPart => p.type === "data-run-card"));
+        expect(run.runId).toBe("run-1");
+        expect(run.title).toBe("DE run");
+        expect(run.stepCount).toBe(3);
     });
 
-    test("an unknown data part renders a visible tagged mention, not swallowed", async () => {
+    test("an unknown data part stays in the transcript, not swallowed", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
-            // A `data-*` type the store has no first-class renderer for still surfaces as a tag.
+            // A `data-*` type with no first-class renderer still lands; the renderer shows it as a tagged mention.
             void emit({ type: "data-widget", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, data: {} } as never);
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const mention = findPart((p): p is Part & { type: "text" } => p.type === "text" && "text" in p && p.text.includes("[part:data-widget]"));
-        expect(mention).toBeDefined();
+        expect(messages[1]?.parts.map((p): string => p.type)).toEqual(["data-widget"]);
     });
 
-    test("data-presentation (markdown) becomes an inline presentation part", async () => {
+    test("data-presentation (markdown) reads as an inline presentation", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-presentation",
@@ -440,12 +459,11 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const pres = findPart((p): p is Extract<Part, { type: "presentation" }> => p.type === "presentation");
-        expect(pres?.title).toBe("Finding");
-        expect(pres?.body).toEqual({ kind: "markdown", body: "**TP53** up" });
+        const view = readPresentation(findPart((p): p is PresentationPart => p.type === "data-presentation"));
+        expect(view).toEqual({ shape: "inline", title: "Finding", body: { kind: "markdown", body: "**TP53** up" } });
     });
 
-    test("data-presentation (echart) becomes an openable card carrying the spec + analysis scope", async () => {
+    test("data-presentation (echart) is an openable entry carrying the spec + analysis scope", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-presentation",
@@ -454,9 +472,9 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const card = findPart((p): p is Extract<Part, { type: "openable-card" }> => p.type === "openable-card");
-        expect(card?.analysisId).toBe(AID);
-        const target = card?.entries[0]?.target;
+        const [openable] = sessionOpenables(AID);
+        expect(openable?.analysisId).toBe(AID);
+        const target = openable?.entry.target;
         expect(target?.kind).toBe("echart");
         if (target?.kind === "echart") {
             expect(target.presId).toBe("pres-chart");
@@ -465,7 +483,7 @@ describe("send() drives the adapter + engine", () => {
         }
     });
 
-    test("data-file-reference becomes an openable gallery card with a folder for multiple files", async () => {
+    test("data-file-reference reads as an openable gallery with a folder for multiple files", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-file-reference",
@@ -474,11 +492,13 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const card = findPart((p): p is Extract<Part, { type: "openable-card" }> => p.type === "openable-card");
-        expect(card?.entries.length).toBe(2);
-        expect(card?.entries[0]?.name).toBe("a.png");
-        expect(card?.entries[1]?.caption).toBe("heatmap");
-        expect(card?.folderPath).toBe("runs/r/figures");
+        const view = readFileReference(findPart((p): p is FileReferencePart => p.type === "data-file-reference"));
+        expect(view.entries.length).toBe(2);
+        expect(view.entries[0]?.name).toBe("a.png");
+        expect(view.entries[1]?.caption).toBe("heatmap");
+        expect(view.folderPath).toBe("runs/r/figures");
+        // Newest first: the last file of the gallery is the first openable.
+        expect(sessionOpenables(AID).map((o) => o.entry.name)).toEqual(["b.png", "a.png"]);
     });
 
     test("copy-on-receive: mutating an emitted echart spec after emit does not corrupt the store", async () => {
@@ -493,9 +513,9 @@ describe("send() drives the adapter + engine", () => {
             (spec.series as { type: string }[])[0]!.type = "MUTATED";
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const card = findPart((p): p is Extract<Part, { type: "openable-card" }> => p.type === "openable-card");
-        const target = card?.entries[0]?.target;
-        if (target?.kind === "echart") expect(target.spec).toEqual({ series: [{ type: "bar" }] });
+        // The plain stored object, thus the check sees what the store holds and not a read through its proxy.
+        const part = unwrap(findPart((p): p is PresentationPart => p.type === "data-presentation"));
+        expect(part?.content).toEqual({ kind: "echart", spec: { series: [{ type: "bar" }] } });
     });
 
     test("sub-agent events (callPath depth > 1) are dropped", async () => {
@@ -512,8 +532,8 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        expect(findPart((p): p is PlanCardPart => p.type === "plan-card")).toBeUndefined();
-        expect(findPart((p): p is ToolCallPart => p.type === "tool-call")).toBeUndefined();
+        expect(findPart((p): p is PlanPart => p.type === "data-plan")).toBeUndefined();
+        expect(findPart(isToolCall)).toBeUndefined();
         // The top-level delta still flushed.
         const part = messages[1]?.parts[0];
         if (part?.type === "text") expect(part.text).toBe("top-level ");
@@ -530,9 +550,9 @@ describe("send() drives the adapter + engine", () => {
             (planData.steps as { name: string }[])[0]!.name = "MUTATED";
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const plan = findPart((p): p is PlanCardPart => p.type === "plan-card");
-        expect(plan?.title).toBe("original");
-        expect(plan?.steps[0]?.name).toBe("step");
+        const plan = readPlanCard(findPart((p): p is PlanPart => p.type === "data-plan"));
+        expect(plan.title).toBe("original");
+        expect(plan.steps[0]?.name).toBe("step");
     });
 
     test("aborted flushes what streamed, returns to idle, and sets no error", async () => {
@@ -620,8 +640,8 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
     const TOP = { agentId: "tui-chat", callPath: ["tui-chat"] };
 
     /** Every ask-card part on the assistant message, in mounted order. */
-    function askCards(): AskCardPart[] {
-        return (messages[1]?.parts ?? []).filter((p): p is AskCardPart => p.type === "ask-card");
+    function askCards(): LiveAskPart[] {
+        return (messages[1]?.parts ?? []).filter((p): p is LiveAskPart => p.type === "data-ask");
     }
 
     test("pending then resolved under one id reconciles to ONE card with the updated status", async () => {
@@ -633,7 +653,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
 
         const cards = askCards();
         expect(cards.length).toBe(1);
-        expect(cards[0]?.askId).toBe("ask-1");
+        expect(cards[0]?.id).toBe("ask-1");
         expect(cards[0]?.command).toBe("inflexa refs list");
         expect(cards[0]?.status).toBe("resolved");
     });
@@ -668,7 +688,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
         expect(seen[1]).toEqual({ active: "ask-2", queued: 0 });
         // Both cards remain in the transcript; ask-1 reconciled to resolved, ask-2 stays pending.
         const cards = askCards();
-        expect(cards.map((c) => `${c.askId}:${c.status}`)).toEqual(["ask-1:resolved", "ask-2:pending"]);
+        expect(cards.map((c) => `${c.id}:${c.status}`)).toEqual(["ask-1:resolved", "ask-2:pending"]);
     });
 
     test("a terminal-only re-emit with no prior pending appends one settled card (append-if-missing)", async () => {
@@ -679,7 +699,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
 
         const cards = askCards();
         expect(cards.length).toBe(1);
-        expect(cards[0]?.askId).toBe("ask-9");
+        expect(cards[0]?.id).toBe("ask-9");
         expect(cards[0]?.status).toBe("rejected");
         // A terminal-only emission never docks a prompt.
         expect(activeAsk()).toBeNull();
@@ -706,10 +726,11 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
 
         expect(activeAsk()).toBeNull();
         expect(queuedCount()).toBe(0);
-        // It still surfaces as a (terminal) card rather than being swallowed.
+        // It still surfaces as a card rather than being swallowed, and the reader that the card renders
+        // through gives it a terminal status.
         const cards = askCards();
         expect(cards.length).toBe(1);
-        expect(cards[0]?.status).toBe("expired");
+        expect(readAskPart(cards[0]).status).toBe("expired");
     });
 
     test("copy-on-receive: mutating the emitted ask data after emit does not corrupt the card", async () => {
@@ -727,10 +748,10 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
         expect(cards[0]?.command).toBe("inflexa refs list");
     });
 
-    // The answer-side feedback echo (noteAskFeedback) and the gateway's terminal re-emit
-    // (reconcileAskCard) race: neither ordering is guaranteed at runtime, and both write the same card.
-    // These two cases pin that they CONVERGE — noteAskFeedback spreads + adds `feedback`, reconcile
-    // spreads + overrides only `status`, so whichever lands second preserves the other's write.
+    // The answer-side feedback echo (noteAskFeedback) and the gateway's terminal re-emit race: neither
+    // ordering is guaranteed at runtime, and both write the same card. These two cases pin that they
+    // CONVERGE — noteAskFeedback spreads + adds `feedback`, and the store copy of the re-emit keeps a
+    // `feedback` already noted, so whichever lands second preserves the other's write.
     test("feedback survives the terminal re-emit — noteAskFeedback THEN reconcile", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "rm -rf out", status: "pending" } });
@@ -764,7 +785,7 @@ describe("send() handles data-compaction parts: one part updated in place by its
     const TOP = { agentId: "tui-chat", callPath: ["tui-chat"] };
 
     function compactionParts(): CompactionPart[] {
-        return (messages[1]?.parts ?? []).filter((p): p is CompactionPart => p.type === "compaction");
+        return (messages[1]?.parts ?? []).filter((p): p is CompactionPart => p.type === "data-compaction");
     }
 
     test("running then done under one id gives one compaction part with the status and the figures of the second emission", async () => {
@@ -779,9 +800,31 @@ describe("send() handles data-compaction parts: one part updated in place by its
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
         expect(compactionParts()).toEqual([
-            { id: expect.any(String), type: "compaction", compactionId: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
+            { type: "data-compaction", id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
         ]);
-        expect((messages[1]?.parts ?? []).some((p) => p.type === "text" && p.text.includes("[part:"))).toBe(false);
+    });
+
+    test("the card keeps its part while the text after it streams, and it settles in place", async () => {
+        // The emission order of a compaction round: the part runs, the round streams, then the part settles.
+        let running: Part | undefined;
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
+            void emit({ type: "text-delta", text: "before " });
+            void emit({ type: "data-compaction", source: TOP, data: { id: "c-1", status: "running", tokensBefore: 162_000 } });
+            running = messages[1]?.parts[1];
+            void emit({ type: "text-delta", text: "af" });
+            void emit({ type: "text-delta", text: "ter" });
+            // A delta changes only the stream signal: the card keeps its part, thus its component keeps its state.
+            expect(messages[1]?.parts[1]).toBe(running);
+            expect(streamText()).toBe("after");
+            void emit({ type: "data-compaction", source: TOP, data: { id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000 } });
+            // The settled part takes the slot of the running one, and the text after it keeps streaming.
+            expect(messages[1]?.parts[1]).not.toBe(running);
+            expect(streamText()).toBe("after");
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        expect(messages[1]?.parts.map((p) => (p.type === "text" ? p.text : p.type))).toEqual(["before ", "data-compaction", "after"]);
+        expect(compactionParts().map((p) => p.status)).toEqual(["done"]);
     });
 
     test("a malformed status reads as the terminal status failed", async () => {
@@ -790,18 +833,19 @@ describe("send() handles data-compaction parts: one part updated in place by its
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
-        expect(compactionParts()).toEqual([{ id: expect.any(String), type: "compaction", compactionId: "c-1", status: "failed", tokensBefore: 0 }]);
+        // The store keeps the part as it arrived; the reader that the block renders through gives the terminal status.
+        expect(compactionParts().map((p) => readCompactionPart(p))).toEqual([{ compactionId: "c-1", status: "failed", tokensBefore: 0 }]);
     });
 
-    test("a reloaded divider maps to an event message with one compaction part and no tagged mention", () => {
-        const divider = { type: "data-compaction", id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
+    test("a reloaded divider mounts as a system message with one compaction part", async () => {
+        const divider: ChatMessage = {
+            id: "c-1",
+            role: "system",
+            parts: [{ type: "data-compaction", id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 }],
+        };
+        await loadMessages(SID, { runtime: () => stubRuntime, loadAll: () => okAsync([[]]), toCortex: () => [divider] });
 
-        const reloaded = cortexToUiMessage({ id: "c-1", role: "system", parts: [divider] } as unknown as CortexMsg, SID, AID);
-
-        expect(reloaded.role).toBe("event");
-        expect(reloaded.parts).toEqual([
-            { id: expect.any(String), type: "compaction", compactionId: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
-        ]);
+        expect(messages.map((m) => ({ ...m }))).toEqual([divider]);
     });
 });
 
@@ -883,7 +927,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
         ]);
     });
 
-    test("text -> plan-card with no trailing prose renders [text][plan-card] and no empty part", async () => {
+    test("text -> plan card with no trailing prose renders [text][data-plan] and no empty part", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "Here is the plan." });
             void emit({
@@ -896,7 +940,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
 
         // Exactly two parts, in order — the card sits AFTER the prose, and nothing minted a trailing
         // empty text part for the (absent) post-card prose.
-        expect(assistantParts()).toEqual([{ type: "text", text: "Here is the plan." }, { type: "plan-card" }]);
+        expect(assistantParts()).toEqual([{ type: "text", text: "Here is the plan." }, { type: "data-plan" }]);
     });
 
     test("deltas after a card flow into a NEW text part, not the pre-card one", async () => {
@@ -911,11 +955,11 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
-        const textParts = (messages[1]?.parts ?? []).filter((p): p is Part & { type: "text" } => p.type === "text");
+        const textParts = (messages[1]?.parts ?? []).filter((p): p is LiveTextPart => p.type === "text");
         // Two DISTINCT text parts — the pre-card prose and the post-card prose never merged.
         expect(textParts.map((p) => p.text)).toEqual(["before", "after"]);
-        expect(textParts[0]?.id).not.toBe(textParts[1]?.id);
-        expect(assistantParts()).toEqual([{ type: "text", text: "before" }, { type: "plan-card" }, { type: "text", text: "after" }]);
+        expect(textParts[0]?.key).not.toBe(textParts[1]?.key);
+        expect(assistantParts()).toEqual([{ type: "text", text: "before" }, { type: "data-plan" }, { type: "text", text: "after" }]);
     });
 });
 
@@ -978,10 +1022,10 @@ describe("send() turn cleanup", () => {
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
-        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        const tool = findPart(isToolCall);
         expect(tool).toBeDefined();
         // Drained to a terminal state — never left `running` at idle.
-        expect(tool?.status).toBe("error");
+        expect(tool?.outcome).toBe("error");
         // No tool-finished arrived, thus nothing measured this call. The elapsed
         // time since its start stamp would be the round's, and a multi-call round
         // would strand every chip with one identical figure.
@@ -1005,13 +1049,13 @@ describe("send() turn cleanup", () => {
         const turnUsage = { inputTokens: 12_400, outputTokens: 3100, cacheReadInputTokens: 9800, reasoningTokens: 900 };
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", opened: true, fallbackText: "hi", turnUsage }));
         expect(typeof messages[1]?.durationMs).toBe("number");
-        expect(messages[1]?.turnUsage).toEqual(turnUsage);
+        expect(messages[1]?.usage).toEqual(turnUsage);
     });
 
     test("an outcome with no rollup leaves the message without one — the duration alone, never a zeroed usage", async () => {
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", opened: true, fallbackText: "hi" }));
         expect(typeof messages[1]?.durationMs).toBe("number");
-        expect(messages[1]?.turnUsage).toBeUndefined();
+        expect(messages[1]?.usage).toBeUndefined();
     });
 
     test("an interrupted turn that streamed output keeps what it spent before the abort", async () => {
@@ -1021,7 +1065,7 @@ describe("send() turn cleanup", () => {
         const seams = fakeSeams({ kind: "aborted", opened: true, turnUsage }, (emit) => void emit({ type: "text-delta", text: "the ans" }));
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         expect(messages[1]?.interrupted).toBe(true);
-        expect(messages[1]?.turnUsage).toEqual(turnUsage);
+        expect(messages[1]?.usage).toEqual(turnUsage);
     });
 
     test("a pre-run failure pops the empty assistant bubble", async () => {
@@ -1061,7 +1105,11 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
             // Faithful reconstruction: each stored row (a fixture Row, cast through the seam's harness
             // message type) becomes one CortexMsg carrying its text, so the trailing message cap is exercised.
             toCortex: (rows) =>
-                (rows as unknown as Row[]).map((r) => ({ id: `id-${r.seq}`, role: r.role, parts: [{ type: "text", text: r.text }] })) as unknown as CortexMsg[],
+                (rows as unknown as Row[]).map((r) => ({
+                    id: `id-${r.seq}`,
+                    role: r.role,
+                    parts: [{ type: "text", text: r.text }],
+                })) as unknown as ChatMessage[],
             reads: () => reads,
         };
     }
@@ -1073,7 +1121,7 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
 
     test("a thread at the cap mounts whole", async () => {
         const seams = loadSeams(turns(200));
-        await loadMessages(SID, AID, seams);
+        await loadMessages(SID, seams);
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m0");
         expect(textAt(199)).toBe("m199");
@@ -1081,7 +1129,7 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
 
     test("one past the cap drops the oldest message, not the newest", async () => {
         const seams = loadSeams(turns(201));
-        await loadMessages(SID, AID, seams);
+        await loadMessages(SID, seams);
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m1");
         expect(textAt(199)).toBe("m200");
@@ -1089,7 +1137,7 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
 
     test("a thread far past the cap still ends on its newest message", async () => {
         const seams = loadSeams(turns(400));
-        await loadMessages(SID, AID, seams);
+        await loadMessages(SID, seams);
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m200");
         expect(textAt(199)).toBe("m399");
@@ -1097,7 +1145,7 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
 
     test("a thread shorter than the cap mounts whole", async () => {
         const seams = loadSeams(turns(3));
-        await loadMessages(SID, AID, seams);
+        await loadMessages(SID, seams);
         expect(messages.length).toBe(3);
         expect(textAt(0)).toBe("m0");
         expect(textAt(2)).toBe("m2");
@@ -1105,7 +1153,7 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
 
     test("one read, whatever the thread's length", async () => {
         const seams = loadSeams(turns(400));
-        await loadMessages(SID, AID, seams);
+        await loadMessages(SID, seams);
         expect(seams.reads()).toBe(1);
     });
 });
@@ -1114,7 +1162,7 @@ describe("loadMessages staleness guard", () => {
     // N rowless turns — the toCortex fakes ignore the rows entirely and answer with their own message.
     const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
     // One assistant text message, shaped enough for cortexToUiMessage to read role/id/parts.
-    const cortexText = (id: string, text: string): CortexMsg[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }] as unknown as CortexMsg[];
+    const cortexText = (id: string, text: string): ChatMessage[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }] as unknown as ChatMessage[];
 
     test("an older load that lands LAST does not clobber the newer load", async () => {
         // The OLDER load (load 1) blocks at its page read until released; the NEWER load (load 2)
@@ -1135,8 +1183,8 @@ describe("loadMessages staleness guard", () => {
             toCortex: () => cortexText("new", "new-msg"),
         };
 
-        const oldLoad = loadMessages(SID, AID, oldSeams); // blocks on oldGate at its page read
-        await loadMessages(SID, AID, newSeams); // starts later, completes first
+        const oldLoad = loadMessages(SID, oldSeams); // blocks on oldGate at its page read
+        await loadMessages(SID, newSeams); // starts later, completes first
 
         const afterNew = messages[0]?.parts[0];
         expect(afterNew?.type).toBe("text");
@@ -1157,7 +1205,7 @@ describe("loadMessages staleness guard", () => {
 // animation is submitted while that load is still awaiting Postgres. A turn must supersede a load.
 describe("a turn supersedes a transcript load in flight", () => {
     const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
-    const cortexText = (id: string, text: string): CortexMsg[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }] as unknown as CortexMsg[];
+    const cortexText = (id: string, text: string): ChatMessage[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }] as unknown as ChatMessage[];
 
     /** Load seams whose page read parks until the returned release is called. */
     function gatedLoadSeams(): { seams: LoadSeams; release: () => void } {
@@ -1177,7 +1225,7 @@ describe("a turn supersedes a transcript load in flight", () => {
 
     test("a load resolving mid-send does not wipe the user message or the in-flight turn", async () => {
         const { seams: loadSeams, release } = gatedLoadSeams();
-        const load = loadMessages(SID, AID, loadSeams); // parks on its page read
+        const load = loadMessages(SID, loadSeams); // parks on its page read
 
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "live answer" });
@@ -1200,7 +1248,7 @@ describe("a turn supersedes a transcript load in flight", () => {
 
     test("parts emitted after the superseded load resolves still reach the assistant message", async () => {
         const { seams: loadSeams, release } = gatedLoadSeams();
-        const load = loadMessages(SID, AID, loadSeams);
+        const load = loadMessages(SID, loadSeams);
 
         // Release the load mid-turn: its trailing write must not land, so the adapter's later parts
         // still find the assistant message they were minted against.
@@ -1218,7 +1266,7 @@ describe("a turn supersedes a transcript load in flight", () => {
 
     test("resetHotState drops a load already in flight for the swapped-away session", async () => {
         const { seams: loadSeams, release } = gatedLoadSeams();
-        const load = loadMessages(SID, AID, loadSeams);
+        const load = loadMessages(SID, loadSeams);
 
         resetHotState();
         release();
@@ -1236,8 +1284,8 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
     test("deltas -> tool -> no further deltas: the fallback renders as a trailing part", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "THE FINAL ANSWER" }, (emit) => {
             void emit({ type: "text-delta", text: "thinking..." });
-            void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
 
@@ -1257,7 +1305,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         await send({ sessionId: SID, analysisId: AID, userText: "plan it" }, seams);
 
         const kinds = messages[1]?.parts.map((p) => p.type);
-        expect(kinds).toEqual(["text", "plan-card", "text"]);
+        expect(kinds).toEqual(["text", "data-plan", "text"]);
     });
 
     test("a streamed final answer is not duplicated by the fallback", async () => {
@@ -1265,8 +1313,8 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         // `fallbackText` on top of it would print the answer twice. The turn's FIRST event is a tool
         // (the common bare-tool_use first iteration), so the prose must render BELOW the chip.
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "streamed answer" }, (emit) => {
-            void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
             void emit({ type: "text-delta", text: "streamed answer" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
@@ -1286,8 +1334,8 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         // `fallbackText`. Pre-fix, `streamPartId` still named the pre-minted part[0] ahead of the tool,
         // so the fallback landed above the chip; the drop-empty fix reopens a fresh segment after it.
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "the answer" }, (emit) => {
-            void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
 
@@ -1305,7 +1353,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         await send({ sessionId: SID, analysisId: AID, userText: "plan it" }, seams);
 
         const kinds = messages[1]?.parts.map((p) => p.type);
-        expect(kinds).toEqual(["text", "plan-card"]);
+        expect(kinds).toEqual(["text", "data-plan"]);
     });
 });
 
@@ -1325,61 +1373,62 @@ describe("MESSAGE_CAP answers to the display alone", () => {
             args: () => seen,
         };
         let seen: unknown[] = [];
-        await loadMessages(SID, AID, seams);
+        await loadMessages(SID, seams);
         expect(seams.args()).toEqual([stubRuntime.pool, SID]);
     });
 });
+
+/** Mount a replay through the real load path: the seams give `replayed` as the harness replay of the thread. */
+async function mountReplay(replayed: ChatMessage[]): Promise<void> {
+    await loadMessages(SID, { runtime: () => stubRuntime, loadAll: () => okAsync([[]]), toCortex: () => replayed });
+}
 
 // A turn's cost and the time it took are both durable — the harness stores them for the turn and gives
 // them back on its assistant message — so reload has to carry them back onto the
 // message. Without this the transcript reads as a wall of turns nobody measured, which under the
 // absent-is-not-zero rule is a false claim about every one of them rather than a missing decoration.
 describe("a reloaded turn keeps the figures the live header showed", () => {
-    test("a stored rollup lands on the message; absence stays structurally absent", () => {
+    test("a stored rollup lands on the message; absence stays structurally absent", async () => {
         const stored = { inputTokens: 49_600, outputTokens: 42 };
-        const withUsage = cortexToUiMessage({ id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], usage: stored } as unknown as CortexMsg, SID);
-        expect(withUsage.turnUsage).toEqual(stored);
+        await mountReplay([
+            { id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], usage: stored },
+            { id: "m2", role: "assistant", parts: [{ type: "text", text: "hi" }] },
+        ]);
+        expect(messages[0]?.usage).toEqual(stored);
 
         // No stored rollup means no key — not a key holding `undefined`. Absence has exactly ONE
         // meaning on this field (no provider reported anything), and a reload that introduced a second
         // one would make the header unable to say which it is showing.
-        const without = cortexToUiMessage({ id: "m2", role: "assistant", parts: [{ type: "text", text: "hi" }] } as unknown as CortexMsg, SID);
-        expect("turnUsage" in without).toBe(false);
+        expect(Object.keys(messages[1] ?? {})).not.toContain("usage");
     });
 
-    test("a stored duration lands on the message, beside the rollup", () => {
-        const m = cortexToUiMessage(
-            { id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], usage: { inputTokens: 10 }, durationMs: 2400 } as unknown as CortexMsg,
-            SID,
-        );
-        expect(m.durationMs).toBe(2400);
-        expect(m.turnUsage).toEqual({ inputTokens: 10 });
+    test("a stored duration lands on the message, beside the rollup", async () => {
+        await mountReplay([{ id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], usage: { inputTokens: 10 }, durationMs: 2400 }]);
+        expect(messages[0]?.durationMs).toBe(2400);
+        expect(messages[0]?.usage).toEqual({ inputTokens: 10 });
     });
 
-    test("a measured zero survives the reload — it is a figure, not an absence", () => {
+    test("a measured zero survives the reload — it is a figure, not an absence", async () => {
         // A turn that settled inside one millisecond measured zero. A reader that tested the field for
         // truth would drop that figure and render the turn as one nobody timed.
-        const m = cortexToUiMessage({ id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], durationMs: 0 } as unknown as CortexMsg, SID);
-        expect(m.durationMs).toBe(0);
+        await mountReplay([{ id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], durationMs: 0 }]);
+        expect(messages[0]?.durationMs).toBe(0);
     });
 
-    test("a row that predates the durable field carries no duration, and nothing reconstructs one", () => {
+    test("a row that predates the durable field carries no duration, and nothing reconstructs one", async () => {
         // The elapsed time of a past turn is unknowable now, thus a header that invented one would be
         // fabricating a meta value. The other facts of the row still arrive.
-        const m = cortexToUiMessage(
-            { id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], usage: { inputTokens: 10 } } as unknown as CortexMsg,
-            SID,
-        );
+        await mountReplay([{ id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], usage: { inputTokens: 10 } }]);
         // No key, and not a key holding `undefined`: absence keeps ONE meaning on this field.
-        expect("durationMs" in m).toBe(false);
-        expect(m.turnUsage).toEqual({ inputTokens: 10 });
-        const text = m.parts[0];
+        expect(Object.keys(messages[0] ?? {})).not.toContain("durationMs");
+        expect(messages[0]?.usage).toEqual({ inputTokens: 10 });
+        const text = messages[0]?.parts[0];
         expect(text?.type === "text" && text.text).toBe("hi");
     });
 });
 
 // The whole live/reload contract as ONE harness: the same turn fed through the live adapter (`send` →
-// `applyEmitEvent`) and through the reload path (`cortexToUiMessage` over the stored parts, in stored
+// `applyEmitEvent`) and through the reload path (the harness replay of the stored parts, in stored
 // order) must yield the SAME part-type sequence. The stored projection keeps emission order, so a turn
 // whose first event is a tool/card must render that part first LIVE too — the emission-order invariant
 // these findings restore. The pre-fix bug inverted the tool-first shapes live while reload kept stored
@@ -1390,49 +1439,40 @@ describe("live emission order matches transcript reload order", () => {
         readonly drive: (emit: RunChatTurnArgs["emit"]) => void;
         readonly fallbackText: string;
         /** The turn as the harness reconstructs it from persisted rows, in stored order. */
-        readonly reloadParts: readonly { type: "text" | "tool-call"; text?: string; toolName?: string }[];
+        readonly reloadParts: readonly MessagePart[];
     };
 
+    const call: MessagePart = { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "ok" };
     const shapes: Shape[] = [
         {
             name: "tool-first, answer streamed",
             drive: (emit) => {
-                void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+                void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
                 void emit({ type: "text-delta", text: "answer" });
             },
             fallbackText: "answer",
-            reloadParts: [
-                { type: "tool-call", toolName: "read_file" },
-                { type: "text", text: "answer" },
-            ],
+            reloadParts: [call, { type: "text", text: "answer" }],
         },
         {
             name: "tool-first, answer only as fallback",
             drive: (emit) => {
-                void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+                void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
             },
             fallbackText: "final",
-            reloadParts: [
-                { type: "tool-call", toolName: "read_file" },
-                { type: "text", text: "final" },
-            ],
+            reloadParts: [call, { type: "text", text: "final" }],
         },
         {
             name: "text, tool, text",
             drive: (emit) => {
                 void emit({ type: "text-delta", text: "before " });
-                void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+                void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
                 void emit({ type: "text-delta", text: "after" });
             },
             fallbackText: "after",
-            reloadParts: [
-                { type: "text", text: "before " },
-                { type: "tool-call", toolName: "read_file" },
-                { type: "text", text: "after" },
-            ],
+            reloadParts: [{ type: "text", text: "before " }, call, { type: "text", text: "after" }],
         },
         {
             name: "text only",
@@ -1450,17 +1490,8 @@ describe("live emission order matches transcript reload order", () => {
             );
             const liveKinds = (messages[1]?.parts ?? []).map((p) => p.type);
 
-            const reloaded = cortexToUiMessage(
-                {
-                    id: "m1",
-                    role: "assistant",
-                    parts: shape.reloadParts.map((p) =>
-                        p.type === "tool-call" ? { type: "tool-call", toolCallId: "t1", toolName: p.toolName } : { type: "text", text: p.text },
-                    ),
-                } as unknown as CortexMsg,
-                SID,
-            );
-            const reloadKinds = reloaded.parts.map((p) => p.type);
+            await mountReplay([{ id: "m1", role: "assistant", parts: [...shape.reloadParts] }]);
+            const reloadKinds = (messages[0]?.parts ?? []).map((p) => p.type);
 
             expect(liveKinds).toEqual(reloadKinds);
             expect(liveKinds).toEqual(shape.reloadParts.map((p) => p.type));
@@ -1470,49 +1501,27 @@ describe("live emission order matches transcript reload order", () => {
 
 // The reconstructed tool part's outcome and detail. Before the converter paired each stored call with
 // its `tool-result` block, every reloaded call reported success — so a call the user had watched fail
-// came back wearing a green check. These pin the recovered values end of the mapping.
-describe("reload maps a reconstructed tool call's outcome and detail", () => {
-    /** One reconstructed assistant message carrying a single tool-call part. */
-    function reloadToolPart(part: Record<string, unknown>): ToolCallPart | undefined {
-        const msg = cortexToUiMessage(
-            { id: "m1", role: "assistant", parts: [{ type: "tool-call", toolCallId: "t1", toolName: "read_file", ...part }] } as unknown as CortexMsg,
-            SID,
-        );
-        const found = msg.parts.find((p) => p.type === "tool-call");
-        return found?.type === "tool-call" ? found : undefined;
-    }
-
-    test("a failed call reloads as failed", () => {
-        expect(reloadToolPart({ outcome: "error" })?.status).toBe("error");
-    });
-
-    test("a refused call reloads as denied, not as an error", () => {
-        expect(reloadToolPart({ outcome: "denied" })?.status).toBe("denied");
-    });
-
-    test("a successful call reloads as ok", () => {
-        expect(reloadToolPart({ outcome: "ok" })?.status).toBe("ok");
-    });
-
-    // A call the turn never saw finish carries `incomplete` — the one field says so, rather than a
-    // reader deducing it from an absent value. It renders as `running`, which is what happened; the
-    // message's interruption badge is what says it will never finish.
-    test("a call cut off mid-flight reloads as running, not as a success or a failure", () => {
-        expect(reloadToolPart({ outcome: "incomplete" })?.status).toBe("running");
-    });
-
-    // A replayed part always carries an outcome, so this is the live in-flight shape rather than a
-    // transcript one. It lands on the same honest `running` rather than defaulting to a result.
-    test("a part with no outcome at all is treated as in flight, never as ok", () => {
-        expect(reloadToolPart({})?.status).toBe("running");
-    });
-
-    test("a rebuilt detail rides the reconstructed part", () => {
-        expect(reloadToolPart({ outcome: "ok", detail: "runs/r1/s2/output/summary.md" })?.detail).toBe("runs/r1/s2/output/summary.md");
-    });
-
-    test("a call the resolver could not describe carries no detail", () => {
-        expect(reloadToolPart({ outcome: "ok" })?.detail).toBeUndefined();
+// came back wearing a green check. The store mounts what the harness recovered, and `MessageBlock`
+// renders each outcome (`message_block.test.tsx`).
+describe("a reload keeps the outcome and the detail of each call", () => {
+    test("each outcome and each detail lands on its part as the harness gives it", async () => {
+        await mountReplay([
+            {
+                id: "m1",
+                role: "assistant",
+                parts: [
+                    { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "error" },
+                    { type: "tool-call", toolCallId: "t2", toolName: "read_file", outcome: "denied" },
+                    { type: "tool-call", toolCallId: "t3", toolName: "read_file", outcome: "ok", detail: "runs/r1/s2/output/summary.md" },
+                    // A call the turn never saw finish carries `incomplete` — the one field says so.
+                    { type: "tool-call", toolCallId: "t4", toolName: "read_file", outcome: "incomplete" },
+                ],
+            },
+        ]);
+        const calls = (messages[0]?.parts ?? []).filter(isToolCall);
+        expect(calls.map((c) => c.outcome)).toEqual(["error", "denied", "ok", "incomplete"]);
+        // A call the resolver could not describe carries no detail.
+        expect(calls.map((c) => c.detail)).toEqual([undefined, undefined, "runs/r1/s2/output/summary.md", undefined]);
     });
 });
 
@@ -1531,7 +1540,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         const initialLoad: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => ResultAsync.fromSafePromise(initialGate.then(() => emptyTurns(1))),
-            toCortex: () => [{ id: "old", role: "assistant", parts: [{ type: "text", text: "never-mounted" }] }] as unknown as CortexMsg[],
+            toCortex: () => [{ id: "old", role: "assistant", parts: [{ type: "text", text: "never-mounted" }] }] as unknown as ChatMessage[],
         };
 
         // The post-turn reload seams: the pg thread now holds the prior history AND the just-finished
@@ -1544,10 +1553,10 @@ describe("a superseded initial load is retried after the turn finishes", () => {
                     { id: "h1", role: "assistant", parts: [{ type: "text", text: "prior history" }] },
                     { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
                     { id: "a1", role: "assistant", parts: [{ type: "text", text: "live answer" }] },
-                ] as unknown as CortexMsg[],
+                ] as unknown as ChatMessage[],
         };
 
-        const load = loadMessages(SID, AID, initialLoad); // parks — the submit below supersedes it
+        const load = loadMessages(SID, initialLoad); // parks — the submit below supersedes it
 
         const seams: SendSeams = {
             runtime: () => stubRuntime,
@@ -1555,7 +1564,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
                 void args.emit({ type: "text-delta", text: "live answer" });
                 return { kind: "ok", opened: true, fallbackText: "" };
             },
-            reloadTranscript: (sid, aid) => loadMessages(sid, aid, reloadSeams),
+            reloadTranscript: (sid) => loadMessages(sid, reloadSeams),
         };
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
 
@@ -1579,9 +1588,9 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         const completedLoad: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => okAsync(emptyTurns(1)),
-            toCortex: () => [{ id: "h1", role: "assistant", parts: [{ type: "text", text: "history" }] }] as unknown as CortexMsg[],
+            toCortex: () => [{ id: "h1", role: "assistant", parts: [{ type: "text", text: "history" }] }] as unknown as ChatMessage[],
         };
-        await loadMessages(SID, AID, completedLoad);
+        await loadMessages(SID, completedLoad);
         expect(messages.length).toBe(1);
 
         let reloadFired = false;
@@ -1617,75 +1626,66 @@ describe("send() closes the emit sink at turn completion", () => {
 
         // The closed sink dropped the straggler: no new tool chip, the finished message is untouched.
         expect(messages[1]?.parts.length).toBe(partsBefore);
-        expect(findPart((p): p is ToolCallPart => p.type === "tool-call")).toBeUndefined();
+        expect(findPart(isToolCall)).toBeUndefined();
     });
 });
 
-// The chat-view contract: a display card emitted live and the same card reconstructed on reload (via
-// `cortexToUiMessage` over the flat parts the harness rebuilds) must yield the SAME UI part — the shared
-// builders read through the same `artifact_open` readers on both paths.
+// The chat-view contract: a display card emitted live and the same card replayed on reload land as the
+// SAME harness part, and the renderer reads both through the same shared reader — the `artifact_open`
+// and `chat_printer` readers.
 describe("display-card parts map identically live and on reload", () => {
     const TOP = { agentId: "tui-chat", callPath: ["tui-chat"] };
 
-    test("a markdown presentation maps to the same inline part in both paths", async () => {
-        const data = { id: "pres-1", title: "Finding", content: { kind: "markdown", body: "**TP53** up" } };
+    /** The store parts of a live turn that emits `emitted`, then of a reload whose replay holds `stored`. */
+    async function liveThenReloaded(emitted: Parameters<EmitFn>[0], stored: MessagePart): Promise<{ live: Part[]; reloaded: Part[] }> {
         await send(
             { sessionId: SID, analysisId: AID, userText: "?" },
-            fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => void emit({ type: "data-presentation", source: TOP, data })),
+            fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => void emit(emitted)),
         );
-        const live = messages[1]?.parts.find((p) => p.type === "presentation");
+        const live = [...(messages[1]?.parts ?? [])];
+        await mountReplay([{ id: "m1", role: "assistant", parts: [stored] }]);
+        return { live, reloaded: [...(messages[0]?.parts ?? [])] };
+    }
 
-        const reloaded = cortexToUiMessage({ id: "m1", role: "assistant", parts: [{ type: "data-presentation", ...data }] } as unknown as CortexMsg, SID, AID);
-        const reloadedPart = reloaded.parts.find((p) => p.type === "presentation");
+    test("a markdown presentation reads as the same inline body in both paths", async () => {
+        const data: Omit<PresentationPart, "type"> = { id: "pres-1", title: "Finding", content: { kind: "markdown", body: "**TP53** up" } };
+        const { live, reloaded } = await liveThenReloaded({ type: "data-presentation", source: TOP, data }, { type: "data-presentation", ...data });
 
-        expect(live?.type === "presentation" ? live.body : null).toEqual({ kind: "markdown", body: "**TP53** up" });
-        expect(reloadedPart?.type === "presentation" ? reloadedPart.body : null).toEqual({ kind: "markdown", body: "**TP53** up" });
+        expect(live).toEqual(reloaded);
+        expect(readPresentation(live[0])).toEqual({ shape: "inline", title: "Finding", body: { kind: "markdown", body: "**TP53** up" } });
     });
 
-    test("a file-reference gallery maps to the same openable card in both paths", async () => {
-        const data = { id: "pres-g", title: "Figures", files: [{ path: "runs/r/a.png" }, { path: "runs/r/b.png", caption: "heatmap" }] };
-        await send(
-            { sessionId: SID, analysisId: AID, userText: "?" },
-            fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => void emit({ type: "data-file-reference", source: TOP, data })),
-        );
-        const live = messages[1]?.parts.find((p) => p.type === "openable-card");
+    test("a file-reference gallery reads as the same openable card in both paths", async () => {
+        const data: Omit<FileReferencePart, "type"> = {
+            id: "pres-g",
+            title: "Figures",
+            files: [{ path: "runs/r/a.png" }, { path: "runs/r/b.png", caption: "heatmap" }],
+        };
+        const { live, reloaded } = await liveThenReloaded({ type: "data-file-reference", source: TOP, data }, { type: "data-file-reference", ...data });
 
-        const reloaded = cortexToUiMessage(
-            { id: "m1", role: "assistant", parts: [{ type: "data-file-reference", ...data }] } as unknown as CortexMsg,
-            SID,
-            AID,
-        );
-        const reloadedPart = reloaded.parts.find((p) => p.type === "openable-card");
-
-        expect(live?.type === "openable-card" ? live.entries.length : 0).toBe(2);
-        expect(reloadedPart?.type === "openable-card" ? reloadedPart.entries.length : 0).toBe(2);
-        expect(reloadedPart?.type === "openable-card" ? reloadedPart.analysisId : null).toBe(AID);
-        expect(reloadedPart?.type === "openable-card" ? reloadedPart.folderPath : null).toBe("runs/r");
+        expect(live).toEqual(reloaded);
+        const view = readFileReference(reloaded[0]);
+        expect(view.entries.length).toBe(2);
+        expect(view.folderPath).toBe("runs/r");
+        // The reloaded entries resolve against the analysis of the open workspace.
+        expect(sessionOpenables(AID).map((o) => o.analysisId)).toEqual([AID, AID]);
     });
 
-    test("a report-session spawn maps to the same report-session part in both paths", async () => {
+    test("a report-session spawn lands as the same part in both paths", async () => {
         const data = { threadId: "child-1", parentThreadId: SID, threadType: "report" };
-        await send(
-            { sessionId: SID, analysisId: AID, userText: "?" },
-            fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => void emit({ type: "data-child-session-started", source: TOP, data })),
+        const { live, reloaded } = await liveThenReloaded(
+            { type: "data-child-session-started", source: TOP, data },
+            { type: "data-child-session-started", ...data },
         );
-        const live = messages[1]?.parts.find((p) => p.type === "report-session");
 
-        const reloaded = cortexToUiMessage(
-            { id: "m1", role: "assistant", parts: [{ type: "data-child-session-started", ...data }] } as unknown as CortexMsg,
-            SID,
-            AID,
-        );
-        const reloadedPart = reloaded.parts.find((p) => p.type === "report-session");
-
-        expect(live?.type === "report-session" ? live.threadId : null).toBe("child-1");
-        expect(reloadedPart?.type === "report-session" ? reloadedPart.threadId : null).toBe("child-1");
+        expect(live).toEqual(reloaded);
+        expect(reloaded).toEqual([{ type: "data-child-session-started", threadId: "child-1", parentThreadId: SID, threadType: "report" }]);
     });
 
-    test("an unknown reconstructed part still surfaces as a tagged mention on reload", () => {
-        const reloaded = cortexToUiMessage({ id: "m1", role: "assistant", parts: [{ type: "data-widget" }] } as unknown as CortexMsg, SID, AID);
-        const mention = reloaded.parts.find((p) => p.type === "text" && "text" in p && p.text.includes("[part:data-widget]"));
-        expect(mention).toBeDefined();
+    test("an unknown replayed part still lands in the transcript on reload", async () => {
+        // The renderer shows it as a tagged mention (`message_block.test.tsx`).
+        await mountReplay([{ id: "m1", role: "assistant", parts: [{ type: "data-widget" } as unknown as MessagePart] }]);
+        expect(messages[0]?.parts.map((p): string => p.type)).toEqual(["data-widget"]);
     });
 });
 
@@ -1762,7 +1762,7 @@ describe("promptHistory", () => {
                     id: `id-${i}`,
                     role: t.role,
                     parts: t.texts.map((text) => ({ type: "text", text })),
-                })) as unknown as CortexMsg[],
+                })) as unknown as ChatMessage[],
         };
     }
 
@@ -1770,7 +1770,7 @@ describe("promptHistory", () => {
     const assistant = (text: string): Turn => ({ role: "assistant", texts: [text] });
 
     async function historyFor(fixture: Turn[]): Promise<string[]> {
-        await loadMessages(SID, AID, seedSeams(fixture));
+        await loadMessages(SID, seedSeams(fixture));
         return promptHistory();
     }
 
@@ -1822,12 +1822,12 @@ describe("hasPromptHistory", () => {
                     id: `id-${i}`,
                     role: t.role,
                     parts: t.texts.map((text) => ({ type: "text", text })),
-                })) as unknown as CortexMsg[],
+                })) as unknown as ChatMessage[],
         };
     }
 
     async function agreementFor(fixture: Turn[]): Promise<{ has: boolean; list: number }> {
-        await loadMessages(SID, AID, seedSeams(fixture));
+        await loadMessages(SID, seedSeams(fixture));
         return { has: hasPromptHistory(), list: promptHistory().length };
     }
 

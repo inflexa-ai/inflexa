@@ -33,19 +33,19 @@ export function Chat(props: ChatProps) {
     const ws = useWorkspace();
 
     // The report sessions of the open thread. The store (`hooks/report_children.ts`) owns the read and
-    // the refresh edge; the persisted `report-session` part inside each turn owns the position, and
-    // `MessageBlock` renders the entry there. A failed listing gives no children, thus the transcript
-    // stays whole. What remains here is the TAIL: the children that no mounted part claims.
+    // the refresh edge; the persisted `data-child-session-started` part inside each turn owns the
+    // position, and `MessageBlock` renders the entry there. A failed listing gives no children, thus the
+    // transcript stays whole. What remains here is the TAIL: the children that no mounted part claims.
     watchReportChildren(ws);
 
-    // The thread ids that a mounted `report-session` part claims, computed ONCE for each change of the
-    // messages. A claimed child renders at its part; the rest render at the tail below — a session
-    // spawned before the part became durable, or a part whose message left the mounted window.
+    // The thread ids that a mounted report spawn claims, computed ONCE for each change of the messages.
+    // A claimed child renders at its part; the rest render at the tail below — a session spawned before
+    // the part became durable, or a part whose message left the mounted window.
     const claimedThreadIds = createMemo((): Set<string> => {
         const claimed = new Set<string>();
         for (const message of messages) {
             for (const part of message.parts) {
-                if (part.type === "report-session") claimed.add(part.threadId);
+                if (part.type === "data-child-session-started" && part.threadType === "report") claimed.add(part.threadId);
             }
         }
         return claimed;
@@ -57,18 +57,18 @@ export function Chat(props: ChatProps) {
 
     // Turn number per store position, computed ONCE per messages change rather than per row.
     //
-    // It counts TURNS, so `event` entries — records this app appended for out-of-band work, which
-    // nobody said — take no number: numbering them would claim a turn happened where none did, and
-    // would renumber every turn after a run finished. They still occupy a slot here (holding their
-    // preceding turn's count) purely so the array can be indexed by store position; `MessageBlock`
-    // renders no number for them.
+    // It counts TURNS, so `system` entries — records this app appended for out-of-band work, which
+    // nobody said, and compaction dividers — take no number: numbering them would claim a turn happened
+    // where none did, and would renumber every turn after a run finished. They still occupy a slot here
+    // (holding their preceding turn's count) purely so the array can be indexed by store position;
+    // `MessageBlock` renders no number for them.
     //
     // A memo rather than the obvious per-row `slice().filter().length`: that form is O(n²) over
     // MESSAGE_CAP rows AND makes every row's number depend on the whole array, so one append
     // recomputes all of them.
     const turnNumbers = createMemo((): number[] => {
         let turns = 0;
-        return messages.map((m) => (m.role === "event" ? turns : ++turns));
+        return messages.map((m) => (m.role === "system" ? turns : ++turns));
     });
 
     // Load the transcript from the pg thread, reacting to BOTH the bound thread AND the runtime boot
@@ -83,9 +83,8 @@ export function Chat(props: ChatProps) {
                 if (prevSessionId !== undefined && prevSessionId !== sessionId) resetHotState();
                 // No thread bound yet (pre-`ready`, or its resolution still in flight) means there is
                 // nothing to read; the chat renders empty until the bind lands and re-fires this effect.
-                // An unscoped chat likewise has no analysis to key the thread's card resolver on.
-                const analysis = ws.analysis;
-                if (phase === "ready" && analysis && sessionId !== null) void loadMessages(sessionId, analysis.id);
+                // An unscoped chat likewise has no analysis for its cards to resolve against.
+                if (phase === "ready" && ws.analysis && sessionId !== null) void loadMessages(sessionId);
             },
         ),
     );
@@ -133,7 +132,7 @@ export function Chat(props: ChatProps) {
                             index={turnNumbers()[index()] ?? 0}
                             role={msg.role}
                             durationMs={msg.durationMs}
-                            turnUsage={msg.turnUsage}
+                            turnUsage={msg.usage}
                             interrupted={msg.interrupted}
                             parts={msg.parts}
                             streamPartId={streamPartId}

@@ -1,12 +1,14 @@
 import { For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
-import type { Thread } from "@inflexa-ai/harness";
+import { unwrap } from "solid-js/store";
+import type { Thread, ToolCallOutcome } from "@inflexa-ai/harness";
+import type { ChatMessage } from "@inflexa-ai/harness/contracts/message.js";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { space, GLYPHS, MARKERS, type ThemeColors } from "../../lib/design_system.ts";
 import { formatTokenFigureLabelled } from "../../lib/usage_format.ts";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
-import { ToolBlock } from "../components/tool_block.tsx";
+import { ToolBlock, type ToolBlockProps } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { RunCardBlock, type RunCardState } from "../components/run_card_block.tsx";
@@ -17,11 +19,12 @@ import { CompactionBlock } from "../components/compaction_block.tsx";
 import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { reportChildren } from "../hooks/report_children.ts";
-import { entryDegraded, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
+import { entryDegraded, readFileReference, readPresentation, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
+import { readAskPart, readChildSessionStarted, readCompactionPart, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
 import { activeRunProgress, runsSnapshot, RUN_STATUS_TERMINAL } from "../hooks/sidebar_live.ts";
 import type { TurnUsage } from "../../modules/harness/turn.ts";
-import type { AskCardPart, MessageRole, OpenableCardPart, Part } from "../../types/session.ts";
+import type { LiveAskPart, OpenableEntry, Part } from "../../types/session.ts";
 
 /**
  * Resolve a run card's settled state from the sidebar's ledger snapshots, by the `runId` the card
@@ -65,8 +68,11 @@ export function resolveRunCardState(runId: string): RunCardState | undefined {
 export type MessageBlockProps = {
     /** 1-based position of this turn in the rendered conversation, shown beside the role label. */
     index: number;
-    /** Who authored the turn — selects the gutter marker and its color. */
-    role: MessageRole;
+    /**
+     * Who authored the turn — selects the gutter marker and its color. `system` is not a turn: it is a
+     * record that the host appended to the thread, or the divider of a compaction.
+     */
+    role: ChatMessage["role"];
     /**
      * Assistant-only turn duration in ms, shown beside the number. Two sources feed one prop — the live
      * turn stamps it at settlement, and a transcript reload reads back what the turn append stored — thus
@@ -90,21 +96,78 @@ export type MessageBlockProps = {
      * assistant message to carry it (that empty shell is dropped rather than marked).
      */
     interrupted?: boolean;
-    /** The turn's parts (text, tool-call, plan-card, run-card, plus the mock thinking/file-edit kinds). */
+    /** The turn's parts: the harness parts, plus the mock thinking/file-edit kinds of the gallery. */
     parts: Part[];
-    /** The part id currently streaming, or null — read reactively. */
+    /** The key of the text part currently streaming, or null — read reactively. */
     streamPartId: Accessor<string | null>;
     /** The live streaming text for the streaming part — read reactively. */
     streamText: Accessor<string>;
 };
 
 /**
+ * The lifecycle that a tool block shows for the outcome of a call.
+ *
+ * The harness records a call's whole terminal state in one field, so this is a total mapping with
+ * nothing left to infer — which is the point: two hosts reading the same projection cannot disagree
+ * about what a call did, and the `never` branch makes a state added later a build failure here
+ * rather than a silent mis-render.
+ *
+ * An absent outcome is a live call still in flight. `incomplete` — a reloaded call that the turn cut
+ * off — maps to the same `running`, which is what actually happened. It does not read as live because
+ * the message carries the interruption badge; the marker and that badge together say "in flight when
+ * the turn was cut off", so a renderer must not show one without the other.
+ */
+function toolStatus(outcome: ToolCallOutcome | undefined): ToolBlockProps["status"] {
+    switch (outcome) {
+        case "ok":
+        case "error":
+        case "denied":
+            return outcome;
+        case "incomplete":
+        case undefined:
+            return "running";
+        default: {
+            const unhandled: never = outcome;
+            throw new Error(`unhandled tool call outcome: ${String(unhandled)}`);
+        }
+    }
+}
+
+/** The one-line tagged mention of a part that has no renderer here — observed, never swallowed. */
+function mention(type: string): string {
+    return `[part:${type}]`;
+}
+
+/** A text body of a turn, through the `<markdown>` renderable. An empty body renders nothing. */
+function MarkdownBody(props: { content: string; paddingLeft: number }): JSX.Element {
+    return (
+        <Show when={props.content}>
+            {/* Mirror opencode's markdown config exactly. `streaming` is pinned true, NOT
+                isStreaming(): in @opentui/core 0.4.0 `<markdown streaming={false}>` renders
+                nothing (verified headlessly), so a finalized/reloaded part would vanish the
+                instant the stream ends. `internalBlockMode="top-level"` is the streaming
+                block mode — without it, incrementally-grown content left inline syntax
+                (`**bold**`) rendered as raw literal `**`. */}
+            <markdown
+                content={props.content}
+                fg={theme().fg}
+                syntaxStyle={syntaxStyle()}
+                streaming={true}
+                internalBlockMode="top-level"
+                paddingLeft={props.paddingLeft}
+            />
+        </Show>
+    );
+}
+
+/**
  * One chat turn: a role-colored gutter marker (`>` you / `<` assistant) and label, then each part
- * rendered as its own gutter-marked block under it. This is the bridge from the domain `Part`
- * union to the domain-agnostic block widgets in `components/`: it switches on the part discriminant
- * and maps each kind to its widget's primitive props. The `never`-typed default makes a new part
- * kind without a renderer a compile error. The streaming text part renders from the live stream
- * accessors and flips to the stored text once the part completes.
+ * rendered as its own gutter-marked block under it. This is the bridge from the harness parts to the
+ * domain-agnostic block widgets in `components/`: it switches on the part discriminant and reads each
+ * card through the shared reader that the REPL printer also uses, thus a live card and its reload
+ * render alike. The `never`-typed default makes a new part kind without a renderer a compile error.
+ * The streaming text part renders from the live stream accessors and flips to the stored text once
+ * the part completes.
  */
 export function MessageBlock(props: MessageBlockProps) {
     // `· #N`, plus `· <dur>` and `· <in> in · <out> out` for a completed assistant turn, through the
@@ -134,75 +197,99 @@ export function MessageBlock(props: MessageBlockProps) {
     // to match, or the two roles misalign under their headers.
     const bodyPadLeft = (): number => (props.role === "user" ? space.sm : space.md);
     // A reloaded compaction divider spans the transcript on its own, thus it takes no event rule.
-    const dividerOnly = (): boolean => props.role === "event" && props.parts.length === 1 && props.parts[0]?.type === "compaction";
+    const dividerOnly = (): boolean => props.role === "system" && props.parts.length === 1 && props.parts[0]?.type === "data-compaction";
+    // A part object never changes in place: each edit of the store gives a fresh object, which `<For>`
+    // mounts as a new item. Thus a card reads its part through the shared reader one time, here.
     const parts = (): JSX.Element => (
         <For each={props.parts}>
             {(part): JSX.Element => {
                 switch (part.type) {
                     case "text": {
-                        const isStreaming = (): boolean => props.streamPartId() === part.id;
-                        const content = (): string => (isStreaming() ? props.streamText() : part.text);
-                        return (
-                            <Show when={content()}>
-                                {/* Mirror opencode's markdown config exactly. `streaming` is pinned true, NOT
-                                    isStreaming(): in @opentui/core 0.4.0 `<markdown streaming={false}>` renders
-                                    nothing (verified headlessly), so a finalized/reloaded part would vanish the
-                                    instant the stream ends. `internalBlockMode="top-level"` is the streaming
-                                    block mode — without it, incrementally-grown content left inline syntax
-                                    (`**bold**`) rendered as raw literal `**`. content() switches source (live
-                                    streamText while streaming, stored part.text once flushed). */}
-                                <markdown
-                                    content={content()}
-                                    fg={theme().fg}
-                                    syntaxStyle={syntaxStyle()}
-                                    streaming={true}
-                                    internalBlockMode="top-level"
-                                    paddingLeft={bodyPadLeft()}
-                                />
-                            </Show>
-                        );
+                        // The content switches source: the live `streamText` while the part streams, and
+                        // the stored `part.text` once it is flushed.
+                        const isStreaming = (): boolean => props.streamPartId() === part.key;
+                        return <MarkdownBody content={isStreaming() ? props.streamText() : part.text} paddingLeft={bodyPadLeft()} />;
                     }
                     case "thinking":
                         return <ThinkingBlock text={part.text} durationMs={part.durationMs} />;
                     case "tool-call":
                         return (
                             <ToolBlock
-                                name={part.name}
+                                name={part.toolName}
                                 detail={part.detail}
-                                result={part.result}
-                                filetype={part.filetype}
-                                status={part.status}
+                                status={toolStatus(part.outcome)}
                                 durationMs={part.durationMs}
                                 activity={part.activity}
                             />
                         );
                     case "file-edit":
                         return <DiffBlock path={part.path} diff={part.diff} added={part.added} removed={part.removed} />;
-                    case "plan-card":
-                        return <PlanCardBlock planId={part.planId} title={part.title} steps={part.steps} />;
-                    case "run-card":
-                        return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} state={resolveRunCardState(part.runId)} />;
-                    case "presentation":
-                        return <PresentationBlock title={part.title} body={part.body} />;
-                    case "openable-card":
-                        return <OpenableCard part={part} />;
-                    case "ask-card":
+                    case "data-plan": {
+                        const plan = readPlanCard(part);
+                        return <PlanCardBlock planId={plan.planId} title={plan.title} steps={plan.steps} />;
+                    }
+                    case "data-run-card": {
+                        const run = readRunCard(part);
+                        return <RunCardBlock runId={run.runId} title={run.title} stepCount={run.stepCount} state={resolveRunCardState(run.runId)} />;
+                    }
+                    case "data-presentation": {
+                        // The reader deep-copies the chart spec, and a store proxy cannot be cloned, thus
+                        // the reader gets the plain part that the proxy wraps.
+                        const view = readPresentation(unwrap(part));
+                        return view.shape === "inline" ? (
+                            <PresentationBlock title={view.title} body={view.body} />
+                        ) : (
+                            <OpenableCard title={view.title} entries={[view.entry]} />
+                        );
+                    }
+                    case "data-file-reference": {
+                        const view = readFileReference(part);
+                        return <OpenableCard title={view.title} entries={view.entries} folderPath={view.folderPath} />;
+                    }
+                    case "data-ask":
                         return <AskCard part={part} />;
-                    case "report-session":
-                        return <ReportSessionEntry threadId={part.threadId} />;
-                    case "compaction":
+                    case "data-child-session-started": {
+                        const started = readChildSessionStarted(part);
+                        return started.threadType === "report" ? (
+                            <ReportSessionEntry threadId={started.threadId} />
+                        ) : (
+                            <MarkdownBody content={mention(part.type)} paddingLeft={bodyPadLeft()} />
+                        );
+                    }
+                    case "data-compaction": {
+                        const compaction = readCompactionPart(part);
                         return (
                             <CompactionBlock
-                                status={part.status}
-                                tokensBefore={part.tokensBefore}
-                                tokensAfter={part.tokensAfter}
-                                durationMs={part.durationMs}
+                                status={compaction.status}
+                                tokensBefore={compaction.tokensBefore}
+                                tokensAfter={compaction.tokensAfter}
+                                durationMs={compaction.durationMs}
                             />
                         );
+                    }
+                    // The parts that the conversation has no first-class renderer for: the sidebar parts
+                    // of a run, and the record of a report render.
+                    case "data-report-rendered":
+                    case "data-run-started":
+                    case "data-dag-state":
+                    case "data-step-activity":
+                    case "data-step-file-tree":
+                    case "data-step-output":
+                    case "data-step-summary":
+                    case "data-step-usage":
+                    case "data-step-blocked":
+                    case "data-run-synthesis":
+                    case "data-synthesis-progress":
+                    case "data-run-completed":
+                    case "data-run-failed":
+                        return <MarkdownBody content={mention(part.type)} paddingLeft={bodyPadLeft()} />;
                     default: {
-                        // Exhaustive: a new Part kind without a case fails the build here.
-                        const _exhaustive: never = part;
-                        return _exhaustive;
+                        // Exhaustive: a new Part kind without a case fails the build here. A frame keeps a
+                        // `data-*` type that this build does not know, thus a part can still reach here at
+                        // run time, and it renders the mention. The cast only reads the discriminant that
+                        // every part carries.
+                        const unknownPart: never = part;
+                        return <MarkdownBody content={mention((unknownPart as { type: string }).type)} paddingLeft={bodyPadLeft()} />;
                     }
                 }
             }}
@@ -217,7 +304,7 @@ export function MessageBlock(props: MessageBlockProps) {
             party speaking. A `<Show>` rather than an early return: Solid components run once, and an
             early return would break the block's reactivity outright. */}
             <Show
-                when={props.role === "event"}
+                when={props.role === "system"}
                 fallback={
                     <>
                         <text fg={theme()[props.role === "user" ? MARKERS.you.role : MARKERS.assistant.role]}>
@@ -254,8 +341,8 @@ export function MessageBlock(props: MessageBlockProps) {
 }
 
 /**
- * The transcript entry for one report session, anchored by its persisted `report-session` part and
- * joined by thread id against the live report-children listing. The listing is the authority for the
+ * The transcript entry for one report session, anchored by its persisted `data-child-session-started`
+ * part (thread type `report`) and joined by thread id against the live report-children listing. The listing is the authority for the
  * session: its title, its activity stamp, and its liveness come from the row, thus a part whose row
  * the listing does not hold — an archived child, or a listing that failed — renders nothing. `Chat`
  * renders the same entry at the transcript tail for a row that no mounted part claims, for example a
@@ -285,34 +372,42 @@ export function ReportSessionEntry(props: { threadId: string }) {
 }
 
 /**
- * Wire an {@link OpenableCardPart} to the pure {@link OpenableCardBlock}: resolve each entry's display path
- * and degraded state at render time (open-time resolution — the part stores only the reference), and hand
- * clicks to the shared opener. Co-located with {@link MessageBlock}, its only caller. Resolution reads the
- * memoized workspace root, so the one-time read per mount is cheap; parts are immutable after receipt, so a
- * static resolution is correct.
+ * Wire the openable entries of a harness part (a pixel-shaped presentation, or a file reference) to the
+ * pure {@link OpenableCardBlock}: resolve each entry's display path and degraded state at render time
+ * (open-time resolution — the part stores only the reference), and hand clicks to the shared opener.
+ * Co-located with {@link MessageBlock}, its only caller. Resolution reads the memoized workspace root, so
+ * the one-time read per mount is cheap; parts are immutable after receipt, so a static resolution is
+ * correct.
+ *
+ * The entries resolve against the analysis of the open workspace: the transcript of a session belongs to
+ * that analysis, and a swap resets the transcript. Thus a mount outside the workspace provider is a
+ * wiring bug, the same rule as {@link ReportSessionEntry}. With no analysis open, no entry resolves, and
+ * each one renders degraded.
  */
-function OpenableCard(props: { part: OpenableCardPart }) {
+function OpenableCard(props: { title?: string; entries: OpenableEntry[]; folderPath?: string }) {
+    const ws = useWorkspace();
+    const analysisId = (): string => ws.analysis?.id ?? "";
     const rows = (): OpenableRowView[] =>
-        props.part.entries.map((entry) => ({
+        props.entries.map((entry) => ({
             name: entry.name,
             ...(entry.caption !== undefined ? { caption: entry.caption } : {}),
-            path: resolveEntryPath(props.part.analysisId, entry.target),
-            degraded: entryDegraded(props.part.analysisId, entry.target),
+            path: resolveEntryPath(analysisId(), entry.target),
+            degraded: entryDegraded(analysisId(), entry.target),
         }));
     function openFolder(): void {
-        const folderPath = props.part.folderPath;
-        if (folderPath) openArtifactFolder(props.part.analysisId, folderPath);
+        const folderPath = props.folderPath;
+        if (folderPath) openArtifactFolder(analysisId(), folderPath);
     }
     return (
         <OpenableCardBlock
-            title={props.part.title}
+            title={props.title}
             rows={rows()}
-            folderLabel={props.part.folderPath ? "Open containing folder" : undefined}
+            folderLabel={props.folderPath ? "Open containing folder" : undefined}
             onOpen={(index) => {
-                const entry = props.part.entries[index];
-                if (entry) openArtifact(props.part.analysisId, entry);
+                const entry = props.entries[index];
+                if (entry) openArtifact(analysisId(), entry);
             }}
-            onOpenFolder={props.part.folderPath ? openFolder : undefined}
+            onOpenFolder={props.folderPath ? openFolder : undefined}
         />
     );
 }
@@ -329,7 +424,7 @@ function OpenableCard(props: { part: OpenableCardPart }) {
  * user, which is exactly what caution means. It is also the same glyph the docked approval prompt
  * shows, so one pending ask no longer wears two different markers depending on where you look at it.
  */
-function askMarker(status: AskCardPart["status"]): { glyph: string; role: keyof ThemeColors } {
+function askMarker(status: LiveAskPart["status"]): { glyph: string; role: keyof ThemeColors } {
     switch (status) {
         case "pending":
             return { glyph: GLYPHS.warning, role: "warning" };
@@ -350,24 +445,27 @@ function askMarker(status: AskCardPart["status"]): { glyph: string; role: keyof 
 
 /**
  * The ask-card block: a status-colored marker with the approval headline and its status word, the exact
- * command being approved on the line below, and an optional detail line. It renders the primitive fields
- * the reconciling {@link AskCardPart} carries (copied at receipt) — a live-turn-only visual, never
- * reconstructed on reload. Co-located with {@link MessageBlock}, its only caller.
+ * command being approved on the line below, and an optional detail line. It renders the harness ask part
+ * through `readAskPart`, which gives a status outside the union as `expired`, a terminal status: thus a
+ * malformed part never renders as pending. A reload gives the terminal status that the harness closed
+ * the ask with, and never the reject feedback, which is live screen state. Co-located with
+ * {@link MessageBlock}, its only caller.
  */
-function AskCard(props: { part: AskCardPart }) {
-    const marker = (): { glyph: string; role: keyof ThemeColors } => askMarker(props.part.status);
-    const heading = (): string => props.part.title || props.part.command;
+function AskCard(props: { part: LiveAskPart }) {
+    const ask = (): ReturnType<typeof readAskPart> => readAskPart(props.part);
+    const marker = (): { glyph: string; role: keyof ThemeColors } => askMarker(ask().status);
+    const heading = (): string => ask().title || ask().command;
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>
                 <Fg role={marker().role}>{`${marker().glyph} `}</Fg>
                 <Fg role="fg">{heading()}</Fg>
-                <Fg role="fgMuted">{` ${GLYPHS.middot} ${props.part.status}`}</Fg>
+                <Fg role="fgMuted">{` ${GLYPHS.middot} ${ask().status}`}</Fg>
             </text>
             <text paddingLeft={space.md}>
-                <Fg role="fgMuted">{props.part.command}</Fg>
+                <Fg role="fgMuted">{ask().command}</Fg>
             </text>
-            <Show when={props.part.detail}>
+            <Show when={ask().detail}>
                 {(detail: Accessor<string>): JSX.Element => (
                     <text paddingLeft={space.md}>
                         <Fg role="fgSubtle">{detail()}</Fg>
@@ -376,7 +474,7 @@ function AskCard(props: { part: AskCardPart }) {
             </Show>
             {/* The user's own typed reject feedback, echoed onto the card by the answering surface — quoted
             muted so it reads as their words, not the tool's. Only a rejection carries feedback. */}
-            <Show when={props.part.status === "rejected" && props.part.feedback}>
+            <Show when={ask().status === "rejected" && props.part.feedback}>
                 {(feedback: Accessor<string>): JSX.Element => (
                     <text paddingLeft={space.md}>
                         <Fg role="fgMuted">feedback: </Fg>

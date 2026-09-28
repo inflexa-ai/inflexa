@@ -2,7 +2,9 @@
 
 ## Purpose
 The TUI conversation view: the hot-state store (`src/tui/hooks/conversation.ts`) holding the transcript, streaming signals, and turn lifecycle over the shared harness turn engine, and the `Chat` component rendering it. The transcript's source of truth is the pg conversation thread (see `tui-harness-chat`).
+
 ## Requirements
+
 ### Requirement: Conversation hot state lives in a dedicated store
 
 The chat's hot state SHALL live in a module singleton at `src/tui/hooks/conversation.ts` (mirroring
@@ -122,29 +124,20 @@ delegate sending to `conversation.send`, pointing the abort keybinding at `conve
 
 ### Requirement: Display-card parts map live and on reload
 
-The conversation store SHALL map `data-presentation` and `data-file-reference`
-events to first-class
-parts in both paths — the live emit reducer (`applyEmitEvent`) and the thread
-reconstruction path (`cortexToUiMessage`) — through shared readers, so a
-reloaded transcript renders the same cards as the live turn (the harness
-card-builders guarantee byte-identical card data across both paths).
-Text-shaped presentations (`markdown`, `code`, `table`) map to an inline
-presentation part; pixel-shaped content (`echart`, `svg` presentations, file
-references) maps to openable card parts carrying only the
-semantic reference fields, extracted at receipt (copy-on-receive — no retained
-harness objects). Unknown `data-*` parts SHALL keep the existing one-line
-tagged-mention fallback.
+The conversation store MUST keep each harness part as the harness gives it, in the live path and in the reload path. In the live path, `applyEmitEvent` applies each event of the top-level agent with `toChatFrame` and `applyChatFrame` of the harness. In the reload path, `loadMessages` mounts the messages of `storedMessagesToCortex` with no change. The live path MUST copy each data part at receipt, thus the store keeps no object that the agent loop can change.
+
+The message renderer MUST read each card through the shared readers of `chat_printer.ts` and `artifact_open.ts`. Thus a reloaded transcript renders the same cards as the live turn. A text-shaped presentation (`markdown`, `code`, `table`) MUST render as an inline presentation. An `echart` or `svg` presentation and a file reference MUST render as an openable card that holds only the semantic references. An unknown `data-*` part MUST keep the one-line tagged mention.
 
 #### Scenario: Live and reloaded turns render alike
 
 - **GIVEN** a turn where the agent emitted a markdown presentation and a file-reference gallery
-- **WHEN** the session is closed and the thread reloads from pg
-- **THEN** the reconstructed transcript shows the same inline markdown block and the same openable gallery card as the live turn did
+- **WHEN** the user closes the session and the thread reloads from pg
+- **THEN** the reloaded transcript shows the same inline markdown block and the same openable gallery card as the live turn
 
 #### Scenario: Unknown parts still surface
 
-- **WHEN** the harness emits a `data-*` part the CLI has no renderer for
-- **THEN** the transcript shows the one-line tagged mention (observed, not swallowed)
+- **WHEN** the harness emits a `data-*` part that the CLI has no renderer for
+- **THEN** the transcript shows the one-line tagged mention of the part, and it does not drop the part
 
 ### Requirement: A harness synthetic message renders as an event, not as a user turn
 
@@ -180,4 +173,3 @@ content.
 
 - **WHEN** the transcript loads an ordinary user message
 - **THEN** it renders with the user marker exactly as before
-

@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import type { DbError, StoredMessage } from "@inflexa-ai/harness";
+import type { ChatMessage } from "@inflexa-ai/harness/contracts/message.js";
 
 import {
     abort,
     armInterrupt,
     canRetract,
-    type CortexMsg,
     errorMsg,
     interruptArmed,
     loadMessages,
@@ -676,12 +676,11 @@ describe("the interrupted marker on an aborted turn", () => {
 describe("the interrupted marker survives a transcript reload", () => {
     const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
     // A reconstructed transcript: a user turn, then the interrupted assistant turn carrying its partial —
-    // the durable `interrupted` field is what the reload must re-derive onto the UI message.
-    const interruptedTranscript = (): CortexMsg[] =>
-        [
-            { id: "u1", role: "user", parts: [{ type: "text", text: "?" }] },
-            { id: "a1", role: "assistant", parts: [{ type: "text", text: "partial answer" }], interrupted: true },
-        ] as unknown as CortexMsg[];
+    // the durable `interrupted` field is what the reload must carry onto the mounted message.
+    const interruptedTranscript = (): ChatMessage[] => [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "?" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "partial answer" }], interrupted: true },
+    ];
 
     test("a loaded transcript flags the marked message and leaves the unmarked one clean", async () => {
         const loadSeams: LoadSeams = {
@@ -689,7 +688,7 @@ describe("the interrupted marker survives a transcript reload", () => {
             loadAll: () => okAsync(emptyTurns(2)),
             toCortex: () => interruptedTranscript(),
         };
-        await loadMessages(SID, AID, loadSeams);
+        await loadMessages(SID, loadSeams);
 
         expect(messages.length).toBe(2);
         // The user turn carries no marker; the interrupted assistant turn renders exactly what the live
@@ -702,31 +701,30 @@ describe("the interrupted marker survives a transcript reload", () => {
         expect(part?.type === "text" ? part.text : undefined).toBe("partial answer");
     });
 
-    test("a call cut off mid-flight replays as running, never as a success or a failure", async () => {
+    test("a call cut off mid-flight replays as incomplete, never as a success or a failure", async () => {
         // The harness records what it observed — a dispatch and no completion — in the ONE field that
         // carries a call's terminal state. `incomplete` is not a success and not a failure, and the
-        // mapping to `running` is total, so no reader has to infer anything from an absent value. The
-        // message's interruption badge is what says it will never finish.
+        // renderer's mapping to `running` is total, so no reader has to infer anything from an absent
+        // value. The message's interruption badge is what says it will never finish.
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => okAsync(emptyTurns(1)),
-            toCortex: () =>
-                [
-                    {
-                        id: "a1",
-                        role: "assistant",
-                        interrupted: true,
-                        parts: [
-                            { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "incomplete", detail: "scripts/run.py" },
-                            { type: "tool-call", toolCallId: "t2", toolName: "grep", outcome: "denied" },
-                        ],
-                    },
-                ] as unknown as CortexMsg[],
+            toCortex: () => [
+                {
+                    id: "a1",
+                    role: "assistant",
+                    interrupted: true,
+                    parts: [
+                        { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "incomplete", detail: "scripts/run.py" },
+                        { type: "tool-call", toolCallId: "t2", toolName: "grep", outcome: "denied" },
+                    ],
+                },
+            ],
         };
-        await loadMessages(SID, AID, loadSeams);
+        await loadMessages(SID, loadSeams);
 
         const calls = messages[0]?.parts.filter((p) => p.type === "tool-call") ?? [];
-        expect(calls.map((p) => (p.type === "tool-call" ? p.status : null))).toEqual(["running", "denied"]);
+        expect(calls.map((p) => (p.type === "tool-call" ? p.outcome : null))).toEqual(["incomplete", "denied"]);
         // The detail recorded live rides the stored projection — nothing re-derives it on reload.
         expect(calls[0]?.type === "tool-call" ? calls[0].detail : undefined).toBe("scripts/run.py");
         expect(messages[0]?.interrupted).toBe(true);
@@ -739,7 +737,7 @@ describe("a transcript load resolving mid-retract", () => {
     const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
     // A stale reload the dropped load WOULD have mounted — present so a failure to drop would be visible as
     // a resurrected message rather than merely an empty store that happened to stay empty.
-    const staleCortex = (): CortexMsg[] => [{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }] as unknown as CortexMsg[];
+    const staleCortex = (): ChatMessage[] => [{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }];
 
     test("a load parked mid-retract drops and never resurrects the spliced-away turn", async () => {
         // A transcript load parks at its page read while a retract runs to completion. The retract claims a
@@ -754,7 +752,7 @@ describe("a transcript load resolving mid-retract", () => {
             loadAll: () => ResultAsync.fromSafePromise(loadGate.then(() => emptyTurns(1))),
             toCortex: () => staleCortex(),
         };
-        const load = loadMessages(SID, AID, loadSeams); // parks at its page read
+        const load = loadMessages(SID, loadSeams); // parks at its page read
 
         const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
         expect(canRetract()).toBe(true);

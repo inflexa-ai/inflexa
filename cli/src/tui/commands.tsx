@@ -1387,7 +1387,8 @@ function AnalysesListDialog(): JSX.Element {
  */
 function BrowseArtifactsDialog(): JSX.Element {
     const ws = useWorkspace();
-    const openables = sessionOpenables();
+    const analysis = ws.analysis;
+    const openables = analysis ? sessionOpenables(analysis.id) : [];
     const items = openables.map((openable) => ({
         value: openable,
         title: openable.entry.name,
