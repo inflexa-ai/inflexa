@@ -8,9 +8,10 @@ import {
     summaryMarkerMessage,
     syntheticRecordMessage,
     syntheticUserMessage,
+    withRequestInputTokens,
 } from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
-import { conversationView, keptTurnsForDrop, viewTokens, withoutReasoning } from "./conversation-view.js";
+import { conversationView, keptTurnsForDrop, measureView, viewTokens, withoutReasoning } from "./conversation-view.js";
 
 function user(text: string): ModelMessage {
     return { role: "user", content: text };
@@ -40,6 +41,15 @@ function toolResult(id: string): ModelMessage {
 
 function summary(id: string, text: string): ModelMessage {
     return summaryMarkerMessage(text, { kind: "summary", id, tokensBefore: 100, tokensAfter: 10, durationMs: 5 });
+}
+
+function turnStartSummary(id: string, text: string): ModelMessage {
+    return summaryMarkerMessage(text, { kind: "summary", id, tokensBefore: 100, tokensAfter: 10, durationMs: 5, keptTurns: 1, trigger: "turn-start" });
+}
+
+function anchored(message: ModelMessage, tokens: number): ModelMessage {
+    if (message.role !== "assistant") throw new Error("an anchor rides an assistant message");
+    return withRequestInputTokens(message, tokens);
 }
 
 function drop(id: string, keptTurns: number): ModelMessage {
@@ -148,6 +158,27 @@ describe("conversationView", () => {
         expect(view.sources).toEqual([0, 2]);
     });
 
+    it("keeps the last turns of a summary marker with kept turns after the summary, without their context records and reasoning", () => {
+        const marker = turnStartSummary("c-1", "the talk so far");
+        const messages = [
+            user("u1"),
+            record("r0"),
+            thinking("early", "a1"),
+            user("u2"),
+            record("r1"),
+            thinking("kept", "a2"),
+            ...exchange("c-1"),
+            marker,
+            record("r2"),
+            thinking("later", "a3"),
+        ];
+
+        const view = conversationView(messages, {});
+
+        expect(view.messages).toEqual([marker, user("u2"), assistant("a2"), record("r2"), thinking("later", "a3")]);
+        expect(view.sources).toEqual([messages.indexOf(marker), 3, 5, messages.length - 2, messages.length - 1]);
+    });
+
     it("gives a view whose view is byte-identical", () => {
         const seed = syntheticRecordMessage("[Report Brief]\nThe brief.");
         const messages = [
@@ -169,6 +200,54 @@ describe("conversationView", () => {
             const view = conversationView(messages, { keepFirstTurn }).messages;
             expect(JSON.stringify(conversationView(view, { keepFirstTurn }).messages)).toBe(JSON.stringify(view));
         }
+    });
+
+    it("gives a view with kept turns of a summary whose view is byte-identical", () => {
+        const messages = [
+            user("u1"),
+            thinking("t", "a1"),
+            user("u2"),
+            record("r1"),
+            ...exchange("c-1"),
+            turnStartSummary("c-1", "first"),
+            record("r2"),
+            thinking("t2", "a2"),
+        ];
+
+        const view = conversationView(messages, {}).messages;
+
+        expect(JSON.stringify(conversationView(view, {}).messages)).toBe(JSON.stringify(view));
+    });
+});
+
+describe("measureView", () => {
+    it("gives the estimate of the view when no assistant message holds an anchor", () => {
+        const messages = [user("u1"), assistant("a1"), user("u2")];
+
+        expect(measureView(messages, {})).toBe(viewTokens(messages));
+    });
+
+    it("gives the anchor of the latest assistant message, plus the estimate of that message and each later one", () => {
+        const latest = anchored(toolCall("t2"), 50_000);
+        const messages = [user("u1"), anchored(assistant("a1"), 40_000), user("u2"), latest, toolResult("t2"), record("r2")];
+
+        expect(measureView(messages, {})).toBe(50_000 + viewTokens([latest, toolResult("t2"), record("r2")]));
+    });
+
+    it("reads no anchor from before the latest marker", () => {
+        const kept = anchored(assistant("a2"), 90_000);
+        const marker = turnStartSummary("c-1", "first");
+        const messages = [user("u1"), anchored(assistant("a1"), 80_000), user("u2"), kept, user("u3"), ...exchange("c-1"), marker, record("r3")];
+
+        expect(measureView(messages, {})).toBe(viewTokens(conversationView(messages, {}).messages));
+    });
+
+    it("reads no anchor of a turn that a drop kept, and reads an anchor after the drop", () => {
+        const after = anchored(assistant("a3"), 30_000);
+        const messages = [user("u1"), anchored(assistant("a1"), 90_000), ...exchange("c-1"), drop("c-1", 1), record("r1")];
+
+        expect(measureView(messages, {})).toBe(viewTokens(conversationView(messages, {}).messages));
+        expect(measureView([...messages, after], {})).toBe(30_000 + viewTokens([after]));
     });
 });
 

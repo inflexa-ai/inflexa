@@ -18,9 +18,11 @@ import {
     markCompactionExchange,
     markInterruptedMessage,
     parseStoredMessageEnvelope,
+    requestInputTokensOf,
     summaryMarkerMessage,
     SYNTHETIC_MESSAGE_KEY,
     syntheticUserMessage,
+    withRequestInputTokens,
 } from "./ai-sdk-message-storage.js";
 
 describe("interruption marker helpers", () => {
@@ -124,6 +126,21 @@ describe("compaction marks", () => {
         });
     });
 
+    it("round-trips the trigger and the kept turns of a turn-start summary marker", () => {
+        const turnStart = summaryMarkerMessage("The user compares two groups.", {
+            kind: "summary",
+            id: "c-3",
+            tokensBefore: 151_000,
+            tokensAfter: 9_000,
+            durationMs: 8_000,
+            keptTurns: 1,
+            trigger: "turn-start",
+        });
+
+        expect(compactionMarkerOf(throughStorage(turnStart))).toMatchObject({ kind: "summary", keptTurns: 1, trigger: "turn-start" });
+        expect(compactionMarkerOf(throughStorage(summary))).not.toHaveProperty("trigger");
+    });
+
     it("makes a marker synthetic and no host record", () => {
         for (const marker of [summary, drop]) {
             expect(marker.role).toBe("user");
@@ -163,5 +180,31 @@ describe("compaction marks", () => {
         expect(compactionExchangeOf(plain)).toBeUndefined();
         expect(compactionMarkerOf(syntheticUserMessage("continue concisely"))).toBeUndefined();
         expect(compactionExchangeOf(summary)).toBeUndefined();
+    });
+});
+
+describe("the input tokens of a request", () => {
+    it("round-trips on an assistant message and keeps the anthropic namespace", () => {
+        const reply: ModelMessage = {
+            role: "assistant",
+            content: [{ type: "reasoning", text: "weighing it", providerOptions: { anthropic: { signature: "SIG-abc" } } }],
+            providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        };
+
+        const stored = parseStoredMessageEnvelope(
+            JSON.parse(JSON.stringify(envelopeMessage(withRequestInputTokens(reply, 302_000)))) as unknown,
+            "thread/0",
+        ).message;
+
+        expect(requestInputTokensOf(stored)).toBe(302_000);
+        expect(stored.content).toEqual(reply.content);
+        expect(stored.providerOptions?.anthropic).toEqual({ cacheControl: { type: "ephemeral" } });
+    });
+
+    it("reads a message with no figure, and a user message, as no figure", () => {
+        expect(requestInputTokensOf({ role: "assistant", content: "done" })).toBeUndefined();
+        expect(
+            requestInputTokensOf({ role: "user", content: "hi", providerOptions: { [HARNESS_PROVIDER_NAMESPACE]: { requestInputTokens: 5 } } }),
+        ).toBeUndefined();
     });
 });

@@ -80,6 +80,7 @@ function compactionDivider(marker: CompactionMarker): ConversationUIMessage {
         tokensBefore: marker.tokensBefore,
         tokensAfter: marker.tokensAfter,
         durationMs: marker.durationMs,
+        ...(marker.trigger === undefined ? {} : { trigger: marker.trigger }),
     });
     return { id: marker.id, role: "system", parts: [part] };
 }

@@ -12,8 +12,10 @@ import {
     contextRecordMessage,
     HARNESS_PROVIDER_NAMESPACE,
     markCompactionExchange,
+    REQUEST_INPUT_TOKENS_KEY,
     summaryMarkerMessage,
     syntheticUserMessage,
+    withRequestInputTokens,
 } from "../memory/ai-sdk-message-storage.js";
 import { makeSession } from "./__fixtures__/session.js";
 import { DEFAULT_PROMPT_CACHE, withSystemPromptBreakpoint } from "./prompt-cache.js";
@@ -430,6 +432,31 @@ describe("compaction marks on the wire", () => {
         expect(body).toContain("[Conversation Summary]");
         expect(body).not.toContain(COMPACTION_EXCHANGE_KEY);
         expect(body).not.toContain(COMPACTION_MARKER_KEY);
+        expect(body).not.toContain(`"${HARNESS_PROVIDER_NAMESPACE}"`);
+    });
+});
+
+describe("the input tokens of a request on the wire", () => {
+    const answered = withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "Hello." }] }, 302_000);
+
+    it.each([
+        ["anthropic", { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7" }, anthropicSse],
+        [
+            "openai-compatible",
+            { kind: "openai-compatible", name: "self-hosted", baseURL: "http://models.local/v1", apiKey: "test-key", model: "local-tool-model" },
+            openaiSse,
+        ],
+        ["openai", { kind: "openai", apiKey: "test-key", model: "gpt-5.1" }, responsesSse],
+    ] as const)("sends an assistant message that holds the figure on the %s arm, and no key of the harness namespace", async (_arm, config, respond) => {
+        const cap = capturingFetch(respond);
+        const provider = createConfiguredAiSdkProvider({ config: { ...config, fetch: cap.fetch } });
+
+        const result = await provider.chat({ ...request, messages: [...request.messages, answered, { role: "user", content: "Again." }] }, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        const body = JSON.stringify(cap.requests[0]?.body);
+        expect(body).toContain("Hello.");
+        expect(body).not.toContain(REQUEST_INPUT_TOKENS_KEY);
         expect(body).not.toContain(`"${HARNESS_PROVIDER_NAMESPACE}"`);
     });
 });

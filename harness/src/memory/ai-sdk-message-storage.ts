@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { modelMessageSchema, type ModelMessage, type UserContent } from "ai";
+import { modelMessageSchema, type AssistantModelMessage, type ModelMessage, type UserContent } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
@@ -191,14 +191,48 @@ export const COMPACTION_EXCHANGE_KEY = "compactionExchange";
 /** The {@link HARNESS_PROVIDER_NAMESPACE} key that holds the figures of a compaction marker, which the view rule reads. */
 export const COMPACTION_MARKER_KEY = "compactionMarker";
 
-const compactionFigures = { id: z.string(), tokensBefore: z.number(), tokensAfter: z.number(), durationMs: z.number() };
+const COMPACTION_TRIGGERS = ["turn-start", "mid-turn"] as const;
+
+/** Where a compaction started: before the first request of a turn, or before a later request. */
+export type CompactionTrigger = (typeof COMPACTION_TRIGGERS)[number];
+
+// A row from before the trigger and the kept turns of a summary has neither field.
+const compactionFigures = {
+    id: z.string(),
+    tokensBefore: z.number(),
+    tokensAfter: z.number(),
+    durationMs: z.number(),
+    trigger: z.enum(COMPACTION_TRIGGERS).optional(),
+};
 
 const CompactionMarkerSchema = z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("summary"), ...compactionFigures }),
+    z.object({ kind: z.literal("summary"), ...compactionFigures, keptTurns: z.number().optional() }),
     z.object({ kind: z.literal("drop"), ...compactionFigures, keptTurns: z.number() }),
 ]);
 
 export type CompactionMarker = z.infer<typeof CompactionMarkerSchema>;
+
+/** The {@link HARNESS_PROVIDER_NAMESPACE} key that holds the input tokens that the provider reported for the request of an assistant message. */
+export const REQUEST_INPUT_TOKENS_KEY = "requestInputTokens";
+
+/** A copy of `message` whose harness namespace holds the input tokens of its request. The mark keeps each other namespace. */
+export function withRequestInputTokens(message: AssistantModelMessage, tokens: number): AssistantModelMessage {
+    const existingOptions = message.providerOptions ?? {};
+    return {
+        ...message,
+        providerOptions: {
+            ...existingOptions,
+            [HARNESS_PROVIDER_NAMESPACE]: { ...existingOptions[HARNESS_PROVIDER_NAMESPACE], [REQUEST_INPUT_TOKENS_KEY]: tokens },
+        },
+    };
+}
+
+/** The input tokens of the request of an assistant message, or `undefined` when the provider reported none. */
+export function requestInputTokensOf(message: ModelMessage): number | undefined {
+    if (message.role !== "assistant") return undefined;
+    const tokens = message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE]?.[REQUEST_INPUT_TOKENS_KEY];
+    return typeof tokens === "number" && Number.isFinite(tokens) ? tokens : undefined;
+}
 
 /** A copy of `message` whose harness namespace, which no provider reads, holds the compaction id. */
 export function markCompactionExchange(message: ModelMessage, id: string): ModelMessage {

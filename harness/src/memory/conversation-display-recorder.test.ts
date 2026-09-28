@@ -267,6 +267,16 @@ describe("conversation display recorder — compaction rounds", () => {
         expect(round).toEqual([{ id: "c-1", role: "system", parts: [{ type: "data-compaction", id: "c-1", data: { ...figures, status: "done" } }] }]);
     });
 
+    it("gives the divider the trigger of the marker", () => {
+        const { recorder } = harness();
+
+        const round = recorder.takeRound([
+            summaryMarkerMessage("The user compares two groups.", { kind: "summary", ...figures, keptTurns: 1, trigger: "turn-start" }),
+        ]);
+
+        expect(round[0]!.parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "done", trigger: "turn-start" } }]);
+    });
+
     it("gives the divider of a drop marker with the status failed, after the assistant message of the parts", async () => {
         const { recorder } = harness();
         await recorder.emit({ type: "text-delta", text: "before" });
