@@ -11,14 +11,15 @@ import type { OpenableEntry, OpenTarget, PresentationBody } from "../../types/se
 // The `artifact-open` capability: the shared readers that turn a harness display-card `data` payload
 // into a normalized card model, plus open-time RESOLUTION (reference → path) and MATERIALIZATION
 // (echart/svg spec → a self-contained file under the analysis workspace's `presentations/` directory).
-// Consumed by BOTH the TUI store adapter (`hooks/conversation.ts` wraps the readouts into `Part`s) and
-// the REPL printer (`dev/chat.ts` renders them as OSC 8 links), so the coercion + resolution logic
-// lives in one place.
+// Consumed by BOTH the TUI (the renderer `layout/message_block.tsx` reads each stored harness part
+// through them, and the store's `sessionOpenables` lists the entries) and the REPL printer
+// (`dev/chat.ts` renders them as OSC 8 links), so the coercion + resolution logic lives in one place.
 //
-// COPY-ON-RECEIVE: the readers run inside the in-process emit path, whose `data` shares mutable
-// references with the agent loop. Every reader extracts primitives and DEEP-COPIES the echart spec at
-// receipt, so nothing the loop later mutates can reach the store (the same hazard the card readers in
-// `chat_printer.ts` guard).
+// COPY-ON-RECEIVE: the REPL runs the readers inside the in-process emit path, whose `data` shares
+// mutable references with the agent loop. Every reader extracts primitives and DEEP-COPIES the echart
+// spec, so nothing the loop later mutates can reach a readout (the same hazard the card readers in
+// `chat_printer.ts` guard). A deep copy cannot read a Solid store proxy, thus a caller that holds a
+// stored part hands the reader the plain part that the proxy wraps.
 //
 // OPEN-TIME RESOLUTION: a card stores only the semantic reference (analysis-rooted paths, the embedded
 // spec, the `pres-` id) — never a resolved location — so the same card resolves to a workspace file

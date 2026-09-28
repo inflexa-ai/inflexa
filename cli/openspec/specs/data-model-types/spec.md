@@ -2,10 +2,10 @@
 
 ## Purpose
 The cross-cutting TypeScript domain model for the local data model — the entity shapes (`Anchor`, `Project`, `Analysis`, `AnalysisInput`), the on-disk `AnchorMarker`, and the `ID`/`Str256`/`IdOrName` aliases over the single uuidv7 scheme — that every data-model slice imports as its contract.
+
 ## Requirements
 
 ### Requirement: Id aliases over the single uuidv7 scheme
-
 
 The system SHALL export the id aliases `AnchorId`, `AnalysisId`, and `ProjectId`, each defined as the shared `ID` alias in `src/lib/types.ts`. `ID` SHALL be a plain `string` documenting the single id scheme — a time-sortable `randomUUIDv7()` minted inline at the call site (DB row ids, the on-disk anchor marker, event ids). The aliases SHALL NOT be branded or nominal.
 
@@ -22,7 +22,6 @@ The system SHALL export the id aliases `AnchorId`, `AnalysisId`, and `ProjectId`
 
 ### Requirement: Validated name type and id-or-name reference
 
-
 The system SHALL export a branded `Str256` type (a trimmed, non-empty string of at most 256 Unicode code points) constructed only via `str256` (validating) or `asStr256` (trusted source), and an `IdOrName` alias naming a value resolved by id **or** human name/slug. Entity name fields SHALL be typed `Str256`, never a bare `string`.
 
 #### Scenario: A name is provably bounded
@@ -37,7 +36,6 @@ The system SHALL export a branded `Str256` type (a trimmed, non-empty string of 
 
 ### Requirement: Domain types grouped by domain
 
-
 The shared domain model SHALL live under `src/types/`, grouped by domain (`anchor.ts`, `project.ts`, `analysis.ts`, `session.ts`, `events.ts`), rather than in a single monolithic file. Every exported type, its properties, and exported functions SHALL carry JSDoc.
 
 #### Scenario: Entity shapes are shared, not module-local
@@ -46,7 +44,6 @@ The shared domain model SHALL live under `src/types/`, grouped by domain (`ancho
 - **THEN** it imports it from `src/types/`, keeping the infra→feature dependency direction intact
 
 ### Requirement: Anchor entity type
-
 
 The system SHALL export an `Anchor` type — the invisible folder-identity record — with fields ordered identity-first: `id: AnchorId`, `createdAt: number`, `updatedAt: number`, then `cachedPath: string`, `markerWritten: boolean`, and `lastSeen: number`. There SHALL be no `driveId` field (cloud-sync mapping is deferred).
 
@@ -58,7 +55,6 @@ The system SHALL export an `Anchor` type — the invisible folder-identity recor
 
 ### Requirement: Project entity type
 
-
 The system SHALL export a `Project` type with fields `id: ProjectId`, `createdAt: number`, `updatedAt: number`, `name: Str256`, `description: string | null`, and `tags: string[]`. There SHALL be no `archivedAt` field.
 
 #### Scenario: Project shape
@@ -68,7 +64,6 @@ The system SHALL export a `Project` type with fields `id: ProjectId`, `createdAt
 - **AND** `description` MUST be expressible as `null`
 
 ### Requirement: Analysis entity type
-
 
 The system SHALL export an `Analysis` type — the primary entity — with fields ordered identity → core → foreign keys: `id: AnalysisId`, `createdAt: number`, `updatedAt: number`, `name: Str256`, `slug: string`, `anchorId: AnchorId`, and `projectId: ProjectId | null`. There SHALL be no `outputDirectory` field (the workspace root is derived from anchor + slug, never stored) and no `goals`, `syncedAnalysisId`, or `archivedAt` fields.
 
@@ -82,7 +77,6 @@ The system SHALL export an `Analysis` type — the primary entity — with field
 
 ### Requirement: AnalysisInput reference type
 
-
 The system SHALL export an `AnalysisInput` type representing one referenced path, with fields ordered core → foreign keys and no identity triple: `path: string`, `isDir: boolean`, `analysisId: AnalysisId`, and `anchorId: AnchorId | null`. It SHALL NOT model the row with a nested `data` JSON blob.
 
 #### Scenario: AnalysisInput shape
@@ -94,7 +88,6 @@ The system SHALL export an `AnalysisInput` type representing one referenced path
 
 ### Requirement: AnchorMarker on-disk type
 
-
 The system SHALL export an `AnchorMarker` type describing the write-once on-disk marker, with fields `schemaVersion: 1` (a literal `1`) and `anchorId: AnchorId`.
 
 #### Scenario: AnchorMarker shape
@@ -105,22 +98,22 @@ The system SHALL export an `AnchorMarker` type describing the write-once on-disk
 
 ### Requirement: Existing chat types preserved
 
-
-The change SHALL retire the SQLite-store entity shapes from `src/types/session.ts` — `Session`, `Message`, and `StoredMessage` — while leaving unchanged the live UI part vocabulary in the same file (`Part`, `TextPart`, and the card/ask/openable part types the TUI conversation store and renderers consume) and the `BusEvent`/`StampedEvent` event contract (`src/types/events.ts`).
+`src/types/session.ts` MUST NOT hold the SQLite-store entity shapes `Session`, `Message`, and `StoredMessage`. It holds the part vocabulary of the TUI: the `Part` union, the screen state of three harness parts, and the view types of the cards. The data fields of a message and of a part come from the harness types. The `BusEvent` and `StampedEvent` event contract (`src/types/events.ts`) does not change.
 
 #### Scenario: Typecheck stays clean
 
-- **WHEN** `bun run typecheck` runs after the change
+- **WHEN** `bun run typecheck` runs
 - **THEN** it completes with no errors
-- **AND** `Session`, `Message`, and `StoredMessage` are no longer exported
+- **AND** `src/types/session.ts` does not export `Session`, `Message`, or `StoredMessage`
 
 #### Scenario: Live part vocabulary is untouched
 
-- **WHEN** the TUI conversation store and message renderers import their part types
-- **THEN** `Part`, `TextPart`, and the card part types resolve from `src/types/session.ts` exactly as before, and the event contract is unmodified
+- **WHEN** the TUI conversation store and the message renderer import their part types
+- **THEN** `Part` and the three live part types resolve from `src/types/session.ts`
+- **AND** each data field of a part comes from the harness part type
+- **AND** the event contract does not change
 
 ### Requirement: Optionality modeled as null
-
 
 All optional or absent fields on the new entity types SHALL be modeled as `T | null`, never with an optional `?` modifier, mirroring the columnar row storage where every column is present and serialized explicitly.
 

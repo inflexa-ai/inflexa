@@ -27,7 +27,7 @@ function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): 
 
 /** An assistant turn with one body part; the header props under test are passed straight through. */
 function renderAssistant(header: { interrupted?: boolean; durationMs?: number; turnUsage?: TurnUsage } = {}): ReturnType<typeof testRender> {
-    const parts: Part[] = [{ id: "p1", sessionId: "s", messageId: "m", type: "text", text: "an answer that began", createdAt: 0 }];
+    const parts: Part[] = [{ type: "text", text: "an answer that began" }];
     return testRender(
         () => (
             <MessageBlock

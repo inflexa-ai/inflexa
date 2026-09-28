@@ -1,22 +1,37 @@
-/**
- * Who a transcript entry is from.
- *
- * `event` is the third kind and is NOT a turn: a record of out-of-band work that the host appended
- * to the thread — an analysis run's outcome, which the model should read on its next turn but which
- * nobody said. It gets its own value rather than borrowing `user` or `assistant` because such a
- * record is stored under the `user` role for the wire format, and rendering it as one would both
- * attribute system-authored text to the reader and mislead them about what they can retract.
- */
-export type MessageRole = "user" | "assistant" | "event";
+import type { AskPart } from "@inflexa-ai/harness/contracts/chat-parts.js";
+import type { MessagePart, TextPart, ToolCallPart } from "@inflexa-ai/harness/contracts/message.js";
 
-/** A plain text part — the only kind the live engine produces. */
-export type TextPart = {
-    id: string;
-    sessionId: string;
-    messageId: string;
-    type: "text";
-    text: string;
-    createdAt: number;
+/**
+ * A harness text part as the store holds it. `key` is set only on a part that the live turn makes: it is what
+ * `streamPartId` names while the stream writes into the part. A reloaded part carries none, because nothing
+ * streams into it.
+ */
+export type LiveTextPart = TextPart & {
+    /** The store key of the part that the live stream writes into. */
+    key?: string;
+};
+
+/** A harness tool-call part, with the activity line of the sub-agent that works inside the running call. */
+export type LiveToolCallPart = ToolCallPart & {
+    /**
+     * What the innermost sub-agent working inside this call is doing right now, or absent.
+     *
+     * Live-only and never persisted: it is a description of work in flight, meaningless once the call
+     * has an outcome, so it is cleared when the call finishes. A sub-agent's own iterations and tool
+     * calls are far too numerous to enter the transcript as blocks — this one line is what makes a
+     * long tool call legible instead of indistinguishable from a wedged one.
+     */
+    activity?: string;
+};
+
+/** A harness ask part, with the reject feedback that the user typed on the live surface. */
+export type LiveAskPart = AskPart & {
+    /**
+     * The reject feedback the user typed, echoed by the answering surface at answer time — the ledger
+     * and the model-facing denial carry it independently; this field is presentation only. Only ever set
+     * alongside a `rejected` status, and never reconstructed on reload (the card is a live-turn visual).
+     */
+    feedback?: string;
 };
 
 /**
@@ -37,57 +52,8 @@ export type ThinkingPart = {
 };
 
 /**
- * A tool/verb invocation and its outcome. The harness emit adapter mints this
- * from live `tool-started`/`tool-finished` events (name + detail + status +
- * duration); the fixture-driven gallery also fills `result`/`filetype` to show
- * the richer result panel. Those two are OPTIONAL because live harness tool
- * events carry no result payload — only the name, detail, outcome, and timing.
- */
-export type ToolCallPart = {
-    id: string;
-    sessionId: string;
-    messageId: string;
-    type: "tool-call";
-    /** Tool/verb name, e.g. `read_file`. */
-    name: string;
-    /**
-     * One line naming what this particular call is doing, e.g. `hypothesis retire h3`.
-     *
-     * Computed harness-side by the called tool's own `describeCall` hook, which is typechecked
-     * against that tool's input schema. It is OPAQUE display text: never split it, key on it, or
-     * derive fields from it — doing so would rebuild the schema coupling the hook exists to remove.
-     * Absent for a tool that declares no hook, and for an input its schema rejects.
-     */
-    detail?: string;
-    /** The tool's textual result/output, rendered in a `<code>` block. Absent for live harness tool events. */
-    result?: string;
-    /** Source filetype for syntax highlighting of `result` (e.g. `ts`). Absent for live harness tool events. */
-    filetype?: string;
-    /**
-     * Lifecycle of the call — `running` on start, then the harness outcome on finish.
-     *
-     * `denied` is a refused approval, and is deliberately not folded into `error`: the tool did not
-     * fail, the user declined it. Reporting a decision as a fault misattributes it to the machine.
-     */
-    status: "running" | "ok" | "error" | "denied";
-    /**
-     * What the innermost sub-agent working inside this call is doing right now, or absent.
-     *
-     * Live-only and never persisted: it is a description of work in flight, meaningless once the call
-     * has an outcome, so it is cleared when the call finishes. A sub-agent's own iterations and tool
-     * calls are far too numerous to enter the transcript as blocks — this one line is what makes a
-     * long tool call legible instead of indistinguishable from a wedged one.
-     */
-    activity?: string;
-    /** Wall-clock duration in ms, stamped when the call finishes; absent while running. */
-    durationMs?: number;
-    createdAt: number;
-};
-
-/**
- * A drafted analysis plan the conversation agent presented. Carries ONLY the
- * primitive fields the harness `readPlanCard` reader extracts — never a harness
- * object — so nothing mutable from the in-process emit stream reaches the store.
+ * One step of a drafted plan card, as `readPlanCard` reads it off the harness `data-plan` part. Primitive
+ * fields only, copied at the read, thus the view holds no harness object.
  */
 export type PlanCardStepView = {
     id: string;
@@ -103,57 +69,16 @@ export type PlanCardStepView = {
     step_type: string;
 };
 
-export type PlanCardPart = {
-    id: string;
-    type: "plan-card";
-    /** The stored plan's id. */
-    planId: string;
-    /** Plan title (empty when the harness card carried none). */
-    title: string;
-    /** Ordered plan steps, copied into the CLI-owned primitive view at receipt. */
-    steps: PlanCardStepView[];
-};
-
-/**
- * A launched run the conversation agent started from an approved plan. Primitive
- * fields only (via `readRunCard`). The harness run-card contract carries no live
- * run-status field, so this holds identity + step count only.
- */
-export type RunCardPart = {
-    id: string;
-    type: "run-card";
-    /** The launched run's id (stamped with the chat thread id in `cortex_runs`). */
-    runId: string;
-    /** Run title (empty when the harness card carried none). */
-    title: string;
-    /** How many steps the launched plan holds. */
-    stepCount: number;
-};
-
 /**
  * The text-shaped body of an inline `show_user` presentation, rendered through the `<markdown>`
- * renderable. Primitive fields only (strings and string arrays), extracted at receipt so nothing
- * mutable from the in-process emit stream reaches the store. `echart`/`svg` are pixel-shaped and
- * become {@link OpenableCardPart}s instead, so they are absent from this union.
+ * renderable. Primitive fields only (strings and string arrays), extracted at the read so the view
+ * holds no harness object. `echart`/`svg` are pixel-shaped and become {@link OpenableEntry} rows
+ * instead, so they are absent from this union.
  */
 export type PresentationBody =
     | { kind: "markdown"; body: string }
     | { kind: "code"; code: string; language: string }
     | { kind: "table"; headers: string[]; rows: string[][]; caption?: string };
-
-/**
- * Agent-synthesized text-shaped content the conversation agent presented via `show_user`
- * (`markdown`/`code`/`table`). Renders inline through the `<markdown>` renderable — no open step.
- * Carries only the primitive body extracted at receipt (copy-on-receive), never a harness object.
- */
-export type PresentationPart = {
-    id: string;
-    type: "presentation";
-    /** Optional heading shown above the content. */
-    title?: string;
-    /** The text-shaped body to render. */
-    body: PresentationBody;
-};
 
 /**
  * How an openable card entry resolves to something to open — the SEMANTIC reference, never a resolved
@@ -183,90 +108,6 @@ export type OpenableEntry = {
 };
 
 /**
- * Pixel-shaped content a terminal cannot paint — `echart`/`svg` presentations and `show_file`
- * galleries — rendered as a card whose rows open externally. Carries only the semantic
- * reference fields extracted at receipt (copy-on-receive); `analysisId` scopes resolution of every
- * entry's `workspace-file`/`dataPath` reference against the analysis workspace root at open time.
- */
-export type OpenableCardPart = {
-    id: string;
-    type: "openable-card";
-    /** The analysis whose workspace root resolves this card's entries at open time. */
-    analysisId: string;
-    /** Optional card heading. */
-    title?: string;
-    /** One row per openable item (a multi-file gallery has several). */
-    entries: OpenableEntry[];
-    /** Analysis-rooted containing folder for a multi-file gallery (the reveal-folder affordance); absent otherwise. */
-    folderPath?: string;
-};
-
-/**
- * The record that a turn started a report session, from the harness
- * `data-child-session-started` part (threadType `report`). It carries the thread id alone: the part is a
- * placement record, and the thread store is the authority for the session — its
- * existence, its title, and its archived state. The renderer joins the live
- * report-children listing by this id, and it renders nothing when the row is absent.
- */
-export type ReportSessionPart = {
-    id: string;
-    type: "report-session";
-    /** The id of the report thread that the spawn made — the join key into the listing. */
-    threadId: string;
-};
-
-/** The status an ask card can carry: `pending`, then exactly one terminal outcome (latest-wins on re-emit). */
-export type AskCardStatus = "pending" | "resolved" | "rejected" | "aborted" | "expired";
-
-/**
- * A tool's pending approval, surfaced as a transcript card and RECONCILED by ask id: the harness
- * re-emits the same ask under one id as it moves `pending` → a terminal status, and the live adapter
- * overwrites this card's `status` in place (latest-wins) rather than appending a duplicate. Lean card
- * shape — no `sessionId`/`messageId` ceremony — carrying only the primitive fields copied at receipt
- * via `readAskPart`, so nothing mutable from the in-process emit stream reaches the store.
- */
-export type AskCardPart = {
-    id: string;
-    type: "ask-card";
-    /** The ask's ledger id — the reconcile key, and what a surface passes back to answer the ask. */
-    askId: string;
-    /** Human-facing headline for the approval. */
-    title: string;
-    /** The exact command / operation being approved — what the user sees granted. */
-    command: string;
-    /** Optional extra context a surface may render beside the command. */
-    detail?: string;
-    /** Latest known status; a terminal re-emit overwrites `pending` in place. */
-    status: AskCardStatus;
-    /**
-     * The reject feedback the user typed, echoed by the answering surface at answer time — the ledger
-     * and the model-facing denial carry it independently; this field is presentation only. Only ever set
-     * alongside a `rejected` status, and never reconstructed on reload (the card is a live-turn visual).
-     */
-    feedback?: string;
-};
-
-/** The status of a compaction: `running` while the harness summarizes the conversation, then one terminal status. */
-export type CompactionStatus = "running" | "done" | "failed";
-
-/**
- * A compaction of the conversation, from the harness `data-compaction` part. The live adapter updates the
- * part in place by `compactionId`, and a reload gives the terminal status that the stored divider holds.
- */
-export type CompactionPart = {
-    id: string;
-    type: "compaction";
-    /** The id of the compaction — the reconcile key. */
-    compactionId: string;
-    status: CompactionStatus;
-    /** The input tokens of the last request before the compaction. */
-    tokensBefore: number;
-    /** Only a part that an older harness stored carries it: the estimate of the context after the compaction. */
-    tokensAfter?: number;
-    durationMs?: number;
-};
-
-/**
  * MOCK part: a file edit. Not produced by the live engine and not persisted —
  * drives the "diff / file edit" stream state from fixtures.
  */
@@ -287,22 +128,10 @@ export type FileEditPart = {
 };
 
 /**
- * A message part. `text`, `tool-call`, `plan-card`, `run-card`, `presentation`,
- * `openable-card`, `report-session`, and `compaction` are produced live by the harness emit adapter (and
- * reconstructed on transcript reload from the thread's stored turns); `ask-card` is produced
- * live only (a live-turn-only visual, never reconstructed on reload — the ledger is its
- * durable record); `thinking`/`file-edit` remain MOCK (fixture-driven) so the gallery can
- * render every design-system state. Discriminated on `type`.
+ * A message part as the TUI store holds it: a harness part, discriminated on `type`. The live turn and a
+ * reload give the same harness parts. Three of them can carry screen state of the live turn: the key of a
+ * streaming text part, the activity line of a running tool call, and the reject feedback of an ask.
+ * `thinking` and `file-edit` remain MOCK (fixture-driven), so the gallery can render every design-system
+ * state.
  */
-export type Part =
-    | TextPart
-    | ThinkingPart
-    | ToolCallPart
-    | FileEditPart
-    | PlanCardPart
-    | RunCardPart
-    | PresentationPart
-    | OpenableCardPart
-    | AskCardPart
-    | ReportSessionPart
-    | CompactionPart;
+export type Part = LiveTextPart | LiveToolCallPart | LiveAskPart | Exclude<MessagePart, TextPart | ToolCallPart | AskPart> | ThinkingPart | FileEditPart;

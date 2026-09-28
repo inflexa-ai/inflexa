@@ -1,13 +1,16 @@
-import type { EmitFn, EventSource } from "@inflexa-ai/harness";
+import type { CompactionPart, EmitFn, EventSource } from "@inflexa-ai/harness";
+import type { AskPart } from "@inflexa-ai/harness/contracts/chat-parts.js";
 
-import type { AskCardStatus, CompactionStatus, PlanCardStepView } from "../../types/session.ts";
+import type { PlanCardStepView } from "../../types/session.ts";
 
-// The readers that turn one raw `EmitFn` event into the primitives a surface renders.
+// The readers that turn one raw `EmitFn` event, or one harness part, into the primitives a surface
+// renders.
 //
 // Two surfaces consume them, and that is the whole reason they sit here rather than inside either
-// one: the TUI conversation reducer (`tui/hooks/conversation.ts`) and the dev REPL printer
-// (`dev/chat.ts`). Both must narrate the same stream the same way — a plan card the TUI reads as
-// three steps and the REPL reads as two would be a difference with no cause behind it — so every
+// one: the TUI (the conversation store `tui/hooks/conversation.ts` and its renderer
+// `tui/layout/message_block.tsx`, which reads each stored harness part through them) and the dev REPL
+// printer (`dev/chat.ts`). Both must narrate the same stream the same way — a plan card the TUI reads
+// as three steps and the REPL reads as two would be a difference with no cause behind it — so every
 // reader with two consumers lives here and neither surface re-derives it.
 //
 // A reader with ONE consumer stays with that consumer instead, per the single-caller rule of
@@ -74,8 +77,8 @@ export function subAgentActivityLabel(event: Parameters<EmitFn>[0]): string | nu
  * payload is the harness's `PlanCardData` (flat: `{id, planId, title?, steps}`),
  * but `ChatDataPart.data` is typed `unknown`, so this narrows defensively and
  * copies every field it keeps — no reference to `data` survives the call.
- * Exported so the TUI adapter extracts card fields with this exact reader rather
- * than duplicating the coercion.
+ * Exported so the TUI renderer reads a stored `data-plan` part with this exact
+ * reader rather than duplicating the coercion.
  */
 export function readPlanCard(data: unknown): { planId: string; title: string; steps: PlanCardStepView[] } {
     // `data` is external/loop-owned; treat it as a loose record and pull only
@@ -124,7 +127,7 @@ export function readPlanCard(data: unknown): { planId: string; title: string; st
  * harness's `RunCardData`). Note the contract carries NO run status field
  * (`RunCardData`/`RunCardPart` expose `{runId, planId, title, stepCount}`),
  * so this renders identity + step count.
- * Exported alongside {@link readPlanCard} so the TUI adapter shares the reader.
+ * Exported alongside {@link readPlanCard} so the TUI renderer shares the reader.
  */
 export function readRunCard(data: unknown): { runId: string; title: string; stepCount: number } {
     // `data` is external/loop-owned; cast to a loose record and read-and-coerce
@@ -142,7 +145,7 @@ export function readRunCard(data: unknown): { runId: string; title: string; step
  * `ChildSessionStartedPart`: `{threadId, parentThreadId, threadType}`). Narrows defensively and copies
  * the fields it keeps — no reference to `data` survives the call. The parent thread id is not read: the
  * part rides the parent's own transcript, thus the position already states the parent. Exported
- * alongside {@link readPlanCard} so the TUI adapter shares the reader.
+ * alongside {@link readPlanCard} so the TUI renderer shares the reader.
  */
 export function readChildSessionStarted(data: unknown): { threadId: string; threadType: string } {
     // `data` is external/loop-owned; cast to a loose record and read-and-coerce the fields.
@@ -153,22 +156,24 @@ export function readChildSessionStarted(data: unknown): { threadId: string; thre
     };
 }
 
-/** The recognized ask statuses, as a runtime set for the reader's narrow. Typed `AskCardStatus[]` so an entry can only be a valid status. */
-const ASK_STATUSES: readonly AskCardStatus[] = ["pending", "resolved", "rejected", "aborted", "expired"];
+/** The status an ask can carry: `pending`, then exactly one terminal outcome (latest-wins on re-emit). */
+type AskStatus = AskPart["status"];
+
+/** The recognized ask statuses, as a runtime set for the reader's narrow. Typed `AskStatus[]` so an entry can only be a valid status. */
+const ASK_STATUSES: readonly AskStatus[] = ["pending", "resolved", "rejected", "aborted", "expired"];
 
 /**
  * Read an ask part's render fields off the `unknown` `data` payload (the harness's `AskPart`:
  * `{id, title, command, detail?, status}`). Narrows defensively and copies every field it keeps —
  * no reference to `data` survives the call. An unrecognized or missing `status` maps to `expired`,
  * the SAFE TERMINAL: never `pending`, so a malformed re-emission can never resurrect a live prompt
- * or wedge the pending-asks queue. `id` becomes `askId` (the reconcile/answer key) to keep it distinct
- * from a card part's own fresh id. Exported so the TUI adapter extracts ask fields with this exact reader.
+ * or wedge the pending-asks queue. `id` becomes `askId` (the reconcile/answer key). Exported so the TUI
+ * store (which docks the pending prompt) and its renderer read ask fields with this exact reader.
  */
-export function readAskPart(data: unknown): { askId: string; title: string; command: string; detail?: string; status: AskCardStatus } {
+export function readAskPart(data: unknown): { askId: string; title: string; command: string; detail?: string; status: AskStatus } {
     // `data` is external/loop-owned; cast to a loose record and read-and-coerce every field.
     const d = (data ?? {}) as Record<string, unknown>;
-    const status: AskCardStatus =
-        typeof d.status === "string" && (ASK_STATUSES as readonly string[]).includes(d.status) ? (d.status as AskCardStatus) : "expired";
+    const status: AskStatus = typeof d.status === "string" && (ASK_STATUSES as readonly string[]).includes(d.status) ? (d.status as AskStatus) : "expired";
     return {
         askId: typeof d.id === "string" ? d.id : "",
         title: typeof d.title === "string" ? d.title : "",
@@ -177,6 +182,9 @@ export function readAskPart(data: unknown): { askId: string; title: string; comm
         status,
     };
 }
+
+/** The status of a compaction: `running` while the harness summarizes the conversation, then one terminal status. */
+type CompactionStatus = CompactionPart["status"];
 
 const COMPACTION_STATUSES: readonly CompactionStatus[] = ["running", "done", "failed"];
 

@@ -4,6 +4,7 @@ import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
 import type { JSX } from "solid-js";
 
 import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../lib/design_system.ts";
+import { readPlanCard } from "../modules/harness/chat_printer.ts";
 import { contrast } from "../test_support/contrast.ts";
 import { setTheme, syntaxStyle, theme } from "./theme.ts";
 import { AskPrompt } from "./components/ask_prompt.tsx";
@@ -336,7 +337,11 @@ const BLOCKS: BlockCase[] = [
     },
     {
         name: "PlanCardBlock",
-        node: () => <PlanCardBlock planId={mockPlanCard.planId} title={mockPlanCard.title} steps={mockPlanCard.steps} />,
+        // The fixture is the harness part, and the card renders what the shared reader reads off it.
+        node: () => {
+            const plan = readPlanCard(mockPlanCard);
+            return <PlanCardBlock planId={plan.planId} title={plan.title} steps={plan.steps} />;
+        },
         until: "8f21",
     },
     {

@@ -713,7 +713,8 @@ export function App(props: AppProps) {
     // dominant "the agent just showed me something" case with zero transcript-focus machinery; the
     // "Browse artifacts…" palette command reaches the long tail.
     function openLatestArtifact(): void {
-        const latest = conversation.sessionOpenables()[0];
+        const analysis = workspace.analysis;
+        const latest = analysis ? conversation.sessionOpenables(analysis.id)[0] : undefined;
         if (!latest) {
             notify({ kind: "info", text: "No artifacts to open yet." });
             return;

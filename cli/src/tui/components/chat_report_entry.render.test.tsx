@@ -3,11 +3,12 @@ import { testRender } from "@opentui/solid";
 import { createMockMouse } from "@opentui/core/testing";
 import { errAsync, okAsync } from "neverthrow";
 import type { DbError, Pool, StoredMessage, Thread } from "@inflexa-ai/harness";
+import type { ChatMessage } from "@inflexa-ai/harness/contracts/message.js";
 
 import { reportThread, threadPageOf } from "../../test_support/threads.ts";
 import { Chat } from "./chat.tsx";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
-import { type CortexMsg, loadMessages, type LoadSeams, resetHotState } from "../hooks/conversation.ts";
+import { loadMessages, type LoadSeams, resetHotState } from "../hooks/conversation.ts";
 import { __resetReportChildrenForTest, refreshReportChildren, type ReportChildrenSeams } from "../hooks/report_children.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -84,7 +85,7 @@ function transcriptSeams(rows: FixtureRow[]): LoadSeams {
                     { type: "text", text: `${r.role} ${r.seq}` },
                     ...(r.spawns ?? []).map((threadId) => ({ type: "data-child-session-started", threadId, parentThreadId: SID, threadType: "report" })),
                 ],
-            })) as unknown as CortexMsg[],
+            })) as unknown as ChatMessage[],
     };
 }
 
@@ -141,7 +142,7 @@ async function withChat<T>(
         { width: 80, height: 40 },
     );
     try {
-        await loadMessages(SID, AID, transcriptSeams(rows));
+        await loadMessages(SID, transcriptSeams(rows));
         await refreshReportChildren(AID, SID, childrenSeams(children));
         // A message body paints through the async markdown renderable, thus one pass can catch the frame
         // before the bodies land. The turn headers and the entries are synchronous either way.

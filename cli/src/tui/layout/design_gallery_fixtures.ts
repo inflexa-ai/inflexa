@@ -8,10 +8,12 @@
 // Ids are literal `mock-*` sentinels (not `randomUUIDv7()`) precisely so a reader
 // can tell at a glance that a value is fixture data, never a real row.
 
-import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
+import type { CortexRunRow, DataProfileStatus, PlanPart, RunCardPart, StepExecutionRow } from "@inflexa-ai/harness";
+import type { TextPart } from "@inflexa-ai/harness/contracts/message.js";
 
 import { formatTokenFigure } from "../../lib/usage_format.ts";
-import type { AskCardPart, TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, PlanCardStepView, RunCardPart } from "../../types/session.ts";
+import type { LiveAskPart, ThinkingPart, FileEditPart, PlanCardStepView } from "../../types/session.ts";
+import type { ToolBlockProps } from "../components/tool_block.tsx";
 import type { ActiveProfileProgress, ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import type { SessionUsageSnapshot } from "../components/dialog/usage_dialog.tsx";
 import type { LlmUsageTotals } from "../../db/primary_query.ts";
@@ -58,24 +60,16 @@ export type Run = {
     total: number;
 };
 
-/** MOCK sample: a user text turn. */
+/** MOCK sample: a user text turn, as the harness text part carries it. */
 export const mockUserText: TextPart = {
-    id: "mock-text-user",
-    sessionId: "mock-session",
-    messageId: "mock-msg-user",
     type: "text",
     text: "what's the schema for analyses?",
-    createdAt: 0,
 };
 
-/** MOCK sample: an assistant text turn. */
+/** MOCK sample: an assistant text turn, as the harness text part carries it. */
 export const mockAssistantText: TextPart = {
-    id: "mock-text-assistant",
-    sessionId: "mock-session",
-    messageId: "mock-msg-assistant",
     type: "text",
     text: "Each analysis row carries a `slug`, an `anchor_uuid`, and a goals blob.",
-    createdAt: 0,
 };
 
 /** MOCK sample: a reasoning block. */
@@ -89,19 +83,17 @@ export const mockThinking: ThinkingPart = {
     createdAt: 0,
 };
 
-/** MOCK sample: a tool call and its result. */
-export const mockToolCall: ToolCallPart = {
-    id: "mock-tool-call",
-    sessionId: "mock-session",
-    messageId: "mock-msg-assistant",
-    type: "tool-call",
+/**
+ * MOCK sample: a tool call and its result, as the props of the tool block. No harness part carries a
+ * result, thus only this exhibit fills the result panel.
+ */
+export const mockToolCall = {
     name: "read_file",
     detail: "src/db/types.ts :55-105",
     result: "export interface Anchor {\n  uuid: AnchorId\n  cached_path: string\n}",
     filetype: "ts",
     status: "ok",
-    createdAt: 0,
-};
+} satisfies ToolBlockProps;
 
 /** MOCK sample: a file edit (unified diff). */
 export const mockFileEdit: FileEditPart = {
@@ -125,53 +117,61 @@ export const mockFileEdit: FileEditPart = {
     createdAt: 0,
 };
 
-/** MOCK sample: a drafted plan card (as the harness emit adapter would mint it). */
-export const mockPlanCard: PlanCardPart = {
+// The steps of the mock plan card as `show_plan` sends them: the declared step fields of the harness,
+// plus the fields of the stored plan that the card renders. A separate constant, because a literal typed
+// as the declared step type refuses the extra fields.
+const mockPlanSteps = [
+    {
+        id: "s1",
+        name: "QC & normalize counts",
+        agent: "rna-preprocess",
+        question: "Are the count matrices suitable for differential analysis?",
+        acceptance_criteria: ["All samples pass count-depth checks", "Normalized matrix is written"],
+        constraints: ["Preserve sample labels"],
+        caveats: [],
+        depends_on: [],
+        resources: { cpu: 2, memoryGb: 4 },
+        track: "preprocess",
+        step_type: "analysis",
+        maxSteps: 30,
+    },
+    {
+        id: "s2",
+        name: "Fit DE model",
+        agent: "deseq2",
+        question: "Which genes differ between conditions?",
+        acceptance_criteria: ["Adjusted p-values are reported"],
+        constraints: [],
+        caveats: ["Small cohorts reduce power"],
+        depends_on: ["s1"],
+        resources: { cpu: 4, memoryGb: 8 },
+        track: "differential-expression",
+        step_type: "analysis",
+        maxSteps: 30,
+    },
+    {
+        id: "s3",
+        name: "Pathway enrichment on DE genes",
+        agent: "pathway",
+        question: "Which pathways explain the differential signal?",
+        acceptance_criteria: ["Enriched pathways include effect direction"],
+        constraints: [],
+        caveats: ["Gene-set overlap may inflate related terms"],
+        depends_on: ["s2"],
+        resources: { cpu: 2, memoryGb: 4 },
+        track: "interpretation",
+        step_type: "analysis",
+        maxSteps: 30,
+    },
+];
+
+/** MOCK sample: a drafted plan card, as the harness `data-plan` part carries it. */
+export const mockPlanCard: PlanPart = {
+    type: "data-plan",
     id: "mock-plan-card",
-    type: "plan-card",
     planId: "plan-8f21",
     title: "Differential expression across conditions",
-    steps: [
-        {
-            id: "s1",
-            name: "QC & normalize counts",
-            agent: "rna-preprocess",
-            question: "Are the count matrices suitable for differential analysis?",
-            acceptance_criteria: ["All samples pass count-depth checks", "Normalized matrix is written"],
-            constraints: ["Preserve sample labels"],
-            caveats: [],
-            depends_on: [],
-            resources: { cpu: 2, memoryGb: 4, gpuCount: 0 },
-            track: "preprocess",
-            step_type: "analysis",
-        },
-        {
-            id: "s2",
-            name: "Fit DE model",
-            agent: "deseq2",
-            question: "Which genes differ between conditions?",
-            acceptance_criteria: ["Adjusted p-values are reported"],
-            constraints: [],
-            caveats: ["Small cohorts reduce power"],
-            depends_on: ["s1"],
-            resources: { cpu: 4, memoryGb: 8, gpuCount: 0 },
-            track: "differential-expression",
-            step_type: "analysis",
-        },
-        {
-            id: "s3",
-            name: "Pathway enrichment on DE genes",
-            agent: "pathway",
-            question: "Which pathways explain the differential signal?",
-            acceptance_criteria: ["Enriched pathways include effect direction"],
-            constraints: [],
-            caveats: ["Gene-set overlap may inflate related terms"],
-            depends_on: ["s2"],
-            resources: { cpu: 2, memoryGb: 4, gpuCount: 0 },
-            track: "interpretation",
-            step_type: "analysis",
-        },
-    ],
+    steps: mockPlanSteps,
 };
 
 function galleryPlanStep(id: string, name: string, depends_on: string[] = []): PlanCardStepView {
@@ -212,11 +212,12 @@ export const mockPlanGraphExhibits = {
     empty: [],
 } satisfies Record<string, PlanCardStepView[]>;
 
-/** MOCK sample: a launched run card (identity + step count; no live status field, per the contract). */
+/** MOCK sample: a launched run card, as the harness `data-run-card` part carries it (identity + step count; no live status field, per the contract). */
 export const mockRunCard: RunCardPart = {
+    type: "data-run-card",
     id: "mock-run-card",
-    type: "run-card",
     runId: "run-3c07",
+    planId: "plan-8f21",
     title: "Differential expression across conditions",
     stepCount: 3,
 };
@@ -260,48 +261,44 @@ export const mockAskPrompts = {
 
 /**
  * MOCK: a reconciled ask card in each of the five statuses the transcript renders — `pending` plus its
- * four terminal outcomes (`resolved`/`rejected`/`aborted`/`expired`). A live-turn-only visual; these
- * exist only so the gallery can show every ask-card state without a live approval round-trip.
+ * four terminal outcomes (`resolved`/`rejected`/`aborted`/`expired`), as the harness `data-ask` part
+ * carries each one. These exist only so the gallery can show every ask-card state without a live
+ * approval round-trip. The rejected card carries the reject feedback, which only the live turn echoes.
  */
-export const mockAskCards: AskCardPart[] = [
+export const mockAskCards: LiveAskPart[] = [
     {
+        type: "data-ask",
         id: "mock-ask-pending",
-        type: "ask-card",
-        askId: "mock-askid-pending",
         title: "Approve shell command",
         command: "Rscript scripts/deseq2.R --cores 8",
         detail: "runs in the analysis sandbox",
         status: "pending",
     },
     {
+        type: "data-ask",
         id: "mock-ask-resolved",
-        type: "ask-card",
-        askId: "mock-askid-resolved",
         title: "Install R package",
         command: "install.packages('fgsea')",
         status: "resolved",
     },
     {
+        type: "data-ask",
         id: "mock-ask-rejected",
-        type: "ask-card",
-        askId: "mock-askid-rejected",
         title: "Delete output directory",
         command: "rm -rf runs/run-abc/output",
         status: "rejected",
         feedback: "don't delete outputs — archive them instead",
     },
     {
+        type: "data-ask",
         id: "mock-ask-aborted",
-        type: "ask-card",
-        askId: "mock-askid-aborted",
         title: "Fetch external dataset",
         command: "curl -O https://ftp.ncbi.nlm.nih.gov/geo/GSE78220_series_matrix.txt.gz",
         status: "aborted",
     },
     {
+        type: "data-ask",
         id: "mock-ask-expired",
-        type: "ask-card",
-        askId: "mock-askid-expired",
         title: "Write outside workspace",
         command: "cp report.html ~/Desktop/",
         status: "expired",
