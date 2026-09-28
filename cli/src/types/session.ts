@@ -1,5 +1,4 @@
-import type { AskPart } from "@inflexa-ai/harness/contracts/chat-parts.js";
-import type { MessagePart, TextPart, ToolCallPart } from "@inflexa-ai/harness/contracts/message.js";
+import type { AskPart, MessagePart, TextPart, ToolCallPart } from "@inflexa-ai/harness";
 
 /**
  * A harness text part as the store holds it. `key` is set only on a part that the live turn makes: it is what

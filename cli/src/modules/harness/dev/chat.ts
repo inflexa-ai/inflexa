@@ -18,17 +18,29 @@ import { pathToFileURL } from "node:url";
 import { randomUUIDv7 } from "bun";
 import { intro, log, outro, spinner, text, isCancel } from "@clack/prompts";
 import { type ResultAsync } from "neverthrow";
-import { createStreamingChat, createThreadStore, type ChatTurnSession, type DbError, type EmitFn, type Thread } from "@inflexa-ai/harness";
+import {
+    checkChatPart,
+    createStreamingChat,
+    createThreadStore,
+    toChatFrame,
+    type ChatPartFrame,
+    type ChatTurnSession,
+    type DbError,
+    type EmitFn,
+    type EventSource,
+    type Thread,
+} from "@inflexa-ai/harness";
 import type { OpenableEntry, OpenTarget, PresentationBody } from "../../../types/session.ts";
 
 import { describeCause } from "../../../lib/cause.ts";
 import { fail } from "../../../lib/cli.ts";
+import { getLogger } from "../../../lib/log.ts";
 import { shutdown } from "../../../lib/shutdown.ts";
 import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../../analysis/context.ts";
 import { resolveHarnessConfig } from "../config.ts";
 import { ensureSandboxImage } from "../../libs/pull.ts";
 import { materializeTarget, readFileReference, readPresentation } from "../artifact_open.ts";
-import { isSubAgentEvent, readAskPart, readPlanCard, readRunCard, subAgentActivityLabel } from "../chat_printer.ts";
+import { isSubAgentEvent, readPlanCard, subAgentActivityLabel } from "../chat_printer.ts";
 import { planToDag } from "../plan_dag.ts";
 import { bootHarnessRuntime, describeBootError, type HarnessRuntime } from "../runtime.ts";
 import { buildChatSession, runChatTurn } from "../turn.ts";
@@ -385,6 +397,12 @@ export type ChatPrinter = {
     readonly finishTurn: (fallbackText?: string) => void;
 };
 
+/**
+ * The source that `toChatFrame` gives the frame of a `text-delta`, which carries none. The printer reads
+ * the source of no frame, because sub-agent traffic leaves before the translation.
+ */
+const REPL_SOURCE: EventSource = { agentId: "chat", callPath: ["chat"] };
+
 /** ms as a compact human string for the tool-chip completion line. */
 function formatMs(ms: number): string {
     return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -449,52 +467,58 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
             return;
         }
 
-        switch (event.type) {
+        // `iteration` and `done` are orchestration, not transcript content, thus they give no frame.
+        const frame = toChatFrame(event, REPL_SOURCE);
+        if (frame === null) return;
+        switch (frame.type) {
             case "text-delta":
                 // Rule 3: write as received; the terminal accumulates.
                 streamedText = true;
-                sink.out(event.text);
-                return;
-            case "done":
-                // Stream terminal marker — the text already rendered via deltas.
-                return;
-            case "iteration":
-                // Loop iteration boundary — orchestration, not transcript content.
+                sink.out(frame.text);
                 return;
             case "tool-started": {
-                const name = event.name;
+                const name = frame.name;
                 // Opaque display text the harness computed from this call's input — printed, never parsed.
-                const detail = event.detail;
-                openTools.set(event.toolUseId, { name, startedAt: Date.now() });
+                const detail = frame.detail;
+                openTools.set(frame.toolUseId, { name, startedAt: Date.now() });
                 sink.out(`\n  [tool] ${name}${detail === undefined ? "" : ` ${detail}`} running...\n`);
                 return;
             }
             case "tool-finished": {
-                const name = event.name;
-                const started = openTools.get(event.toolUseId);
-                openTools.delete(event.toolUseId);
+                const name = frame.name;
+                const started = openTools.get(frame.toolUseId);
+                openTools.delete(frame.toolUseId);
                 const dur = started ? ` (${formatMs(Date.now() - started.startedAt)})` : "";
                 // Three outcomes get three words. `denied` is the user's own refusal of an approval, so
                 // printing it as `error` would report their decision as a fault of the tool.
-                const outcome = event.outcome === "error" ? "error" : event.outcome === "denied" ? "denied" : `done${dur}`;
+                const outcome = frame.outcome === "error" ? "error" : frame.outcome === "denied" ? "denied" : `done${dur}`;
                 // A tool that describes its own result names the outcome here — the page it wrote, the
                 // version it recorded — so the finished line prints what the running line could not know.
-                const detail = event.detail;
+                const detail = frame.detail;
                 sink.out(`  [tool] ${name}${detail === undefined ? "" : ` ${detail}`} ${outcome}\n`);
                 return;
             }
+            case "finish":
+            case "error":
+                // `toChatFrame` gives neither for an emitted event: the outcome of `runChatTurn` ends the turn.
+                return;
             default: {
-                // Only `ChatDataPart` remains (its `type` is `data-${string}`).
-                renderDataPart(event.type, event.data);
+                // The one check of a part: each reader past this point trusts the type of the part.
+                const checked = checkChatPart(frame);
+                if (!checked.ok) {
+                    getLogger("chat").warn({ type: frame.type, error: checked.error }, "chat part dropped: it failed the check of its type");
+                    return;
+                }
+                renderDataPart(checked.frame);
                 return;
             }
         }
     };
 
-    function renderDataPart(type: `data-${string}`, data: unknown): void {
-        switch (type) {
+    function renderDataPart(part: ChatPartFrame): void {
+        switch (part.type) {
             case "data-plan": {
-                const plan = readPlanCard(data);
+                const plan = readPlanCard(part);
                 const heading = plan.title || plan.planId;
                 sink.out(`\n  [plan] ${heading} (${plan.planId})\n`);
                 const graph =
@@ -511,32 +535,28 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 }
                 return;
             }
-            case "data-run-card": {
-                const run = readRunCard(data);
-                sink.out(`\n  [run] ${run.runId}: ${run.title} (${run.stepCount} step(s))\n`);
+            case "data-run-card":
+                sink.out(`\n  [run] ${part.runId}: ${part.title} (${part.stepCount} step(s))\n`);
                 return;
-            }
             case "data-presentation": {
-                const view = readPresentation(data);
+                const view = readPresentation(part);
                 if (view.shape === "inline") renderInlinePresentation(view.title, view.body);
                 else renderOpenables(view.title, [view.entry]);
                 return;
             }
             case "data-file-reference": {
-                const view = readFileReference(data);
+                const view = readFileReference(part);
                 renderOpenables(view.title, view.entries);
                 return;
             }
-            case "data-ask": {
+            case "data-ask":
                 // The REPL is a write-only sink with no mid-turn input path, so it cannot answer an ask —
                 // the harness denies it by default. Still observe the approval and its outcome, one line.
-                const ask = readAskPart(data);
-                sink.out(`\n  [approval] ${ask.command} — ${ask.status}\n`);
+                sink.out(`\n  [approval] ${part.command} — ${part.status}\n`);
                 return;
-            }
             default:
                 // Rule 3: observe unknown parts, do not swallow them.
-                sink.out(`  [part:${type}]\n`);
+                sink.out(`  [part:${part.type}]\n`);
                 return;
         }
     }

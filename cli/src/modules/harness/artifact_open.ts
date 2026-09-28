@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, join, posix } from "node:path";
+import type { FileReferencePart, PresentationPart } from "@inflexa-ai/harness";
 import { validatePath } from "@inflexa-ai/harness/tools/lib/path-validation";
 import { err, ok, type Result } from "neverthrow";
 
@@ -8,58 +9,35 @@ import { openExternal } from "../../lib/open_external.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import type { OpenableEntry, OpenTarget, PresentationBody } from "../../types/session.ts";
 
-// The `artifact-open` capability: the shared readers that turn a harness display-card `data` payload
-// into a normalized card model, plus open-time RESOLUTION (reference → path) and MATERIALIZATION
+// The `artifact-open` capability: the shared readers that turn a harness display-card part into a
+// normalized card model, plus open-time RESOLUTION (reference → path) and MATERIALIZATION
 // (echart/svg spec → a self-contained file under the analysis workspace's `presentations/` directory).
 // Consumed by BOTH the TUI (the renderer `layout/message_block.tsx` reads each stored harness part
 // through them, and the store's `sessionOpenables` lists the entries) and the REPL printer
-// (`dev/chat.ts` renders them as OSC 8 links), so the coercion + resolution logic lives in one place.
+// (`dev/chat.ts` renders them as OSC 8 links), so the mapping + resolution logic lives in one place.
 //
-// COPY-ON-RECEIVE: the REPL runs the readers inside the in-process emit path, whose `data` shares
-// mutable references with the agent loop. Every reader extracts primitives and DEEP-COPIES the echart
-// spec, so nothing the loop later mutates can reach a readout (the same hazard the card readers in
-// `chat_printer.ts` guard). A deep copy cannot read a Solid store proxy, thus a caller that holds a
-// stored part hands the reader the plain part that the proxy wraps.
+// COPY-ON-RECEIVE: the REPL runs the readers inside the in-process emit path. The receipt check copies
+// each field that its schema names, but the echart spec is `unknown` below its top level, thus the
+// spec still shares mutable references with the agent loop. Every reader copies what it keeps and
+// DEEP-COPIES the echart spec, so nothing the loop later mutates can reach a readout (the same hazard
+// the card readers in `chat_printer.ts` guard). A deep copy cannot read a Solid store proxy, thus a
+// caller that holds a stored part hands the reader the plain part that the proxy wraps.
 //
 // OPEN-TIME RESOLUTION: a card stores only the semantic reference (analysis-rooted paths, the embedded
 // spec, the `pres-` id) — never a resolved location — so the same card resolves to a workspace file
 // today and (unchanged) to a local-webserver URL under the planned front+back architecture.
 
-// ── loose-value coercion (untrusted emit `data`) ────────────────────────────────────────────────────
-
-/** Coerce `v` to a string, defaulting to empty — every field below is read off untrusted emit `data`. */
-function str(v: unknown): string {
-    return typeof v === "string" ? v : "";
-}
-
-/** Coerce `v` to an optional string (undefined when absent/mistyped), for fields the card omits when unset. */
-function optStr(v: unknown): string | undefined {
-    return typeof v === "string" ? v : undefined;
-}
-
-/** Coerce `v` to a fresh string array (copy-on-receive), tolerating non-string cells. */
-function strArr(v: unknown): string[] {
-    return Array.isArray(v) ? v.map((x) => (typeof x === "string" ? x : String(x))) : [];
-}
-
-/** Coerce `v` to a fresh matrix of strings (copy-on-receive) for table rows. */
-function strMatrix(v: unknown): string[][] {
-    return Array.isArray(v) ? v.map(strArr) : [];
-}
-
-/** Deep-copy an echart spec object at receipt so no mutable loop reference survives; `{}` on non-objects. */
-function cloneSpec(v: unknown): Record<string, unknown> {
-    if (typeof v !== "object" || v === null) return {};
+/** Deep-copy an echart spec at receipt, thus no mutable loop reference survives. A spec that cannot be cloned reads as `{}`. */
+function cloneSpec(spec: Record<string, unknown>): Record<string, unknown> {
     try {
-        // structuredClone deep-copies the plain JSON-shaped spec (copy-on-receive); a spec carrying an
-        // unclonable value (never, for a tool-input JSON object) degrades to an empty spec rather than throwing.
-        return structuredClone(v) as Record<string, unknown>;
+        // A tool-input spec is JSON, thus the clone fails only on a value that no JSON holds.
+        return structuredClone(spec);
     } catch {
         return {};
     }
 }
 
-// ── readers: harness `data` payload → normalized card model ──────────────────────────────────────────
+// ── readers: harness part → normalized card model ───────────────────────────────────────────────────
 
 /**
  * A `data-presentation` readout: text-shaped (`markdown`/`code`/`table`) becomes an inline body; the
@@ -68,33 +46,27 @@ function cloneSpec(v: unknown): Record<string, unknown> {
 export type PresentationReadout = { shape: "inline"; title?: string; body: PresentationBody } | { shape: "card"; title?: string; entry: OpenableEntry };
 
 /**
- * Read a `show_user` presentation payload (`{ id, title?, content: { kind, ... } }`, flat on reload).
- * Text-shaped kinds map to an inline body; `echart`/`svg` map to an openable entry carrying the embedded
- * spec/markup + the deterministic `pres-` id. An unrecognized kind degrades to an inline note naming it.
+ * Read a `show_user` presentation part. Text-shaped kinds map to an inline body; `echart`/`svg` map to
+ * an openable entry carrying the embedded spec/markup + the deterministic `pres-` id. A `structure`
+ * card has no renderer here, thus it degrades to an inline note that names its kind.
  */
-export function readPresentation(data: unknown): PresentationReadout {
-    const d = (data ?? {}) as Record<string, unknown>;
-    const id = str(d.id);
-    const title = optStr(d.title);
-    const content = (d.content ?? {}) as Record<string, unknown>;
-    const kind = str(content.kind);
-    switch (kind) {
+export function readPresentation(part: PresentationPart): PresentationReadout {
+    const title = part.title;
+    const content = part.content;
+    switch (content.kind) {
         case "markdown":
-            return { shape: "inline", title, body: { kind: "markdown", body: str(content.body) } };
+            return { shape: "inline", title, body: { kind: "markdown", body: content.body } };
         case "code":
-            return { shape: "inline", title, body: { kind: "code", code: str(content.code), language: str(content.language) } };
+            return { shape: "inline", title, body: { kind: "code", code: content.code, language: content.language } };
         case "table":
             return {
                 shape: "inline",
                 title,
-                body: { kind: "table", headers: strArr(content.headers), rows: strMatrix(content.rows), caption: optStr(content.caption) },
+                body: { kind: "table", headers: [...content.headers], rows: content.rows.map((row) => [...row]), caption: content.caption },
             };
-        case "echart": {
-            // `dataPath` is the harness `PresentationContent` echart's optional analysis-rooted CSV
-            // reference, read loosely off untrusted emit `data` (like every field here) and resolved to
-            // `dataset.source` at open time. Omitted from the target when absent so a self-contained spec
-            // carries no empty key.
-            const dataPath = optStr(content.dataPath);
+        case "echart":
+            // `dataPath` is resolved to `dataset.source` at open time. It is omitted from the target when
+            // absent, thus a self-contained spec carries no empty key.
             return {
                 shape: "card",
                 title,
@@ -102,22 +74,24 @@ export function readPresentation(data: unknown): PresentationReadout {
                     name: title ?? "Chart",
                     target: {
                         kind: "echart",
-                        presId: id,
+                        presId: part.id,
                         spec: cloneSpec(content.spec),
-                        ...(dataPath !== undefined ? { dataPath } : {}),
+                        ...(content.dataPath !== undefined ? { dataPath: content.dataPath } : {}),
                     },
                 },
             };
-        }
         case "svg":
             return {
                 shape: "card",
                 title,
-                entry: { name: title ?? "Diagram", target: { kind: "svg", presId: id, markup: str(content.markup) } },
+                entry: { name: title ?? "Diagram", target: { kind: "svg", presId: part.id, markup: content.markup } },
             };
-        default:
-            // Observe an unrecognized presentation kind rather than swallowing it — render a visible inline note.
-            return { shape: "inline", title, body: { kind: "markdown", body: `_(unsupported presentation: ${kind || "unknown"})_` } };
+        case "structure":
+            return { shape: "inline", title, body: { kind: "markdown", body: `_(unsupported presentation: ${content.kind})_` } };
+        default: {
+            const _exhaustive: never = content;
+            return _exhaustive;
+        }
     }
 }
 
@@ -125,27 +99,19 @@ export function readPresentation(data: unknown): PresentationReadout {
 export type FileReferenceReadout = { title?: string; entries: OpenableEntry[]; folderPath?: string };
 
 /**
- * Read a `show_file` payload (`{ id, title?, files: [{ path, runId?, caption? }] }`). Each file becomes
- * an openable `workspace-file` entry; a multi-file gallery also carries `folderPath` (the first file's
- * directory) for the reveal-containing-folder affordance.
+ * Read a `show_file` part. Each file becomes an openable `workspace-file` entry; a multi-file gallery
+ * also carries `folderPath` (the first file's directory) for the reveal-containing-folder affordance.
  */
-export function readFileReference(data: unknown): FileReferenceReadout {
-    const d = (data ?? {}) as Record<string, unknown>;
-    const title = optStr(d.title);
-    const rawFiles = Array.isArray(d.files) ? d.files : [];
-    const entries: OpenableEntry[] = rawFiles.map((f) => {
-        const file = (f ?? {}) as Record<string, unknown>;
-        const path = str(file.path);
-        return {
-            name: basename(path) || path,
-            ...(optStr(file.caption) !== undefined ? { caption: optStr(file.caption)! } : {}),
-            target: { kind: "workspace-file", path },
-        };
-    });
-    const firstPath = rawFiles.length > 0 ? str((rawFiles[0] as Record<string, unknown>).path) : "";
+export function readFileReference(part: FileReferencePart): FileReferenceReadout {
+    const entries: OpenableEntry[] = part.files.map((file) => ({
+        name: basename(file.path) || file.path,
+        ...(file.caption !== undefined ? { caption: file.caption } : {}),
+        target: { kind: "workspace-file", path: file.path },
+    }));
+    const firstPath = part.files[0]?.path ?? "";
     const dir = firstPath ? dirname(firstPath) : "";
     const folderPath = entries.length > 1 && dir && dir !== "." ? dir : undefined;
-    return { title, entries, ...(folderPath !== undefined ? { folderPath } : {}) };
+    return { title: part.title, entries, ...(folderPath !== undefined ? { folderPath } : {}) };
 }
 
 // ── open-time resolution + materialization ──────────────────────────────────────────────────────────

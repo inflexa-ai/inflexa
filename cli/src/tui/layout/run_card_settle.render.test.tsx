@@ -8,8 +8,7 @@ import { RunCardBlock } from "../components/run_card_block.tsx";
 import { MessageBlock, resolveRunCardState } from "./message_block.tsx";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshSeams } from "../hooks/sidebar_live.ts";
 import { loadMessages, messages, promptHistory, resetHotState } from "../hooks/conversation.ts";
-import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
-import type { ChatMessage } from "@inflexa-ai/harness/contracts/message.js";
+import type { ChatMessage, CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Part } from "../../types/session.ts";
 
@@ -226,7 +225,7 @@ describe("synthetic record entries in the transcript", () => {
             chatMessage("r1", "system", "did the run finish yet?"),
             chatMessage("a1", "assistant", "on it"),
         ];
-        await loadMessages("s1", { runtime: () => fakeRuntime, loadAll: () => okAsync([[]]), toCortex: () => replayed });
+        await loadMessages("s1", { runtime: () => fakeRuntime, loadAll: () => okAsync([[]]), toChat: () => replayed });
 
         expect(messages.map((m) => m.role)).toEqual(["user", "system", "assistant"]);
         // Not a prompt of the user, thus the history recall never offers it.

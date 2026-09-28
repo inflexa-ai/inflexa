@@ -54,7 +54,8 @@ describe("plan.explore-steps", () => {
                     type: "data-plan",
                     source: { agentId: "tui-chat", callPath: ["tui-chat"] },
                     data: {
-                        planId: "plan-1",
+                        id: "plan-card-1",
+                        planId: "pln-00000001",
                         title: "Branching plan",
                         steps: [
                             {
@@ -64,6 +65,7 @@ describe("plan.explore-steps", () => {
                                 question: "Which inputs are valid?",
                                 acceptance_criteria: ["Inputs validated"],
                                 depends_on: [],
+                                maxSteps: 30,
                             },
                         ],
                     },

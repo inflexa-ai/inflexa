@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { errAsync, ok, okAsync, ResultAsync } from "neverthrow";
-import type { DbError, StoredMessage } from "@inflexa-ai/harness";
-import type { ChatMessage } from "@inflexa-ai/harness/contracts/message.js";
+import type { ChatMessage, DbError, StoredMessage } from "@inflexa-ai/harness";
 
 import {
     abort,
@@ -143,7 +142,7 @@ describe("canRetract gates the retract window", () => {
     test("flips false the instant a card part lands", async () => {
         const { sendP, emit, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "" });
         expect(canRetract()).toBe(true);
-        void emit()({ type: "data-plan", source: TOP, data: { planId: "p1", title: "t", steps: [] } });
+        void emit()({ type: "data-plan", source: TOP, data: { id: "p1", planId: "pln-00000001", title: "t", steps: [] } });
         expect(canRetract()).toBe(false);
         release();
         await sendP;
@@ -686,7 +685,7 @@ describe("the interrupted marker survives a transcript reload", () => {
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => okAsync(emptyTurns(2)),
-            toCortex: () => interruptedTranscript(),
+            toChat: () => interruptedTranscript(),
         };
         await loadMessages(SID, loadSeams);
 
@@ -709,7 +708,7 @@ describe("the interrupted marker survives a transcript reload", () => {
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => okAsync(emptyTurns(1)),
-            toCortex: () => [
+            toChat: () => [
                 {
                     id: "a1",
                     role: "assistant",
@@ -737,7 +736,7 @@ describe("a transcript load resolving mid-retract", () => {
     const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
     // A stale reload the dropped load WOULD have mounted — present so a failure to drop would be visible as
     // a resurrected message rather than merely an empty store that happened to stay empty.
-    const staleCortex = (): ChatMessage[] => [{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }];
+    const staleChat = (): ChatMessage[] => [{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }];
 
     test("a load parked mid-retract drops and never resurrects the spliced-away turn", async () => {
         // A transcript load parks at its page read while a retract runs to completion. The retract claims a
@@ -750,7 +749,7 @@ describe("a transcript load resolving mid-retract", () => {
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => ResultAsync.fromSafePromise(loadGate.then(() => emptyTurns(1))),
-            toCortex: () => staleCortex(),
+            toChat: () => staleChat(),
         };
         const load = loadMessages(SID, loadSeams); // parks at its page read
 

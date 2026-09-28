@@ -8,8 +8,7 @@
 // Ids are literal `mock-*` sentinels (not `randomUUIDv7()`) precisely so a reader
 // can tell at a glance that a value is fixture data, never a real row.
 
-import type { CortexRunRow, DataProfileStatus, PlanPart, RunCardPart, StepExecutionRow } from "@inflexa-ai/harness";
-import type { TextPart } from "@inflexa-ai/harness/contracts/message.js";
+import type { CortexRunRow, DataProfileStatus, PlanPart, RunCardPart, StepExecutionRow, TextPart } from "@inflexa-ai/harness";
 
 import { formatTokenFigure } from "../../lib/usage_format.ts";
 import type { LiveAskPart, ThinkingPart, FileEditPart, PlanCardStepView } from "../../types/session.ts";
@@ -117,9 +116,6 @@ export const mockFileEdit: FileEditPart = {
     createdAt: 0,
 };
 
-// The steps of the mock plan card as `show_plan` sends them: the declared step fields of the harness,
-// plus the fields of the stored plan that the card renders. A separate constant, because a literal typed
-// as the declared step type refuses the extra fields.
 const mockPlanSteps = [
     {
         id: "s1",

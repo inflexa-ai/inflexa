@@ -41,6 +41,28 @@ describe("conversation display recorder", () => {
         expect(forwarded).toHaveLength(3);
     });
 
+    it("keeps each plan step field that the card shows", async () => {
+        const { recorder } = harness();
+        const step = {
+            id: "T1S1",
+            name: "Normalize",
+            agent: "rna-seq",
+            question: "Which genes change?",
+            depends_on: [],
+            maxSteps: 40,
+            track: "1",
+            step_type: "analysis",
+            acceptance_criteria: ["A counts table exists"],
+            constraints: ["Use DESeq2"],
+            caveats: ["Low depth"],
+            resources: { cpu: 4, memoryGb: 16, gpu: { count: 1 } },
+        };
+        await recorder.emit({ type: "data-plan", source: TOP, data: { id: "pres-1", planId: "pln-0123abcd", steps: [step] } });
+
+        const display = recorder.finish();
+        expect(display[1]!.parts).toEqual([{ type: "data-plan", id: "pres-1", data: { id: "pres-1", planId: "pln-0123abcd", steps: [step] } }]);
+    });
+
     it("keeps observed concurrent card order rather than tool declaration order", async () => {
         const { recorder } = harness();
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "a", name: "tool_a", input: {} });

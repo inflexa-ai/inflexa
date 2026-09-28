@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { EmitFn, EventSource } from "@inflexa-ai/harness";
+import type { EmitFn, EventSource, PlanPart, RunCardPart } from "@inflexa-ai/harness";
 
 import { createChatPrinter, type ChatSink, type PrinterOptions } from "./chat.ts";
 
@@ -111,9 +111,9 @@ describe("createChatPrinter", () => {
                 planId: "pln-abc12345",
                 title: "Differential expression",
                 steps: [
-                    { id: "T1S1", name: "load", agent: "scientific-executor", depends_on: [] },
-                    { id: "T2S1", name: "align", agent: "scientific-executor", depends_on: ["T1S1"] },
-                    { id: "T3S1", name: "quantify", agent: "scientific-executor", depends_on: ["T1S1"] },
+                    { id: "T1S1", name: "load", agent: "scientific-executor", question: "q", depends_on: [], maxSteps: 30 },
+                    { id: "T2S1", name: "align", agent: "scientific-executor", question: "q", depends_on: ["T1S1"], maxSteps: 30 },
+                    { id: "T3S1", name: "quantify", agent: "scientific-executor", question: "q", depends_on: ["T1S1"], maxSteps: 30 },
                 ],
             },
         });
@@ -128,8 +128,16 @@ describe("createChatPrinter", () => {
 
     test("data-plan falls back to planId as heading when title is absent", () => {
         const h = harness();
-        h.emit({ type: "data-plan", source: TOP, data: { planId: "pln-abc12345", steps: [] } });
+        h.emit({ type: "data-plan", source: TOP, data: { id: "pres-1", planId: "pln-abc12345", steps: [] } });
         expect(h.out()).toContain("[plan] pln-abc12345 (pln-abc12345)");
+    });
+
+    test("an invalid part of a known type is dropped at receipt, and nothing prints", () => {
+        const h = harness();
+        // The status is outside the union of the ask part, thus the check refuses the part.
+        h.emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "inflexa refs list", status: "granted" } });
+        expect(h.out()).toBe("");
+        expect(h.errs).toEqual([]);
     });
 
     test("data-run-card renders run id, title, and step count", () => {
@@ -200,16 +208,17 @@ describe("createChatPrinter", () => {
 
     test("copy-on-receive: mutating a part after emit does not change output", () => {
         const h = harness();
-        const data: { planId: string; title: string; steps: { id: string; name: string; agent: string }[] } = {
+        const data: Omit<PlanPart, "type"> & { title: string; steps: NonNullable<PlanPart["steps"]> } = {
+            id: "pres-1",
             planId: "pln-abc12345",
             title: "Original",
-            steps: [{ id: "S1", name: "one", agent: "a1" }],
+            steps: [{ id: "S1", name: "one", agent: "a1", question: "q", depends_on: [], maxSteps: 30 }],
         };
         h.emit({ type: "data-plan", source: TOP, data });
         const snapshot = h.out();
         // Mutate the exact object handed to emit — the in-process emit hazard.
         data.title = "MUTATED";
-        data.steps.push({ id: "S2", name: "two", agent: "a2" });
+        data.steps.push({ id: "S2", name: "two", agent: "a2", question: "q", depends_on: [], maxSteps: 30 });
         data.steps[0]!.name = "CHANGED";
         expect(h.out()).toBe(snapshot);
         expect(snapshot).toContain("[plan] Original");
@@ -288,7 +297,7 @@ describe("createChatPrinter", () => {
 
     test("copy-on-receive: mutating a run card after emit does not change output", () => {
         const h = harness();
-        const data: { runId: string; title: string; stepCount: number } = { runId: "run-xyz", title: "Original", stepCount: 3 };
+        const data: Omit<RunCardPart, "type"> = { id: "pres-r", runId: "run-xyz", planId: "pln-abc12345", title: "Original", stepCount: 3 };
         h.emit({ type: "data-run-card", source: TOP, data });
         const snapshot = h.out();
         // Mutate the exact object handed to emit — the in-process emit hazard.

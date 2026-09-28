@@ -124,9 +124,11 @@ delegate sending to `conversation.send`, pointing the abort keybinding at `conve
 
 ### Requirement: Display-card parts map live and on reload
 
-The conversation store MUST keep each harness part as the harness gives it, in the live path and in the reload path. In the live path, `applyEmitEvent` applies each event of the top-level agent with `toChatFrame` and `applyChatFrame` of the harness. In the reload path, `loadMessages` mounts the messages of `storedMessagesToCortex` with no change. The live path MUST copy each data part at receipt, thus the store keeps no object that the agent loop can change.
+The conversation store MUST keep each harness part as the harness gives it, in the live path and in the reload path. In the live path, `applyEmitEvent` applies each event of the top-level agent with `toChatFrame` and `applyChatFrame` of the harness. In the reload path, `loadMessages` mounts the messages of `storedMessagesToChat` with no change.
 
-The message renderer MUST read each card through the shared readers of `chat_printer.ts` and `artifact_open.ts`. Thus a reloaded transcript renders the same cards as the live turn. A text-shaped presentation (`markdown`, `code`, `table`) MUST render as an inline presentation. An `echart` or `svg` presentation and a file reference MUST render as an openable card that holds only the semantic references. An unknown `data-*` part MUST keep the one-line tagged mention.
+The live path MUST check each data part at receipt with `checkChatPart` of the harness. It MUST drop a part that the check refuses, and log the type of the part and the error. It MUST copy each part that it keeps, thus the store keeps no object that the agent loop can change.
+
+The message renderer MUST read each card through its harness part type. `readPlanCard`, `readPresentation`, and `readFileReference` map a part to its view, thus a reloaded transcript renders the same cards as the live turn. A text-shaped presentation (`markdown`, `code`, `table`) MUST render as an inline presentation. An `echart` or `svg` presentation and a file reference MUST render as an openable card that holds only the semantic references. An unknown `data-*` part MUST keep the one-line tagged mention.
 
 #### Scenario: Live and reloaded turns render alike
 
@@ -138,6 +140,11 @@ The message renderer MUST read each card through the shared readers of `chat_pri
 
 - **WHEN** the harness emits a `data-*` part that the CLI has no renderer for
 - **THEN** the transcript shows the one-line tagged mention of the part, and it does not drop the part
+
+#### Scenario: A part that its schema refuses is dropped
+
+- **WHEN** the harness emits a known `data-*` part that its schema refuses
+- **THEN** the transcript does not show the part, and the log holds a warning with the type of the part
 
 ### Requirement: A harness synthetic message renders as an event, not as a user turn
 
@@ -182,7 +189,7 @@ Live, `applyChatFrame` of the harness appends the first emission of an id to the
 
 After a reload, the harness gives each stored marker as a `system` message with one `data-compaction` part at its final status. The store MUST mount that message with no change, and it renders as an event entry. The event entry is not a turn, and it is not retractable.
 
-The message renderer MUST read the part through the shared reader `readCompactionPart` of `chat_printer.ts`. The reader MUST copy each field that it keeps: the id of the compaction, the status, the tokens before and after, and the duration. An unknown or missing status MUST read as `failed`, the safe terminal. Thus a malformed emission never leaves a live line with no terminal status.
+The message renderer MUST read the fields of the harness part directly. A part with a status that the harness schema does not know never reaches the store: the live path drops it at receipt, and the replay reads only parts that the harness checked when it stored them.
 
 #### Scenario: Live emissions update one part
 
@@ -198,8 +205,8 @@ The message renderer MUST read the part through the shared reader `readCompactio
 
 #### Scenario: A malformed status is a terminal failure
 
-- **WHEN** the renderer reads a `data-compaction` part whose status the reader does not know
-- **THEN** the compaction block shows the status `failed`
+- **WHEN** the harness emits a `data-compaction` part whose status the harness schema does not know
+- **THEN** the live path drops the part at receipt, and no compaction line waits for a terminal status
 
 #### Scenario: The part is not a tagged mention
 

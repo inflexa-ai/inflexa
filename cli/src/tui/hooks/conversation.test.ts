@@ -6,15 +6,16 @@ import { unwrap } from "solid-js/store";
 import type {
     AskContext,
     AskRequest,
+    ChatMessage,
     CompactionPart,
     EmitFn,
     FileReferencePart,
+    MessagePart,
     PlanPart,
     PresentationPart,
     RunCardPart,
     StoredMessage,
 } from "@inflexa-ai/harness";
-import type { ChatMessage, MessagePart } from "@inflexa-ai/harness/contracts/message.js";
 
 import {
     applyEmitEvent,
@@ -39,7 +40,7 @@ import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { activeAsk, queuedCount } from "./asks.ts";
 import { chatStatus } from "./status.ts";
 import { readFileReference, readPresentation } from "../../modules/harness/artifact_open.ts";
-import { readAskPart, readCompactionPart, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
+import { readPlanCard } from "../../modules/harness/chat_printer.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { RunChatTurnArgs, TurnOutcome } from "../../modules/harness/turn.ts";
 import type { LiveAskPart, LiveTextPart, LiveToolCallPart, Part } from "../../types/session.ts";
@@ -50,6 +51,15 @@ const SID = "s1";
 const AID = "a1";
 // The source of the top-level chat agent: its call path has one entry.
 const ROOT = { agentId: "tui-chat", callPath: ["tui-chat"] };
+// A plan step that the schema of a `data-plan` part accepts.
+const PLAN_STEP: NonNullable<PlanPart["steps"]>[number] = {
+    id: "s1",
+    name: "QC",
+    agent: "prep",
+    question: "Is the matrix clean?",
+    depends_on: [],
+    maxSteps: 30,
+};
 
 // A stub runtime whose pool/provider are never dereferenced: the fake engine drives the adapter and
 // returns an outcome without touching them. The chat path reads the CONVERSATION agent's provider, and
@@ -83,6 +93,13 @@ function findPart<T extends Part>(pred: (p: Part) => p is T): T | undefined {
         for (const p of m.parts) if (pred(p)) return p;
     }
     return undefined;
+}
+
+/** The first part that `pred` matches. A missing part fails the test. */
+function requirePart<T extends Part>(pred: (p: Part) => p is T): T {
+    const part = findPart(pred);
+    if (part === undefined) throw new Error("no part in the transcript matches");
+    return part;
 }
 
 const isToolCall = (p: Part): p is LiveToolCallPart => p.type === "tool-call";
@@ -410,15 +427,15 @@ describe("send() drives the adapter + engine", () => {
             void emit({
                 type: "data-plan",
                 source: { agentId: "tui-chat", callPath: ["tui-chat"] },
-                data: { planId: "plan-1", title: "DE analysis", steps: [{ id: "s1", name: "QC", agent: "prep" }] },
+                data: { id: "plan-card-1", planId: "pln-00000001", title: "DE analysis", steps: [PLAN_STEP] },
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const part = findPart((p): p is PlanPart => p.type === "data-plan");
+        const part = requirePart((p): p is PlanPart => p.type === "data-plan");
         // The source of a frame routes the frame, and it is not a field of the part.
-        expect(part).toEqual({ type: "data-plan", planId: "plan-1", title: "DE analysis", steps: [{ id: "s1", name: "QC", agent: "prep" }] } as PlanPart);
+        expect(part).toEqual({ type: "data-plan", id: "plan-card-1", planId: "pln-00000001", title: "DE analysis", steps: [PLAN_STEP] });
         const plan = readPlanCard(part);
-        expect(plan.planId).toBe("plan-1");
+        expect(plan.planId).toBe("pln-00000001");
         expect(plan.title).toBe("DE analysis");
         expect(plan.steps[0]?.id).toBe("s1");
         expect(plan.steps[0]?.name).toBe("QC");
@@ -426,19 +443,35 @@ describe("send() drives the adapter + engine", () => {
         expect(plan.steps[0]?.depends_on).toEqual([]);
     });
 
-    test("data-run-card lands as the harness part, and the card reads it through readRunCard", async () => {
+    test("data-run-card lands as the harness part", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-run-card",
                 source: { agentId: "tui-chat", callPath: ["tui-chat"] },
-                data: { runId: "run-1", title: "DE run", stepCount: 3 },
+                data: { id: "run-card-1", runId: "run-1", planId: "pln-00000001", title: "DE run", stepCount: 3 },
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const run = readRunCard(findPart((p): p is RunCardPart => p.type === "data-run-card"));
+        const run = requirePart((p): p is RunCardPart => p.type === "data-run-card");
         expect(run.runId).toBe("run-1");
         expect(run.title).toBe("DE run");
         expect(run.stepCount).toBe(3);
+    });
+
+    test("an invalid part of a known type is dropped at receipt, and the parts around it still land", async () => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
+            void emit({ type: "text-delta", text: "before" });
+            // A run card with no `runId` fails the check of its type.
+            void emit({ type: "data-run-card", source: ROOT, data: { id: "run-card-1", planId: "pln-00000001", title: "DE run", stepCount: 3 } });
+            void emit({
+                type: "data-run-card",
+                source: ROOT,
+                data: { id: "run-card-2", runId: "run-2", planId: "pln-00000001", title: "QC run", stepCount: 1 },
+            });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        expect(messages[1]?.parts.map((p) => p.type)).toEqual(["text", "data-run-card"]);
+        expect(requirePart((p): p is RunCardPart => p.type === "data-run-card").runId).toBe("run-2");
     });
 
     test("an unknown data part stays in the transcript, not swallowed", async () => {
@@ -459,7 +492,7 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const view = readPresentation(findPart((p): p is PresentationPart => p.type === "data-presentation"));
+        const view = readPresentation(requirePart((p): p is PresentationPart => p.type === "data-presentation"));
         expect(view).toEqual({ shape: "inline", title: "Finding", body: { kind: "markdown", body: "**TP53** up" } });
     });
 
@@ -492,7 +525,7 @@ describe("send() drives the adapter + engine", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const view = readFileReference(findPart((p): p is FileReferencePart => p.type === "data-file-reference"));
+        const view = readFileReference(requirePart((p): p is FileReferencePart => p.type === "data-file-reference"));
         expect(view.entries.length).toBe(2);
         expect(view.entries[0]?.name).toBe("a.png");
         expect(view.entries[1]?.caption).toBe("heatmap");
@@ -543,14 +576,14 @@ describe("send() drives the adapter + engine", () => {
         // Assigned inside `drive` (below) so the post-emit mutation sees the same reference the store copied.
         let planData: Record<string, unknown> = {};
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
-            planData = { planId: "plan-x", title: "original", steps: [{ id: "s1", name: "step", agent: "a" }] };
+            planData = { id: "plan-card-x", planId: "pln-0000000a", title: "original", steps: [{ ...PLAN_STEP, name: "step" }] };
             void emit({ type: "data-plan", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, data: planData });
             // The agent loop reuses+mutates emitted references; the store must already own a copy.
             planData.title = "MUTATED";
             (planData.steps as { name: string }[])[0]!.name = "MUTATED";
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const plan = readPlanCard(findPart((p): p is PlanPart => p.type === "data-plan"));
+        const plan = readPlanCard(requirePart((p): p is PlanPart => p.type === "data-plan"));
         expect(plan.title).toBe("original");
         expect(plan.steps[0]?.name).toBe("step");
     });
@@ -716,21 +749,16 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
         expect(queuedCount()).toBe(0);
     });
 
-    test("a malformed data-ask never pushes a pending entry — a bad status is terminal, not pending", async () => {
+    test("an invalid data-ask is dropped at receipt — it never docks a prompt and never lands a card", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
-            // No id, no status → readAskPart yields askId "" and status "expired" (terminal): it settles
-            // (a no-op) and never pushes, so the docked prompt store stays empty.
-            void emit({ type: "data-ask", source: TOP, data: { title: 5, command: null } } as never);
+            // No id, and a status outside the union: the check of the ask type refuses the part.
+            void emit({ type: "data-ask", source: TOP, data: { title: "t", command: "c", status: "granted" } });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
         expect(activeAsk()).toBeNull();
         expect(queuedCount()).toBe(0);
-        // It still surfaces as a card rather than being swallowed, and the reader that the card renders
-        // through gives it a terminal status.
-        const cards = askCards();
-        expect(cards.length).toBe(1);
-        expect(readAskPart(cards[0]).status).toBe("expired");
+        expect(askCards()).toEqual([]);
     });
 
     test("copy-on-receive: mutating the emitted ask data after emit does not corrupt the card", async () => {
@@ -827,14 +855,13 @@ describe("send() handles data-compaction parts: one part updated in place by its
         expect(compactionParts().map((p) => p.status)).toEqual(["done"]);
     });
 
-    test("a malformed status reads as the terminal status failed", async () => {
+    test("an invalid compaction part is dropped at receipt", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "data-compaction", source: TOP, data: { id: "c-1", status: "paused", tokensBefore: "many" } });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
-        // The store keeps the part as it arrived; the reader that the block renders through gives the terminal status.
-        expect(compactionParts().map((p) => readCompactionPart(p))).toEqual([{ compactionId: "c-1", status: "failed", tokensBefore: 0 }]);
+        expect(compactionParts()).toEqual([]);
     });
 
     test("a reloaded divider mounts as a system message with one compaction part", async () => {
@@ -843,7 +870,7 @@ describe("send() handles data-compaction parts: one part updated in place by its
             role: "system",
             parts: [{ type: "data-compaction", id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 }],
         };
-        await loadMessages(SID, { runtime: () => stubRuntime, loadAll: () => okAsync([[]]), toCortex: () => [divider] });
+        await loadMessages(SID, { runtime: () => stubRuntime, loadAll: () => okAsync([[]]), toChat: () => [divider] });
 
         expect(messages.map((m) => ({ ...m }))).toEqual([divider]);
     });
@@ -933,7 +960,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
             void emit({
                 type: "data-plan",
                 source: { agentId: "tui-chat", callPath: ["tui-chat"] },
-                data: { planId: "plan-1", title: "DE analysis", steps: [{ id: "s1", name: "QC", agent: "prep" }] },
+                data: { id: "plan-card-1", planId: "pln-00000001", title: "DE analysis", steps: [PLAN_STEP] },
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
@@ -949,7 +976,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
             void emit({
                 type: "data-plan",
                 source: { agentId: "tui-chat", callPath: ["tui-chat"] },
-                data: { planId: "plan-1", title: "t", steps: [] },
+                data: { id: "plan-card-1", planId: "pln-00000001", title: "t", steps: [] },
             });
             void emit({ type: "text-delta", text: "after" });
         });
@@ -1102,14 +1129,14 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
                 reads++;
                 return okAsync(fixture as unknown as StoredMessage[][]);
             },
-            // Faithful reconstruction: each stored row (a fixture Row, cast through the seam's harness
-            // message type) becomes one CortexMsg carrying its text, so the trailing message cap is exercised.
-            toCortex: (rows) =>
-                (rows as unknown as Row[]).map((r) => ({
+            // Faithful reconstruction: each stored row (a fixture Row, cast through the stored harness
+            // message type) becomes one ChatMessage carrying its text, so the trailing message cap is exercised.
+            toChat: (rows) =>
+                (rows as unknown as Row[]).map((r): ChatMessage => ({
                     id: `id-${r.seq}`,
                     role: r.role,
                     parts: [{ type: "text", text: r.text }],
-                })) as unknown as ChatMessage[],
+                })),
             reads: () => reads,
         };
     }
@@ -1159,10 +1186,9 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
 });
 
 describe("loadMessages staleness guard", () => {
-    // N rowless turns — the toCortex fakes ignore the rows entirely and answer with their own message.
+    // N rowless turns — the toChat fakes ignore the rows entirely and answer with their own message.
     const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
-    // One assistant text message, shaped enough for cortexToUiMessage to read role/id/parts.
-    const cortexText = (id: string, text: string): ChatMessage[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }] as unknown as ChatMessage[];
+    const chatText = (id: string, text: string): ChatMessage[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }];
 
     test("an older load that lands LAST does not clobber the newer load", async () => {
         // The OLDER load (load 1) blocks at its page read until released; the NEWER load (load 2)
@@ -1175,12 +1201,12 @@ describe("loadMessages staleness guard", () => {
         const oldSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => ResultAsync.fromSafePromise(oldGate.then(() => emptyTurns(1))),
-            toCortex: () => cortexText("old", "old-msg"),
+            toChat: () => chatText("old", "old-msg"),
         };
         const newSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => okAsync(emptyTurns(1)),
-            toCortex: () => cortexText("new", "new-msg"),
+            toChat: () => chatText("new", "new-msg"),
         };
 
         const oldLoad = loadMessages(SID, oldSeams); // blocks on oldGate at its page read
@@ -1205,7 +1231,7 @@ describe("loadMessages staleness guard", () => {
 // animation is submitted while that load is still awaiting Postgres. A turn must supersede a load.
 describe("a turn supersedes a transcript load in flight", () => {
     const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
-    const cortexText = (id: string, text: string): ChatMessage[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }] as unknown as ChatMessage[];
+    const chatText = (id: string, text: string): ChatMessage[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }];
 
     /** Load seams whose page read parks until the returned release is called. */
     function gatedLoadSeams(): { seams: LoadSeams; release: () => void } {
@@ -1217,7 +1243,7 @@ describe("a turn supersedes a transcript load in flight", () => {
             seams: {
                 runtime: () => stubRuntime,
                 loadAll: () => ResultAsync.fromSafePromise(gate.then(() => emptyTurns(1))),
-                toCortex: () => cortexText("stale", "stale-transcript"),
+                toChat: () => chatText("stale", "stale-transcript"),
             },
             release: () => release(),
         };
@@ -1300,7 +1326,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
     test("deltas -> plan card -> no further deltas: the fallback renders below the card", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "here is the plan" }, (emit) => {
             void emit({ type: "text-delta", text: "drafting" });
-            void emit({ type: "data-plan", data: { planId: "p1", title: "T", steps: [] } } as never);
+            void emit({ type: "data-plan", data: { id: "p1", planId: "pln-00000001", title: "T", steps: [] } } as never);
         });
         await send({ sessionId: SID, analysisId: AID, userText: "plan it" }, seams);
 
@@ -1348,7 +1374,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
     test("a turn ending on a card with no fallback leaves no trailing empty part", async () => {
         const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "drafting" });
-            void emit({ type: "data-plan", data: { planId: "p1", title: "T", steps: [] } } as never);
+            void emit({ type: "data-plan", data: { id: "p1", planId: "pln-00000001", title: "T", steps: [] } } as never);
         });
         await send({ sessionId: SID, analysisId: AID, userText: "plan it" }, seams);
 
@@ -1369,7 +1395,7 @@ describe("MESSAGE_CAP answers to the display alone", () => {
                 seen = args;
                 return okAsync([] as StoredMessage[][]);
             },
-            toCortex: () => [],
+            toChat: () => [],
             args: () => seen,
         };
         let seen: unknown[] = [];
@@ -1380,7 +1406,7 @@ describe("MESSAGE_CAP answers to the display alone", () => {
 
 /** Mount a replay through the real load path: the seams give `replayed` as the harness replay of the thread. */
 async function mountReplay(replayed: ChatMessage[]): Promise<void> {
-    await loadMessages(SID, { runtime: () => stubRuntime, loadAll: () => okAsync([[]]), toCortex: () => replayed });
+    await loadMessages(SID, { runtime: () => stubRuntime, loadAll: () => okAsync([[]]), toChat: () => replayed });
 }
 
 // A turn's cost and the time it took are both durable — the harness stores them for the turn and gives
@@ -1540,7 +1566,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         const initialLoad: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => ResultAsync.fromSafePromise(initialGate.then(() => emptyTurns(1))),
-            toCortex: () => [{ id: "old", role: "assistant", parts: [{ type: "text", text: "never-mounted" }] }] as unknown as ChatMessage[],
+            toChat: () => [{ id: "old", role: "assistant", parts: [{ type: "text", text: "never-mounted" }] }],
         };
 
         // The post-turn reload seams: the pg thread now holds the prior history AND the just-finished
@@ -1548,12 +1574,11 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         const reloadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => okAsync(emptyTurns(3)),
-            toCortex: () =>
-                [
-                    { id: "h1", role: "assistant", parts: [{ type: "text", text: "prior history" }] },
-                    { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
-                    { id: "a1", role: "assistant", parts: [{ type: "text", text: "live answer" }] },
-                ] as unknown as ChatMessage[],
+            toChat: () => [
+                { id: "h1", role: "assistant", parts: [{ type: "text", text: "prior history" }] },
+                { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
+                { id: "a1", role: "assistant", parts: [{ type: "text", text: "live answer" }] },
+            ],
         };
 
         const load = loadMessages(SID, initialLoad); // parks — the submit below supersedes it
@@ -1588,7 +1613,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         const completedLoad: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => okAsync(emptyTurns(1)),
-            toCortex: () => [{ id: "h1", role: "assistant", parts: [{ type: "text", text: "history" }] }] as unknown as ChatMessage[],
+            toChat: () => [{ id: "h1", role: "assistant", parts: [{ type: "text", text: "history" }] }],
         };
         await loadMessages(SID, completedLoad);
         expect(messages.length).toBe(1);
@@ -1652,7 +1677,9 @@ describe("display-card parts map identically live and on reload", () => {
         const { live, reloaded } = await liveThenReloaded({ type: "data-presentation", source: TOP, data }, { type: "data-presentation", ...data });
 
         expect(live).toEqual(reloaded);
-        expect(readPresentation(live[0])).toEqual({ shape: "inline", title: "Finding", body: { kind: "markdown", body: "**TP53** up" } });
+        const [card] = live;
+        if (card?.type !== "data-presentation") throw new Error("the live turn landed no presentation part");
+        expect(readPresentation(card)).toEqual({ shape: "inline", title: "Finding", body: { kind: "markdown", body: "**TP53** up" } });
     });
 
     test("a file-reference gallery reads as the same openable card in both paths", async () => {
@@ -1664,7 +1691,9 @@ describe("display-card parts map identically live and on reload", () => {
         const { live, reloaded } = await liveThenReloaded({ type: "data-file-reference", source: TOP, data }, { type: "data-file-reference", ...data });
 
         expect(live).toEqual(reloaded);
-        const view = readFileReference(reloaded[0]);
+        const [card] = reloaded;
+        if (card?.type !== "data-file-reference") throw new Error("the reload mounted no file-reference part");
+        const view = readFileReference(card);
         expect(view.entries.length).toBe(2);
         expect(view.folderPath).toBe("runs/r");
         // The reloaded entries resolve against the analysis of the open workspace.
@@ -1748,8 +1777,8 @@ describe("turnFailureMessage", () => {
 
 describe("promptHistory", () => {
     // Seeded through the REAL load path rather than a hand-built store, so the reader is exercised over
-    // the UIMessage shapes a thread replay actually produces (`cortexToUiMessage` emits one text Part per
-    // text part, which is what makes the multi-part join case reachable at all).
+    // the messages a thread replay actually produces (the replay keeps one text part for each stored text
+    // part, which is what makes the multi-part join case reachable at all).
     type Turn = { role: "user" | "assistant"; texts: string[] };
 
     function seedSeams(fixture: Turn[]): LoadSeams {
@@ -1757,12 +1786,12 @@ describe("promptHistory", () => {
             runtime: () => stubRuntime,
             // One turn per fixture entry; the replay below reads entries, not turn boundaries.
             loadAll: () => okAsync(fixture.map((t) => [t]) as unknown as StoredMessage[][]),
-            toCortex: (rows) =>
-                (rows as unknown as Turn[]).map((t, i) => ({
+            toChat: (rows) =>
+                (rows as unknown as Turn[]).map((t, i): ChatMessage => ({
                     id: `id-${i}`,
                     role: t.role,
-                    parts: t.texts.map((text) => ({ type: "text", text })),
-                })) as unknown as ChatMessage[],
+                    parts: t.texts.map((text): MessagePart => ({ type: "text", text })),
+                })),
         };
     }
 
@@ -1817,12 +1846,12 @@ describe("hasPromptHistory", () => {
             runtime: () => stubRuntime,
             // One turn per fixture entry; the replay below reads entries, not turn boundaries.
             loadAll: () => okAsync(fixture.map((t) => [t]) as unknown as StoredMessage[][]),
-            toCortex: (rows) =>
-                (rows as unknown as Turn[]).map((t, i) => ({
+            toChat: (rows) =>
+                (rows as unknown as Turn[]).map((t, i): ChatMessage => ({
                     id: `id-${i}`,
                     role: t.role,
-                    parts: t.texts.map((text) => ({ type: "text", text })),
-                })) as unknown as ChatMessage[],
+                    parts: t.texts.map((text): MessagePart => ({ type: "text", text })),
+                })),
         };
     }
 

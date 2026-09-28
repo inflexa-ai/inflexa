@@ -2,8 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { createMockMouse } from "@opentui/core/testing";
 import { errAsync, okAsync } from "neverthrow";
-import type { DbError, Pool, StoredMessage, Thread } from "@inflexa-ai/harness";
-import type { ChatMessage } from "@inflexa-ai/harness/contracts/message.js";
+import type { ChatMessage, DbError, Pool, StoredMessage, Thread } from "@inflexa-ai/harness";
 
 import { reportThread, threadPageOf } from "../../test_support/threads.ts";
 import { Chat } from "./chat.tsx";
@@ -77,15 +76,20 @@ function transcriptSeams(rows: FixtureRow[]): LoadSeams {
         runtime: () => fakeRuntime,
         // One turn carrying every fixture row: the replay below reads rows, not turn boundaries.
         loadAll: () => okAsync([rows] as unknown as StoredMessage[][]),
-        toCortex: (loaded) =>
-            (loaded as unknown as FixtureRow[]).map((r) => ({
+        toChat: (loaded) =>
+            (loaded as unknown as FixtureRow[]).map((r): ChatMessage => ({
                 id: `id-${r.seq}`,
                 role: r.role,
                 parts: [
                     { type: "text", text: `${r.role} ${r.seq}` },
-                    ...(r.spawns ?? []).map((threadId) => ({ type: "data-child-session-started", threadId, parentThreadId: SID, threadType: "report" })),
+                    ...(r.spawns ?? []).map((threadId) => ({
+                        type: "data-child-session-started" as const,
+                        threadId,
+                        parentThreadId: SID,
+                        threadType: "report" as const,
+                    })),
                 ],
-            })) as unknown as ChatMessage[],
+            })),
     };
 }
 

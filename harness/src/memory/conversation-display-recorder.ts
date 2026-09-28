@@ -2,10 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { ModelMessage, UIMessagePart } from "ai";
 
 import type { ChatFrame, ChatPartFrame, EventSource } from "../contracts/chat-events.js";
-import { applyChatFrame, isRootFrame, toChatFrame } from "../contracts/chat-frame.js";
+import { applyChatFrame, checkChatPart, isRootFrame, toChatFrame } from "../contracts/chat-frame.js";
 import type { ChatMessage, MessagePart } from "../contracts/message.js";
 import { PART_REGISTRY, type ChatPartType } from "../contracts/part-registry.js";
-import { ChatPartSchema } from "../contracts/schemas/chat-parts.js";
 import type { EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, type CompactionMarker } from "./ai-sdk-message-storage.js";
 import { conversationDisplayPart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
@@ -41,12 +40,11 @@ function durableConversationType(type: string): type is ChatPartType {
     return descriptor.emitter === "conversation" && descriptor.consumer === "conversation" && !descriptor.transient;
 }
 
-/** The validated part of a data frame, copied at receipt, because the emitter keeps its own reference to the payload. */
+/** The checked part of a data frame, copied at receipt, because the emitter keeps its own reference to the payload. */
 function recordedPart(frame: ChatPartFrame): ChatPartFrame {
-    const { source: _source, ...part } = frame;
-    const parsed = ChatPartSchema.safeParse(part);
-    if (!parsed.success) throw new Error(`Invalid emitted conversation part ${frame.type}: ${parsed.error.message}`);
-    return jsonCopy(parsed.data);
+    const checked = checkChatPart(frame);
+    if (!checked.ok) throw new Error(`Invalid emitted conversation part ${frame.type}: ${checked.error}`);
+    return jsonCopy(checked.frame);
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { envelopeMessage, summaryMarkerMessage, syntheticRecordMessage } from "./ai-sdk-message-storage.js";
-import { storedMessagesToCortex } from "./conversation-display-replay.js";
+import { storedMessagesToChat } from "./conversation-display-replay.js";
 import { createConversationDisplayRecorder } from "./conversation-display-recorder.js";
 import { envelopeDisplayMessages, type ConversationUIMessage } from "./conversation-display-storage.js";
 import type { StoredMessage, StoredTurnRecord } from "./thread-history.js";
@@ -48,7 +48,7 @@ describe("recorded conversation display replay", () => {
 
         const display = recorder.finish();
         const model = { role: "user" as const, content: "show everything" };
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             {
                 seq: 0,
                 envelope: envelopeMessage(model),
@@ -82,7 +82,7 @@ describe("recorded conversation display replay", () => {
         await recorder.emit({ type: "tool-finished", source: SOURCE, toolUseId: "t2", name: "execute_command", outcome: "denied" });
 
         const model = { role: "user" as const, content: "run it" };
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             { seq: 0, envelope: envelopeMessage(model), message: model, displayEnvelope: envelopeDisplayMessages(recorder.finish()) },
         ]);
 
@@ -104,7 +104,7 @@ describe("recorded conversation display replay", () => {
         await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "read_file", input: {}, detail: "scripts/run.py" });
 
         const model = { role: "user" as const, content: "run it" };
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             { seq: 0, envelope: envelopeMessage(model), message: model, displayEnvelope: envelopeDisplayMessages(recorder.finish({ interrupted: true })) },
         ]);
 
@@ -118,7 +118,7 @@ describe("recorded conversation display replay", () => {
         const user = { role: "user" as const, content: "q" };
         const assistant = { role: "assistant" as const, content: "a" };
         const usage = { inputTokens: 10, outputTokens: 5 };
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             {
                 seq: 0,
                 envelope: envelopeMessage(user),
@@ -138,7 +138,7 @@ describe("recorded conversation display replay", () => {
         const user = { role: "user" as const, content: "q" };
         const assistant = { role: "assistant" as const, content: "a" };
         const usage = { inputTokens: 10, outputTokens: 5 };
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             {
                 seq: 0,
                 envelope: envelopeMessage(user),
@@ -158,7 +158,7 @@ describe("recorded conversation display replay", () => {
     it("folds a duration that no rollup accompanies, and keeps a measured zero", () => {
         const user = { role: "user" as const, content: "q" };
         const assistant = { role: "assistant" as const, content: "a" };
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             {
                 seq: 0,
                 envelope: envelopeMessage(user),
@@ -181,7 +181,7 @@ describe("recorded conversation display replay", () => {
         const user = { role: "user" as const, content: "q" };
         const assistant = { role: "assistant" as const, content: "a" };
         const createdAt = new Date("2026-02-03T10:15:30.000Z");
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             {
                 seq: 0,
                 envelope: envelopeMessage(user),
@@ -206,7 +206,7 @@ describe("recorded conversation display replay", () => {
     it("replays a turn stored without an author with no author key", () => {
         const user = { role: "user" as const, content: "q" };
         const createdAt = new Date("2026-02-03T10:15:30.000Z");
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             {
                 seq: 0,
                 envelope: envelopeMessage(user),
@@ -227,7 +227,7 @@ describe("recorded conversation display replay", () => {
 
     it("replays a row that carries no time with no createdAt key", () => {
         const user = { role: "user" as const, content: "q" };
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             {
                 seq: 0,
                 envelope: envelopeMessage(user),
@@ -249,7 +249,7 @@ describe("recorded conversation display replay", () => {
             { id: "a", role: "assistant", parts: [{ type: "text", text: "a" }] },
         ]);
 
-        storedMessagesToCortex([
+        storedMessagesToChat([
             {
                 seq: 0,
                 envelope: envelopeMessage(user),
@@ -267,7 +267,7 @@ describe("recorded conversation display replay", () => {
 
     it("skips a row with no stored projection rather than reconstructing one", () => {
         const model = { role: "user" as const, content: "written before display was persisted" };
-        expect(storedMessagesToCortex([{ seq: 0, envelope: envelopeMessage(model), message: model }])).toEqual([]);
+        expect(storedMessagesToChat([{ seq: 0, envelope: envelopeMessage(model), message: model }])).toEqual([]);
     });
 });
 
@@ -295,7 +295,7 @@ describe("replay of a turn stored in rounds", () => {
     }
 
     it("gives one assistant message for two rounds with one id, with the parts in order", () => {
-        const replay = storedMessagesToCortex([openingRow(0), roundRow(1, [{ type: "text", text: "first" }]), roundRow(4, [{ type: "text", text: "second" }])]);
+        const replay = storedMessagesToChat([openingRow(0), roundRow(1, [{ type: "text", text: "first" }]), roundRow(4, [{ type: "text", text: "second" }])]);
 
         expect(replay.map((m) => m.role)).toEqual(["user", "assistant"]);
         expect(replay[1]!.parts).toEqual([
@@ -305,7 +305,7 @@ describe("replay of a turn stored in rounds", () => {
     });
 
     it("replaces the earlier copy of a reconciling part in its position", () => {
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             openingRow(0),
             roundRow(1, [{ type: "text", text: "before" }, ask("pending")]),
             roundRow(4, [ask("resolved"), { type: "text", text: "after" }]),
@@ -319,7 +319,7 @@ describe("replay of a turn stored in rounds", () => {
     });
 
     it("folds the rollup, the duration, and the interruption of an aborted turn record", () => {
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             openingRow(0, { status: "aborted", usage, durationMs: 4321 }),
             roundRow(1, [{ type: "text", text: "first" }]),
             roundRow(4, [{ type: "text", text: "partial" }]),
@@ -332,7 +332,7 @@ describe("replay of a turn stored in rounds", () => {
     it("keeps the fold of the row figures for an older turn with no record", () => {
         const older = { role: "assistant" as const, content: "an older answer" };
         const newer = { inputTokens: 20, outputTokens: 7 };
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             {
                 ...openingRow(0),
                 displayEnvelope: envelopeDisplayMessages([
@@ -361,7 +361,7 @@ describe("replay of a turn stored in rounds", () => {
     }
 
     it("gives two assistant messages with the divider between them for a divider between two rounds", () => {
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             openingRow(0, { status: "done", usage }),
             roundRow(3, [{ type: "text", text: "first" }]),
             dividerRow(9, "done"),
@@ -381,7 +381,7 @@ describe("replay of a turn stored in rounds", () => {
     });
 
     it("gives the divider of a drop with the status failed", () => {
-        const replay = storedMessagesToCortex([openingRow(0), roundRow(3, [{ type: "text", text: "first" }]), dividerRow(9, "failed")]);
+        const replay = storedMessagesToChat([openingRow(0), roundRow(3, [{ type: "text", text: "first" }]), dividerRow(9, "failed")]);
 
         expect(replay[2]!.parts).toEqual([
             { type: "data-compaction", id: "c-1", status: "failed", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
@@ -391,7 +391,7 @@ describe("replay of a turn stored in rounds", () => {
     it("keeps a failure note as a system message after the assistant message of its turn", () => {
         const noteText = "[Turn Failed]\nThe turn stopped before it finished. Reason: The model request failed.";
         const note = syntheticRecordMessage(noteText);
-        const replay = storedMessagesToCortex([
+        const replay = storedMessagesToChat([
             openingRow(0, { status: "failed", reason: "The model request failed.", usage }),
             roundRow(1, [{ type: "text", text: "first" }]),
             {
