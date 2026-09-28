@@ -146,9 +146,6 @@ export interface ChatErrorEvent {
 /** The discriminated union of all chat-stream events. */
 export type ChatEvent = TextDeltaEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent;
 
-/** @deprecated Use {@link ChatEvent}. */
-export type CortexChatEvent = ChatEvent;
-
 /** A `data-*` part as a frame, with the source of its emitter when the emitter stamped one. */
 export type ChatPartFrame = ChatPart & { source?: EventSource };
 

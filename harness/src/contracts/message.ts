@@ -97,9 +97,3 @@ export interface ChatMessage {
      */
     createdAt?: string;
 }
-
-/** @deprecated Use {@link MessagePart}. */
-export type CortexPart = MessagePart;
-
-/** @deprecated Use {@link ChatMessage}. */
-export type CortexMessage = ChatMessage;

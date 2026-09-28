@@ -179,7 +179,7 @@ describe("the known differences between the live path and the replay", () => {
     });
 
     it("a compaction: the replay gives a divider between two assistant messages, and the live message holds the part", async () => {
-        const figures = { tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
+        const figures = { tokensBefore: 162_000, durationMs: 21_000 };
         const exchange = [syntheticUserMessage("Reply with the summary."), { role: "assistant", content: "The user compares two groups." } as ModelMessage].map(
             (message) => markCompactionExchange(message, "c-1"),
         );

@@ -379,7 +379,7 @@ export type { ConversationDisplayMetadata, ConversationUIData, ConversationUIMes
 // along with the startup backfill that was its only caller. `parseStoredDisplayEnvelope` absorbs the
 // one thing a read can now meet and not understand — a part whose key this vocabulary has retired —
 // by dropping that part, so one stale row cannot fail a whole thread.
-export { storedMessagesToChat, storedMessagesToCortex } from "./memory/conversation-display-replay.js";
+export { storedMessagesToChat } from "./memory/conversation-display-replay.js";
 
 // Chat wire contracts — the chat-stream vocabulary a consumer
 // rendering the stream types against. Two names are deliberately NOT re-exported
@@ -400,7 +400,6 @@ export type {
     ChatEvent,
     ChatFrame,
     ChatPartFrame,
-    CortexChatEvent,
     TextDeltaEvent,
     ToolStartedEvent,
     ToolFinishedEvent,
@@ -416,7 +415,6 @@ export type { TurnTerminal, ApplyFrameResult, ChatPartCheck } from "./contracts/
 export type { TokenUsageRollup } from "./contracts/usage.js";
 export type {
     ChatPart,
-    CortexChatPart,
     PresentationPart,
     PresentationContent,
     PlanPart,
@@ -450,7 +448,7 @@ export type {
     ReportRenderedPart,
 } from "./contracts/chat-parts.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./contracts/part-registry.js";
-export type { ChatPartType, CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./contracts/part-registry.js";
+export type { ChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./contracts/part-registry.js";
 // The source grammar of a `structure` presentation card — a host re-runs the same parse over a
 // persisted `url` before it fetches, so the rule lives in one place for both sides.
 export { parseStructureUrl, alphafoldEntryUrl, alphafoldPredictionUrl } from "./contracts/structure-source.js";

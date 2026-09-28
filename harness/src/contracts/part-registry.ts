@@ -2,9 +2,6 @@ import type { ChatPart } from "./chat-parts.js";
 
 export type ChatPartType = ChatPart["type"];
 
-/** @deprecated Use {@link ChatPartType}. */
-export type CortexChatPartType = ChatPartType;
-
 export type PartEmitter = "workflow" | "conversation";
 export type PartConsumer = "sidebar" | "conversation";
 

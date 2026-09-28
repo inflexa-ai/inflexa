@@ -482,6 +482,3 @@ export type ChatPart =
     | ChildSessionStartedPart
     | ReportRenderedPart
     | CompactionPart;
-
-/** @deprecated Use {@link ChatPart}. */
-export type CortexChatPart = ChatPart;

@@ -37,7 +37,6 @@ export type {
     ReportRenderedPart,
     CompactionPart,
     ChatPart,
-    CortexChatPart,
 } from "./chat-parts.js";
 
 export type {
@@ -50,7 +49,6 @@ export type {
     ChatEvent,
     ChatFrame,
     ChatPartFrame,
-    CortexChatEvent,
 } from "./chat-events.js";
 export type { TokenUsageRollup } from "./usage.js";
 export { DATA_PROFILE_RUN_LITERAL } from "./data-profile.js";
@@ -104,11 +102,11 @@ export type {
     GroupRoleEntry,
     ProbeOutcome,
 } from "./profile-vocabulary.js";
-export type { TextPart, ToolCallPart, MessagePart, ChatMessage, CortexPart, CortexMessage } from "./message.js";
+export type { TextPart, ToolCallPart, MessagePart, ChatMessage } from "./message.js";
 export { toChatFrame, applyChatFrame, checkChatPart } from "./chat-frame.js";
 export type { TurnTerminal, ApplyFrameResult, ChatPartCheck } from "./chat-frame.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./part-registry.js";
-export type { ChatPartType, CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./part-registry.js";
+export type { ChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./part-registry.js";
 
 export { AnalogyCoverageSchema, AnalogyReportSchema, AnalogyReportErrorSchema, AnalogicalReasonerOutputSchema } from "./analogy-report.js";
 export type { AnalogyCoverage, AnalogyReport, AnalogyReportError, AnalogicalReasonerOutput } from "./analogy-report.js";

@@ -74,6 +74,3 @@ export function storedMessagesToChat(messages: readonly StoredMessage[]): ChatMe
     foldTurnRecord(turnAssistant, turnRecord);
     return out;
 }
-
-/** @deprecated Use {@link storedMessagesToChat}. */
-export const storedMessagesToCortex = storedMessagesToChat;

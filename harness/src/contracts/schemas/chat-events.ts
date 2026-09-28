@@ -63,6 +63,3 @@ export const ChatEventSchema = z.discriminatedUnion("type", [
     FinishEventSchema,
     ChatErrorEventSchema,
 ]);
-
-/** @deprecated Use {@link ChatEventSchema}. */
-export const CortexChatEventSchema = ChatEventSchema;
