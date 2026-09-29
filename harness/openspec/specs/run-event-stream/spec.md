@@ -92,6 +92,22 @@ Whether a part reconciles SHALL be read from the part registry rather than from 
 - **WHEN** a part type's reconciling classification is read
 - **THEN** it comes from the shared part registry, not from a list maintained inside this capability
 
+### Requirement: The same fold is exported for a live stream
+
+The harness SHALL export `pipeFoldedRunEvents(entries, emit, flushMs)` for an embedder that reads the run streams itself. It SHALL key an entry with `reconcileKey`, the key of the batch fold. It SHALL hold a keyed entry for `flushMs`, and a later entry with the same key SHALL replace the held one. It SHALL give every other entry to `emit` at once, also an entry of a type that the registry does not know. When the stream ends, it SHALL give each held entry to `emit`.
+
+#### Scenario: A catch-up burst is delivered once per key
+
+- **GIVEN** a stream replays several entries with one reconcile key inside one window
+- **WHEN** `pipeFoldedRunEvents` reads the stream
+- **THEN** `emit` receives only the latest of those entries
+
+#### Scenario: A workflow envelope passes at once
+
+- **GIVEN** an entry of a type that the registry does not know, such as `data-loop-event`
+- **WHEN** `pipeFoldedRunEvents` reads it
+- **THEN** `emit` receives it at once, unchanged
+
 ### Requirement: Ordering is guaranteed within a stream, not across streams
 
 Parts originating from a single workflow SHALL be delivered in the order that workflow wrote them. The subscription SHALL NOT impose a total order across the parent and its children, because those workflows execute concurrently and the producers establish no cross-stream clock.

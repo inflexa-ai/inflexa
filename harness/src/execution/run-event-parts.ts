@@ -1,12 +1,11 @@
 /**
- * The two input-only rules of the run-event read seam: narrowing a raw durable
- * stream value to the chat data-part contract, and the latest-wins reconciling
- * fold applied before delivery.
+ * The rules of the run-event read side that need no database and no durability
+ * engine: narrowing a raw durable stream value to the chat data-part contract,
+ * and the latest-wins reconciling fold, as a batch for `createRunEventStream`
+ * and live for an embedder that reads the run streams itself.
  *
- * They live apart from the reader because they are the only part of the seam
- * whose correctness is a function of its argument alone — no database, no
- * durability engine, no clock — and keeping them here is what lets that be
- * proven directly instead of inferred from a driven subscription.
+ * They live apart from the reader, thus a test drives them directly instead of
+ * through a subscription.
  */
 
 import { reconcileKey } from "../contracts/chat-frame.js";
@@ -66,4 +65,64 @@ export function foldRunEventParts(parts: readonly ChatPart[]): ChatPart[] {
         folded.push(part);
     }
     return folded;
+}
+
+/**
+ * The live form of {@link foldRunEventParts}, for a stream that stays open. An
+ * entry with a reconcile key waits `flushMs`, and a later entry with the same
+ * key replaces it. Thus a catch-up burst delivers each key once, and a live
+ * update lands one window later. Every other entry, also one of a type that the
+ * registry does not know, goes to `emit` at once, thus it can overtake a held
+ * entry. The held entries go to `emit` when the stream ends.
+ */
+export async function pipeFoldedRunEvents<T>(
+    entries: AsyncIterable<T>,
+    emit: (entry: T) => Promise<void>,
+    flushMs: number,
+): Promise<void> {
+    const latestByKey = new Map<string, T>();
+    const pendingKeys = new Set<string>();
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    let flushChain: Promise<void> = Promise.resolve();
+
+    const flushPending = async (): Promise<void> => {
+        flushTimer = null;
+        const keys = [...pendingKeys];
+        pendingKeys.clear();
+        for (const key of keys) {
+            const entry = latestByKey.get(key);
+            if (entry !== undefined) await emit(entry);
+        }
+    };
+
+    const scheduleFlush = (): void => {
+        if (flushTimer !== null) return;
+        flushTimer = setTimeout(() => {
+            // A timed flush has no caller to report to. A lasting emit failure
+            // still reaches the caller, through the next direct emit or the
+            // final flush.
+            flushChain = flushChain.then(flushPending).catch(() => undefined);
+        }, flushMs);
+    };
+
+    try {
+        for await (const entry of entries) {
+            const part = parseRunEventPart(entry);
+            const key = part === null ? undefined : reconcileKey(part);
+            if (key === undefined) {
+                await emit(entry);
+                continue;
+            }
+            latestByKey.set(key, entry);
+            pendingKeys.add(key);
+            scheduleFlush();
+        }
+    } finally {
+        if (flushTimer !== null) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+        }
+        await flushChain;
+        if (pendingKeys.size > 0) await flushPending();
+    }
 }
