@@ -68,6 +68,8 @@ const DEFAULT_IMAGE_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/${IMAGE_PACKAGES_FIL
  */
 const CLI_TITLE = "System tools (CLI)";
 const NODE_TITLE = "Node (npm)";
+/** The R packages that ship with the R runtime of the image: the base and the recommended packages. */
+const R_BASE_TITLE = "R (ships with R)";
 
 /** The section title of each known lock track. An unknown track titles itself. */
 const TRACK_TITLES: Record<string, string> = {
@@ -116,16 +118,22 @@ export function lockSections(lock: FarmLock): Section[] {
 }
 
 /**
- * Group the image record into its two sections, in the order of the record.
- * An empty track yields no section, so the report never carries a heading
- * with nothing under it.
+ * Group the image record into its sections, in the order of the record. An
+ * empty or absent track yields no section, so the report never carries a
+ * heading with nothing under it.
  *
  * A `system_tools` row renders its `executable` name where the record gives
  * one, because an agent invokes the binary rather than the conda package
- * (the manifest `binaries:` map holds the pairs that differ).
+ * (the manifest `binaries:` map holds the pairs that differ). The `r_base`
+ * rows are the R track: a `names` lookup of `survival` or `MASS` resolves
+ * there, with the version the runtime ships, and the `language: "r"` filter
+ * lists them beside the farm packages.
  */
 export function imageSections(record: ImagePackages): Section[] {
     const sections: Section[] = [];
+    if (record.r_base !== undefined && record.r_base.length > 0) {
+        sections.push({ title: R_BASE_TITLE, track: "r", packages: record.r_base.map((pkg) => ({ name: pkg.name, version: pkg.version })) });
+    }
     if (record.system_tools.length > 0) {
         sections.push({
             title: CLI_TITLE,

@@ -6,6 +6,7 @@ import { dataProfilerPrompt } from "../../prompts/sandbox/data-profiler.js";
 
 import { makeFakeSandboxAgentDeps } from "./__fixtures__/deps.js";
 import { createSandboxAgents, SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS, SANDBOX_AGENT_META } from "./index.js";
+import { BASE_SANDBOX_TOOLS } from "./shared.js";
 
 describe("createSandboxAgents", () => {
     const deps = makeFakeSandboxAgentDeps();
@@ -17,6 +18,13 @@ describe("createSandboxAgents", () => {
 
     it("covers the full ported roster (21 agents)", () => {
         expect(Object.keys(agents)).toHaveLength(21);
+    });
+
+    it("every agent lists the knowledge template through the base list, because the template follows the step, not the specialist", () => {
+        expect(BASE_SANDBOX_TOOLS).toContain("knowledgeTemplate");
+        for (const [id, meta] of Object.entries(SANDBOX_AGENT_META)) {
+            expect(meta.tools.includes("knowledgeTemplate"), `${id} lists knowledgeTemplate`).toBe(true);
+        }
     });
 
     it("every AgentDefinition.tools is meta.tools plus the always-on set", () => {
@@ -39,9 +47,14 @@ describe("createSandboxAgents", () => {
             expect(toolIds.has("edit_file"), `${id} edit_file`).toBe(true);
 
             // The fixture deps wire no blockerHolder / embedding / skillsDir, so the
-            // resolved surface is exactly the always-on tools + meta.tools.
+            // resolved surface is exactly the always-on tools + meta.tools. The
+            // knowledge template is the one allowlist member that resolves to
+            // nothing without a knowledge client, thus it does not count here.
             const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + 2;
-            const expected = alwaysOnCount + new Set(meta.tools).size;
+            const declared = new Set(meta.tools);
+            declared.delete("knowledgeTemplate");
+            const expected = alwaysOnCount + declared.size;
+            expect(toolIds.has("knowledge_template"), `${id} knowledge_template without a client`).toBe(false);
             expect(def.tools.length, `${id} tool count`).toBe(expected);
         }
     });
