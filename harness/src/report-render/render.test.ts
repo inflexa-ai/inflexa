@@ -248,20 +248,20 @@ describe("the block mark", () => {
         return blocks.flatMap((block) => [block.id, ...(block.kind === "section" ? blockIdsOf(block.blocks) : [])]);
     }
 
-    it("marks each block of the page with its id, with the lineage and without it", () => {
+    it("marks each block of the page with its id, with the lineage and without it", async () => {
         const ids = blockIdsOf(FIXTURE_DOCUMENT.sections);
         for (const provenance of [undefined, FIXTURE_PROVENANCE]) {
-            const page = load(renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance })._unsafeUnwrap().html);
+            const page = load((await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance }))._unsafeUnwrap().html);
             for (const id of ids) {
                 expect(page(`[${BLOCK_ID_ATTRIBUTE}="${id}"]`).length).toBeGreaterThan(0);
             }
         }
     });
 
-    it("marks each paragraph and the list of a text block, and adds no element", () => {
+    it("marks each paragraph and the list of a text block, and adds no element", async () => {
         const block: TextBlock = { kind: "text", id: "t1", content: { prose: "One.\n\nTwo.", list: { ordered: false, items: ["A.", "B."] } } };
         const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [block] }] };
-        const page = load(renderReportPage(document, {})._unsafeUnwrap().html);
+        const page = load((await renderReportPage(document, {}))._unsafeUnwrap().html);
 
         // A text block has no container, thus the capture of the block reads the union of these boxes.
         expect(
@@ -2757,7 +2757,7 @@ describe("the chart bootstrap under a broken chart", () => {
                 throw new Error("bad option");
             }
             good.push("init");
-            return { on: (_event: string, listener: () => void) => listener(), setOption: () => undefined };
+            return { on: (event: string, listener: () => void) => event === "finished" && listener(), setOption: () => undefined };
         });
 
         // The readiness signal still fires, thus a capture returns on the event and not at its timeout.
@@ -2774,15 +2774,17 @@ describe("the chart bootstrap under a broken chart", () => {
 describe("the chart bootstrap binds the toolbox", () => {
     /**
      * Run the bootstrap over one container whose option carries the toolbox of a scatter. Give the set options, the
-     * window listeners, and the canvas layers of the chart.
+     * window listeners, the events that the bootstrap listens to on the chart, and the canvas layers of the chart.
      */
     function bootToolbox(): {
         applied: Record<string, unknown>[];
         listeners: Record<string, () => void>;
+        chartEvents: string[];
         layers: { zlevel: number; dom: { style: Record<string, string> } }[];
     } {
         const applied: Record<string, unknown>[] = [];
         const listeners: Record<string, () => void> = {};
+        const chartEvents: string[] = [];
         const layers = [0, 1, TOOLBOX_ZLEVEL].map((zlevel) => ({ zlevel, dom: { style: {} as Record<string, string> } }));
         const win: Record<string, unknown> = {
             addEventListener: (event: string, listener: () => void) => {
@@ -2800,7 +2802,10 @@ describe("the chart bootstrap binds the toolbox", () => {
             },
         };
         const instance = {
-            on: (_event: string, listener: () => void) => listener(),
+            on: (event: string, listener: () => void) => {
+                chartEvents.push(event);
+                if (event === "finished") listener();
+            },
             setOption: (given: Record<string, unknown>) => applied.push(given),
             getZr: () => ({ painter }),
         };
@@ -2809,8 +2814,12 @@ describe("the chart bootstrap binds the toolbox", () => {
         const errors: string[] = [];
         new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
         expect(errors).toEqual([]);
-        return { applied, listeners, layers };
+        return { applied, listeners, chartEvents, layers };
     }
+
+    it("attaches the zoom handler of the toolbox to the chart", () => {
+        expect(bootToolbox().chartEvents).toEqual(expect.arrayContaining(["datazoom", "restore"]));
+    });
 
     it("binds each handler name of the toolbox to its page function before the chart reads the option", () => {
         const { applied } = bootToolbox();
@@ -2855,7 +2864,10 @@ describe("the chart bootstrap registers the named renderers", () => {
         const echarts = {
             init: () => {
                 calls.push("init");
-                return { on: (_event: string, listener: () => void) => listener(), setOption: (given: Record<string, unknown>) => applied.push(given) };
+                return {
+                    on: (event: string, listener: () => void) => event === "finished" && listener(),
+                    setOption: (given: Record<string, unknown>) => applied.push(given),
+                };
             },
             getInstanceByDom: () => undefined,
             registerCustomSeries: (name: string, render: unknown) => {
@@ -3112,7 +3124,7 @@ describe("the shared chart payload", () => {
         const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
         const echarts = {
             init: () => ({
-                on: (_event: string, listener: () => void) => listener(),
+                on: (event: string, listener: () => void) => event === "finished" && listener(),
                 setOption: (given: Record<string, unknown>) => {
                     applied.push(given);
                 },
@@ -3392,7 +3404,7 @@ describe("the PNG download of the page", () => {
             init: (_dom: unknown, theme: unknown, opts: Record<string, unknown> | undefined) => {
                 init.push({ theme, ...(opts ?? {}) });
                 return {
-                    on: (_event: string, listener: () => void) => listener(),
+                    on: (event: string, listener: () => void) => event === "finished" && listener(),
                     setOption: (given: Record<string, unknown>) => setOption.push(given),
                     getDataURL: (given: Record<string, unknown>) => {
                         dataUrl.push(given);
@@ -3506,7 +3518,11 @@ describe("the hybrid SVG download of the page", () => {
             createElement: () => ({ click: () => downloads.push("download") }),
         };
         const echarts = {
-            init: () => ({ on: (_event: string, listener: () => void) => listener(), setOption: () => undefined, dispose: () => undefined }),
+            init: () => ({
+                on: (event: string, listener: () => void) => event === "finished" && listener(),
+                setOption: () => undefined,
+                dispose: () => undefined,
+            }),
             getInstanceByDom: () => undefined,
             registerCustomSeries: () => undefined,
         };

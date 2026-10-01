@@ -4,10 +4,12 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartOpts, type ChartRow, type EchartOption } from "../chart.js";
 import { exportOption } from "../chart-renderers.js";
+import { CHART_TOOLBOX_SOURCE, pageChartOption } from "../chart-toolbox.js";
 import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../design.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import { BELOW_RESOLUTION_SYMBOL, POINT_NAMES } from "./dense.js";
@@ -407,5 +409,148 @@ describe("the dense Manhattan plot", () => {
         // The chromosome names ride the page option after the points, thus the page draws them over the payload points.
         const names = seriesOf(render.option)[22];
         expect((names.data as unknown[]).length).toBe(22);
+    });
+});
+
+describe("the Manhattan chromosome names after a zoom of the page toolbox", () => {
+    /** The ids that the chart runtime gives the zoom components of the toolbox for the first x axis and the first y axis. */
+    const ZOOM_IDS = { x: "\0_ec_\0toolbox-dataZoom_xAxis0", y: "\0_ec_\0toolbox-dataZoom_yAxis0" } as const;
+
+    /** The page functions of the bootstrap: the binding of each named page function, and the zoom handler that the bootstrap attaches after the init. */
+    const page = new Function(`${CHART_TOOLBOX_SOURCE}\nreturn { bind: reportBindToolbox, watch: reportWatchZoom };`)() as {
+        readonly bind: (option: EchartOption) => void;
+        readonly watch: (chart: echarts.ECharts, option: EchartOption) => void;
+    };
+
+    /** A zoom window in data units, as a box select of the toolbox gives it. */
+    interface ZoomWindow {
+        readonly x: readonly [number, number];
+        readonly y: readonly [number, number];
+    }
+
+    /**
+     * One act of the reader on the toolbox: a box select, the undo of the zoom to the full range, as the last undo of
+     * the zoom history gives it, or the restore.
+     */
+    type Step = ZoomWindow | "undo" | "restore";
+
+    /** The texts that the page chart draws under its plot and to the left of its plot, inside the window. */
+    interface PlotTexts {
+        readonly under: string[];
+        readonly left: string[];
+    }
+
+    /**
+     * The texts that the page chart draws after the steps of the reader. The chart reads the page option as the
+     * bootstrap binds it, the bootstrap attaches the zoom handler, and a zoom goes through the zoom components of
+     * the toolbox, as a box select does.
+     */
+    function textsAfter(steps: readonly Step[]): PlotTexts {
+        const option = pageChartOption(derive(), "manhattan");
+        page.bind(option);
+        const chart = echarts.init(null, undefined, { renderer: "svg", ssr: true, width: 900, height: 400 });
+        try {
+            page.watch(chart, option);
+            chart.setOption(option);
+            const x = option.xAxis as EchartOption;
+            const full: ZoomWindow = { x: [x.min as number, x.max as number], y: [0, asTop(option)] };
+            let window = full;
+            for (const step of steps) {
+                if (step === "restore") {
+                    chart.dispatchAction({ type: "restore" });
+                    window = full;
+                } else if (step === "undo") {
+                    chart.dispatchAction({
+                        type: "dataZoom",
+                        batch: [
+                            { dataZoomId: ZOOM_IDS.x, start: 0, end: 100 },
+                            { dataZoomId: ZOOM_IDS.y, start: 0, end: 100 },
+                        ],
+                    });
+                    window = full;
+                } else {
+                    chart.dispatchAction({
+                        type: "dataZoom",
+                        batch: [
+                            { dataZoomId: ZOOM_IDS.x, startValue: step.x[0], endValue: step.x[1] },
+                            { dataZoomId: ZOOM_IDS.y, startValue: step.y[0], endValue: step.y[1] },
+                        ],
+                    });
+                    window = step;
+                }
+            }
+            const [left, bottom] = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [window.x[0], window.y[0]]);
+            const [right, top] = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [window.x[1], window.y[1]]);
+            const texts: PlotTexts = { under: [], left: [] };
+            for (const element of chart.getZr().storage.getDisplayList(true)) {
+                const text: unknown = Reflect.get(element.style, "text");
+                if (typeof text !== "string" || element.invisible) continue;
+                const box = element.getBoundingRect().clone();
+                box.applyTransform(element.getComputedTransform());
+                const [middleX, middleY] = [box.x + box.width / 2, box.y + box.height / 2];
+                if (box.y >= bottom && middleX >= left && middleX <= right) texts.under.push(text);
+                if (box.x + box.width <= left && middleY >= top && middleY <= bottom) texts.left.push(text);
+            }
+            return texts;
+        } finally {
+            chart.dispose();
+        }
+    }
+
+    /** A text that names chromosome 2, bare or with a `chr` prefix, alone or before a position. */
+    const CHROMOSOME_TWO = /^\s*(chr)?2(?![\d.,])/i;
+
+    /** A text of a genome position on the x axis. */
+    const POSITION = /^chr\w+: [\d.]+ Mb$/;
+
+    it("draws the chromosome names under the plot before a zoom", () => {
+        const { under } = textsAfter([]);
+        expect(under).toEqual(expect.arrayContaining(["1", "2", "3"]));
+        expect(under.filter((text) => POSITION.test(text))).toEqual([]);
+    });
+
+    // Chromosome 2 spans 249.1 to 491 Mb, and its middle sits at 370.05 Mb. The p axis starts at 0, and the peak of
+    // chromosome 2 rises to 14.4.
+    const windows: ReadonlyArray<readonly [string, ZoomWindow]> = [
+        ["a box that holds the middle of chromosome 2 and the floor of the p axis", { x: [100e6, 600e6], y: [0, 15] }],
+        ["a box over the floor of the p axis, across the chromosomes", { x: [100e6, 600e6], y: [5, 15] }],
+        ["a box inside chromosome 2, away from its middle, down to the floor of the p axis", { x: [255e6, 300e6], y: [0, 15] }],
+        ["a box inside chromosome 2, away from its middle, over the floor of the p axis", { x: [255e6, 300e6], y: [5, 15] }],
+    ];
+    for (const [description, window] of windows) {
+        it(`names chromosome 2 under the plot after a zoom to ${description}`, () => {
+            expect(textsAfter([window]).under).toEqual(expect.arrayContaining([expect.stringMatching(CHROMOSOME_TWO)]));
+        });
+    }
+
+    it("prints each round position of a zoomed x axis as the chromosome and the megabases from its start, in place of the chromosome names", () => {
+        // Chromosome 2 starts at the last drawn position of chromosome 1, 248.9 Mb, and chromosome 3 starts at 491 Mb.
+        const { under } = textsAfter([{ x: [100e6, 600e6], y: [0, 15] }]);
+        expect(under.filter((text) => POSITION.test(text))).toEqual(["chr1: 200 Mb", "chr2: 51.1 Mb", "chr2: 151.1 Mb", "chr3: 9 Mb"]);
+        expect(under).not.toEqual(expect.arrayContaining([expect.stringMatching(/^\d$/)]));
+    });
+
+    it("draws the chromosome names again and hides the positions after the undo of the zoom", () => {
+        const { under } = textsAfter([{ x: [255e6, 300e6], y: [5, 15] }, "undo"]);
+        expect(under).toEqual(expect.arrayContaining(["1", "2", "3"]));
+        expect(under.filter((text) => POSITION.test(text))).toEqual([]);
+    });
+
+    it("draws the chromosome names after the restore of the toolbox, and prints the positions again at the next zoom", () => {
+        const zoom: ZoomWindow = { x: [255e6, 300e6], y: [5, 15] };
+        const restored = textsAfter([zoom, "restore"]).under;
+        expect(restored).toEqual(expect.arrayContaining(["1", "2", "3"]));
+        expect(restored.filter((text) => POSITION.test(text))).toEqual([]);
+        expect(textsAfter([zoom, "restore", zoom]).under.filter((text) => POSITION.test(text)).length).toBeGreaterThan(0);
+    });
+
+    it("prints no end of the box on a zoomed value axis, and prints the ends of the full range again after the undo", () => {
+        // The zoom fixes the ends of the p axis to the ends of the box, and the runtime prints each end as a label.
+        const zoomed = textsAfter([{ x: [100e6, 600e6], y: [5.3, 12.7] }]).left;
+        expect(zoomed.length).toBeGreaterThan(0);
+        expect(zoomed).not.toContain("5.3");
+        expect(zoomed).not.toContain("12.7");
+        const full = textsAfter([{ x: [100e6, 600e6], y: [5.3, 12.7] }, "undo"]).left;
+        expect(full).toEqual(expect.arrayContaining(["0", String(asTop(derive()))]));
     });
 });
