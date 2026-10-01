@@ -2652,9 +2652,14 @@ describe("the chart bootstrap waits for each chart to finish", () => {
 
     /**
      * Run the emitted bootstrap over fake containers of the given CSS sizes. Give the readiness flag, each
-     * fake chart, and the resize listener of the window.
+     * fake container, each fake chart, and the resize listener of the window.
      */
-    function boot(sizes: ReadonlyArray<{ width: number; height: number }>): { ready: () => boolean; charts: FakeChart[]; resize: () => void } {
+    function boot(sizes: ReadonlyArray<{ width: number; height: number }>): {
+        ready: () => boolean;
+        containers: Array<{ clientWidth: number; clientHeight: number }>;
+        charts: FakeChart[];
+        resize: () => void;
+    } {
         const win: Record<string, unknown> = {};
         let onResize: () => void = () => undefined;
         win.addEventListener = (event: string, listener: () => void) => {
@@ -2693,7 +2698,7 @@ describe("the chart bootstrap waits for each chart to finish", () => {
         const errors: string[] = [];
         new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
         expect(errors).toEqual([]);
-        return { ready: () => win.__inflexaThemeReady === true, charts, resize: () => onResize() };
+        return { ready: () => win.__inflexaThemeReady === true, containers, charts, resize: () => onResize() };
     }
 
     it("signals readiness after the last chart finishes its render, and not before", () => {
@@ -2718,6 +2723,15 @@ describe("the chart bootstrap waits for each chart to finish", () => {
         charts[0].width = 500;
         resize();
         expect(charts[0].resized).toBe(1);
+    });
+
+    it("draws no chart again at a zero size on a window resize", () => {
+        // ECharts 6.1.0 throws `Cannot read properties of null (reading '0')` when a Sankey draws at a zero size
+        // (apache/echarts#21706). A capture past the viewport can give a container a zero width for one resize.
+        const { containers, charts, resize } = boot([{ width: 600, height: 400 }]);
+        containers[0].clientWidth = 0;
+        resize();
+        expect(charts[0].resized).toBe(0);
     });
 });
 

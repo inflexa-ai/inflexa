@@ -350,7 +350,9 @@ const DOWNLOAD_URL_LIFETIME_MS = 60_000;
  * theme. The skeleton registers the theme before this script runs. A resize handler keeps each chart
  * fit to the window. It draws a chart again only when the container of the chart changes size. A capture past
  * the viewport resizes the window and keeps each container, and a redraw there restarts the chunked render of
- * a dense chart.
+ * a dense chart. A container of zero width or height keeps its chart as it is: ECharts 6.1.0 throws when a
+ * Sankey draws at a zero size (apache/echarts#21706), and a capture can give a container a zero width for one
+ * resize.
  *
  * A custom series names its renderer as a string, because the option is JSON. The script registers each named
  * renderer with the chart runtime before the first chart initializes, and it keeps the option under the
@@ -480,7 +482,9 @@ export const CHART_BOOTSTRAP = `(function () {
     var nodes = document.querySelectorAll("[data-echarts-id]");
     for (var j = 0; j < nodes.length; j++) {
       var instance = echarts.getInstanceByDom(nodes[j]);
-      if (instance && (instance.getWidth() !== nodes[j].clientWidth || instance.getHeight() !== nodes[j].clientHeight)) {
+      var width = nodes[j].clientWidth;
+      var height = nodes[j].clientHeight;
+      if (instance && width > 0 && height > 0 && (instance.getWidth() !== width || instance.getHeight() !== height)) {
         instance.resize();
       }
     }
