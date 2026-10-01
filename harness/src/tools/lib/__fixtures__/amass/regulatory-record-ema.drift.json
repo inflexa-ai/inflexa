@@ -1,0 +1,76 @@
+{
+    "data": {
+        "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+        "agency": "EMA",
+        "name": "Glivec",
+        "activeSubstance": "Imatinib",
+        "moleculeType": "SMALL_MOLECULE",
+        "authorizationStatus": "ACTIVE",
+        "procedureType": "CENTRALISED_HUMAN",
+        "therapeuticIndication": "Glivec is indicated for the treatment of  adult and paediatric patients with newly diagnosed Philadelphia-chromosome (bcr-abl)-positive (Ph+) chronic myeloid leukaemia (CML) for whom bone-marrow transplantation is not considered as the first line of treatment; adult and paediatric patients with Ph+ CML in chronic phase after failure of interferon-alpha therapy, or in accelerated phase or blast crisis; adult and paediatric patients with newly diagnosed Philadelphia-chromosome-positive acute lymphoblastic leukaemia (Ph+ ALL) integrated with chemotherapy; adult patients with relapsed or refractory Ph+ ALL as monotherapy; adult patients with myelodysplastic / myeloproliferative diseases (MDS / MPD) associated with platelet-derived growth factor receptor (PDGFR) gene re-arrangements; adult patients with advanced hypereosinophilic syndrome (HES) and / or chronic eosinophilic leukaemia (CEL) with FIP1L1-PDGFRa rearrangement.  The effect of Glivec on the outcome of bone-marrow transplantation has not been determined. Glivec is indicated for:  the treatment of adult patients with Kit (CD 117)-positive unresectable and / or metastatic malignant gastrointestinal stromal tumours (GIST); the adjuvant treatment of adult patients who are at significant risk of relapse following resection of Kit (CD117)-positive GIST. Patients who have a low or very low risk of recurrence should not receive adjuvant treatment; the treatment of adult patients with unresectable dermatofibrosarcoma protuberans (DFSP) and adult patients with recurrent and / or metastatic DFSP who are not eligible for surgery.  In adult and paediatric patients, the effectiveness of Glivec is based on overall haematological and cytogenetic response rates and progression-free survival in CML, on haematological and cytogenetic response rates in Ph+ ALL, MDS / MPD, on haematological response rates in HES / CEL and on objective response rates in adult patients with unresectable and / or metastatic GIST and DFSP and on recurrence-free survival in adjuvant GIST. The experience with Glivec in patients with MDS / MPD associated with PDGFR gene re-arrangements is very limited (see section 5.1). Except in newly diagnosed chronic phase CML, there are no controlled trials demonstrating a clinical benefit or increased survival for these diseases.",
+        "marketingAuthorisationHolder": "Novartis Europharm Limited",
+        "authorizationDate": "2001-11-07",
+        "firstAuthorizationDate": "2001-11-07",
+        "lastUpdateDate": "2026-09-14",
+        "createDate": "2026-04-22",
+        "sourceUrl": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+        "url": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+        "isOrphan": false,
+        "designations": [],
+        "authorizationsByAgency": [],
+        "documentSections": [
+            {
+                "documentSectionId": "AMRCDS_ZIZzen4knkWqlcNSfkZrCWV797B",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "1",
+                "title": "Haematological response criteria (all responses to be confirmed after  4 weeks):",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_9QBrCXR3qVQpEJiDhpHmN7A1oPi",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "2",
+                "title": "Cytogenetic response criteria:",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_BYetIE5quHWlMtmLNgxZAgxVyht",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "3",
+                "title": "PHARMACEUTICAL FORM",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            }
+        ],
+        "emaDetails": {
+            "productNumber": "EMEA/H/C/000406",
+            "category": "Human",
+            "opinionStatus": null,
+            "isBiosimilar": false,
+            "isAdvancedTherapy": false,
+            "isGenericOrHybrid": false,
+            "additionalMonitoring": false,
+            "pharmacotherapeuticGroup": "Antineoplastic agents",
+            "patientSafety": "No",
+            "latestProcedure": "VR/0000290092",
+            "revisionNumber": "51",
+            "smpcUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+            "smpcDate": null,
+            "opinionAdoptedDate": "2001-07-26",
+            "europeanCommissionDecisionDate": "2025-10-16",
+            "withdrawalOfApplicationDate": null,
+            "refusalOfMarketingAuthorisationDate": null,
+            "withdrawalExpiryRevocationLapseDate": null,
+            "firstPublishedDate": "2018-06-25"
+        },
+        "fdaDetails": null
+    }
+}

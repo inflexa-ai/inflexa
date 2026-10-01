@@ -1,0 +1,56 @@
+{
+    "regulatory-search.json": {
+        "url": "https://api.amass.tech/api/v1/cores/regulatorycore/records",
+        "params": {
+            "query": "imatinib",
+            "limit": "3"
+        },
+        "capturedAt": "2026-09-30"
+    },
+    "regulatory-record-fda.json": {
+        "url": "https://api.amass.tech/api/v1/cores/regulatorycore/records/AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+        "params": {
+            "include": "fdaDetails"
+        },
+        "capturedAt": "2026-09-30"
+    },
+    "regulatory-record-ema.json": {
+        "url": "https://api.amass.tech/api/v1/cores/regulatorycore/records/AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU?include=fdaDetails&include=emaDetails",
+        "capturedAt": "2026-09-30"
+    },
+    "regulatory-section.json": {
+        "url": "https://api.amass.tech/api/v1/cores/regulatorycore/records/AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg/document-sections/AMRCDS_WgRxoVBczNBLu0ZjTztiHdOuafj",
+        "capturedAt": "2026-09-30"
+    },
+    "regulatory-lookup.json": {
+        "url": "https://api.amass.tech/api/v1/cores/regulatorycore/records/lookup",
+        "method": "POST",
+        "body": "{\"items\":[{\"fdaApplicationNumber\":\"021588\"},{\"fdaApplicationNumber\":\"NDA021588\"},{\"ndc\":\"0078-0401-05\"},{\"fdaApplicationNumber\":\"999999\"}]}",
+        "capturedAt": "2026-09-30"
+    },
+    "regulatory-not-found.json": {
+        "url": "https://api.amass.tech/api/v1/cores/regulatorycore/records/AMRC_doesnotexist000000000000",
+        "capturedAt": "2026-09-30"
+    },
+    "patent-search.json": {
+        "url": "https://api.amass.tech/api/v1/cores/patentcore/records",
+        "params": {
+            "query": "imatinib mesylate crystal",
+            "limit": "1"
+        },
+        "capturedAt": "2026-09-30"
+    },
+    "patent-record.json": {
+        "url": "https://api.amass.tech/api/v1/cores/patentcore/records/AMPC_EzkKarMF7cIFSt3SZg13CV1tr3M",
+        "params": {
+            "include": "claims"
+        },
+        "capturedAt": "2026-09-30"
+    },
+    "patent-lookup.json": {
+        "url": "https://api.amass.tech/api/v1/cores/patentcore/records/lookup",
+        "method": "POST",
+        "body": "{\"items\":[{\"publicationNumber\":\"CN-103570677-A\"},{\"applicationNumber\":\"CN-201310332334-A\"},{\"publicationNumber\":\"US-0000000-B2\"}]}",
+        "capturedAt": "2026-09-30"
+    }
+}

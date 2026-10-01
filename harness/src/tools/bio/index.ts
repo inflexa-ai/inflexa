@@ -49,6 +49,10 @@ export * from "./search-clinical-trials.js";
 export * from "./search-geo-datasets.js";
 export * from "./search-faers.js";
 
+// Regulatory authorizations and patents (Amass)
+export * from "./search-regulatory-approvals.js";
+export * from "./search-patents.js";
+
 // Safety / toxicology
 export * from "./target-safety.js";
 export * from "./comptox.js";

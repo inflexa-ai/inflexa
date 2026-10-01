@@ -36,6 +36,7 @@ export const meta: AgentMeta = {
         "opentargets",
         "searchClinicalTrials",
         "searchFaers",
+        "searchRegulatoryApprovals",
         "geneDiseaseEvidence",
         "drugGeneInteractions",
         "genePreclinicalProfile",

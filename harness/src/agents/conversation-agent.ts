@@ -59,7 +59,7 @@ import {
     genePreclinicalProfileTool,
     targetSafetyTool,
 } from "../tools/bio/index.js";
-import { createNcbiTools, createChemDbTools, type BioToolKeys } from "../tools/bio/keys.js";
+import { createAmassTools, createNcbiTools, createChemDbTools, type BioToolKeys } from "../tools/bio/keys.js";
 
 // Dependency-bearing tool factories.
 import {
@@ -238,6 +238,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
     const chemDb = createChemDbTools(bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
+    const amass = createAmassTools(bioKeys);
     // The write path of this agent: coordinates resolve per call from the
     // session's analysis scope, the write prefix is the analysis root, and
     // every successful write emits a `write-file` provenance session event.
@@ -279,6 +280,9 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         chemDb.drugGeneInteractions,
         searchFaersTool,
         searchClinicalTrialsTool,
+        // FDA and EMA authorizations with their label text, and patents (Amass; keyed).
+        amass.regulatoryApprovals,
+        amass.patents,
         searchGeoDatasetsTool,
         // Preclinical — baseline expression + mouse knockout in one call.
         genePreclinicalProfileTool,

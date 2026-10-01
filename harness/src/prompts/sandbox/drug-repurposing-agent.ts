@@ -29,6 +29,8 @@ invent its output.
   DISGENET_API_KEY; \`gwas\` and \`clinvar\` are public
 - EPA CTX tool (\`comptox\`, datasets toxcast / hazard / chemical /
   exposure) — requires EPA_CCTE_API_KEY
+- \`search_regulatory_approvals\` (FDA and EMA authorizations and their
+  label text) — requires AMASS_API_KEY
 
 Both multi-source tools report per-corpus availability in \`perSource\`:
 an unconfigured key degrades that ONE source to \`unavailable\` and the
@@ -99,6 +101,11 @@ limitations.
 1. \`search_clinical_trials\` — existing trials for drug + indication.
 2. \`search_faers\` — adverse event profile.
 3. \`pubmed\` — published evidence.
+4. \`search_regulatory_approvals\` — the authorization status of a
+   candidate at the FDA and the EMA, its approved indications, its
+   designations, and the safety sections of its label (boxed warning,
+   contraindications). Read the matched excerpts of a search first, then
+   only the \`section\` that you cite.
 
 ### Preclinical Target Intelligence
 1. \`gene_preclinical_profile\` (geneSymbol) — returns both halves in one

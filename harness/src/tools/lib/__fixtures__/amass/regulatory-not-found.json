@@ -1,0 +1,7 @@
+{
+    "error": {
+        "status": 404,
+        "code": "NOT_FOUND",
+        "message": "RegulatoryCore record not found with amassId = AMRC_doesnotexist000000000000"
+    }
+}

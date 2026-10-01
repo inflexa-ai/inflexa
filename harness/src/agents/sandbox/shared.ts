@@ -57,7 +57,7 @@ import {
     searchInteractionsTool,
     targetSafetyTool,
 } from "../../tools/bio/index.js";
-import { createNcbiTools, createChemDbTools, type BioToolKeys } from "../../tools/bio/keys.js";
+import { createAmassTools, createNcbiTools, createChemDbTools, type BioToolKeys } from "../../tools/bio/keys.js";
 
 // Workspace read surface.
 import { createFileStatTool, createGrepTool, createListFilesTool, createReadFileTool, createWorkspaceSearchTool } from "../../tools/workspace/index.js";
@@ -177,6 +177,7 @@ export interface SandboxAgentPromptOptions {
 function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[]): Tool[] {
     const ncbi = createNcbiTools(deps.bioKeys);
     const chemDb = createChemDbTools(deps.bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
+    const amass = createAmassTools(deps.bioKeys);
     if (tools.includes("resolve_citation") && deps.citationResolver === undefined) {
         throw new Error('createSandboxAgent: SandboxToolName "resolve_citation" requires a CitationResolver dependency.');
     }
@@ -216,6 +217,7 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         searchFaers: searchFaersTool,
         searchClinicalTrials: searchClinicalTrialsTool,
         searchGeoDatasets: searchGeoDatasetsTool,
+        searchRegulatoryApprovals: amass.regulatoryApprovals,
         targetSafety: targetSafetyTool,
         comptox: chemDb.comptox,
     };

@@ -106,6 +106,8 @@ describe("createConversationAgent", () => {
             "pubmed",
             "resolve_citation",
             "comptox",
+            "search_regulatory_approvals",
+            "search_patents",
             "generate_plan",
             "generate_analogy_report",
             "workspace_search",
