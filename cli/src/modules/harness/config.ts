@@ -23,6 +23,7 @@ const harnessConfigSchema = z.object({
             ncbi: z.string().optional(),
             github: z.string().optional(),
             semanticScholar: z.string().optional(),
+            amass: z.string().optional(),
         })
         .optional(),
     sandboxImage: z.string().optional(),
@@ -61,6 +62,7 @@ export type ResolvedHarnessConfig = {
         readonly ncbi?: string;
         readonly github?: string;
         readonly semanticScholar?: string;
+        readonly amass?: string;
     };
     readonly sandboxImage: string;
     /**
@@ -157,6 +159,7 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
             ncbi: cfg?.bioKeys?.ncbi,
             github: cfg?.bioKeys?.github,
             semanticScholar: cfg?.bioKeys?.semanticScholar,
+            amass: cfg?.bioKeys?.amass,
         },
         sandboxImage: cfg?.sandboxImage ?? SANDBOX_IMAGE,
         resourcePolicy,
