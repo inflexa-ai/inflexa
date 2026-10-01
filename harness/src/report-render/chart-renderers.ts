@@ -349,15 +349,30 @@ function scaledGraphic(element: unknown, scale: number): unknown {
 /** The width of one character of the chart text, as a share of the text size. The export guesses a label width with it. */
 const CHARACTER_SHARE = 0.6;
 
+/** The height of one line of the chart text, as a share of the text size. An upright category label takes one line along its axis. */
+export const LABEL_LINE_SHARE = 1.3;
+
 /** The share of the export width that the category labels of one x axis can fill. */
 const LABEL_ROOM = 0.8;
 
 /**
- * One x axis of categories with its labels turned where they do not fit the width of the export.
+ * The label interval of an axis of upright category labels at one width and one text size: the count of labels that
+ * the chart runtime skips after each label that it prints. The width holds one upright label for each line of text.
+ * An axis of more categories prints the first label of each run that the width gives, and an axis that fits skips none.
+ */
+export function categoryInterval(count: number, textPx: number, widthPx: number): number {
+    const fit = Math.max(1, Math.floor(widthPx / (textPx * LABEL_LINE_SHARE)));
+    return count > fit ? Math.ceil(count / fit) - 1 : 0;
+}
+
+/**
+ * One x axis of categories with its labels turned where they do not fit the width of the export, and its upright
+ * labels thinned to the count that the width holds.
  *
  * The page turns the labels by their count. A column export is narrower, thus it turns the labels whose
  * longest name, at the export text size, passes the width of one category. A label that needs more than two
- * widths turns upright. An authored turn stays.
+ * widths turns upright. An authored turn stays. The page thins its upright labels at the page width, thus the
+ * export states the interval again at its own width and text size.
  */
 function fittedCategories(axis: unknown, textPx: number, widthPx: number): unknown {
     if (typeof axis !== "object" || axis === null || Array.isArray(axis)) return axis;
@@ -365,13 +380,17 @@ function fittedCategories(axis: unknown, textPx: number, widthPx: number): unkno
     const data = fields.data;
     if (fields.type !== "category" || !Array.isArray(data) || data.length === 0) return axis;
     const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? (fields.axisLabel as Record<string, unknown>) : {};
-    if (typeof label.rotate === "number" && label.rotate !== 0) return axis;
-    let longest = 0;
-    for (const name of data) longest = Math.max(longest, String(name).length);
-    const need = longest * textPx * CHARACTER_SHARE;
-    const room = (widthPx * LABEL_ROOM) / data.length;
-    if (need <= room) return axis;
-    return { ...fields, axisLabel: { ...label, rotate: need > 2 * room ? 90 : 45 } };
+    let rotate = label.rotate;
+    if (typeof rotate !== "number" || rotate === 0) {
+        let longest = 0;
+        for (const name of data) longest = Math.max(longest, String(name).length);
+        const need = longest * textPx * CHARACTER_SHARE;
+        const room = (widthPx * LABEL_ROOM) / data.length;
+        if (need <= room) return axis;
+        rotate = need > 2 * room ? 90 : 45;
+    }
+    const interval = rotate === 90 ? { interval: categoryInterval(data.length, textPx, widthPx * LABEL_ROOM) } : {};
+    return { ...fields, axisLabel: { ...label, rotate, ...interval } };
 }
 
 /** The share of the scale band that one line of a scale title can fill. The rest keeps a gap to the plot. */
@@ -933,6 +952,10 @@ function reportHoldsBottomLegend(option) {
   var bottom = typeof legend === "object" && legend !== null && legend.show !== false && legend.bottom !== undefined;
   return bottom && option.xAxis !== undefined && !Array.isArray(option.grid);
 }
+function reportCategoryInterval(count, textPx, widthPx) {
+  var fit = Math.max(1, Math.floor(widthPx / (textPx * ${LABEL_LINE_SHARE})));
+  return count > fit ? Math.ceil(count / fit) - 1 : 0;
+}
 function reportFittedCategories(axis, textPx, widthPx) {
   if (typeof axis !== "object" || axis === null || Array.isArray(axis)) {
     return axis;
@@ -942,19 +965,24 @@ function reportFittedCategories(axis, textPx, widthPx) {
     return axis;
   }
   var label = typeof axis.axisLabel === "object" && axis.axisLabel !== null ? axis.axisLabel : {};
-  if (typeof label.rotate === "number" && label.rotate !== 0) {
-    return axis;
+  var rotate = label.rotate;
+  if (typeof rotate !== "number" || rotate === 0) {
+    var longest = 0;
+    for (var d = 0; d < data.length; d++) {
+      longest = Math.max(longest, String(data[d]).length);
+    }
+    var need = longest * textPx * ${CHARACTER_SHARE};
+    var room = (widthPx * ${LABEL_ROOM}) / data.length;
+    if (need <= room) {
+      return axis;
+    }
+    rotate = need > 2 * room ? 90 : 45;
   }
-  var longest = 0;
-  for (var d = 0; d < data.length; d++) {
-    longest = Math.max(longest, String(data[d]).length);
+  var fitted = { rotate: rotate };
+  if (rotate === 90) {
+    fitted.interval = reportCategoryInterval(data.length, textPx, widthPx * ${LABEL_ROOM});
   }
-  var need = longest * textPx * ${CHARACTER_SHARE};
-  var room = (widthPx * ${LABEL_ROOM}) / data.length;
-  if (need <= room) {
-    return axis;
-  }
-  return Object.assign({}, axis, { axisLabel: Object.assign({}, label, { rotate: need > 2 * room ? 90 : 45 }) });
+  return Object.assign({}, axis, { axisLabel: Object.assign({}, label, fitted) });
 }
 function reportWrappedTitle(title, textPx, widthPx) {
   var perLine = Math.max(1, Math.floor((widthPx * ${COLOR_SCALE_BAND_PCT} * ${SCALE_TITLE_ROOM}) / 100 / (textPx * ${CHARACTER_SHARE})));
