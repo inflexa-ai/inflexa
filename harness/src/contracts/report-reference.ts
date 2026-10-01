@@ -148,7 +148,7 @@ export const ArtifactTableReferenceSchema = z.strictObject({
         .record(z.string(), z.string().min(1))
         .optional()
         .describe(
-            "The display name of each column, keyed by the raw column name. A label names what the column measures, for example `Adjusted p-value` for `padj`. The page shows the label in the table header and in the axis title, and the raw name stays on hover. A key that names no column of the artifact has no effect.",
+            "The display name of each column, keyed by the raw column name. A label names what the column measures, for example `Adjusted p-value` for `padj`. The page shows the label in the table header and in the axis title, and the raw name stays on hover. Name the raw column, never a transform of it: the header shows the raw values, and a chart channel with a transform states the transform on its axis itself, for example `log10(Normalized count)`. A key that names no column of the artifact has no effect.",
         ),
     ...displayShape,
 });

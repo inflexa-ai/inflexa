@@ -108,7 +108,7 @@ export const ChartChannelSchema = z.union([
         .strictObject({
             column: z.string().describe("The column that feeds the channel."),
             transform: ChartTransformSchema.optional().describe(
-                "The per-row transform. `log10` and `neg_log10` drop a cell that is not positive. `rank` gives the place of the cell in the ascending order of the column, and a tie shares its place.",
+                "The per-row transform. `log10` and `neg_log10` drop a cell that is not positive. `rank` gives the place of the cell in the ascending order of the column, and a tie shares its place. The axis title puts the label of the column inside the transform, for example `log10(Normalized count)`, thus the label names the untransformed column.",
             ),
             orderBy: z
                 .string()
