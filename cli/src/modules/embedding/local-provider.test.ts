@@ -631,6 +631,11 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         /* eslint-enable no-restricted-properties */
     });
 
+    // The failing embed spends the retry envelope of the harness embedding client: two
+    // retries with full jitter over 2 s and then 4 s, thus up to about 6 s. That is above
+    // the default test timeout of 5 s. A timed-out test leaves its embed in flight past
+    // `afterEach`, which turns the bypass back on, so the last retry reaches the stub and
+    // the outcome reads "ok". The timeout of this test sits above the envelope.
     test("with the loopback bypass suppressed, a loopback embed behind a poisoned proxy fails (bypass is load-bearing)", async () => {
         const key = "test-key-neg-proxy";
         const stub = startStub(key);
@@ -668,7 +673,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             process.env.no_proxy = saved.no_proxy ?? "";
         }
         /* eslint-enable no-restricted-properties */
-    });
+    }, 15_000);
 
     test("stopLocalSidecar terminates the running sidecar (shutdown reap)", async () => {
         const key = "test-key-reap";
