@@ -22,7 +22,8 @@ import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartEncoding } from "../../contracts/report-blocks.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
-import { GUIDE_LINE_WIDTH_PX, MUTED_CHART_COLOR } from "../design.js";
+import { TOOLBOX_BAND_PX } from "../chart-toolbox.js";
+import { CHART_BODY_PX, GUIDE_LINE_WIDTH_PX, MUTED_CHART_COLOR } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
     categoricalPalette,
@@ -59,10 +60,13 @@ const METRIC_TITLE = "Ranked metric";
  * The three grids share one left edge and one right edge, thus the three panels align on the rank axis. The
  * left band holds the tick labels and the turned title of the two value axes. The bottom band holds the tick
  * labels and the title of the rank axis, and the legend under them where the figure draws more than one set.
+ * The top band is the band of the toolbox on the page body, because the statistics text sits at the top right
+ * corner of the top panel. The graphic of a media rule draws from the rule alone and an export scales only the
+ * text of the base graphic, thus an export keeps the same top band.
  */
 const GRID_LEFT = 12;
 const GRID_RIGHT = 4;
-const GRID_TOP = 4;
+const GRID_TOP = (100 * TOOLBOX_BAND_PX) / CHART_BODY_PX;
 const AXIS_BAND = 15;
 const PANEL_GAP = 2;
 

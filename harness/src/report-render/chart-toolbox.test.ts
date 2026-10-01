@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
-import type { ChartType } from "../contracts/report-blocks.js";
+import type { ChartBlock, ChartType } from "../contracts/report-blocks.js";
+import { deriveChartRender, type ChartInputs, type ChartRow } from "./chart.js";
+import { registerChartRenderers } from "./chart-renderers.js";
+import { CHART_PAGE_WIDTH_PX, ECHARTS_THEME, ECHARTS_THEME_NAME } from "./design.js";
 import {
     CHART_TOOLBOX_SOURCE,
     chartMenuId,
@@ -190,6 +193,217 @@ describe("the canvas layer of the toolbox", () => {
         expect(Object.keys(bare).length).toBeGreaterThan(2);
         expect(shown[TOOLBOX_ZLEVEL]).toBeGreaterThan(0);
         expect(Object.fromEntries(Object.entries(shown).filter(([zlevel]) => Number(zlevel) !== TOOLBOX_ZLEVEL))).toEqual(bare);
+    });
+});
+
+describe("the band of the toolbox", () => {
+    const HASH = `sha256:${"a".repeat(64)}`;
+
+    /** One box in the pixels of a chart body, with y down. */
+    interface Box {
+        readonly left: number;
+        readonly top: number;
+        readonly right: number;
+        readonly bottom: number;
+    }
+
+    /** One element that the runtime draws. */
+    type Drawn = ReturnType<ReturnType<echarts.ECharts["getZr"]>["storage"]["getDisplayList"]>[number];
+
+    /** The box of one drawn element in the pixels of the chart body. */
+    function drawnBox(element: Drawn): Box {
+        const rect = element.getBoundingRect().clone();
+        if (element.transform) rect.applyTransform(element.transform);
+        return { left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height };
+    }
+
+    /** One box as text, to one decimal. */
+    function boxText(box: Box): string {
+        return `x ${box.left.toFixed(1)} to ${box.right.toFixed(1)}, y ${box.top.toFixed(1)} to ${box.bottom.toFixed(1)}`;
+    }
+
+    /**
+     * Each plot area and each drawn text that the toolbox covers on the page. The chart draws as the page draws
+     * it: the page option of the block, the page theme, the named renderers, and the body box of its card. The
+     * box of the toolbox is the box that the runtime lays out for it, thus it holds the padding and the hit area
+     * of each icon. A pixel is under the toolbox when its center is inside that box, thus a plot that starts at
+     * the bottom edge of the toolbox is clear of it.
+     */
+    function underToolbox(block: ChartBlock, rows: readonly ChartRow[], inputs: ChartInputs = {}): string[] {
+        const columns = Object.keys(rows[0]);
+        const render = deriveChartRender(block, rows, columns, { key: block.id, columns }, inputs)._unsafeUnwrap();
+        const width = render.widthPx ?? CHART_PAGE_WIDTH_PX;
+        const option = pageChartOption(render.option, block.chartType);
+        pageFunctions(stubDocument().document).bind(option);
+        echarts.registerTheme(ECHARTS_THEME_NAME, ECHARTS_THEME);
+        registerChartRenderers({ registerCustomSeries: (name, draw) => echarts.registerCustomSeries(name, draw as unknown as echarts.CustomSeriesRenderItem) });
+        const chart = echarts.init(null, ECHARTS_THEME_NAME, { renderer: "svg", ssr: true, width, height: render.bodyPx });
+        try {
+            chart.setOption(option);
+            const drawn = chart.getZr().storage.getDisplayList(true);
+            const parts = drawn.filter((element) => element.zlevel === TOOLBOX_ZLEVEL).map(drawnBox);
+            const box: Box = {
+                left: Math.min(...parts.map((part) => part.left)),
+                top: Math.min(...parts.map((part) => part.top)),
+                right: Math.max(...parts.map((part) => part.right)),
+                bottom: Math.max(...parts.map((part) => part.bottom)),
+            };
+            const covered: string[] = [];
+            const grids = Array.isArray(option.grid) ? option.grid.length : 1;
+            for (let grid = 0; grid < grids; grid += 1) {
+                let hit: string | undefined;
+                for (let x = Math.ceil(box.left - 0.5); x + 0.5 < box.right && hit === undefined; x += 1) {
+                    for (let y = Math.ceil(box.top - 0.5); y + 0.5 < box.bottom && hit === undefined; y += 1) {
+                        if (chart.containPixel({ gridIndex: grid }, [x + 0.5, y + 0.5]))
+                            hit = `the plot area of grid ${grid} at (${x}, ${y}), under the toolbox at ${boxText(box)}`;
+                    }
+                }
+                if (hit !== undefined) covered.push(hit);
+            }
+            for (const element of drawn) {
+                if (element.zlevel === TOOLBOX_ZLEVEL || element.type !== "tspan") continue;
+                const text = drawnBox(element);
+                if (text.left < box.right && text.right > box.left && text.top < box.bottom && text.bottom > box.top) {
+                    covered.push(`the text "${String(element.style.text)}" at ${boxText(text)}, under the toolbox at ${boxText(box)}`);
+                }
+            }
+            return covered;
+        } finally {
+            chart.dispose();
+        }
+    }
+
+    it("leaves the plot and each text of a bar chart clear of the toolbox", () => {
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "b1",
+            binding: { kind: "artifact-table", path: "counts.csv", hash: HASH },
+            chartType: "bar",
+            encoding: { x: "gene", y: "count" },
+        };
+        const rows: ChartRow[] = [
+            { gene: "TP53", count: 12 },
+            { gene: "KRAS", count: 30 },
+            { gene: "EGFR", count: 21 },
+        ];
+        expect(underToolbox(block, rows)).toEqual([]);
+    });
+
+    it("leaves the column titles of a forest clear of the toolbox", () => {
+        // The Cox model of the NCCTG lung table, as the forest figure test reads it.
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "f1",
+            binding: { kind: "artifact-table", path: "cox_forest.csv", hash: HASH, columnLabels: { term: "Covariate", hr: "Hazard ratio", pvalue: "p-value" } },
+            chartType: "forest",
+            encoding: { y: "term", x: "hr", low: "lower", high: "upper", p: "pvalue" },
+        };
+        const rows: ChartRow[] = [
+            { term: "Age (per year)", hr: 1.0152725322439, lower: 0.99603004960191, upper: 1.03488676384906, pvalue: 0.120538258209777 },
+            { term: "Female vs male", hr: 0.531834967483113, lower: 0.375837377499962, upper: 0.752581966485737, pvalue: 0.00036433764194166 },
+            { term: "ECOG performance score", hr: 2.09636398838477, lower: 1.44080207397493, upper: 3.05020519554927, pvalue: 0.000109424049741189 },
+            { term: "Karnofsky score (physician)", hr: 1.01536757487862, lower: 0.996056535985802, upper: 1.03505300639841, pvalue: 0.119552522237802 },
+            { term: "Weight loss (lb)", hr: 0.990745350649488, lower: 0.977821803396287, upper: 1.00383970415085, pvalue: 0.165167923804808 },
+        ];
+        expect(underToolbox(block, rows)).toEqual([]);
+    });
+
+    it("leaves the square of a ROC curve clear of the toolbox", () => {
+        // An excerpt of the ROC table of the NCCTG lung data, as the ROC figure test reads it, with the AUC of each model.
+        const full = "ECOG + Karnofsky + age";
+        const alone = "ECOG alone";
+        const auc = (label: string, row: number): NonNullable<ChartBlock["statistics"]>[number] => ({
+            label,
+            value: { kind: "artifact-value", path: "roc_auc.csv", hash: HASH, locator: { column: "auc", row } },
+        });
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "r1",
+            binding: { kind: "artifact-table", path: "roc.csv", hash: HASH, columnLabels: { fpr: "False positive rate", tpr: "True positive rate" } },
+            chartType: "roc",
+            encoding: { x: "fpr", y: "tpr", group: "model" },
+            statistics: [auc(`AUC, ${full}`, 0), auc(`AUC, ${alone}`, 1)],
+        };
+        const rows: ChartRow[] = [
+            { fpr: 0, tpr: 0, model: full },
+            { fpr: 0.0154, tpr: 0.0168, model: full },
+            { fpr: 0, tpr: 0.0084, model: full },
+            { fpr: 0.4, tpr: 0.62, model: full },
+            { fpr: 1, tpr: 1, model: full },
+            { fpr: 0, tpr: 0, model: alone },
+            { fpr: 0, tpr: 0.0083, model: alone },
+            { fpr: 0.1385, tpr: 0.3167, model: alone },
+            { fpr: 0.6615, tpr: 0.8, model: alone },
+            { fpr: 1, tpr: 1, model: alone },
+        ];
+        const inputs: ChartInputs = {
+            statistics: [
+                { label: `AUC, ${full}`, value: 0.626761473820297 },
+                { label: `AUC, ${alone}`, value: 0.619166666666667 },
+            ],
+        };
+        expect(underToolbox(block, rows, inputs)).toEqual([]);
+    });
+
+    it("leaves the square of an embedding clear of the wide toolbox of a dense chart", () => {
+        // An excerpt of the PBMC 3k UMAP table, as the embedding figure test reads it.
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "e1",
+            binding: { kind: "artifact-table", path: "cells.csv", hash: HASH },
+            chartType: "embedding",
+            encoding: { x: "UMAP_1", y: "UMAP_2", group: "cluster" },
+        };
+        const rows: ChartRow[] = [
+            { UMAP_1: 1.35285573560809, UMAP_2: 2.26612718696679, cluster: "CD4 T" },
+            { UMAP_1: 2.165888749165179, UMAP_2: -0.2448122627872643, cluster: "CD4 T" },
+            { UMAP_1: -0.47802448287846216, UMAP_2: 7.877304234882818, cluster: "B" },
+            { UMAP_1: -0.2, UMAP_2: 8.4, cluster: "B" },
+            { UMAP_1: -8.69549315663449, UMAP_2: 4.516540904583949, cluster: "CD14 Monocytes" },
+            { UMAP_1: -8.1, UMAP_2: 3.9, cluster: "CD14 Monocytes" },
+        ];
+        expect(underToolbox(block, rows)).toEqual([]);
+    });
+
+    it("leaves the top panel of a GSEA plot and its statistics clear of the toolbox", () => {
+        // One set whose running score peaks above zero, thus the statistics sit at the top right of the top panel.
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "g1",
+            binding: { kind: "artifact-table", path: "gsea_running.csv", hash: HASH },
+            chartType: "gsea",
+            encoding: { x: "rank", y: "running_es", group: "term", hit: "hit", metric: "ranked_metric" },
+            statistics: [{ label: "NES", value: { kind: "artifact-value", path: "gsea_results.csv", hash: HASH, locator: { column: "NES", row: 0 } } }],
+        };
+        const hits = new Set([1, 2, 4, 7]);
+        let score = 0;
+        const rows: ChartRow[] = Array.from({ length: 20 }, (_entry, index) => {
+            const rank = index + 1;
+            score += hits.has(rank) ? 0.25 : -1 / 16;
+            return { term: "cell-cell junction assembly", rank, running_es: score, hit: hits.has(rank) ? 1 : 0, ranked_metric: 10 - rank };
+        });
+        expect(underToolbox(block, rows, { statistics: [{ label: "NES", value: 1.9 }] })).toEqual([]);
+    });
+
+    it("leaves the legend and the statistics of a survival curve clear of the toolbox", () => {
+        // An excerpt of the Kaplan-Meier table of the NCCTG lung data by sex, as the km figure test reads it.
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "k1",
+            binding: { kind: "artifact-table", path: "km_curve.csv", hash: HASH },
+            chartType: "km",
+            encoding: { x: "time", y: "surv", group: "strata", low: "lower", high: "upper", censor: "n_censor", risk: "n_risk" },
+            statistics: [{ label: "Log-rank p", value: { kind: "artifact-value", path: "logrank.csv", hash: HASH, locator: { column: "pvalue", row: 0 } } }],
+        };
+        const rows: ChartRow[] = [
+            { strata: "Female", time: 0, surv: 1, lower: 1, upper: 1, n_risk: 90, n_censor: 0 },
+            { strata: "Female", time: 371, surv: 0.509, lower: 0.386, upper: 0.619, n_risk: 30, n_censor: 1 },
+            { strata: "Female", time: 765, surv: 0.083, lower: 0.019, upper: 0.212, n_risk: 3, n_censor: 1 },
+            { strata: "Male", time: 0, surv: 1, lower: 1, upper: 1, n_risk: 138, n_censor: 0 },
+            { strata: "Male", time: 270, surv: 0.494, lower: 0.406, upper: 0.576, n_risk: 59, n_censor: 0 },
+            { strata: "Male", time: 883, surv: 0.036, lower: 0.009, upper: 0.097, n_risk: 3, n_censor: 1 },
+        ];
+        expect(underToolbox(block, rows, { statistics: [{ label: "Log-rank p", value: 0.00131116452035549 }] })).toEqual([]);
     });
 });
 

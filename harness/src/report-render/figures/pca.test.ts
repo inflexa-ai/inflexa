@@ -6,6 +6,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../chart.js";
+import { TOOLBOX_BAND_PX } from "../chart-toolbox.js";
 import { CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_INK, CHART_PAGE_TEXT_PX, CHART_PALETTE } from "../design.js";
 import { equalRanges, squareLayout } from "./equal-units.js";
 import { PCA_LABEL_ROWS, SHAPE_SYMBOLS } from "./pca.js";
@@ -208,13 +209,14 @@ describe("the layout of one unit", () => {
     it("lays out three squares to a row, and places the band after the last column", () => {
         const layout = squareLayout({ panels: 4, margins: { top: 10, bottom: 10, left: 10, right: 10 }, side: 50, legend: true });
         const grids = layout.grid;
+        // The top margin of a page square is the band of the toolbox at least.
         expect(grids.map((grid) => [grid.left, grid.top])).toEqual([
-            [10, 10],
-            [146, 10],
-            [282, 10],
-            [10, 146],
+            [10, TOOLBOX_BAND_PX],
+            [146, TOOLBOX_BAND_PX],
+            [282, TOOLBOX_BAND_PX],
+            [10, TOOLBOX_BAND_PX + 136],
         ]);
-        expect(layout.legend).toEqual({ left: 418, top: 10 });
+        expect(layout.legend).toEqual({ left: 418, top: TOOLBOX_BAND_PX });
     });
 
     it("places a bottom legend band under the squares, and the band takes its lines from the entry widths", () => {
@@ -227,7 +229,7 @@ describe("the layout of one unit", () => {
             legendBand: { place: "bottom", entries: ["ECOG alone", "ECOG + Karnofsky + age"] },
         });
         const grid = layout.grid[0];
-        expect(layout.legend).toEqual({ left: 50, top: 10 + (grid.height as number) + 40, width: grid.width, orient: "horizontal" });
+        expect(layout.legend).toEqual({ left: 50, top: TOOLBOX_BAND_PX + (grid.height as number) + 40, width: grid.width, orient: "horizontal" });
         // The smallest square is 120 pixels, and the two entries take one line each at that width.
         const rule = layout.media[0].option as EchartOption;
         expect((rule.grid as EchartOption[])[0].width as number).toBe(120);
@@ -249,6 +251,8 @@ describe("the layout of one unit", () => {
             const legend = option.legend as EchartOption;
             // The block spans from the left edge of the y labels to the right margin of the band.
             const scale = size.textPx / CHART_PAGE_TEXT_PX;
+            // An export has no toolbox, thus its top margin is the margin of the figure alone.
+            expect(grid.top).toBe(Math.round(margins.top * scale));
             const blockLeft = (grid.left as number) - Math.round(margins.left * scale);
             const blockRight = (legend.left as number) + Math.round(120 * scale) + Math.round(margins.right * scale);
             expect(Math.abs(blockLeft - (size.widthPx - blockRight))).toBeLessThanOrEqual(1);
