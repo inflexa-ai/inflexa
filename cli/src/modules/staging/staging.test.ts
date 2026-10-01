@@ -65,7 +65,7 @@ describe("stageInputs", () => {
         expect(s.mountName).toBe("local");
         expect(s.key).toBe("data.csv");
         expect(s.fileName).toBe("data.csv");
-        expect(s.hash).toBe(sha256(content));
+        expect(s.hash).toBe(`sha256:${sha256(content)}`);
         expect(s.size).toBe(Buffer.byteLength(content));
         expect(s.relativePath).toBe(join("inputs", "local", "data.csv"));
 

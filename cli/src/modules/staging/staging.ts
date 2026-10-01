@@ -25,7 +25,7 @@ export type StagedInput = {
     readonly key: string;
     /** The file's basename. */
     readonly fileName: string;
-    /** SHA-256 hex digest of the file content. */
+    /** SHA-256 digest of the file content as `sha256:<hex>`, the form of every harness artifact hash. */
     readonly hash: string;
     /** File size in bytes. */
     readonly size: number;
@@ -211,7 +211,7 @@ async function materializeStagedFile(file: InputFile, targetDir: string): Promis
         mountName: LOCAL_MOUNT_NAME,
         key: file.key,
         fileName: basename(file.absPath),
-        hash: hashResult.value,
+        hash: `sha256:${hashResult.value}`,
         size: statsResult.value.size,
         // Verbatim, fraction and all: this is the value the ledger records, and
         // {@link isInputSetMaterialized} compares it against a fresh `statSync` of the same file.
