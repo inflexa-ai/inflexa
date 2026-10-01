@@ -11,6 +11,7 @@ import * as echarts from "echarts";
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "../chart.js";
 import { renderChartSvg } from "../chart-export.js";
+import { TOOLBOX_BAND_PX } from "../chart-toolbox.js";
 import { CHART_EXPORT_SIZES, CHART_INK, GUIDE_LINE_COLOR } from "../design.js";
 import { FOREST_FIGURE, termLines } from "./forest.js";
 import { FIGURE_MODULES } from "./index.js";
@@ -222,6 +223,13 @@ describe("the forest figure", () => {
         const labeled: ChartBlock = { ...block, binding: { ...block.binding, columnLabels: { hr: "Hazard ratio", pvalue: "p" } } };
         const [, estimates, pValues] = yAxes(derive(labeled));
         expect([estimates.name, pValues.name, (derive(labeled).xAxis as EchartOption).name]).toEqual(["Hazard ratio", "p", "Hazard ratio"]);
+    });
+
+    it("keeps the column titles of an export at its top edge, because an export has no toolbox", () => {
+        const svg = renderChartSvg(echarts, derive(forestBlock()), CHART_EXPORT_SIZES.single)._unsafeUnwrap();
+        const title = /<text[^>]*transform="translate\([\d.]+ ([\d.]+)\)"[^>]*>pvalue<\/text>/.exec(svg);
+        expect(title).not.toBeNull();
+        expect(Number(title?.[1])).toBeLessThan(TOOLBOX_BAND_PX);
     });
 });
 

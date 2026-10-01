@@ -15,12 +15,15 @@
  * rule also states the point size of a square smaller than the page square.
  *
  * The page narrows its chart body to the block of the largest square that fits the body height, and it
- * centers the body in the card. An export has a fixed size, thus one rule for each export size places the
- * largest square that fits it, with the margins at the text size of the export, in the middle of the width.
- * Such a rule names its size as the smallest and the largest container, thus no other container meets it.
+ * centers the body in the card. Thus the toolbox of the page sits over the top right corner of the block, and
+ * the top margin of a page rule is the band of the toolbox at least. An export has a fixed size and no
+ * toolbox, thus one rule for each export size places the largest square that fits it, with the margins at the
+ * text size of the export, in the middle of the width. Such a rule names its size as the smallest and the
+ * largest container, thus no other container meets it.
  */
 
 import type { EchartOption } from "../chart.js";
+import { TOOLBOX_BAND_PX } from "../chart-toolbox.js";
 import { CHART_EXPORT_SIZES, CHART_PAGE_TEXT_PX, FACET_COLUMNS } from "../design.js";
 import { legendLineCount, legendLinePx } from "./common.js";
 
@@ -118,7 +121,7 @@ interface Placement {
  * its box, thus the runtime never shrinks a square to fit a label.
  */
 export function squareLayout(fields: SquareLayoutFields): SquareLayout {
-    const placements = SQUARE_SIDES.map((side) => placement(side, fields, marginScale(side)));
+    const placements = SQUARE_SIDES.map((side) => placement(side, fields, marginScale(side), TOOLBOX_BAND_PX));
     const smallest = placements[0];
     const media: EchartOption[] = placements.map((entry, index) => ({
         // The first rule matches every container, thus a container that shrinks past a rule falls back to it.
@@ -127,10 +130,10 @@ export function squareLayout(fields: SquareLayoutFields): SquareLayout {
     }));
     for (const size of EXPORT_SIZES) {
         const scale = size.textPx / CHART_PAGE_TEXT_PX;
-        const fitting = SQUARE_SIDES.map((side) => placement(side, fields, scale)).filter(
+        const fitting = SQUARE_SIDES.map((side) => placement(side, fields, scale, 0)).filter(
             (entry) => entry.minWidth <= size.widthPx && entry.minHeight <= size.heightPx,
         );
-        const chosen = fitting.length > 0 ? fitting[fitting.length - 1] : placement(SQUARE_MIN_PX, fields, scale);
+        const chosen = fitting.length > 0 ? fitting[fitting.length - 1] : placement(SQUARE_MIN_PX, fields, scale, 0);
         media.push({
             query: { minWidth: size.widthPx, maxWidth: size.widthPx, minHeight: size.heightPx, maxHeight: size.heightPx },
             option: placedOption(shifted(chosen, Math.max(0, Math.floor((size.widthPx - chosen.minWidth) / 2)))),
@@ -175,11 +178,11 @@ function shifted(entry: Placement, by: number): Placement {
 
 /**
  * The place of each member of the layout at one square side. `scale` is the scale of the margins: the text
- * size of the container over the page text size.
+ * size of the container over the page text size. `leastTop` is the least top margin, in pixels.
  */
-function placement(side: number, fields: SquareLayoutFields, scale: number): Placement {
+function placement(side: number, fields: SquareLayoutFields, scale: number, leastTop: number): Placement {
     const margin = (value: number): number => Math.round(value * scale);
-    const top = margin(fields.margins.top);
+    const top = Math.max(margin(fields.margins.top), leastTop);
     const left = margin(fields.margins.left);
     const columns = Math.max(1, Math.min(fields.panels, FACET_COLUMNS));
     const rows = Math.max(1, Math.ceil(fields.panels / columns));

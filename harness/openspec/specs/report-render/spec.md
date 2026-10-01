@@ -2085,6 +2085,8 @@ The toolbox MUST hold no control that changes the chart type, because a reader m
 
 The option stays JSON. Each handler of the toolbox is the name of a page function. The page script binds each function to its name after it parses the option, and before the chart reads the option. The script removes a name that the page does not hold. The print hides the toolbox of each chart, and the end of the print shows it again. Each export removes the toolbox, thus a file never shows it.
 
+The toolbox takes a band at the top of the chart body, as tall as the toolbox that the chart runtime lays out. A figure that places its own grid MUST keep its plot and its text under the band on the page. An export has no toolbox, thus a `forest` and a square figure keep the top margin of the figure in each export file.
+
 #### Scenario: A dense chart gets the zoom
 - **WHEN** the caller renders a `manhattan` chart
 - **THEN** the toolbox of the page option holds the zoom, the restore, the data view, and the download controls, in that order
@@ -2104,6 +2106,10 @@ The option stays JSON. Each handler of the toolbox is the name of a page functio
 #### Scenario: The data view holds back a long table
 - **WHEN** a reader opens the data view of a Manhattan plot of 25,813 variants
 - **THEN** the view shows the first 1,000 rows and states that the plot holds 25,813 rows
+
+#### Scenario: A figure keeps its plot clear of the toolbox
+- **WHEN** the caller renders a `forest`, `roc`, `embedding`, or `gsea` chart on the page
+- **THEN** no plot area and no text lies under the box of the toolbox
 
 ### Requirement: The download menu of a chart
 The download control MUST open the download menu of its chart. The menu follows the option script in the chart card. It holds the two SVG entries, a rule, and the three PNG entries. An SVG entry links the staged file of its column, or it builds the hybrid SVG file of a dense chart. The page makes the file of each PNG entry on a click.

@@ -37,8 +37,7 @@ export const DOWNLOAD_ICON = "path://M12 3L12 15M7 10L12 15L17 10M4 17L4 21L20 2
 
 /**
  * The place of the toolbox in the chart body, in pixels: the gap to the right edge and to the top edge, the
- * padding of the toolbox box, the size of one icon, and the gap between two icons. The theme reserves a top
- * band of 24 pixels over the grid, thus one icon and its padding fit the band.
+ * padding of the toolbox box, the size of one icon, and the gap between two icons.
  */
 const TOOLBOX_RIGHT_PX = 4;
 const TOOLBOX_TOP_PX = 0;
@@ -55,6 +54,19 @@ export const TOOLBOX_ZLEVEL = 1000;
 
 /** The width of an icon stroke, in pixels. */
 const TOOLBOX_STROKE_PX = 1.25;
+
+/**
+ * The least hit width of an outline, in pixels. The runtime measures a path with a stroke and no fill with its
+ * hit area, thus the box of each toolbox icon is this width larger than the icon.
+ */
+const OUTLINE_HIT_PX = 5;
+
+/**
+ * The height of the band that the toolbox takes at the top of the chart body, in pixels: the top gap, the
+ * padding over and under the icons, and the box of one outline icon. The derivation gives no toolbox, and no
+ * layer reserves this band, thus a figure that places its own grid keeps its plot and its text under the band.
+ */
+export const TOOLBOX_BAND_PX = TOOLBOX_TOP_PX + 2 * TOOLBOX_PADDING_PX + TOOLBOX_ITEM_PX + Math.max(TOOLBOX_STROKE_PX, OUTLINE_HIT_PX);
 
 /** The size of the title text that the runtime shows under an icon on hover, in pixels. */
 const TOOLBOX_TITLE_PX = 10;

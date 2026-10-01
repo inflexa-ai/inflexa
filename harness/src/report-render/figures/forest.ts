@@ -15,7 +15,8 @@ import { err, ok, type Result } from "neverthrow";
 import { channelColumn, channelOrder, channelTransform, type ChartBlock } from "../../contracts/report-blocks.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { INTERVAL_RENDERER } from "../chart-renderers.js";
-import { CHART_INK, CHART_PAGE_TEXT_PX, GUIDE_LINE_COLOR, GUIDE_LINE_WIDTH_PX } from "../design.js";
+import { TOOLBOX_BAND_PX } from "../chart-toolbox.js";
+import { CHART_EXPORT_SIZES, CHART_INK, CHART_PAGE_TEXT_PX, GUIDE_LINE_COLOR, GUIDE_LINE_WIDTH_PX } from "../design.js";
 import { formatNumberCell, selectNumberKind, shownMinus, smallestPositiveValue, typographicExponent } from "../number-format.js";
 import type { RenderProblem } from "../types.js";
 import {
@@ -95,7 +96,9 @@ const ESTIMATE_SCIENTIFIC_FLOOR = 1e-3;
 
 /**
  * The edges of the chart in percent. The grid holds its tick labels, its axis names, and each text column
- * inside these edges, thus a long term and the p column both stay inside the chart.
+ * inside these edges, thus a long term and the p column both stay inside the chart. On the page the top edge
+ * sits under the band of the toolbox, because the titles of the text columns sit at the top right corner. An
+ * export has no toolbox, thus a rule for each export size puts the top edge back.
  */
 const CHART_EDGE = "2%";
 
@@ -157,7 +160,7 @@ function deriveForest(block: ChartBlock, rows: readonly ChartRow[], context: Fig
     if (columns.value.low !== undefined && columns.value.high !== undefined) series.push(intervalSeries(forest, range));
     return ok({
         legend: { show: false },
-        grid: { top: CHART_EDGE, bottom: CHART_EDGE, left: CHART_EDGE, right: CHART_EDGE, outerBoundsMode: "same", outerBoundsContain: "all" },
+        grid: { top: TOOLBOX_BAND_PX, bottom: CHART_EDGE, left: CHART_EDGE, right: CHART_EDGE, outerBoundsMode: "same", outerBoundsContain: "all" },
         xAxis,
         yAxis: [
             {
@@ -173,6 +176,10 @@ function deriveForest(block: ChartBlock, rows: readonly ChartRow[], context: Fig
             ...textAxes,
         ],
         series,
+        media: Object.values(CHART_EXPORT_SIZES).map((size) => ({
+            query: { minWidth: size.widthPx, maxWidth: size.widthPx, minHeight: size.heightPx, maxHeight: size.heightPx },
+            option: { grid: { top: CHART_EDGE } },
+        })),
     });
 }
 
