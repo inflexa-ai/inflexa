@@ -46,6 +46,14 @@ describe("createSandboxAgents", () => {
         }
     });
 
+    it("gives the Amass regulatory tool to the drug-repurposing agent only, and the patent tool to no sandbox agent", () => {
+        for (const [id, def] of Object.entries(agents)) {
+            const toolIds = new Set(def.tools.map((t) => t.id));
+            expect(toolIds.has("search_regulatory_approvals"), `${id} search_regulatory_approvals`).toBe(id === "drug-repurposing-agent");
+            expect(toolIds.has("search_patents"), `${id} search_patents`).toBe(false);
+        }
+    });
+
     it("every AgentDefinition.systemPrompt contains the sandbox layer verbatim", () => {
         for (const [id, def] of Object.entries(agents)) {
             expect(def.systemPrompt.length, `${id} prompt empty`).toBeGreaterThan(100);

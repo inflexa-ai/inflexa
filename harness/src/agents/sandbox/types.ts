@@ -46,6 +46,8 @@ export type SandboxToolName =
     | "searchFaers"
     | "searchClinicalTrials"
     | "searchGeoDatasets"
+    // FDA and EMA authorizations with their label text (Amass; keyed).
+    | "searchRegulatoryApprovals"
     // Safety / toxicology.
     | "targetSafety"
     | "comptox";

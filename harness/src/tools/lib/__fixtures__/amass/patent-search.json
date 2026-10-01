@@ -1,0 +1,47 @@
+{
+    "data": [
+        {
+            "amassId": "AMPC_EzkKarMF7cIFSt3SZg13CV1tr3M",
+            "publicationNumber": "CN-103570677-A",
+            "url": "https://patents.google.com/patent/CN103570677A",
+            "applicationNumber": "CN-201310332334-A",
+            "countryCode": "CN",
+            "kindCode": "A",
+            "familyId": "50043462",
+            "familyMembers": [
+                "AMPC_VqlmWsgcRLp4IrwXtNg7n4bp0RT"
+            ],
+            "title": "Preparation method of alpha crystal form imatinib mesylate",
+            "abstract": "The invention provides a preparation method of alpha crystal form imatinib mesylate. The method comprises the following steps: dissolving an imatinib mesylate crude product in a mixed solution containing alcohols solvent and water, and then crystallizing in the alcohols solvent to obtain the crystal of imatinib mesylate in alpha crystal form. The alpha crystal form imatinib mesylate obtained through the method provided by the invention is single in crystal form, the residual solvent is qualified, and the imatinib mesylate alpha crystal form in high quality can be obtained, the process is stable, and the production demand is satisfied.",
+            "language": "en",
+            "nonEnglishFallback": false,
+            "cpcCodes": [
+                "C07D401/04"
+            ],
+            "ipcCodes": [
+                "C07D401/04"
+            ],
+            "inventors": [
+                "WANG TIANMING",
+                "MA FENGYING",
+                "XING YUEZHI",
+                "KOU JINGPING"
+            ],
+            "assignees": [
+                "GUANGDONG HEC PHARMACEUTICAL"
+            ],
+            "publicationDate": "2014-02-12",
+            "filingDate": "2013-08-01",
+            "grantDate": null,
+            "priorityDate": "2012-08-02",
+            "citedPatents": [],
+            "priorityClaimNumbers": [],
+            "parentPublicationNumbers": [],
+            "childPublicationNumbers": [],
+            "hasClaims": false,
+            "hasDescription": false,
+            "nplCount": 0,
+            "citedByCount": 0
+        }
+    ]
+}

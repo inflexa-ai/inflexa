@@ -1,0 +1,30 @@
+{
+    "data": [
+        {
+            "input": {
+                "publicationNumber": "CN-103570677-A"
+            },
+            "amassIds": [
+                "AMPC_EzkKarMF7cIFSt3SZg13CV1tr3M"
+            ]
+        },
+        {
+            "input": {
+                "applicationNumber": "CN-201310332334-A"
+            },
+            "amassIds": [
+                "AMPC_VqlmWsgcRLp4IrwXtNg7n4bp0RT",
+                "AMPC_EzkKarMF7cIFSt3SZg13CV1tr3M"
+            ]
+        },
+        {
+            "input": {
+                "publicationNumber": "US-0000000-B2"
+            },
+            "error": {
+                "code": 404,
+                "message": "Identifier not found"
+            }
+        }
+    ]
+}

@@ -1,0 +1,1268 @@
+{
+    "data": {
+        "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+        "agency": "FDA",
+        "name": "Gleevec",
+        "activeSubstance": "Imatinib Mesylate",
+        "moleculeType": "SMALL_MOLECULE",
+        "authorizationStatus": "ACTIVE",
+        "procedureType": "NDA",
+        "therapeuticIndication": "11 DESCRIPTION Imatinib is a small molecule kinase inhibitor. Gleevec film-coated tablets are supplied as 100 mg and 400 mg tablets for oral administration. Each 100 mg tablet contains 119.5 mg of imatinib mesylate equivalent to 100 mg of imatinib free base. Each 400 mg tablet contains 478 mg of imatinib mesylate equivalent to 400 mg of imatinib free base. Imatinib mesylate is designated chemically as 4-[(4-Methyl-1-piperazinyl)methyl]-N-[4-methyl-3-[[4-(3-pyridinyl)-2-pyrimidinyl]amino]-phenyl]benzamide methanesulfonate and its structural formula is: Imatinib mesylate is a white to off-white to brownish or yellowish tinged crystalline powder. Its molecular formula is C 29 H 31 N 7 O • CH 4 SO 3 and its molecular weight is 589.7 g/mol. Imatinib mesylate is soluble in aqueous buffers less than or equal to pH 5.5 but is very slightly soluble to insoluble in neutral/alkaline aqueous buffers. In non-aqueous solvents, the drug substance is freely soluble to very slightly soluble in dimethyl sulfoxide, methanol, and ethanol, but is insoluble in n-octanol, acetone, and acetonitrile. Inactive Ingredients: colloidal silicon dioxide (NF); crospovidone (NF); hydroxypropyl methylcellulose (USP); magnesium stearate (NF); and microcrystalline cellulose (NF). Tablet coating: ferric oxide, red (NF); ferric oxide, yellow (NF); hydroxypropyl methylcellulose (USP); polyethylene glycol (NF), and talc (USP). Imatinib structural formula 1 INDICATIONS AND USAGE Gleevec is a kinase inhibitor indicated for the treatment of: Newly diagnosed adult and pediatric patients with Philadelphia chromosome positive chronic myeloid leukemia (Ph+ CML) in chronic phase. ( 1.1 ) Patients with Philadelphia chromosome positive chronic myeloid leukemia (Ph+ CML) in blast crisis (BC), accelerated phase (AP), or in chronic phase (CP) after failure of interferon-alpha therapy. ( 1.2 ) Adult patients with relapsed or refractory Philadelphia chromosome positive acute lymphoblastic leukemia (Ph+ ALL). ( 1.3 ) Pediatric patients with newly diagnosed Philadelphia chromosome positive acute lymphoblastic leukemia (Ph+ ALL) in combination with chemotherapy. ( 1.4 ) Adult patients with myelodysplastic/myeloproliferative diseases (MDS/MPD) associated with platelet-derived growth factor receptor (PDGFR) gene re-arrangements. ( 1.5 ) Adult patients with aggressive systemic mastocytosis (ASM) without the D816V c-Kit mutation or with c-Kit mutational status unknown. ( 1.6 ) Adult patients with hypereosinophilic syndrome (HES) and/or chronic eosinophilic leukemia (CEL) who have the FIP1L1-PDGFRα fusion kinase (mutational analysis or fluorescence in situ hybridization [FISH] demonstration of CHIC2 allele deletion) and for patients with HES and/or CEL who are FIP1L1-PDGFRα fusion kinase negative or unknown. ( 1.7 ) Adult patients with unresectable, recurrent and/or metastatic dermatofibrosarcoma protuberans (DFSP). ( 1.8 ) Patients with Kit (CD117) positive unresectable and/or metastatic malignant gastrointestinal stromal tumors (GIST). ( 1.9 ) Adjuvant treatment of adult patients following resection of Kit (CD117) positive GIST. ( 1.10 ) 1.1 Newly Diagnosed Philadelphia Positive Chronic Myeloid Leukemia (Ph+ CML) Newly diagnosed adult and pediatric patients with Philadelphia chromosome positive chronic myeloid leukemia (Ph+ CML) in chronic phase. 1.2 Ph+ CML in Blast Crisis (BC), Accelerated Phase (AP) or Chronic Phase (CP) After Interferon-alpha (IFN) Therapy Patients with Philadelphia chromosome positive chronic myeloid leukemia in blast crisis, accelerated phase, or in chronic phase after failure of interferon-alpha therapy. 1.3 Adult Patients With Ph+ Acute Lymphoblastic Leukemia (ALL) Adult patients with relapsed or refractory Philadelphia chromosome positive acute lymphoblastic leukemia (Ph+ ALL). 1.4 Pediatric Patients With Ph+ Acute Lymphoblastic Leukemia (ALL) Pediatric patients with newly diagnosed Philadelphia chromosome positive acute lymphoblastic leukemia (Ph+ ALL) in combination with chemotherapy. 1.5 Myelodysplastic/Myeloproliferative Diseases (MDS/MPD) Adult patients with myelodysplastic/myeloproliferative diseases associated with platelet-derived growth factor receptor (PDGFR) gene re-arrangements. 1.6 Aggressive Systemic Mastocytosis (ASM) Adult patients with aggressive systemic mastocytosis without the D816V c-Kit mutation or with c-Kit mutational status unknown. 1.7 Hypereosinophilic Syndrome (HES) and/or Chronic Eosinophilic Leukemia (CEL) Adult patients with hypereosinophilic syndrome and/or chronic eosinophilic leukemia who have the FIP1L1-PDGFRα fusion kinase (mutational analysis or fluorescence in situ hybridization [FISH] demonstration of CHIC2 allele deletion) and for patients with HES and/or CEL who are FIP1L1-PDGFRα fusion kinase negative or unknown. 1.8 Dermatofibrosarcoma Protuberans (DFSP) Adult patients with unresectable, recurrent and/or metastatic dermatofibrosarcoma protuberans. 1.9 Kit+ Gastrointestinal Stromal Tumors (GIST) Patients with Kit (CD117) positive unresectable and/or metastatic malignant gastrointestinal stromal tumors. 1.10 Adjuvant Treatment of GIST Adjuvant treatment of adult patients following complete gross resection of Kit (CD117) positive GIST. 12.1 Mechanism of Action Imatinib mesylate is a protein-tyrosine kinase inhibitor that inhibits the BCR-ABL tyrosine kinase, the constitutive abnormal tyrosine kinase created by the Philadelphia chromosome abnormality in CML. Imatinib inhibits proliferation and induces apoptosis in BCR-ABL positive cell lines as well as fresh leukemic cells from Philadelphia chromosome positive chronic myeloid leukemia. Imatinib inhibits colony formation in assays using ex vivo peripheral blood and bone marrow samples from CML patients. In vivo, imatinib inhibits tumor growth of BCR-ABL transfected murine myeloid cells as well as BCR-ABL positive leukemia lines derived from CML patients in blast crisis. Imatinib is also an inhibitor of the receptor tyrosine kinases for platelet-derived growth factor (PDGF) and stem cell factor (SCF), c-Kit, and inhibits PDGF- and SCF-mediated cellular events. In vitro, imatinib inhibits proliferation and induces apoptosis in GIST cells, which express an activating c-Kit mutation.",
+        "marketingAuthorisationHolder": "NOVARTIS",
+        "authorizationDate": "2003-04-18",
+        "firstAuthorizationDate": "2003-04-18",
+        "lastUpdateDate": "2026-09-15",
+        "createDate": "2026-05-27",
+        "sourceUrl": "https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&ApplNo=021588",
+        "url": "https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&ApplNo=021588",
+        "isOrphan": true,
+        "designations": [
+            {
+                "axis": "REVIEW_ACCELERATION",
+                "type": "PRIORITY_REVIEW",
+                "agency": "FDA",
+                "nativeName": "Priority Review",
+                "basis": null,
+                "indication": null,
+                "postMarketingObligation": null
+            },
+            {
+                "axis": "EARLY_ACCESS_BASIS",
+                "type": "ACCELERATED_APPROVAL",
+                "agency": "FDA",
+                "nativeName": "Accelerated Approval",
+                "basis": "SURROGATE_ENDPOINT",
+                "indication": "For the adjuvant treatment of adult patients following complete gross resection of kit (CD117) positive gastrointestinal stromal tumors (GIST); For the treatment of newly diagnosed philadelphia positive CML in pediatric patients",
+                "postMarketingObligation": true
+            }
+        ],
+        "authorizationsByAgency": [
+            {
+                "amassId": "AMRC_RfKUQtk4IU2J6QizabVl9GdSKx7",
+                "agency": "FDA",
+                "name": "Gleevec",
+                "authorizationStatus": "WITHDRAWN_VOLUNTARY"
+            }
+        ],
+        "documentSections": [
+            {
+                "documentSectionId": "AMRCDS_WgRxoVBczNBLu0ZjTztiHdOuafj",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "0.2",
+                "title": "Reference ID: 5832783",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_6fjTmmbLp9JDWYen3Gf3ICES6nU",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "0.4",
+                "title": "All Grades",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_5IEAVAVljreW22d68jwhAmi1jeG",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "0.6",
+                "title": "Reference ID: 5832783",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_LHt5Zn86x38KHKUSPwvVQFRmcDC",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "1.1",
+                "title": "Newly Diagnosed Philadelphia Positive Chronic Myeloid Leukemia (Ph+ CML)",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_B82Q1QtZrnW3V519UoBGk3wJ2mY",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "1.3",
+                "title": "Adult Patients With Ph+ Acute Lymphoblastic Leukemia (ALL)",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_Ev37QwUK4O89N09fDEuRC0kFurz",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "1.4",
+                "title": "Pediatric Patients With Ph+ Acute Lymphoblastic Leukemia (ALL)",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_ZGe6AicBGokw6QtDePVVgKM5DwB",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "1.6",
+                "title": "Aggressive Systemic Mastocytosis (ASM)",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_ARizRPBJmgNrm5I4y1dCvINVDte",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "1.7",
+                "title": "Hypereosinophilic Syndrome (HES) and/or Chronic Eosinophilic Leukemia (CEL)",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_BQ5kUIexeqnf9Lxtkr9SHJ0vYvC",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "1.8",
+                "title": "Dermatofibrosarcoma Protuberans (DFSP)",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_Sdj2YnMikMYOLiB0SVJabUh52V8",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "1.9",
+                "title": "Kit+ Gastrointestinal Stromal Tumors (GIST)",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_9nty8nYGvF514NgnzNAWfNy7SMF",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "1.10",
+                "title": "Adjuvant Treatment of GIST",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_QTjN5rBDzWtS6nR0aVyUH0isc6c",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2",
+                "title": "Resume treatment with Gleevec at previous dose",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_ExC5x65CWqMc8C7TOJqPQhaUahH",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.1",
+                "title": "Drug Administration",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_VCti6Ma4W0gU1KIKtF2PtRx8XFb",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.3",
+                "title": "Gleevec",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_QLvgjiDlKPSefqcafFaxevqr06b",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.4",
+                "title": "Adult Patients With Ph+ ALL",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_RcQwcJzXxMJ9FVsSZ93eFxz1yPJ",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.5",
+                "title": "Pediatric Patients With Ph+ ALL",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_Fo2BAECbvG1cEanbcZyfnIWlihe",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.7",
+                "title": "Placebo",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_SdxKANoJzfvZeiwgPIbdy9cpbvT",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.9",
+                "title": "Adult Patients With DFSP",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_Sazqk1vDMvcQm9pSwS89BLRU1TO",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.10",
+                "title": "Adult Patients With Metastatic and/or Unresectable GIST",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_BQEoA4oovmtZc2tkMtcJWlnBrjy",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.11",
+                "title": "Adult Patients With Adjuvant GIST",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_LSRwDwGElkSOTJKcreDJgTS7JNs",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.12",
+                "title": "Dose Modification Guidelines",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_K1F81PMgG5LppKPbRo32YtvfSS5",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.13",
+                "title": "Dose Adjustment for Hepatotoxicity and Non-Hematologic Adverse Reactions",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_JdJj8brepJorxYRrQs2dHRjkTaS",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "2.14",
+                "title": "Dose Adjustment for Hematologic Adverse Reactions",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_5xqlzCiWQB6uOG2nS2FIGpf3WhS",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "3",
+                "title": "DOSAGE FORMS AND STRENGTHS",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_L7f90ofcW9Z1kSmT8HLNsoEqtx2",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "4.5",
+                "title": "CTC Grades",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_9vS9zLYSemYTxlRXmOlwH07ZAOx",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.0",
+                "title": "Placebo",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_6CAiAH4pYWR97XlEtlxPHCujBlo",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.1",
+                "title": "Adverse Reactions from Multiple Clinical Trials",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_YlcpavCIAdF6FArXvSMAOcCCWXD",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.2",
+                "title": "Palpitations",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_3xQm64dAGSdiBWsGm03UhdEg19Z",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.3",
+                "title": "Congestive Heart Failure and Left Ventricular Dysfunction",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_5iAbJQI3NcpLw89hq0tLLbWGgWN",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.5",
+                "title": "Hemorrhage",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_HWibynCuQqszxzVWlpovudSpUac",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.6",
+                "title": "Gastrointestinal Disorders",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_WlIaK9DAfFUqxNVzrZOQA7isgwY",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.7",
+                "title": "Hypereosinophilic Cardiac Toxicity",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_IM9Xfk3OJsNygAz4FOqtw18KwoM",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.8",
+                "title": "Dermatologic Toxicities",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_GqUOm4Nzby22j14xDawATaNzYN5",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.9",
+                "title": "Hypothyroidism",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_1TuvrGX9ZZ2RjfCPf2RZ0kFpjYb",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.10",
+                "title": "Embryo-Fetal Toxicity",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_2eexlGgtNmpYJIdzWTU6vO7wx8E",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.11",
+                "title": "Growth Retardation in Children and Adolescents",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_3GbK5KIOZP7ao4yayhMoJ8hnu8l",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.12",
+                "title": "Tumor Lysis Syndrome",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_11HOdlYK9zimGuSO8OcKpzzbnOn",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.13",
+                "title": "Impairments Related to Driving and Using Machinery",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_4er05P1zIUx7yZuc9RyRTgiYY67",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "5.14",
+                "title": "Renal Toxicity",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_WZ42oPI4kvKhm2qPBtrYoHvDAYA",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "6",
+                "title": "ADVERSE REACTIONS",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_VXOAnQmsZupfgIDuX1ilkCFz7A",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "6.1",
+                "title": "Clinical Trials Experience",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_55OqLZs3EWgSvKB0Iwy9VX7B9sT",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "6.2",
+                "title": "Postmarketing Experience",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_VFTIVJFwDxRlRHUQyRGnarawxL",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "7",
+                "title": "DRUG INTERACTIONS",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_RdkZ14yykE2GvZLTLZHrMK0WTQu",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "7.5",
+                "title": "Interactions With Methotrexate",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_2wnP2rNSCOeqZN1wkvhBKAFz1Aw",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "8.1",
+                "title": "Pregnancy",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_VkeA3450efum9iSGrpVmikp8AjC",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "8.2",
+                "title": "Lactation",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_NFq8XIf8Jh32pRATK3mnn61kpvB",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "8.3",
+                "title": "Females and Males of Reproductive Potential",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_JSzJ6exZxVCp9vSVY2LetyQhk5n",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "8.4",
+                "title": "Pediatric Use",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_48g0gQSEp7MjoloT5BQY5vOj95c",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "8.5",
+                "title": "Geriatric Use",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_14hqVYB4pmJbxTBlQ4UDDqREjd5",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "8.6",
+                "title": "Hepatic Impairment",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_1py1DxOI4R00xjQErQjP7UyDkGs",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "8.7",
+                "title": "Renal Impairment",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_42Tt1EHx22ME5LhjiKDhuRKN8gE",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "10",
+                "title": "OVERDOSAGE",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_YK0i4HFTa39opat71fSA5IjTYPj",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "10.0",
+                "title": "Grades",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_Kdb3OYKe7661oMzL0JI7ynl4GWs",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "10.1",
+                "title": "Grades",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_AEKdfk55t5sSiqlIzvHhyqftPsY",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "10.8",
+                "title": "Gleevec",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_MwUfQD7YwafeZtWqYJbW0KiNAmY",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "11",
+                "title": "DESCRIPTION",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_EIhCz5iAXqfpLXIiYYWZOJ5WUmE",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "11.1",
+                "title": "CTC Grades 3 and above",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_WjepuOlXkblcz4ICpj5mOiBiemI",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "12.1",
+                "title": "Mechanism of Action",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_LxjqarlhyTKAiAX2T3KkGqTIyqF",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "12.3",
+                "title": "Pharmacokinetics",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_8pWJv0DJNys2MiIEA1X3Z8Ao7XL",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "13.1",
+                "title": "Carcinogenesis, Mutagenesis, Impairment of Fertility",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_QKn9XPyNVYZhWorcVB4wNW1oXLf",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "13.2",
+                "title": "Animal Toxicology and/or Pharmacology",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_QuU7Gi2V0Ynfexx84aci4SEQUDX",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "14.1",
+                "title": "Chronic Myeloid Leukemia",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_Ox1JMBXawD0uArjayIHHmnhffUW",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "14.2",
+                "title": "Pediatric CML",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_4GSx61Zh6WO6JcP8up1Fn82lFvF",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "14.3",
+                "title": "Acute Lymphoblastic Leukemia",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_3Id2vXg0HAGltcbNnCKFjvmr2A2",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "14.4",
+                "title": "Pediatric ALL",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_B9dmUXI2qKncJ5AqFibZkhe0wtX",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "14.5",
+                "title": "Myelodysplastic/Myeloproliferative Diseases",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_HU1O63CCN41IZ39vrJXZ0iRKfDD",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "14.6",
+                "title": "Aggressive Systemic Mastocytosis",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_UJayT6wqsnamMpTYt1lFxuoKnI5",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "14.7",
+                "title": "Hypereosinophilic Syndrome/Chronic Eosinophilic Leukemia",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_UUEg1gurQs6s2A6VbuCfuqyEjeb",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "14.8",
+                "title": "Dermatofibrosarcoma Protuberans",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_FKkqPW1oY8zhE9Gmj3mF6zVknzg",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "14.9",
+                "title": "Gastrointestinal Stromal Tumors",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_ToyXkzzwNriCj4nrFtP9BT63P9i",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "15",
+                "title": "REFERENCES",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_UtVtykODmOYe8PD7inVZmPANQYe",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "17",
+                "title": "PATIENT COUNSELING INFORMATION",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_XPJH9DOYJu7n2GyGyp9RNML9E7t",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "HIGHLIGHTS OF PRESCRIBING INFORMATION",
+                "title": "HIGHLIGHTS OF PRESCRIBING INFORMATION",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_QlIe16Wd8TdjxeMzNxXSD1QM4T1",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_LABEL",
+                "path": "PATIENT COUNSELING INFORMATION",
+                "title": "PATIENT COUNSELING INFORMATION",
+                "textType": "Label",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+                "sourceDate": "2026-07-15"
+            },
+            {
+                "documentSectionId": "AMRCDS_2etFa10UmSsFGzD8AxA0MYZwr4J",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "1.1",
+                "title": "Recommendations",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_KlNrrRhdUvMvp7gJVQ2dPeA3drP",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "1.2",
+                "title": "Clinical Pharmacology Summary",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_9P2x3nFeRHHyyPcHOx6H7HqRyiD",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "2.2.1",
+                "title": "What are the design features of the pivotal clinical studies?",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_2msj8iCWrTxA5CpCWImdFiiiQ2i",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "2.2.2",
+                "title": "What is the basis for selecting the response endpoints or biomarkers and how were",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_YVfzy1AJG3FWHWG4DZT0owYKEts",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "2.2.3",
+                "title": "Are the active moieties in the plasma (or other biological fluid) appropriately",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_848FKVQU9tTl6ZQezB9tQOWPm9H",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "2.2.4",
+                "title": "Exposure Response",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_RTBEruWyDPHnSSVX5Q5E36q8R6J",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "2.2.4.3",
+                "title": "Is the dose and dosing regimen selected by the sponsor consistent with the known",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_NQF6zlTR8qSeRH2b003vOuj1Edy",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "2.2.5",
+                "title": "Pharmacokinetic Characteristics",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_NwBGSiM9d8HWvtOHDPJZuPVumX8",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "3.",
+                "title": "Investigate and submit data regarding:",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_Njh95F2hzUtIdvTJb0QztRgBhEo",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "4.1.1",
+                "title": "Original NDA 21-335 - CML",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_EKIh4ohhr7NhpaM7PXNfb5Uwtkv",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "4.1.4",
+                "title": "Original NDA 21-588 switch from capsules to tablets",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_KdjAfTpL9Ss4A2JmjYYQrbXmWsu",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "ACCELERATED APPROVAL",
+                "title": "ACCELERATED APPROVAL",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_BB5PQvBOGgjCmyoyQEXMkRqBZWC",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "APPROVAL & LABELING",
+                "title": "APPROVAL & LABELING",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_KT03EX5AhFwaM9xv68l41m39GkE",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "CARTON AND CONTAINER LABELING",
+                "title": "CARTON AND CONTAINER LABELING",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_TelqSA9PVvOZEUIaoInBHWCIr5B",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "CARTON AND CONTAINER LABELS",
+                "title": "CARTON AND CONTAINER LABELS",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_CGvQ6ez4beYmVuiDxZlRNgPapRi",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "CARTON AND IMMEDIATE CONTAINER LABELS",
+                "title": "CARTON AND IMMEDIATE CONTAINER LABELS",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_6RfT1RO61aczsKWH354Ki06jBNd",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "CONTENT OF LABELING",
+                "title": "CONTENT OF LABELING",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_S4JbSQZFbYIiSuWn5432o3OXhls",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "DEAR HEALTH CARE PROFESSIONAL LETTER",
+                "title": "DEAR HEALTH CARE PROFESSIONAL LETTER",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_5yx81TZirrfU5egVJJK14UKZHyA",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "DEPARTMENT OF HEALTH & HUMAN",
+                "title": "DEPARTMENT OF HEALTH & HUMAN",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_73xiiOkiHwXikqDdrD6w9bPSYaI",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "DEPARTMENT OF HEALTH & HUMAN SERVICES",
+                "title": "DEPARTMENT OF HEALTH & HUMAN SERVICES",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_9TgG7RKeB1CyuONuCXobiOTqqBO",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "DEPARTMNT OF HEALTH & HUMA SERVICES",
+                "title": "DEPARTMNT OF HEALTH & HUMA SERVICES",
+                "textType": "Review",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/nda/2006/021588_s017_gleevec.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_9uHWEZ3M7Hx8xmYZWgUSaQDqUhg",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "DOSAGE AND ADMINISTRATION",
+                "title": "DOSAGE AND ADMINISTRATION",
+                "textType": "Pediatric_Clinical_Pharmacology_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-ClinPharmRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_CShRXbj8ENjLov1AcnPrACzGvEo",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "DRUG EVALUATION AND",
+                "title": "DRUG EVALUATION AND",
+                "textType": "Review",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/nda/2006/021588_s017_gleevec.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_JJ5z2C6yfBQcbxfn7bjoRKLvzvt",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "EXCLUSIVITY FOR NEW CHEMICAL ENTITIES",
+                "title": "EXCLUSIVITY FOR NEW CHEMICAL ENTITIES",
+                "textType": "Review",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/nda/2006/021588_s017_gleevec.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_ZrPgt5GTcXv7IRXWAnUlW8cz5cN",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "EXCLUSIVITY SUMMARY",
+                "title": "EXCLUSIVITY SUMMARY",
+                "textType": "Review",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/nda/2006/021588_s017_gleevec.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_M1mB5WbeuBxr3mKGd1BWiLJz4D7",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "HOW SUPPLIED",
+                "title": "HOW SUPPLIED",
+                "textType": "Review",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/nda/2006/021588_s017_gleevec.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_UD9a6kpDchqwg6VQHJMzywD9rh4",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "INDICATIONS AND USAGE",
+                "title": "INDICATIONS AND USAGE",
+                "textType": "Review",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/nda/2006/021588_s017_gleevec.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_f5Sr4jvaduIqqt1unwCS0jgjKF",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "MEDICAL OFFICER",
+                "title": "MEDICAL OFFICER",
+                "textType": "Review",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/nda/2006/021588_s017_gleevec.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_981Q70x6KhPYWPZklhJivTnxPHP",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "PATENT LISTING REQUIREMENTS",
+                "title": "PATENT LISTING REQUIREMENTS",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_XpNeOnJQjfskG4smF0Nz7IRfKhV",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "PEDIATRIC RESEARCH EQUITY ACT",
+                "title": "PEDIATRIC RESEARCH EQUITY ACT",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_KMwNOaqQxuyhQygWwI2cEwK9WbF",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "POSTMARKETING COMMITMENT FULFILLED",
+                "title": "POSTMARKETING COMMITMENT FULFILLED",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_YLkaf0HVqJVxinLLmjy2anvqzgH",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "POSTMARKETING COMMITMENT FULFILLMENT",
+                "title": "POSTMARKETING COMMITMENT FULFILLMENT",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_IGgNQdD8QSE1FJ6f3rar84zhgpv",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "POSTMARKETING COMMITMENTS SUBJECT TO REPORTING REQUIREMENTS",
+                "title": "POSTMARKETING COMMITMENTS SUBJECT TO REPORTING REQUIREMENTS",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_XDzSqjVL5uUcbaEeFX3GXQxLXU7",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "POSTMARKETING COMMITMENTS SUBJECT TO THE REPORTING",
+                "title": "POSTMARKETING COMMITMENTS SUBJECT TO THE REPORTING",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_IY6q1agOwn4YCb1650Sz9DIUj66",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "PROJECT MANAGER REVIEW OF LABELING",
+                "title": "PROJECT MANAGER REVIEW OF LABELING",
+                "textType": "Review",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/nda/2006/021588_s017_gleevec.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_dRqScRp0ABuHB9WL7im1vCWCmZ",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "PROMOTIONAL MATERIALS",
+                "title": "PROMOTIONAL MATERIALS",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_PVUlTVCwu1DkVNgPId85m547Awb",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "PROVIDES FOR THE TREATMENT OF",
+                "title": "PROVIDES FOR THE TREATMENT OF",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_8tQMLwGK8uU9dovSUYjZRM2HLfw",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "REPORTING REQUIREMENTS",
+                "title": "REPORTING REQUIREMENTS",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_Qo1JRYjXAHdlMl1hc43PnQLpdX6",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "REQUIRED PEDIATRIC ASSESSMENTS",
+                "title": "REQUIRED PEDIATRIC ASSESSMENTS",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_LttbUC13YsPnA7Vzx76EuWIq44k",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "SUPPLEMENT APPROVAL",
+                "title": "SUPPLEMENT APPROVAL",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_VZHHckt1yvAmrQTCYZqh43QkoKS",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "THREE-YEAR EXCLUSIVITY",
+                "title": "THREE-YEAR EXCLUSIVITY",
+                "textType": "Review",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/nda/2006/021588_s017_gleevec.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_3h2NzOIc0kpT6081lsq5X3vcGIe",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "WAIVER OF HIGHLIGHTS SECTION",
+                "title": "WAIVER OF HIGHLIGHTS SECTION",
+                "textType": "Letter",
+                "sourceUrl": "http://www.accessdata.fda.gov/drugsatfda_docs/appletter/2006/021588s008,%20s010LTR.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_1ufFddsf9nMJ29QXFakYe4skgAK",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "chunk_0001",
+                "title": "Chunk 0001",
+                "textType": "Pediatric_Medical_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-Med&StatsRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_XTtLkAIqU7sUzmPqj6zUwiP2QkW",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "chunk_0002",
+                "title": "Chunk 0002",
+                "textType": "Pediatric_Medical_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-Med&StatsRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_TTTIEe3fRhCn6ZhS0KJw2XEjnXB",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "chunk_0003",
+                "title": "Chunk 0003",
+                "textType": "Pediatric_Medical_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-Med&StatsRev.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_FkNw1lyh4Z5Tv8zFqmGoFCl2ATi",
+                "amassId": "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg",
+                "docType": "FDA_REVIEW",
+                "path": "chunk_0004",
+                "title": "Chunk 0004",
+                "textType": "Pediatric_Medical_Review",
+                "sourceUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/pediatric/021588s016_imatinib_Gleevec-Med&StatsRev.pdf",
+                "sourceDate": null
+            }
+        ],
+        "fdaDetails": {
+            "applicationNumber": "NDA021588",
+            "prescriptionClass": "Prescription",
+            "submissionClassCode": "TYPE 3",
+            "labelDate": "2026-07-15",
+            "labelUrl": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2026/021588s067lbl.pdf",
+            "ndc": [
+                "0078-0401",
+                "0078-0649",
+                "0078-1490"
+            ],
+            "splSetId": [
+                "211ef2da-2868-4a77-8055-1cb2cd78e24b"
+            ],
+            "withdrawalDate": null,
+            "withdrawalReason": null,
+            "withdrawalSourceUrl": null
+        }
+    }
+}

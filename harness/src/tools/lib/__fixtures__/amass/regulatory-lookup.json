@@ -1,0 +1,39 @@
+{
+    "data": [
+        {
+            "input": {
+                "fdaApplicationNumber": "021588"
+            },
+            "error": {
+                "code": "NOT_FOUND",
+                "message": "Record not found."
+            }
+        },
+        {
+            "input": {
+                "fdaApplicationNumber": "NDA021588"
+            },
+            "amassIds": [
+                "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg"
+            ]
+        },
+        {
+            "input": {
+                "ndc": "0078-0401-05"
+            },
+            "error": {
+                "code": "NOT_FOUND",
+                "message": "Record not found."
+            }
+        },
+        {
+            "input": {
+                "fdaApplicationNumber": "999999"
+            },
+            "error": {
+                "code": "NOT_FOUND",
+                "message": "Record not found."
+            }
+        }
+    ]
+}

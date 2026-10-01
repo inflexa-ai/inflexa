@@ -5,6 +5,8 @@ import { createComptoxTool } from "./comptox.js";
 import { createDrugGeneInteractionsTool } from "./drug-gene-interactions.js";
 import { createGeneDiseaseEvidenceTool } from "./gene-disease-evidence.js";
 import { createPubMedTool } from "./pubmed.js";
+import { createSearchPatentsTool } from "./search-patents.js";
+import { createSearchRegulatoryApprovalsTool } from "./search-regulatory-approvals.js";
 
 /**
  * API keys for the external bio/chem data sources. Threaded from the
@@ -20,6 +22,7 @@ export interface BioToolKeys {
     readonly ncbi?: string;
     readonly github?: string;
     readonly semanticScholar?: string;
+    readonly amass?: string;
 }
 
 /**
@@ -67,5 +70,22 @@ export function createChemDbTools(
             ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         comptox: createComptoxTool({ apiKey: keys.epaCcte }),
+    };
+}
+
+/**
+ * The Amass tools: FDA and EMA authorizations, and patents.
+ *
+ * The key is optional. With no key, each tool is still built, and a call throws
+ * before it reaches Amass, the same as `comptox` without its EPA key.
+ */
+export function createAmassTools(keys: BioToolKeys): {
+    regulatoryApprovals: Tool;
+    patents: Tool;
+} {
+    const apiKey = keys.amass ?? "";
+    return {
+        regulatoryApprovals: createSearchRegulatoryApprovalsTool({ apiKey }),
+        patents: createSearchPatentsTool({ apiKey }),
     };
 }

@@ -1,0 +1,476 @@
+{
+    "data": {
+        "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+        "agency": "EMA",
+        "name": "Glivec",
+        "activeSubstance": "Imatinib",
+        "moleculeType": "SMALL_MOLECULE",
+        "authorizationStatus": "ACTIVE",
+        "procedureType": "CENTRALISED_HUMAN",
+        "therapeuticIndication": "Glivec is indicated for the treatment of  adult and paediatric patients with newly diagnosed Philadelphia-chromosome (bcr-abl)-positive (Ph+) chronic myeloid leukaemia (CML) for whom bone-marrow transplantation is not considered as the first line of treatment; adult and paediatric patients with Ph+ CML in chronic phase after failure of interferon-alpha therapy, or in accelerated phase or blast crisis; adult and paediatric patients with newly diagnosed Philadelphia-chromosome-positive acute lymphoblastic leukaemia (Ph+ ALL) integrated with chemotherapy; adult patients with relapsed or refractory Ph+ ALL as monotherapy; adult patients with myelodysplastic / myeloproliferative diseases (MDS / MPD) associated with platelet-derived growth factor receptor (PDGFR) gene re-arrangements; adult patients with advanced hypereosinophilic syndrome (HES) and / or chronic eosinophilic leukaemia (CEL) with FIP1L1-PDGFRa rearrangement.  The effect of Glivec on the outcome of bone-marrow transplantation has not been determined. Glivec is indicated for:  the treatment of adult patients with Kit (CD 117)-positive unresectable and / or metastatic malignant gastrointestinal stromal tumours (GIST); the adjuvant treatment of adult patients who are at significant risk of relapse following resection of Kit (CD117)-positive GIST. Patients who have a low or very low risk of recurrence should not receive adjuvant treatment; the treatment of adult patients with unresectable dermatofibrosarcoma protuberans (DFSP) and adult patients with recurrent and / or metastatic DFSP who are not eligible for surgery.  In adult and paediatric patients, the effectiveness of Glivec is based on overall haematological and cytogenetic response rates and progression-free survival in CML, on haematological and cytogenetic response rates in Ph+ ALL, MDS / MPD, on haematological response rates in HES / CEL and on objective response rates in adult patients with unresectable and / or metastatic GIST and DFSP and on recurrence-free survival in adjuvant GIST. The experience with Glivec in patients with MDS / MPD associated with PDGFR gene re-arrangements is very limited (see section 5.1). Except in newly diagnosed chronic phase CML, there are no controlled trials demonstrating a clinical benefit or increased survival for these diseases.",
+        "marketingAuthorisationHolder": "Novartis Europharm Limited",
+        "authorizationDate": "2001-11-07",
+        "firstAuthorizationDate": "2001-11-07",
+        "lastUpdateDate": "2026-09-14",
+        "createDate": "2026-04-22",
+        "sourceUrl": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+        "url": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+        "isOrphan": false,
+        "designations": [],
+        "authorizationsByAgency": [],
+        "documentSections": [
+            {
+                "documentSectionId": "AMRCDS_ZIZzen4knkWqlcNSfkZrCWV797B",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "1",
+                "title": "Haematological response criteria (all responses to be confirmed after  4 weeks):",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_9QBrCXR3qVQpEJiDhpHmN7A1oPi",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "2",
+                "title": "Cytogenetic response criteria:",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_BYetIE5quHWlMtmLNgxZAgxVyht",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "3",
+                "title": "PHARMACEUTICAL FORM",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_JmbSzmTFGfqxRTttSDhnRCJEM8b",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "4.1",
+                "title": "Therapeutic indications",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_8dI664FSGFo19VOo9Y4LdPFZKpQ",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "4.2",
+                "title": "Posology and method of administration",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_KAThthDLhIoxY31wygQxNl9Sky2",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "4.3",
+                "title": "Contraindications",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_44QeFxOnl1lrUSWBcTiCZg9gw6F",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "4.4",
+                "title": "Special warnings and precautions for use",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_WohuNmMEKM9mcOLvR4QI1vOjCm4",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "4.5",
+                "title": "Interaction with other medicinal products and other forms of interaction",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_5vxR3eF6gdcdyZxsLkhuXOtWeNB",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "4.6",
+                "title": "Fertility, pregnancy and lactation",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_IR4zwedD6UQC1dBlM6sM9rIPju7",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "4.7",
+                "title": "Effects on ability to drive and use machines",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_JJPKgBjo0vobzUEpgZskGSeNKUc",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "4.8",
+                "title": "Undesirable effects",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_3w88jkOA77nJEdaI4bIwwjaXLkx",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "4.9",
+                "title": "Overdose",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_Wkc3syVcOH6aoQ4EMctpqVqhFNi",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "5.1",
+                "title": "Pharmacodynamic properties",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_WFZLqyF3iHjwOs82O1U1o6UCySA",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "5.2",
+                "title": "Pharmacokinetic properties",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_C18iyburjjdwe3sgvAgf4sao3H1",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "5.3",
+                "title": "Preclinical safety data",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_YklV4CbUQZP7Piv6y5nlxA1y4CN",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "6.1",
+                "title": "List of excipients",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_X7YWez1hAs6uQ0MzqxOtq9AwhmX",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "6.4",
+                "title": "Special precautions for storage",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_Rc7CHlZLq8DjWceSWe94jSH3fD2",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "6.5",
+                "title": "Nature and contents of container",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_P35LcSEFYODhCgawJtc2M6yzHWk",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "6.6",
+                "title": "Special precautions for disposal",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_FTrykVbaTiPHyfyKmd7IC7ep5Xn",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "7",
+                "title": "MARKETING AUTHORISATION HOLDER",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_YclVAaOBi9pDisLaKyZBv39QU3F",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "8",
+                "title": "MARKETING AUTHORISATION NUMBER(S)",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_Aj546cleuAAPzTmR2KPG2V7ujmC",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "10",
+                "title": "DATE OF REVISION OF THE TEXT",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_W8fIKhuMlLRLHFvoKTKslm05lZZ",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "11",
+                "title": "Pregnancy",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_AzTxOt5q6QG4BThTf48izjrAjnH",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "13",
+                "title": "Nervous system disorders",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_ZxYP3UEAwJsnW0YnJgY2YHx4X18",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "14",
+                "title": "Skin and subcutaneous tissue disorders",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_JUCRlJDrzSbvTGaWWAkIBi4cO4s",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "15",
+                "title": "Investigations",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_BXqqhKRBcD1YVBNiHj0USpwlx2X",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "16",
+                "title": "Biochemistry",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_4taOuGVCn7tHFNYRE096TE3EyUA",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "18",
+                "title": "Chronic phase, newly diagnosed",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_9mjkLFkwLDU2eUmt65woDeSlYuO",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "20",
+                "title": "Accelerated phase",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_PONH9inruZAzX256Hf7iX9btwk6",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "22",
+                "title": "Clinical studies in Ph+ ALL",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_4donUypmHind2yYQakwO1ZpAk5Q",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "25",
+                "title": "Maintenance",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_CFY9R79Ok7HFpTV7QLMA9O8DRm7",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "27",
+                "title": "Clinical studies in unresectable and/or metastatic GIST",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_KpNtFyTnE2TcJBD7VwN0tRhPTKf",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "30",
+                "title": "Figure 2  Kaplan-Meier estimates for overall survival (ITT population)",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_1K6tvwwRi5nQu62YlYG6ExIc78h",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "32",
+                "title": "Plasma pharmacokinetics",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_BJAMQgMtUnMxtV6yHz4DJ5A0I32",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "148",
+                "title": "At-risk : Events",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_Y9ANnspqO7WswayRddUxrsoYBZg",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_SMPC",
+                "path": "186",
+                "title": "Survival time in months",
+                "textType": "SmPC",
+                "sourceUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_GbdaHz98irMq9XjpvaE8TCfptia",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_EPAR",
+                "path": "7.1.",
+                "title": "Preclinical aspects",
+                "textType": null,
+                "sourceUrl": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_AL4o99Xnr41tOAVhUYYzdKxzPyb",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_EPAR",
+                "path": "7.2.",
+                "title": "Clinical aspects",
+                "textType": null,
+                "sourceUrl": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_GFSnvd7loo6w4ojHTEuMgJJtaoR",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_EPAR",
+                "path": "8.1.",
+                "title": "Clinical aspects",
+                "textType": null,
+                "sourceUrl": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_5Cg9BlLlGFB1Tq1b1zI5sx58p5Q",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_EPAR",
+                "path": "9.1",
+                "title": "Clinical aspects",
+                "textType": null,
+                "sourceUrl": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_W1pN1dXxSPKVHLMPbyRBedGtPOt",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_EPAR",
+                "path": "10.",
+                "title": "Update on Clinical Safety post-authorisation",
+                "textType": null,
+                "sourceUrl": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_B9H5pGEzVZWShArRERGIYkweflN",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_EPAR",
+                "path": "PATIENT POPULATION",
+                "title": "PATIENT POPULATION",
+                "textType": null,
+                "sourceUrl": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+                "sourceDate": null
+            },
+            {
+                "documentSectionId": "AMRCDS_6VKQJ3HMJBLNpDrpV1GOTe4Bc9",
+                "amassId": "AMRC_JKSk0AQq4Gusemp7gLzW6twyKXU",
+                "docType": "EMA_EPAR",
+                "path": "SCIENTIFIC DISCUSSION",
+                "title": "SCIENTIFIC DISCUSSION",
+                "textType": null,
+                "sourceUrl": "https://www.ema.europa.eu/en/medicines/human/EPAR/glivec",
+                "sourceDate": null
+            }
+        ],
+        "emaDetails": {
+            "productNumber": "EMEA/H/C/000406",
+            "category": "Human",
+            "opinionStatus": null,
+            "isBiosimilar": false,
+            "isAdvancedTherapy": false,
+            "isGenericOrHybrid": false,
+            "additionalMonitoring": false,
+            "pharmacotherapeuticGroup": "Antineoplastic agents",
+            "patientSafety": "No",
+            "latestProcedure": "VR/0000290092",
+            "revisionNumber": 51,
+            "smpcUrl": "https://www.ema.europa.eu/en/documents/product-information/glivec-epar-product-information_en.pdf",
+            "smpcDate": null,
+            "opinionAdoptedDate": "2001-07-26",
+            "europeanCommissionDecisionDate": "2025-10-16",
+            "withdrawalOfApplicationDate": null,
+            "refusalOfMarketingAuthorisationDate": null,
+            "withdrawalExpiryRevocationLapseDate": null,
+            "firstPublishedDate": "2018-06-25"
+        },
+        "fdaDetails": null
+    }
+}

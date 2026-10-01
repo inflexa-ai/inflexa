@@ -133,6 +133,7 @@ describe("createSandboxAgent", () => {
         expect(toolIds).not.toContain("chembl");
         expect(toolIds).not.toContain("search_faers");
         expect(toolIds).not.toContain("comptox");
+        expect(toolIds).not.toContain("search_regulatory_approvals");
     });
 
     // Reference discovery reads the store the host already has on disk, so it needs no
