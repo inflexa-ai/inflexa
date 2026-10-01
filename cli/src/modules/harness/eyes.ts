@@ -20,8 +20,11 @@ import { harnessLogger } from "../../lib/log.ts";
  * `chromedp/headless-shell` serves the plain devtools endpoint that `puppeteer.connect({ browserURL })`
  * expects, with no wrapper API and no token. The digest pin matches the infrastructure images, thus a moved
  * tag never changes what a look runs against.
+ *
+ * The digest names the multi-arch index, never one platform manifest. The run passes no `--platform`, thus a
+ * platform digest makes each host of a different architecture pull a foreign browser.
  */
-export const EYES_IMAGE = "chromedp/headless-shell@sha256:2fc473f3f926ccae8dbfedf60897937dece94ff7bbdfab20457ebfc732c2b162";
+export const EYES_IMAGE = "chromedp/headless-shell@sha256:2d349b544a1ea6b5b5fd7c0fe99215ff662339c57407ee2e8c0a11af93516b04";
 
 /**
  * The devtools port inside the container. The entrypoint of the image relays this port onto the port that
