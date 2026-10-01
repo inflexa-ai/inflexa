@@ -357,10 +357,11 @@ const DOWNLOAD_URL_LIFETIME_MS = 60_000;
  * container id.
  *
  * The option carries the toolbox of the chart. Each handler of the toolbox is the name of a page function, and
- * the script binds each function after the parse and before the chart initializes. The download control opens
- * the download menu of the card. The print hides the canvas layer of the toolbox of each chart, because the
- * runtime draws the toolbox inside the chart body, and the end of the print shows the layer again. The print sets
- * no option, because a new option starts the chunked draw of a dense chart again.
+ * the script binds each function after the parse and before the chart initializes. The formatter of a genome axis
+ * is such a name too. After the init the script attaches the zoom handler of the toolbox to the chart. The
+ * download control opens the download menu of the card. The print hides the canvas layer of the toolbox of each
+ * chart, because the runtime draws the toolbox inside the chart body, and the end of the print shows the layer
+ * again. The print sets no option, because a new option starts the chunked draw of a dense chart again.
  *
  * A click on a PNG entry of the menu draws the kept option again on a detached element, at the CSS size of the
  * export and its pixel ratio, in the theme of its text size. The entry states the height of its export, because
@@ -462,6 +463,7 @@ export const CHART_BOOTSTRAP = `(function () {
       }
       reportBindToolbox(option);
       var chart = echarts.init(container, ${JSON.stringify(ECHARTS_THEME_NAME)});
+      reportWatchZoom(chart, option);
       kept[container.getAttribute("id") || ""] = option;
       var finish = track(chart);
       try {

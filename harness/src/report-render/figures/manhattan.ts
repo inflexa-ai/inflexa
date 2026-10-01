@@ -19,6 +19,8 @@
  *   then each other name. The colors, the names, and the leads read that order.
  * - A variant whose stored p is 0 draws an upward triangle at the top of the plotted range, and it leads its
  *   chromosome.
+ * - While a zoom of the page toolbox narrows the x axis, the axis shows each position as `chrN: P Mb`, and the
+ *   chromosome names hide.
  *
  * The `group` channel names the chromosome, and the figure needs it. The points come from the composition
  * machinery, thus a table of many thousand variants reads the shared payload. The lines ride the point series
@@ -30,6 +32,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, type ChartBlock, type ChartComposition } from "../../contracts/report-blocks.js";
 import { MANHATTAN_P_THRESHOLD } from "../chart-presets.js";
+import { GENOME_MEMBER, GENOME_POSITION_FUNCTION, type GenomeAxis } from "../chart-toolbox.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { CHART_INK, CHART_PALETTE, MUTED_CHART_COLOR } from "../design.js";
 import { formatNumberCell, typographicExponent } from "../number-format.js";
@@ -167,6 +170,23 @@ function chromosomeNames(found: readonly Chromosome[]): EchartOption {
         label: { show: true, position: "bottom", distance: 6, color: CHART_INK, formatter: "{b}" },
         labelLayout: { hideOverlap: true },
         data: found.map((chromosome) => ({ name: categoryName(chromosome.name), value: [(chromosome.low + chromosome.high) / 2, 0] })),
+    };
+}
+
+/**
+ * The genome member of the x axis: the start and the axis label of each chromosome, in position order.
+ *
+ * The table gives the cumulative position alone. Thus a chromosome starts at the last drawn position of the
+ * chromosome before it, and the first one starts at 0, as qqman adds up the positions.
+ */
+function genomeAxis(found: readonly Chromosome[]): GenomeAxis {
+    const byPlace = [...found].sort((a, b) => a.low - b.low);
+    return {
+        names: CHROMOSOME_NAMES,
+        starts: byPlace.map((chromosome, index) => [
+            index === 0 ? 0 : byPlace[index - 1].high,
+            `chr${categoryName(chromosome.name).trim().replace(CHROMOSOME_PREFIX, "")}`,
+        ]),
     };
 }
 
@@ -345,8 +365,9 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
         xAxis: {
             ...axisOf(option, "xAxis"),
             ...(low !== undefined && high !== undefined ? { min: low, max: high } : {}),
-            axisLabel: { show: false },
+            axisLabel: { show: false, formatter: GENOME_POSITION_FUNCTION },
             axisTick: { show: false },
+            [GENOME_MEMBER]: genomeAxis(found),
         },
         yAxis: { ...axisOf(option, "yAxis"), min: 0, max: top },
         series: [

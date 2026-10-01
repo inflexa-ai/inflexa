@@ -166,6 +166,28 @@ export function pageChartOption(option: EchartOption, chartType: ChartType | und
 }
 
 /**
+ * The page function that makes the label formatter of a genome axis, and the member of the axis that it reads.
+ *
+ * A genome axis plots the cumulative position over the chromosomes. At the full range a series names the
+ * chromosomes, and the axis hides its labels. While a zoom of the toolbox narrows the axis, the axis shows each
+ * position as the chromosome and the position on it, and that series hides.
+ */
+export const GENOME_POSITION_FUNCTION = "reportGenomePosition";
+export const GENOME_MEMBER = "genome";
+
+/** The genome member of an axis: the series that names the chromosomes, and the start and the label of each chromosome in position order. */
+export interface GenomeAxis {
+    readonly names: string;
+    readonly starts: ReadonlyArray<readonly [number, string]>;
+}
+
+/** The bases in one megabase, the unit of a position on a genome axis. */
+const BASES_PER_MEGABASE = 1e6;
+
+/** The decimals of a position on a genome axis, in megabases: one kilobase. */
+const GENOME_POSITION_DIGITS = 3;
+
+/**
  * The page functions of the toolbox, as browser source text.
  *
  * `reportOpenExportMenu` is the click handler of the download icon of the toolbox. The runtime calls it with the
@@ -193,7 +215,18 @@ export function pageChartOption(option: EchartOption, chartType: ChartType | und
  * figure, thus the table skips it. A number of a category axis reads as its category. The view builds each cell
  * as text, thus a hostile name reaches the view as text and never as markup.
  *
- * `reportBindToolbox` replaces each function name of the toolbox with its page function.
+ * `reportBindToolbox` replaces each function name of the toolbox with its page function. It also replaces the name
+ * of the formatter of each genome axis with the formatter that `reportGenomePosition` makes from the genome member
+ * of the axis. The formatter gives the label of the chromosome that holds the position, and the distance from the
+ * start of that chromosome in megabases.
+ *
+ * `reportWatchZoom` attaches the zoom handler to a chart after its init. The handler reads the window of each
+ * axis after each zoom. The toolbox zoom fixes the ends of a zoomed axis to the ends of the selected box, and the
+ * runtime prints each end of a value axis as a label beside the round labels. Thus a zoomed value axis hides
+ * its two end labels, and a genome axis shows its labels and hides the series that names the chromosomes. That
+ * series draws one point under the middle of each chromosome, and a zoom clips each point outside the window.
+ * At the full range each value goes back to the value of the option. The restore of the toolbox sets the option
+ * of the chart again, thus the handler then starts from the option.
  */
 export const CHART_TOOLBOX_SOURCE = `var reportMenuOpen = null;
 var reportMenuEvent = null;
@@ -475,8 +508,28 @@ function reportDataViewContent(option) {
   root.appendChild(table);
   return root;
 }
+function reportGenomePosition(genome) {
+  var starts = genome && Array.isArray(genome.starts) ? genome.starts : [];
+  return function (value) {
+    var at = -1;
+    for (var c = 0; c < starts.length && (c === 0 || starts[c][0] < value); c++) {
+      at = c;
+    }
+    if (at < 0) {
+      return String(value);
+    }
+    return starts[at][1] + ": " + Number(((value - starts[at][0]) / ${BASES_PER_MEGABASE}).toFixed(${GENOME_POSITION_DIGITS})) + " Mb";
+  };
+}
 var reportToolboxFunctions = { ${TOOLBOX_PAGE_FUNCTIONS.map((name) => `${name}: ${name}`).join(", ")} };
 function reportBindToolbox(option) {
+  var axes = reportToolboxList(option.xAxis).concat(reportToolboxList(option.yAxis));
+  for (var a = 0; a < axes.length; a++) {
+    var label = axes[a] ? axes[a].axisLabel : null;
+    if (label && label.formatter === ${JSON.stringify(GENOME_POSITION_FUNCTION)}) {
+      label.formatter = reportGenomePosition(axes[a][${JSON.stringify(GENOME_MEMBER)}]);
+    }
+  }
   var toolbox = option.toolbox;
   var features = toolbox && typeof toolbox === "object" ? toolbox.feature : null;
   if (!features || typeof features !== "object") {
@@ -499,4 +552,81 @@ function reportBindToolbox(option) {
       }
     }
   }
+}
+function reportZoomedAxes(chart) {
+  var zoomed = { xAxis: [], yAxis: [] };
+  chart.getModel().eachComponent("dataZoom", function (zoom) {
+    var range = zoom.getPercentRange();
+    if (!range || (range[0] <= 0 && range[1] >= 100)) {
+      return;
+    }
+    zoom.eachTargetAxis(function (dimension, index) {
+      var axes = zoomed[dimension + "Axis"];
+      if (axes) {
+        axes[index] = true;
+      }
+    });
+  });
+  return zoomed;
+}
+function reportOptionValue(value) {
+  return value === undefined ? null : value;
+}
+function reportZoomPatch(chart, option, zoomed) {
+  var model = chart.getModel();
+  var series = reportToolboxList(option.series);
+  var patch = { xAxis: [], yAxis: [] };
+  var named = [];
+  var mainTypes = ["xAxis", "yAxis"];
+  for (var t = 0; t < mainTypes.length; t++) {
+    var axes = reportToolboxList(option[mainTypes[t]]);
+    for (var a = 0; a < axes.length; a++) {
+      var axis = axes[a] || {};
+      var label = axis.axisLabel || {};
+      var zoom = zoomed[mainTypes[t]][a] === true;
+      var entry = {};
+      var axisModel = model.getComponent(mainTypes[t], a);
+      if (axisModel && axisModel.axis && axisModel.axis.type === "value") {
+        entry.showMinLabel = zoom ? false : reportOptionValue(label.showMinLabel);
+        entry.showMaxLabel = zoom ? false : reportOptionValue(label.showMaxLabel);
+      }
+      var genome = axis[${JSON.stringify(GENOME_MEMBER)}];
+      if (genome && typeof genome === "object") {
+        entry.show = zoom ? true : reportOptionValue(label.show);
+        for (var s = 0; s < series.length; s++) {
+          if (series[s] && series[s].name === genome.names) {
+            var names = series[s].label || {};
+            named.push({ name: genome.names, label: { show: zoom ? false : reportOptionValue(names.show) } });
+          }
+        }
+      }
+      patch[mainTypes[t]].push({ axisLabel: entry });
+    }
+  }
+  if (named.length > 0) {
+    patch.series = named;
+  }
+  return patch;
+}
+function reportWatchZoom(chart, option) {
+  var toolbox = option.toolbox;
+  var features = toolbox && typeof toolbox === "object" ? toolbox.feature : null;
+  if (!features || typeof features !== "object" || !features.dataZoom) {
+    return;
+  }
+  var shown = null;
+  chart.on("restore", function () {
+    shown = null;
+  });
+  chart.on("datazoom", function () {
+    var patch = reportZoomPatch(chart, option, reportZoomedAxes(chart));
+    var key = JSON.stringify(patch);
+    if (shown === null) {
+      shown = JSON.stringify(reportZoomPatch(chart, option, { xAxis: [], yAxis: [] }));
+    }
+    if (key !== shown) {
+      shown = key;
+      chart.setOption(patch);
+    }
+  });
 }`;

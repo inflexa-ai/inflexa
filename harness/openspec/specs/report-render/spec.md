@@ -2111,6 +2111,21 @@ The toolbox takes a band at the top of the chart body, as tall as the toolbox th
 - **WHEN** the caller renders a `forest`, `roc`, `embedding`, or `gsea` chart on the page
 - **THEN** no plot area and no text lies under the box of the toolbox
 
+### Requirement: The zoom of a page chart
+While the toolbox zoom narrows a value axis, the axis MUST NOT print the ends of the box as labels. At the full range, each label setting goes back to the option. While the x range of a `manhattan` chart is zoomed, the axis MUST print each position as `chrN: P Mb`, and the chromosome names hide. A chromosome starts at the last drawn position of the chromosome before it. An export does not change.
+
+#### Scenario: A zoomed value axis prints only round labels
+- **WHEN** a reader zooms the p axis to 5.3 to 12.7
+- **THEN** no label `5.3` or `12.7` prints, and the undo prints `0` and the top again
+
+#### Scenario: A zoomed Manhattan plot names the positions
+- **WHEN** a reader zooms to 100 to 600 Mb, and chromosome 2 starts at 248.9 Mb
+- **THEN** the x axis prints `chr1: 200 Mb`, `chr2: 51.1 Mb`, `chr2: 151.1 Mb`, `chr3: 9 Mb`, and no chromosome name
+
+#### Scenario: The restore shows the names
+- **WHEN** a reader zooms, then pushes the restore control
+- **THEN** the chromosome names print again, and the next zoom prints the positions
+
 ### Requirement: The download menu of a chart
 The download control MUST open the download menu of its chart. The menu follows the option script in the chart card. It holds the two SVG entries, a rule, and the three PNG entries. An SVG entry links the staged file of its column, or it builds the hybrid SVG file of a dense chart. The page makes the file of each PNG entry on a click.
 
