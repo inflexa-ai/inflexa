@@ -255,6 +255,21 @@ The derived option MUST carry no toolbox. The derivation removes the toolbox tha
 - **WHEN** the caller derives a chart block
 - **THEN** the derived option holds no toolbox member, and the legend and the axis rules of the discipline stay
 
+### Requirement: A dense category axis prints the labels that its plot holds
+The renderer MUST thin the upright x labels of a report chart after the layout discipline. One label takes 1.3 times the text size. The plot holds `fit = floor(width / line)` labels. An axis with more categories than `fit` MUST take the interval `ceil(count / fit) − 1`. The width is the page body of 900 px less the side margins of the grid. A facet panel uses its own width. A thinned chart with no tooltip MUST get the axis tooltip, thus a reader can name each bar. The export MUST calculate the interval again at 0.8 times its width and at its text size. The chat display keeps the interval 0.
+
+#### Scenario: A bar of 200 samples thins its labels
+- **WHEN** the caller derives a bar over 200 samples
+- **THEN** the labels turn 90 degrees, and the axis prints 40 labels
+
+#### Scenario: Each facet panel thins its labels
+- **WHEN** the same bar has a facet of two panels
+- **THEN** each panel prints 25 labels
+
+#### Scenario: The single column thins again
+- **WHEN** the export draws that bar at the single column
+- **THEN** the axis prints 20 labels
+
 ### Requirement: The composition derivation
 The renderer MUST derive one option from a chart composition: one runtime series for each declared series, over the resolved rows of the one bound table. A transform applies per row, and `rank` ranks the column deterministically with shared ranks on ties. The label column rides each data item, and a static template formatter shows the name with the values. A reference line and a reference band derive as static mark members. Point labels show on the declared top-N subset alone. The label flags MUST survive a series split: when a group channel or a preset classification splits the rows, each flagged row carries its label in the series that holds it. An axis title replaces the raw column name where the author gives one, and a `log` scale maps onto the static axis type.
 
@@ -900,7 +915,7 @@ Each chart MUST obey the rules of a publication figure. One shared module holds 
 - Eight categories or fewer take the Okabe-Ito palette. More categories take a fixed list of 24 distinct colors in a stable order, which opens with the Okabe-Ito set.
 - A legend icon matches the form of its series: a line for a line and a step, a filled square for a bar and an area, and a circle for a point.
 - The export text is 7 pt at the column width, which is 9.33 px at 96 px for each inch.
-- Each category label of a facet panel prints. A label that does not fit its part of the panel width turns 45 degrees. A label that still covers its neighbor turns 90 degrees. The rule measures the page panel at a chart body 900 px wide.
+- Each category label of a facet panel prints, up to the upright labels that the panel width holds. A label that does not fit its part of the panel width turns 45 degrees. A label that still covers its neighbor turns 90 degrees. The rule measures the page panel at a chart body 900 px wide.
 - An axis title never covers a label of its axis. The chart runtime moves a title off its labels. A grid that holds its labels stops that move by default. Thus an option with such a grid states the move on each titled axis.
 
 The shared module also gives a figure the statistics text, the size legend, and the axis builders. The statistics text prints one line for each statistic, in the form `label = value`, at the plot corner that the figure names. Where the reference of a statistic carries a `unit`, the unit follows the value. A percent sign joins the value, for example `27.5%`, and each other unit follows a space, for example `426 days`. The size legend draws three reference circles with their values, formatted by the number helper.

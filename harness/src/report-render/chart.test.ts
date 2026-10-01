@@ -4,9 +4,13 @@ import type { ChartBlock, ChartComposition, ChartTransform } from "../contracts/
 import { renderChart } from "./views/chart-view.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, transformColumn, type ChartDataSource, type ChartRow, type EchartOption } from "./chart.js";
 import { MANHATTAN_P_THRESHOLD, VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "./chart-presets.js";
+import { CHART_RENDERERS_SOURCE, exportOption } from "./chart-renderers.js";
 import {
+    CHART_EXPORT_SIZES,
     CHART_INK,
     CHART_INLINE_OPTION_BOUND,
+    CHART_PAGE_TEXT_PX,
+    CHART_PAGE_WIDTH_PX,
     CHART_PALETTE,
     DESIGN_CSS,
     GUIDE_LINE_COLOR,
@@ -1896,5 +1900,78 @@ describe("the channel transform", () => {
         const server = VECTOR.map(transformOnTheServer);
         const page = VECTOR.map((entry) => transformOnThePage(entry.cells, entry.transform));
         expect(page).toEqual(server);
+    });
+});
+
+describe("a dense category axis", () => {
+    /** The mutation burden of a cohort: one bar for each sample, the largest count first. */
+    const burdenRows: ChartRow[] = Array.from({ length: 200 }, (_, index) => ({ sample: `TCGA-AB-${2800 + index}`, mutations: 200 - index }));
+
+    /** The height of one line of the chart text, as a share of the text size. An upright label takes one line along the axis. */
+    const LINE_SHARE = 1.3;
+
+    /** The width of the plot, in pixels: the chart width, by default the page chart body, less the two side margins of the grid. */
+    function plotWidthPx(grid: Record<string, unknown>, widthPx = CHART_PAGE_WIDTH_PX): number {
+        const share = (value: unknown): number => (typeof value === "string" && value.endsWith("%") ? Number.parseFloat(value) / 100 : 0);
+        return widthPx * (1 - share(grid.left) - share(grid.right));
+    }
+
+    /** The page twin of the export option. */
+    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`)() as (
+        option: EchartOption,
+        textPx: number,
+        widthPx: number,
+        heightPx: number,
+    ) => EchartOption;
+
+    /**
+     * The count of labels that the axis prints. A numeric interval prints every (interval + 1)th label. Any other
+     * interval leaves the choice to the runtime, which the layout discipline forbids, thus it counts every label.
+     */
+    function printedLabels(count: number, label: Record<string, unknown>): number {
+        if (label.show === false) return 0;
+        return typeof label.interval === "number" ? Math.ceil(count / (label.interval + 1)) : count;
+    }
+
+    it("prints no more upright labels than the plot width holds at the page text size", () => {
+        const option = derive(chartBlock("bar", { x: "sample", y: "mutations" }, { id: "mut-burden" }), burdenRows);
+        const xAxis = asObj(option.xAxis);
+        const label = asObj(xAxis.axisLabel);
+        const fontPx = typeof label.fontSize === "number" ? label.fontSize : CHART_PAGE_TEXT_PX;
+        const room = Math.floor(plotWidthPx(asObj(option.grid)) / (fontPx * LINE_SHARE));
+        expect(asArr(xAxis.data).length).toBe(200);
+        expect(label.rotate).toBe(90);
+        expect(printedLabels(200, label)).toBeLessThanOrEqual(room);
+    });
+
+    it("names the bar under the pointer in the axis tooltip, because a thinned axis prints no label for some bars", () => {
+        const option = derive(chartBlock("bar", { x: "sample", y: "mutations" }, { id: "mut-burden" }), burdenRows);
+        expect(option.tooltip).toEqual({ trigger: "axis" });
+    });
+
+    it("prints no more upright labels in each facet panel than the panel width holds", () => {
+        const rows = burdenRows.map((row, index) => ({ ...row, cohort: index % 2 === 0 ? "Control" : "Treated" }));
+        const option = derive(chartBlock("bar", { x: "sample", y: "mutations", facet: "cohort" }, { id: "mut-burden" }), rows);
+        const grids = asArr(option.grid).map(asObj);
+        const axes = asArr(option.xAxis).map(asObj);
+        expect(axes.length).toBe(2);
+        for (const axis of axes) {
+            const label = asObj(axis.axisLabel);
+            const panelPx = (CHART_PAGE_WIDTH_PX * Number.parseFloat(String(grids[axis.gridIndex as number].width))) / 100;
+            expect(label.rotate).toBe(90);
+            expect(printedLabels(200, label)).toBeLessThanOrEqual(Math.floor(panelPx / (CHART_PAGE_TEXT_PX * LINE_SHARE)));
+        }
+    });
+
+    it("thins the upright labels again at the width and the text size of each export, on the page as on the server", () => {
+        const option = derive(chartBlock("bar", { x: "sample", y: "mutations" }, { id: "mut-burden" }), burdenRows);
+        for (const size of Object.values(CHART_EXPORT_SIZES)) {
+            const exported = exportOption(option, size.textPx, size.widthPx, size.heightPx);
+            const label = asObj(asObj(exported.xAxis).axisLabel);
+            const room = Math.floor(plotWidthPx(asObj(exported.grid), size.widthPx) / (size.textPx * LINE_SHARE));
+            expect(label.rotate).toBe(90);
+            expect(printedLabels(200, label)).toBeLessThanOrEqual(room);
+            expect(JSON.stringify(exportOnThePage(option, size.textPx, size.widthPx, size.heightPx))).toBe(JSON.stringify(exported));
+        }
     });
 });

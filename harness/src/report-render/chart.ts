@@ -46,7 +46,7 @@ import {
 import { declaredForColumn } from "../contracts/report-reference.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { type PresetAxisTitles, type PresetClassification, type PresetRule } from "./chart-presets.js";
-import { INTERVAL_RENDERER, OUTLINE_RENDERER, VIOLIN_GRID_POINTS } from "./chart-renderers.js";
+import { categoryInterval, INTERVAL_RENDERER, LABEL_LINE_SHARE, OUTLINE_RENDERER, VIOLIN_GRID_POINTS } from "./chart-renderers.js";
 import {
     BAR_VALUE_LABEL_LIMIT,
     CHART_BODY_PX,
@@ -296,8 +296,8 @@ export interface ChartOpts {
 export const DEFAULT_CHART_OPTS: ChartOpts = { figures: FIGURE_MODULES };
 
 /**
- * The layout discipline of a report chart: the rules of `normalizeEchartSpec` with no toolbox, then the
- * figure rules that read the whole option.
+ * The layout discipline of a report chart: the rules of `normalizeEchartSpec` with no toolbox, the upright
+ * category labels thinned to the plot width, then the figure rules that read the whole option.
  *
  * The chart card carries the export row, thus the save button of the discipline has no place on the page.
  * Every other rule of the discipline stays. The normalizer gives a copy, thus the delete touches no input.
@@ -306,7 +306,7 @@ function reportLayout(raw: EchartOption, title: string | undefined): EchartOptio
     const { [FIGURE_BODY_MEMBER]: _body, ...rest } = raw;
     const option = normalizeEchartSpec(rest, { title });
     delete option.toolbox;
-    return applyFigureRules(option);
+    return applyFigureRules(thinnedLabels(option));
 }
 
 /**
@@ -2764,9 +2764,9 @@ function facetLayout(names: readonly (Cell | undefined)[], shared: AxisPair, leg
  * One shared axis as each panel draws it: no name and three ticks.
  *
  * A value label that overlaps its neighbor hides, because the next tick states the scale. A category label
- * names its bar, thus each one prints. A category label that does not fit its share of the panel width turns
- * 45 degrees, and 90 degrees where a turned label still covers its neighbor. `widthPx` is the panel width on
- * the page, and an x axis alone states it.
+ * names its bar, thus each one prints, up to the upright labels that the panel width holds (`thinnedLabels`).
+ * A category label that does not fit its share of the panel width turns 45 degrees, and 90 degrees where a
+ * turned label still covers its neighbor. `widthPx` is the panel width on the page, and an x axis alone states it.
  */
 function panelAxis(axis: EchartOption, widthPx?: number): EchartOption {
     const label = typeof axis.axisLabel === "object" && axis.axisLabel !== null ? (axis.axisLabel as EchartOption) : {};
@@ -2776,9 +2776,8 @@ function panelAxis(axis: EchartOption, widthPx?: number): EchartOption {
     return { ...base, axisLabel: { ...label, interval: 0, ...(turn !== undefined ? { rotate: turn } : {}) } };
 }
 
-/** The width of one character, and the height of one line, of the chart text, as a share of the text size. */
+/** The width of one character of the chart text, as a share of the text size. */
 const LABEL_CHARACTER_SHARE = 0.6;
-const LABEL_LINE_SHARE = 1.3;
 
 /**
  * The turn of the category labels of one axis at one width, or `undefined` for labels that fit level.
@@ -2793,6 +2792,49 @@ function categoryTurn(categories: readonly Cell[], widthPx: number): 45 | 90 | u
     const band = widthPx / categories.length;
     if (longest * CHART_PAGE_TEXT_PX * LABEL_CHARACTER_SHARE <= band) return undefined;
     return band * Math.SQRT1_2 >= CHART_PAGE_TEXT_PX * LABEL_LINE_SHARE ? 45 : 90;
+}
+
+/**
+ * One option with the upright category labels of each x axis thinned to the count that the plot width of its
+ * grid holds on the page.
+ *
+ * The layout discipline pins the interval of each axis to 0, and a facet panel pins it too. An axis of more
+ * upright labels than its plot holds takes the interval of `categoryInterval` in place of that 0. A thinned
+ * axis no longer names each bar, thus an option with no tooltip takes the axis tooltip, which names the
+ * category under the pointer. The export states the interval again at its own width.
+ */
+function thinnedLabels(option: EchartOption): EchartOption {
+    if (option.xAxis === undefined) return option;
+    let thinned = false;
+    const thin = (axis: unknown): unknown => {
+        if (typeof axis !== "object" || axis === null || Array.isArray(axis)) return axis;
+        const fields = axis as EchartOption;
+        const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? (fields.axisLabel as EchartOption) : {};
+        if (fields.type !== "category" || !Array.isArray(fields.data) || label.rotate !== 90 || label.show === false) return axis;
+        const interval = categoryInterval(fields.data.length, CHART_PAGE_TEXT_PX, pagePlotWidth(option.grid, fields));
+        if (interval === 0) return axis;
+        thinned = true;
+        return { ...fields, axisLabel: { ...label, interval } };
+    };
+    const xAxis = Array.isArray(option.xAxis) ? option.xAxis.map(thin) : thin(option.xAxis);
+    return { ...option, xAxis, ...(thinned && option.tooltip === undefined ? { tooltip: { trigger: "axis" } } : {}) };
+}
+
+/**
+ * The plot width of the grid of one axis on the page, in pixels. A grid that states its width gives that width,
+ * as a facet panel does. Every other grid spans the page chart body less its two side margins.
+ */
+function pagePlotWidth(grid: unknown, axis: EchartOption): number {
+    const entry = Array.isArray(grid) ? grid[typeof axis.gridIndex === "number" ? axis.gridIndex : 0] : grid;
+    const fields = typeof entry === "object" && entry !== null ? (entry as EchartOption) : {};
+    const stated = pagePx(fields.width);
+    return stated > 0 ? stated : CHART_PAGE_WIDTH_PX - pagePx(fields.left) - pagePx(fields.right);
+}
+
+/** One horizontal length of a grid on the page, in pixels: a percent of the page chart body, or a number of pixels. Any other value takes no room. */
+function pagePx(value: unknown): number {
+    if (typeof value === "number") return value;
+    return typeof value === "string" && value.endsWith("%") ? (CHART_PAGE_WIDTH_PX * Number.parseFloat(value)) / 100 : 0;
 }
 
 /** The outer bounds mode of each facet panel: each grid holds its labels and its names inside its own box. */
