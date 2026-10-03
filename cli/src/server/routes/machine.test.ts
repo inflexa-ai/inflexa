@@ -134,11 +134,11 @@ describe("GET /api/v1/models", () => {
         expect((await (await routes.request("/models")).json()) as ModelList).toEqual({ models: [{ id: "claude-opus-4-8", efforts: ["low", "high"] }] });
     });
 
-    test("a listing that failed is `models: null`, not an error", async () => {
-        const routes = routesWith({ listModels: async () => err({ type: "key_missing" }) });
+    test("a listing that failed is `models: null` with the reason for a person, not an error", async () => {
+        const routes = routesWith({ listModels: async () => err({ type: "timed_out", afterMs: 10_000 }) });
         const response = await routes.request("/models");
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ models: null });
+        expect(await response.json()).toEqual({ models: null, reason: "the model endpoint gave no answer within 10 s" });
     });
 });
 

@@ -1,7 +1,7 @@
 import type { Result, ResultAsync } from "neverthrow";
 import type { ChatPart } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { CancelRunResult, ChatContext, DataProfileView, FarmHealResult, ProfileRerunResult, RunDetail, RunList, SandboxReadiness } from "../api/runs.ts";
+import type { CancelRunResult, ChatContext, DataProfileView, FarmHealResult, ProfileRerunResult, RunDetail, RunList } from "../api/runs.ts";
 import { DEFAULT_CLIENT_OPTS, request, streamRequest, type ClientError, type ClientOpts } from "./api.ts";
 
 /** The query of `GET {A}/runs`. Each field is optional: the server pages with its defaults. */
@@ -69,11 +69,6 @@ export function fetchDataProfile(analysisId: string, opts: ClientOpts = DEFAULT_
 /** `POST {A}/data-profile/rerun`: profile the analysis again, on the request of the user. The response gives the outcome of the dispatch. */
 export function rerunDataProfile(analysisId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<ProfileRerunResult, ClientError> {
     return request<ProfileRerunResult>("POST", `${analysisPath(analysisId)}/data-profile/rerun`, {}, opts);
-}
-
-/** `GET {A}/sandbox-readiness`: the verdict of the machine for a sandbox of the analysis. It consumes a recorded farm failure. */
-export function fetchSandboxReadiness(analysisId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SandboxReadiness, ClientError> {
-    return request<SandboxReadiness>("GET", `${analysisPath(analysisId)}/sandbox-readiness`, {}, opts);
 }
 
 /** `POST {A}/farm/heal`: compose the missing package farm of the analysis from the catalog. */

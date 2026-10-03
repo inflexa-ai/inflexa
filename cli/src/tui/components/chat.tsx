@@ -145,9 +145,11 @@ export function Chat(props: ChatProps) {
             </ScrollPane>
 
             {/* Error banner: onAccent is the readable foreground on the filled error background
-                (replaces the prior bg-reuse hack of painting fg with the app background). */}
+                (replaces the prior bg-reuse hack of painting fg with the app background). It takes the
+                rows of its wrapped text, because the remedy comes last in the message; flexShrink={0}
+                keeps those rows on a short terminal, and the stream yields the squeeze instead. */}
             <Show when={errorMsg()}>
-                <box height={1} width="100%" backgroundColor={theme().error} paddingLeft={1}>
+                <box width="100%" flexShrink={0} backgroundColor={theme().error} paddingLeft={1} paddingRight={1}>
                     <text fg={theme().onAccent}>{errorMsg()}</text>
                 </box>
             </Show>

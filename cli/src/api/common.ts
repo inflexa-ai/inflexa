@@ -3,13 +3,24 @@
 
 /** The `error` code of an {@link ApiError} body. Each code has one HTTP status. */
 export type ApiErrorCode =
-    "invalid_json" | "validation_error" | "unauthorized" | "not_found" | "conflict" | "busy" | "locked" | "internal_error" | "unavailable" | "draining";
+    | "invalid_json"
+    | "validation_error"
+    | "unauthorized"
+    | "forbidden"
+    | "not_found"
+    | "conflict"
+    | "busy"
+    | "locked"
+    | "internal_error"
+    | "unavailable"
+    | "draining";
 
 /** The HTTP status of each {@link ApiErrorCode}. */
 export const API_ERROR_STATUS = {
     invalid_json: 400,
     validation_error: 400,
     unauthorized: 401,
+    forbidden: 403,
     not_found: 404,
     conflict: 409,
     busy: 409,

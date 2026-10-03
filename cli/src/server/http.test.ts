@@ -81,6 +81,23 @@ describe("requireRuntime", () => {
         expect(await failed.json()).toMatchObject({ error: "unavailable", details: { phase: "failed" } });
     });
 
+    test("the 503 message gives a person the phase and the command to run, not an API route", async () => {
+        const starting = (await (await appFor(bootIn({ ...identity, phase: "starting" }, null)).request("/needs")).json()) as { message: string };
+        expect(starting.message).toContain("phase `starting`");
+
+        const signIn: ServerState = { ...identity, phase: "failed", bootError: { reason: "sign_in_required", message: "No provider login.", detailLines: [] } };
+        const signInMessage = ((await (await appFor(bootIn(signIn, null)).request("/needs")).json()) as { message: string }).message;
+        expect(signInMessage).toContain("phase `failed`");
+        expect(signInMessage).toContain("No provider login.");
+        expect(signInMessage).toContain("boots again after the sign-in");
+
+        const other: ServerState = { ...identity, phase: "failed", bootError: { reason: "infra_unready", message: "Docker is not running.", detailLines: [] } };
+        const otherMessage = ((await (await appFor(bootIn(other, null)).request("/needs")).json()) as { message: string }).message;
+        expect(otherMessage).toContain("Docker is not running.");
+        expect(otherMessage).toContain("Then run `inflexa up`");
+        for (const message of [starting.message, signInMessage, otherMessage]) expect(message).not.toContain("/api/v1/");
+    });
+
     test("a ready boot hands the runtime to the handler", async () => {
         const readyState: ServerState = { ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } };
         const response = await appFor(bootIn(readyState, runtime)).request("/needs");

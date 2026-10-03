@@ -99,7 +99,7 @@ function needsServer(kind: CommandKind, options: Record<string, unknown>): boole
     return kind.machineFlags.every((flag) => options[flag] === undefined);
 }
 
-/** What {@link registerAction} calls before the action of an `instance` command. Tests replace it. */
+/** What {@link registerAction} calls before the action of an `instance` command. Tests and {@link terminalUiRegisterOpts} replace it. */
 export type RegisterOpts = {
     /** Gives when a server answers, after it starts one when none answers. Otherwise it stops the process with the reason. */
     readonly requireServer: () => Promise<void>;
@@ -112,6 +112,21 @@ export const DEFAULT_REGISTER_OPTS: RegisterOpts = {
         await requireServer();
     },
 };
+
+/**
+ * The {@link RegisterOpts} of an `instance` command that opens a terminal UI, `surface` in the refusal. It refuses a
+ * run with no TTY before the server check, because the check starts a background server that a refused launch
+ * would leave behind.
+ */
+export function terminalUiRegisterOpts(surface: string): RegisterOpts {
+    return {
+        requireServer: async () => {
+            const { requireInteractiveTerminal } = await import("../lib/cli.ts");
+            requireInteractiveTerminal(surface);
+            await DEFAULT_REGISTER_OPTS.requireServer();
+        },
+    };
+}
 
 /**
  * Give `command` the value of an option IT DECLARES that an ancestor parsed instead.

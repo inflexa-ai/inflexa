@@ -439,7 +439,7 @@ export async function setup(options: SetupOptions): Promise<void> {
                     } else {
                         note(
                             "No provider credential is staged on this machine yet, and the sign-in needs a browser.\n" +
-                                "The first `inflexa` launch offers the interactive sign-in; everything else is provisioned.",
+                                "The first `inflexa` launch offers the interactive sign-in, and so does `inflexa up`; everything else is provisioned.",
                             "Provider sign-in pending",
                         );
                     }
@@ -2516,7 +2516,18 @@ export function providerKindForSlug(slug: string | undefined): Provider | undefi
  * Expected, user-actionable failures. Callers print `.message` and exit rather
  * than dumping a stack.
  */
-export class ProxyError extends Error {}
+export class ProxyError extends Error {
+    /**
+     * @param signInRequired true when the provider login is absent or dead and no prompt could ask for it. An
+     *   interactive `inflexa up` repairs it, thus the server boot reports it as `sign_in_required`.
+     */
+    constructor(
+        message: string,
+        readonly signInRequired: boolean = false,
+    ) {
+        super(message);
+    }
+}
 
 function isProvider(value: string): value is Provider {
     return (PROVIDERS as string[]).includes(value);
@@ -2705,7 +2716,7 @@ async function authenticate(rt: ContainerRuntime, preselected: Provider | undefi
     if (chosen) {
         const loggedIn = await runProviderLogin(rt, chosen);
         // Record the connection provider fact from the account kind on a successful login. This runs
-        // for both the setup flow and the TUI-launch fallback login (ensureProxyReady) — every login
+        // for both the setup flow and the login of `inflexa up` (ensureProxyReady) — every login
         // rewrites the slug. A write failure is non-fatal: the OAuth login already succeeded.
         if (loggedIn) {
             recordCliproxyProvider(chosen).match(
@@ -2973,7 +2984,7 @@ export async function ensureLiveCredential(deps: LiveCredentialDeps): Promise<Re
     if (first.kind !== "unauthorized") return reportNonVerdict(first, deps, false);
 
     if (!deps.isInteractive()) {
-        return err(new ProxyError("The provider login has expired or been revoked.\n  Run `inflexa setup --provider <name>` to sign in again."));
+        return err(new ProxyError("The provider login has expired or been revoked.\n  Run `inflexa up` in a terminal to sign in again.", true));
     }
 
     // Offer, don't impose: forcing OAuth on every 401 was the daily churn users hit, and the user may
@@ -3062,7 +3073,7 @@ async function verifyCredentialAtLaunch(rt: ContainerRuntime, opts: ProxyReadyOp
         },
         // The clack confirm (lib/cli.ts) matches the surrounding setup prompt idiom; it is reached only on
         // the TTY path, so its non-TTY stdin-drain branch never runs here. Declining is the consenting "no".
-        confirmRelogin: () => confirm("Sign in to the provider again now? Declining continues to the app — provider calls will fail until you sign in."),
+        confirmRelogin: () => confirm("Sign in to the provider again now? If you decline, provider calls fail until you sign in."),
         relogin: () => authenticate(rt, providerKindForSlug(resolveModelConnection().provider)),
         restartProxy: () => composeRestartProxy(rt),
         isInteractive: () => opts.interactiveLogin && Boolean(process.stdin.isTTY),
@@ -3157,7 +3168,7 @@ async function warnStalePinsAtLaunch(): Promise<void> {
     });
 }
 
-// --- shared entry used by the TUI ------------------------------------------
+// --- shared entry of the server boot and `inflexa up` ----------------------
 
 /** How {@link ensureProxyReady} meets a provider login that is absent or dead. */
 export type ProxyReadyOpts = {
@@ -3169,12 +3180,12 @@ export type ProxyReadyOpts = {
     readonly interactiveLogin: boolean;
 };
 
-/** The {@link ProxyReadyOpts} of a launch in the terminal of the user: the login prompts when stdin is a TTY. */
+/** The {@link ProxyReadyOpts} of `inflexa up` in the terminal of the user: the login prompts when stdin is a TTY. */
 export const DEFAULT_PROXY_READY_OPTS: ProxyReadyOpts = { interactiveLogin: true };
 
 /**
- * Make the chat backend's local prerequisites ready before the TUI takes the
- * terminal. The mode-INDEPENDENT phases always run — the container runtime, the
+ * Make the chat backend's local prerequisites ready: for the server boot, and for
+ * `inflexa up`. The mode-INDEPENDENT phases always run — the container runtime, the
  * Postgres compose stack, and the embedder readiness gate — because they are the
  * harness runtime's prerequisites regardless of where chat traffic goes. The
  * proxy-SPECIFIC phases (writing the proxy config, provider OAuth) run only in
@@ -3210,7 +3221,7 @@ export async function ensureProxyReady(
 
         if (!(await isAuthenticated())) {
             if (!opts.interactiveLogin || !process.stdin.isTTY) {
-                return err(new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa setup` to sign in to a provider, then try again."));
+                return err(new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa up` in a terminal to sign in to a provider.", true));
             }
             console.log("\n  CLIProxyAPI isn't authenticated yet — let's sign in.");
             try {

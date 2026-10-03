@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "@inflexa-ai/harness";
 
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
@@ -40,10 +40,25 @@ describe("workspaceBusyReasons", () => {
             ...DEFAULT_BUSY_GATE_OPTS,
             hasRunningTurn: () => false,
             profileWorkInFlight: () => false,
-            activeRunIds: () => okAsync([]),
-            anyLiveRunWorkflow: () => okAsync(false),
+            liveDurableWork: () => okAsync({ runs: 0, profiles: 0 }),
         };
 
         expect(await workspaceBusyReasons(analysisId, runtime, opts)).toContain("data_profile");
+    });
+
+    test("a run with a live workflow holds the folder, and an unreadable ledger reads as busy", async () => {
+        const runtime = { pool: poolWithRunningProfile("analysis-1") } as unknown as HarnessRuntime;
+        const idle: BusyGateOpts = {
+            ...DEFAULT_BUSY_GATE_OPTS,
+            hasRunningTurn: () => false,
+            profileWorkInFlight: () => false,
+            profileStatus: () => okAsync(null),
+        };
+
+        expect(await workspaceBusyReasons("analysis-1", runtime, { ...idle, liveDurableWork: () => okAsync({ runs: 1, profiles: 0 }) })).toEqual(["run"]);
+        expect(await workspaceBusyReasons("analysis-1", runtime, { ...idle, liveDurableWork: () => okAsync({ runs: 0, profiles: 0 }) })).toEqual([]);
+        expect(await workspaceBusyReasons("analysis-1", runtime, { ...idle, liveDurableWork: () => errAsync(new Error("down")) })).toEqual([
+            "run_state_unreadable",
+        ]);
     });
 });

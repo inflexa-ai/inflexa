@@ -1,10 +1,10 @@
 import { createContext, useContext } from "solid-js";
-import { createStore } from "solid-js/store";
+import { createStore, reconcile } from "solid-js/store";
 import type { JSX } from "solid-js";
 
 import type { AnalysisDetail, AnchorView } from "../../api/analyses.ts";
 import type { ProjectView } from "../../api/projects.ts";
-import { fetchAnalysis } from "../../client/analyses.ts";
+import { fetchAnalysis, toAnalysis } from "../../client/analyses.ts";
 import { abort as abortConversationTurn } from "../hooks/conversation.ts";
 import type { Analysis } from "../../types/analysis.ts";
 
@@ -46,8 +46,9 @@ export type Workspace = {
     /** Swap the open chat in place — bind a different thread and/or analysis without a restart. */
     openSession: (threadId: string | null, workingDir: string, analysis: Analysis) => void;
     /**
-     * Read the project, the anchor, and the input count of the open analysis again: after an input change
-     * of this client, and at the end of a turn, whose agent can change the inputs. The server pushes nothing.
+     * Read the open analysis and its project, anchor, and input count again: after an input change of this
+     * client, at the end of a turn, whose agent can change the inputs, and at each tick of the poll, which
+     * shows a rename or an input change of a different client. The server pushes nothing.
      */
     refreshScope: () => void;
     /** Quit the app cleanly (restore the terminal, then exit). */
@@ -79,15 +80,18 @@ export type WorkspaceInit = {
 export type WorkspaceOpts = {
     /** Abort any in-flight chat turn (real: `abort` from `hooks/conversation.ts`). */
     readonly abortTurn: () => void;
-    /** One analysis with its scope, or `null` when the read fails (real: `GET {A}`). */
-    readonly fetchDetail: (analysisId: string) => Promise<AnalysisDetail | null>;
+    /**
+     * One analysis with its scope, or `null` when the read fails (real: `GET {A}`). `touch` records a sighting of
+     * the anchor folder: an open of the analysis does, and a read again of the open analysis does not.
+     */
+    readonly fetchDetail: (analysisId: string, touch: boolean) => Promise<AnalysisDetail | null>;
 };
 
 /** The production {@link WorkspaceOpts}. */
 export const DEFAULT_WORKSPACE_OPTS: WorkspaceOpts = {
     abortTurn: abortConversationTurn,
-    fetchDetail: async (analysisId) =>
-        (await fetchAnalysis(analysisId, process.cwd())).match(
+    fetchDetail: async (analysisId, touch) =>
+        (await fetchAnalysis(analysisId, { cwd: process.cwd(), touch })).match(
             (detail) => detail,
             () => null,
         ),
@@ -99,17 +103,24 @@ export const DEFAULT_WORKSPACE_OPTS: WorkspaceOpts = {
  * for the sidebar/status bar to repaint on an in-place swap the value must be a reactive primitive.
  * Accessors are deliberately avoided, so a `createStore` (which gives plain-property reactive reads)
  * is the mechanism. `openSession` is the SOLE writer of the scope data: it sets the three scope fields,
- * and the `GET {A}` read of each swap sets the project, the anchor, and the input count. The chat hot state is reset reactively by the `Chat`
+ * and the `GET {A}` read of each swap and each refresh sets the analysis, the project, the anchor, and the input count. The chat hot state is reset reactively by the `Chat`
  * component watching `sessionId`, not by a host callback here. The capability fields are never
  * written through the store. `opts` is injected only by tests.
  */
 export function createWorkspace(init: WorkspaceInit, opts: WorkspaceOpts = DEFAULT_WORKSPACE_OPTS): Workspace {
     // The scope of the server arrives after the swap. A read that lands after a later swap is dropped, thus
     // the scope of a different analysis never shows. A failed read keeps the last answer.
-    const refreshScope = (analysisId: string): void => {
-        void opts.fetchDetail(analysisId).then((detail) => {
+    //
+    // `reconcile` writes only the fields that changed, and keeps each object. The poll reads the scope at
+    // each tick, and a new `analysis` object would run again each effect keyed on `workspace.analysis`,
+    // for example the transcript load and the profile drive.
+    const refreshScope = (analysisId: string, touch: boolean): void => {
+        void opts.fetchDetail(analysisId, touch).then((detail) => {
             if (detail === null || store.analysis?.id !== analysisId) return;
-            setStore({ project: detail.project, anchor: detail.anchor, inputCount: detail.inputCount });
+            setStore("analysis", reconcile(toAnalysis(detail)));
+            setStore("project", reconcile(detail.project));
+            setStore("anchor", reconcile(detail.anchor));
+            setStore("inputCount", detail.inputCount);
         });
     };
     const [store, setStore] = createStore<Workspace>({
@@ -134,14 +145,15 @@ export function createWorkspace(init: WorkspaceInit, opts: WorkspaceOpts = DEFAU
             if (prev?.id === analysis.id) setStore({ analysis, sessionId: threadId, workingDir });
             else setStore({ analysis, sessionId: threadId, workingDir, project: null, anchor: null, inputCount: null });
             // Read again for the same analysis too: a set-project or a rename swaps in place.
-            refreshScope(analysis.id);
+            refreshScope(analysis.id, true);
         },
         refreshScope() {
             const a = store.analysis;
-            if (a !== null) refreshScope(a.id);
+            if (a !== null) refreshScope(a.id, false);
         },
     });
-    if (init.analysis !== null) refreshScope(init.analysis.id);
+    // The launch opened the analysis before the screen, thus this first read is not an open.
+    if (init.analysis !== null) refreshScope(init.analysis.id, false);
     return store;
 }
 

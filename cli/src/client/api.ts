@@ -90,13 +90,34 @@ export function discoverServer(): Result<ServerEndpoint, ClientError> {
         );
 }
 
-/** One line for a person, for each {@link ClientError}. An unreachable server names the command that starts one. */
+/**
+ * Who reads the messages of {@link describeClientError} in this process: a command, or the chat. A send of the
+ * chat does not start a server, as a command does: the chat offers the start in a dialog.
+ */
+export type ClientSurface = "command" | "chat";
+
+let surface: ClientSurface = "command";
+
+/** Name the {@link ClientSurface} of this process. The chat sets `chat` one time, before it renders. */
+export function setClientSurface(next: ClientSurface): void {
+    surface = next;
+}
+
+/**
+ * One line for a person, for each {@link ClientError}. An unreachable server says what starts one on the
+ * {@link ClientSurface} of this process, and names the command that shows the server.
+ */
 export function describeClientError(e: ClientError): string {
     switch (e.type) {
-        case "unreachable":
-            return e.reason === "not_running"
-                ? `No Inflexa server runs: ${env.serverFilePath} names none. Start the server with \`inflexa serve\`, then try again.`
-                : `No Inflexa server answers at ${e.baseUrl}. Start the server with \`inflexa serve\`, then try again.`;
+        case "unreachable": {
+            const missing =
+                e.reason === "not_running" ? `No Inflexa server runs: ${env.serverFilePath} names none.` : `No Inflexa server answers at ${e.baseUrl}.`;
+            const starter =
+                surface === "chat"
+                    ? "This chat offers to start it, and each `inflexa` command starts it too."
+                    : "The next inflexa command that needs a server starts it.";
+            return `${missing} ${starter} \`inflexa server status\` shows it.`;
+        }
         case "aborted":
             return "The request to the Inflexa server was canceled.";
         case "http":

@@ -3,64 +3,44 @@ import { rmSync } from "node:fs";
 import { ensureRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { promptText } from "../../lib/cli.ts";
-import { composeUp, composeDown, composePullIfMissing, composeAvailable, postgresDataLocation, removePostgresVolume, writeComposeFile } from "./compose.ts";
+import { composeDown, composeAvailable, postgresDataLocation, removePostgresVolume } from "./compose.ts";
+import { ensureProxyReady } from "./setup.ts";
 
 // `inflexa up` / `inflexa down` — explicit lifecycle commands for the infra
 // stack. `up` is the same as the self-healing gate but user-initiated; `down`
 // stops everything and optionally deletes persistent data.
 
-/** `inflexa up` — start the infra containers (idempotent). */
-export async function up(): Promise<void> {
+/**
+ * `inflexa up` — make the machine ready for the server (idempotent): the containers, the provider sign-in when the
+ * login is absent or dead, and the embedder. The sign-in prompts only on a TTY. Gives false after it prints why, and
+ * the caller sets the exit code.
+ */
+export async function up(): Promise<boolean> {
     const rtResult = await ensureRuntime();
     if (rtResult.isErr()) {
         console.error(`\n  ${rtResult.error.message}\n`);
-        process.exitCode = 1;
-        return;
+        return false;
     }
     const rt = rtResult.value;
 
     if (!(await composeAvailable(rt))) {
         console.error(`\n  ${rt.label} Compose is not available.\n  Install it (https://docs.docker.com/compose/install/) and re-run.\n`);
-        process.exitCode = 1;
-        return;
+        return false;
     }
 
-    const conn = resolvePostgresConfig();
-    // Regenerate the compose file from current config before starting the engine, so the file the engine
-    // executes and the mount-source guard composeUp runs both derive from the same connection mode in the
-    // same invocation — a file left on disk under an earlier mode can never out-drift the guard.
-    const mode = resolveConnectionMode();
-    const writeErr = writeComposeFile(conn, mode).match(
-        () => null,
-        (e) => e,
-    );
-    if (writeErr) {
-        console.error(`\n  ${writeErr.message}\n`);
-        process.exitCode = 1;
-        return;
-    }
-
-    const pullResult = await composePullIfMissing(rt, mode);
-    if (pullResult.isErr()) {
-        console.error(`\n  ${pullResult.error.message}\n`);
-        process.exitCode = 1;
-        return;
-    }
-
-    // `up` provisions the same preconditions as the launch gate purely by routing through composeUp's
-    // guarded seam: in cliproxy mode the guard writes the proxy config before the engine runs (no
-    // manufactured directory at its path); direct mode provisions nothing proxy-related.
+    // The gate of the server boot, with the login prompt: it regenerates the compose file for the mode, starts
+    // the containers, and probes the provider login.
     console.log("  Starting inflexa containers…");
-    const upResult = await composeUp(rt, mode);
-    if (upResult.isErr()) {
-        console.error(`\n  ${upResult.error.message}\n`);
-        process.exitCode = 1;
-        return;
+    const ready = await ensureProxyReady(resolveConnectionMode());
+    if (ready.isErr()) {
+        console.error(`\n  ${ready.error.message}\n`);
+        return false;
     }
 
     console.log("  Containers are running.");
     console.log(`  Proxy: ${env.cliproxyBaseUrl}`);
-    console.log(`  Postgres: localhost:${conn.port}\n`);
+    console.log(`  Postgres: localhost:${resolvePostgresConfig().port}\n`);
+    return true;
 }
 
 /** `inflexa down` — stop the infra containers, optionally delete data. */

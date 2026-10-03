@@ -48,8 +48,7 @@ export function isSubAgentEvent(frame: ChatFrame): boolean {
 /**
  * A short human phrase for what a sub-agent frame says its emitter is doing, or `null` for a frame
  * that describes no activity (a data part, a text delta — prose the sub-agent is writing for its own
- * caller, not a description of work). The stream gives no frame for an `iteration` of the loop, thus
- * a sub-agent between two tool calls keeps the line of its last call.
+ * caller, not a description of work). An `iteration` is the start of a model request.
  *
  * Shared by the REPL printer and the TUI reducer so the two narrate sub-agent work identically. The
  * agent id leads because a nested call chain is otherwise unattributable: `tool bash` alone does not
@@ -58,6 +57,8 @@ export function isSubAgentEvent(frame: ChatFrame): boolean {
 export function subAgentActivityLabel(frame: ChatFrame): string | null {
     const who = eventSource(frame)?.agentId ?? "sub-agent";
     switch (frame.type) {
+        case "iteration":
+            return `${who}: thinking`;
         case "tool-started":
             return `${who}: ${frame.name}`;
         case "tool-finished":

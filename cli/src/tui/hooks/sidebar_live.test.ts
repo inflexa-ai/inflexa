@@ -7,12 +7,16 @@ import type { DataProfileResult } from "@inflexa-ai/harness/contracts/index.js";
 // Side-effect import: installs `Date.relativeAge` (the loaded-profile timestamp lines call it) via the
 // same central loader the app boots with.
 import "../../extensions/index.ts";
+import type { AnalysisView } from "../../api/analyses.ts";
 import type { DataProfileState, DataProfileView, RunDetail, RunStepSummary, RunSummary, StepExecutionStatus } from "../../api/runs.ts";
 import type { UsageTotals } from "../../api/usage.ts";
+import { toAnalysis } from "../../client/analyses.ts";
 import type { ClientError } from "../../client/api.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
-import type { Workspace } from "../contexts/workspace.ts";
+import { asStr256 } from "../../lib/types.ts";
+import { createWorkspace, type Workspace } from "../contexts/workspace.ts";
 import { __resetBootForTest, __setBootStateForTest } from "./boot.ts";
+import { pollOpenThread, resetHotState, type ThreadPollOpts } from "./conversation.ts";
 import { setChatStatus } from "./status.ts";
 import {
     __resetSidebarLiveForTest,
@@ -112,12 +116,21 @@ function opts(profile: DataProfileState | null, runs: RunSummary[], ready: () =>
     };
 }
 
-/** Mount `watchSidebarData` in a disposable reactive root; returns the dispose so the test tears it down. */
-function mountWatch(ws: Workspace, watchOpts: WatchOpts): () => void {
+/** The reads of a tick beside the ledger, for a case about the ledger: a server that answers, and an open thread that the case does not read. */
+const LEDGER_ONLY: Pick<WatchOpts, "checkServer" | "pollThread"> = { checkServer: async () => true, pollThread: async () => {} };
+
+/** The options of a case about the ledger: {@link LEDGER_ONLY} fills the reads that it omits. */
+type LedgerWatchOpts = Omit<WatchOpts, keyof typeof LEDGER_ONLY> & Partial<typeof LEDGER_ONLY>;
+
+/**
+ * Mount `watchSidebarData` in a disposable reactive root; returns the dispose so the test tears it down. A
+ * case that omits the server probe or the thread read gets {@link LEDGER_ONLY}.
+ */
+function mountWatch(ws: Workspace, watchOpts: LedgerWatchOpts): () => void {
     let dispose!: () => void;
     createRoot((d) => {
         dispose = d;
-        watchSidebarData(ws, watchOpts);
+        watchSidebarData(ws, { ...LEDGER_ONLY, ...watchOpts });
     });
     return dispose;
 }
@@ -127,11 +140,11 @@ function bootReady(): void {
     __setBootStateForTest({ phase: "ready", model: "m", connection: { provider: "anthropic", mode: "cliproxy" } });
 }
 
-// The watch reads only `workspace.analysis?.id`, so a partial stand-in cast is sound and keeps the
-// trigger tests offline (no reactive store, no lock, no session).
+// The watch reads only `workspace.analysis?.id`, the bound session, and the scope read, so a partial
+// stand-in cast is sound and keeps the trigger tests offline (no reactive store, no lock, no session).
 function wsFor(id: string | null): Workspace {
     const analysis = id === null ? null : ({ id } as unknown as Workspace["analysis"]);
-    return { analysis } as unknown as Workspace;
+    return { analysis, sessionId: null, refreshScope: () => {} } as unknown as Workspace;
 }
 
 /** Build a `loaded` profile snapshot for the {@link profileDetailLines} composer tests. */
@@ -568,6 +581,19 @@ describe("refreshSidebarData — the profile's panel-subject entry", () => {
         expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(true);
     });
 
+    // The server re-profiles an input change after a debounce and the staging. In that window the row still
+    // describes the old input set, and an idle sidebar must keep looking until the new row lands.
+    test("profile work that the server holds arms the poll before the row shows it", async () => {
+        const withWork = (view: DataProfileView): RefreshOpts => ({ ...opts(null, []), loadProfile: () => okAsync({ ...view, workPending: true }) });
+        await refreshSidebarData("A", withWork(viewOf(profileState({ status: "completed" }))));
+        expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(true);
+        await refreshSidebarData("A", withWork({ status: null }));
+        expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(true);
+
+        await refreshSidebarData("A", opts(profileState({ status: "completed" }), []));
+        expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(false);
+    });
+
     test("publishing a profile entry leaves the per-run entries untouched", async () => {
         const active = [runRow({ runId: "run-1", status: "running" })];
         await refreshSidebarData(
@@ -704,7 +730,7 @@ describe("hasActiveWork — poll arming predicate", () => {
         expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", runs: terminal })).toBe(false);
     });
 
-    test("not_ready snapshots alone are never active (idle costs nothing)", () => {
+    test("not_ready snapshots alone are never active (the poll stays at the idle cadence)", () => {
         expect(hasActiveWork(notReady, { kind: "not_ready" })).toBe(false);
     });
 
@@ -743,11 +769,11 @@ describe("watchSidebarData — triggers and bounded poll", () => {
         }
     });
 
-    test("the poll arms on active work, ticks a refresh, and disarms when work goes terminal", async () => {
+    test("the poll speeds up on active work, ticks a refresh, and slows down when work goes terminal", async () => {
         const refreshed: string[] = [];
         const arms: Array<{ fn: () => void; ms: number }> = [];
         let disarms = 0;
-        const watchOpts: WatchOpts = {
+        const watchOpts: LedgerWatchOpts = {
             refresh: async (id) => void refreshed.push(id),
             arm: (fn, ms) => {
                 arms.push({ fn, ms });
@@ -758,19 +784,18 @@ describe("watchSidebarData — triggers and bounded poll", () => {
         };
         const dispose = mountWatch(wsFor("A"), watchOpts);
         try {
-            expect(arms).toHaveLength(0); // not_ready snapshots → no work → no interval
+            expect(arms.map((a) => a.ms)).toEqual([15_000]); // not_ready snapshots → no work → the idle cadence
 
             await refreshSidebarData("A", opts(runningProfile(), []));
-            expect(arms).toHaveLength(1); // a running profile armed the poll
-            expect(arms[0]?.ms).toBe(5_000);
-            expect(disarms).toBe(0);
+            expect(arms.map((a) => a.ms)).toEqual([15_000, 5_000]); // a running profile re-armed the poll fast
+            expect(disarms).toBe(1);
 
-            arms[0]?.fn(); // a tick refreshes for the open analysis
+            arms[1]?.fn(); // a tick refreshes for the open analysis
             expect(refreshed).toEqual(["A"]);
 
             await refreshSidebarData("A", opts(profileState({ status: "completed" }), []));
-            expect(disarms).toBe(1); // all work terminal → the interval is torn down
-            expect(arms).toHaveLength(1); // and never re-armed
+            expect(disarms).toBe(2); // all work terminal → the fast interval is torn down
+            expect(arms.map((a) => a.ms)).toEqual([15_000, 5_000, 15_000]); // and the idle cadence replaces it
         } finally {
             dispose();
         }
@@ -779,7 +804,7 @@ describe("watchSidebarData — triggers and bounded poll", () => {
     test("disposing the watcher tears down a live interval", async () => {
         const arms: Array<() => void> = [];
         let disarms = 0;
-        const watchOpts: WatchOpts = {
+        const watchOpts: LedgerWatchOpts = {
             refresh: async () => {},
             arm: () => {
                 const disarm = (): void => void (disarms += 1);
@@ -789,10 +814,199 @@ describe("watchSidebarData — triggers and bounded poll", () => {
         };
         const dispose = mountWatch(wsFor("A"), watchOpts);
         await refreshSidebarData("A", opts(runningProfile(), []));
-        expect(arms).toHaveLength(1);
-        expect(disarms).toBe(0);
+        expect(arms).toHaveLength(2); // the idle interval, then the fast one
+        expect(disarms).toBe(1);
         dispose();
-        expect(disarms).toBe(1); // onCleanup disarmed the live interval
+        expect(disarms).toBe(2); // onCleanup disarmed the live interval
+    });
+});
+
+describe("watchSidebarData — an idle TUI sees the work of a different client", () => {
+    test("the idle poll reads again, and the poll speeds up while the work is active", async () => {
+        // The ledger of the server. A different client changes it between two ticks, and the server
+        // sends no notification of the change.
+        let serverRuns: RunSummary[] = [runRow({ runId: "done", status: "completed" })];
+        const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
+        const watchOpts: LedgerWatchOpts = {
+            refresh: (id) => refreshSidebarData(id, opts(profileState(), serverRuns)),
+            arm: (fn, ms) => {
+                const timer = { fn, ms, live: true };
+                timers.push(timer);
+                return () => {
+                    timer.live = false;
+                };
+            },
+        };
+        const liveCadences = (): number[] => timers.filter((t) => t.live).map((t) => t.ms);
+        const tick = async (): Promise<void> => {
+            for (const t of timers.filter((t) => t.live)) t.fn();
+            await new Promise<void>((r) => setTimeout(r, 0));
+        };
+        const listedIds = (): string[] | null => {
+            const snap = runsSnapshot();
+            return snap.kind === "loaded" ? snap.runs.map((r) => r.runId) : null;
+        };
+        const dispose = mountWatch(wsFor("A"), watchOpts);
+        try {
+            await refreshSidebarData("A", opts(profileState(), serverRuns));
+            expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(false);
+
+            serverRuns = [runRow({ runId: "other-client", status: "running" }), ...serverRuns];
+            await tick();
+            expect(listedIds()).toEqual(["other-client", "done"]);
+            expect(liveCadences()).toEqual([5_000]);
+
+            serverRuns = [runRow({ runId: "other-client", status: "completed" }), runRow({ runId: "done", status: "completed" })];
+            await tick();
+            expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(false);
+            expect(liveCadences()).toEqual([15_000]);
+        } finally {
+            dispose();
+        }
+    });
+});
+
+// One poll is the way that a TUI sees what a different client changes: the server pushes nothing. A tick
+// reads the ledger, and when the server answers it also reads the scope of the analysis, the open thread,
+// and the usage of the session.
+describe("watchSidebarData — a tick reads what a different client changes", () => {
+    /** Mount the watcher over `ws`, and give a tick of its live interval that settles the reads it starts. */
+    function mountPoll(ws: Workspace, over: Partial<WatchOpts> = {}): { tick: () => Promise<void>; dispose: () => void } {
+        const timers: { fn: () => void; live: boolean }[] = [];
+        const dispose = mountWatch(ws, {
+            refresh: async () => {},
+            arm: (fn) => {
+                const timer = { fn, live: true };
+                timers.push(timer);
+                return () => {
+                    timer.live = false;
+                };
+            },
+            ...over,
+        });
+        return {
+            tick: async () => {
+                for (const timer of timers.filter((t) => t.live)) timer.fn();
+                for (let i = 0; i < 3; i++) await new Promise<void>((r) => setTimeout(r, 0));
+            },
+            dispose,
+        };
+    }
+
+    test("a tick reads the scope of the analysis: the name and the input count that a different client changed", async () => {
+        let view: AnalysisView = {
+            id: "A",
+            createdAt: "2026-10-03T00:00:00.000Z",
+            updatedAt: "2026-10-03T00:00:00.000Z",
+            name: "before",
+            slug: "before",
+            anchorId: "anchor-a",
+            projectId: null,
+        };
+        let inputCount = 2;
+        const ws = createWorkspace(
+            { analysis: toAnalysis(view), sessionId: null, workingDir: "/work", openDialog: () => {}, closeDialog: () => {}, quit: async () => {} },
+            { abortTurn: () => {}, fetchDetail: async () => ({ ...view, project: null, anchor: null, outputDir: null, inputCount, busy: [] }) },
+        );
+        const poll = mountPoll(ws);
+        try {
+            await new Promise<void>((r) => setTimeout(r, 0));
+            expect(ws.inputCount).toBe(2);
+
+            // A second client renames the analysis and adds an input between two ticks.
+            view = { ...view, name: "renamed by the GUI", slug: "renamed-by-the-gui" };
+            inputCount = 3;
+            await poll.tick();
+
+            expect(ws.analysis?.name).toBe(asStr256("renamed by the GUI"));
+            expect(ws.inputCount).toBe(3);
+        } finally {
+            poll.dispose();
+        }
+    });
+
+    test("a tick reads the open thread of the open analysis", async () => {
+        const reads: [string, string][] = [];
+        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => {} } as unknown as Workspace;
+        const poll = mountPoll(ws, { pollThread: async (analysisId, threadId) => void reads.push([analysisId, threadId]) });
+        try {
+            await poll.tick();
+            expect(reads).toEqual([["A", "T"]]);
+        } finally {
+            poll.dispose();
+        }
+    });
+
+    test("a tick whose server does not answer reads neither the scope nor the thread", async () => {
+        let scopeReads = 0;
+        let threadReads = 0;
+        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => void (scopeReads += 1) } as unknown as Workspace;
+        const poll = mountPoll(ws, { checkServer: async () => false, pollThread: async () => void (threadReads += 1) });
+        try {
+            await poll.tick();
+            expect({ scopeReads, threadReads }).toEqual({ scopeReads: 0, threadReads: 0 });
+        } finally {
+            poll.dispose();
+        }
+    });
+
+    test("the poll runs at the fast cadence while a turn of a different client runs on the open thread", async () => {
+        const live: { ms: number; live: boolean }[] = [];
+        const dispose = mountWatch(wsFor("A"), {
+            refresh: async () => {},
+            arm: (_fn, ms) => {
+                const timer = { ms, live: true };
+                live.push(timer);
+                return () => {
+                    timer.live = false;
+                };
+            },
+        });
+        const cadences = (): number[] => live.filter((t) => t.live).map((t) => t.ms);
+        const turns = (running: boolean): ThreadPollOpts => ({
+            fetchThread: () => okAsync(null),
+            fetchMessages: () => okAsync({ messages: [], total: 0, page: 0, perPage: 0, hasMore: false }),
+            fetchTurns: () =>
+                okAsync({
+                    turns: running
+                        ? [{ turnId: "turn-of-the-gui", threadId: "T", analysisId: "A", status: "running", startedAt: "2026-10-03T10:00:00.000Z" }]
+                        : [],
+                    total: running ? 1 : 0,
+                    page: 0,
+                    perPage: 1,
+                    hasMore: false,
+                }),
+        });
+        try {
+            expect(cadences()).toEqual([15_000]);
+
+            await pollOpenThread("A", "T", turns(true));
+            expect(cadences()).toEqual([5_000]);
+
+            await pollOpenThread("A", "T", turns(false));
+            expect(cadences()).toEqual([15_000]);
+        } finally {
+            dispose();
+            resetHotState();
+        }
+    });
+
+    test("each tick asks the server if it still answers", async () => {
+        const probes: string[] = [];
+        const ws = wsFor("A");
+        const poll = mountPoll(ws, {
+            checkServer: async () => {
+                probes.push("probe");
+                return false;
+            },
+        });
+        try {
+            await poll.tick();
+            await poll.tick();
+            expect(probes).toEqual(["probe", "probe"]);
+        } finally {
+            poll.dispose();
+        }
     });
 });
 
@@ -1077,7 +1291,7 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
 // that failure would be self-sustaining against a degraded server.
 describe("the bounded poll never overlaps itself", () => {
     /** Watch options whose `refresh` parks until released, recording each entry. */
-    function parkedRefresh(): { watchOpts: WatchOpts; tick: () => void; entries: () => number; release: () => void } {
+    function parkedRefresh(): { watchOpts: LedgerWatchOpts; tick: () => void; entries: () => number; release: () => void } {
         const arms: Array<() => void> = [];
         let entries = 0;
         let release!: () => void;
@@ -1117,8 +1331,8 @@ describe("the bounded poll never overlaps itself", () => {
             expect(h.entries()).toBe(armedAfterEdge + 1); // three ticks, one refresh
 
             h.release();
-            await Promise.resolve();
-            await Promise.resolve();
+            // The tick settles after its refresh and the reads beside it, thus a macrotask, not a count of microtasks.
+            await new Promise<void>((r) => setTimeout(r, 0));
 
             // Once the in-flight refresh settles the poll resumes.
             h.tick();
@@ -1160,7 +1374,7 @@ describe("the in-flight guard is bounded", () => {
     test("a refresh whose reads never settle is abandoned, and the next tick refreshes the store", async () => {
         const arms: Array<() => void> = [];
         let entries = 0;
-        const watchOpts: WatchOpts = {
+        const watchOpts: LedgerWatchOpts = {
             // The first refresh parks FOREVER — the wedged read the bound exists for. Every later one
             // runs the REAL refresh against immediate reads, so "the next tick proceeds" is asserted
             // against a store write rather than against a call count.

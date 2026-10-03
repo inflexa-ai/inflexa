@@ -70,9 +70,15 @@ export function createAnalysis(body: CreateAnalysisRequest, opts: ClientOpts = D
 /**
  * `GET {A}`: one analysis with its scope. The first request for an analysis takes its instance lock (409
  * `locked`). `cwd` is the absolute folder of this client: the search for a moved anchor folder starts there.
+ * `touch: false` records no sighting of the anchor folder, for a read that is not an open, for example a poll.
  */
-export function fetchAnalysis(analysisId: string, cwd: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AnalysisDetail, ClientError> {
-    return request<AnalysisDetail>("GET", `${analysisPath(analysisId)}?cwd=${encodeURIComponent(cwd)}`, {}, opts);
+export function fetchAnalysis(
+    analysisId: string,
+    query: { cwd: string; touch?: boolean },
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): ResultAsync<AnalysisDetail, ClientError> {
+    const touch = query.touch === false ? "&touch=false" : "";
+    return request<AnalysisDetail>("GET", `${analysisPath(analysisId)}?cwd=${encodeURIComponent(query.cwd)}${touch}`, {}, opts);
 }
 
 /** `PATCH {A}`: rename the analysis, or set or clear its project. A rename gives 409 `busy` while work holds the folder. */

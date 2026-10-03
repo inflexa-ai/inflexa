@@ -126,6 +126,7 @@ function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () =
         fetchTurn: (analysisId, threadId, turnId) => okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", ...end }),
         reloadTranscript: async () => undefined,
         healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
+        transcript: { fetchThread: () => okAsync(null), fetchMessages: () => okAsync({ messages: [], total: 0, page: 0, perPage: 0, hasMore: false }) },
     };
 }
 
@@ -735,7 +736,7 @@ describe("the interrupted marker survives a transcript reload", () => {
     ];
 
     test("a loaded transcript flags the marked message and leaves the unmarked one clean", async () => {
-        await loadMessages(AID, SID, { fetchMessages: () => okAsync(messageList(interruptedTranscript())) });
+        await loadMessages(AID, SID, { fetchThread: () => okAsync(null), fetchMessages: () => okAsync(messageList(interruptedTranscript())) });
 
         expect(messages.length).toBe(2);
         // The user turn carries no marker; the interrupted assistant turn renders exactly what the live
@@ -764,7 +765,7 @@ describe("the interrupted marker survives a transcript reload", () => {
                 ],
             },
         ];
-        await loadMessages(AID, SID, { fetchMessages: () => okAsync(messageList(replay)) });
+        await loadMessages(AID, SID, { fetchThread: () => okAsync(null), fetchMessages: () => okAsync(messageList(replay)) });
 
         const calls = messages[0]?.parts.filter((p) => p.type === "tool-call") ?? [];
         expect(calls.map((p) => (p.type === "tool-call" ? p.outcome : null))).toEqual(["incomplete", "denied"]);
@@ -788,6 +789,7 @@ describe("a transcript load resolving mid-retract", () => {
         // A stale transcript the dropped load WOULD have mounted — present so a failure to drop would be
         // visible as a resurrected message rather than merely an empty store that happened to stay empty.
         const staleLoad: LoadOpts = {
+            fetchThread: () => okAsync(null),
             fetchMessages: () =>
                 ResultAsync.fromSafePromise(
                     loadGate.then(() => messageList([{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }])),

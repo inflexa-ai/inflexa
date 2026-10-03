@@ -1,10 +1,10 @@
 import { intro, log, outro, spinner } from "@clack/prompts";
 import PQueue from "p-queue";
 
-import type { ProfileOutcome, RunDetail, RunSummary, SandboxReadiness } from "../../api/runs.ts";
+import type { ProfileOutcome, RunDetail, RunSummary } from "../../api/runs.ts";
 import { fail } from "../../lib/cli.ts";
 import { describeClientError, DEFAULT_CLIENT_OPTS, type ClientOpts } from "../api.ts";
-import { fetchDataProfile, fetchRun, fetchRuns, fetchSandboxReadiness, rerunDataProfile } from "../runs.ts";
+import { fetchDataProfile, fetchRun, fetchRuns, rerunDataProfile } from "../runs.ts";
 
 /** The analysis that a command operates on: its id for the routes, and its name for the text. */
 export type AnalysisTarget = {
@@ -33,19 +33,11 @@ export const DEFAULT_PROFILE_RUN_OPTS: ProfileRunOpts = { client: DEFAULT_CLIENT
 /**
  * `inflexa profile`: profile the analysis again through the server, then follow the profile until it ends.
  * The server stages the inputs and runs the profile in its own runtime, thus a stop of this command stops
- * only the wait.
+ * only the wait. A machine that cannot start a sandbox gives the 409 of the server, with the command that
+ * repairs the machine.
  */
 export async function profileRun(analysis: AnalysisTarget, opts: ProfileRunOpts = DEFAULT_PROFILE_RUN_OPTS): Promise<void> {
     intro(`inflexa profile — ${analysis.name}`);
-
-    // The checks of the sandbox gate of the TUI, with no wait: a profile that the server cannot start in a
-    // sandbox fails here with the command that repairs the machine.
-    const readiness = (await fetchSandboxReadiness(analysis.id, opts.client)).match(
-        (r) => r,
-        (e) => fail(describeClientError(e)),
-    );
-    const refusal = sandboxRefusal(readiness);
-    if (refusal !== null) fail(refusal);
 
     const outcome = (await rerunDataProfile(analysis.id, opts.client)).match(
         (body) => body.outcome,
@@ -83,32 +75,6 @@ export async function profileRun(analysis: AnalysisTarget, opts: ProfileRunOpts 
         s.message(view.status === "pending" ? `Profiling — waiting for the run to start · ${elapsed}` : `Profiling · ${elapsed}`);
         await Promise.sleep(opts.pollMs);
     }
-}
-
-/** The refusal of the machine for a profile, or `null` when a sandbox can start. An analysis with no inputs profiles nothing, thus it passes. */
-function sandboxRefusal(readiness: SandboxReadiness): string | null {
-    if (readiness.inputCount === 0) return null;
-    switch (readiness.image.state) {
-        case "present":
-            break;
-        case "engine_error":
-            return readiness.image.message;
-        case "absent":
-            return "The sandbox image is not installed. Run `inflexa sandbox pull` to download it.";
-        case "custom":
-            return `Sandbox image "${readiness.image.image}" is not present, and it is not the published image, thus no registry can supply it. Build it, or set the published image and run \`inflexa sandbox pull\`.`;
-        default: {
-            const exhaustive: never = readiness.image;
-            throw new Error(`unhandled image state: ${JSON.stringify(exhaustive)}`);
-        }
-    }
-    if (readiness.store !== "installed" && readiness.store !== "local") {
-        return `The package store is ${readiness.store === "missing" ? "not installed" : "incomplete"}. Run \`inflexa store download\` to obtain it.`;
-    }
-    if (readiness.farm.failure !== null) {
-        return `The package farm of this analysis could not be composed: ${readiness.farm.failure}. Run \`inflexa store ls\` to see the store, then try again.`;
-    }
-    return null;
 }
 
 /** Print what the rerun did. True when a profile runs, thus the command waits for it. */

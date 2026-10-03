@@ -7,7 +7,7 @@ import { ok } from "neverthrow";
 
 import pkg from "../../../package.json";
 import { API_VERSION, type ServerActivity, type ServerDiscovery, type ServerState, type ShutdownMode } from "../../api/server.ts";
-import { serverLogs, serverStatus, serverStop, stopServerAfterUpgrade, type ServerCommandOpts, type ServerStatusView } from "./server.ts";
+import { bootServerAfterUp, serverLogs, serverStatus, serverStop, stopServerAfterUpgrade, type ServerCommandOpts, type ServerStatusView } from "./server.ts";
 
 const DISCOVERY: ServerDiscovery = {
     pid: 7001,
@@ -52,6 +52,8 @@ function machine(): {
         tty: boolean;
         answer: boolean;
         questions: string[];
+        state: ServerState;
+        boots: number;
     };
 } {
     const world = {
@@ -66,6 +68,8 @@ function machine(): {
         tty: false,
         answer: false,
         questions: [] as string[],
+        state: READY,
+        boots: 0,
     };
     let output = "";
     let polls = 0;
@@ -80,7 +84,12 @@ function machine(): {
         fetch: async (url, init) => {
             if (!world.answering) throw new Error("ECONNREFUSED");
             const path = new URL(url).pathname;
-            if (path === "/api/v1/server") return Response.json(READY);
+            if (path === "/api/v1/server") return Response.json(world.state);
+            if (path === "/api/v1/server/boot") {
+                world.boots += 1;
+                world.state = { ...world.state, phase: "starting" } as ServerState;
+                return Response.json(world.state, { status: 202 });
+            }
             if (path === "/api/v1/server/activity") {
                 return world.activity === null ? Response.json({ error: "internal_error", message: "boom" }, { status: 500 }) : Response.json(world.activity);
             }
@@ -356,5 +365,34 @@ describe("the stop of the old server after `inflexa upgrade`", () => {
             expect(world.stops).toEqual(answer ? ["drain"] : []);
             expect(out()).toContain(answer ? "Stopped the old Inflexa server." : "keeps running until `inflexa server stop`");
         }
+    });
+});
+
+describe("the boot after `inflexa up`", () => {
+    const FAILED: ServerState = {
+        version: pkg.version,
+        apiVersion: API_VERSION,
+        startedAt: DISCOVERY.startedAt,
+        phase: "failed",
+        bootError: { reason: "sign_in_required", message: "no provider login", detailLines: [] },
+    };
+
+    test("a server whose boot failed boots again, and the command says so", async () => {
+        const { opts, out, world } = machine();
+        running(world);
+        world.state = FAILED;
+        await bootServerAfterUp(opts);
+        expect(world.boots).toBe(1);
+        expect(out()).toContain("boots again");
+    });
+
+    test("a ready server, or no server, gets no request and no line", async () => {
+        const ready = machine();
+        running(ready.world);
+        await bootServerAfterUp(ready.opts);
+        const none = machine();
+        await bootServerAfterUp(none.opts);
+        expect([ready.world.boots, none.world.boots]).toEqual([0, 0]);
+        expect(ready.out() + none.out()).toBe("");
     });
 });

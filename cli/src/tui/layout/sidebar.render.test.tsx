@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { testRender } from "@opentui/solid";
+import { createRoot } from "solid-js";
 import { createStore } from "solid-js/store";
-import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
+import { parseColor, rgbToHex, type RGBA, type TextareaRenderable } from "@opentui/core";
+import { createMockMouse } from "@opentui/core/testing";
 
 import { renderFrame } from "../../test_support/tui.ts";
 import { asStr256 } from "../../lib/types.ts";
@@ -15,6 +17,8 @@ import { setTheme } from "../theme.ts";
 import type { ClientError, ClientOpts } from "../../client/api.ts";
 import type { UsageTotals, UsageView } from "../../api/usage.ts";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
+import { DialogOverlay, dialogClear, dialogIsOpen, dialogPush } from "../components/dialog/dialog_host.tsx";
+import { useKeymapRoot } from "../keymap.ts";
 import {
     __resetSidebarLiveForTest,
     absTime,
@@ -23,6 +27,7 @@ import {
     refreshSidebarData,
     relAge,
     shortSessionId,
+    watchSidebarData,
     type RefreshOpts,
 } from "../hooks/sidebar_live.ts";
 import type { DataProfileState, DataProfileView, RunDetail, RunStepSummary, RunSummary } from "../../api/runs.ts";
@@ -1529,9 +1534,38 @@ describe("Sidebar USAGE section", () => {
         }
     });
 
-    test("the live store's refresh advances the figures — the section rides the poll it already arms", async () => {
+    test("each tick of the poll reads the usage one time, also a tick whose ledger read writes nothing", async () => {
         const a = await analysisIn(dirA, "alpha");
         const server = usageServer({ calls: 0 });
+        // The ledger read of the first tick writes the snapshots. The second one writes nothing, as a
+        // read that a newer refresh superseded does. The usage of the session is part of the tick
+        // itself, thus the two ticks read it the same.
+        let ledgerWrites = true;
+        const ticks: { fn: () => void; live: boolean }[] = [];
+        let disposeWatch!: () => void;
+        createRoot((dispose) => {
+            disposeWatch = dispose;
+            watchSidebarData(
+                { ...wsFor(a, dirA), sessionId: THREAD },
+                {
+                    refresh: async (id) => {
+                        if (ledgerWrites) await refreshSidebarData(id, refreshOpts(null, [runRow({ status: "running" })]));
+                    },
+                    arm: (fn) => {
+                        const tick = { fn, live: true };
+                        ticks.push(tick);
+                        return () => {
+                            tick.live = false;
+                        };
+                    },
+                    checkServer: async () => true,
+                    pollThread: async () => {},
+                },
+            );
+        });
+        const tick = (): void => {
+            for (const t of ticks.filter((t) => t.live)) t.fn();
+        };
         const setup = await testRender(
             usageNode(a, dirA, () => 0, server.opts),
             { width: 44, height: 40 },
@@ -1542,14 +1576,22 @@ describe("Sidebar USAGE section", () => {
             expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
 
             server.set(REPORTED);
-            // What a poll tick does: republish the live snapshots. The section reads them, so it lands
-            // on that cadence without a second interval to keep armed and disarmed in step with the first.
-            await refreshSidebarData(a.id, refreshOpts(null, [runRow({ status: "running" })]));
+            let reads = server.urls.length;
+            tick();
             await settle(setup);
-
+            expect(server.urls.length - reads).toBe(1);
             expect(usageHas(setup.captureCharFrame(), "12.4k in")).toBe(true);
+
+            ledgerWrites = false;
+            server.set({ calls: 2, inputTokens: 13_000, outputTokens: 3_200 });
+            reads = server.urls.length;
+            tick();
+            await settle(setup);
+            expect(server.urls.length - reads).toBe(1);
+            expect(usageHas(setup.captureCharFrame(), "13.0k in")).toBe(true);
         } finally {
             setup.renderer.destroy();
+            disposeWatch();
         }
     });
 
@@ -1737,6 +1779,86 @@ describe("Sidebar per-entity figures", () => {
             // merely off-palette — the one theme where this assertion can fail for the right reason.
             expect(fg && rgbToHex(fg)).not.toBe("#ffffff");
             expect(fg && parseColor(themes["github-light"].colors.fg).equals(fg)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+// The rail is a mouse surface beside the chat, and the keys belong to the chat. A click that opens a
+// dialog from a rail section must leave the keys with the composer when the dialog closes: the chat binds
+// its keys (typing, `i`, esc) to the composer and to the stream pane, and to nothing on the rail.
+describe("a click on a rail section that opens a dialog", () => {
+    afterEach(() => dialogClear());
+
+    test("esc closes the dialog and gives the keys back to the composer", async () => {
+        const a = analysisRow("alpha");
+        const ws = { ...wsFor(a, dirA), sessionId: "thr-1" };
+        // The section reads its figure from the server. A failed read paints "unavailable", which is enough here.
+        const failing: ClientOpts = {
+            discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
+            fetch: async () => new Response(JSON.stringify({ error: "internal_error", message: "boom" }), { status: 500 }),
+        };
+        let composer!: TextareaRenderable;
+        const setup = await testRender(
+            () => {
+                useKeymapRoot();
+                return (
+                    <WorkspaceContext.Provider value={ws}>
+                        <box flexDirection="row" width="100%" height="100%">
+                            <box flexGrow={1}>
+                                <textarea
+                                    ref={(r: TextareaRenderable) => {
+                                        composer = r;
+                                        queueMicrotask(() => r.focus());
+                                    }}
+                                />
+                            </box>
+                            <Sidebar
+                                messageCount={() => 0}
+                                clientOpts={failing}
+                                onOpenUsage={() =>
+                                    dialogPush(() => (
+                                        <box>
+                                            <text>usage breakdown</text>
+                                        </box>
+                                    ))
+                                }
+                            />
+                            <DialogOverlay />
+                        </box>
+                    </WorkspaceContext.Provider>
+                );
+            },
+            { width: 100, height: 40 },
+        );
+        // A lone ESC byte waits 20 ms in the stdin parser before it is a key, thus the settle waits on a real clock.
+        const settle = async (): Promise<void> => {
+            await new Promise((r) => setTimeout(r, 35));
+            await setup.renderOnce();
+            await setup.renderOnce();
+        };
+        try {
+            await settle();
+            expect(composer.focused).toBe(true);
+
+            const rows = setup.captureCharFrame().split("\n");
+            const y = rows.findIndex((row) => row.includes("USAGE"));
+            const x = rows[y]!.indexOf("USAGE");
+            const mouse = createMockMouse(setup.renderer);
+            await mouse.pressDown(x, y);
+            await mouse.release(x, y);
+            await settle();
+            expect(dialogIsOpen()).toBe(true);
+
+            setup.mockInput.pressEscape();
+            await settle();
+            // The restore of the focus waits one tick past the unmount of the dialog.
+            await new Promise((r) => setTimeout(r, 10));
+            await setup.renderOnce();
+
+            expect(dialogIsOpen()).toBe(false);
+            expect(composer.focused).toBe(true);
         } finally {
             setup.renderer.destroy();
         }

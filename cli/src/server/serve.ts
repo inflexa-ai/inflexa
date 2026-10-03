@@ -7,7 +7,7 @@ import type { Hono } from "hono";
 import { err, ok, Result } from "neverthrow";
 
 import pkg from "../../package.json";
-import { API_VERSION, type ServerDiscovery, type ServerState } from "../api/server.ts";
+import { API_VERSION, type ServerDiscovery, type ServerState, type ShutdownMode } from "../api/server.ts";
 import { readServerDiscovery, serverBaseUrl } from "../client/api.ts";
 import { DEFAULT_ENSURE_SERVER_OPTS, describeServerError, lookupServer, waitForServer } from "../client/server.ts";
 import { describeCause } from "../lib/cause.ts";
@@ -83,6 +83,12 @@ export async function runServe(mode: ServeMode): Promise<void> {
     // At exit, after the shutdown hooks released the runtime lock: a client that finds no file starts a new
     // server, and that server must find the lock free.
     process.on("exit", () => removeOwnDiscovery(env.serverFilePath));
+    // The first hook of the stop, for each path to it: a client request, Ctrl+C, SIGTERM, or SIGHUP. Without
+    // it the log of a detached server ends with no word of why or when the server stopped.
+    onShutdown(() => {
+        console.log(serverStopLine(lifecycle.stopping(), process.pid, new Date()));
+        return Promise.resolve();
+    });
 
     // The re-profile after an input change, from each writer in this process: a route, and the
     // `manage_inputs` tool inside a turn.
@@ -159,6 +165,20 @@ export async function runServeDetached(): Promise<void> {
         (server) => console.log(`Inflexa server started: pid ${server.discovery.pid}, port ${server.discovery.port}.\n  Log: ${env.serverLogPath}`),
         (e) => fail(describeServerError(e)),
     );
+}
+
+/**
+ * The line that the server log gets when the server starts to stop. `mode` is the stop that a client asked for,
+ * or `null` when no client asked, thus a signal stops the process.
+ */
+export function serverStopLine(mode: ShutdownMode | null, pid: number, at: Date): string {
+    const reason =
+        mode === "drain"
+            ? "a client asked for a stop that waits for the chat turns"
+            : mode === "now"
+              ? "a client asked for an immediate stop"
+              : "the process got a stop signal";
+    return `Inflexa server pid ${pid} stops at ${at.toISOString()}: ${reason}.`;
 }
 
 /** Bind `app` on `127.0.0.1:port`. Port 0 binds a free port that the OS picks; the server gives it as `port`. */

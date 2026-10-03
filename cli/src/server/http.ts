@@ -3,6 +3,7 @@ import { err, ok, ResultAsync, type Result } from "neverthrow";
 import { z, type ZodType } from "zod";
 
 import { API_ERROR_STATUS, DEFAULT_PER_PAGE, MAX_PER_PAGE, type ApiError, type ApiErrorCode, type ListEnvelope, type PageQuery } from "../api/common.ts";
+import { SIGN_IN_REQUIRED, type ServerState } from "../api/server.ts";
 import { getLogger } from "../lib/log.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { ServerBoot } from "./boot.ts";
@@ -68,16 +69,23 @@ export function requireRuntime(boot: ServerBoot): MiddlewareHandler<ServerEnv> {
     return async (c, next) => {
         const runtime = boot.runtime();
         if (runtime === null) {
-            const phase = boot.state().phase;
-            const message =
-                phase === "failed"
-                    ? "The harness runtime failed to boot. GET /api/v1/server gives the cause, and POST /api/v1/server/boot starts the boot again."
-                    : "The harness runtime is still starting.";
-            return apiError(c, "unavailable", message, { phase });
+            const state = boot.state();
+            return apiError(c, "unavailable", unavailableMessage(state), { phase: state.phase });
         }
         c.set("runtime", runtime);
         await next();
     };
+}
+
+/**
+ * The 503 message for a person: the phase, the cause of a failed boot, and the command after which the server
+ * boots again. A command prints it as its remedy, thus it names no API route.
+ */
+function unavailableMessage(state: ServerState): string {
+    if (state.phase !== "failed") return "The Inflexa server is still booting its runtime (phase `starting`). Try again in a moment.";
+    const after =
+        state.bootError.reason === SIGN_IN_REQUIRED ? "The server boots again after the sign-in." : "Then run `inflexa up`: the server boots again after it.";
+    return `The Inflexa server could not boot its runtime (phase \`failed\`). ${state.bootError.message}\n  ${after}`;
 }
 
 /**

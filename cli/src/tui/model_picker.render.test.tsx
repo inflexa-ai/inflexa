@@ -61,6 +61,27 @@ describe("ModelPickerDialog", () => {
         expect(frame).toContain("claude-opus-4-8");
     });
 
+    test("listing failure names the reason of the server beside the free-text field", async () => {
+        const frame = await renderFrame(
+            () => (
+                <DialogShowcase>
+                    <ModelPickerDialog
+                        agent="sandbox"
+                        models={null}
+                        listingFailure="no answer in 10 s"
+                        current="claude-opus-4-8"
+                        currentEffort="medium"
+                        save={saveNoop}
+                        onSaved={noop}
+                        onCancel={noop}
+                    />
+                </DialogShowcase>
+            ),
+            { width: 120, height: 24 },
+        );
+        expect(frame).toContain("no answer in 10 s");
+    });
+
     test("the chat agent titles its picker for the conversation agent", async () => {
         const frame = await renderFrame(
             () => (

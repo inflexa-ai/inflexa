@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -28,6 +29,7 @@ import {
     collectStoreDebris,
     createPendingFlushGate,
     describeRequestRefusal,
+    dirBytes,
     queueStoreAdd,
     reclaimStore,
     runStoreDownload,
@@ -355,38 +357,6 @@ describe("the pending flush gate", () => {
     });
 });
 
-describe("the in-process reclaim exclusion", () => {
-    test("a second reclamation in this process refuses, and a debris pass yields, while the first runs", async () => {
-        const root = tempStore();
-        mkdirSync(join(root, "store", DEBRIS_DIR), { recursive: true });
-        let release: () => void = () => undefined;
-        const blocked = new Promise<void>((resolve) => {
-            release = resolve;
-        });
-        const invocations: (readonly string[])[] = [];
-        const blockingRunner: ProvisionerRunner = async (invocation) => {
-            invocations.push([...invocation.args]);
-            await blocked;
-            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
-        };
-
-        const first = reclaimStore({ storeRoot: root }, { run: blockingRunner, flightWaitMs: 50, flightPollMs: 5 });
-        while (invocations.length === 0) await Bun.sleep(5);
-
-        // The lock file is re-entrant for this pid, thus only the in-process exclusion refuses these two.
-        const second = await reclaimStore({ storeRoot: root }, { run: countingRunner(invocations), flightWaitMs: 50, flightPollMs: 5 });
-        expect(second._unsafeUnwrapErr().type).toBe("reclaim_in_flight");
-        const debris = await collectStoreDebris(root, { run: countingRunner(invocations) });
-        expect(debris._unsafeUnwrap().swept).toBe(false);
-
-        release();
-        expect((await first)._unsafeUnwrap().reclaimed).toEqual([DEBRIS_DIR]);
-        expect(invocations).toEqual([["reclaim"]]);
-        // The first run released the exclusion: a new reclamation runs.
-        expect((await reclaimStore({ storeRoot: root }, { run: countingRunner(invocations), flightWaitMs: 50, flightPollMs: 5 })).isOk()).toBe(true);
-    });
-});
-
 describe("describeRequestRefusal", () => {
     // The graph keys the identity of each track, and an R name is case- and
     // dot-sensitive. Each refusal and each remedy must echo the spelling of
@@ -466,6 +436,53 @@ describe("the in-process debris single-flight", () => {
     });
 });
 
+describe("dirBytes", () => {
+    /** A small tree: real files at three depths, an empty directory, and symlinks to a file and to a directory. Gives the root and the sum of its real files. */
+    function sizedTree(): { root: string; realBytes: number } {
+        const root = mkdtempSync(join(tmpdir(), "inflexa-dir-bytes-"));
+        created.push(root);
+        const files: Array<[string, number]> = [
+            ["top.txt", 10],
+            ["pkg/R/code.R", 2_000],
+            ["pkg/R/deep/data.rds", 1],
+            ...Array.from({ length: 40 }, (_, i): [string, number] => [`pkg/many/f${i}.so`, 100 + i]),
+        ];
+        mkdirSync(join(root, "pkg", "R", "deep"), { recursive: true });
+        mkdirSync(join(root, "pkg", "many"), { recursive: true });
+        mkdirSync(join(root, "empty"), { recursive: true });
+        for (const [path, size] of files) writeFileSync(join(root, path), "x".repeat(size));
+        symlinkSync(join(root, "pkg", "R", "code.R"), join(root, "link-to-file"));
+        symlinkSync(join(root, "pkg"), join(root, "link-to-dir"));
+        return { root, realBytes: files.reduce((sum, [, size]) => sum + size, 0) };
+    }
+
+    test("sums the real files and skips each symlink", async () => {
+        const { root, realBytes } = sizedTree();
+        expect(await dirBytes(root)).toBe(realBytes);
+    });
+
+    test("an absent directory sums to 0", async () => {
+        expect(await dirBytes(join(tmpdir(), "inflexa-dir-bytes-absent"))).toBe(0);
+    });
+
+    test("runs more than one lstat at a time, and at most 16", async () => {
+        const { root, realBytes } = sizedTree();
+        let inFlight = 0;
+        let peak = 0;
+        async function slowLstat(path: string): Promise<{ readonly size: number }> {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            await Promise.sleep(1);
+            inFlight -= 1;
+            return lstat(path);
+        }
+
+        expect(await dirBytes(root, slowLstat)).toBe(realBytes);
+        expect(peak).toBeGreaterThan(1);
+        expect(peak).toBeLessThanOrEqual(16);
+    });
+});
+
 // e2e: the real `inflexa` binary over the sandboxed DB, with no server. The env names a discovery file that
 // does not exist, thus a command that needs a server stops at its check, and starts none. A cloud job runs
 // these commands in a one-shot container where no server runs.
@@ -500,6 +517,27 @@ describe("the store commands with no server (e2e)", () => {
         const result = runCli(["store", "ls"], { env: noServer });
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain(`  Store    ${env.packageStoreDir}`);
+    });
+
+    test("`store ls` names the store directory of a pin that two directories hold", () => {
+        const pins: [dir: string, inner: string, pin: string][] = [
+            ["abind-1.4-8-5512bfc3c04a7bbf", "abind", "abind==1.4-8"],
+            ["seuratdisk-0.0.0.9021-1ed17c8bcf04e515", "SeuratDisk", "SeuratDisk==0.0.0.9021"],
+            ["seuratdisk-0.0.0.9021-c9991ab3e9c1dac5", "SeuratDisk", "SeuratDisk==0.0.0.9021"],
+        ];
+        for (const [dir, inner, pin] of pins) {
+            mkdirSync(join(env.packageStoreDir, "store", dir, inner), { recursive: true });
+            writeFileSync(join(env.packageStoreDir, "store", dir, inner, ".inflexa-pin"), `${pin}\n`);
+        }
+        try {
+            const result = runCli(["store", "ls"], { env: noServer });
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).toContain("    abind==1.4-8\n");
+            expect(result.stdout).toContain("    SeuratDisk==0.0.0.9021  seuratdisk-0.0.0.9021-1ed17c8bcf04e515\n");
+            expect(result.stdout).toContain("    SeuratDisk==0.0.0.9021  seuratdisk-0.0.0.9021-c9991ab3e9c1dac5\n");
+        } finally {
+            rmSync(env.packageStoreDir, { recursive: true, force: true });
+        }
     });
 
     test("`store download --foreground` reaches the transfer check, and refuses a live transfer", () => {

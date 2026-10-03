@@ -545,7 +545,8 @@ async function failureOf(cause: unknown, opts: ConversationRouteOpts): Promise<T
     if (findAuthCause(cause) !== null) {
         if (connection.mode === "direct") {
             return {
-                message: `The ${connection.provider} endpoint rejected your API key — check ${MODEL_API_KEY_VAR}, then restart the server (\`inflexa serve\`).`,
+                // The server reads the key from its own environment at its boot, thus only a new server sees a new key.
+                message: `The ${connection.provider} endpoint rejected your API key — check ${MODEL_API_KEY_VAR}, then run \`inflexa server stop\`. The next \`inflexa\` command starts the server with the new key.`,
                 detailLines,
                 auth: { provider: connection.provider, envVar: MODEL_API_KEY_VAR },
             };
@@ -579,11 +580,11 @@ async function failureOf(cause: unknown, opts: ConversationRouteOpts): Promise<T
     }
 }
 
-/** The `cliproxy` remedy for a dead login: the boot of the server signs in again. */
+/** The `cliproxy` remedy for a dead login: `inflexa up` signs in again and restarts the proxy, thus the server needs no restart. */
 function deadLoginMessage(provider: string): string {
     const kind = providerKindForSlug(provider);
-    const relogin = kind ? ` (or run \`inflexa setup --provider ${kind}\`)` : "";
-    return `Your ${provider} login has expired or been revoked — restart the server (\`inflexa serve\`) to sign in again${relogin}.`;
+    const relogin = kind ? ` (or \`inflexa setup --provider ${kind}\`)` : "";
+    return `Your ${provider} login has expired or been revoked — run \`inflexa up\` in a terminal to sign in again${relogin}.`;
 }
 
 /** The frames of one turn, from the emit sink of the turn to the SSE writer of its response. */

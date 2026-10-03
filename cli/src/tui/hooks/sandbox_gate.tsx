@@ -3,28 +3,26 @@ import type { ResultAsync } from "neverthrow";
 
 import type { PendingAddView, StoreFlightView, StoreState, TransferReportView, TransferStartKind } from "../../api/store.ts";
 import { describeClientError, type ClientError } from "../../client/api.ts";
-import type { SandboxReadiness } from "../../api/runs.ts";
-import { fetchSandboxReadiness } from "../../client/runs.ts";
 import { createTransfer, fetchStore } from "../../client/store.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { Notice } from "../theme.ts";
 import { notify } from "./notice.ts";
 
-// The sandbox prerequisite gate, held here (not inside `app.tsx`) so the holder of the state is
+// The transfer state of the TUI, held here (not inside `app.tsx`) so the holder of the state is
 // decoupled from its callers. It has two jobs. It publishes the lifecycle of the three detached
 // transfers, which the sidebar renders as one row per live transfer: a poll of `GET /api/v1/store`.
-// And it holds each sandbox-making action (`awaitSandboxReady`) while a transfer is live, refusing a
-// terminal state with the retry command.
+// And it holds each profile drive (`awaitTransfersSettled`) while a transfer is live, thus the drive
+// starts when the transfer ends instead of a refusal.
 //
-// The gate STARTS NO TRANSFER and OPENS NO CONSENT (the package-store-transfers spec). `inflexa
+// The hold decides nothing about the machine. The server refuses a profile that cannot start a
+// sandbox (`server/sandbox_gate.ts`), and the drive shows that refusal. The hold never reads
+// `GET {A}/sandbox-readiness`, because that read consumes a recorded farm failure that the server
+// gate must see.
+//
+// The hold STARTS NO TRANSFER and OPENS NO CONSENT (the package-store-transfers spec). `inflexa
 // setup`, `inflexa sandbox pull`, and `inflexa store download` start the children, and each owns its
-// consent. The gate is a reader: it reads the rows, it reports the state, and it names the retry
-// command. The deliberate retry surfaces — the sidebar key and the command palette — route through
-// {@link retryTerminalTransfers}, which is a user action and not the gate.
-//
-// The FILESYSTEM decides usability, never a row. A store root that `inflexa store add` built carries
-// no catalog receipt and is completely usable; a row that reports `installed` over an absent store
-// keeps the refusal. The rows supply the reason for a hold and the progress the hold reports.
+// consent. The deliberate retry surfaces — the sidebar key and the command palette — route through
+// {@link retryTerminalTransfers}, which is a user action and not the hold.
 
 /** One acquisition flight as the sidebar renders it: a live one, or a terminal `failed` record. */
 export type StoreFlightLine = StoreFlightView;
@@ -58,11 +56,6 @@ const TRANSFER_POLL_MS = 2000;
 export type SandboxGateSeams = {
     /** The transfers, the flights, and the pending adds. Real: `GET /api/v1/store`. */
     readonly readStore: () => ResultAsync<StoreState, ClientError>;
-    /**
-     * The verdict of the machine for a sandbox of the analysis: the image, the store content, and the
-     * farm. The read CONSUMES a recorded farm-composition failure. Real: `GET {A}/sandbox-readiness`.
-     */
-    readonly readiness: (analysisId: string) => ResultAsync<SandboxReadiness, ClientError>;
     /** Raise a transient toast. Real: {@link notify}. */
     readonly notify: (notice: Notice) => void;
     /**
@@ -72,15 +65,9 @@ export type SandboxGateSeams = {
     readonly pollMs: number;
 };
 
-/** The first line of a multi-line message, so a hint with its remedy stays one toast line. */
-function firstLine(text: string): string {
-    return text.split("\n", 1)[0] ?? text;
-}
-
-/** The production seams: the real row reads, the engine image check, and the TUI feedback channel. */
+/** The production reads: the store rows and the TUI feedback channel. */
 export const realSandboxGateSeams: SandboxGateSeams = {
     readStore: () => fetchStore(),
-    readiness: (analysisId) => fetchSandboxReadiness(analysisId),
     notify,
     pollMs: TRANSFER_POLL_MS,
 };
@@ -139,59 +126,28 @@ export function transferLabel(kind: TransferReportView["kind"]): string {
     }
 }
 
-/** The retry command of one transfer kind, named in each refusal. */
-function retryCommand(kind: TransferReportView["kind"]): string {
-    return kind === "catalog" ? "`inflexa store download`" : "`inflexa sandbox pull`";
-}
-
-// The in-flight wait, so two concurrent sandbox actions share one hold rather than each polling the
+// The in-flight wait, so two concurrent profile drives share one hold rather than each polling the
 // rows on its own. The check-and-set below has no await between the read and the write, so two
 // concurrent callers cannot both start a wait.
 let gateFlowInflight: Promise<"ready" | "blocked"> | null = null;
 
 /**
- * Hold the caller while any transfer is live, then decide against the machine.
+ * Hold the caller while any transfer is live, and report the wait one time.
  *
  * The wait ends when the transfers end, and that bound is structural rather than a timeout: each child
  * holds its lock for its whole life, thus a process a user killed frees the lock and the next read
- * degrades its `running` row to `failed`. The gate therefore never holds without end.
- *
- * After the wait, the decision reads the MACHINE: a terminal transfer state refuses with the retry
- * command, an absent image refuses with the pull, an unusable store refuses with the download, and a
- * recorded farm-composition failure refuses with its reason. The gate starts nothing and opens no
- * consent in any branch.
+ * degrades its `running` row to `failed`. The hold therefore never holds without end.
  */
-async function runGateFlow(analysisId: string, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
+async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
     let announced = false;
-    let reports: readonly TransferReportView[];
     for (;;) {
         const read = await refreshTransferState(seams);
         if (read.isErr()) {
             seams.notify({ kind: "error", text: describeClientError(read.error) });
             return "blocked";
         }
-        reports = read.value;
-        const live = reports.filter((report) => report.live);
-        if (live.length === 0) break;
-        // A live CATALOG transfer over a store that cannot serve yet is the
-        // between-consent-and-landing state of a farm-less analysis. Its landing
-        // is a multi-gigabyte download, and that is not a wait a launch can
-        // hold. The refusal classifies the state the way the launch refusal
-        // classifies a pool miss: in flight, launch again when it lands. A
-        // catalog UPDATE over a usable store keeps the wait, because the merge
-        // into the store root is the hazard the hold exists for.
-        if (live.some((report) => report.kind === "catalog")) {
-            const machine = await seams.readiness(analysisId);
-            if (machine.isErr()) {
-                seams.notify({ kind: "error", text: describeClientError(machine.error) });
-                return "blocked";
-            }
-            const content = machine.value.store;
-            if (content !== "installed" && content !== "local") {
-                seams.notify({ kind: "error", text: "The package-store catalog transfer is in flight. Launch again when it lands." });
-                return "blocked";
-            }
-        }
+        const live = read.value.filter((report) => report.live);
+        if (live.length === 0) return "ready";
         if (!announced) {
             announced = true;
             seams.notify({
@@ -201,77 +157,16 @@ async function runGateFlow(analysisId: string, seams: SandboxGateSeams): Promise
         }
         await Promise.sleep(seams.pollMs);
     }
-
-    // One read of the machine after the wait: the image, the store, and the farm.
-    const machine = await seams.readiness(analysisId);
-    if (machine.isErr()) {
-        seams.notify({ kind: "error", text: describeClientError(machine.error) });
-        return "blocked";
-    }
-
-    // The image half. The engine is the truth of presence; the row of the kind
-    // supplies the reason when it is absent.
-    const image = machine.value.image.image;
-    const readiness = machine.value.image;
-    if (readiness.state === "engine_error") {
-        seams.notify({ kind: "error", text: readiness.message });
-        return "blocked";
-    }
-    if (readiness.state === "custom") {
-        seams.notify({
-            kind: "error",
-            text: `Sandbox image "${image}" is not present, and it is not the published image, thus no registry can supply it. Build it, or set the published image and run \`inflexa sandbox pull\`.`,
-        });
-        return "blocked";
-    }
-    if (readiness.state === "absent") {
-        const report = reports.find((entry) => entry.kind === "runtime_image");
-        const detail = report?.state === "failed" && report.row?.message ? ` ${firstLine(report.row.message)}` : "";
-        seams.notify({ kind: "error", text: `The sandbox image is not installed.${detail} Run ${retryCommand("runtime_image")} to download it.` });
-        return "blocked";
-    }
-
-    // The store half. The filesystem decides: `installed` is a downloaded
-    // catalog, and `local` is a store that `inflexa store add` built — both
-    // mount. The catalog row supplies the reason for the rest.
-    const content = machine.value.store;
-    if (content !== "installed" && content !== "local") {
-        const report = reports.find((entry) => entry.kind === "catalog");
-        const detail = report?.state === "failed" && report.row?.message ? ` ${firstLine(report.row.message)}` : "";
-        const reason =
-            report?.state === "declined"
-                ? "The package store was declined at setup, and the analysis sandbox needs it."
-                : report?.state === "canceled"
-                  ? "You stopped the package-store download, and the analysis sandbox needs it."
-                  : `The package store is ${content === "missing" ? "not installed" : "incomplete"}.${detail}`;
-        seams.notify({ kind: "error", text: `${reason} Run ${retryCommand("catalog")} to obtain it.` });
-        return "blocked";
-    }
-
-    // The farm half. Composition runs INSIDE the farm provider that the harness
-    // calls, thus it runs after this gate decided and its error reaches no user
-    // surface of its own. The read CONSUMES the record, thus the action after
-    // this one composes again.
-    const failure = machine.value.farm.failure;
-    if (failure !== null) {
-        seams.notify({
-            kind: "error",
-            text: `The package farm of this analysis could not be composed: ${failure}. Run \`inflexa store ls\` to see the store, then try again.`,
-        });
-        return "blocked";
-    }
-
-    return "ready";
 }
 
 /**
- * Hold a sandbox-making action of one analysis until the transfers settle and the machine can serve one.
- * Returns `ready` when a sandbox may start, or `blocked` otherwise — the gate reports the reason as it
- * decides, so a `blocked` caller starts no sandbox against an empty store.
+ * Hold a profile drive until no transfer is live. Gives `ready` when the drive can go to the server, which
+ * decides if a sandbox can start, or `blocked` when the transfer state cannot be read. The hold reports the
+ * reason of a `blocked` as it decides.
  */
-export async function awaitSandboxReady(analysisId: string, seams: SandboxGateSeams = realSandboxGateSeams): Promise<"ready" | "blocked"> {
+export async function awaitTransfersSettled(seams: SandboxGateSeams = realSandboxGateSeams): Promise<"ready" | "blocked"> {
     if (gateFlowInflight !== null) return gateFlowInflight;
-    gateFlowInflight = runGateFlow(analysisId, seams).finally(() => {
+    gateFlowInflight = runGateFlow(seams).finally(() => {
         gateFlowInflight = null;
     });
     return gateFlowInflight;

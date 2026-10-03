@@ -18,6 +18,7 @@ import {
     runMark,
     idTail,
     shortSessionId,
+    pollTicks,
     RUN_STATUS_TERMINAL,
 } from "../hooks/sidebar_live.ts";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
@@ -588,8 +589,8 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
  * USAGE reads the usage ledger of the server (`GET {A}/usage`), which is SQLite and needs nothing
  * behind the booted runtime, so it neither gates on boot state nor arms a timer of its own: the figures
  * are readable while the engine is cold. It refreshes on the edges this component already observes —
- * the chat status leaving `busy` (a turn actually completing), and `sidebar_live`'s bounded poll, which
- * it rides by reading the snapshots that poll republishes, thus a run that progresses shows on the next
+ * the chat status leaving `busy` (a turn actually completing), and each tick of `sidebar_live`'s bounded
+ * poll ({@link pollTicks}), thus a run that progresses, or a turn of a different client, shows on the next
  * tick. It deliberately does NOT depend on the conversation's message count: the assistant
  * message is pushed when a turn STARTS, so a memo keyed on it reads the ledger before any of that
  * turn's calls were recorded, and past the store's message cap the push-and-shift leaves the length
@@ -655,8 +656,8 @@ export function Sidebar(props: SidebarProps) {
         return a ? (a.markerWritten ? GLYPHS.check : GLYPHS.warning) : "";
     };
     // The usage total is a server read with no reactive dependency of its own, so the turn edge below
-    // ticks a version signal the read effect reads. A run that moves shows through the `sidebar_live`
-    // snapshots, which the read effect also reads.
+    // ticks a version signal the read effect reads. A run that moves, or a turn of a different client,
+    // shows through the tick count of the poll, which the read effect also reads.
     const [usageVersion, setUsageVersion] = createSignal(0);
 
     // Turn completion, stated directly rather than inferred from a store's length: a turn's calls are
@@ -683,20 +684,18 @@ export function Sidebar(props: SidebarProps) {
     // The open session's cumulative spend — the conversation's own calls AND every run it launched —
     // read from the usage ledger of the server (`GET {A}/usage?threadId=`), which needs no poll of its own.
     //
-    // Three triggers, none of them a clock this section owns: the version signal above, and the two
-    // `sidebar_live` snapshots read below. A failed read is a degraded row, never
+    // Three triggers, none of them a clock this section owns: the version signal above, the open
+    // session, and the tick count of the poll read below. A failed read is a degraded row, never
     // a thrown render: the rail keeps every other section. The section keeps its last answer while a new
     // read is in flight, thus a refresh does not blink; before the first answer it reads "unavailable".
     const [usageSection, setUsageSection] = createSignal<UsageSection>({ kind: "message", text: "unavailable" });
     createEffect(() => {
         usageVersion();
-        // Read for the SUBSCRIPTION, not the value. `sidebar_live` republishes both snapshots as fresh
-        // objects on every refresh it performs — including each tick of the bounded poll it already
-        // arms while work is active and disarms when it is not — so reading them here puts this
-        // section on exactly that cadence. A second interval would be a second thing to keep armed and
-        // disarmed in step with the first, for a figure that is cumulative and whose lag understates.
-        runsSnapshot();
-        profileSnapshot();
+        // Read for the SUBSCRIPTION, not the value: one read for each tick of the poll. The snapshots of
+        // the ledger are not the edge, because a tick writes them two times, and a tick whose ledger read
+        // a newer refresh superseded writes them zero times. A second interval would be a second thing to
+        // keep armed and disarmed in step with the first.
+        pollTicks();
         const a = ws.analysis;
         if (!a) return setUsageSection({ kind: "message", text: "no analysis" });
         // A session identity cannot be resolved before boot, and the figure is a session's — so say
@@ -785,11 +784,11 @@ export function Sidebar(props: SidebarProps) {
             backgroundColor={theme().bgRaised}
         >
             {/* The section stack scrolls when it outgrows the rail (the RUNS progress embed makes
-                its height variable) instead of clipping or squeezing sections. Never focused —
-                mouse-wheel only, so the pane's key layer stays disengaged and the rail steals no
-                keys from the chat. Nothing sits below the pane, so the scrollbox 1-cell bleed
-                (see cli/CLAUDE.md Layout) has no chrome row to bleed into. */}
-            <ScrollPane focusOnMount={false} flexGrow={1} minHeight={0} width="100%">
+                its height variable) instead of clipping or squeezing sections. Never focused, not
+                even by a click — mouse-wheel only, so the pane's key layer stays disengaged and the
+                rail steals no keys from the chat. Nothing sits below the pane, so the scrollbox 1-cell
+                bleed (see cli/CLAUDE.md Layout) has no chrome row to bleed into. */}
+            <ScrollPane focusOnMount={false} focusable={false} flexGrow={1} minHeight={0} width="100%">
                 <Section label="SESSION" value={sessionHandle()} onValueActivate={copySessionId}>
                     <Switch>
                         <Match when={openThread().kind === "unresolved"}>

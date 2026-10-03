@@ -37,6 +37,11 @@ export function fetchServerState(opts: ClientOpts = DEFAULT_CLIENT_OPTS): Result
     return request<ServerState>("GET", "/api/v1/server", {}, opts);
 }
 
+/** `POST /api/v1/server/boot`: boot again after a failed boot. The server answers 202 with its state at once. */
+export function requestServerBoot(opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<ServerState, ClientError> {
+    return request<ServerState>("POST", "/api/v1/server/boot", {}, opts);
+}
+
 /** What the discovery file of this channel says about a server right now. */
 export type ServerLookup =
     /** No usable discovery file. */
@@ -244,17 +249,23 @@ const START_COMMAND_WAIT_MS = SERVER_START_WAIT_MS + 15_000;
 
 /**
  * Run `inflexa serve --detach` with the same executable: the compiled binary, or `bun` and the source entry in a
- * dev checkout. Its stdout would mix into the output of the command, thus only its stderr reaches the person.
+ * dev checkout. Its stdout would mix into the output of the command, thus only its stderr reaches the person:
+ * `inherit` prints it in the terminal of a command, and `pipe` puts it into the error, for a TUI that owns the
+ * terminal.
  */
-async function startDetachedServer(): Promise<Result<void, string>> {
+export async function startDetachedServer(stderr: "inherit" | "pipe" = "inherit"): Promise<Result<void, string>> {
     const spawned = Result.fromThrowable(
-        () => Bun.spawn({ cmd: selfInvocation(["serve", "--detach"]), stdin: "ignore", stdout: "ignore", stderr: "inherit" }),
+        () => Bun.spawn({ cmd: selfInvocation(["serve", "--detach"]), stdin: "ignore", stdout: "ignore", stderr }),
         (cause) => describeCause(cause),
     )();
     if (spawned.isErr()) return err(`the spawn of \`inflexa serve --detach\` failed (${spawned.error})`);
-    const code = await Promise.race([spawned.value.exited, Promise.sleep(START_COMMAND_WAIT_MS).then(() => null)]);
+    const child = spawned.value;
+    const code = await Promise.race([child.exited, Promise.sleep(START_COMMAND_WAIT_MS).then(() => null)]);
     if (code === null) return err(`\`inflexa serve --detach\` did not finish within ${START_COMMAND_WAIT_MS / 1000} s`);
-    return code === 0 ? ok(undefined) : err(`\`inflexa serve --detach\` exited with code ${code}`);
+    if (code === 0) return ok(undefined);
+    const said =
+        child.stderr instanceof ReadableStream ? (await ResultAsync.fromPromise(new Response(child.stderr).text(), () => null)).unwrapOr("").trim() : "";
+    return err(`\`inflexa serve --detach\` exited with code ${code}${said === "" ? "" : `: ${said}`}`);
 }
 
 /** One message for a person, for each {@link ServerError}. */

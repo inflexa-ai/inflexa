@@ -284,6 +284,23 @@ describe("GET {A}", () => {
         expect(response.status).toBe(400);
         expect(((await response.json()) as ApiError).error).toBe("validation_error");
     });
+
+    test("`touch=false` records no sighting of the anchor folder; the default does", async () => {
+        // The poll of a chat reads the analysis at each tick. A read of a poll is not an open of the folder.
+        const a = seedAnalysis(tmp());
+        expect((await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?touch=false`)).status).toBe(200);
+        expect(getAnchor(a.anchorId)._unsafeUnwrap()?.lastSeen).toBe(1);
+
+        expect((await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`)).status).toBe(200);
+        expect(getAnchor(a.anchorId)._unsafeUnwrap()?.lastSeen).toBeGreaterThan(1);
+    });
+
+    test("a `touch` that is not `true` or `false` is a 400", async () => {
+        const a = seedAnalysis(tmp());
+        const response = await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?touch=no`);
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+    });
 });
 
 describe("PATCH {A}", () => {
@@ -505,6 +522,20 @@ describe("the inputs of an analysis", () => {
         const a = seedAnalysis(dir);
         insertAnalysisInput({ path: "a.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
         await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`);
+        expect(getAnchor(a.anchorId)._unsafeUnwrap()?.lastSeen).toBe(1);
+    });
+
+    test("POST remove records no sighting of an anchor folder", async () => {
+        const dir = tmp();
+        const a = seedAnalysis(dir);
+        insertAnalysisInput({ path: "a.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: "b.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
+        await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs/remove`, json("POST", { paths: [join(dir, "a.csv")] }));
+        expect(
+            listAnalysisInputs(a.id)
+                ._unsafeUnwrap()
+                .map((i) => i.path),
+        ).toEqual(["b.csv"]);
         expect(getAnchor(a.anchorId)._unsafeUnwrap()?.lastSeen).toBe(1);
     });
 

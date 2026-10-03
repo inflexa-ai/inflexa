@@ -3,6 +3,7 @@ import { ConsolePosition } from "@opentui/core";
 
 import { warmGrammars } from "./grammars/register.ts";
 import { resolveNewTarget, resolveResumeTarget, resolveDefaultTarget, type ChatTarget, type ContextFlags } from "../client/commands/analyses.ts";
+import { setClientSurface } from "../client/api.ts";
 import { requireInteractiveTerminal } from "../lib/cli.ts";
 import { readConfig } from "../lib/config.ts";
 import type { IdOrName } from "../lib/types.ts";
@@ -32,6 +33,7 @@ async function renderChat(target: ChatTarget): Promise<void> {
     // The server took the instance lock of the analysis when the resolver opened it (`GET {A}`), before
     // the alternate screen, thus a lock that a different process holds already stopped the launch.
     setTheme(readConfig().theme);
+    setClientSurface("chat");
 
     // Claimed BEFORE the screen is taken. This launcher returns as soon as the renderer has the terminal,
     // so the command beneath it finishes while the chat is live, and the stderr report would paint over it.
