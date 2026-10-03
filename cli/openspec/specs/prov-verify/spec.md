@@ -78,7 +78,7 @@ The system SHALL define a discriminated union `VerifyResult` with the following 
 - `{ status: "tampered"; detail: string }` — the recomputed chain hash or payload digest does not match the stored value, or the signature does not verify; `detail` names which.
 - `{ status: "no-key" }` — a signature is stored but the public key file is missing, so it cannot be verified.
 - `{ status: "empty" }` — no provenance has been recorded for the analysis.
-- `{ status: "invalid-sidecar"; detail: string }` — (file path) the `.sig.json` sidecar is missing, malformed, or fails schema validation.
+- `{ status: "invalid-attestation"; detail: string }` — (file path) the `.sig.json` sidecar is unreadable, malformed, or fails schema validation.
 - `{ status: "invalid-key" }` — (file path) the public key embedded in the sidecar cannot be imported as an Ed25519 key.
 - `{ status: "verify-error"; detail: string }` — a crypto operation (chain-hash/digest computation or signature verification) failed internally; `detail` carries the cause.
 

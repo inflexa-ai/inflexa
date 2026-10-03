@@ -1,9 +1,4 @@
-# cliproxy-credential-health Specification
-
-## Purpose
-Detecting a dead provider OAuth credential behind the managed CLIProxyAPI container before it fails work mid-flight: the structural presence check (what counts as a credential on disk), the launch-time live probe that is the sole authority on validity (a dead refresh token leaves no trace in the credential file), and setup's truthful reporting of what it can actually know statically.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Credential presence is decided structurally, never by expiry
 
@@ -24,16 +19,6 @@ The authenticated-state check of cliproxy MUST read only the `*.json` entries in
 
 - **WHEN** a credential JSON has `disabled: false` and an `expired` timestamp in the past
 - **THEN** the static check still reports authenticated, because the proxy refreshes the access token and only the live probe judges validity
-
-### Requirement: Setup reports credential state truthfully
-
-`inflexa setup`'s already-authenticated branch SHALL state only what it can know statically — that a credential exists — and SHALL name the forced re-login path (`--provider <name>`) as the remedy when provider calls fail authentication. It SHALL NOT assert that the credential is valid.
-
-#### Scenario: Setup after a refresh death does not claim health
-
-- **GIVEN** a present credential whose refresh token has been revoked (statically indistinguishable from a healthy one)
-- **WHEN** `inflexa setup` runs without `--provider`
-- **THEN** the message says a credential exists and names `--provider <name>` re-login as the fix for failing authentication, without claiming the credential works
 
 ### Requirement: The boot of the local server probes the live credential in cliproxy mode
 
@@ -140,32 +125,3 @@ The boot of the local server drives no login. With no credential on disk, it MUS
 
 - **WHEN** a login completes while no proxy container is running
 - **THEN** no restart is attempted and the container reads the credential when it next starts
-
-### Requirement: The boot of the local server warns when an explicit model pin has gone stale
-
-The launch gate in the boot of the local server SHALL check each distinct explicitly-pinned model's
-accessibility — when it runs in cliproxy mode on an anthropic-family connection and a pin exists
-(`models.agents.*` or `harness.model`) — with the unbilled `count_tokens` request (bounded like
-every probe round-trip). A definite `not_found_error` SHALL produce a warning in the output of the
-server, naming the pinned model, the agent(s) resolving to it, and the repick remedy (the palette's
-model-switch commands or setup) — it SHALL NOT block the boot and SHALL NOT rewrite config. Any
-inconclusive outcome SHALL stay silent (only a definite verdict is worth interrupting the boot
-output for). Auto-resolved sessions are outside this requirement — election already validated the
-default.
-
-#### Scenario: A pin the account can no longer serve is named at boot
-
-- **GIVEN** `models.agents.conversation` pinned to a model the upstream account no longer serves
-- **WHEN** the local server boots
-- **THEN** a warning in the output of the server names the pinned model, the conversation agent,
-  and how to repick — and the boot proceeds (the real failure remains observable in chat)
-
-#### Scenario: A healthy pin adds no boot output
-
-- **WHEN** every pinned model's accessibility check answers 200
-- **THEN** the boot output is unchanged from the pre-change flow
-
-#### Scenario: A flaky check never interrupts the boot
-
-- **WHEN** a pinned model's accessibility check times out
-- **THEN** no warning is shown and the boot proceeds

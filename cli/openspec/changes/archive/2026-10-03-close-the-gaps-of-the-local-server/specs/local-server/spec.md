@@ -1,71 +1,4 @@
-# local-server Specification
-
-## Purpose
-
-The local server of the CLI: one process for each OS user and each build channel that holds the harness runtime and the local stores. This spec gives its lifecycle (the bind, the discovery file, the start by a client, the stop), the `server` commands, the import rule of a client, and the conventions of its HTTP API. The TUI, the instance commands, and a later GUI are its clients.
-
-## Requirements
-
-### Requirement: One local server holds the runtime and the local stores
-
-Each OS user MUST have one server process for each build channel. That process MUST hold the harness runtime, the SQLite database, the provenance recorder, and the package store work. The TUI, each `instance` command, and a later GUI MUST be clients of its HTTP API under `/api/v1`. A client MUST NOT boot the harness runtime, and it MUST NOT open the SQLite database. The one exception is the dev `run --plan`, which boots its own runtime. The runtime lock refuses it while a server runs.
-
-The server MUST give no guarantee that the harness and Cortex do not give together. Thus it adds a coordination item only when the harness does not enforce it and a client breaks without it.
-
-#### Scenario: Two clients see one state
-
-- **GIVEN** a TUI that is open on an analysis
-- **WHEN** a different terminal runs `inflexa project new p1`
-- **THEN** the TUI reads the new project at its next read, because both clients use the same server
-
-#### Scenario: A client opens no runtime
-
-- **WHEN** the TUI starts on an analysis
-- **THEN** it reads the boot phase from `GET /api/v1/server`, and its own process boots no harness runtime
-
-### Requirement: The server binds the loopback port of its build channel
-
-`inflexa serve` MUST bind `127.0.0.1` only, on the fixed port of its build channel: 8431 for a production build and 8436 for a dev build. It MUST bind the port before it writes the discovery file. Thus a second server fails at the bind, and it never replaces the file of the server that holds the port. A failed bind MUST name the pid of the running server when the discovery file names a live server on that port. Otherwise the message MUST say that a different process holds the port.
-
-#### Scenario: A second server stops at the bind
-
-- **GIVEN** a server that holds port 8436
-- **WHEN** a second `inflexa serve` of the dev build starts
-- **THEN** it exits with a message that names the pid of the first server, and the discovery file stays as it was
-
-### Requirement: The discovery file names the running server
-
-After the bind, the server MUST write the discovery file `<dataDir>/inflexa/server.json`, or `server.dev.json` for a dev build. The file MUST hold the pid, the port, the bearer token, the package version, the API version, the start time, and the build channel. The server MUST write it with mode 0600, through a temporary file and a rename, so that a reader never sees a part of the file. At its exit, the server MUST remove the file only when the file names its own pid.
-
-A client MUST read the file again at each request. Thus a client that outlives a restart of the server sends the new token.
-
-`INFLEXA_SERVER_FILE` MUST replace the path of the file. A client under this variable MUST NOT start a server, because a different owner starts and stops that server, for example a test.
-
-#### Scenario: The file holds the token with a narrow mode
-
-- **WHEN** the server binds its port
-- **THEN** the discovery file exists with mode 0600, and it holds the pid, the port, the token, the versions, the start time, and the channel
-
-#### Scenario: A stop removes only its own file
-
-- **GIVEN** a discovery file that names a different pid
-- **WHEN** the server exits
-- **THEN** the file stays
-
-#### Scenario: A test names its own server
-
-- **GIVEN** `INFLEXA_SERVER_FILE` names the discovery file of a test server
-- **WHEN** an `instance` command runs and the server does not answer
-- **THEN** the command fails with the instruction to start the server, and it starts no server
-
-### Requirement: Each API request carries the bearer token
-
-At its start, the server MUST make a random 256-bit token, and it MUST write the token only to the discovery file. Each request to a path under `/api/` MUST send `Authorization: Bearer <token>`. A missing or different token MUST get 401 `unauthorized`. The server MUST compare the token in constant time. The token proves that the caller is a process of the OS user that can read the file.
-
-#### Scenario: A request with no token
-
-- **WHEN** a request to `GET /api/v1/projects` sends no `Authorization` header
-- **THEN** the server answers 401 with the error `unauthorized`
+## MODIFIED Requirements
 
 ### Requirement: The runtime boots behind the routes
 
@@ -94,31 +27,6 @@ The boot MUST NOT ask for a provider login, also in a terminal. A missing or dea
 - **GIVEN** a provider login that the provider rejects
 - **WHEN** the server boots
 - **THEN** no prompt appears, the phase is `failed`, and the boot error has the reason `sign_in_required` and names `inflexa up`
-
-### Requirement: A client starts a server when none answers
-
-An `instance` command MUST connect to the server before its action runs. The client MUST read the discovery file and probe `GET /api/v1/server` with a limit of 2 s. A server that answers in any phase counts. A file whose pid is dead is stale, and the client MUST remove it, after it reads the file again.
-
-When no server answers, the client MUST take the `server-spawn` lock, read the file again, and run `inflexa serve --detach`. Then it MUST probe until the server answers, up to 30 s. A client that finds the lock held MUST start nothing, and it MUST wait for the server that the holder starts. Thus two clients that find no server start one server. The client MUST tell the person that it starts the server, and it MUST name the server log.
-
-A server whose `apiVersion` differs from the API version of the client MUST be refused, with the instruction to run `inflexa server stop`.
-
-#### Scenario: The first command starts the server
-
-- **GIVEN** no server runs
-- **WHEN** the person runs `inflexa ls`
-- **THEN** the command starts the server in the background, waits until it answers, and lists the analyses
-
-#### Scenario: Two clients start one server
-
-- **GIVEN** no server runs
-- **WHEN** two `instance` commands start at the same time
-- **THEN** one of them starts the server, and both use that server
-
-#### Scenario: A server of a different API version
-
-- **WHEN** the server answers with an `apiVersion` that the client does not speak
-- **THEN** the command fails, names the two versions, and tells the person to run `inflexa server stop`
 
 ### Requirement: inflexa serve runs in the foreground or in the background
 
@@ -177,44 +85,6 @@ A ledger read that fails MUST give the state `unreadable`. A server with no runt
 
 - **WHEN** a detached server gets SIGTERM
 - **THEN** the server log gets one line with the pid, the time, and the stop signal as the reason
-
-### Requirement: The server commands inspect and stop the server
-
-The `server` commands MUST be `machine` commands: none of them starts a server.
-
-- `inflexa server status` MUST show if a server runs. For a running server, it MUST show the pid, the port, the phase, the start time, the versions, the active work, and the log path. `--json` MUST give the same data as one JSON document. It MUST write nothing: a stale discovery file stays for `server stop`.
-- `inflexa server stop` MUST send the stop request with the mode `now`, or `drain` with `--drain`. Then it MUST wait for the exit of the pid, up to 60 s for `now` and 120 s for `drain`. With no server, it MUST say so and succeed. A stale discovery file MUST be removed. A live pid that does not answer MUST fail with the pid to end.
-- `inflexa server logs` MUST print the path of the server log and its last lines, 50 by default or `--lines <n>`. `--follow` MUST then print each line that the server appends, also across a rotation, until Ctrl+C. Its cost MUST follow the count of lines, not the size of the file.
-
-#### Scenario: A stop with no server
-
-- **GIVEN** no discovery file
-- **WHEN** the person runs `inflexa server stop`
-- **THEN** the command prints that no server runs and exits 0
-
-#### Scenario: The status of a running server
-
-- **WHEN** the person runs `inflexa server status --json` and a server answers
-- **THEN** the document has the state `running`, the pid, the port, the phase, the versions, the activity, and the log path
-
-### Requirement: An upgrade stops the old server
-
-After `inflexa upgrade` replaces the binary, it MUST stop the server of the old version, so that the next command starts the new one. With no active work, it MUST stop the server with the mode `drain`. With active work, or when the activity read fails, it MUST ask the person first in a terminal. The default answer MUST be No. With no terminal, or with the answer No, the old server MUST keep running, and the command MUST say that `inflexa server stop` stops it.
-
-#### Scenario: An upgrade with a busy server and no terminal
-
-- **GIVEN** a server with a run whose workflow is live
-- **WHEN** `inflexa upgrade` completes with no terminal
-- **THEN** the old server keeps running, and the command names the work and `inflexa server stop`
-
-### Requirement: A client reaches the server state only through the API
-
-The TUI and the API client MUST read and change the server state only through the HTTP API. A lint rule MUST refuse a static import from the TUI or the API client of these parts: the SQLite layer, the server, the bus, the harness runtime, and a module that holds state or does I/O. The rule MUST permit these parts: the pure harness contracts, the pure data profile view, the pure plan and part readers, the file check of an exported provenance document, and the update module. A type-only import of a server row type MUST also be refused, because each wire type comes from the shared API types.
-
-#### Scenario: The TUI imports the database
-
-- **WHEN** a file of the TUI imports the SQLite query layer
-- **THEN** the lint fails with the instruction to call a route of the server
 
 ### Requirement: The API has one error body and one list shape
 
@@ -279,50 +149,6 @@ A route that can work for longer than 10 s before its response MUST lift the idl
 
 - **WHEN** a client sends `POST /api/v1/store/reclaim`
 - **THEN** the server answers 404 `not_found`
-
-### Requirement: An analysis route checks the analysis and its instance lock
-
-Each route under `/api/v1/analyses/:analysisId` MUST answer 404 `not_found` when no analysis has the id. At the first request for an analysis, the server MUST take the instance lock of that analysis. It MUST hold the lock until it exits. A lock that a different live process holds MUST give 409 `locked` with `details.holderPid`. The lock keeps one provenance recorder on each signed chain across processes, as a fence against an installed binary from before the server.
-
-#### Scenario: An analysis that a different process holds
-
-- **GIVEN** a different live process that holds the instance lock of analysis `a1`
-- **WHEN** a client sends `GET /api/v1/analyses/a1`
-- **THEN** the server answers 409 `locked` with the pid of the holder
-
-### Requirement: The chat turn and the run stream use SSE
-
-The server MUST use SSE only for the chat turn and for the run stream. Each frame MUST be `data: <JSON>` and a blank line, with no `event:` field and no `id:` field. The stream MUST send the comment `: open` at once, so that the headers go out before the first frame. It MUST send the comment `: ping` each 5 s, because `Bun.serve` closes a connection that is silent for 10 s. No `Last-Event-ID` resume exists: a chat client that connects again reads the transcript, and a run client gets a full replay.
-
-The run stream MUST deliver the parts of the harness run-event reader, and it MUST close after the terminal part, also for a canceled run. A run of a different analysis MUST get 404 `not_found`. The stream of a data profile workflow MUST close when that workflow ends.
-
-#### Scenario: A quiet run keeps its stream
-
-- **GIVEN** a run stream with no part for 30 s
-- **WHEN** the client reads the stream
-- **THEN** it gets a `: ping` comment each 5 s, and the connection stays open
-
-#### Scenario: A canceled run closes its stream
-
-- **WHEN** a client cancels a run that a second client streams
-- **THEN** the second client gets a `data-run-failed` part with the reason `canceled`, and the stream closes
-
-### Requirement: The chat turn runs apart from its request
-
-`POST {A}/chat` with `{threadId, message}` MUST start one turn in the server. The server MUST make a turn id, register the turn, and send the id in the response header `Inflexa-Turn-Id` when the turn opens. A refusal before the turn opens MUST be a JSON error: 404 for a thread that is absent or of a different analysis, and 500 for a turn that cannot prepare or has no agent. After the open, the stream MUST carry the frames of the turn and of its sub-agents. It MUST end with one `finish` frame for a turn that ended or aborted. It MUST end with one `error` frame for a turn that failed.
-
-A client that disconnects MUST stop only the delivery of the frames, never the turn. `POST {T}/turns/:turnId/abort` MUST abort the turn for each client. `GET {T}/turns` and `GET {T}/turns/:turnId` MUST give the running turns and the newest 100 ended turns, with the status, the usage, and the failure detail of each one. The server MUST NOT refuse a second turn on the same thread, because the harness and Cortex do not serialize turns. At the end of each turn, the server MUST start the flush of the package adds that the turn queued.
-
-#### Scenario: A second client aborts a turn
-
-- **GIVEN** a turn that a TUI started
-- **WHEN** a different client sends the abort of its turn id
-- **THEN** the turn ends as aborted, and the TUI gets its `finish` frame
-
-#### Scenario: A client leaves during a turn
-
-- **WHEN** the client of a turn closes its connection
-- **THEN** the turn runs to its end, and `GET {T}/turns/:turnId` gives its outcome
 
 ### Requirement: A rename or a delete waits for no work
 
@@ -401,6 +227,8 @@ The server MUST NOT keep a write queue for each thread, because the harness lock
 - **GIVEN** an analysis with inputs, and no sandbox image on the machine
 - **WHEN** a client adds an input to the analysis
 - **THEN** no drive starts, the data profile route gives `workPending: true`, and the change asks the gate again after 30 s
+
+## ADDED Requirements
 
 ### Requirement: The server answers only a request to its own address
 

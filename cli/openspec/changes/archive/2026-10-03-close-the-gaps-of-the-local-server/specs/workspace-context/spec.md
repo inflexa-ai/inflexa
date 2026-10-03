@@ -1,37 +1,4 @@
-# workspace-context Specification
-
-## Purpose
-TBD - created by archiving change add-workspace-context. Update Purpose after archive.
-
-## Requirements
-
-### Requirement: Workspace context for the open-chat scope
-
-The system SHALL provide a single Solid context `WorkspaceContext` (no JSX) whose value is a `createStore` holding the open chat's rarely-changed, read-mostly scope and the in-app capabilities, in flat fields ordered data-then-capabilities: data `analysis` (`Analysis | null`), `sessionId` (`string | null`, `null` until the thread is bound), `workingDir` (`string`), and the scope that the local server gives for the analysis — `project` (`ProjectView | null`), `anchor` (`AnchorView | null`), and `inputCount` (`number | null`); capabilities `openDialog`, `closeDialog`, `openSession`, `refreshScope`, `quit`. `app.tsx` SHALL build the store exactly once (seeded from its mount props), wrap the chat render tree in `<WorkspaceContext.Provider>`, and expose a `useWorkspace()` hook that returns the store and SHALL throw when called outside a Provider. The store SHALL replace the per-call `buildCtx()` snapshot, which SHALL be deleted.
-
-#### Scenario: Components read live scope reactively
-
-- **WHEN** a component under the Provider reads `useWorkspace().analysis` (or `.sessionId` / `.workingDir` / `.project` / `.anchor` / `.inputCount`) inside its render
-- **THEN** it receives the current value and repaints when that value changes, with no accessor call
-
-#### Scenario: Hook outside a Provider throws
-
-- **WHEN** `useWorkspace()` is called outside a `WorkspaceContext.Provider`
-- **THEN** it throws an error rather than returning `undefined`
-
-#### Scenario: buildCtx is removed
-
-- **WHEN** the change is implemented
-- **THEN** `buildCtx()` no longer exists and the per-keystroke/per-open snapshot rebuild is gone
-
-### Requirement: Workspace scope excludes hot per-frame state
-
-The workspace store SHALL hold only the open-chat scope and the capabilities. Hot, per-frame, or component-local state SHALL NOT be placed in the context: `messages`, `streamText`, `streamPartId`, the chat status (which keeps its own `hooks/status.ts` store), `errorMsg`, `sidebarOpen`, and the `dialogs` stack SHALL remain local to `app.tsx`. The sidebar's `messageCount` SHALL remain an App-local prop, not a workspace field, because it is message-store length rather than workspace scope.
-
-#### Scenario: Hot state stays out of the context
-
-- **WHEN** a developer adds or reviews workspace fields
-- **THEN** only rarely-changed scope and capabilities are present; streaming/message/status/dialog state is not
+## MODIFIED Requirements
 
 ### Requirement: Single openSession write path with the scope read from the local server
 

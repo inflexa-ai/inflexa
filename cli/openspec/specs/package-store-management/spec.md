@@ -48,18 +48,18 @@ merge into the query. A prefix such as `r:name` MUST NOT appear at the
 command surface: an argument that carries one refuses with the `--lang`
 remedy. A flag and a value in the argument that disagree MUST refuse.
 Without `--lang`, the flight searches both ecosystems, and a name that
-both satisfy stops with an ask to the user.
+both satisfy installs nothing and fails its row with the `--lang` remedy.
 
 #### Scenario: One package per call
 
 - **WHEN** `inflexa store add scanpy numpy` runs
 - **THEN** the command refuses with the one-package rule
 
-#### Scenario: A both-hit name asks
+#### Scenario: A both-hit name fails with the --lang remedy
 
 - **GIVEN** a name that PyPI and CRAN both hold, and no `--lang`
 - **WHEN** the add runs
-- **THEN** the user gets an ask that names the two candidates, and nothing installs before the answer
+- **THEN** nothing installs, and the failed row tells the user to run the add again with the `--lang` flag of one candidate
 
 #### Scenario: A pinned argument records its version
 
@@ -405,63 +405,6 @@ prune the graph nodes whose directories are gone.
 - **WHEN** `store reclaim` runs
 - **THEN** the directory stays, thus the graph keeps every edge resolvable
 
-### Requirement: Debris collects without a command
-
-The app MUST collect debris silently, with no user command. Debris is the
-store content that nothing references: a store directory with no farm link
-and no graph node, and a stale acquire report. The collection MUST run at
-two moments, and no timer exists. The tail of a flush that ended with
-refusals, and one boot pass after the runtime of the local server reaches
-ready.
-
-Both MUST run only when no acquisition flight, no farm composition, and no
-transfer is live. A sandbox run needs no gate of its own. A run reaches
-store content only through the links of its farm, and a linked directory
-is never debris. Both MUST hold the reclaim exclusivity, and both MUST
-yield to live work.
-
-The reclaim lock is re-entrant for one pid, thus it excludes a different
-process only. Within one process, a second collection MUST join the live
-one. A reclamation and a collection MUST also exclude each other in one
-process: a second reclamation refuses, and a collection yields. The local
-server runs a reclamation and the debris passes in one process. An entry
-beside the first would release the lock under it.
-
-The collection MUST NOT
-touch a directory that the graph references, thus a pre-fetched package
-survives. `store reclaim` keeps its approval gate, and it removes the same
-tier plus the graph prune.
-
-#### Scenario: A failed acquisition frees itself
-
-- **GIVEN** a flush in which one spec failed its load check
-- **WHEN** the flush tail runs with no other live work
-- **THEN** the never-advertised directories of the failed spec leave the pool
-
-#### Scenario: The collection yields to live work
-
-- **GIVEN** a live acquisition flight
-- **WHEN** the boot pass wakes
-- **THEN** it collects nothing and takes no lock that the flight waits on
-
-#### Scenario: A flush tail beside a live sibling collects nothing
-
-- **GIVEN** two concurrent flights, one that ended with a refusal and one still live
-- **WHEN** the tail of the finished flush runs
-- **THEN** it collects nothing, because the live sibling can hold staged directories
-
-#### Scenario: An advertised package is not debris
-
-- **GIVEN** a committed package that no farm links yet
-- **WHEN** the debris collection runs
-- **THEN** the directory and its node stay
-
-#### Scenario: A collection yields to a reclamation of the same process
-
-- **GIVEN** a reclamation that runs in the local server
-- **WHEN** a debris pass of the same server starts
-- **THEN** the pass collects nothing, and the lock stays with the reclamation
-
 ### Requirement: Analysis creation makes the empty farm
 
 Analysis creation MUST make the farm of the analysis, empty, with its
@@ -552,7 +495,7 @@ name. Migration 10 MUST rebuild the two tables, and it MUST fill
 dedupe of the pending set MUST compare the spelling, the specifier, and
 the track. Two spellings of one fold are two rows, because they are two
 queries. The spelling MUST reach the installer and every render: the
-sidebar pipeline, `store ls`, the refusal messages, and the both-hit ask.
+sidebar pipeline, `store ls`, the refusal messages, and the both-hit remedy.
 The provisioner spec MUST be `formatQuery` of the query. Without `--lang`,
 each ecosystem MUST be probed in the spelling, thus the both-hit guard
 stays armed for a name that both ecosystems hold.
@@ -614,3 +557,60 @@ flight and transfer rows coordinate a command process with the server.
 
 - **WHEN** `inflexa store link jinja2==3.1.6 --lang python` runs
 - **THEN** the command connects to the local server, and the server extends the farm
+
+### Requirement: Debris collects with no user command
+
+The app MUST collect debris silently, with no user command. Debris is the
+store content that nothing references: a store directory with no farm link
+and no graph node, and a stale acquire report. The collection MUST run at
+these moments, and no timer exists:
+
+- the tail of a flush that ended with refusals
+- one boot pass after the runtime of the local server reaches ready
+- the delete of a failed flight record through the local server
+
+Each pass MUST run only when no acquisition flight, no farm composition,
+and no transfer is live. A sandbox run needs no gate of its own. A run
+reaches store content only through the links of its farm, and a linked
+directory is never debris. Each pass MUST hold the reclaim exclusivity,
+and each pass MUST yield to live work.
+
+The reclaim lock is re-entrant for one pid, thus it excludes a different
+process only. Within one process, a second collection MUST join the live
+one. Only `store reclaim` runs a reclamation, in its own process. The
+local server runs no reclamation. Thus a reclamation and a collection
+never meet in one process, and the lock file excludes them.
+
+The collection MUST NOT touch a directory that the graph references, thus
+a package that an add fetched before its use stays. `store reclaim` keeps
+its approval gate, and it removes the same tier plus the graph prune.
+
+#### Scenario: A failed acquisition frees itself
+
+- **GIVEN** a flush in which one spec failed its load check
+- **WHEN** the flush tail runs with no other live work
+- **THEN** the never-advertised directories of the failed spec leave the pool
+
+#### Scenario: The collection yields to live work
+
+- **GIVEN** a live acquisition flight
+- **WHEN** the boot pass wakes
+- **THEN** it collects nothing and takes no lock that the flight waits on
+
+#### Scenario: A flush tail beside a live sibling collects nothing
+
+- **GIVEN** two concurrent flights, one that ended with a refusal and one still live
+- **WHEN** the tail of the finished flush runs
+- **THEN** it collects nothing, because the live sibling can hold staged directories
+
+#### Scenario: An advertised package is not debris
+
+- **GIVEN** a committed package that no farm links yet
+- **WHEN** the debris collection runs
+- **THEN** the directory and its node stay
+
+#### Scenario: A collection yields to a reclamation of a different process
+
+- **GIVEN** a `store reclaim` that runs in its own process
+- **WHEN** the boot pass of the local server starts
+- **THEN** the pass collects nothing, and the lock stays with the reclamation
