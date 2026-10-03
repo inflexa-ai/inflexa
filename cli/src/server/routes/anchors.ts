@@ -18,7 +18,7 @@ import { analysisPurgeFor } from "../../modules/harness/purge.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { ServerBoot } from "../boot.ts";
 import { workspaceBusyReasons } from "../busy_gate.ts";
-import { apiError, holdConnection, internalError, readBody, type ServerEnv } from "../http.ts";
+import { apiError, internalError, readBody, type ServerEnv } from "../http.ts";
 import { absolutePath } from "./analyses.ts";
 
 /** What the anchor routes read beyond SQLite and the disk. Tests replace each one. */
@@ -98,7 +98,6 @@ export function anchorRoutes(boot: ServerBoot, opts: AnchorRouteOpts = DEFAULT_A
     });
 
     routes.post("/prune", async (c) => {
-        holdConnection(c);
         const body = await readBody(c, pruneBody);
         if (body.isErr()) return body.error;
         const found = findDeadAnchors(body.value.cwd === undefined ? undefined : [body.value.cwd]);

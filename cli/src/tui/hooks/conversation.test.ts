@@ -780,7 +780,7 @@ describe("send() reads the end of a turn from its stream when the summary is gon
         }
         const server: SendOpts = { ...fakeServer(done()), startTurn: () => okAsync({ turnId: "turn-x", frames: frames() }), fetchTurn: () => errAsync(broken) };
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
-        expect(errorMsg()).toContain("The stream of the turn broke");
+        expect(errorMsg()).toContain("The connection to the turn was lost");
         expect(chatStatus()).toBe("error");
         // What streamed before the break stays on screen.
         const part = messages[1]?.parts[0];
@@ -1931,6 +1931,41 @@ describe("the open thread that a different client changes", () => {
         thread.state.running = false;
         await pollOpenThread(AID, SID, thread.opts);
         expect(otherClientTurn()).toBe(false);
+    });
+
+    // A disconnect does not stop a turn on the server, thus a lost stream says nothing about the open calls.
+    test("a lost stream leaves the open calls to the server, and the poll then reads the turn that still runs", async () => {
+        const thread = sharedThread();
+        await loadMessages(AID, SID, thread.opts);
+        const broken: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: new Error("reset") };
+        async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
+            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+            yield ok({ type: "tool-started", toolUseId: "t1", name: "read_file", source: ROOT });
+            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+            yield err(broken);
+        }
+        await send(
+            { sessionId: SID, analysisId: AID, userText: "my question" },
+            {
+                ...fakeServer(done()),
+                startTurn: () => okAsync({ turnId: "turn-x", frames: frames() }),
+                fetchTurn: () => errAsync(broken),
+                transcript: thread.opts,
+            },
+        );
+
+        expect(findPart(isToolCall)?.outcome).toBeUndefined();
+        expect(errorMsg()).toContain("The connection to the turn was lost");
+        expect(chatStatus()).not.toBe("busy");
+
+        // The opening of the turn moved the stamp, and the turn still runs on the server.
+        thread.state.list = [...thread.state.list, said("u2", "user", "my question")];
+        thread.state.updatedAt = "2026-10-03T10:06:00.000Z";
+        thread.state.running = true;
+        await pollOpenThread(AID, SID, thread.opts);
+
+        expect(otherClientTurn()).toBe(true);
+        expect(texts()).toEqual(["first question", "first answer", "my question"]);
     });
 
     test("a send reads the transcript again first when the thread changed since its last read", async () => {

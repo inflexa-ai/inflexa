@@ -92,6 +92,9 @@ function unavailableMessage(state: ServerState): string {
  * Lift the 10 s idle timeout of `Bun.serve` for this request. Call it in a route whose work can run for longer
  * than 10 s before the response, for example a hash of a large input set or a wait behind the farm queue.
  * Bun closes a connection with no byte for 10 s, and the client then gets no response.
+ *
+ * Bun 1.4.0 closes only a request with no body, for example a GET or a POST that a client sends with no body.
+ * A route that reads a JSON body has no need of the call. `machine.test.ts` pins both sides over a real listener.
  */
 export function holdConnection(c: Context): void {
     // `Bun.serve` passes its server as the second argument of `fetch`, which Hono gives as `c.env`.
