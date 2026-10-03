@@ -5,40 +5,41 @@ import { join, sep } from "node:path";
 import { testRender } from "@opentui/solid";
 import type { JSX } from "solid-js";
 
-import { freshDb } from "../test_support/db.ts";
-import { str256 } from "../lib/types.ts";
-import { createAnalysis } from "../modules/analysis/analysis.ts";
-import { listAnalysisInputs, listAnchors } from "../db/primary_query.ts";
+import type { InputList, InputsChange, InputView } from "../api/analyses.ts";
+import type { ClientOpts } from "../client/api.ts";
+import { asStr256 } from "../lib/types.ts";
+import { fakeClient, type FakeRequest } from "../test_support/fake_client.ts";
 import { useKeymapRoot } from "./keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "./components/dialog/dialog_host.tsx";
 import { WorkspaceContext, type Workspace } from "./contexts/workspace.ts";
-import { commands } from "./commands.tsx";
+import { openRemoveInputs } from "./commands.tsx";
 import type { Analysis } from "../types/analysis.ts";
 
-// The flat inputs list drives the REAL `analysis.remove-input` command against a REAL database. Two
-// claims are under test and neither is visible from the picker: that a batch of inputs leaves in ONE
-// pass, and that a row names its input by a path the user can act on.
+// The flat inputs list drives the REAL `analysis.remove-input` flow against a fake client of the server,
+// which gives the inputs and records the removal. Two claims are under test and neither is visible from
+// the picker: that a batch of inputs leaves in ONE request, and that a row names its input by a path the
+// user can act on. The server's own removal is tested in `server/routes/analyses.test.ts`.
+
+const analysis: Analysis = { id: "a1", createdAt: 0, updatedAt: 0, name: asStr256("rna-seq"), slug: "rna-seq", anchorId: "anchor-1", projectId: null };
 
 let anchorDir = "";
 let outsideDir = "";
-let analysis: Analysis;
+let inputs: InputView[] = [];
 
-beforeEach(async () => {
-    freshDb();
-    // realpath so the anchor markers the analysis mints match macOS's canonical /private/var.
+beforeEach(() => {
+    // realpath so the paths match the canonical form that the server gives, on macOS too.
     anchorDir = realpathSync(mkdtempSync(join(tmpdir(), "rm-inputs-")));
     outsideDir = realpathSync(mkdtempSync(join(tmpdir(), "rm-inputs-far-")));
     writeFileSync(join(anchorDir, "counts.tsv"), "x".repeat(2048));
     mkdirSync(join(anchorDir, "data"));
     writeFileSync(join(anchorDir, "data", "inner.txt"), "x");
     writeFileSync(join(outsideDir, "matrix.mtx"), "x");
-    analysis = (
-        await createAnalysis({
-            cwd: anchorDir,
-            name: str256("rna-seq")._unsafeUnwrap(),
-            inputPaths: [join(anchorDir, "counts.tsv"), join(anchorDir, "data"), join(outsideDir, "matrix.mtx")],
-        })
-    )._unsafeUnwrap();
+    // The rows of `GET {A}/inputs`: two inputs under the anchor (stored relative), one outside it.
+    inputs = [
+        { path: "counts.tsv", isDir: false, anchorId: analysis.anchorId, absolutePath: join(anchorDir, "counts.tsv") },
+        { path: "data", isDir: true, anchorId: analysis.anchorId, absolutePath: join(anchorDir, "data") },
+        { path: join(outsideDir, "matrix.mtx"), isDir: false, anchorId: null, absolutePath: join(outsideDir, "matrix.mtx") },
+    ];
 });
 
 afterEach(() => {
@@ -46,15 +47,40 @@ afterEach(() => {
     for (const dir of [anchorDir, outsideDir]) rmSync(dir, { recursive: true, force: true });
 });
 
+/** The paths of a removal request. The cast reads the body that the flow under test built from `InputPathsRequest`. */
+function pathsOf(req: FakeRequest | undefined): string[] {
+    return (req?.body as { paths: string[] } | undefined)?.paths ?? [];
+}
+
+/** A fake server that lists `inputs` and removes the inputs at the paths of a removal. */
+function server(): { opts: ClientOpts; removals: () => FakeRequest[] } {
+    const client = fakeClient((req) => {
+        if (req.method === "GET" && req.path.startsWith(`/api/v1/analyses/${analysis.id}/inputs`)) {
+            const list: InputList = { inputs, total: inputs.length, page: 0, perPage: 200, hasMore: false };
+            return { status: 200, body: list };
+        }
+        if (req.method === "POST" && req.path === `/api/v1/analyses/${analysis.id}/inputs/remove`) {
+            const paths = pathsOf(req);
+            const change: InputsChange = { added: [], removed: inputs.filter((i) => paths.includes(i.absolutePath ?? i.path)), notInputs: [] };
+            return { status: 200, body: change };
+        }
+        return { status: 404, body: { error: "not_found", message: `No route for ${req.method} ${req.path}.` } };
+    });
+    return { opts: client.opts, removals: () => client.requests.filter((r) => r.path.endsWith("/inputs/remove")) };
+}
+
 function ws(): Workspace {
     return {
         analysis,
         sessionId: null,
         workingDir: anchorDir,
         project: null,
+        anchor: null,
+        inputCount: null,
         openDialog: () => {},
         closeDialog: () => {},
         openSession: () => {},
+        refreshScope: () => {},
         quit: async () => {},
     };
 }
@@ -90,19 +116,18 @@ function flat(frame: string): string {
     return frame.replace(/[\s\u2500-\u257f]/g, "");
 }
 
-/** Run the real `analysis.remove-input` command and push the dialog it opens onto the host. */
-function openRemoveInputs(workspace: Workspace): void {
-    const command = commands.find((c) => c.id === "analysis.remove-input");
-    expect(command).toBeDefined();
-    void command!.run({ ...workspace, openDialog: (render) => dialogPush(render) });
+/** Run the real `analysis.remove-input` flow against the fake server and push the dialog it opens onto the host. */
+async function openList(workspace: Workspace, opts: ClientOpts): Promise<void> {
+    await openRemoveInputs({ ...workspace, openDialog: (render) => dialogPush(render) }, opts);
 }
 
 describe("the flat inputs list", () => {
     test("names each input by its absolute path, marking a directory", async () => {
+        const s = server();
         const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
-            openRemoveInputs(ws());
+            await openList(ws(), s.opts);
             const frame = await settle(setup);
 
             // The STORED path is anchor-relative ("counts.tsv"), which says nothing about where the
@@ -119,10 +144,11 @@ describe("the flat inputs list", () => {
     test("an input outside the anchor folder is listed without any navigation", async () => {
         // The reason this surface exists at all: the picker seeds a far input into its selection but
         // renders no row for it until the user browses to that folder.
+        const s = server();
         const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
-            openRemoveInputs(ws());
+            await openList(ws(), s.opts);
             const frame = await settle(setup);
             expect(flat(frame)).toContain(join(outsideDir, "matrix.mtx"));
         } finally {
@@ -133,10 +159,11 @@ describe("the flat inputs list", () => {
     test("opens in NORMAL, so the first space toggles instead of typing", async () => {
         // The state a user actually meets. Mounting focused made space type a character into the
         // filter with nothing on screen explaining why the row would not select.
+        const s = server();
         const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
-            openRemoveInputs(ws());
+            await openList(ws(), s.opts);
             let frame = await settle(setup);
             expect(frame).toContain("NORMAL");
 
@@ -156,11 +183,12 @@ describe("the flat inputs list", () => {
         }
     });
 
-    test("two inputs leave in one pass", async () => {
+    test("two inputs leave in one request", async () => {
+        const s = server();
         const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
-            openRemoveInputs(ws());
+            await openList(ws(), s.opts);
             await settle(setup);
 
             // Multi mode mounts in NORMAL (the FilePicker convention), so space toggles straight away.
@@ -170,31 +198,8 @@ describe("the flat inputs list", () => {
             setup.mockInput.pressEnter();
             await settle(setup);
 
-            expect(listAnalysisInputs(analysis.id)._unsafeUnwrap()).toHaveLength(1);
-        } finally {
-            setup.renderer.destroy();
-        }
-    });
-
-    test("opening the list records no sighting of the anchor folder", async () => {
-        // A listing is not a sighting. `resolveAnchor` writes a `lastSeen` heartbeat by default, so
-        // the per-input form would make this dialog measure dialog opens and pay one synchronous
-        // SQLite write for each row it draws.
-        const before = listAnchors()
-            ._unsafeUnwrap()
-            .map((anchor) => anchor.lastSeen);
-        const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
-        try {
-            // `settle` waits 20ms, so any heartbeat the open writes carries a strictly later stamp.
-            await settle(setup);
-            openRemoveInputs(ws());
-            await settle(setup);
-
-            expect(
-                listAnchors()
-                    ._unsafeUnwrap()
-                    .map((anchor) => anchor.lastSeen),
-            ).toEqual(before);
+            expect(s.removals()).toHaveLength(1);
+            expect(pathsOf(s.removals()[0])).toEqual([join(anchorDir, "counts.tsv"), join(anchorDir, "data")]);
         } finally {
             setup.renderer.destroy();
         }
@@ -202,25 +207,24 @@ describe("the flat inputs list", () => {
 
     test("an input whose file is gone still lists and still removes", async () => {
         rmSync(join(outsideDir, "matrix.mtx"));
+        const s = server();
         const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
-            openRemoveInputs(ws());
+            await openList(ws(), s.opts);
             const frame = await settle(setup);
             // Removal resolves against the REGISTERED set, so a vanished file is a normal row.
             expect(flat(frame)).toContain(join(outsideDir, "matrix.mtx"));
             expect(frame).toContain("not on disk");
 
-            // The far input sorts last (creation order), so walk to it and drop it.
+            // The far input sorts last (the order of the list), so walk to it and drop it.
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressArrow("down");
             await setup.mockInput.pressKeys([" "]);
             setup.mockInput.pressEnter();
             await settle(setup);
 
-            const left = listAnalysisInputs(analysis.id)._unsafeUnwrap();
-            expect(left).toHaveLength(2);
-            expect(left.some((i) => i.path.includes("matrix.mtx"))).toBe(false);
+            expect(pathsOf(s.removals()[0])).toEqual([join(outsideDir, "matrix.mtx")]);
         } finally {
             setup.renderer.destroy();
         }

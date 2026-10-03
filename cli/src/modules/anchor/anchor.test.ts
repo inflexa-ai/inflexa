@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 import { freshDb } from "../../test_support/db.ts";
 import { classifyMarkerSighting, resolveAnchor } from "./anchor.ts";
-import { canonicalPath, writeMarker } from "./marker.ts";
+import { canonicalPath } from "../../lib/paths.ts";
+import { writeMarker } from "./marker.ts";
 import { insertAnchor } from "../../db/primary_mutation.ts";
 import { getAnchor } from "../../db/primary_query.ts";
 import type { Anchor, AnchorMarker } from "../../types/anchor.ts";

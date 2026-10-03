@@ -253,16 +253,19 @@ export function resolveAgentEfforts(): Record<AgentName, AgentEffort> {
 }
 
 /**
- * Persist one agent's effort to `models.efforts.<agent>`, spread-preserving like {@link writeAgentModel}:
- * each other key of the config, and the effort of each other agent, stay as they are.
+ * Persist one agent's model and effort to `models.agents.<agent>` and `models.efforts.<agent>` in ONE write,
+ * spread-preserving like {@link writeAgentModel}: each other key of the config, and the selection of each
+ * other agent, stay as they are. One write, because a failed second write would leave the model changed
+ * and the effort not.
  */
-export function writeAgentEffort(agent: AgentName, effort: AgentEffort): Result<void, ConfigError> {
+export function writeAgentSelection(agent: AgentName, selection: { readonly model: string; readonly effort: AgentEffort }): Result<void, ConfigError> {
     const config = readConfig();
-    // `config.models` is `unknown` in lib/config.ts, thus spread it and its nested `efforts` as plain
-    // records, the same as `writeAgentModel`.
+    // `config.models` is `unknown` in lib/config.ts, thus spread it and its nested `agents` and `efforts` as
+    // plain records, the same as `writeAgentModel`.
     const models = (config.models ?? {}) as Record<string, unknown>;
-    const efforts = { ...(models.efforts as Record<string, unknown> | undefined), [agent]: effort };
-    return writeConfig({ ...config, models: { ...models, efforts } });
+    const agents = { ...(models.agents as Record<string, unknown> | undefined), [agent]: selection.model };
+    const efforts = { ...(models.efforts as Record<string, unknown> | undefined), [agent]: selection.effort };
+    return writeConfig({ ...config, models: { ...models, agents, efforts } });
 }
 
 /**

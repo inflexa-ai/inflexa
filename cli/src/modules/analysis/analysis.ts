@@ -169,6 +169,9 @@ export function removeInput(input: AnalysisInput): Result<AnalysisInput | null, 
 /** One failed leg of {@link applyInputsDiff} — which operation failed and the underlying error. */
 export type InputsDiffFailure = { op: "add" | "remove"; error: DbError };
 
+/** What {@link applyInputsDiff} changed: the inputs that landed, the inputs that went, and each failed leg. */
+export type InputsDiffOutcome = { added: AnalysisInput[]; removed: AnalysisInput[]; failures: InputsDiffFailure[] };
+
 /**
  * Apply a picker-style set diff to an analysis's inputs. The adds land first as one
  * all-or-nothing batch ({@link addInputs} short-circuits on the first bad path), and the
@@ -176,24 +179,26 @@ export type InputsDiffFailure = { op: "add" | "remove"; error: DbError };
  * reject every add while the removals still stripped the unchecked rows, leaving the
  * analysis with fewer inputs than either the before or the after state. Removal failures
  * are collected rather than short-circuited: each removal is independent, so the
- * survivors should still land. Returns the failures (empty = the whole diff applied).
+ * survivors should still land. `failures` is empty when the whole diff applied.
  */
-export function applyInputsDiff(analysisId: string, toAdd: string[], toRemove: AnalysisInput[], cwd: string): InputsDiffFailure[] {
-    const failures: InputsDiffFailure[] = [];
+export function applyInputsDiff(analysisId: string, toAdd: string[], toRemove: AnalysisInput[], cwd: string): InputsDiffOutcome {
+    const outcome: InputsDiffOutcome = { added: [], removed: [], failures: [] };
     if (toAdd.length > 0) {
         addInputs(analysisId, toAdd, cwd).match(
-            () => {},
-            (error) => failures.push({ op: "add", error }),
+            (added) => outcome.added.push(...added),
+            (error) => outcome.failures.push({ op: "add", error }),
         );
     }
-    if (failures.length > 0) return failures;
+    if (outcome.failures.length > 0) return outcome;
     for (const input of toRemove) {
         removeInput(input).match(
-            () => {},
-            (error) => failures.push({ op: "remove", error }),
+            (removed) => {
+                if (removed !== null) outcome.removed.push(removed);
+            },
+            (error) => outcome.failures.push({ op: "remove", error }),
         );
     }
-    return failures;
+    return outcome;
 }
 
 /**

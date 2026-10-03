@@ -1,16 +1,16 @@
-import { ResultAsync } from "neverthrow";
 import { createEffect, createSignal, Show } from "solid-js";
 import type { BoxRenderable, CliRenderer, Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
-import type { AskReply } from "@inflexa-ai/harness";
-import { causeDetailLines, describeCause } from "../lib/cause.ts";
+import type { AskReply } from "../api/conversation.ts";
+import { describeClientError } from "../client/api.ts";
+import { answerAsk as answerAskOnServer } from "../client/conversation.ts";
 import { GLYPHS, size, zIndex } from "../lib/design_system.ts";
 import { contractHome } from "../lib/paths.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
 import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus } from "./hooks/status.ts";
-import { bootState, harnessRuntime, watchAgentModels } from "./hooks/boot.ts";
+import { bootState, watchAgentModels } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { activeAsk, queuedCount, settleAsk, type PendingAsk } from "./hooks/asks.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
@@ -29,14 +29,13 @@ import {
     watchActivityPanel,
 } from "./hooks/activity_panel.ts";
 import { watchRunCompletions } from "./hooks/run_completion.ts";
-import { retryTerminalTransfers, watchTransfers } from "./hooks/sandbox_gate.tsx";
+import { refreshTransferState, retryTerminalTransfers, storeFlightLines, watchTransfers } from "./hooks/sandbox_gate.tsx";
 import { commands, openParentSession, openReportSession } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { FailedFlightDialog } from "./components/dialog/failed_flight_dialog.tsx";
 import { UsageDialog, readSessionUsage } from "./components/dialog/usage_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
-import { readStoreFlights } from "../modules/libs/store_flight.ts";
 import {
     useKeymapRoot,
     useBindings,
@@ -61,7 +60,7 @@ import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
 import { watchProfileParity, driveForceReprofile } from "./hooks/profile_parity.ts";
 import { watchFarmHeal } from "./hooks/farm_heal.tsx";
-import { listAnalysisInputs } from "../db/primary_query.ts";
+import { fetchInputs } from "../client/analyses.ts";
 import type { Analysis } from "../types/analysis.ts";
 
 type AppProps = {
@@ -513,17 +512,16 @@ export function App(props: AppProps) {
     // Sidebar renders and the details views below snapshot on open).
     watchSidebarData(workspace);
 
-    // Wire the run-activity panel: its focused run's activity read (cadenced off the sidebar refresh,
-    // deliberately not a second timer) and its dismissal expiry. Under App's reactive owner.
-    watchActivityPanel();
+    // Wire the run-activity panel: the run stream of its focused subject, under the open analysis, and
+    // its dismissal expiry. Under App's reactive owner.
+    watchActivityPanel(workspace);
 
     // Mirror the three detached transfers and the live acquisition flights into
     // the gate signals the sidebar renders. A poll, because the writers are
     // other processes. Under App's reactive owner.
     watchTransfers();
 
-    // Announce every run that reaches a terminal status: a toast now, and a durable outcome record on
-    // the analysis thread queued behind whatever else is writing it. Deliberately independent of the
+    // Announce every run that reaches a terminal status with a toast. Deliberately independent of the
     // sidebar and the activity panel — either may be hidden when a run lands.
     watchRunCompletions();
 
@@ -535,20 +533,20 @@ export function App(props: AppProps) {
     // Open the DATA PROFILE details view. Snapshots the profile as of open (a
     // point-in-time view) and hands the composed lines to `ResultsDialog`, reused verbatim. The
     // optional `r re-profile` footer action drives a DELIBERATE force re-profile: offered only when
-    // one could actually start — boot ready (so a runtime exists), no profile currently running, and
+    // one could actually start — boot ready (so the server has a runtime), no profile currently running, and
     // at least one input to profile. All three are snapshotted at open (the dialog does not track them
     // changing after it opens); after firing it closes, so the sidebar + toast carry the live outcome.
-    function openProfile(): void {
+    async function openProfile(): Promise<void> {
         const snap = profileSnapshot();
         const analysis = workspace.analysis;
         const name = analysis?.name;
         const title = name ? `Data profile ${GLYPHS.emDash} ${name}` : "Data profile";
-        const runtime = harnessRuntime();
         const running = snap.kind === "loaded" && snap.profile.status === "running";
+        // One input is enough to know: a page of one gives the count of all of them.
         const hasInputs =
             analysis !== null &&
-            listAnalysisInputs(analysis.id).match(
-                (xs) => xs.length > 0,
+            (await fetchInputs(analysis.id, { page: 0, perPage: 1 })).match(
+                (list) => list.total > 0,
                 () => false,
             );
         const canReprofile = bootState().phase === "ready" && !running && hasInputs;
@@ -557,16 +555,16 @@ export function App(props: AppProps) {
                 title={title}
                 lines={profileDetailLines(snap)}
                 emptyText="no profile data"
-                // Present the action only when a runtime + analysis exist to close over; `enabled`
-                // gates whether it is actually offered (footer hint + key binding).
+                // Present the action only when an analysis exists to close over; `enabled` gates whether
+                // it is actually offered (footer hint + key binding).
                 action={
-                    analysis && runtime
+                    analysis
                         ? {
                               key: "r",
                               label: "re-profile",
                               enabled: canReprofile,
                               onAction: () => {
-                                  void driveForceReprofile(runtime, analysis, () => workspace.analysis?.id ?? null);
+                                  void driveForceReprofile(analysis, () => workspace.analysis?.id ?? null);
                                   dialogClose();
                               },
                           }
@@ -590,37 +588,29 @@ export function App(props: AppProps) {
     // dialog shows its empty text. No footer action: this is a read-only inspection surface.
     function openTurnError(): void {
         dialogPush(() => (
-            <ResultsDialog
-                title="Turn error"
-                lines={causeDetailLines(conversation.lastTurnFailure())}
-                emptyText="no recent turn error"
-                onClose={() => dialogClose()}
-            />
+            <ResultsDialog title="Turn error" lines={conversation.lastTurnFailure() ?? []} emptyText="no recent turn error" onClose={() => dialogClose()} />
         ));
     }
 
     // Open the USAGE breakdown: what the OPEN SESSION has consumed, by model and by agent. Reads the
-    // CLI's OWN local ledger, so it opens with the durable engine, its Postgres, and the model proxy
-    // all cold — the same property the rail section that launches it has, and the reason there is no
-    // boot gate here (unlike `openRuns`, whose picker needs the live pool).
+    // usage ledger of the server, which is SQLite, so it opens with the durable engine, its Postgres, and
+    // the model proxy all cold — the same property the rail section that launches it has, and the reason
+    // there is no boot gate here (unlike `openRuns`, whose picker needs the live pool).
     //
     // Scoped to the session, matching the section it opens from, so the dialog explains the number the
     // reader just clicked rather than a wider one. Every other grain the dialog used to stack up —
     // sessions, runs, steps — now rides the entity that owns it (the rail's run rows, the run detail,
     // the run block's steps), and two sources for one figure is how they come to disagree.
-    function openUsage(): void {
+    //
+    // The read comes before the push: the dialog is a point-in-time view that reads its snapshot once.
+    async function openUsage(): Promise<void> {
         const analysis = workspace.analysis;
         if (!analysis) return;
-        dialogPush(() => (
-            <UsageDialog
-                analysisName={analysis.name}
-                // `sessionId` is null before a thread is bound; the dialog reports that as its own
-                // state rather than silently widening to the analysis, which would answer a question
-                // the reader did not ask under a label that says otherwise.
-                loadUsage={() => readSessionUsage(analysis.id, workspace.sessionId)}
-                onClose={() => dialogClose()}
-            />
-        ));
+        // `sessionId` is null before a thread is bound; the dialog reports that as its own state rather
+        // than silently widening to the analysis, which would answer a question the reader did not ask
+        // under a label that says otherwise.
+        const usage = await readSessionUsage(analysis.id, workspace.sessionId);
+        dialogPush(() => <UsageDialog analysisName={analysis.name} loadUsage={() => usage} onClose={() => dialogClose()} />);
     }
 
     // A text-selection drag released over a Sidebar Section fires its `onMouseUp` (→ open dialog) on the
@@ -632,23 +622,25 @@ export function App(props: AppProps) {
     // wrapper is its only door.
     function openProfileFromSidebar(): void {
         if (renderer.getSelection()?.getSelectedText()) return;
-        openProfile();
+        void openProfile();
     }
     function openRunsFromSidebar(): void {
         if (renderer.getSelection()?.getSelectedText()) return;
         openRuns();
     }
-    function openFailedFlightFromSidebar(flightId: string): void {
+    async function openFailedFlightFromSidebar(flightId: string): Promise<void> {
         if (renderer.getSelection()?.getSelectedText()) return;
-        // The row reads FRESH at open: the line the user clicked is a poll-old
+        // The store reads FRESH at open: the line the user clicked is a poll-old
         // snapshot, and a row a retry already claimed must not open as failed.
-        const row = readStoreFlights().find((flight) => flight.row.id === flightId && flight.row.state === "failed")?.row;
-        if (row === undefined) return;
-        dialogPush(() => <FailedFlightDialog flight={row} onClose={() => dialogClose()} />);
+        const read = await refreshTransferState();
+        if (read.isErr()) return;
+        const flight = storeFlightLines().find((entry) => entry.id === flightId && entry.state === "failed");
+        if (flight === undefined) return;
+        dialogPush(() => <FailedFlightDialog flight={flight} onClose={() => dialogClose()} />);
     }
     function openUsageFromSidebar(): void {
         if (renderer.getSelection()?.getSelectedText()) return;
-        openUsage();
+        void openUsage();
     }
 
     // The single root keyboard handler that drives the keymap engine. Every binding below is a
@@ -726,55 +718,46 @@ export function App(props: AppProps) {
     // the feedback input dims, so a second keypress cannot double-answer before the gateway resolves.
     const [answerBusy, setAnswerBusy] = createSignal(false);
 
-    // Answer the head ask through the runtime gateway. `applied` drains the entry (the gateway's
-    // terminal re-emit also reconciles the transcript card); a stale outcome (`not_found` /
-    // `already_terminal`) still drains it with a notice — the ledger has already moved past this ask
-    // and holding the prompt open would wedge the queue. A thrown answer (e.g. Postgres unreachable)
-    // leaves the entry in place: the write failed, the ask may still be answerable, so the user can
-    // retry rather than lose the decision. Bridged through ResultAsync so the harness throw becomes a
-    // handled branch (neverthrow-first) rather than a bare try/catch.
+    // Answer the head ask through `POST {A}/asks/:askId/answer`. `applied` drains the entry (the gateway's
+    // terminal re-emit on the turn stream also reconciles the transcript card); a stale ask (404, or 409
+    // for an ask already answered) still drains it with a notice — the ledger has already moved past this
+    // ask and holding the prompt open would wedge the queue. Any other failure (e.g. the server is gone)
+    // leaves the entry in place: the write failed, the ask may still be answerable, so the user can retry
+    // rather than lose the decision.
     //
-    // `onSettled` runs only in the three branches that advance the queue (applied / not_found /
-    // already_terminal) — never on the error branch or the missing-gateway early return. The composer
-    // answer path uses it to defer its buffer clear to settle time: a failed write (or an unbound
-    // gateway) keeps the typed token so the user can retry the submit rather than lose the decision.
+    // `onSettled` runs only in the three branches that advance the queue (applied / 404 / 409) — never on
+    // the error branch or the unscoped early return. The composer answer path uses it to defer its buffer
+    // clear to settle time: a failed write keeps the typed token so the user can retry the submit rather
+    // than lose the decision.
     function answerAsk(askId: string, reply: AskReply, onSettled?: () => void): void {
-        const gateway = harnessRuntime()?.askGateway;
-        if (!gateway) return;
+        const analysisId = workspace.analysis?.id;
+        if (analysisId === undefined) return;
         setAnswerBusy(true);
-        void ResultAsync.fromPromise(gateway.answer(askId, reply), (e): unknown => e).match(
-            (outcome) => {
+        void answerAskOnServer(analysisId, askId, reply).match(
+            () => {
                 setAnswerBusy(false);
-                switch (outcome) {
-                    case "applied":
-                        // Echo the user's own typed reject feedback onto the transcript card. The gateway
-                        // already carried it to the ledger and the model-facing denial; this is the only
-                        // path that surfaces it to the user. Order-safe vs the gateway's terminal re-emit:
-                        // noteAskFeedback and reconcileAskCard both spread the same card, so they converge.
-                        if (reply.kind === "reject" && reply.feedback) conversation.noteAskFeedback(askId, reply.feedback);
-                        settleAsk(askId);
-                        onSettled?.();
-                        return;
-                    case "not_found":
-                        notify({ kind: "info", text: "That approval is no longer pending." });
-                        settleAsk(askId);
-                        onSettled?.();
-                        return;
-                    case "already_terminal":
-                        notify({ kind: "info", text: "That approval was already answered." });
-                        settleAsk(askId);
-                        onSettled?.();
-                        return;
-                    default: {
-                        const _exhaustive: never = outcome;
-                        throw new Error(`unhandled answer outcome: ${JSON.stringify(_exhaustive)}`);
-                    }
-                }
+                // Echo the user's own typed reject feedback onto the transcript card. The gateway
+                // already carried it to the ledger and the model-facing denial; this is the only
+                // path that surfaces it to the user. Order-safe vs the gateway's terminal re-emit:
+                // noteAskFeedback and reconcileAskCard both spread the same card, so they converge.
+                if (reply.kind === "reject" && reply.feedback) conversation.noteAskFeedback(askId, reply.feedback);
+                settleAsk(askId);
+                onSettled?.();
             },
-            (cause) => {
-                // Leave the entry queued — the write failed, so the ask may still be answerable.
+            (e) => {
                 setAnswerBusy(false);
-                notify({ kind: "error", text: `Could not answer the approval: ${describeCause(cause)}` });
+                const stale = e.type === "http" && (e.body.error === "not_found" || e.body.error === "conflict");
+                if (stale) {
+                    notify({
+                        kind: "info",
+                        text: e.body.error === "not_found" ? "That approval is no longer pending." : "That approval was already answered.",
+                    });
+                    settleAsk(askId);
+                    onSettled?.();
+                    return;
+                }
+                // Leave the entry queued — the write failed, so the ask may still be answerable.
+                notify({ kind: "error", text: `Could not answer the approval: ${describeClientError(e)}` });
             },
         );
     }
@@ -860,7 +843,7 @@ export function App(props: AppProps) {
             { chord: leaderSeq("]"), run: focusNextSubject, desc: "Next active run or profile", group: "View" },
             { chord: leaderSeq("a"), run: () => runCommandById("analysis.switch"), desc: "Switch analysis", group: "Analysis" },
             { chord: leaderSeq("n"), run: () => runCommandById("analysis.new"), desc: "New analysis", group: "Analysis" },
-            { chord: leaderSeq("d"), run: openProfile, desc: "Data profile", group: "Analysis" },
+            { chord: leaderSeq("d"), run: () => void openProfile(), desc: "Data profile", group: "Analysis" },
             { chord: leaderSeq("r"), run: openRuns, desc: "Runs", group: "Analysis" },
             // The retry of a transfer row: the sidebar renders a terminal
             // failure row, and this key starts that transfer again through the
@@ -1255,7 +1238,7 @@ export function App(props: AppProps) {
                             onOpenProfile={openProfileFromSidebar}
                             onOpenRuns={openRunsFromSidebar}
                             onOpenUsage={openUsageFromSidebar}
-                            onOpenFailedFlight={openFailedFlightFromSidebar}
+                            onOpenFailedFlight={(flightId) => void openFailedFlightFromSidebar(flightId)}
                         />
                     </Show>
                 </box>

@@ -78,6 +78,10 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa sandbox remove": "blocked",
     "inflexa sandbox status": "auto()",
     "inflexa sbom": "blocked",
+    "inflexa serve": "blocked",
+    "inflexa server logs": "approval",
+    "inflexa server status": "auto(json)",
+    "inflexa server stop": "blocked",
     "inflexa setup": "blocked",
     "inflexa status": "approval",
     "inflexa store add": "approval",
@@ -94,8 +98,8 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa usage steps": "auto(analysis,run)",
 };
 
-// The full surface (dev channel ON) — the release table plus the three dev-only harness entry points.
-// `chat` is a blocked TUI launcher; `profile`/`run` boot the embedded runtime and stay approval.
+// The full surface (dev channel ON) — the release table plus the dev-only entry points. `chat` is a
+// blocked TUI launcher; `profile`/`run` stay approval.
 const EXPECTED_DEV_ON: Record<string, string> = {
     inflexa: "blocked",
     "inflexa analysis set-project": "approval",
@@ -132,6 +136,10 @@ const EXPECTED_DEV_ON: Record<string, string> = {
     "inflexa sandbox remove": "blocked",
     "inflexa sandbox status": "auto()",
     "inflexa sbom": "blocked",
+    "inflexa serve": "blocked",
+    "inflexa server logs": "approval",
+    "inflexa server status": "auto(json)",
+    "inflexa server stop": "blocked",
     "inflexa setup": "blocked",
     "inflexa status": "approval",
     "inflexa store add": "approval",
@@ -148,10 +156,81 @@ const EXPECTED_DEV_ON: Record<string, string> = {
     "inflexa usage steps": "auto(analysis,run)",
 };
 
+/**
+ * Compact each row to its command kind: the bare kind, or `instance machine(flag,flag)` when options make
+ * the command a `machine` command for one run. `unclassified` marks a row with no kind.
+ */
+function kindTable(rows: readonly PolicyRow[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const row of rows) {
+        const kind = row.commandKind ?? "unclassified";
+        out[row.grantKey] = row.machineFlags === null ? kind : `${kind} machine(${row.machineFlags.join(",")})`;
+    }
+    return out;
+}
+
+// The command kind of each command of the full surface (dev channel ON): what it needs from the local
+// server. `instance` is a client of the server, `machine` prepares or controls the machine or the server,
+// `standalone` needs no instance. The release surface is the same table without the dev-only entries.
+const EXPECTED_KINDS: Record<string, string> = {
+    inflexa: "instance",
+    "inflexa analysis set-project": "instance",
+    "inflexa auth login": "machine",
+    "inflexa auth logout": "machine",
+    "inflexa auth whoami": "standalone",
+    "inflexa chat": "instance",
+    "inflexa config": "instance",
+    "inflexa down": "machine",
+    "inflexa geo download": "instance",
+    "inflexa inputs add": "instance",
+    "inflexa inputs ls": "instance",
+    "inflexa inputs remove": "instance",
+    "inflexa ls": "instance",
+    "inflexa new": "instance",
+    "inflexa open": "instance",
+    "inflexa profile": "instance",
+    "inflexa project ls": "instance",
+    "inflexa project new": "instance",
+    "inflexa prov export": "instance",
+    "inflexa prov lineage": "instance",
+    "inflexa prov verify": "instance",
+    "inflexa prov verify-file": "standalone",
+    "inflexa prune": "instance",
+    "inflexa refs download": "machine",
+    "inflexa refs list": "standalone",
+    "inflexa refs path": "standalone",
+    "inflexa refs verify": "standalone",
+    "inflexa relocate": "instance",
+    "inflexa repair": "instance",
+    "inflexa resume": "instance",
+    "inflexa run": "instance machine(plan)",
+    "inflexa sandbox pull": "machine",
+    "inflexa sandbox remove": "machine",
+    "inflexa sandbox status": "machine",
+    "inflexa serve": "machine",
+    "inflexa server logs": "machine",
+    "inflexa server status": "machine",
+    "inflexa server stop": "machine",
+    "inflexa setup": "machine",
+    "inflexa status": "instance",
+    "inflexa store add": "machine",
+    "inflexa store cancel": "machine",
+    "inflexa store download": "machine",
+    "inflexa store link": "instance",
+    "inflexa store ls": "machine",
+    "inflexa store reclaim": "machine",
+    "inflexa up": "machine",
+    "inflexa upgrade": "machine",
+    "inflexa usage": "instance",
+    "inflexa usage runs": "instance",
+    "inflexa usage sessions": "instance",
+    "inflexa usage steps": "instance",
+};
+
 describe("agent policy — tree-walk exhaustiveness (both channels)", () => {
     test.each([["development"], ["production"]] as const)("every action-carrying command in the %s channel carries a policy", (channel) => {
         const rows = runReport(channel);
-        const unclassified = rows.filter((r) => !r.hasPolicy).map((r) => r.grantKey);
+        const unclassified = rows.filter((r) => !r.hasPolicy || r.commandKind === null).map((r) => r.grantKey);
         expect(unclassified).toEqual([]);
         // Guard against a walk that found nothing (a broken subprocess), which would pass the filter vacuously.
         expect(rows.length).toBeGreaterThan(0);
@@ -177,6 +256,18 @@ describe("agent policy — snapshot audit surface", () => {
 
     test("the dev-ON policy table matches the pinned snapshot (adds the dev-only entries)", () => {
         expect(policyTable(runReport("development"))).toEqual(EXPECTED_DEV_ON);
+    });
+
+    test("the command kind table matches the pinned snapshot in each channel", () => {
+        expect(kindTable(runReport("development"))).toEqual(EXPECTED_KINDS);
+        const release = kindTable(runReport("production"));
+        expect(release).toEqual(Object.fromEntries(Object.keys(release).map((key) => [key, EXPECTED_KINDS[key] ?? "absent from EXPECTED_KINDS"])));
+    });
+
+    test("each machine flag names a declared option", () => {
+        for (const row of runReport("development")) {
+            for (const flag of row.machineFlags ?? []) expect(row.declaredOptions).toContain(flag);
+        }
     });
 });
 

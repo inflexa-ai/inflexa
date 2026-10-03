@@ -2,7 +2,6 @@ import type { JSX } from "solid-js";
 import { TextareaRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/solid";
 import { err, ok, okAsync } from "neverthrow";
-import type { DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import { formatTokenFigure } from "../../lib/usage_format.ts";
@@ -44,10 +43,7 @@ import { SelectDialog } from "../components/dialog/select_dialog.tsx";
 import { FilePicker } from "../components/dialog/file_picker.tsx";
 import { RunDetailDialog } from "../components/dialog/run_detail_dialog.tsx";
 import { UsageDialog, type SessionUsageSnapshot } from "../components/dialog/usage_dialog.tsx";
-// Aliased: `DbError` in this file already means the HARNESS's storage error (the run-detail exhibit's
-// step fetch). The usage dialog reads the CLI's own SQLite ledger, whose error union is a different
-// type with the same name, and only the alias keeps the two exhibits from silently swapping them.
-import type { DbError as LocalDbError } from "../../db/errors.ts";
+import type { ClientError } from "../../client/api.ts";
 import {
     absTime,
     absTimeShort,
@@ -76,10 +72,8 @@ import {
     mockAskPrompts,
     mockAskCards,
     mockCortexRuns,
-    mockRunSteps,
+    mockRunDetail,
     mockDataProfile,
-    mockRunUsage,
-    mockRunStepUsage,
     mockUsageSnapshot,
     mockUsageSnapshotInputOnly,
     mockUsageSnapshotNoFigures,
@@ -262,15 +256,14 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         <FailedFlightDialog
                             flight={{
                                 id: "python::scipy::==1.18.1",
-                                createdAt: 0,
-                                updatedAt: 0,
+                                spec: "scipy==1.18.1 (python)",
                                 state: "failed",
-                                ecosystem: "python",
-                                spelling: "scipy",
-                                specifier: "==1.18.1",
+                                subscribers: 0,
                                 progress: null,
                                 message: 'commit: the dependency "scipy-1.18.1-ac47ce3c59033b5f" resolves to nothing in the pool',
-                                holderPid: 0,
+                                failure:
+                                    'a dependency of it did not land in the pool (the dependency "scipy-1.18.1-ac47ce3c59033b5f" resolves to nothing in the pool)',
+                                updatedAt: "1970-01-01T00:00:00.000Z",
                             }}
                             onClose={noop}
                         />
@@ -593,11 +586,10 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             title={`Runs ${GLYPHS.emDash} rna-seq-2026`}
                             placeholder={`Search runs${GLYPHS.ellipsis}`}
                             items={mockCortexRuns.map((run) => {
-                                const totals = mockRunUsage.get(run.runId);
-                                const figure = totals ? formatTokenFigure(totals) : "";
+                                const figure = run.usage ? formatTokenFigure(run.usage) : "";
                                 return {
                                     value: run,
-                                    title: shortRunName(run),
+                                    title: run.planTitle ?? shortRunName(run),
                                     meta: `${idTail(run.runId)} ${GLYPHS.middot} ${run.status} ${GLYPHS.middot} ${absTimeShort(run.startedAt)}${figure ? ` ${GLYPHS.middot} ${figure}` : ""}`,
                                     description: `started ${absTime(run.startedAt)}${run.completedAt ? ` ${GLYPHS.middot} finished ${absTime(run.completedAt)}` : ""}`,
                                 };
@@ -606,23 +598,17 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             onCancel={noop}
                         />
                     </DialogShowcase>
-                    {/* `usage` arrives as DATA — the picker above batched ONE ledger read across every row
-                        it drew and hands the picked run's totals down, which is what keeps `runDetailLines`
-                        pure and this dialog showcaseable with no ledger in sight. The call count rides
-                        beside the figure because it is the only thing separating a run whose provider
-                        reported nothing from a run that made no calls at all. */}
+                    {/* `usage` rides the picked run row — the picker's one read carries it on each row,
+                        which is what keeps `runDetailLines` pure and this dialog showcaseable with no
+                        server in sight; the steps and their figures arrive with the detail fetch. The call
+                        count rides beside the figure because it is the only thing separating a run whose
+                        provider reported nothing from a run that made no calls at all. */}
                     <text fg={theme().fgMuted}>
                         RunDetailDialog — one picked run's metadata (its usage property line in the LONG form) + full step list (done / running / failed /
                         queued), each step carrying its own compact figure:
                     </text>
                     <DialogShowcase>
-                        <RunDetailDialog
-                            run={mockCortexRuns[0]!}
-                            loadSteps={() => okAsync<StepExecutionRow[], DbError>(mockRunSteps)}
-                            usage={mockRunUsage.get(mockCortexRuns[0]!.runId)}
-                            stepUsage={mockRunStepUsage}
-                            onClose={noop}
-                        />
+                        <RunDetailDialog run={mockCortexRuns[0]!} loadDetail={() => okAsync(mockRunDetail)} onClose={noop} />
                     </DialogShowcase>
                     {/* The USAGE section's dialog, narrowed to the two cuts with no entity of their own —
                         the model that answered and the agent that spent it. Every other grain now reports
@@ -647,7 +633,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         (parts of an arm, never peers of it, and never summed), over the compact-form model / agent cuts:
                     </text>
                     <DialogShowcase>
-                        <UsageDialog analysisName="rna-seq-2026" loadUsage={() => ok<SessionUsageSnapshot, LocalDbError>(mockUsageSnapshot)} onClose={noop} />
+                        <UsageDialog analysisName="rna-seq-2026" loadUsage={() => ok<SessionUsageSnapshot, ClientError>(mockUsageSnapshot)} onClose={noop} />
                     </DialogShowcase>
                     <text fg={theme().fgMuted}>
                         UsageDialog — a HALF figure: the provider reported prompt tokens and never completion tokens, so the trailing arm says so instead of
@@ -656,7 +642,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <DialogShowcase>
                         <UsageDialog
                             analysisName="rna-seq-2026"
-                            loadUsage={() => ok<SessionUsageSnapshot, LocalDbError>(mockUsageSnapshotInputOnly)}
+                            loadUsage={() => ok<SessionUsageSnapshot, ClientError>(mockUsageSnapshotInputOnly)}
                             onClose={noop}
                         />
                     </DialogShowcase>
@@ -667,7 +653,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <DialogShowcase>
                         <UsageDialog
                             analysisName="rna-seq-2026"
-                            loadUsage={() => ok<SessionUsageSnapshot, LocalDbError>(mockUsageSnapshotNoFigures)}
+                            loadUsage={() => ok<SessionUsageSnapshot, ClientError>(mockUsageSnapshotNoFigures)}
                             onClose={noop}
                         />
                     </DialogShowcase>
@@ -678,15 +664,22 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <DialogShowcase>
                         <UsageDialog
                             analysisName="rna-seq-2026"
-                            loadUsage={() => ok<SessionUsageSnapshot, LocalDbError>(mockUsageSnapshotEmpty)}
+                            loadUsage={() => ok<SessionUsageSnapshot, ClientError>(mockUsageSnapshotEmpty)}
                             onClose={noop}
                         />
                     </DialogShowcase>
-                    <text fg={theme().fgMuted}>UsageDialog — the unavailable state a failed ledger read renders INSIDE the dialog, never instead of it:</text>
+                    <text fg={theme().fgMuted}>UsageDialog — the unavailable state a failed usage read renders INSIDE the dialog, never instead of it:</text>
                     <DialogShowcase>
                         <UsageDialog
                             analysisName="rna-seq-2026"
-                            loadUsage={() => err<SessionUsageSnapshot, LocalDbError>({ type: "query_failed", op: "gallery", cause: null })}
+                            loadUsage={() =>
+                                err<SessionUsageSnapshot, ClientError>({
+                                    type: "unreachable",
+                                    reason: "connection_failed",
+                                    baseUrl: "http://127.0.0.1:8436",
+                                    cause: null,
+                                })
+                            }
                             onClose={noop}
                         />
                     </DialogShowcase>

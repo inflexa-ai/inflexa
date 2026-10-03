@@ -2,16 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { createRoot } from "solid-js";
 import { createStore } from "solid-js/store";
-import type { DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import type { ThreadList, ThreadSummary } from "../../api/conversation.ts";
+import type { ClientError } from "../../client/api.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import { conversationThread, reportThread } from "../../test_support/threads.ts";
+import { conversationSummary, reportSummary } from "../../test_support/threads.ts";
 import { __resetBootForTest, __setBootStateForTest, type BootState } from "./boot.ts";
 import { setChatStatus } from "./status.ts";
-import { __resetOpenThreadForTest, openThread, refreshOpenThread, resolveThreadId, watchOpenThread, type ThreadSeams } from "./thread.ts";
+import { __resetOpenThreadForTest, openThread, refreshOpenThread, resolveThreadId, watchOpenThread, type ThreadOpts } from "./thread.ts";
 
 // The open-thread store is a module singleton (one chat screen at a time) and so are the boot phase
 // and the chat status the watch reads, so every case resets all three — otherwise an in-flight
@@ -23,10 +23,8 @@ afterEach(() => {
     setChatStatus("idle");
 });
 
-// The seams read only `.pool` off the handle and the fake listings ignore it, so a partial stand-in
-// cast keeps every case offline (no Postgres, no booted runtime). Mirrors `sidebar_live.test.ts`.
-const fakeRuntime = { pool: {} } as unknown as HarnessRuntime;
-const dbErr: DbError = { type: "query_failed", op: "test", cause: new Error("boom") };
+// A failed request to the server: the client error the listing and the row read give instead of a row.
+const serverGone: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://test", cause: new Error("boom") };
 
 // The watch reads only `analysis.id`, so a partial stand-in cast is sound and keeps the fixture flat.
 const ANALYSIS = { id: "analysis-alpha", name: "Alpha", projectId: null } as unknown as Analysis;
@@ -39,46 +37,38 @@ const OTHER_ANALYSIS = { id: "analysis-beta", name: "Beta", projectId: null } as
 // what carries the time-sortable ordering the thread listing depends on.
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-function threadRow(over: Partial<Thread> = {}): Thread {
-    return {
-        threadId: "thread-1",
-        analysisId: ANALYSIS.id,
-        title: "Cohort survival questions",
-        threadType: "conversation",
-        parentThreadId: null,
-        parentSeq: null,
-        createdAt: new Date("2026-07-08T00:00:00.000Z"),
-        updatedAt: new Date("2026-07-08T01:00:00.000Z"),
-        // The resolver and the rail read only live rows, so the fixture carries no tombstone.
-        deletedAt: null,
-        ...over,
-    };
+function threadRow(over: Partial<ThreadSummary> = {}): ThreadSummary {
+    // The resolver and the rail read only live rows, so the fixture carries no tombstone.
+    return conversationSummary({ id: "thread-1", resourceId: ANALYSIS.id, ...over });
 }
 
-function threadPage(threads: Thread[]): ThreadPage {
+function threadPage(threads: ThreadSummary[]): ThreadList {
     return { threads, total: threads.length, page: 0, perPage: 20, hasMore: false };
 }
 
 /**
- * Seams plus recorders for every edge the resolution/read drives: the listing calls it saw (pool +
- * analysis id), the row reads, and the notices it raised.
+ * Options plus recorders for every request the resolution/read sends: the listing calls it saw (the
+ * analysis id), the row reads (the thread id, and the analysis that scopes it), and the notices it raised.
  */
-function makeSeams(over: Partial<ThreadSeams> = {}): {
-    seams: ThreadSeams;
-    listings: { pool: Pool; analysisId: string }[];
+function makeOpts(over: Partial<ThreadOpts> = {}): {
+    opts: ThreadOpts;
+    listings: string[];
     reads: string[];
+    readScopes: string[];
     notices: Notice[];
 } {
-    const listings: { pool: Pool; analysisId: string }[] = [];
+    const listings: string[] = [];
     const reads: string[] = [];
+    const readScopes: string[] = [];
     const notices: Notice[] = [];
-    const base: ThreadSeams = {
-        runtime: () => fakeRuntime,
-        listThreads: (pool, analysisId) => {
-            listings.push({ pool, analysisId });
+    const base: ThreadOpts = {
+        ready: () => true,
+        listThreads: (analysisId) => {
+            listings.push(analysisId);
             return okAsync(threadPage([]));
         },
-        getThread: (_pool, threadId) => {
+        getThread: (analysisId, threadId) => {
+            readScopes.push(analysisId);
             reads.push(threadId);
             return okAsync(null);
         },
@@ -88,50 +78,48 @@ function makeSeams(over: Partial<ThreadSeams> = {}): {
     };
     // A recording base with per-case overrides: an overridden `listThreads`/`getThread` records
     // nothing, so cases that assert call counts keep the base and vary only what it returns.
-    return { seams: { ...base, ...over }, listings, reads, notices };
+    return { opts: { ...base, ...over }, listings, reads, readScopes, notices };
 }
 
 describe("resolveThreadId", () => {
     test("picks the most-recently-active thread from the listing page, minting nothing", async () => {
         // `listThreads` orders newest-updated first, so the head of the page IS the resume target; the
         // older row exists so "took the head" is distinguishable from "took whatever single row there was".
-        const newest = threadRow({ threadId: "thread-newest", updatedAt: new Date("2026-07-08T09:00:00.000Z") });
-        const older = threadRow({ threadId: "thread-older", updatedAt: new Date("2026-07-01T09:00:00.000Z") });
-        const t = makeSeams({ listThreads: () => okAsync(threadPage([newest, older])) });
+        const newest = threadRow({ id: "thread-newest", updatedAt: "2026-07-08T09:00:00.000Z" });
+        const older = threadRow({ id: "thread-older", updatedAt: "2026-07-01T09:00:00.000Z" });
+        const t = makeOpts({ listThreads: () => okAsync(threadPage([newest, older])) });
 
-        expect(await resolveThreadId(ANALYSIS.id, t.seams)).toBe("thread-newest");
+        expect(await resolveThreadId(ANALYSIS.id, t.opts)).toBe("thread-newest");
         expect(t.notices).toEqual([]); // a clean resume is silent
     });
 
     test("an empty page mints a fresh UUIDv7 identity and asks the store for this analysis", async () => {
-        const t = makeSeams();
-        const resolved = await resolveThreadId(ANALYSIS.id, t.seams);
+        const t = makeOpts();
+        const resolved = await resolveThreadId(ANALYSIS.id, t.opts);
 
         expect(resolved).toMatch(UUID_V7);
-        // The listing is scoped to the open analysis and runs against the booted runtime's pool.
-        expect(t.listings).toHaveLength(1);
-        expect(t.listings[0]?.analysisId).toBe(ANALYSIS.id);
-        expect(t.listings[0]?.pool).toBe(fakeRuntime.pool);
+        // The listing is scoped to the open analysis.
+        expect(t.listings).toEqual([ANALYSIS.id]);
         // Minting an identity writes nothing — the row is the first turn's job.
         expect(t.notices).toEqual([]);
     });
 
     test("two empty-page resolutions mint DIFFERENT ids (an identity, not a constant)", async () => {
-        const t = makeSeams();
-        const first = await resolveThreadId(ANALYSIS.id, t.seams);
-        const second = await resolveThreadId(ANALYSIS.id, t.seams);
+        const t = makeOpts();
+        const first = await resolveThreadId(ANALYSIS.id, t.opts);
+        const second = await resolveThreadId(ANALYSIS.id, t.opts);
         expect(first).not.toBe(second);
     });
 
-    test("an unbooted runtime resolves to null and issues NO listing", async () => {
-        const t = makeSeams({ runtime: () => null });
-        expect(await resolveThreadId(ANALYSIS.id, t.seams)).toBeNull();
+    test("a server that is not ready resolves to null and issues NO listing", async () => {
+        const t = makeOpts({ ready: () => false });
+        expect(await resolveThreadId(ANALYSIS.id, t.opts)).toBeNull();
         expect(t.listings).toEqual([]);
     });
 
-    test("a DbError degrades to a fresh mint plus a warn notice, never an error", async () => {
-        const t = makeSeams({ listThreads: () => errAsync(dbErr) });
-        const resolved = await resolveThreadId(ANALYSIS.id, t.seams);
+    test("a failed listing degrades to a fresh mint plus a warn notice, never an error", async () => {
+        const t = makeOpts({ listThreads: () => errAsync(serverGone) });
+        const resolved = await resolveThreadId(ANALYSIS.id, t.opts);
 
         // The user still gets a working chat; the unread threads stay recoverable through the picker.
         expect(resolved).toMatch(UUID_V7);
@@ -141,40 +129,40 @@ describe("resolveThreadId", () => {
     });
 
     // A report child rides the same activity clock as a conversation, so a child spawned a moment ago
-    // sits at the head of an unnarrowed listing. The narrow itself lives in the real seam, which pushes
-    // `type: "conversation"` into the query — the seam takes a pool and an analysis id and nothing else,
-    // so an injected one cannot report the filter it applied. The fakes below therefore model the store:
-    // the fixture is the analysis's WHOLE thread set and the seam answers with the narrowed slice of it,
+    // sits at the head of an unnarrowed listing. The narrow itself lives in the real option, which sends
+    // `type=conversation` to the server — the option takes an analysis id and nothing else, so an
+    // injected one cannot report the filter it applied. The fakes below therefore model the server:
+    // the fixture is the analysis's WHOLE thread set and the fake answers with the narrowed slice of it,
     // the same faithful stand-in shape the page slicing in `conversation.test.ts` uses.
-    const analysisThreads = (all: Thread[]): ThreadPage => threadPage(all.filter((t) => t.threadType === "conversation"));
+    const analysisThreads = (all: ThreadSummary[]): ThreadList => threadPage(all.filter((t) => t.threadType === "conversation"));
 
     test("an analysis whose newest thread is a report child launches on the newest CONVERSATION", async () => {
-        const child = reportThread({ analysisId: ANALYSIS.id, threadId: "thread-report-newest", updatedAt: new Date("2026-07-09T09:00:00.000Z") });
-        const newest = conversationThread({ analysisId: ANALYSIS.id, threadId: "thread-newest", updatedAt: new Date("2026-07-08T09:00:00.000Z") });
-        const older = conversationThread({ analysisId: ANALYSIS.id, threadId: "thread-older", updatedAt: new Date("2026-07-01T09:00:00.000Z") });
-        const t = makeSeams({ listThreads: () => okAsync(analysisThreads([child, newest, older])) });
+        const child = reportSummary({ resourceId: ANALYSIS.id, id: "thread-report-newest", updatedAt: "2026-07-09T09:00:00.000Z" });
+        const newest = conversationSummary({ resourceId: ANALYSIS.id, id: "thread-newest", updatedAt: "2026-07-08T09:00:00.000Z" });
+        const older = conversationSummary({ resourceId: ANALYSIS.id, id: "thread-older", updatedAt: "2026-07-01T09:00:00.000Z" });
+        const t = makeOpts({ listThreads: () => okAsync(analysisThreads([child, newest, older])) });
 
         // A launch that landed on the child would hand the first message the user types to the report
         // agent, in a chat that names itself the conversation.
-        expect(await resolveThreadId(ANALYSIS.id, t.seams)).toBe("thread-newest");
+        expect(await resolveThreadId(ANALYSIS.id, t.opts)).toBe("thread-newest");
         expect(t.notices).toEqual([]);
     });
 
     test("an analysis holding report children only starts a fresh conversation, never resumes one of them", async () => {
-        const child = reportThread({ analysisId: ANALYSIS.id, threadId: "thread-report-only" });
-        const t = makeSeams({ listThreads: () => okAsync(analysisThreads([child])) });
+        const child = reportSummary({ resourceId: ANALYSIS.id, id: "thread-report-only" });
+        const t = makeOpts({ listThreads: () => okAsync(analysisThreads([child])) });
 
-        const resolved = await resolveThreadId(ANALYSIS.id, t.seams);
+        const resolved = await resolveThreadId(ANALYSIS.id, t.opts);
 
         expect(resolved).toMatch(UUID_V7);
-        expect(resolved).not.toBe(child.threadId);
+        expect(resolved).not.toBe(child.id);
     });
 });
 
 describe("refreshOpenThread — the snapshot ladder", () => {
     test("a live row loads, carrying the pg-owned title", async () => {
-        const t = makeSeams({ getThread: () => okAsync(threadRow({ title: "Variant burden sweep" })) });
-        await refreshOpenThread("thread-1", t.seams);
+        const t = makeOpts({ getThread: () => okAsync(threadRow({ title: "Variant burden sweep" })) });
+        await refreshOpenThread(ANALYSIS.id, "thread-1", t.opts);
 
         const snap = openThread();
         expect(snap.kind).toBe("loaded");
@@ -182,32 +170,41 @@ describe("refreshOpenThread — the snapshot ladder", () => {
     });
 
     test("a bound id with no row is absent — a minted identity awaiting its first turn", async () => {
-        const t = makeSeams();
-        await refreshOpenThread("thread-1", t.seams);
+        const t = makeOpts();
+        await refreshOpenThread(ANALYSIS.id, "thread-1", t.opts);
         expect(openThread().kind).toBe("absent");
         expect(t.reads).toEqual(["thread-1"]);
+        // The server scopes the read to the analysis in the path, so the read names the open analysis.
+        expect(t.readScopes).toEqual([ANALYSIS.id]);
     });
 
-    test("a DbError degrades to unavailable, never a crash", async () => {
-        const t = makeSeams({ getThread: () => errAsync(dbErr) });
-        await refreshOpenThread("thread-1", t.seams);
+    test("a failed read degrades to unavailable, never a crash", async () => {
+        const t = makeOpts({ getThread: () => errAsync(serverGone) });
+        await refreshOpenThread(ANALYSIS.id, "thread-1", t.opts);
         expect(openThread().kind).toBe("unavailable");
     });
 
     test("a null thread id resets to unresolved and issues no query", async () => {
-        const loadedSeams = makeSeams({ getThread: () => okAsync(threadRow()) });
-        await refreshOpenThread("thread-1", loadedSeams.seams);
+        const loaded = makeOpts({ getThread: () => okAsync(threadRow()) });
+        await refreshOpenThread(ANALYSIS.id, "thread-1", loaded.opts);
         expect(openThread().kind).toBe("loaded");
 
-        const t = makeSeams();
-        await refreshOpenThread(null, t.seams);
+        const t = makeOpts();
+        await refreshOpenThread(ANALYSIS.id, null, t.opts);
         expect(openThread().kind).toBe("unresolved");
         expect(t.reads).toEqual([]);
     });
 
-    test("an unbooted runtime resets to unresolved and issues no query", async () => {
-        const t = makeSeams({ runtime: () => null });
-        await refreshOpenThread("thread-1", t.seams);
+    test("a null analysis resets to unresolved and issues no query: a thread read needs the analysis that scopes it", async () => {
+        const t = makeOpts();
+        await refreshOpenThread(null, "thread-1", t.opts);
+        expect(openThread().kind).toBe("unresolved");
+        expect(t.reads).toEqual([]);
+    });
+
+    test("a server that is not ready resets to unresolved and issues no query", async () => {
+        const t = makeOpts({ ready: () => false });
+        await refreshOpenThread(ANALYSIS.id, "thread-1", t.opts);
         expect(openThread().kind).toBe("unresolved");
         expect(t.reads).toEqual([]);
     });
@@ -219,13 +216,13 @@ describe("refreshOpenThread — the snapshot ladder", () => {
         const oldGate = new Promise<void>((r) => {
             releaseOld = r;
         });
-        const oldSeams = makeSeams({
-            getThread: () => ResultAsync.fromSafePromise(oldGate.then(() => threadRow({ threadId: "thread-old", title: "Older thread" }))),
+        const oldRows = makeOpts({
+            getThread: () => ResultAsync.fromSafePromise(oldGate.then(() => threadRow({ id: "thread-old", title: "Older thread" }))),
         });
-        const newSeams = makeSeams({ getThread: () => okAsync(threadRow({ threadId: "thread-new", title: "Newer thread" })) });
+        const newRows = makeOpts({ getThread: () => okAsync(threadRow({ id: "thread-new", title: "Newer thread" })) });
 
-        const oldRead = refreshOpenThread("thread-old", oldSeams.seams); // parks on its gate
-        await refreshOpenThread("thread-new", newSeams.seams); // starts later, settles first
+        const oldRead = refreshOpenThread(ANALYSIS.id, "thread-old", oldRows.opts); // parks on its gate
+        await refreshOpenThread(ANALYSIS.id, "thread-new", newRows.opts); // starts later, settles first
 
         releaseOld();
         await oldRead;
@@ -236,21 +233,21 @@ describe("refreshOpenThread — the snapshot ladder", () => {
     });
 
     test("a read for a DIFFERENT thread blanks the rail synchronously, before the new row lands", async () => {
-        // The read is a full pg round-trip. Without a synchronous reset the SESSION rail would keep
+        // The read is a full server round-trip. Without a synchronous reset the SESSION rail would keep
         // painting the thread the user swapped (or deleted) away from for that entire window.
-        const loaded = makeSeams({ getThread: () => okAsync(threadRow({ threadId: "thread-a", title: "Alpha conversation" })) });
-        await refreshOpenThread("thread-a", loaded.seams);
+        const loaded = makeOpts({ getThread: () => okAsync(threadRow({ id: "thread-a", title: "Alpha conversation" })) });
+        await refreshOpenThread(ANALYSIS.id, "thread-a", loaded.opts);
         expect(openThread().kind).toBe("loaded");
 
         let releaseNext!: () => void;
         const gate = new Promise<void>((r) => {
             releaseNext = r;
         });
-        const gated = makeSeams({
-            getThread: () => ResultAsync.fromSafePromise(gate.then(() => threadRow({ threadId: "thread-b", title: "Beta conversation" }))),
+        const gated = makeOpts({
+            getThread: () => ResultAsync.fromSafePromise(gate.then(() => threadRow({ id: "thread-b", title: "Beta conversation" }))),
         });
 
-        const pending = refreshOpenThread("thread-b", gated.seams);
+        const pending = refreshOpenThread(ANALYSIS.id, "thread-b", gated.opts);
         // Deliberately NOT awaited: the reset has to land in the same turn the swap is requested.
         expect(openThread().kind).toBe("unresolved");
 
@@ -264,18 +261,18 @@ describe("refreshOpenThread — the snapshot ladder", () => {
     test("a re-read of the SAME thread leaves the loaded row standing — no placeholder flicker", async () => {
         // The rename poke and the post-turn re-read both target the bound thread; blanking there would
         // flash "runtime not ready" over a row that is still correct.
-        const loaded = makeSeams({ getThread: () => okAsync(threadRow({ threadId: "thread-a", title: "Alpha conversation" })) });
-        await refreshOpenThread("thread-a", loaded.seams);
+        const loaded = makeOpts({ getThread: () => okAsync(threadRow({ id: "thread-a", title: "Alpha conversation" })) });
+        await refreshOpenThread(ANALYSIS.id, "thread-a", loaded.opts);
 
         let releaseRename!: () => void;
         const gate = new Promise<void>((r) => {
             releaseRename = r;
         });
-        const gated = makeSeams({
-            getThread: () => ResultAsync.fromSafePromise(gate.then(() => threadRow({ threadId: "thread-a", title: "Renamed conversation" }))),
+        const gated = makeOpts({
+            getThread: () => ResultAsync.fromSafePromise(gate.then(() => threadRow({ id: "thread-a", title: "Renamed conversation" }))),
         });
 
-        const pending = refreshOpenThread("thread-a", gated.seams);
+        const pending = refreshOpenThread(ANALYSIS.id, "thread-a", gated.opts);
         const during = openThread();
         expect(during.kind).toBe("loaded");
         if (during.kind === "loaded") expect(during.thread.title).toBe("Alpha conversation");
@@ -288,15 +285,15 @@ describe("refreshOpenThread — the snapshot ladder", () => {
     });
 
     // The report child and the conversation it was spawned from. The refresh reads BOTH through the one
-    // `getThread` seam, so a fake that ignored the id could answer the parent read with the child row
+    // `getThread` option, so a fake that ignored the id could answer the parent read with the child row
     // and still look correct — every case below drives an id-keyed table for that reason.
-    const PARENT = threadRow({ threadId: "thread-parent", title: "Cohort survival questions" });
-    const CHILD = reportThread({ analysisId: ANALYSIS.id, threadId: "thread-report", parentThreadId: PARENT.threadId });
+    const PARENT = threadRow({ id: "thread-parent", title: "Cohort survival questions" });
+    const CHILD = reportSummary({ resourceId: ANALYSIS.id, id: "thread-report", parentThreadId: PARENT.id });
 
-    /** A `getThread` seam over a fixed row set, keyed by thread id as the store keys it, recording each read. */
-    function rowsByThreadId(rows: Thread[], reads: string[]): ThreadSeams["getThread"] {
-        const table = new Map(rows.map((r) => [r.threadId, r]));
-        return (_pool, threadId) => {
+    /** A `getThread` fake over a fixed row set, keyed by thread id as the server keys it, recording each read. */
+    function rowsByThreadId(rows: ThreadSummary[], reads: string[]): ThreadOpts["getThread"] {
+        const table = new Map(rows.map((r) => [r.id, r]));
+        return (_analysisId, threadId) => {
             reads.push(threadId);
             return okAsync(table.get(threadId) ?? null);
         };
@@ -304,54 +301,54 @@ describe("refreshOpenThread — the snapshot ladder", () => {
 
     test("a report child carries the conversation it was spawned from", async () => {
         const reads: string[] = [];
-        const t = makeSeams({ getThread: rowsByThreadId([CHILD, PARENT], reads) });
-        await refreshOpenThread(CHILD.threadId, t.seams);
+        const t = makeOpts({ getThread: rowsByThreadId([CHILD, PARENT], reads) });
+        await refreshOpenThread(ANALYSIS.id, CHILD.id, t.opts);
 
         const snap = openThread();
         expect(snap.kind).toBe("loaded");
         if (snap.kind === "loaded") {
-            expect(snap.thread.threadId).toBe(CHILD.threadId);
-            expect(snap.parent).toEqual({ threadId: PARENT.threadId, title: PARENT.title });
+            expect(snap.thread.id).toBe(CHILD.id);
+            expect(snap.parent).toEqual({ threadId: PARENT.id, title: "Cohort survival questions" });
         }
         // The second read is by the PARENT's id, so a lookup aimed at the wrong row cannot pass here.
-        expect(reads).toEqual([CHILD.threadId, PARENT.threadId]);
+        expect(reads).toEqual([CHILD.id, PARENT.id]);
     });
 
     test("a conversation issues no second read at all", async () => {
         const reads: string[] = [];
-        const t = makeSeams({ getThread: rowsByThreadId([PARENT], reads) });
-        await refreshOpenThread(PARENT.threadId, t.seams);
+        const t = makeOpts({ getThread: rowsByThreadId([PARENT], reads) });
+        await refreshOpenThread(ANALYSIS.id, PARENT.id, t.opts);
 
         const snap = openThread();
         expect(snap.kind).toBe("loaded");
         if (snap.kind === "loaded") expect(snap.parent).toBeUndefined();
-        expect(reads).toEqual([PARENT.threadId]);
+        expect(reads).toEqual([PARENT.id]);
     });
 
     test("a report row whose parent link is gone reads no parent", async () => {
         // The store writes the link and the spawn point together, so a row carrying neither names
         // nothing to read — and the rail renders the kind alone rather than waiting on a query.
         const reads: string[] = [];
-        const orphan = reportThread({ analysisId: ANALYSIS.id, threadId: "thread-orphan", parentThreadId: null, parentSeq: null });
-        const t = makeSeams({ getThread: rowsByThreadId([orphan], reads) });
-        await refreshOpenThread(orphan.threadId, t.seams);
+        const { parentThreadId: _link, parentSeq: _anchor, ...orphan } = reportSummary({ resourceId: ANALYSIS.id, id: "thread-orphan" });
+        const t = makeOpts({ getThread: rowsByThreadId([orphan], reads) });
+        await refreshOpenThread(ANALYSIS.id, orphan.id, t.opts);
 
         const snap = openThread();
         expect(snap.kind).toBe("loaded");
         if (snap.kind === "loaded") expect(snap.parent).toBeUndefined();
-        expect(reads).toEqual([orphan.threadId]);
+        expect(reads).toEqual([orphan.id]);
     });
 
     test("a failed parent read keeps the loaded row and leaves the parent empty", async () => {
-        // Which session is open stays true whether or not its parent resolved, so a blinking Postgres
+        // Which session is open stays true whether or not its parent resolved, so a blinking server
         // must cost the context line and nothing else.
-        const t = makeSeams({ getThread: (_pool, threadId) => (threadId === CHILD.threadId ? okAsync(CHILD) : errAsync(dbErr)) });
-        await refreshOpenThread(CHILD.threadId, t.seams);
+        const t = makeOpts({ getThread: (_analysisId, threadId) => (threadId === CHILD.id ? okAsync(CHILD) : errAsync(serverGone)) });
+        await refreshOpenThread(ANALYSIS.id, CHILD.id, t.opts);
 
         const snap = openThread();
         expect(snap.kind).toBe("loaded");
         if (snap.kind === "loaded") {
-            expect(snap.thread.threadId).toBe(CHILD.threadId);
+            expect(snap.thread.id).toBe(CHILD.id);
             expect(snap.parent).toBeUndefined();
         }
     });
@@ -360,13 +357,13 @@ describe("refreshOpenThread — the snapshot ladder", () => {
         // A normal state, never a fault: the read hides an archived row, and another instance can move
         // a thread the scope still names.
         const reads: string[] = [];
-        const t = makeSeams({ getThread: rowsByThreadId([CHILD], reads) });
-        await refreshOpenThread(CHILD.threadId, t.seams);
+        const t = makeOpts({ getThread: rowsByThreadId([CHILD], reads) });
+        await refreshOpenThread(ANALYSIS.id, CHILD.id, t.opts);
 
         const snap = openThread();
         expect(snap.kind).toBe("loaded");
         if (snap.kind === "loaded") expect(snap.parent).toBeUndefined();
-        expect(reads).toEqual([CHILD.threadId, PARENT.threadId]);
+        expect(reads).toEqual([CHILD.id, PARENT.id]);
     });
 
     test("the loaded row lands BEFORE the parent read settles", async () => {
@@ -376,11 +373,11 @@ describe("refreshOpenThread — the snapshot ladder", () => {
         const gate = new Promise<void>((r) => {
             releaseParent = r;
         });
-        const t = makeSeams({
-            getThread: (_pool, threadId) => (threadId === CHILD.threadId ? okAsync(CHILD) : ResultAsync.fromSafePromise(gate.then(() => PARENT))),
+        const t = makeOpts({
+            getThread: (_analysisId, threadId) => (threadId === CHILD.id ? okAsync(CHILD) : ResultAsync.fromSafePromise(gate.then(() => PARENT))),
         });
 
-        const pending = refreshOpenThread(CHILD.threadId, t.seams);
+        const pending = refreshOpenThread(ANALYSIS.id, CHILD.id, t.opts);
         await settle();
         const during = openThread();
         expect(during.kind).toBe("loaded");
@@ -397,17 +394,17 @@ describe("refreshOpenThread — the snapshot ladder", () => {
         // The post-turn refresh and the rename poke both re-read a thread the snapshot already
         // describes. Dropping the parent until the second read lands would blank the rail's context
         // line on every turn — the blink the same-id rule keeps off the row itself.
-        const settled = makeSeams({ getThread: rowsByThreadId([CHILD, PARENT], []) });
-        await refreshOpenThread(CHILD.threadId, settled.seams);
+        const settled = makeOpts({ getThread: rowsByThreadId([CHILD, PARENT], []) });
+        await refreshOpenThread(ANALYSIS.id, CHILD.id, settled.opts);
 
         let releaseParent!: () => void;
         const gate = new Promise<void>((r) => {
             releaseParent = r;
         });
-        const again = makeSeams({
-            getThread: (_pool, threadId) => (threadId === CHILD.threadId ? okAsync(CHILD) : ResultAsync.fromSafePromise(gate.then(() => PARENT))),
+        const again = makeOpts({
+            getThread: (_analysisId, threadId) => (threadId === CHILD.id ? okAsync(CHILD) : ResultAsync.fromSafePromise(gate.then(() => PARENT))),
         });
-        const pending = refreshOpenThread(CHILD.threadId, again.seams);
+        const pending = refreshOpenThread(ANALYSIS.id, CHILD.id, again.opts);
         await settle();
 
         const during = openThread();
@@ -421,12 +418,12 @@ describe("refreshOpenThread — the snapshot ladder", () => {
     test("a row that left its parent drops the carried one rather than naming the conversation it left", async () => {
         // The carry is keyed on the link the FRESH row states, so a re-read that finds the child under
         // a different parent — or under none — never describes it by the one it no longer belongs to.
-        const settled = makeSeams({ getThread: rowsByThreadId([CHILD, PARENT], []) });
-        await refreshOpenThread(CHILD.threadId, settled.seams);
+        const settled = makeOpts({ getThread: rowsByThreadId([CHILD, PARENT], []) });
+        await refreshOpenThread(ANALYSIS.id, CHILD.id, settled.opts);
 
-        const orphaned = { ...CHILD, parentThreadId: null, parentSeq: null };
-        const after = makeSeams({ getThread: rowsByThreadId([orphaned], []) });
-        await refreshOpenThread(CHILD.threadId, after.seams);
+        const { parentThreadId: _link, parentSeq: _anchor, ...orphaned } = CHILD;
+        const after = makeOpts({ getThread: rowsByThreadId([orphaned], []) });
+        await refreshOpenThread(ANALYSIS.id, CHILD.id, after.opts);
 
         const snap = openThread();
         expect(snap.kind).toBe("loaded");
@@ -440,15 +437,15 @@ describe("refreshOpenThread — the snapshot ladder", () => {
         const gate = new Promise<void>((r) => {
             releaseParent = r;
         });
-        const stale = makeSeams({
-            getThread: (_pool, threadId) => (threadId === CHILD.threadId ? okAsync(CHILD) : ResultAsync.fromSafePromise(gate.then(() => PARENT))),
+        const stale = makeOpts({
+            getThread: (_analysisId, threadId) => (threadId === CHILD.id ? okAsync(CHILD) : ResultAsync.fromSafePromise(gate.then(() => PARENT))),
         });
 
-        const pending = refreshOpenThread(CHILD.threadId, stale.seams);
+        const pending = refreshOpenThread(ANALYSIS.id, CHILD.id, stale.opts);
         await settle(); // the child row has landed; the parent read is parked on its gate
 
-        const next = makeSeams({ getThread: () => okAsync(threadRow({ threadId: "thread-next", title: "Newer conversation" })) });
-        await refreshOpenThread("thread-next", next.seams);
+        const next = makeOpts({ getThread: () => okAsync(threadRow({ id: "thread-next", title: "Newer conversation" })) });
+        await refreshOpenThread(ANALYSIS.id, "thread-next", next.opts);
 
         releaseParent();
         await pending;
@@ -456,7 +453,7 @@ describe("refreshOpenThread — the snapshot ladder", () => {
         const snap = openThread();
         expect(snap.kind).toBe("loaded");
         if (snap.kind === "loaded") {
-            expect(snap.thread.threadId).toBe("thread-next");
+            expect(snap.thread.id).toBe("thread-next");
             expect(snap.parent).toBeUndefined();
         }
     });
@@ -468,10 +465,10 @@ describe("refreshOpenThread — the snapshot ladder", () => {
         const oldGate = new Promise<void>((r) => {
             releaseOld = r;
         });
-        const oldSeams = makeSeams({ getThread: () => ResultAsync.fromSafePromise(oldGate.then(() => threadRow({ title: "Swapped away" }))) });
+        const oldRows = makeOpts({ getThread: () => ResultAsync.fromSafePromise(oldGate.then(() => threadRow({ title: "Swapped away" }))) });
 
-        const oldRead = refreshOpenThread("thread-old", oldSeams.seams);
-        await refreshOpenThread(null, makeSeams().seams);
+        const oldRead = refreshOpenThread(ANALYSIS.id, "thread-old", oldRows.opts);
+        await refreshOpenThread(ANALYSIS.id, null, makeOpts().opts);
         expect(openThread().kind).toBe("unresolved");
 
         releaseOld();
@@ -519,11 +516,11 @@ function reactiveWorkspace(
 }
 
 /** Mount `watchOpenThread` in a disposable reactive root; returns the dispose so the test tears it down. */
-function mountWatch(ws: Workspace, seams: ThreadSeams): () => void {
+function mountWatch(ws: Workspace, opts: ThreadOpts): () => void {
     let dispose!: () => void;
     createRoot((d) => {
         dispose = d;
-        watchOpenThread(ws, seams);
+        watchOpenThread(ws, opts);
     });
     return dispose;
 }
@@ -540,9 +537,9 @@ function ready(): BootState {
 
 describe("watchOpenThread — the ready-edge bind", () => {
     test("ready + an open analysis + no bound thread resolves exactly once into the scope", async () => {
-        const t = makeSeams({ listThreads: () => okAsync(threadPage([threadRow({ threadId: "thread-resumed" })])) });
+        const t = makeOpts({ listThreads: () => okAsync(threadPage([threadRow({ id: "thread-resumed" })])) });
         const w = reactiveWorkspace(ANALYSIS, null);
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             expect(w.bound).toEqual([]); // boot idle at mount → nothing resolved
 
@@ -557,9 +554,9 @@ describe("watchOpenThread — the ready-edge bind", () => {
     });
 
     test("a thread already bound at the ready edge is left alone — no listing is even issued", async () => {
-        const t = makeSeams({ listThreads: () => okAsync(threadPage([threadRow({ threadId: "thread-from-store" })])) });
+        const t = makeOpts({ listThreads: () => okAsync(threadPage([threadRow({ id: "thread-from-store" })])) });
         const w = reactiveWorkspace(ANALYSIS, "thread-palette-bound");
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -572,17 +569,17 @@ describe("watchOpenThread — the ready-edge bind", () => {
     });
 
     test("a thread bound WHILE the resolution is in flight is not overwritten by it", async () => {
-        // The listing is a Postgres round-trip; a palette swap can bind a thread inside that window, and
+        // The listing is a server round-trip; a palette swap can bind a thread inside that window, and
         // writing the stale resolution on top would swap the user off the chat they just opened.
         let release!: () => void;
         const gate = new Promise<void>((r) => {
             release = r;
         });
-        const t = makeSeams({
-            listThreads: () => ResultAsync.fromSafePromise(gate.then(() => threadPage([threadRow({ threadId: "thread-stale" })]))),
+        const t = makeOpts({
+            listThreads: () => ResultAsync.fromSafePromise(gate.then(() => threadPage([threadRow({ id: "thread-stale" })]))),
         });
         const w = reactiveWorkspace(ANALYSIS, null);
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -607,14 +604,14 @@ describe("watchOpenThread — the ready-edge bind", () => {
             release = r;
         });
         let listings = 0;
-        const t = makeSeams({
+        const t = makeOpts({
             listThreads: () => {
                 listings += 1;
-                return ResultAsync.fromSafePromise(gate.then(() => threadPage([threadRow({ threadId: "thread-once" })])));
+                return ResultAsync.fromSafePromise(gate.then(() => threadPage([threadRow({ id: "thread-once" })])));
             },
         });
         const w = reactiveWorkspace(ANALYSIS, null);
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -638,20 +635,21 @@ describe("watchOpenThread — the ready-edge bind", () => {
         // The marker is a single slot. An unconditional clear would let analysis A's resolution drop a
         // marker a later effect run had re-taken for B, and B could then resolve twice — two mints
         // racing, the loser's id silently replaced. Production cannot reach this interleaving (the scope
-        // is never left unbound while `ready`, because the runtime handle is set before the phase flips),
-        // but that invariant lives in `hooks/boot.ts`, so the guard is pinned here rather than inherited.
+        // is never left unbound while `ready`, because the open of an analysis under `ready` resolves a
+        // non-null id), but that invariant lives in other flows, so the guard is pinned here rather than
+        // inherited.
         const gates = new Map<string, () => void>();
         const listed: string[] = [];
-        const t = makeSeams({
-            listThreads: (_pool, analysisId) => {
+        const t = makeOpts({
+            listThreads: (analysisId) => {
                 listed.push(analysisId);
                 return ResultAsync.fromSafePromise(
-                    new Promise<void>((r) => gates.set(analysisId, r)).then(() => threadPage([threadRow({ threadId: `thread-${analysisId}` })])),
+                    new Promise<void>((r) => gates.set(analysisId, r)).then(() => threadPage([threadRow({ id: `thread-${analysisId}` })])),
                 );
             },
         });
         const w = reactiveWorkspace(ANALYSIS, null);
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -685,16 +683,16 @@ describe("watchOpenThread — the ready-edge bind", () => {
         // out of it. The in-flight marker must still clear: were it left set, every later ready edge
         // would read this analysis as already resolving and skip, stranding the chat unbound forever.
         let attempts = 0;
-        const t = makeSeams({
+        const t = makeOpts({
             listThreads: () => {
                 attempts += 1;
                 return attempts === 1
-                    ? ResultAsync.fromSafePromise<ThreadPage, DbError>(Promise.reject(new Error("the pool blew up")))
-                    : okAsync(threadPage([threadRow({ threadId: "thread-second-try" })]));
+                    ? ResultAsync.fromSafePromise<ThreadList, ClientError>(Promise.reject(new Error("the client blew up")))
+                    : okAsync(threadPage([threadRow({ id: "thread-second-try" })]));
             },
         });
         const w = reactiveWorkspace(ANALYSIS, null);
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -713,9 +711,9 @@ describe("watchOpenThread — the ready-edge bind", () => {
     });
 
     test("ready with no analysis open binds nothing", async () => {
-        const t = makeSeams({ listThreads: () => okAsync(threadPage([threadRow()])) });
+        const t = makeOpts({ listThreads: () => okAsync(threadPage([threadRow()])) });
         const w = reactiveWorkspace(null, null);
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -726,10 +724,10 @@ describe("watchOpenThread — the ready-edge bind", () => {
         }
     });
 
-    test("a null resolution (no pool behind the ready phase) leaves the scope unbound", async () => {
-        const t = makeSeams({ runtime: () => null });
+    test("a null resolution (a server that is not ready behind the ready phase) leaves the scope unbound", async () => {
+        const t = makeOpts({ ready: () => false });
         const w = reactiveWorkspace(ANALYSIS, null);
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -743,12 +741,12 @@ describe("watchOpenThread — the ready-edge bind", () => {
 
 describe("watchOpenThread — the row tracker", () => {
     test("the bound thread's row lands in the snapshot once boot is ready", async () => {
-        const t = makeSeams({
-            listThreads: () => okAsync(threadPage([threadRow({ threadId: "thread-resumed", title: "Pathway enrichment" })])),
-            getThread: () => okAsync(threadRow({ threadId: "thread-resumed", title: "Pathway enrichment" })),
+        const t = makeOpts({
+            listThreads: () => okAsync(threadPage([threadRow({ id: "thread-resumed", title: "Pathway enrichment" })])),
+            getThread: () => okAsync(threadRow({ id: "thread-resumed", title: "Pathway enrichment" })),
         });
         const w = reactiveWorkspace(ANALYSIS, null);
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -761,20 +759,34 @@ describe("watchOpenThread — the row tracker", () => {
         }
     });
 
+    test("the row read names the analysis of the open scope", async () => {
+        const t = makeOpts();
+        const w = reactiveWorkspace(OTHER_ANALYSIS, "thread-1");
+        const dispose = mountWatch(w.ws, t.opts);
+        try {
+            __setBootStateForTest(ready());
+            await settle();
+            expect(t.reads).toEqual(["thread-1"]);
+            expect(t.readScopes).toEqual([OTHER_ANALYSIS.id]);
+        } finally {
+            dispose();
+        }
+    });
+
     test("a completed turn re-reads the row, so the row the FIRST turn created reaches the rail", async () => {
         // The first turn creates the row (and seeds its title from the message) under an unchanged bound
         // id and boot phase — no other edge fires — so without the turn-completion re-read the SESSION
         // section would read "new conversation" for the rest of the session.
-        let row: Thread | null = null;
-        const t = makeSeams({ getThread: () => okAsync(row) });
+        let row: ThreadSummary | null = null;
+        const t = makeOpts({ getThread: () => okAsync(row) });
         const w = reactiveWorkspace(ANALYSIS, "thread-1");
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
             expect(openThread().kind).toBe("absent"); // the identity is bound; its row does not exist yet
 
-            row = threadRow({ threadId: "thread-1", title: "Kinase inhibitor screen" });
+            row = threadRow({ id: "thread-1", title: "Kinase inhibitor screen" });
             setChatStatus("busy");
             setChatStatus("idle");
             await settle();
@@ -794,14 +806,14 @@ describe("watchOpenThread — the row tracker", () => {
         // "new conversation" for the rest of the session, with a real titled row sitting in Postgres.
         // An overridden `getThread` records nothing in the base recorder, so count here.
         let reads = 0;
-        const t = makeSeams({
+        const t = makeOpts({
             getThread: () => {
                 reads += 1;
                 return okAsync(threadRow({ title: "Seeded by the failed turn" }));
             },
         });
         const w = reactiveWorkspace(ANALYSIS, "thread-1");
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -823,7 +835,7 @@ describe("watchOpenThread — the row tracker", () => {
 
     test("only the busy→idle DOWN-edge re-reads, and only with a thread bound", async () => {
         let reads = 0;
-        const t = makeSeams({
+        const t = makeOpts({
             getThread: () => {
                 reads += 1;
                 return okAsync(threadRow());
@@ -831,7 +843,7 @@ describe("watchOpenThread — the row tracker", () => {
         });
         // No analysis in scope, so the ready edge binds nothing and the scope stays genuinely unbound.
         const w = reactiveWorkspace(null, null);
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -858,15 +870,15 @@ describe("watchOpenThread — the row tracker", () => {
     });
 
     test("dropping back out of ready collapses the snapshot rather than showing a stale row", async () => {
-        const t = makeSeams({ getThread: () => okAsync(threadRow({ title: "Pathway enrichment" })) });
+        const t = makeOpts({ getThread: () => okAsync(threadRow({ title: "Pathway enrichment" })) });
         const w = reactiveWorkspace(ANALYSIS, "thread-1");
-        const dispose = mountWatch(w.ws, t.seams);
+        const dispose = mountWatch(w.ws, t.opts);
         try {
             __setBootStateForTest(ready());
             await settle();
             expect(openThread().kind).toBe("loaded");
 
-            // Pre-`ready` there is no pool to read the row from, so the rail must fall back to its
+            // Pre-`ready` the server cannot read the row, so the rail must fall back to its
             // placeholder rather than keep a previous boot's metadata on screen.
             __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
             await settle();

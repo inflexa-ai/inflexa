@@ -9,7 +9,6 @@ import type { DbError } from "../../db/errors.ts";
 import { Bus } from "../../lib/bus.ts";
 import { bakedEnv } from "../../lib/env.ts";
 import { getLogger } from "../../lib/log.ts";
-import { dieOn, fail } from "../../lib/cli.ts";
 import { findAnalysesByRef, findAnalysesByRefWithAnchor, getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
 import { provModel, provSubject } from "./document.ts";
@@ -363,30 +362,4 @@ export function resolveAnalysisForProv(ref: IdOrName): Result<Analysis, DbError 
             candidates: rows.map((r) => ({ id: r.analysis.id, name: r.analysis.name, createdAt: r.analysis.createdAt, anchorPath: r.anchorPath })),
         });
     });
-}
-
-/**
- * The CLI-boundary wrapper every analysis-ref prov action shares: resolve the analysis or exit.
- * Ambiguity lists each candidate's id, name, local creation time (the same `toLocaleString()`
- * formatting the analyses listing shows, so the two listings read identically), and last-known
- * anchor folder, so the user recognizes the one they mean and re-runs with its exact id — prov
- * commands are headless-first, so the failure must be deterministic, never a prompt. Lives beside
- * the resolver so the three actions cannot drift on the failure wording.
- */
-export function requireAnalysisForProv(ref: IdOrName): Analysis {
-    return resolveAnalysisForProv(ref).match(
-        (a) => a,
-        (e) => {
-            if (e.type === "not_found") fail(`No analysis found matching "${ref}".`);
-            if (e.type === "ambiguous") {
-                const list = e.candidates
-                    // "(folder unknown)" reads as a fact about the local state, not a failure: the
-                    // anchor row is gone, so the folder's whereabouts are simply not known anymore.
-                    .map((c) => `  ${c.id}  ${c.name}  ${new Date(c.createdAt).toLocaleString()}  ${c.anchorPath ?? "(folder unknown)"}`)
-                    .join("\n");
-                fail(`Analysis reference "${ref}" is ambiguous — re-run with an exact id:\n${list}`);
-            }
-            return dieOn("Failed to resolve analysis")(e);
-        },
-    );
 }

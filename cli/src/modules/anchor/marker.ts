@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
@@ -14,20 +14,6 @@ export type MarkerError =
 /** The on-disk marker for a folder: <dir>/.inflexa/id (write-once identity file). */
 export function markerPath(dir: string): string {
     return join(dir, ".inflexa", "id");
-}
-
-/**
- * Canonical (symlink-resolved) absolute form of a path. Falls back to resolve() when the
- * path doesn't exist yet (realpath requires existence). Identity must key on the canonical
- * path, or the same physical folder reached via two textual forms — e.g. macOS /var vs
- * /private/var, or any user symlink — would be misread as a move or a copy.
- */
-export function canonicalPath(p: string): string {
-    try {
-        return realpathSync(p);
-    } catch {
-        return resolve(p);
-    }
 }
 
 /**
@@ -76,9 +62,11 @@ export function writeMarker(dir: string, anchorId: AnchorId): Result<AnchorMarke
         return mkdirResult(dotDir, "writeMarker:mkdir")
             .mapErr((e): MarkerError => ({ type: "marker_write_failed", path, cause: e.cause }))
             .andThen(() =>
-                writeFileResult(path, `${JSON.stringify(marker, null, 2)}\n`, "writeMarker:write").mapErr(
-                    (e): MarkerError => ({ type: "marker_write_failed", path, cause: e.cause }),
-                ),
+                writeFileResult(path, `${JSON.stringify(marker, null, 2)}\n`, "writeMarker:write").mapErr((e): MarkerError => ({
+                    type: "marker_write_failed",
+                    path,
+                    cause: e.cause,
+                })),
             )
             .map(() => marker);
     });

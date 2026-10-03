@@ -490,7 +490,6 @@ export function bootHarnessRuntime(
         config?: ResolvedHarnessConfig;
         connection?: ResolvedModelConnection;
         efforts?: Readonly<Record<AgentName, AgentEffort>>;
-        analysisId?: string;
     } = {},
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     if (active) return Promise.resolve(ok(active));
@@ -500,7 +499,6 @@ export function bootHarnessRuntime(
         options.config ?? resolveHarnessConfig(),
         options.connection ?? resolveModelConnection(),
         options.efforts ?? resolveAgentEfforts(),
-        options.analysisId,
     );
     booting = attempt;
     void attempt.finally(() => {
@@ -630,7 +628,6 @@ async function bootHarnessRuntimeOnce(
     cfg: ResolvedHarnessConfig,
     connection: ResolvedModelConnection,
     efforts: Readonly<Record<AgentName, AgentEffort>>,
-    analysisId?: string,
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     const logger = harnessLogger("harness");
 
@@ -778,12 +775,11 @@ async function bootHarnessRuntimeOnce(
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
     const conn = pgResult.value;
 
-    // The `inflexa.lock` of the open analysis's farm — the inventory of what a sandbox
-    // of THIS process can import. One analysis opens per process (the instance lock
-    // holds that), thus one static path serves the whole boot. The tool re-reads the
-    // file per call, so a farm that grows mid-session reaches the next call unchanged.
-    // A boot with no analysis (a probe) carries none, and the inventory reads unknown.
-    const farmLockFile = analysisId === undefined ? null : join(analysisFarmPath(env.packageStoreDir, analysisId), "inflexa.lock");
+    // The `inflexa.lock` of the farm of each analysis — the inventory of what a sandbox
+    // of that analysis can import. One runtime serves each analysis of the machine, thus
+    // the harness resolves the path with the analysis id of each session. The tool
+    // re-reads the file per call, so a farm that grows mid-session reaches the next call.
+    const farmLockFile = (id: string): string => join(analysisFarmPath(env.packageStoreDir, id), "inflexa.lock");
 
     // The image inventory record the catalog build packs at the store root, beside the graph.
     // The path is static, thus the boot stats nothing: the tool re-reads the file per call, so a
@@ -1121,7 +1117,7 @@ async function bootHarnessRuntimeOnce(
                 embedding,
                 skillsDir: cfg.skillsDir,
                 refStorePath: env.refsDir,
-                ...(farmLockFile ? { farmLockFile } : {}),
+                farmLockFile,
                 imagePackagesFile,
                 // The same farm-extension realization as the step agents (the
                 // composition bundle above): the profiler meets the farm at its
@@ -1163,7 +1159,7 @@ async function bootHarnessRuntimeOnce(
             // agent answers from. Its question is "what does the store hold", and
             // the farm of a new analysis is empty — a farm view here would read
             // every pool package as absent, and the agent would ask for held ones.
-            ...(farmLockFile ? { farmLockFile } : {}),
+            farmLockFile,
             imagePackagesFile,
             readPoolInventory: () => readPoolInventorySections(env.packageStoreDir),
             // The link seam of the conversation side: the pre-launch pass of

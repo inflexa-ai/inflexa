@@ -1,10 +1,10 @@
-import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { ok, err, type Result } from "neverthrow";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { statResult } from "../../lib/fs.ts";
-import { canonicalPath, findMarkerUpwards } from "../anchor/marker.ts";
+import { canonicalPath, expandAndResolve } from "../../lib/paths.ts";
+import { findMarkerUpwards } from "../anchor/marker.ts";
 import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
 
 /**
@@ -18,16 +18,6 @@ import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
  * add path of `addInputs`, a deliberate user action, which is what the no-litter policy
  * demands of a recovery; the marker-present branch of the ensure writes nothing to disk.
  */
-/**
- * Expand a leading `~` to the home directory, then resolve against `cwd` — the front half of
- * input-path classification, shared with existence pre-checks and removal matching so all three
- * agree on what a raw path resolves to.
- */
-export function expandAndResolve(cwd: string, rawPath: string): string {
-    const expanded = rawPath.startsWith("~") ? join(homedir(), rawPath.slice(1)) : rawPath;
-    return resolve(cwd, expanded);
-}
-
 export function classifyInputPath(analysisId: string, rawPath: string, cwd: string): Result<AnalysisInput, DbError> {
     const target = expandAndResolve(cwd, rawPath);
 

@@ -1,19 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { okAsync } from "neverthrow";
-import type { DbError, Pool, Thread } from "@inflexa-ai/harness";
 
 import { useKeymapRoot, __resetKeybindCache } from "./keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "./components/dialog/dialog_host.tsx";
 import { WorkspaceContext, type Workspace } from "./contexts/workspace.ts";
-import { purgeSessionFlow, type SessionSeams } from "./commands.tsx";
+import { purgeSessionFlow, type SessionOpts } from "./commands.tsx";
 import { __setBootStateForTest, __resetBootForTest } from "./hooks/boot.ts";
-import type { HarnessRuntime } from "../modules/harness/runtime.ts";
+import { conversationSummary, threadListOf } from "../test_support/threads.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { Notice } from "./theme.ts";
 
 // The hard-delete confirmation is the counterpart to the removal one, and the pair is only safe if a
-// user can tell them apart from the panel alone: `purgeThread` drops the row AND every message, with
+// user can tell them apart from the panel alone: `POST {T}/purge` drops the row AND every message, with
 // no restore behind it, while removal keeps all of it. Both dialogs carry the same danger chrome and
 // the same type-the-name gate, so the WORDS are the entire difference — and words only exist as
 // painted cells, which no notice-text or props assertion reaches.
@@ -29,38 +28,22 @@ afterEach(() => {
 });
 
 const ANALYSIS = { id: "a1", name: "Alpha", projectId: null } as unknown as Analysis;
-const fakePool = {} as unknown as Pool;
-const fakeRuntime = { pool: fakePool } as unknown as HarnessRuntime;
 
-function threadRow(): Thread {
-    return {
-        threadId: "thread-1",
-        analysisId: ANALYSIS.id,
-        title: "Cohort survival questions",
-        threadType: "conversation",
-        parentThreadId: null,
-        parentSeq: null,
-        createdAt: new Date("2026-07-08T00:00:00.000Z"),
-        updatedAt: new Date("2026-07-08T01:00:00.000Z"),
-        // The flow only ever confirms against a LIVE conversation, so the row it reads carries no
-        // tombstone.
-        deletedAt: null,
-    };
-}
+/** The flow only ever confirms against a LIVE conversation, so the row it reads carries no tombstone. */
+const THREAD = conversationSummary({ id: "thread-1", resourceId: ANALYSIS.id });
 
-function seams(notices: Notice[]): SessionSeams {
+/** Session options whose server answers stand still: the read gives {@link THREAD}, and each write succeeds. */
+function sessionOpts(notices: Notice[]): SessionOpts {
     return {
-        runtime: () => fakeRuntime,
-        listThreads: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
-        listReportChildren: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
-        getThread: () => okAsync(threadRow()),
+        ready: () => true,
+        listThreads: () => okAsync(threadListOf([])),
+        listReportChildren: () => okAsync(threadListOf([])),
+        getThread: () => okAsync(THREAD),
         updateTitle: () => okAsync(null),
-        listThreadsWithArchived: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
-        archiveThread: () => okAsync<void, DbError>(undefined),
-        unarchiveThread: () => okAsync<void, DbError>(undefined),
-        purgeThread: () => okAsync<readonly string[], DbError>([]),
-        workspaceRootFor: () => ({ kind: "unlocatable" }),
-        removeReportSessionDir: async () => true,
+        listThreadsWithArchived: () => okAsync(threadListOf([])),
+        archiveThread: () => okAsync(undefined),
+        unarchiveThread: () => okAsync(undefined),
+        purgeThread: () => okAsync({ purged: [], pages: { kind: "kept" } }),
         chatBusy: () => false,
         resolveThreadId: async () => "thread-2",
         workingDirFor: () => "/work",
@@ -103,7 +86,7 @@ async function openDeleteDialog() {
     );
 
     __setBootStateForTest({ phase: "ready", model: "claude-test", connection: { provider: "anthropic", mode: "cliproxy" } });
-    await purgeSessionFlow(ws, seams(notices));
+    await purgeSessionFlow(ws, sessionOpts(notices));
     await Promise.resolve();
     await setup.renderOnce();
     return setup;

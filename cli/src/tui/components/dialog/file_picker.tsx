@@ -9,7 +9,7 @@ import { GLYPHS, space } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel, type Chord } from "../../keymap.ts";
 import { statResult, isReadableBy, processIdentity, type ProcessIdentity } from "../../../lib/fs.ts";
-import { canonicalPath } from "../../../modules/anchor/marker.ts";
+import { canonicalPath } from "../../../lib/paths.ts";
 import { openExternal } from "../../../lib/open_external.ts";
 import { notify } from "../../hooks/notice.ts";
 import { useDialogBindings, useDialogCancel, useDialogCloseGuard } from "./dialog_host.tsx";

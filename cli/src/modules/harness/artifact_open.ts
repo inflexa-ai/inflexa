@@ -1,128 +1,25 @@
 import { existsSync } from "node:fs";
-import { basename, dirname, join, posix } from "node:path";
-import type { FileReferencePart, PresentationPart } from "@inflexa-ai/harness";
+import { dirname, join, posix } from "node:path";
 import { validatePath } from "@inflexa-ai/harness/tools/lib/path-validation";
 import { err, ok, type Result } from "neverthrow";
 
 import { mkdirResult, writeFileResult } from "../../lib/fs.ts";
-import { openExternal } from "../../lib/open_external.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
-import type { OpenableEntry, OpenTarget, PresentationBody } from "../../types/session.ts";
+import type { OpenTarget } from "../../types/session.ts";
 
-// The `artifact-open` capability: the shared readers that turn a harness display-card part into a
-// normalized card model, plus open-time RESOLUTION (reference → path) and MATERIALIZATION
+// The `artifact-open` capability: open-time RESOLUTION (reference → path) and MATERIALIZATION
 // (echart/svg spec → a self-contained file under the analysis workspace's `presentations/` directory).
-// Consumed by BOTH the TUI (the renderer `layout/message_block.tsx` reads each stored harness part
-// through them, and the store's `sessionOpenables` lists the entries) and the REPL printer
-// (`dev/chat.ts` renders them as OSC 8 links), so the mapping + resolution logic lives in one place.
-//
-// COPY-ON-RECEIVE: the REPL runs the readers inside the in-process emit path. The receipt check copies
-// each field that its schema names, but the echart spec is `unknown` below its top level, thus the
-// spec still shares mutable references with the agent loop. Every reader copies what it keeps and
-// DEEP-COPIES the echart spec, so nothing the loop later mutates can reach a readout (the same hazard
-// the card readers in `chat_printer.ts` guard). A deep copy cannot read a Solid store proxy, thus a
-// caller that holds a stored part hands the reader the plain part that the proxy wraps.
+// The server resolves a card for the TUI (`POST {A}/artifacts/resolve`), and the REPL printer
+// (`dev/chat.ts`) links each entry as an OSC 8 path. The readers that turn a harness display-card part
+// into the card model are in `chat_printer.ts`, because the TUI client reads them too.
 //
 // OPEN-TIME RESOLUTION: a card stores only the semantic reference (analysis-rooted paths, the embedded
 // spec, the `pres-` id) — never a resolved location — so the same card resolves to a workspace file
 // today and (unchanged) to a local-webserver URL under the planned front+back architecture.
 
-/** Deep-copy an echart spec at receipt, thus no mutable loop reference survives. A spec that cannot be cloned reads as `{}`. */
-function cloneSpec(spec: Record<string, unknown>): Record<string, unknown> {
-    try {
-        // A tool-input spec is JSON, thus the clone fails only on a value that no JSON holds.
-        return structuredClone(spec);
-    } catch {
-        return {};
-    }
-}
-
-// ── readers: harness part → normalized card model ───────────────────────────────────────────────────
-
-/**
- * A `data-presentation` readout: text-shaped (`markdown`/`code`/`table`) becomes an inline body; the
- * pixel-shaped `echart`/`svg` become a single openable entry (materialized on open).
- */
-export type PresentationReadout = { shape: "inline"; title?: string; body: PresentationBody } | { shape: "card"; title?: string; entry: OpenableEntry };
-
-/**
- * Read a `show_user` presentation part. Text-shaped kinds map to an inline body; `echart`/`svg` map to
- * an openable entry carrying the embedded spec/markup + the deterministic `pres-` id. A `structure`
- * card has no renderer here, thus it degrades to an inline note that names its kind.
- */
-export function readPresentation(part: PresentationPart): PresentationReadout {
-    const title = part.title;
-    const content = part.content;
-    switch (content.kind) {
-        case "markdown":
-            return { shape: "inline", title, body: { kind: "markdown", body: content.body } };
-        case "code":
-            return { shape: "inline", title, body: { kind: "code", code: content.code, language: content.language } };
-        case "table":
-            return {
-                shape: "inline",
-                title,
-                body: { kind: "table", headers: [...content.headers], rows: content.rows.map((row) => [...row]), caption: content.caption },
-            };
-        case "echart":
-            // `dataPath` is resolved to `dataset.source` at open time. It is omitted from the target when
-            // absent, thus a self-contained spec carries no empty key.
-            return {
-                shape: "card",
-                title,
-                entry: {
-                    name: title ?? "Chart",
-                    target: {
-                        kind: "echart",
-                        presId: part.id,
-                        spec: cloneSpec(content.spec),
-                        ...(content.dataPath !== undefined ? { dataPath: content.dataPath } : {}),
-                    },
-                },
-            };
-        case "svg":
-            return {
-                shape: "card",
-                title,
-                entry: { name: title ?? "Diagram", target: { kind: "svg", presId: part.id, markup: content.markup } },
-            };
-        case "structure":
-            return { shape: "inline", title, body: { kind: "markdown", body: `_(unsupported presentation: ${content.kind})_` } };
-        default: {
-            const _exhaustive: never = content;
-            return _exhaustive;
-        }
-    }
-}
-
-/** A `data-file-reference` readout: one entry per referenced file, plus the shared containing folder for a gallery. */
-export type FileReferenceReadout = { title?: string; entries: OpenableEntry[]; folderPath?: string };
-
-/**
- * Read a `show_file` part. Each file becomes an openable `workspace-file` entry; a multi-file gallery
- * also carries `folderPath` (the first file's directory) for the reveal-containing-folder affordance.
- */
-export function readFileReference(part: FileReferencePart): FileReferenceReadout {
-    const entries: OpenableEntry[] = part.files.map((file) => ({
-        name: basename(file.path) || file.path,
-        ...(file.caption !== undefined ? { caption: file.caption } : {}),
-        target: { kind: "workspace-file", path: file.path },
-    }));
-    const firstPath = part.files[0]?.path ?? "";
-    const dir = firstPath ? dirname(firstPath) : "";
-    const folderPath = entries.length > 1 && dir && dir !== "." ? dir : undefined;
-    return { title: part.title, entries, ...(folderPath !== undefined ? { folderPath } : {}) };
-}
-
-// ── open-time resolution + materialization ──────────────────────────────────────────────────────────
-
-/** Why an artifact could not be opened. Every case carries what the notice needs to name the path/reason. */
+/** Why an artifact is not ready to open. Every case carries what the notice needs to name the path/reason. */
 export type OpenArtifactError =
-    | { type: "unresolved" }
-    | { type: "missing"; path: string }
-    | { type: "materialize_failed"; cause: unknown }
-    | { type: "open_failed"; path: string; cause: unknown }
-    | { type: "unavailable"; reason: string };
+    { type: "unresolved" } | { type: "missing"; path: string } | { type: "materialize_failed"; cause: unknown } | { type: "unavailable"; reason: string };
 
 /**
  * The workspace-reserved directory `echart`/`svg` presentations materialize into, a sibling of the
@@ -189,18 +86,11 @@ export function entryDegraded(analysisId: string, target: OpenTarget): boolean {
     }
 }
 
-/** Spawn the OS opener for `path`, mapping its failure onto the artifact error channel (carrying the path). */
-function spawnOpen(path: string): Result<string, OpenArtifactError> {
-    return openExternal(path)
-        .map(() => path)
-        .mapErr((e): OpenArtifactError => ({ type: "open_failed", path, cause: e.cause }));
-}
-
 /**
  * Resolve an entry to a concrete, ready-to-open location WITHOUT opening it: `workspace-file` returns
  * the resolved workspace path (missing → `missing`); `echart`/`svg` materialize their presentations
- * file and return it; `unavailable` never resolves. This is the seam the REPL printer links to (an OSC 8
- * `file://` path) and the shared step {@link openEntry} builds on. Never throws.
+ * file and return it; `unavailable` never resolves. The REPL printer links to the path (an OSC 8
+ * `file://` path), and the artifact route of the server gives it to the client that opens it. Never throws.
  */
 export function materializeTarget(analysisId: string, target: OpenTarget): Result<string, OpenArtifactError> {
     switch (target.kind) {
@@ -221,27 +111,6 @@ export function materializeTarget(analysisId: string, target: OpenTarget): Resul
             return _exhaustive;
         }
     }
-}
-
-/**
- * Resolve an entry to an openable location and open it in the default OS application, returning the
- * resolved path. Materializes `echart`/`svg` first; `unavailable` never opens. Never throws — a failed
- * open is a `Result` err the caller degrades to a notice.
- */
-export function openEntry(analysisId: string, target: OpenTarget): Result<string, OpenArtifactError> {
-    return materializeTarget(analysisId, target).andThen(spawnOpen);
-}
-
-/** Open the analysis-rooted `folder` (a gallery's containing directory) in the OS file browser. */
-export function openFolder(analysisId: string, folder: string): Result<string, OpenArtifactError> {
-    const root = workspaceRootForAnalysisId(analysisId).match(
-        (r): string | null => r,
-        () => null,
-    );
-    if (root === null) return err({ type: "unresolved" });
-    const dir = join(root, folder);
-    if (!existsSync(dir)) return err({ type: "missing", path: dir });
-    return spawnOpen(dir);
 }
 
 /** Write `content` to the presentations file at `dest` (creating its directory), mapping fs faults onto the error channel. */

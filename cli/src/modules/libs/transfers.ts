@@ -19,14 +19,12 @@
  * from the hidden flag to a child body lives in the command actions.
  */
 
-import { join } from "node:path";
-
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { selfInvocation } from "../../lib/cli.ts";
 import { ensureRuntime } from "../../lib/config.ts";
 import { capture, resolveEngineSocket, type ContainerRuntime } from "../../lib/container.ts";
-import { env } from "../../lib/env.ts";
 import { acquireInstanceLock, instanceLockHolder, releaseInstanceLock, TRANSFER_LOCK_KEY_PREFIX } from "../../lib/lock.ts";
 import { getTransfer, listTransfers } from "../../db/primary_query.ts";
 import { recordTransferProgress, recordTransferResolve, settleTransfer, startTransferRun } from "../../db/primary_mutation.ts";
@@ -100,16 +98,6 @@ export function readTransferReports(): readonly TransferReport[] {
 /** Whether any transfer child is live right now. The sandbox gate waits on exactly this. */
 export function anyTransferLive(): boolean {
     return TRANSFER_KINDS.some((kind) => instanceLockHolder(transferLockKey(kind)) !== null);
-}
-
-/**
- * The argv that runs this CLI again. A dev run has no compiled binary, so the
- * source entry is executed by the `bun` runtime; a release binary IS the
- * `inflexa` executable. This module lives at `src/modules/libs/`, thus the CLI
- * source entry is two levels up.
- */
-function selfInvocation(argv: readonly string[]): string[] {
-    return env.isDevelopment ? [process.execPath, join(import.meta.dir, "../../index.ts"), ...argv] : [process.execPath, ...argv];
 }
 
 /**

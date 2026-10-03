@@ -210,7 +210,7 @@ describe("applyInputsDiff", () => {
 
         // The add batch is all-or-nothing (classification short-circuits on the vanished path);
         // the recorded input must survive because the removals never ran.
-        const failures = applyInputsDiff(a.id, [join(dir, "vanished.txt")], existing, dir);
+        const { failures } = applyInputsDiff(a.id, [join(dir, "vanished.txt")], existing, dir);
         expect(failures.map((f) => f.op)).toEqual(["add"]);
         expect(listAnalysisInputs(a.id)._unsafeUnwrap()).toHaveLength(1);
     });
@@ -221,8 +221,10 @@ describe("applyInputsDiff", () => {
         const a = (await createAnalysis({ cwd: dir, name: str256("diff-b")._unsafeUnwrap(), inputPaths: [join(dir, "old.txt")] }))._unsafeUnwrap();
         const existing = listAnalysisInputs(a.id)._unsafeUnwrap();
 
-        const failures = applyInputsDiff(a.id, [join(dir, "new.txt")], existing, dir);
-        expect(failures).toEqual([]);
+        const outcome = applyInputsDiff(a.id, [join(dir, "new.txt")], existing, dir);
+        expect(outcome.failures).toEqual([]);
+        expect(outcome.added.map((i) => i.path)).toEqual(["new.txt"]);
+        expect(outcome.removed.map((i) => i.path)).toEqual(["old.txt"]);
         const after = listAnalysisInputs(a.id)._unsafeUnwrap();
         expect(after).toHaveLength(1);
         expect(after[0]?.path).toContain("new.txt");

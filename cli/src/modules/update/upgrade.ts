@@ -58,4 +58,7 @@ export async function upgrade(): Promise<void> {
         () => log.success(`Updated to inflexa ${version}. It takes effect the next time you start inflexa.`),
         (error) => fail(applyErrorMessage(error)),
     );
+    // A running server still runs the old binary from memory.
+    const { stopServerAfterUpgrade } = await import("../../client/commands/server.ts");
+    await stopServerAfterUpgrade(version);
 }

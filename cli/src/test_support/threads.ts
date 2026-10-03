@@ -1,9 +1,14 @@
 import type { Thread, ThreadPage } from "@inflexa-ai/harness";
 
-// The thread rows that the report-session coverage drives through the injected seams. No CLI test
+import type { ThreadList, ThreadSummary } from "../api/conversation.ts";
+
+// The thread rows that the report-session coverage drives through the injected options. No CLI test
 // reaches Postgres, and no local composition writes a report thread, thus a report child exists for a
-// test only as a row that a fake seam hands back. One shape here keeps that row honest: a `report` row
+// test only as a row that a fake hands back. One shape here keeps that row honest: a `report` row
 // carries the parent link and the spawn point, and a `conversation` row carries neither.
+//
+// The harness rows feed the server routes. The wire summaries feed the clients, and they carry the same
+// values as the rows of the same name.
 
 /** The analysis that a fixture row belongs to, unless a caller names a different one. */
 export const FIXTURE_ANALYSIS_ID = "a1";
@@ -60,4 +65,45 @@ export function reportThread(over: Partial<Thread> = {}): Thread {
 /** One full page over the given rows, which is what a single-page listing gives back. */
 export function threadPageOf(threads: Thread[]): ThreadPage {
     return { threads, total: threads.length, page: 0, perPage: 20, hasMore: false };
+}
+
+/**
+ * The wire form of {@link conversationThread}: what `GET {T}` gives a client.
+ *
+ * @param over the fields that the case is about.
+ */
+export function conversationSummary(over: Partial<ThreadSummary> = {}): ThreadSummary {
+    return {
+        id: "thread-conversation",
+        title: "Cohort survival questions",
+        resourceId: FIXTURE_ANALYSIS_ID,
+        threadType: "conversation",
+        createdAt: "2026-07-08T00:00:00.000Z",
+        updatedAt: "2026-07-08T01:00:00.000Z",
+        ...over,
+    };
+}
+
+/**
+ * The wire form of {@link reportThread}. Keep both parent fields, and override the values instead.
+ *
+ * @param over the fields that the case is about.
+ */
+export function reportSummary(over: Partial<ThreadSummary> = {}): ThreadSummary {
+    return {
+        id: "thread-report",
+        title: "Differential expression report",
+        resourceId: FIXTURE_ANALYSIS_ID,
+        threadType: "report",
+        parentThreadId: "thread-conversation",
+        parentSeq: 2,
+        createdAt: "2026-07-08T02:00:00.000Z",
+        updatedAt: "2026-07-08T03:00:00.000Z",
+        ...over,
+    };
+}
+
+/** One full page over the given summaries, which is what a single-page `GET {A}/threads` gives back. */
+export function threadListOf(threads: ThreadSummary[]): ThreadList {
+    return { threads, total: threads.length, page: 0, perPage: 100, hasMore: false };
 }

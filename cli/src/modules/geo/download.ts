@@ -1,20 +1,26 @@
 import { join } from "node:path";
 
-import { dieOn, fail } from "../../lib/cli.ts";
-import { resolveContext, type ContextFlags } from "../analysis/context.ts";
+import { describeClientError } from "../../client/api.ts";
+import { resolveAnalysisContext } from "../../client/analyses.ts";
+import type { ContextFlags } from "../../client/commands/analyses.ts";
+import { fail } from "../../lib/cli.ts";
 import { isDirWritable } from "../anchor/marker.ts";
 import { downloadGeoSeries, parseByteSize, parseGseAccession, type GeoDownloadError, type GeoProgress } from "./geo.ts";
 
 /**
- * The folder a downloaded Series lands in — the analysis's home folder, not its workspace.
+ * The folder a downloaded Series lands in — the analysis's home folder, not its workspace. The local
+ * server resolves it (`POST /api/v1/analyses/resolve`); the download itself runs in this process.
  *
  * Resolution needs an analysis only to reach that folder, so both a resolved analysis and a bare
  * anchor answer the question and neither branch reads the analysis itself. Mirrors how profile/run
  * resolve their target, minus the single-analysis requirement they need and this does not: several
  * analyses in one folder still share the one folder to download into.
  */
-function resolveTargetFolder(flags: ContextFlags): string {
-    const ctx = resolveContext(process.cwd(), flags).match((c) => c, dieOn("Could not resolve the folder to download into"));
+async function resolveTargetFolder(flags: ContextFlags): Promise<string> {
+    const ctx = (await resolveAnalysisContext({ cwd: process.cwd(), ref: flags.analysis, project: flags.project })).match(
+        (c) => c,
+        (e) => fail(`Could not resolve the folder to download into: ${describeClientError(e)}`),
+    );
     switch (ctx.kind) {
         case "analysis":
         case "anchor":
@@ -99,7 +105,7 @@ function reportProgress(event: GeoProgress): void {
  * Series becomes an input the moment the user asks for it, through the same add-inputs path any local
  * file uses, so this command owns no part of enrollment.
  *
- * The target folder resolves through `resolveContext`, so an agent-driven run with no `--analysis`
+ * The target folder resolves through the server, so an agent-driven run with no `--analysis`
  * lands in the chat analysis's folder — `run_inflexa` starts the child there, so the ordinary marker
  * walk-up already points at it.
  */
@@ -110,7 +116,7 @@ export async function runGeoDownload(rawGse: string, flags: ContextFlags, maxSiz
     );
     const maxBytes = maxSize === undefined ? undefined : parseByteSize(maxSize);
     if (maxSize !== undefined && maxBytes === undefined) fail(`Not a size: "${maxSize}" (expected e.g. 500MB, 64GB, or a plain byte count).`);
-    const folder = resolveTargetFolder(flags);
+    const folder = await resolveTargetFolder(flags);
     // Checked before the transfer rather than after: a read-only folder is a property of the user's
     // filesystem with an obvious remedy, and discovering it only once the bytes have moved wastes them.
     if (!isDirWritable(folder)) fail(`${folder} is not writable, so ${accession} cannot be downloaded there.`);

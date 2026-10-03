@@ -2,13 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
 import { createStore } from "solid-js/store";
 import { errAsync, okAsync } from "neverthrow";
-import type { Pool, Thread } from "@inflexa-ai/harness";
 
-import { reportThread, threadPageOf, FIXTURE_ANALYSIS_ID } from "../../test_support/threads.ts";
+import type { ThreadSummary } from "../../api/conversation.ts";
+import { reportSummary, threadListOf, FIXTURE_ANALYSIS_ID } from "../../test_support/threads.ts";
 import { __setBootStateForTest, type BootState } from "./boot.ts";
-import { __resetReportChildrenForTest, reportChildren, watchReportChildren, type ReportChildrenSeams } from "./report_children.ts";
+import { __resetReportChildrenForTest, reportChildren, watchReportChildren, type ReportChildrenOpts } from "./report_children.ts";
 import { setChatStatus } from "./status.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { Analysis } from "../../types/analysis.ts";
 
@@ -17,7 +16,6 @@ import type { Analysis } from "../../types/analysis.ts";
 // does. Each case here drives one of the two edges and reads the listing that landed.
 
 const ANALYSIS = { id: FIXTURE_ANALYSIS_ID, name: "Alpha", projectId: null } as unknown as Analysis;
-const fakeRuntime = { pool: {} as unknown as Pool } as unknown as HarnessRuntime;
 
 /** A NEW object each call, thus re-seeding the phase is an observable signal edge. */
 function ready(): BootState {
@@ -32,11 +30,11 @@ function scope(analysis: Analysis | null, sessionId: string | null): { ws: Works
 }
 
 /** Mount the watch in a disposable root, and hand back the dispose. */
-function mount(ws: Workspace, seams: ReportChildrenSeams): () => void {
+function mount(ws: Workspace, opts: ReportChildrenOpts): () => void {
     let dispose!: () => void;
     createRoot((d) => {
         dispose = d;
-        watchReportChildren(ws, seams);
+        watchReportChildren(ws, opts);
     });
     return dispose;
 }
@@ -57,21 +55,21 @@ describe("watchReportChildren", () => {
         // A spawn writes its row under an UNCHANGED bound thread and boot phase. Without this edge the
         // user would ask for a report, watch the turn finish, and find no entry until they left the
         // conversation and came back.
-        let rows: Thread[] = [];
-        const seams: ReportChildrenSeams = { runtime: () => fakeRuntime, listThreads: () => okAsync(threadPageOf(rows)) };
+        let rows: ThreadSummary[] = [];
+        const opts: ReportChildrenOpts = { ready: () => true, listThreads: () => okAsync(threadListOf(rows)) };
         const w = scope(ANALYSIS, "thread-parent");
-        const dispose = mount(w.ws, seams);
+        const dispose = mount(w.ws, opts);
         try {
             __setBootStateForTest(ready());
             await settle();
             expect(reportChildren()).toEqual([]);
 
-            rows = [reportThread({ threadId: "child-1", parentThreadId: "thread-parent" })];
+            rows = [reportSummary({ id: "child-1", parentThreadId: "thread-parent" })];
             setChatStatus("busy");
             setChatStatus("idle");
             await settle();
 
-            expect(reportChildren().map((t) => t.threadId)).toEqual(["child-1"]);
+            expect(reportChildren().map((t) => t.id)).toEqual(["child-1"]);
         } finally {
             dispose();
         }
@@ -80,40 +78,60 @@ describe("watchReportChildren", () => {
     test("a turn that FAILS still re-reads, because the spawn wrote its row before the failure", async () => {
         // Leaving `busy` is the edge, and not reaching `idle`. To key on `idle` would drop the entry of a
         // session whose own turn died after the spawn.
-        let rows: Thread[] = [];
-        const seams: ReportChildrenSeams = { runtime: () => fakeRuntime, listThreads: () => okAsync(threadPageOf(rows)) };
+        let rows: ThreadSummary[] = [];
+        const opts: ReportChildrenOpts = { ready: () => true, listThreads: () => okAsync(threadListOf(rows)) };
         const w = scope(ANALYSIS, "thread-parent");
-        const dispose = mount(w.ws, seams);
+        const dispose = mount(w.ws, opts);
         try {
             __setBootStateForTest(ready());
             await settle();
 
-            rows = [reportThread({ threadId: "child-1", parentThreadId: "thread-parent" })];
+            rows = [reportSummary({ id: "child-1", parentThreadId: "thread-parent" })];
             setChatStatus("busy");
             setChatStatus("error");
             await settle();
 
-            expect(reportChildren().map((t) => t.threadId)).toEqual(["child-1"]);
+            expect(reportChildren().map((t) => t.id)).toEqual(["child-1"]);
+        } finally {
+            dispose();
+        }
+    });
+
+    test("the listing names the open analysis and the bound thread", async () => {
+        const asked: [string, string][] = [];
+        const opts: ReportChildrenOpts = {
+            ready: () => true,
+            listThreads: (analysisId, parentThreadId) => {
+                asked.push([analysisId, parentThreadId]);
+                return okAsync(threadListOf([]));
+            },
+        };
+        const w = scope(ANALYSIS, "thread-parent");
+        const dispose = mount(w.ws, opts);
+        try {
+            __setBootStateForTest(ready());
+            await settle();
+            expect(asked).toEqual([[ANALYSIS.id, "thread-parent"]]);
         } finally {
             dispose();
         }
     });
 
     test("binding a different thread reads that thread's children", async () => {
-        const byParent = new Map<string, Thread[]>([
-            ["thread-parent", [reportThread({ threadId: "child-1", parentThreadId: "thread-parent" })]],
-            ["thread-other", [reportThread({ threadId: "child-2", parentThreadId: "thread-other" })]],
+        const byParent = new Map<string, ThreadSummary[]>([
+            ["thread-parent", [reportSummary({ id: "child-1", parentThreadId: "thread-parent" })]],
+            ["thread-other", [reportSummary({ id: "child-2", parentThreadId: "thread-other" })]],
         ]);
-        const seams: ReportChildrenSeams = {
-            runtime: () => fakeRuntime,
-            listThreads: (_pool, _analysisId, parentThreadId) => okAsync(threadPageOf(byParent.get(parentThreadId) ?? [])),
+        const opts: ReportChildrenOpts = {
+            ready: () => true,
+            listThreads: (_analysisId, parentThreadId) => okAsync(threadListOf(byParent.get(parentThreadId) ?? [])),
         };
         const w = scope(ANALYSIS, "thread-parent");
-        const dispose = mount(w.ws, seams);
+        const dispose = mount(w.ws, opts);
         try {
             __setBootStateForTest(ready());
             await settle();
-            expect(reportChildren().map((t) => t.threadId)).toEqual(["child-1"]);
+            expect(reportChildren().map((t) => t.id)).toEqual(["child-1"]);
 
             w.bindTo("thread-other");
             // Empty BEFORE the query lands. The transcript resets synchronously at a swap, thus rows held
@@ -121,7 +139,7 @@ describe("watchReportChildren", () => {
             expect(reportChildren()).toEqual([]);
             await settle();
 
-            expect(reportChildren().map((t) => t.threadId)).toEqual(["child-2"]);
+            expect(reportChildren().map((t) => t.id)).toEqual(["child-2"]);
         } finally {
             dispose();
         }
@@ -130,18 +148,18 @@ describe("watchReportChildren", () => {
     test("a settled turn keeps the rows on screen while it re-reads them", async () => {
         // The clear is for a swap alone. To blank the entries on each turn would flash them out and back
         // under a reader who never left the conversation.
-        const rows = [reportThread({ threadId: "child-1", parentThreadId: "thread-parent" })];
-        const seams: ReportChildrenSeams = { runtime: () => fakeRuntime, listThreads: () => okAsync(threadPageOf(rows)) };
+        const rows = [reportSummary({ id: "child-1", parentThreadId: "thread-parent" })];
+        const opts: ReportChildrenOpts = { ready: () => true, listThreads: () => okAsync(threadListOf(rows)) };
         const w = scope(ANALYSIS, "thread-parent");
-        const dispose = mount(w.ws, seams);
+        const dispose = mount(w.ws, opts);
         try {
             __setBootStateForTest(ready());
             await settle();
-            expect(reportChildren().map((t) => t.threadId)).toEqual(["child-1"]);
+            expect(reportChildren().map((t) => t.id)).toEqual(["child-1"]);
 
             setChatStatus("busy");
             setChatStatus("idle");
-            expect(reportChildren().map((t) => t.threadId)).toEqual(["child-1"]);
+            expect(reportChildren().map((t) => t.id)).toEqual(["child-1"]);
         } finally {
             dispose();
         }
@@ -151,12 +169,12 @@ describe("watchReportChildren", () => {
         // The entries are an addition to the transcript, thus their absence costs the reader nothing. A
         // toast for each failed read would interrupt the conversation over a surface that carries no
         // message.
-        const seams: ReportChildrenSeams = {
-            runtime: () => fakeRuntime,
-            listThreads: () => errAsync({ type: "query_failed", op: "test", cause: new Error("boom") }),
+        const opts: ReportChildrenOpts = {
+            ready: () => true,
+            listThreads: () => errAsync({ type: "unreachable", reason: "connection_failed", baseUrl: "http://test", cause: new Error("boom") }),
         };
         const w = scope(ANALYSIS, "thread-parent");
-        const dispose = mount(w.ws, seams);
+        const dispose = mount(w.ws, opts);
         try {
             __setBootStateForTest(ready());
             await settle();
@@ -167,13 +185,13 @@ describe("watchReportChildren", () => {
         }
     });
 
-    test("before ready the listing stays empty, because no pool answers it", async () => {
-        const seams: ReportChildrenSeams = {
-            runtime: () => null,
-            listThreads: () => okAsync(threadPageOf([reportThread({ parentThreadId: "thread-parent" })])),
+    test("before ready the listing stays empty, because the server cannot answer it", async () => {
+        const opts: ReportChildrenOpts = {
+            ready: () => false,
+            listThreads: () => okAsync(threadListOf([reportSummary({ parentThreadId: "thread-parent" })])),
         };
         const w = scope(ANALYSIS, "thread-parent");
-        const dispose = mount(w.ws, seams);
+        const dispose = mount(w.ws, opts);
         try {
             await settle();
 

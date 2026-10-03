@@ -26,7 +26,6 @@ import {
     parseQuery,
     queryActiveRun,
     queryRun,
-    queryRunsByAnalysis,
     queryStepsByRun,
     RunDedupCollisionError,
     StatusString,
@@ -62,7 +61,7 @@ import { ensureSandboxImage } from "../../libs/pull.ts";
 import { stageInputs } from "../../staging/staging.ts";
 import { resolveHarnessConfig } from "../config.ts";
 import { validatePlanFile, persistPlan, type PlanIntakeError } from "../plan_intake.ts";
-import { formatElapsed, readNewestWorkflowStep, runWorkflowFamily, withStatusPool } from "./status.ts";
+import { formatElapsed, readNewestWorkflowStep, runWorkflowFamily } from "./status.ts";
 import { bootHarnessRuntime, describeBootError, type RunTriggerDeps } from "../runtime.ts";
 
 // ── The replicated trigger flow ───────────────────────
@@ -420,7 +419,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
-    const bootResult = await bootHarnessRuntime({ config: cfg, analysisId: analysis.id });
+    const bootResult = await bootHarnessRuntime({ config: cfg });
     const runtime = bootResult.match(
         (r) => r,
         (e) => {
@@ -734,48 +733,4 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
             throw new Error(`unhandled terminal status: ${JSON.stringify(exhaustive)}`);
         }
     }
-}
-
-/**
- * `inflexa run --status <analysis>` — read-only ledger view. Deliberately never
- * boots the runtime or provisions anything; the pool acquire/drain (shared with
- * `inflexa profile --status`) lives in {@link withStatusPool}.
- */
-export async function runAnalysisStatus(flags: ContextFlags): Promise<void> {
-    const analysis = resolveSingleAnalysis(flags, RUN_EMPTY_HINT);
-
-    await withStatusPool(async (pool, hasRuntime) => {
-        const runs = (await queryRunsByAnalysis(pool, analysis.id)).match(
-            (r) => r,
-            (e) => fail("Postgres is not reachable — run state lives there. Start it with `inflexa setup` (or launch a run first).", e),
-        );
-        if (runs.length === 0) {
-            console.log(`  "${analysis.name}" has no runs yet. Launch one with \`inflexa run --plan <file>\`.`);
-            return;
-        }
-        console.log(`  Runs for "${analysis.name}" (${analysis.id}):`);
-        for (const run of runs) {
-            console.log("");
-            console.log(`  ${run.runId}  [${run.status}]`);
-            console.log(`    plan:       ${run.planId ?? "—"}`);
-            console.log(`    started:    ${run.startedAt}`);
-            if (run.completedAt) console.log(`    completed:  ${run.completedAt}`);
-            if (run.error) console.log(`    error:      ${run.error}`);
-            if (run.status === "running" && !hasRuntime) {
-                // A `running` row with no runtime in THIS process is usually normal:
-                // another inflexa process owns it, or a previous session died mid-run
-                // and DBOS resumes the workflow on the next boot. The exception is a
-                // row orphaned BEFORE its workflow was launched (the hard-kill window
-                // in `triggerAnalysisRun`) — that one has nothing to resume and stays
-                // wedged until the #28 run-recovery path lands.
-                console.log("    note:       no runtime here — a launched run resumes on the next `inflexa run`/`inflexa profile` boot");
-            }
-            const steps = (await queryStepsByRun(pool, run.runId)).unwrapOr([]);
-            for (const st of steps) {
-                const dur = st.durationMs !== null ? ` (${Math.round(st.durationMs / 1000)}s)` : "";
-                const stepErr = st.error ? `  ${st.error}` : "";
-                console.log(`      - ${st.stepId}  ${st.status}  [${st.agentId}]${dur}${stepErr}`);
-            }
-        }
-    });
 }

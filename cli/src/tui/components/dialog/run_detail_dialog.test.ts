@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { CortexRunRow } from "@inflexa-ai/harness";
+import type { RunSummary } from "../../../api/runs.ts";
 
 import { runDetailLines } from "./run_detail_dialog.tsx";
 import { GLYPHS } from "../../../lib/design_system.ts";
@@ -9,22 +9,16 @@ import { absTime } from "../../hooks/sidebar_live.ts";
 // `profileDetailLines`: absolute local timestamps + a duration for finished runs (the
 // durable-record rule), an elapsed age for a run still in flight, and the error verbatim.
 
-function run(overrides: Partial<CortexRunRow> = {}): CortexRunRow {
+function run(overrides: Partial<RunSummary> = {}): RunSummary {
     return {
         runId: "11111111-2222-3333-4444-5555aabbccdd",
-        analysisId: "an-1",
         threadId: null,
         workflowName: "executeAnalysis",
+        workflowId: "11111111-2222-3333-4444-5555aabbccdd",
         status: "completed",
         startedAt: "2026-01-01T00:00:00.000Z",
         completedAt: "2026-01-01T00:05:00.000Z",
         error: null,
-        synthesisStatus: null,
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: null,
         ...overrides,
     };
 }

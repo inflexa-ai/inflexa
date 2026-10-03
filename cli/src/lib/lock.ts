@@ -65,6 +65,12 @@ export const PACKAGE_STORE_RECLAIM_LOCK_KEY = "package-store-reclaim";
  */
 export const PACKAGE_STORE_METADATA_LOCK_KEY = "package-store-metadata";
 
+/**
+ * Advisory-lock key of a client that starts the local server in the background. The holder reads the
+ * discovery file again before it spawns, thus two clients that find no server start one server, not two.
+ */
+export const SERVER_SPAWN_LOCK_KEY = "server-spawn";
+
 /** The extension of every lock file, which is what turns a file name of the lock directory back into a key. */
 const LOCK_SUFFIX = ".lock";
 
