@@ -2,39 +2,39 @@
 
 ## Purpose
 
-Define provenance-safe add AND remove of analysis inputs after creation. Every surface — the TUI file picker, the `inflexa inputs add`/`inputs remove` subcommands, and the in-process conversation-agent tool — goes through the shared `addInputs`/`removeInput`/`applyInputsDiff` operations. Mutation is register-only: it stages nothing and boots no runtime, leaving materialization to `input-staging` and re-profiling to the profile-parity engine. Adds are existence-checked and all-or-nothing; removes resolve against the registered set rather than the filesystem.
+Define provenance-safe add AND remove of analysis inputs after creation. Every surface — the TUI file picker, the `inflexa inputs add`/`inputs remove` subcommands, and the in-process conversation-agent tool — goes through the shared `addInputs`/`removeInput`/`applyInputsDiff` operations. Mutation is register-only: it stages nothing and boots no runtime, leaving materialization to `input-staging` and re-profiling to the input-change watch of the local server. Adds are existence-checked and all-or-nothing; removes resolve against the registered set rather than the filesystem.
 
 ## Requirements
 
 ### Requirement: Manage analysis inputs after creation through the shared register-only operations
 
-The system SHALL let inputs be added AND removed after analysis creation through the existing operations in `src/modules/analysis/analysis.ts` — `addInputs` (insert `analysis_inputs` rows, emit `prov.input_added`), `removeInput` (delete a row, emit `prov.input_removed`), and `applyInputsDiff` (a combined add-then-remove batch) — from surfaces sharing those operations: the TUI file picker / "Manage inputs" flow (existing), new `inflexa inputs add <paths…>` and `inflexa inputs remove <paths…>` subcommands, and a new in-process conversation-agent tool that can add and remove. No surface SHALL re-implement registration.
+The system SHALL let inputs be added AND removed after analysis creation through the existing operations in `src/modules/analysis/analysis.ts` — `addInputs` (insert `analysis_inputs` rows, emit `prov.input_added`), `removeInput` (delete a row, emit `prov.input_removed`), and `applyInputsDiff` (a combined add-then-remove batch). These operations SHALL run in the local server process. The surfaces that share them are the input routes of the local server, and the conversation-agent tool that runs inside a chat turn in the server. The TUI file picker / "Manage inputs" flow and the `inflexa inputs add <paths…>` and `inflexa inputs remove <paths…>` subcommands call the input routes. No surface SHALL re-implement registration. A client SHALL resolve each relative path against its own working folder, and SHALL send absolute paths.
 
-Input mutation SHALL be register-only: it SHALL NOT stage files into the workspace tree and SHALL NOT boot a harness runtime. Materialization SHALL remain owned by `input-staging` and re-profiling by the profile-parity engine.
+Input mutation SHALL be register-only: the operation SHALL NOT stage files into the workspace tree and SHALL NOT boot a harness runtime. Materialization SHALL remain owned by `input-staging` and re-profiling by the input-change watch of the local server.
 
-The `inputs add`/`inputs remove` subcommands SHALL be agent-blocked (the conversation agent's `run_inflexa` tool may not invoke them): mid-chat mutation must run in-process via the agent tool so it writes provenance under the lock the chat already holds, and a subprocess would be refused by that lock. The subcommands are the terminal (human) surface; `inputs ls` remains agent-runnable (read-only).
+The `inputs add`/`inputs remove` subcommands SHALL be agent-blocked (the conversation agent's `run_inflexa` tool may not invoke them): during a chat the agent changes the inputs with its own tool, which asks the user for approval inside the turn and records the change in the provenance of the turn. The subcommands are the terminal (human) surface; `inputs ls` remains agent-runnable (read-only).
 
 #### Scenario: The subcommand registers an input without staging or booting
 
 - **WHEN** `inflexa inputs add <path>` runs for a resolved analysis
-- **THEN** an `analysis_inputs` row is created for the path and `prov.input_added` is emitted
-- **AND** no file is staged into the workspace tree and no harness runtime is booted
+- **THEN** the local server creates an `analysis_inputs` row for the absolute path and emits `prov.input_added`
+- **AND** the mutation stages no file into the workspace tree, and the process of the subcommand boots no harness runtime
 
 #### Scenario: The subcommand removes an input
 
 - **WHEN** `inflexa inputs remove <path>` runs for a path that is a current input of the analysis
-- **THEN** that `analysis_inputs` row is deleted and `prov.input_removed` is emitted
+- **THEN** the local server deletes that `analysis_inputs` row and emits `prov.input_removed`
 
 #### Scenario: The agent tool adds and removes in the chat's own process
 
-- **WHEN** the in-process agent tool adds and/or removes inputs during a live chat
-- **THEN** it applies them via the same `addInputs`/`removeInput`/`applyInputsDiff` in the chat's process
-- **AND** the resulting `prov.input_added`/`prov.input_removed` are emitted on the in-process bus the running recorder and profile-parity watcher observe
+- **WHEN** the agent tool adds and/or removes inputs during a live chat
+- **THEN** it applies them via the same `addInputs`/`removeInput`/`applyInputsDiff` in the server process, which runs the chat turn
+- **AND** the resulting `prov.input_added`/`prov.input_removed` are emitted on the bus of the server, which the running recorder and the input-change watch observe
 
 #### Scenario: The agent adds and removes via the in-process tool, confirmation-gated
 
 - **WHEN** the agent adds or removes inputs
-- **THEN** it does so through the in-process tool (never the agent-blocked subcommand)
+- **THEN** it does so through its tool in the process of the turn (never the agent-blocked subcommand)
 - **AND** the action is approval-gated so the user confirms before any input is added or removed
 
 ### Requirement: Adding an input rejects paths that do not exist
@@ -88,24 +88,6 @@ The system SHALL provide the conversation agent a read-only way to list the anal
 - **WHEN** the agent requests the analysis's current inputs
 - **THEN** it receives the set of registered `analysis_inputs` references, including inputs whose paths are outside the anchor folder
 
-### Requirement: Added or removed inputs re-profile through the parity engine, not the mutation path
-
-Adding or removing an input SHALL NOT itself trigger data profiling. The mutation changes the analysis's current input set, and the existing profile-parity engine SHALL detect the drift and re-profile: immediately on a running chat (its in-process input-mutation edge), or on the next open of the analysis otherwise. Emptying the input set SHALL clear the now-stale profile through the same engine.
-
-#### Scenario: A mid-chat mutation reprofiles immediately
-
-- **GIVEN** an open chat on an analysis
-- **WHEN** the agent adds or removes an input in-process
-- **THEN** the mutation triggers no profiling directly
-- **AND** the profile-parity engine observes the input-set drift and starts a re-profile (or clears the profile if the set emptied) in the running process
-
-#### Scenario: A terminal mutation reprofiles on next open
-
-- **GIVEN** no live instance holds the analysis
-- **WHEN** `inflexa inputs add` or `inflexa inputs remove` changes the input set
-- **THEN** no profiling runs at mutation time
-- **AND** the next open of that analysis detects the drift and re-profiles
-
 ### Requirement: manage_inputs describes its call by action and target
 
 `manage_inputs` SHALL declare a `describeCall` hook naming the action the call performs and what it acts on. An `add` or `remove` call SHALL name the paths it carries, and SHALL report a count rather than an enumeration when it carries enough of them that naming each would exceed what one line can usefully hold. A `list` call carries no paths and SHALL be described by its action alone.
@@ -135,3 +117,26 @@ The `paths` field is optional in the schema and required only for `add` and `rem
 - **GIVEN** an `add` call whose `paths` field is absent, which the schema permits and `execute` rejects
 - **WHEN** the tool call is rendered
 - **THEN** the detail names the action rather than producing an empty string
+
+### Requirement: Added or removed inputs re-profile through the input-change watch of the local server
+
+Adding or removing an input SHALL NOT itself trigger data profiling. The local server SHALL watch the input events of each writer in its process — an input route, or the agent's input tool inside a turn. After a short debounce for each analysis, it SHALL queue one re-profile drive behind the profile work of that analysis. The drive needs the runtime: a change whose debounce ends before the runtime is ready drives no re-profile. Emptying the input set SHALL clear the now-stale profile through the same drive. A client SHALL NOT re-profile after its own input change.
+
+#### Scenario: A mid-chat mutation reprofiles in the server
+
+- **GIVEN** an open chat on an analysis
+- **WHEN** the agent adds or removes an input inside a turn
+- **THEN** the mutation triggers no profiling directly
+- **AND** the input-change watch of the server starts a re-profile (or clears the profile if the set emptied) after its debounce
+
+#### Scenario: A terminal mutation reprofiles in the server
+
+- **GIVEN** a local server whose runtime is ready, and no open chat on the analysis
+- **WHEN** `inflexa inputs add` or `inflexa inputs remove` changes the input set
+- **THEN** no profiling runs inside the route
+- **AND** the input-change watch of the server re-profiles the analysis after its debounce
+
+#### Scenario: A burst of changes gets one re-profile
+
+- **WHEN** a batch edit changes several inputs of one analysis inside the debounce window
+- **THEN** the server queues one re-profile drive for that analysis

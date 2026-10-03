@@ -2,19 +2,23 @@
 
 ## Purpose
 The analysis-aware chat launcher: resolving a `ChatTarget` (analysis + working directory) headlessly, rendering the TUI rooted at the analysis's resolved anchor path, and swapping the open chat in place. Session identity lives in the harness Postgres thread store; the launcher resolves no session — the conversation thread binds after the harness boot reaches `ready`.
+
 ## Requirements
+
 ### Requirement: Analysis-aware chat launcher
 
 The system SHALL provide analysis-aware launchers in `src/tui/app.launch.tsx` (the
-presentation/app-shell layer, which may import module logic) — `launchNew`, `launchResume`, and
-`launchDefault` — each resolving its `ChatTarget` through the headless resolvers in
-`src/modules/analysis/launch.ts` and rendering the TUI through the one shared `renderChat` path,
-with `workingDir` set to the analysis's resolved anchor path. A `ChatTarget` SHALL carry only the
-analysis and working directory: the launcher performs no session resolution and reads or writes no
-session state — the conversation thread is resolved after the harness boot reaches `ready` (see
-`tui-harness-chat`). Resolution SHALL heal a moved anchor passively (recovery only, never
-creation — no-litter policy). The launcher SHALL pass the active `analysis` to `App` so in-app
-commands can read the current analysis through the workspace context.
+presentation/app-shell layer) — `launchNew`, `launchResume`, and `launchDefault` — each resolving its
+`ChatTarget` through the headless resolvers of the client, which ask the local server (the resolve
+route, the create route, and the read of the analysis), and rendering the TUI through the one shared
+`renderChat` path, with `workingDir` set to the analysis's resolved anchor path. A `ChatTarget` SHALL
+carry only the analysis and working directory: the launcher performs no session resolution and reads
+or writes no session state — the conversation thread is resolved after the boot store reaches
+`ready` (see `tui-harness-chat`). Resolution SHALL heal a moved anchor passively (recovery only,
+never creation — no-litter policy). The read of the analysis takes its instance lock in the server,
+thus an analysis that a different process holds SHALL stop the launch with a plain line before
+`render()`. The launcher SHALL pass the active `analysis` to `App` so in-app commands can read the
+current analysis through the workspace context.
 
 #### Scenario: Launch resolves no session
 
@@ -36,25 +40,31 @@ commands can read the current analysis through the workspace context.
 - **WHEN** the TUI is rendered
 - **THEN** `App` is given the active `Analysis` and `workingDir`, so in-app commands can read `ctx.analysis`
 
+#### Scenario: A locked analysis stops the launch
+
+- **WHEN** a launcher resolves an analysis that a different live process holds
+- **THEN** the launcher prints the conflict and exits, and the alternate screen is never taken
+
 ### Requirement: Shared launch preamble
 
 Every launcher that opens an analysis chat MUST share one factored
-preamble. It holds the proxy-ready check (`ensureProxyReadyOrExit`), the
-config validity gate, the theme seed, and the render options. All of it
-runs in the normal-stdio phase, before `render()` takes over the terminal.
-The interactive sandbox-image gate MUST NOT be part of the preamble: the app
+preamble. It holds the theme seed, the claim of the update notice, and the
+render options. All of it runs in the normal-stdio phase, before `render()`
+takes over the terminal. The preamble MUST NOT check the proxy or the
+harness config: the local server checks them when it boots its runtime. The
+interactive sandbox-image gate MUST NOT be part of the preamble: the app
 renders at once, and the wait surfaces at the first sandbox-making action,
-through the gate of the TUI. After `render()`, the launcher kicks off the
-asynchronous harness runtime boot that drives the boot-state store (see
+through the gate of the TUI. After `render()`, the launcher starts the read
+of the boot phase of the server that drives the boot-state store (see
 `tui-harness-chat`). The `App` component's props MUST be `workingDir` plus
-`analysis`. The current thread id is workspace state resolved after boot
-reaches `ready` (never a launcher prop), held reactively so the open chat
-can be swapped in place.
+`analysis`. The current thread id is workspace state resolved after the boot
+store reaches `ready` (never a launcher prop), held reactively so the open
+chat can be swapped in place.
 
 #### Scenario: Launchers use the same preamble
 
 - **WHEN** any launcher opens an analysis chat
-- **THEN** the same proxy-ready handling, config gate, theme seeding, and render options run before the alternate screen, and the runtime boot starts after it
+- **THEN** the same theme seeding and render options run before the alternate screen, and the read of the boot phase of the server starts after it
 
 #### Scenario: The app opens during a transfer
 
@@ -65,7 +75,7 @@ can be swapped in place.
 #### Scenario: App carries no session prop
 
 - **WHEN** `App` mounts
-- **THEN** its props are `workingDir` plus `analysis`, and the current thread id is resolved into the reactive workspace state after boot reaches `ready`
+- **THEN** its props are `workingDir` plus `analysis`, and the current thread id is resolved into the reactive workspace state after the boot store reaches `ready`
 
 ### Requirement: In-place chat switching
 
@@ -73,10 +83,12 @@ The `App` component SHALL expose an `openSession(threadId, workingDir, analysis)
 swaps the open chat without a process restart: it SHALL update the reactive current thread, working
 directory, and analysis, rebind the conversation thread scope (the id is the pg thread id — the one
 session identity), reload that thread's transcript, reset streaming and error state, and abort any
-in-flight turn. Swapping to a different analysis SHALL additionally exchange the per-analysis
-instance lock — refusing the swap with a notice when the target analysis is held by another
-process — and re-run the data-profile parity check. The event/turn plumbing SHALL follow the
-current reactive thread id, so turn output applies to the chat that is now open.
+in-flight turn. A swap to a different analysis SHALL read the target analysis from the local server
+first (`GET {A}`), which takes its instance lock in the server: a lock that a different process
+holds SHALL refuse the swap with a notice before any scope moves. The server keeps the lock of each
+analysis that it opened until it exits, thus a swap releases no lock. The swap SHALL then re-run the
+data-profile parity check. The turn plumbing SHALL follow the current reactive thread id, so turn
+output applies to the chat that is now open.
 
 #### Scenario: Swap without restart
 
@@ -90,5 +102,5 @@ current reactive thread id, so turn output applies to the chat that is now open.
 
 #### Scenario: Analysis swap refused when locked elsewhere
 
-- **WHEN** `openSession` targets an analysis held by another live inflexa process
+- **WHEN** a swap targets an analysis held by another live inflexa process
 - **THEN** the swap is refused with a notice and the current chat scope is unchanged

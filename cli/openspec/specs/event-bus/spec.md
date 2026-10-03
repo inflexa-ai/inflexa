@@ -2,15 +2,18 @@
 
 ## Purpose
 The in-process event bus (`Bus`) and its `BusEvent` contract — a single typed channel modules publish to and subscribe from without circular imports.
+
 ## Requirements
+
 ### Requirement: BusEvent type lives in src/types/events.ts
 
 The canonical `BusEvent` union type SHALL be defined in the shared domain-model directory
 `src/types/`, in its event-contract module `src/types/events.ts`. The bus module (`src/lib/bus.ts`)
 SHALL import it from there and MUST NOT define its own `BusEvent` type. The union SHALL contain
 only members with at least one live emitter and consumer — today the analysis-scoped provenance
-members (`prov.*`); the session-scoped chat members retired with the proxy chat engine (the
-harness conversation path writes the Solid store directly and never used the bus).
+members (`prov.*`) and the run observation member (`run.*`); the session-scoped chat members retired
+with the proxy chat engine (the harness conversation path streams its frames to the client and never
+used the bus).
 
 #### Scenario: Bus imports BusEvent from types
 
@@ -65,9 +68,10 @@ string — no second bus instance SHALL be introduced.
 The two families SHALL remain independent: a `run.*` member SHALL NOT be derived from, aliased
 to, or emitted as a side effect of a `prov.*` member, and a subscriber to one SHALL be able to
 ignore the other entirely. Provenance events close a signed, hash-chained record written under a
-single-writer instance lock; run observation is a lossy-tolerant channel that drives presentation.
-Overloading one family with the other's job would couple a repaint to the chain's write discipline
-and force provenance to record step names and agent identities it has no reason to hold.
+single-writer instance lock; run observation is a lossy-tolerant channel that drives in-process
+reactions of the process that runs the runtime, for example the busy gauge of the agent switch.
+Overloading one family with the other's job would couple such a reaction to the chain's write
+discipline and force provenance to record step names and agent identities it has no reason to hold.
 
 Each `run.*` member SHALL carry exactly the fields its own action needs, following the existing
 one-event-per-domain-action rule — never one member discriminated by an interior field with
@@ -94,10 +98,14 @@ Because the harness re-invokes that callback after a durable-runtime recovery, a
 a durable or user-visible action SHALL key it by run id and observed status. A subscriber that only
 renders SHALL NOT need such keying.
 
+The bus SHALL stay inside the process that runs the runtime: the local server, or a dev command
+that boots its own runtime. A client of the local server, the TUI included, SHALL NOT subscribe to the
+bus. It SHALL observe run state by reading the run routes of the local server on its own refresh edges.
+
 #### Scenario: Events reach the bus through the composition root
 
 - **WHEN** a run's state changes inside the embedded runtime
-- **THEN** the injected callback fires and the corresponding `run.*` event is published on the CLI bus
+- **THEN** the injected callback fires and the corresponding `run.*` event is published on the bus of that process
 
 #### Scenario: Re-delivery does not double a durable reaction
 
@@ -106,6 +114,6 @@ renders SHALL NOT need such keying.
 
 #### Scenario: Events are in-process only
 
-- **WHEN** a run is launched by a separate process rather than inside the running app
-- **THEN** no `run.*` event is observed, and the sidebar's polling backstop remains the path by which that run becomes visible
-
+- **WHEN** a run executes in the local server and a TUI shows the same analysis
+- **THEN** the `run.*` events of that run reach only the subscribers of the server process
+- **AND** the TUI sees the new run state through a read of the run routes of the local server at its next refresh edge

@@ -11,15 +11,21 @@ Define the `inflexa` command that resolves a GEO Series accession (`GSE…`) to 
 The CLI SHALL provide a command that accepts a GEO Series accession (`GSE…`) and
 fetches the Series' processed data host-side into a per-accession directory in the
 target analysis's home folder. The command SHALL resolve that folder through the
-shared context resolution (`resolveContext`) — an explicit `--analysis` ref, else the
-working-directory marker. It needs no resolution tier of its own for the agent path:
+resolve route of the local server (`POST /api/v1/analyses/resolve`), which runs the
+shared context resolution — an explicit `--analysis` ref, else the marker of the
+working folder of the command, which the command sends as an absolute path. The
+download itself SHALL run in the command process, not in the server. It needs no
+resolution tier of its own for the agent path:
 `run_inflexa` starts the subprocess in the session analysis's folder, so a chat request
 that names only the accession resolves there through the ordinary marker walk-up.
 
 Downloading SHALL be the command's whole responsibility. It SHALL NOT record input
-rows, emit provenance, stage, seed, (re)profile, or boot a harness runtime. Because
-it mutates no analysis state, it SHALL NOT require the analysis instance lock and is
-therefore safe to run as a subprocess beside a live TUI that holds it. Making the
+rows, emit provenance, stage, seed, (re)profile, or boot a harness runtime of its own.
+Like each instance command, it starts the local server when none answers, and that
+server boots its runtime. Because
+it mutates no analysis state, it SHALL NOT require the analysis instance lock: the
+resolve route takes no lock, thus the command is safe to run as a subprocess beside a
+live chat of the same analysis. Making the
 downloaded files inputs is a separate, explicit user action through the existing
 add-inputs path, which already stages and profiles them like any other local file.
 
@@ -39,7 +45,7 @@ add-inputs path, which already stages and profiles them like any other local fil
 
 - **GIVEN** a completed download in a subprocess
 - **WHEN** the command finishes
-- **THEN** no input rows were recorded, no provenance was emitted, no runtime was booted, and the analysis instance lock was never claimed
+- **THEN** no input rows were recorded, no provenance was emitted, the command booted no runtime of its own, and the analysis instance lock was never claimed
 
 #### Scenario: The downloaded files become inputs only when the user asks
 
