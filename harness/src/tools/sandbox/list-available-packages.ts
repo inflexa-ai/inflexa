@@ -493,7 +493,7 @@ export type InventoryRead = { readonly kind: "sections"; readonly sections: read
  * here, thus the census a model sees and the check a launch runs never
  * disagree about what the source holds.
  */
-export async function readInventorySections(deps: ListAvailablePackagesDeps): Promise<InventoryRead> {
+export async function readInventorySections(deps: ListAvailablePackagesDeps, analysisId: string): Promise<InventoryRead> {
     // The image record merges in when the host can read a valid one. An absent
     // record and an invalid record both merge nothing, and neither is an
     // error: the record is an enrichment, and the farm or pool inventory stays
@@ -514,8 +514,9 @@ export async function readInventorySections(deps: ListAvailablePackagesDeps): Pr
     }
     // Both farm container paths are tried when the host injects none, because
     // the path keys on the declared toolchain and this read carries none.
+    const farmLockFile = typeof deps.farmLockFile === "function" ? deps.farmLockFile(analysisId) : deps.farmLockFile;
     let lock: FarmLock | null = null;
-    for (const candidate of deps.farmLockFile ? [deps.farmLockFile] : DEFAULT_FARM_LOCK_FILES) {
+    for (const candidate of farmLockFile ? [farmLockFile] : DEFAULT_FARM_LOCK_FILES) {
         lock = readFarmLockFile(candidate).unwrapOr(null);
         if (lock !== null) break;
     }
@@ -596,8 +597,8 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
             if (language !== undefined) return `${language} packages`;
             return "full package list";
         },
-        execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
-            const read = await readInventorySections(deps);
+        execute: async (input, ctx): Promise<Result<PackagesResult, ToolError>> => {
+            const read = await readInventorySections(deps, ctx.session.scope.analysisId);
             // An unreadable inventory is an expected environment state — model it as an
             // `available: false` data variant telling the caller the set is UNKNOWN,
             // WITH the reason: without it, a structural fault (a damaged dependency

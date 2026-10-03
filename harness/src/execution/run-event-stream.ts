@@ -32,13 +32,16 @@
  */
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
+import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
-import type { ChatPart } from "../contracts/chat-parts.js";
+import type { ChatPart, RunFailedPart } from "../contracts/chat-parts.js";
 import { sleep } from "../lib/async-utils.js";
 import { createNoopLogger } from "../lib/console-logger.js";
-import { describeDbError } from "../lib/db-result.js";
+import { describeDbError, type DbError } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
+import { queryRun } from "../state/runs.js";
+import type { RunStatus } from "../state/schema.js";
 import { queryStepsByRun } from "../state/step-executions.js";
 import { foldRunEventParts, parseRunEventPart } from "./run-event-parts.js";
 
@@ -60,6 +63,15 @@ const RUN_EVENT_STREAM_KEY = "events";
 const CHILD_DISCOVERY_INTERVAL_MS = 1_000;
 
 /**
+ * The reads of the run row for a run whose parent stream ended with no terminal
+ * part. The canceler writes `canceled` to the row after the engine cancel, thus
+ * the stream can end before the row changes, and the later reads wait out that
+ * window.
+ */
+const CANCELED_ROW_READ_ATTEMPTS = 4;
+const CANCELED_ROW_READ_INTERVAL_MS = 500;
+
+/**
  * Construction-time dependencies. The pool is the application pool the run
  * ledger lives in; the logger is where every contained failure is reported, and
  * defaults to silence so an embedder that wired none sees nothing rather than
@@ -68,6 +80,10 @@ const CHILD_DISCOVERY_INTERVAL_MS = 1_000;
 export interface RunEventStreamDeps {
     readonly pool: Pool;
     readonly logger?: Logger;
+    /** Reads the status of the run row, `null` when no row exists. Defaults to `queryRun` on `pool`. */
+    readonly readRunStatus?: (runId: string) => ResultAsync<RunStatus | null, DbError>;
+    /** The wait between two reads of the run row. Defaults to a timer. */
+    readonly sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -95,8 +111,15 @@ export interface RunEventSubscribeOptions {
 export interface RunEventStream {
     /**
      * Deliver every part the run produces — parent and children alike — to
-     * `onPart`, resolving when the run is terminal and every stream opened has
-     * drained, or promptly when the signal aborts.
+     * `onPart`, resolving when the run is terminal, every stream opened has
+     * drained, and `onPart` has taken the last part, or promptly when the signal
+     * aborts.
+     *
+     * A canceled workflow runs no more steps, thus it never writes its own
+     * terminal part, and the canceler cannot write a stream. When the parent
+     * stream ends with no `data-run-completed` or `data-run-failed` part and
+     * the run row reads `canceled`, the last part delivered is a
+     * `data-run-failed` part with `reason: "canceled"`.
      *
      * Parts from one workflow arrive in the order that workflow wrote them. No
      * order is promised ACROSS the parent and its children: those workflows
@@ -120,6 +143,8 @@ export interface RunEventStream {
  */
 export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
     const baseLogger = (deps.logger ?? createNoopLogger()).named("run-event-stream");
+    const readRunStatus = deps.readRunStatus ?? ((runId: string) => queryRun(deps.pool, runId).map((row) => row?.status ?? null));
+    const waitForRowRead = deps.sleep ?? sleep;
 
     return {
         async subscribe({ runId, onPart, signal }: RunEventSubscribeOptions): Promise<void> {
@@ -156,9 +181,9 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
             // survivors in place, so a single stream's write order survives it.
             const pending: ChatPart[] = [];
             let delivering = false;
+            let delivered: Promise<void> = Promise.resolve();
 
-            const deliver = async (): Promise<void> => {
-                if (delivering) return;
+            const drain = async (): Promise<void> => {
                 delivering = true;
                 try {
                     while (pending.length > 0 && !signal.aborted) {
@@ -177,6 +202,15 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                 }
             };
 
+            // The returned promise settles when the queue is empty, thus a caller
+            // that awaits it knows that the handler took each part enqueued so far.
+            const deliver = (): Promise<void> => {
+                if (!delivering) delivered = drain();
+                return delivered;
+            };
+
+            let sawTerminal = false;
+
             const readWorkflowStream = async (workflowId: string): Promise<void> => {
                 const streamLogger = logger.with({ workflowId });
                 const generator = DBOS.readStream<unknown>(workflowId, RUN_EVENT_STREAM_KEY);
@@ -193,6 +227,7 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                             streamLogger.debug("dropped a stream value outside the chat-part contract");
                             continue;
                         }
+                        if (part.type === "data-run-completed" || part.type === "data-run-failed") sawTerminal = true;
                         pending.push(part);
                         void deliver();
                     }
@@ -249,10 +284,35 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                 }
             })();
 
+            const canceledTerminalPart = async (): Promise<RunFailedPart | null> => {
+                for (let attempt = 1; attempt <= CANCELED_ROW_READ_ATTEMPTS; attempt++) {
+                    const read = await readRunStatus(runId);
+                    if (read.isErr()) {
+                        logger.warn("run row read failed", { err: describeDbError(read.error) });
+                    } else {
+                        const status = read.value;
+                        if (status === "canceled") return { type: "data-run-failed", runId, error: "Run canceled", reason: "canceled" };
+                        // The launch writes the row before the workflow starts, thus
+                        // no row means that the id is not an analysis run.
+                        if (status === null) return null;
+                        // Only an active row can still become `canceled`.
+                        if (status !== "running" && status !== "suspended_insufficient_funds") return null;
+                    }
+                    if (attempt < CANCELED_ROW_READ_ATTEMPTS) await Promise.race([waitForRowRead(CANCELED_ROW_READ_INTERVAL_MS), aborted]);
+                    if (signal.aborted) return null;
+                }
+                return null;
+            };
+
             const settled = (async (): Promise<void> => {
                 await discovery;
                 await parentRead;
                 await Promise.all(childReads);
+                if (!sawTerminal && !signal.aborted) {
+                    const terminal = await canceledTerminalPart();
+                    if (terminal !== null) pending.push(terminal);
+                }
+                await deliver();
             })().catch((err: unknown) => {
                 // Defensive: every stream read and every discovery pass contains its
                 // own failure, so arriving here is a defect in this seam rather than
