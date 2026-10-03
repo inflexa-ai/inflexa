@@ -7,25 +7,19 @@
 
 ### Requirement: Data-profile launch is a deliberate action
 
-The system SHALL provide a dedicated text command that runs a data profile for a resolved analysis.
-The command is a client of the local server: it asks the server for the deliberate re-profile, and the
-server stages the inputs and triggers the workflow in its own runtime.
+The system MUST give a dedicated text command that runs a data profile for a resolved analysis. The command is a client of the local server. It asks the server for the deliberate re-profile, and the server stages the inputs and triggers the workflow in its own runtime.
 
-Staging files and triggering profile workflows SHALL happen only on deliberate actions, and only in a
-process that runs the harness runtime: this command, `inflexa run --plan` (which stages in its own
-process), the open of an analysis chat in the TUI (its chat-context read drives the parity check in the
-server), an input change that the local server records from any writer (an input route, or the agent's
-input tool inside a turn), and the TUI's manual re-profile action. The input-change edge is the
-server's: it re-profiles after a short debounce, and only when its runtime is ready at the end of
-that debounce. Parity *checks* on these
-edges SHALL be read-only (the identity-only enumeration per `input-staging`); staging writes happen only
-when a drive decides to materialize or to (re-)trigger.
+A staging of files and a trigger of a profile workflow MUST occur only on a deliberate action. They MUST occur only in a process that runs the harness runtime. These are the deliberate actions:
 
-The runtime boot SHALL belong to the local server, which boots at its own start. A flow that resolves to
-no analysis chat — bare `inflexa` resolving to nothing, the welcome screen, `--status` views,
-`inflexa ls`/`status` — SHALL remain free of staging writes and workflow triggers. Such a flow is a
-client, and a client that finds no server starts one, thus the flow can start the local server and
-with it the runtime.
+- this command
+- `inflexa run --plan`, which stages in its own process
+- the open of an analysis chat in the TUI, whose chat-context read drives the parity check in the server
+- an input change that the local server records from each writer: an input route, or the input tool of the agent inside a turn
+- the manual re-profile action of the TUI
+
+The input-change edge is the edge of the server. It re-profiles after a short debounce, when its runtime is ready and its sandbox gate passes. Until then the change waits, per `local-server`. The parity *checks* on these edges MUST be read-only: the enumeration of identities only, per `input-staging`. A staging write occurs only when a drive decides to materialize or to trigger again.
+
+The runtime boot MUST belong to the local server, which boots at its own start. A flow that resolves to no analysis chat MUST stay free of staging writes and workflow triggers. Such flows are bare `inflexa` that resolves to nothing, the welcome screen, the `--status` views, and `inflexa ls` or `status`. Such a flow is a client, and a client that finds no server starts one. Thus the flow can start the local server and with it the runtime.
 
 #### Scenario: No-analysis flows stay side-effect free
 
@@ -53,6 +47,12 @@ with it the runtime.
 
 - **WHEN** the user invokes the profile command for an analysis with staged-able inputs
 - **THEN** the local server stages the inputs and triggers the data-profile workflow in its runtime
+
+#### Scenario: An input change before the ready edge
+
+- **GIVEN** a server whose runtime still boots
+- **WHEN** a client adds an input to an analysis
+- **THEN** the server runs the input-change drive at the first fire of its timer after the runtime is ready
 
 ### Requirement: The headless parity and force checks judge drift on content signatures
 
@@ -138,27 +138,25 @@ underlying reason, never a silent exit.
 
 ### Requirement: Missing prerequisites yield actionable errors
 
-The command SHALL fail with an error that names the missing prerequisite and its
-remedial action whenever a prerequisite is unavailable. Raw connection errors SHALL
-NOT be the surfaced form. Prerequisite checks SHALL run before staging and triggering.
+The command MUST fail with an error that names the missing prerequisite and its remedy, each time a prerequisite is unavailable. A raw connection error MUST NOT be the form that the user sees. The checks of the prerequisites MUST run before the staging and the trigger.
 
-The prerequisites of a sandbox are the command's own checks, from the sandbox
-readiness read of the local server before it asks for the profile: the sandbox
-image absent (remedy: `inflexa sandbox pull`, or build a custom image), the package
-store absent or incomplete (remedy: `inflexa store download`), and a farm of the
-analysis that could not be composed. An analysis with no inputs needs none of them.
+The server checks the prerequisites of a sandbox before each profile drive, per `local-server`:
 
-The prerequisites of the runtime are the prerequisites of the boot of the local
-server: Postgres not provisioned or not running (remedy: the setup flow), the local
-proxy unreachable or not signed in (remedy: start or configure the proxy, or
-`inflexa setup`), and the embedder unresolved or failing its boot probe (remedy:
-`inflexa setup --embeddings`, or the top-level `embedding` config key — api-key mode
-connects directly to an OpenAI-compatible endpoint, separate from the chat proxy; the
-profile's vector indexing cannot run without an embedder and would fail after the
-sandbox run already spent its work). The boot error of the server SHALL name such a
-prerequisite and its remedy, and the server status, the TUI, and the server log
-show it. While the runtime is not ready, the command SHALL refuse with the
-unavailable answer of the server, before any staging or trigger.
+- no live transfer
+- a sandbox image in the engine
+- a package store that is present and complete
+- no recorded failure of the farm composition of the analysis
+
+The remedies are `inflexa sandbox pull` or the build of a custom image, and `inflexa store download`. A refusal gives 409 `conflict` with the line of the gate, and the command prints it. An analysis with no inputs needs none of them. The command itself does no check of the machine.
+
+The prerequisites of the runtime are the prerequisites of the boot of the local server:
+
+- Postgres that is not provisioned or does not run. The remedy is the setup flow.
+- A local proxy that does not answer. The remedy is to start or configure the proxy.
+- A provider login that is absent or dead. The remedy is `inflexa up` in a terminal.
+- An embedder that does not resolve or fails its boot probe. The remedy is `inflexa setup --embeddings`, or the top-level `embedding` config key.
+
+In api-key mode the embedder connects directly to an OpenAI-compatible endpoint, apart from the chat proxy. The vector index of the profile cannot run without an embedder, and it would fail after the sandbox run spent its work. The boot error of the server MUST name such a prerequisite and its remedy. The server status, the TUI, and the server log show it. While the runtime is not ready, the command MUST refuse with the unavailable answer of the server, before any staging or trigger.
 
 #### Scenario: Unprovisioned Postgres
 
@@ -169,12 +167,14 @@ unavailable answer of the server, before any staging or trigger.
 #### Scenario: Missing sandbox image
 
 - **WHEN** the container engine has no sandbox-base image and the analysis has inputs
-- **THEN** the error names the image and how to obtain it, before the command asks for the profile
+- **THEN** the server refuses the profile with 409 `conflict`, and the command prints the line that names the image and how to get it
+- **AND** nothing is staged
 
 #### Scenario: Unconfigured or broken embedder blocks before any work
 
 - **WHEN** the local server boots with `embedding.mode = "off"`, an incomplete embedding config, or an embedder that fails its probe embedding
-- **THEN** the boot error names the `embedding` config key and the remedial setup command, and the profile command refuses before staging or triggering anything
+- **THEN** the boot error names the `embedding` config key and the remedial setup command
+- **AND** the profile command refuses before staging or triggering anything
 
 ### Requirement: Profile run state is observable
 

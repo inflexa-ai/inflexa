@@ -105,20 +105,6 @@ The system SHALL provide `listAnalysisInputs(analysisId)` and `insertAnalysisInp
 - **THEN** `listAnalysisInputs(analysisId)` returns a row whose `isDir` is `true` (decoded from `is_dir = 1`)
 - **AND** an input with `anchorId: null` round-trips with `anchorId` null and an absolute `path`
 
-### Requirement: Count and bulk helpers for grouping and recovery
-
-The system SHALL provide `countAnalysesByProject(projectId)` and `countAnalysesByAnchor(anchorId)` (each `0` when none or the parent does not exist), `deleteAnalysesForAnchor(anchorId)` (used by `prune`, returning rows deleted; input refs cascade), and `relocateRawInputPrefix(fromPrefix, toPrefix)` (rewriting `anchor_id IS NULL` input paths under a moved tree, on true path boundaries, returning the count rewritten).
-
-#### Scenario: Counts back the list views
-
-- **WHEN** a project groups two analyses
-- **THEN** `countAnalysesByProject(projectId)` returns `2`
-
-#### Scenario: Raw input prefix rewrite respects path boundaries
-
-- **WHEN** `relocateRawInputPrefix("/a/b", "/a/c")` runs
-- **THEN** a raw input at `/a/b/x` becomes `/a/c/x` and a sibling `/a/bc` is left untouched
-
 ### Requirement: Paged reads serve the lists of the local server
 
 The system SHALL provide one paged read for each list that the local server gives: `listAnalysisPage({ projectId, limit, offset })`, `listProjectPage({ limit, offset })`, and `listAnalysisInputPage(analysisId, { limit, offset })`, each returning one page and the count of all rows of the filter. `listAnalysisPage` SHALL give each analysis with the cached path of its anchor, and SHALL keep an analysis whose anchor row is gone, with a `null` path. `listProjectPage` SHALL give each project with its analysis count in the same statement, never one count query for each project. The analysis and project pages SHALL order newest first, with `id` as the tie-break of `created_at`, so two pages never overlap. The system SHALL also provide `countAnalysisInputs(analysisId)`.
@@ -134,3 +120,20 @@ The system SHALL provide one paged read for each list that the local server give
 - **GIVEN** three analyses with the same `created_at`
 - **WHEN** two pages of size 2 are read
 - **THEN** each analysis appears on exactly one page
+
+### Requirement: Bulk helpers for recovery
+
+The system MUST give `deleteAnalysesForAnchor(anchorId)`, which `prune` uses. It MUST return the count of the deleted rows, and the input refs cascade. The system MUST also give `relocateRawInputPrefix(fromPrefix, toPrefix)`. It MUST rewrite each input path with `anchor_id IS NULL` under a moved tree, on true path boundaries, and return the count that it rewrote.
+
+The system MUST NOT keep a count query for each project or for each anchor. The paged project read gives the count of each project in its own statement. The prune lists the analyses of the dead anchors in one read.
+
+#### Scenario: Raw input prefix rewrite respects path boundaries
+
+- **WHEN** `relocateRawInputPrefix("/a/b", "/a/c")` runs
+- **THEN** a raw input at `/a/b/x` becomes `/a/c/x` and a sibling `/a/bc` stays as it is
+
+#### Scenario: A prune deletes the analyses of a dead anchor
+
+- **GIVEN** a dead anchor that homes two analyses
+- **WHEN** `deleteAnalysesForAnchor(anchorId)` runs
+- **THEN** it returns 2, and the input rows of the two analyses go with them

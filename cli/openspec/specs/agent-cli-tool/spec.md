@@ -41,9 +41,11 @@ The tool SHALL classify each argv before running it. An argv that classification
 
 ### Requirement: Interactive TUI-launcher commands are blocked from the agent
 
-The commands that exist only to open an interactive terminal UI — bare `inflexa`, `inflexa config`, `inflexa new`, `inflexa resume`, and the dev-channel `inflexa chat` — cannot function as a captured subprocess: with `stdin` ignored and `stdout`/`stderr` piped, there is no terminal to drive. Each SHALL be registered with a `blocked` agent policy whose reason explains this to the model, and the tool SHALL refuse such a command outright — a blocked result WITHOUT prompting for approval and WITHOUT spawning. A blocked command's introspection (its `--help`) SHALL remain allowed, since it runs no UI.
+Some commands exist only to open an interactive terminal UI: bare `inflexa`, `inflexa config`, `inflexa new`, `inflexa resume`, and the dev-channel `inflexa chat`. Such a command cannot work as a captured subprocess, because its `stdin` is ignored and its output is piped. Each MUST have a `blocked` agent policy whose reason tells the model why. The tool MUST refuse such a command with a blocked result, with no approval prompt and no spawn. The introspection of a blocked command (its `--help`) MUST stay permitted, because it runs no UI.
 
-The policy declaration is the courtesy layer, not the safety boundary: every TUI launcher SHALL itself refuse a non-interactive stdin at the start of its action, before it resolves a target, creates any state of an analysis, or renders a frame — so a TUI command misdeclared or unclassified exits non-zero with a clear message instead of hanging, and a launcher that creates state before its first frame (`inflexa new` creates the analysis during target resolution) refuses before any state exists. Each TUI launcher is an `instance` command, thus the connection to the local server, which can start a server in the background, comes before that refusal.
+The policy is the courtesy layer, not the safety boundary. Each TUI launcher MUST itself refuse a stdin that is not interactive. The refusal comes before it resolves a target, makes any state of an analysis, or renders a frame. Thus a misdeclared launcher exits non-zero with a clear message and does not hang. `inflexa new` makes the analysis during the resolution of its target, thus it refuses before any state exists.
+
+The launchers bare `inflexa`, `inflexa config`, `inflexa new`, and `inflexa resume` are `instance` commands. Each MUST refuse a stdin that is not interactive before the check of the local server. That check can start a server in the background, and a refused launch MUST NOT leave a server behind. The dev `inflexa chat` refuses at the start of its action, after the check.
 
 #### Scenario: Bare inflexa is refused
 
@@ -74,6 +76,12 @@ The policy declaration is the courtesy layer, not the safety boundary: every TUI
 
 - **WHEN** a TUI-launching command runs with a non-interactive stdin (a pipe, a script, or a captured subprocess)
 - **THEN** the launcher exits non-zero with a clear message before it resolves a target, creates any state of an analysis, or renders any frame
+
+#### Scenario: A headless launch starts no server
+
+- **GIVEN** no local server runs
+- **WHEN** `inflexa new demo` runs with a stdin that is not interactive
+- **THEN** the command exits non-zero with the terminal message, and no server starts
 
 ### Requirement: Infrastructure lifecycle commands are blocked from the agent
 
