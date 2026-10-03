@@ -1,4 +1,5 @@
-import { createEffect, createSignal, Show } from "solid-js";
+import { createEffect, createSignal, on, Show } from "solid-js";
+import type { JSX } from "solid-js";
 import type { BoxRenderable, CliRenderer, Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import type { AskReply } from "../api/conversation.ts";
@@ -9,8 +10,8 @@ import { contractHome } from "../lib/paths.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
 import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
-import { chatStatus } from "./hooks/status.ts";
-import { bootState, watchAgentModels } from "./hooks/boot.ts";
+import { chatStatus, type ChatStatus } from "./hooks/status.ts";
+import { bootRecoveryOpts, bootState, recoverServerBoot, watchAgentModels, type BootRecovery, type BootState } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { activeAsk, queuedCount, settleAsk, type PendingAsk } from "./hooks/asks.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
@@ -33,9 +34,10 @@ import { refreshTransferState, retryTerminalTransfers, storeFlightLines, watchTr
 import { commands, openParentSession, openReportSession } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
+import { ConfirmDialog } from "./components/dialog/confirm_dialog.tsx";
 import { FailedFlightDialog } from "./components/dialog/failed_flight_dialog.tsx";
 import { UsageDialog, readSessionUsage } from "./components/dialog/usage_dialog.tsx";
-import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
+import { dialogPush, dialogClose, dialogIsOpen, dialogTop, DialogOverlay } from "./components/dialog/dialog_host.tsx";
 import {
     useKeymapRoot,
     useBindings,
@@ -48,7 +50,7 @@ import {
     KEYS,
     type LayerConfig,
 } from "./keymap.ts";
-import { StatusBar } from "./layout/status_bar.tsx";
+import { StatusBar, type StatusTone } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
 import { AskPrompt } from "./components/ask_prompt.tsx";
@@ -58,7 +60,7 @@ import { ActivityPanel } from "./layout/activity_panel.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
-import { watchProfileParity, driveForceReprofile } from "./hooks/profile_parity.ts";
+import { watchProfileParity, gatedForceReprofile } from "./hooks/profile_parity.ts";
 import { watchFarmHeal } from "./hooks/farm_heal.tsx";
 import { fetchInputs } from "../client/analyses.ts";
 import type { Analysis } from "../types/analysis.ts";
@@ -444,6 +446,75 @@ export function turnSubmitAction(opts: { busy: boolean; ready: boolean; analysis
     return { kind: "send", sessionId: opts.sessionId, analysisId: opts.analysisId };
 }
 
+/**
+ * The state segment of the header, in precedence order: the boot, then the turn of this client, then a turn
+ * of a different client on the open thread, then the result of the last turn. Pure over its three inputs,
+ * thus the precedence is testable without the App, as {@link turnSubmitAction} is.
+ *
+ * A server that stopped is a `failed` boot whose recovery is the start of a server, and it says so: "boot
+ * failed" would send the person to look for a fault in a server that no longer runs.
+ */
+export function headerStatusOf(boot: BootState, chat: ChatStatus, otherTurn: boolean): { text: string; tone: StatusTone } {
+    if (boot.phase === "failed") {
+        return { text: boot.recovery === "start_server" ? `${GLYPHS.cross} server not running` : `${GLYPHS.cross} boot failed`, tone: "error" };
+    }
+    // Until the runtime is ready (idle before the boot fires, or booting), no turn can run — show
+    // the boot state rather than a misleading "ready". Once ready, the turn-scoped status wins.
+    if (boot.phase !== "ready") return { text: `${GLYPHS.circleHalf} booting${GLYPHS.ellipsis}`, tone: "warn" };
+    if (chat === "busy") return { text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" };
+    if (otherTurn) return { text: `${GLYPHS.circleHalf} other client's turn${GLYPHS.ellipsis}`, tone: "warn" };
+    return chat === "error" ? { text: `${GLYPHS.cross} error`, tone: "error" } : { text: `${GLYPHS.circle} ready`, tone: "success" };
+}
+
+/**
+ * Offer the recovery of each boot that settles at `failed` in a dialog that `dialogOf` draws. Each settle offers
+ * it again, thus a recovery that fails again offers it again. A boot that reaches `ready` by a different path (a
+ * different client started the server, and the poll followed it) closes the dialog that is still open, when it is
+ * on top: a dialog that the person opened over it stays. Call once from `App`, inside its reactive owner.
+ */
+export function watchBootRecovery(dialogOf: (recovery: BootRecovery, message: string) => () => JSX.Element): void {
+    let offered: (() => JSX.Element) | null = null;
+    createEffect(
+        on(bootState, (boot) => {
+            if (boot.phase === "failed" && boot.recovery !== undefined) {
+                const render = dialogOf(boot.recovery, boot.message);
+                offered = render;
+                dialogPush(render, () => {
+                    if (offered === render) offered = null;
+                });
+            } else if (boot.phase === "ready" && offered !== null && dialogTop() === offered) {
+                dialogClose("dismiss");
+            }
+        }),
+    );
+}
+
+/** The title, the question, and the button that Enter presses, of the dialog that offers the recovery of a failed boot. */
+function bootRecoveryOffer(recovery: BootRecovery, message: string): { title: string; message: string; defaultActive: "confirm" | "cancel" } {
+    switch (recovery) {
+        case "sign_in":
+            return {
+                title: "Provider sign-in",
+                message: `${message}\n\nSign in now? The chat pauses while \`inflexa up\` runs in this terminal, and the server boots again after the sign-in.`,
+                defaultActive: "confirm",
+            };
+        case "boot_again":
+            return { title: "Boot failed", message: `${message}\n\nBoot the server again? Fix the cause first.`, defaultActive: "confirm" };
+        case "start_server":
+            // A question, never an automatic start, and Enter answers "not now": the person can have stopped
+            // the server on purpose, and each open chat asks.
+            return {
+                title: "Server not running",
+                message: `${message}\n\nStart the server now? It runs in the background, and the chat continues when it is ready.`,
+                defaultActive: "cancel",
+            };
+        default: {
+            const exhaustive: never = recovery;
+            throw new Error(`unhandled boot recovery: ${String(exhaustive)}`);
+        }
+    }
+}
+
 export function App(props: AppProps) {
     const dims = useTerminalDimensions();
     const renderer = useRenderer();
@@ -530,6 +601,27 @@ export function App(props: AppProps) {
     // at the ready edge and follows every later swap/schedule. Under App's reactive owner.
     watchAgentModels();
 
+    // A banner that a state of the server raised (a drain, no runtime, no server) goes when the server is
+    // ready again. Under App's reactive owner.
+    conversation.watchServerStateErrors();
+
+    watchBootRecovery((recovery, message) => {
+        const offer = bootRecoveryOffer(recovery, message);
+        return () => (
+            <ConfirmDialog
+                title={offer.title}
+                message={offer.message}
+                defaultActive={offer.defaultActive}
+                cancelLabel="not now"
+                onConfirm={() => {
+                    dialogClose();
+                    void recoverServerBoot(recovery, bootRecoveryOpts(renderer));
+                }}
+                onCancel={() => dialogClose("cancel")}
+            />
+        );
+    });
+
     // Open the DATA PROFILE details view. Snapshots the profile as of open (a
     // point-in-time view) and hands the composed lines to `ResultsDialog`, reused verbatim. The
     // optional `r re-profile` footer action drives a DELIBERATE force re-profile: offered only when
@@ -564,7 +656,7 @@ export function App(props: AppProps) {
                               label: "re-profile",
                               enabled: canReprofile,
                               onAction: () => {
-                                  void driveForceReprofile(analysis, () => workspace.analysis?.id ?? null);
+                                  gatedForceReprofile(analysis, () => workspace.analysis?.id ?? null);
                                   dialogClose();
                               },
                           }
@@ -1058,18 +1150,7 @@ export function App(props: AppProps) {
         return boot.phase === "failed" ? boot.message : undefined;
     };
 
-    const statusState = (): { text: string; tone: "success" | "warn" | "error" } => {
-        const boot = bootState();
-        if (boot.phase === "failed") return { text: `${GLYPHS.cross} boot failed`, tone: "error" };
-        // Until the runtime is ready (idle before the boot fires, or booting), no turn can run — show
-        // the boot state rather than a misleading "ready". Once ready, the turn-scoped status wins.
-        if (boot.phase !== "ready") return { text: `${GLYPHS.circleHalf} booting${GLYPHS.ellipsis}`, tone: "warn" };
-        return chatStatus() === "busy"
-            ? { text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }
-            : chatStatus() === "error"
-              ? { text: `${GLYPHS.cross} error`, tone: "error" }
-              : { text: `${GLYPHS.circle} ready`, tone: "success" };
-    };
+    const statusState = (): { text: string; tone: StatusTone } => headerStatusOf(bootState(), chatStatus(), conversation.otherClientTurn());
 
     // The open session's scope, read once here and rendered by two surfaces below (see
     // {@link sessionScopeOf}). Both reads are of this one derivation, so the footer and the header
@@ -1154,8 +1235,9 @@ export function App(props: AppProps) {
                         directly below the Chat stream's flexGrow scrollbox, so it must opaquely reclaim
                         its rows (the documented 1-cell scrollbox bleed) and keep them on a short
                         terminal — the Chat stream yields the squeeze instead. paddingLeft aligns it with
-                        the stream content. */}
-                        <Show when={bootState().phase === "booting" || bootState().phase === "failed"}>
+                        the stream content. Keyed on the phase, thus a new boot after a failure mounts a
+                        fresh indicator whose age starts at 0. */}
+                        <Show when={bootState().phase === "booting" || bootState().phase === "failed" ? bootState().phase : undefined} keyed>
                             <box width="100%" flexShrink={0} backgroundColor={theme().bg} paddingLeft={1} paddingRight={1}>
                                 <BootIndicator message={bootFailureMessage()} />
                             </box>

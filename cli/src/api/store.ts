@@ -69,67 +69,7 @@ export type StoreState = {
     pendingAdds: PendingAddView[];
 };
 
-/** One stored distribution: its store directory, and the pin it records (`name==version`) or `null`. */
-export type StorePackageView = {
-    dir: string;
-    pin: string | null;
-};
-
-/** One farm of the store. */
-export type StoreFarmView = {
-    /** The directory name under `farms/`. For an analysis farm it is the analysis id. */
-    name: string;
-    /** True for the catalog farm. */
-    template: boolean;
-    /** The name of the analysis that owns the farm, or `null` for the catalog and for a farm whose analysis is gone. */
-    analysisName: string | null;
-    links: number;
-    /** The runtime tracks that the lock of the farm records. Empty when the lock is absent or unreadable. */
-    tracks: string[];
-};
-
-/** The state of the catalog transfer, for the listing. */
-export type StoreDownloadView = {
-    updatedAt: string | null;
-    state: TransferStatus | null;
-    bytesTransferred: number;
-    totalBytes: number | null;
-    phase: TransferPhase | null;
-    message: string | null;
-    /** True when the receipt pins a manifest that is not the one the last resolve saw. */
-    updateAvailable: boolean;
-};
-
-/** The body of `GET /api/v1/store/inventory`: a passive inspection of the store on the host. */
-export type StoreInventory = {
-    root: string;
-    exists: boolean;
-    packages: StorePackageView[];
-    farms: StoreFarmView[];
-    /** The live flights, with the analyses subscribed by name where the database holds one. */
-    flights: { spec: string; state: StoreFlightStatus; analyses: string[] }[];
-    /** The failed flights, each with the whole recorded reason. */
-    failed: { spec: string; message: string }[];
-    pending: { spec: string; analysis: string | null }[];
-    storeBytes: number;
-    /** The bytes that `POST /api/v1/store/reclaim` would recover. */
-    reclaimableBytes: number;
-    download: StoreDownloadView;
-};
-
-/** The body of `POST /api/v1/store/adds`: one package. */
-export type StoreAddRequest = {
-    /** One package name, with `==<version>` for one exact version. */
-    package: string;
-    version?: string;
-    lang?: StoreEcosystem;
-    /** The analysis whose farm the add extends after the commit, by id or by name. */
-    analysis?: string;
-    /** Enqueue only. Without it, the server also starts the flush of the pending set. */
-    queued?: boolean;
-};
-
-/** The body of a `202` of `POST /api/v1/store/adds`. */
+/** The body of a `202` of `POST /api/v1/store/flights/:flightId/retry`. */
 export type StoreAddAccepted = {
     flightKey: string;
     spec: string;
@@ -161,21 +101,6 @@ export type StartTransfersResponse = {
     starts: TransferStartView[];
 };
 
-/** The body of `POST /api/v1/store/transfers/catalog/cancel`. */
-export type CatalogCancelView = { outcome: "no_run" } | { outcome: "timed_out"; holderPid: number } | { outcome: "canceled"; holderPid: number };
-
-/** The body of `POST /api/v1/store/reclaim`. */
-export type ReclaimView = {
-    /** What the run found to remove, inside the exclusivity window, before it removed anything. */
-    preview: string[];
-    /** The store directories that the run removed. */
-    reclaimed: string[];
-    /** The farms whose analysis the database no longer holds. */
-    farmsReaped: string[];
-    /** The lines of the provisioner run. */
-    lines: string[];
-};
-
 /** The body of `POST {A}/farm/link`. */
 export type FarmLinkRequest = {
     /** The packages to link: each a name, or `name==version`. */
@@ -189,26 +114,4 @@ export type FarmLinkView = {
     linked: string[];
     /** How many store directories the farm links after the call. */
     storeDirs: number;
-};
-
-/** One image of `GET /api/v1/sandbox`. */
-export type SandboxImageView = {
-    label: "Runtime" | "Provisioner";
-    image: string;
-    /** `null` when no container runtime answers. */
-    present: boolean | null;
-    digest: string | null;
-};
-
-/** The body of `GET /api/v1/sandbox`. */
-export type SandboxStatus = {
-    images: SandboxImageView[];
-    /** The bin of the runtime that answered, for a removal hint, or `null`. */
-    runtimeBin: string | null;
-    /** The retired images that the engine still holds. */
-    retiredImages: { ref: string; size: string }[];
-    transfers: TransferReportView[];
-    storeRoot: string;
-    /** The local state of the store content: `installed` and `local` both mount. */
-    storeContent: "missing" | "local" | "incomplete" | "installed" | "invalid_receipt";
 };

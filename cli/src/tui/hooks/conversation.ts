@@ -1,7 +1,7 @@
 import { randomUUIDv7 } from "bun";
 import type { ResultAsync } from "neverthrow";
-import { createSignal } from "solid-js";
-import { createStore, produce, unwrap } from "solid-js/store";
+import { createEffect, createSignal, on } from "solid-js";
+import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import {
     applyChatFrame,
     checkChatPart,
@@ -14,17 +14,19 @@ import {
     type ToolCallPart,
 } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { MessageList, RetractResponse, TurnSummary } from "../../api/conversation.ts";
+import type { MessageList, RetractResponse, ThreadSummary, TurnList, TurnSummary } from "../../api/conversation.ts";
 import { describeClientError, type ClientError } from "../../client/api.ts";
-import { abortTurn, createChatTurn, fetchMessages, fetchTurn, retractTurn, type ChatTurnStream } from "../../client/conversation.ts";
+import { abortTurn, createChatTurn, fetchMessages, fetchThread, fetchTurn, fetchTurns, retractTurn, type ChatTurnStream } from "../../client/conversation.ts";
 import { describeCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
 import { refreshReportChildren } from "./report_children.ts";
+import { bootState } from "./boot.ts";
 import { notify } from "./notice.ts";
 import { chatStatus, setChatStatus } from "./status.ts";
+import { publishThreadRow } from "./thread.ts";
 import type { OpenableEntry, Part, PlanCardStepView } from "../../types/session.ts";
 
 // The chat's hot state — the message list, the in-flight streaming buffer, and the last error —
@@ -80,6 +82,43 @@ export { streamPartId };
 export { errorMsg };
 /** The detail lines of the last failed turn, or `null` — read reactively for the details dialog. */
 export { lastTurnFailure };
+
+// The text of the banner when a state of the server raised it: no server answers, or the server drains or has
+// no runtime. Such a banner says nothing about the conversation, thus the ready edge of the boot clears it
+// (`watchServerStateErrors`). Compared by text, thus a later banner of a different cause is never cleared.
+let serverStateBanner: string | null = null;
+
+/** Raise a banner that a state of the server caused, and record it for the clear at the ready edge. */
+function setServerStateError(text: string): void {
+    setErrorMsg(text);
+    serverStateBanner = text;
+}
+
+/** True when `e` says that no server answers, or that the server drains or has no runtime. */
+function isServerStateError(e: ClientError): boolean {
+    return e.type === "unreachable" || (e.type === "http" && (e.body.error === "unavailable" || e.body.error === "draining"));
+}
+
+/**
+ * Clear the banner and the error state at each `ready` edge of the boot when a state of the server raised them.
+ * A failure of the model stays. Call once from `App`, inside its reactive owner.
+ */
+export function watchServerStateErrors(): void {
+    createEffect(
+        on(
+            () => bootState().phase,
+            (phase) => {
+                if (phase !== "ready") return;
+                const banner = serverStateBanner;
+                serverStateBanner = null;
+                if (banner === null || errorMsg() !== banner) return;
+                setErrorMsg(null);
+                setLastTurnFailure(null);
+                if (chatStatus() === "error") setChatStatus("idle");
+            },
+        ),
+    );
+}
 
 /** The current message count — the `Sidebar` reads this; reactive on the store length. */
 export function messageCount(): number {
@@ -386,6 +425,7 @@ export function noteAskFeedback(askId: string, feedback: string): void {
  *     dropped with a warning, and a part of a type that this build does not know passes unchanged;
  *   - a `data-ask` docks or settles its prompt, and a report spawn pokes the report-children listing;
  *   - `finish`/`error` end the stream, and the driver of the turn reads them, thus they apply nothing.
+ *     Only a sub-agent gives an `iteration`, thus the routing above takes each one.
  *
  * Each frame is a fresh object that the client parsed from the stream, thus the store shares no
  * reference with a producer.
@@ -429,6 +469,7 @@ export function applyServerFrame(frame: ChatFrame): void {
             applyFrame(frame.durationMs === undefined && startedAt !== undefined ? { ...frame, durationMs: Date.now() - startedAt } : frame);
             return;
         }
+        case "iteration":
         case "finish":
         case "error":
             return;
@@ -676,15 +717,17 @@ function finishTurn(result: TurnResult, assistantId: string, startedAt: number):
             const gone = result.error.type === "http" && result.error.body.error === "not_found";
             const line = gone ? "This conversation thread is no longer available." : `Could not start the turn: ${describeClientError(result.error)}`;
             setLastTurnFailure([line]);
-            setErrorMsg(`${line} — ${detailsHint()}`);
+            if (isServerStateError(result.error)) setServerStateError(`${line} — ${detailsHint()}`);
+            else setErrorMsg(`${line} — ${detailsHint()}`);
             setChatStatus("error");
             return;
         }
         case "lost":
+            // The stream broke and the summary was not readable: the server stopped or went away, not the model.
             commitStream();
             drainOpenTools();
             setLastTurnFailure([result.detail]);
-            setErrorMsg(`The stream of the turn broke: ${result.detail} — ${detailsHint()}`);
+            setServerStateError(`The stream of the turn broke: ${result.detail} — ${detailsHint()}`);
             setChatStatus("error");
             return;
         default: {
@@ -762,12 +805,17 @@ function finishEndedTurn(end: TurnEnd, assistantId: string, startedAt: number): 
  * is exercisable offline. Production callers omit the argument.
  */
 export type LoadOpts = {
+    /** The row of a thread, for its `updatedAt`, or `null` when it has no live row. Real: {@link fetchThread}. */
+    readonly fetchThread: (analysisId: string, threadId: string) => ResultAsync<ThreadSummary | null, ClientError>;
     /** The whole transcript of a thread, as the server replays it. Real: {@link fetchMessages}. */
     readonly fetchMessages: (analysisId: string, threadId: string) => ResultAsync<MessageList, ClientError>;
 };
 
 /** The production {@link LoadOpts}. */
-export const DEFAULT_LOAD_OPTS: LoadOpts = { fetchMessages: (analysisId, threadId) => fetchMessages(analysisId, threadId) };
+export const DEFAULT_LOAD_OPTS: LoadOpts = {
+    fetchThread: (analysisId, threadId) => fetchThread(analysisId, threadId),
+    fetchMessages: (analysisId, threadId) => fetchMessages(analysisId, threadId),
+};
 
 // Monotonic token ordering EVERY asynchronous write to the message store. Two producers write it —
 // `loadMessages` (a replay of the durable pg thread) and `send` (the live turn) — and both interleave
@@ -783,7 +831,7 @@ export const DEFAULT_LOAD_OPTS: LoadOpts = { fetchMessages: (analysisId, threadI
 // and a later lifecycle edge would re-fire it anyway. `resetHotState` claims the token too, so a load
 // started for a swapped-away session can never repopulate the cleared store.
 //
-// Module-private: only loadMessages / send / resetHotState touch it.
+// Module-private: only loadMessages / pollOpenThread / send / resetHotState touch it.
 let loadGeneration = 0;
 
 // The session id a transcript load has SUCCESSFULLY mounted into the store, or `null` when none has.
@@ -792,6 +840,24 @@ let loadGeneration = 0;
 // history that dropped load would have. Keyed by session id so a stale value from a swapped-away
 // session cannot suppress the new session's post-turn reload; `resetHotState` clears it on a swap.
 let loadedSessionId: string | null = null;
+
+// The thread whose transcript the store shows, and its `updatedAt` from a read made BEFORE the transcript
+// read: a write between the two reads then shows as a change at the next check, and is never lost.
+// `undefined` when that row read failed, thus the next check reads the transcript again. `null` when no
+// read mounted a transcript. A different client writes the thread, and the server pushes nothing, thus
+// this stamp is how the poll and the send know that the screen holds less than the model reads.
+let mountedThread: { readonly threadId: string; readonly updatedAt: string | null | undefined } | null = null;
+
+// The sends that have not returned yet, a superseded one included. A load claims a newer token than a send,
+// and a send whose token is gone drops its turn, thus the poll never claims one while this is above 0.
+let sendsInFlight = 0;
+
+const [otherTurn, setOtherTurn] = createSignal(false);
+/**
+ * True while a turn runs on the open thread and this client sends none: the turn of a different client,
+ * which the poll reads (`GET {T}/turns`). Read reactively for the header.
+ */
+export const otherClientTurn = otherTurn;
 
 /**
  * Load a session's transcript from the server (`GET {T}/messages`), replacing whatever was mounted.
@@ -809,12 +875,37 @@ let loadedSessionId: string | null = null;
  */
 export async function loadMessages(analysisId: string, sessionId: string, opts: LoadOpts = DEFAULT_LOAD_OPTS): Promise<void> {
     const myLoad = ++loadGeneration;
+    const row = await opts.fetchThread(analysisId, sessionId);
+    if (myLoad !== loadGeneration) return; // a newer swap started while the read was in flight — drop it
+    await mountTranscript(analysisId, sessionId, row.isOk() ? (row.value?.updatedAt ?? null) : undefined, myLoad, opts, "report");
+}
 
+/**
+ * Read the transcript and mount it under the token `myLoad`, then record the stamp that a read before it
+ * gave. `report` raises the load banner on a failed read. `quiet` leaves the screen as it is, for a read
+ * that a later poll or a later send makes again.
+ *
+ * The write goes through `reconcile` by message id: a message that did not change keeps its object, thus
+ * its block does not mount again, and a read again after a turn of a different client repaints the new
+ * messages alone.
+ */
+async function mountTranscript(
+    analysisId: string,
+    sessionId: string,
+    updatedAt: string | null | undefined,
+    myLoad: number,
+    opts: LoadOpts,
+    onFailure: "report" | "quiet",
+): Promise<void> {
     const res = await opts.fetchMessages(analysisId, sessionId);
     if (myLoad !== loadGeneration) return; // a newer swap started while the read was in flight — drop it
     if (res.isErr() && !(res.error.type === "http" && res.error.status === 404)) {
-        setErrorMsg(`Failed to load the conversation: ${describeClientError(res.error)}`);
-        setChatStatus("error");
+        if (onFailure === "report") {
+            const text = `Failed to load the conversation: ${describeClientError(res.error)}`;
+            if (isServerStateError(res.error)) setServerStateError(text);
+            else setErrorMsg(text);
+            setChatStatus("error");
+        }
         return;
     }
 
@@ -824,8 +915,54 @@ export async function loadMessages(analysisId: string, sessionId: string, opts: 
     if (myLoad !== loadGeneration) return;
     // The cap is in MESSAGES, matching the unit the live append caps by. Record the session this load
     // mounted so `send` knows the history is already on screen and skips its post-turn reload.
-    setMessages(res.isOk() ? res.value.messages.slice(-MESSAGE_CAP) : []);
+    setMessages(reconcile(res.isOk() ? res.value.messages.slice(-MESSAGE_CAP) : [], { key: "id" }));
     loadedSessionId = sessionId;
+    mountedThread = { threadId: sessionId, updatedAt };
+}
+
+/** True when the store shows the transcript of `threadId` and a row read since then gave a different `updatedAt`. */
+function movedSinceMount(threadId: string, row: ThreadSummary | null): boolean {
+    return mountedThread !== null && mountedThread.threadId === threadId && mountedThread.updatedAt !== (row?.updatedAt ?? null);
+}
+
+/**
+ * The reads of {@link pollOpenThread}: the reads of a transcript load, and the turns of the thread. Tests
+ * replace each one. Production callers omit the argument.
+ */
+export type ThreadPollOpts = LoadOpts & {
+    /** The turns of a thread, the running ones first. Real: `GET {T}/turns` with a page of one. */
+    readonly fetchTurns: (analysisId: string, threadId: string) => ResultAsync<TurnList, ClientError>;
+};
+
+/** The production {@link ThreadPollOpts}. */
+export const DEFAULT_THREAD_POLL_OPTS: ThreadPollOpts = {
+    ...DEFAULT_LOAD_OPTS,
+    // The server lists the running turns first, thus a page of one says if any runs.
+    fetchTurns: (analysisId, threadId) => fetchTurns(analysisId, threadId, { page: 0, perPage: 1 }),
+};
+
+/**
+ * Read the open thread at a tick of the poll: give its row to the rail, publish {@link otherClientTurn}, and
+ * mount the transcript again when the thread changed since the last mount. A different client writes the thread, and the server pushes
+ * nothing, thus without this read the screen shows less than the model reads at the next turn.
+ *
+ * Reads nothing more while a send of this client is in flight: that turn writes the thread itself, and the
+ * next tick after it mounts the transcript that the server holds. Mounts only over the transcript of the same
+ * thread, thus a read that a session swap outran never writes a different session.
+ */
+export async function pollOpenThread(analysisId: string, threadId: string, opts: ThreadPollOpts = DEFAULT_THREAD_POLL_OPTS): Promise<void> {
+    // Observed, not claimed: a poll that finds nothing new must not supersede a load in flight.
+    const seen = loadGeneration;
+    const turns = await opts.fetchTurns(analysisId, threadId);
+    const row = await opts.fetchThread(analysisId, threadId);
+    // The rail of the thread is not the message store: a send of this client does not hold it.
+    if (row.isOk()) publishThreadRow(threadId, row.value);
+    // A swap, a load, or a send took the store while the reads were in flight.
+    if (seen !== loadGeneration || sendsInFlight > 0) return;
+    setOtherTurn(turns.isOk() && turns.value.turns.some((turn) => turn.status === "running"));
+    if (row.isErr() || !movedSinceMount(threadId, row.value)) return;
+    const myLoad = ++loadGeneration;
+    await mountTranscript(analysisId, threadId, row.value?.updatedAt ?? null, myLoad, opts, "quiet");
 }
 
 // The in-flight turn's local token. Module-private: only `send`/`abort`/`resetHotState` touch it, so the
@@ -873,6 +1010,8 @@ export function resetHotState(): void {
     // The cleared store no longer holds any session's history, so forget which session was mounted —
     // otherwise a swap back to it could suppress the post-turn reload that would remount its history.
     loadedSessionId = null;
+    mountedThread = null;
+    setOtherTurn(false);
     abortController?.abort();
     // C1: null the token AFTER aborting so an in-flight turn's controller no longer matches its
     // captured `myTurn` — the result/late-frame guards in `send` then drop everything that turn
@@ -896,6 +1035,7 @@ export function resetHotState(): void {
     setStreamPartId(null);
     setStreamText("");
     setErrorMsg(null);
+    serverStateBanner = null;
     setLastTurnFailure(null);
     setChatStatus("idle");
     setMessages([]);
@@ -923,6 +1063,11 @@ export type SendOpts = {
      * Real: `POST {T}/retract` with `ifOrphan`.
      */
     readonly healRetract: (analysisId: string, threadId: string) => ResultAsync<RetractResponse, ClientError>;
+    /**
+     * The reads of the check before the turn: the row of the thread, then its transcript when a different
+     * client wrote the thread since the last mount. Real: {@link DEFAULT_LOAD_OPTS}.
+     */
+    readonly transcript: LoadOpts;
 };
 
 /** The production {@link SendOpts}. */
@@ -932,6 +1077,7 @@ export const DEFAULT_SEND_OPTS: SendOpts = {
     fetchTurn: (analysisId, threadId, turnId) => fetchTurn(analysisId, threadId, turnId),
     reloadTranscript: (analysisId, sessionId) => loadMessages(analysisId, sessionId),
     healRetract: (analysisId, threadId) => retractTurn(analysisId, threadId, { ifOrphan: true }),
+    transcript: DEFAULT_LOAD_OPTS,
 };
 
 /**
@@ -1006,8 +1152,21 @@ async function driveTurn(
  * no longer matches, and the result is dropped on the same check — a superseded turn NEVER touches the
  * new turn's streaming signals, status, error, or messages. Its writes already ran (correctly) on the
  * server on the old thread; the only remaining work is UI-visible, so dropping it is exactly right.
+ *
+ * Before the turn, the transcript is read again when a different client wrote the thread since the last
+ * mount, thus the screen holds what the model reads.
  */
 export async function send(turn: { sessionId: string; analysisId: string; userText: string }, opts: SendOpts = DEFAULT_SEND_OPTS): Promise<void> {
+    sendsInFlight += 1;
+    try {
+        await sendTurn(turn, opts);
+    } finally {
+        sendsInFlight -= 1;
+    }
+}
+
+/** The body of {@link send}, which counts it in {@link sendsInFlight} on each exit. */
+async function sendTurn(turn: { sessionId: string; analysisId: string; userText: string }, opts: SendOpts): Promise<void> {
     setErrorMsg(null);
     setLastTurnFailure(null);
 
@@ -1042,6 +1201,19 @@ export async function send(turn: { sessionId: string; analysisId: string; userTe
         // session's message straight into the swapped-in session's cleared store: `pushUserMessage` below
         // is a synchronous write with no further token check.
         if (loadGeneration !== myTurnLoad) return;
+    }
+
+    // A different client can have written the thread since the last mount. With no mount of this thread
+    // there is nothing to compare, and the post-turn reload below mounts it. The mount runs under this
+    // turn's token, thus it neither supersedes this turn nor survives a swap, and each await is followed
+    // by the same re-check as the heal above.
+    if (mountedThread?.threadId === turn.sessionId) {
+        const row = await opts.transcript.fetchThread(turn.analysisId, turn.sessionId);
+        if (loadGeneration !== myTurnLoad) return;
+        if (row.isOk() && movedSinceMount(turn.sessionId, row.value)) {
+            await mountTranscript(turn.analysisId, turn.sessionId, row.value?.updatedAt ?? null, myTurnLoad, opts.transcript, "quiet");
+            if (loadGeneration !== myTurnLoad) return;
+        }
     }
 
     pushUserMessage(turn.userText);

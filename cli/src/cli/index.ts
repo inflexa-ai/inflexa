@@ -6,7 +6,7 @@ import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc
 // the action runs. It is the shape of `setup`'s answer flags — see the batch options declared below.
 import type { SetupAnswerFlags } from "../modules/infra/setup_answers.ts";
 import type { AnalysisView } from "../api/analyses.ts";
-import { registerAction } from "./agent_policy.ts";
+import { registerAction, terminalUiRegisterOpts } from "./agent_policy.ts";
 
 /**
  * The Paths/Environment tables appended to the root `--help`. Built from `envDoc`
@@ -80,8 +80,9 @@ export function buildProgram(): Command {
     // an interactive terminal UI, which cannot function as a captured subprocess (stdin ignored,
     // stdout/stderr piped — no terminal to drive). Each is `blocked`, so `run_inflexa` refuses it
     // before prompting rather than burning the user's approval on an immediate error. For this
-    // family the policy is the courtesy layer, not the safety boundary — each launcher's own TTY
-    // guard (`requireInteractiveTerminal`, lib/cli.ts) is the structural backstop.
+    // family the policy is the courtesy layer, not the safety boundary — the TTY guard
+    // (`requireInteractiveTerminal`, lib/cli.ts) is the structural backstop. `terminalUiRegisterOpts`
+    // runs it before the server check, thus a refused launch starts no server.
     registerAction(
         cli.option("--analysis <id|name>", "Operate on a specific analysis").option("--project <name>", "Scope to a project"),
         "instance",
@@ -97,6 +98,7 @@ export function buildProgram(): Command {
             const { launchDefault } = await import("../tui/app.launch.tsx");
             await launchDefault({ analysis: options.analysis, project: options.project });
         },
+        terminalUiRegisterOpts("inflexa"),
     );
 
     registerAction(
@@ -110,6 +112,7 @@ export function buildProgram(): Command {
             const { launchConfig } = await import("../tui/app_config.tsx");
             await launchConfig();
         },
+        terminalUiRegisterOpts("inflexa config"),
     );
 
     // Analysis lifecycle: the primary entity. `new`/`resume` open a chat (TUI layer); `ls`/
@@ -134,6 +137,7 @@ export function buildProgram(): Command {
             const { launchNew } = await import("../tui/app.launch.tsx");
             await launchNew({ name, paths: paths ?? [], project: options.project });
         },
+        terminalUiRegisterOpts("inflexa new"),
     );
 
     // Read-only analysis lister: the cached anchor path, no reconciliation side effects (`GET /api/v1/analyses`).
@@ -160,6 +164,7 @@ export function buildProgram(): Command {
             const { launchResume } = await import("../tui/app.launch.tsx");
             await launchResume(idOrName);
         },
+        terminalUiRegisterOpts("inflexa resume"),
     );
 
     // Stays `approval` (not `auto`): `open` launches the OS file browser — an external effect, not a read.
@@ -658,7 +663,8 @@ export function buildProgram(): Command {
         { kind: "approval", transfer: true },
         async (gse: string, options: { analysis?: string; maxSize?: string }) => {
             const { runGeoDownload } = await import("../modules/geo/download.ts");
-            await runGeoDownload(gse, { analysis: options.analysis }, options.maxSize);
+            const { resolveGeoDownloadFolder } = await import("../client/commands/geo.ts");
+            await runGeoDownload(gse, options.maxSize, () => resolveGeoDownloadFolder({ analysis: options.analysis }));
         },
     );
 
@@ -693,7 +699,11 @@ export function buildProgram(): Command {
     // declared `blocked` policy IS the gate, and the required-policy helper makes an undeclared lifecycle
     // command unrepresentable.
     registerAction(
-        cli.command("up").description("Start the inflexa infrastructure containers (proxy + Postgres)"),
+        cli
+            .command("up")
+            .description(
+                "Start the inflexa infrastructure containers (proxy + Postgres), sign in to the provider when the login is absent or dead, and boot a failed server again",
+            ),
         "machine",
         {
             kind: "blocked",
@@ -701,9 +711,15 @@ export function buildProgram(): Command {
                 "`inflexa up` manages the infrastructure containers this conversation depends on. " +
                 "It is not available to you — ask the user to run it from their own shell.",
         },
+        // A module does not import the client side, thus the registry asks the server to boot again after `up`.
         async () => {
             const { up } = await import("../modules/infra/lifecycle.ts");
-            await up();
+            if (!(await up())) {
+                process.exitCode = 1;
+                return;
+            }
+            const { bootServerAfterUp } = await import("../client/commands/server.ts");
+            await bootServerAfterUp();
         },
     );
 

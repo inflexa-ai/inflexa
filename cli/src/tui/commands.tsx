@@ -30,7 +30,7 @@ import { createProvenanceExport, fetchProvenanceVerification } from "../client/p
 import { gatedForceReprofile } from "./hooks/profile_parity.ts";
 import { fetchRun, fetchRuns } from "../client/runs.ts";
 import type { RunSummary } from "../api/runs.ts";
-import { absTime, absTimeShort, idTail, shortRunName, shortSessionId } from "./hooks/sidebar_live.ts";
+import { absTime, absTimeShort, idTail, refreshSidebarData, shortRunName, shortSessionId } from "./hooks/sidebar_live.ts";
 import { restoreActivityPanel } from "./hooks/activity_panel.ts";
 import { chatStatus } from "./hooks/status.ts";
 import { KEYS, chordLabel, keybindLabel, type Chord } from "./keymap.ts";
@@ -60,7 +60,7 @@ import type { PurgedThread, ReportPageFate, ThreadList, ThreadSummary } from "..
 import { deleteThread, fetchThread, fetchThreads, purgeThread, restoreThread, updateThread } from "../client/conversation.ts";
 import type { ProjectSummary } from "../api/projects.ts";
 import { openExternal } from "../lib/open_external.ts";
-import type { AgentEffort, AgentName, AgentSelection, ListedModelView as ListedModel, MeView } from "../api/machine.ts";
+import type { AgentEffort, AgentName, AgentSelection, ListedModelView as ListedModel, MeView, ModelList } from "../api/machine.ts";
 import { fetchAgents, fetchMe, fetchModels, fetchSettings, updateAgent } from "../client/machine.ts";
 import { createTransfer } from "../client/store.ts";
 import { contractHome } from "../lib/paths.ts";
@@ -109,7 +109,7 @@ function clientErrorText(e: ClientError): string {
  * happen: a different process holds the lock, or the server does not answer.
  */
 async function workingDirFor(a: Analysis): Promise<string | null> {
-    return (await fetchAnalysis(a.id, process.cwd())).match(
+    return (await fetchAnalysis(a.id, { cwd: process.cwd() })).match(
         (detail) => workingDirOf(detail),
         (e) => {
             notify({ kind: "warn", text: clientErrorText(e) });
@@ -125,7 +125,7 @@ async function workingDirFor(a: Analysis): Promise<string | null> {
  * is modal across clients.
  */
 async function workspaceBusyReason(analysisId: string): Promise<string | null> {
-    return (await fetchAnalysis(analysisId, process.cwd())).match(
+    return (await fetchAnalysis(analysisId, { cwd: process.cwd() })).match(
         (detail) => (detail.busy[0] === undefined ? null : describeBusyReason(detail.busy[0])),
         (e) => `the analysis cannot be read (${clientErrorText(e)})`,
     );
@@ -476,6 +476,8 @@ export function ModelPickerDialog(props: {
     agent: AgentName;
     /** The connection's models with their efforts, or `null` when listing failed (degrade to free-text entry). */
     models: readonly ListedModel[] | null;
+    /** Why the listing failed, as the server says it, shown under the free-text field. */
+    listingFailure?: string;
     /** The agent's currently-running model, marked `current` in the list and pre-filled in the listing-failure free-text field. */
     current: string;
     /** The agent's currently-running effort: the seed of the left and right keys, and the effort of a model that lists none. */
@@ -596,11 +598,16 @@ export function ModelPickerDialog(props: {
                         value={props.models ? "" : props.current}
                         placeholder="Enter a model id"
                         description={() => (
-                            <text fg={theme().fgMuted}>
-                                {props.models
-                                    ? "Enter an id this connection does not list — it is checked against your account before it applies."
-                                    : "Could not list the connection's models — enter a model id manually."}
-                            </text>
+                            <box>
+                                <text fg={theme().fgMuted}>
+                                    {props.models
+                                        ? "Enter an id this connection does not list — it is checked against your account before it applies."
+                                        : "Could not list the connection's models — enter a model id manually."}
+                                </text>
+                                <Show when={props.models === null ? props.listingFailure : undefined} keyed>
+                                    {(reason: string) => <text fg={theme().fgMuted}>{`Cause: ${reason}.`}</text>}
+                                </Show>
+                            </box>
                         )}
                         // Back to the list, not out of the picker: this prompt was reached FROM the list, so esc
                         // means "I didn't want manual entry after all". With no list there is nowhere to go back to.
@@ -636,8 +643,8 @@ export function ModelPickerDialog(props: {
 /**
  * Open the model picker for `agent`. Boot-gated like `analysis.reprofile` (the picker shows the selection that
  * the live runtime runs): refuse with a notice while booting rather than a silent no-op. Reads the agents
- * (`GET /api/v1/agents`) and the connection's models UNCACHED (`GET /api/v1/models`, `null` on failure →
- * free-text mode) before opening, then hands the picker the current model to mark.
+ * (`GET /api/v1/agents`) and the connection's models UNCACHED (`GET /api/v1/models`, `null` with the reason on
+ * failure → free-text mode) before opening, then hands the picker the current model to mark.
  */
 async function openModelPicker(ctx: Workspace, agent: AgentName): Promise<void> {
     if (bootState().phase !== "ready") {
@@ -655,14 +662,15 @@ async function openModelPicker(ctx: Workspace, agent: AgentName): Promise<void> 
         return;
     }
     const current = view.current;
-    const models = (await fetchModels()).match(
-        (list): readonly ListedModel[] | null => list.models,
-        () => null,
+    const listing = (await fetchModels()).match(
+        (list): ModelList => list,
+        (e): ModelList => ({ models: null, reason: describeClientError(e) }),
     );
     ctx.openDialog(() => (
         <ModelPickerDialog
             agent={agent}
-            models={models}
+            models={listing.models}
+            listingFailure={listing.models === null ? listing.reason : undefined}
             current={current.model}
             currentEffort={current.effort}
             save={(selection) => saveAgentSelection(agent, selection)}
@@ -1714,6 +1722,8 @@ function AddInputDialog(props: { inputs: InputView[] }): JSX.Element {
                         if (change.added.length === 0 && change.removed.length === 0) notify({ kind: "info", text: "Inputs unchanged" });
                         else notify({ kind: "info", text: `Inputs updated: +${change.added.length} -${change.removed.length}` });
                         ws.refreshScope();
+                        // The server re-profiles the new set, and the read arms the poll of the sidebar until the row shows it.
+                        void refreshSidebarData(a.id);
                     },
                     (e) => notify({ kind: "error", text: `Input update failed (${clientErrorText(e)})` }),
                 );
@@ -1796,6 +1806,7 @@ function RemoveInputsDialog(props: { inputs: InputView[]; client: ClientOpts }):
                         const removed = change.removed.length;
                         notify({ kind: "info", text: `Removed ${removed} input${removed === 1 ? "" : "s"}` });
                         ws.refreshScope();
+                        void refreshSidebarData(a.id);
                     },
                     (e) => notify({ kind: "error", text: `Input removal failed (${clientErrorText(e)})` }),
                 );

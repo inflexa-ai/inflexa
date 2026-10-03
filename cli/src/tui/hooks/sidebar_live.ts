@@ -13,7 +13,8 @@ import type { ThemeColors } from "../../lib/design_system.ts";
 import { formatTokenFigure, formatTokenFigureLabelled } from "../../lib/usage_format.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { RunStepView } from "../components/run_block.tsx";
-import { bootState } from "./boot.ts";
+import { bootState, checkServer } from "./boot.ts";
+import { otherClientTurn, pollOpenThread } from "./conversation.ts";
 import { chatStatus, type ChatStatus } from "./status.ts";
 
 // The sidebar's live ledger data — the data-profile status and the analysis's newest runs — held
@@ -25,7 +26,7 @@ import { chatStatus, type ChatStatus } from "./status.ts";
 // token and the interval handle are plain infrastructure, nothing reacts to them).
 //
 // The server sends no notification of a change, so this reads the run and profile endpoints on
-// lifecycle edges and, ONLY while work is active, on a bounded interval.
+// lifecycle edges and on one bounded interval: fast while work is active, slow while idle.
 
 /**
  * The data-profile section's render input. `not_ready` before the runtime boots (no query is
@@ -35,10 +36,16 @@ import { chatStatus, type ChatStatus } from "./status.ts";
 export type ProfileSnapshot =
     | { kind: "not_ready" }
     | { kind: "unavailable" }
-    | { kind: "absent" }
+    | {
+          kind: "absent";
+          /** Profile work that the server holds and the row does not show yet. It keeps the poll armed, and no surface renders it. */
+          workPending?: true;
+      }
     | {
           kind: "loaded";
           profile: DataProfileState;
+          /** Profile work that the server holds and the row does not show yet. It keeps the poll armed, and no surface renders it. */
+          workPending?: true;
           /**
            * What the profile's own calls consumed, from the local token ledger of the server.
            *
@@ -517,8 +524,15 @@ export function stepStateOf(status: StepExecutionStatus): RunStepView["state"] {
 /** How many run rows a refresh pulls. The sidebar renders the newest few; the store holds the head. */
 const RUNS_LIMIT = 10;
 
-/** The bounded poll cadence while work is active. Idle sidebars issue zero queries. */
+/** The poll cadence while work is active. */
 const POLL_INTERVAL_MS = 5_000;
+
+/**
+ * The poll cadence while no work is active. An idle sidebar still polls, because a different client of
+ * the same server (a second TUI, a CLI command, a GUI) can start a run or a profile, and the server
+ * sends no notification of it. This cadence is the bound on how late an idle sidebar shows that work.
+ */
+const IDLE_POLL_INTERVAL_MS = 15_000;
 
 /**
  * How long a guarded refresh may hold the in-flight guard before the next trigger takes it away.
@@ -539,7 +553,7 @@ const REFRESH_BOUND_MS = POLL_INTERVAL_MS * 3;
  * not a set literal) so adding a status to the harness enum is a compile error here until it is
  * classified — the arming rule must never silently mis-treat a new status as terminal.
  *
- * Trade-off: a genuinely wedged non-terminal run keeps the 5s poll alive. Accepted
+ * Trade-off: a genuinely wedged non-terminal run keeps the poll at the 5s cadence. Accepted
  * — it is bounded, cheap (≤10 rows), and visible; the alternative (guessing wedged-ness) is worse.
  */
 /** Whether a run status means the run is finished — i.e. nothing is still writing to its workspace. */
@@ -553,20 +567,23 @@ export const RUN_STATUS_TERMINAL: Record<RunStatus, boolean> = {
 };
 
 /**
- * Whether the snapshots should keep the bounded poll armed: a pending/running data profile, any run
- * in a non-terminal status, OR an `unavailable` snapshot. This is the sole gate on the poll — pure so
- * the arming decision is unit-testable without a reactive root.
+ * Whether the snapshots should keep the poll at its fast cadence: a pending/running data profile,
+ * profile work that the server holds, any run in a non-terminal status, OR an `unavailable` snapshot.
+ * Otherwise the poll runs at the idle cadence. This is the sole gate on the cadence — pure so the
+ * decision is unit-testable without a reactive root.
  *
- * `unavailable` arms because it is the failed-read degrade: a transient blip mid-profile/mid-run
- * would otherwise tear the poll down on an idle screen and nothing would ever re-read to recover, so
- * the section would stay stuck at "unavailable" until the next lifecycle edge. Re-arming lets the
- * SAME cheap 5s poll self-heal the moment the read succeeds again. A persistent outage keeps that one
- * failing read alive — accepted, exactly like a genuinely wedged non-terminal run: it is
- * bounded, cheap (≤10 rows), and the alternative (guessing transient-vs-persistent) is worse.
+ * `unavailable` counts because it is the failed-read degrade: a transient blip mid-profile/mid-run
+ * would otherwise drop the poll to the idle cadence, so the section would stay stuck at "unavailable"
+ * for up to a slow tick. The fast cadence lets the SAME cheap poll self-heal within 5s of the read
+ * succeeding again. A persistent outage keeps that one failing read at 5s — accepted, exactly like a
+ * genuinely wedged non-terminal run: it is bounded, cheap (≤10 rows), and the alternative (guessing
+ * transient-vs-persistent) is worse.
  */
 export function hasActiveWork(profileSnap: ProfileSnapshot, runsSnap: RunsSnapshot): boolean {
     const anyUnavailable = profileSnap.kind === "unavailable" || runsSnap.kind === "unavailable";
-    const profileActive = profileSnap.kind === "loaded" && (profileSnap.profile.status === "pending" || profileSnap.profile.status === "running");
+    const profileActive =
+        (profileSnap.kind === "loaded" && (profileSnap.profile.status === "pending" || profileSnap.profile.status === "running")) ||
+        ((profileSnap.kind === "loaded" || profileSnap.kind === "absent") && profileSnap.workPending === true);
     const runsActive = runsSnap.kind === "loaded" && runsSnap.runs.some((r) => !RUN_STATUS_TERMINAL[r.status]);
     return anyUnavailable || profileActive || runsActive;
 }
@@ -688,14 +705,15 @@ export async function refreshSidebarData(analysisId: string, opts: RefreshOpts =
 
     profileRes.match(
         (view) => {
+            const work = view.workPending === true ? { workPending: true as const } : {};
             if (view.status === null) {
-                setProfile({ kind: "absent" });
+                setProfile({ kind: "absent", ...work });
                 return;
             }
             // The figure rides beside the row, never inside it: the row is the ledger truth, the figure a
             // decoration that an absent read leaves off.
-            const { usage, ...profile } = view;
-            setProfile(usage === undefined ? { kind: "loaded", profile } : { kind: "loaded", profile, usage });
+            const { usage, workPending: _workPending, ...profile } = view;
+            setProfile(usage === undefined ? { kind: "loaded", profile, ...work } : { kind: "loaded", profile, usage, ...work });
         },
         () => setProfile({ kind: "unavailable" }),
     );
@@ -853,17 +871,34 @@ export async function refreshSidebarData(analysisId: string, opts: RefreshOpts =
 export type WatchSeams = {
     /** Repopulate the snapshots for an analysis. Real: {@link refreshSidebarData}. */
     readonly refresh: (analysisId: string) => Promise<void>;
+    /**
+     * Probe the server one time, and keep the boot store true to it. Gives `true` when the server that the
+     * store saw ready still answers. Real: {@link checkServer}.
+     */
+    readonly checkServer: () => Promise<boolean>;
+    /** Read the open thread: the turn of a different client, and the transcript when it changed. Real: {@link pollOpenThread}. */
+    readonly pollThread: (analysisId: string, threadId: string) => Promise<void>;
     /** Arm a repeating timer; returns its disarm. Real: wraps `setInterval`/`clearInterval`. */
     readonly arm: (fn: () => void, ms: number) => () => void;
 };
 
 const realWatchSeams: WatchSeams = {
     refresh: refreshSidebarData,
+    checkServer: () => checkServer(),
+    pollThread: (analysisId, threadId) => pollOpenThread(analysisId, threadId),
     arm: (fn, ms) => {
         const handle = setInterval(fn, ms);
         return () => clearInterval(handle);
     },
 };
+
+const [pollTick, setPollTick] = createSignal(0);
+/**
+ * The count of the poll ticks that found the server. The USAGE section reads the usage of the session again
+ * at each one, thus the figure of a turn of a different client shows at the next tick, and each tick reads it
+ * one time. Read in a tracking scope.
+ */
+export const pollTicks = pollTick;
 
 /**
  * Wire the sidebar's live-data lifecycle. Call once from `App` (inside its reactive root). Three
@@ -874,19 +909,21 @@ const realWatchSeams: WatchSeams = {
  *  2. **turn completion** — refresh on the `busy → idle` down-edge of {@link chatStatus}, so a run or
  *     profile the agent launched during the turn is reflected without user action. `refresh` itself
  *     no-ops when the runtime is not ready, so this needs no boot guard of its own.
- *  3. **bounded poll** — an interval armed ONLY while {@link hasActiveWork} holds for the open
- *     analysis, torn down the moment work goes terminal (or the analysis swaps, or the watcher
- *     unmounts). The arming key is a MEMO (`active ? analysisId : null`) so the interval is not
- *     re-armed on every snapshot identity change (each refresh mints fresh snapshot objects) — it
- *     re-arms only when the arm/disarm decision or the analysis actually changes, keeping the 5s
- *     cadence steady and guaranteeing an idle sidebar issues zero queries.
+ *  3. **bounded poll** — one interval, armed while an analysis is open: at {@link POLL_INTERVAL_MS}
+ *     while {@link hasActiveWork} holds or a turn of a different client runs on the open thread, else at
+ *     {@link IDLE_POLL_INTERVAL_MS}. It is torn down when the analysis closes or the watcher unmounts.
+ *     The analysis and the cadence are MEMOS, so the interval is not re-armed on every snapshot identity
+ *     change (each refresh mints fresh snapshot objects) — it re-arms only when the cadence or the
+ *     analysis actually changes, which keeps each cadence steady.
  *
  * The poll ticks share one in-flight guard so they never overlap themselves, and that guard is bounded
  * by {@link REFRESH_BOUND_MS} so a refresh that cannot finish can never disable the ones after it.
  *
- * The server sends no event when a run changes, thus a run that a different client starts shows at
- * the next of these edges. A caller that learns of a new run, for example from a run card of the
- * turn, calls {@link refreshSidebarData} itself.
+ * The server sends no event, thus this poll is how the TUI sees what a different client changes: a tick
+ * refreshes the ledger, probes the server, and, when the server that the boot store saw ready answers,
+ * reads the scope of the analysis, the usage of the session ({@link pollTicks}), and the open thread. A
+ * change shows at the latest one idle tick later. A caller that learns of a new run, for example from a
+ * run card of the turn, calls {@link refreshSidebarData} itself.
  */
 export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realWatchSeams): void {
     // Trigger 1 — ready + analysis (and analysis swap). On a genuine swap the two snapshots still hold
@@ -919,7 +956,7 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         prev = status;
     });
 
-    // Trigger 3 — the bounded poll. `disarm` is the live interval's teardown (null when idle).
+    // Trigger 3 — the bounded poll. `disarm` is the live interval's teardown (null when no analysis is open).
     let disarm: (() => void) | null = null;
     const teardown = (): void => {
         if (disarm) {
@@ -927,11 +964,8 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
             disarm = null;
         }
     };
-    const armKey = createMemo<string | null>(() => {
-        const active = hasActiveWork(profileSnapshot(), runsSnapshot());
-        const analysisId = workspace.analysis?.id;
-        return active && analysisId ? analysisId : null;
-    });
+    const pollAnalysisId = createMemo<string | null>(() => workspace.analysis?.id ?? null);
+    const pollMs = createMemo<number>(() => (hasActiveWork(profileSnapshot(), runsSnapshot()) || otherClientTurn() ? POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS));
     // A tick fired while the previous refresh is still awaiting the server is DROPPED, not queued.
     // `refreshSidebarData` claims the generation token at entry, so a newer refresh CANCELS an older
     // one — without this guard, reads slower than the interval would leave every tick superseded by
@@ -947,8 +981,22 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
     let inFlight: { readonly startedAt: number } | null = null;
 
     /**
-     * Run one refresh under the in-flight guard, abandoning a claim that has outlived
-     * {@link REFRESH_BOUND_MS}.
+     * The reads of a tick beside the ledger. They wait for the probe: a server that does not answer gets no
+     * more requests, and a server that answers again first brings the boot store back to ready.
+     */
+    async function readShared(analysisId: string): Promise<void> {
+        if (!(await seams.checkServer())) return;
+        // The probe was an await: an analysis swap in that time re-armed the poll for the new analysis.
+        if (workspace.analysis?.id !== analysisId) return;
+        workspace.refreshScope();
+        setPollTick((n) => n + 1);
+        const threadId = workspace.sessionId;
+        if (threadId !== null) await seams.pollThread(analysisId, threadId);
+    }
+
+    /**
+     * Run one tick under the in-flight guard, abandoning a claim that has outlived
+     * {@link REFRESH_BOUND_MS}. The ledger refresh starts at once, beside the reads that wait for the probe.
      *
      * Abandonment is resolved HERE, when the next trigger asks for the guard, rather than by a timer
      * armed alongside each refresh: the guard only matters when something wants it, so the moment of
@@ -971,16 +1019,17 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         inFlight = claim;
         // Cleared by IDENTITY: an abandoned refresh can still settle long after its replacement
         // claimed the guard, and a bare `inFlight = null` there would release a claim it does not own.
-        void seams.refresh(analysisId).finally(() => {
+        void Promise.all([seams.refresh(analysisId), readShared(analysisId)]).finally(() => {
             if (inFlight === claim) inFlight = null;
         });
     }
 
     createEffect(() => {
-        const key = armKey();
+        const analysisId = pollAnalysisId();
+        const ms = pollMs();
         teardown();
-        if (!key) return;
-        disarm = seams.arm(() => guardedRefresh(key), POLL_INTERVAL_MS);
+        if (analysisId === null) return;
+        disarm = seams.arm(() => guardedRefresh(analysisId), ms);
     });
     onCleanup(teardown);
 }

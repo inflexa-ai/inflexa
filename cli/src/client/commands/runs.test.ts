@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test, type Mock } from "bun:test";
 import { ok } from "neverthrow";
 
-import type { DataProfileView, ProfileRerunResult, RunDetail, RunList, RunSummary, SandboxReadiness } from "../../api/runs.ts";
+import type { DataProfileView, ProfileRerunResult, RunDetail, RunList, RunSummary } from "../../api/runs.ts";
 import type { ClientOpts } from "../api.ts";
 import { profileRun, profileStatus, runStatus } from "./runs.ts";
 
@@ -143,12 +143,6 @@ describe("inflexa run --status", () => {
 });
 
 describe("inflexa profile", () => {
-    const ready: SandboxReadiness = {
-        image: { state: "present", image: "ghcr.io/inflexa-ai/sandbox-base:1" },
-        store: "installed",
-        farm: { present: true, catalogPresent: true, failure: null },
-        inputCount: 2,
-    };
     const profile = (status: "pending" | "running" | "completed"): DataProfileView => ({
         status,
         error: null,
@@ -162,14 +156,12 @@ describe("inflexa profile", () => {
     test("asks the server for the re-profile, then reads the profile until it completes", async () => {
         const rerun: ProfileRerunResult = { outcome: { kind: "triggered", restarted: true, materialized: true } };
         const { opts, requests } = serverOf({
-            "GET /api/v1/analyses/a1/sandbox-readiness": ready,
             "POST /api/v1/analyses/a1/data-profile/rerun": rerun,
             "GET /api/v1/analyses/a1/data-profile": [profile("pending"), profile("running"), profile("completed")],
         });
         await profileRun(ANALYSIS, { client: opts, pollMs: 1 });
 
         expect(requests).toEqual([
-            "GET /api/v1/analyses/a1/sandbox-readiness",
             "POST /api/v1/analyses/a1/data-profile/rerun",
             "GET /api/v1/analyses/a1/data-profile",
             "GET /api/v1/analyses/a1/data-profile",

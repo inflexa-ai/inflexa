@@ -211,6 +211,7 @@ describe("synthetic record entries in the transcript", () => {
             chatMessage("a1", "assistant", "on it"),
         ];
         await loadMessages("analysis-1", "s1", {
+            fetchThread: () => okAsync(null),
             fetchMessages: () => okAsync({ messages: replayed, total: replayed.length, page: 0, perPage: replayed.length, hasMore: false }),
         });
 

@@ -37,6 +37,7 @@ import { lstat, readFile, readdir, readlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
+import PQueue from "p-queue";
 import { z } from "zod";
 
 import { parseQuery, type PackageQuery, type ParseQueryError } from "@inflexa-ai/harness";
@@ -519,23 +520,45 @@ async function countSymlinks(dir: string): Promise<number> {
     return count;
 }
 
-/** Sum the bytes of the real files under a directory. Never follows a symlink, so a farm's links add nothing and a loop cannot form. */
-async function dirBytes(dir: string): Promise<number> {
+/** How many `readdir` and `lstat` calls {@link dirBytes} keeps in flight at one time. */
+const DIR_WALK_WIDTH = 16;
+
+/**
+ * Sum the bytes of the real files under a directory, or 0 when it is absent. Never follows a symlink,
+ * so a farm's links add nothing and a loop cannot form. `lstatFile` reads the size of one file.
+ */
+export async function dirBytes(dir: string, lstatFile: (path: string) => Promise<{ readonly size: number }> = lstat): Promise<number> {
     if (!existsSync(dir)) return 0;
+    const queue = new PQueue({ concurrency: DIR_WALK_WIDTH });
     let total = 0;
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isSymbolicLink()) continue;
-        if (entry.isDirectory()) {
-            total += await dirBytes(full);
-        } else if (entry.isFile()) {
-            try {
-                total += (await lstat(full)).size;
-            } catch {
-                // A file that vanished mid-walk contributes nothing.
-            }
-        }
+    // The priority is the depth, so deeper work runs first and the walk drains one subtree before it
+    // opens the next. The queue then holds about one listing for each level, as a recursive walk does,
+    // and not the whole frontier of the tree.
+    async function walk(path: string, depth: number): Promise<void> {
+        const entries = await queue.add(() => readdir(path, { withFileTypes: true }), { priority: depth });
+        await Promise.all(
+            entries.map(async (entry) => {
+                const full = join(path, entry.name);
+                if (entry.isSymbolicLink()) return;
+                if (entry.isDirectory()) return walk(full, depth + 1);
+                if (!entry.isFile()) return;
+                const size = await queue.add(
+                    async () => {
+                        try {
+                            return (await lstatFile(full)).size;
+                        } catch {
+                            // A file that vanished mid-walk contributes nothing.
+                            return 0;
+                        }
+                    },
+                    { priority: depth + 1 },
+                );
+                // Added after the await: `total += await …` reads `total` before it, and loses the sums of the concurrent reads.
+                total += size;
+            }),
+        );
     }
+    await walk(dir, 0);
     return total;
 }
 
@@ -623,12 +646,6 @@ function danglingGraphNodes(storeRoot: string): readonly string[] {
 }
 
 export async function reclaimStore(params: { readonly storeRoot: string }, deps: ReclaimDeps = {}): Promise<Result<ReclaimOutcome, StoreActionError>> {
-    if (reclaimTakenInProcess) {
-        return err({
-            type: "reclaim_in_flight",
-            message: "This process reclaims the package store already. Wait for that reclamation to finish, then run this command again.",
-        });
-    }
     const lock = acquireInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     if (!lock.acquired) {
         return err({
@@ -636,7 +653,6 @@ export async function reclaimStore(params: { readonly storeRoot: string }, deps:
             message: `Another \`inflexa\` process (pid ${lock.holderPid}) is reclaiming this package store. Wait for it to finish, then run this command again.`,
         });
     }
-    reclaimTakenInProcess = true;
     try {
         const settled = await waitForNoLiveWork(deps.flightWaitMs ?? FLIGHT_WAIT_MS, deps.flightPollMs ?? FLIGHT_POLL_MS);
         if (settled.isErr()) return err(settled.error);
@@ -654,21 +670,9 @@ export async function reclaimStore(params: { readonly storeRoot: string }, deps:
         if (ran.isErr()) return err(ran.error);
         return classifyProvisionerRun(ran.value).map(() => ({ reclaimed: candidates, farmsReaped }));
     } finally {
-        reclaimTakenInProcess = false;
         releaseInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     }
 }
-
-/**
- * True while a reclamation or a debris pass of THIS process holds the reclaim lock.
- *
- * The lock file excludes a different process only: `acquireInstanceLock` is re-entrant for one pid. In the
- * server, a `store reclaim` route and the boot debris pass meet in one process, thus the second taker would
- * pass the acquire, and the `finally` of the first would delete the lock under it. This flag keeps the
- * exclusion of two processes inside one: a second reclamation refuses, and a debris pass yields. The test and
- * the set have no `await` between them, thus two callers cannot both pass.
- */
-let reclaimTakenInProcess = false;
 
 /**
  * Remove each farm whose analysis the database no longer holds.
@@ -794,10 +798,8 @@ export async function collectStoreDebris(storeRoot: string, deps: DebrisDeps = {
 let debrisInflight: Promise<Result<DebrisSweepOutcome, StoreActionError>> | null = null;
 
 async function runDebrisPass(storeRoot: string, deps: DebrisDeps): Promise<Result<DebrisSweepOutcome, StoreActionError>> {
-    if (reclaimTakenInProcess) return ok({ swept: false, dirs: [], reports: 0 });
     const lock = acquireInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     if (!lock.acquired) return ok({ swept: false, dirs: [], reports: 0 });
-    reclaimTakenInProcess = true;
     try {
         const liveFlight = readStoreFlights().some((flight) => flight.row.state !== "failed");
         if (liveFlight || liveInstanceLockHolds(FARM_LOCK_KEY_PREFIX).length > 0 || liveInstanceLockHolds(TRANSFER_LOCK_KEY_PREFIX).length > 0) {
@@ -812,7 +814,6 @@ async function runDebrisPass(storeRoot: string, deps: DebrisDeps): Promise<Resul
         if (ran.isErr()) return err(ran.error);
         return classifyProvisionerRun(ran.value).map(() => ({ swept: true, dirs, reports }));
     } finally {
-        reclaimTakenInProcess = false;
         releaseInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     }
 }
@@ -1078,7 +1079,7 @@ export function queueStoreAdd(pkg: string, options: StoreAddOptions): Result<Sto
 }
 
 /** Make the store root, so that the flush of a direct add has a root to bind. */
-export function ensureStoreRoot(storeRoot: string): Result<void, StoreAddRefusal> {
+function ensureStoreRoot(storeRoot: string): Result<void, StoreAddRefusal> {
     try {
         mkdirSync(storeRoot, { recursive: true });
         return ok(undefined);
@@ -1423,7 +1424,14 @@ function printInspection(inspection: StoreInspection): void {
         return;
     }
     console.log(`  Packages ${inspection.packages.length}`);
-    for (const pkg of inspection.packages) console.log(`    ${pkg.pin ?? pkg.dir}`);
+    const pinCounts = new Map<string, number>();
+    for (const pkg of inspection.packages) if (pkg.pin !== null) pinCounts.set(pkg.pin, (pinCounts.get(pkg.pin) ?? 0) + 1);
+    for (const pkg of inspection.packages) {
+        // Two store directories can hold one pin, for example the build of an older catalog that a farm
+        // still links. Only the directory tells the two lines apart.
+        const shared = pkg.pin !== null && (pinCounts.get(pkg.pin) ?? 0) > 1;
+        console.log(`    ${pkg.pin ?? pkg.dir}${shared ? `  ${pkg.dir}` : ""}`);
+    }
     console.log(`  Farms    ${inspection.farms.length}`);
     for (const farm of inspection.farms) {
         const tracks = farm.tracks.length === 0 ? "no lock" : `tracks: ${farm.tracks.join(", ")}`;

@@ -443,9 +443,11 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 sink.out(`  [tool] ${name}${detail === undefined ? "" : ` ${detail}`} ${outcome}\n`);
                 return;
             }
+            case "iteration":
             case "finish":
             case "error":
                 // The REPL reads the summary of the turn after the stream ends, and reports the outcome from it.
+                // Only a sub-agent gives an `iteration`, thus the routing above takes each one.
                 return;
             default: {
                 // The one check of a part: each reader past this point trusts the type of the part.

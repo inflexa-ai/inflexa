@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { err, errAsync, ok, okAsync, ResultAsync, type Result } from "neverthrow";
+import { createRoot } from "solid-js";
 import {
     toChatFrame,
     type ChatFrame,
@@ -12,7 +13,7 @@ import {
     type RunCardPart,
 } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { MessageList, TurnSummary } from "../../api/conversation.ts";
+import type { MessageList, ThreadSummary, TurnList, TurnSummary } from "../../api/conversation.ts";
 import type { ClientError } from "../../client/api.ts";
 import {
     applyServerFrame,
@@ -23,6 +24,8 @@ import {
     hasPromptHistory,
     messages,
     noteAskFeedback,
+    otherClientTurn,
+    pollOpenThread,
     promptHistory,
     resetHotState,
     send,
@@ -30,12 +33,17 @@ import {
     streamPartId,
     streamText,
     type SendOpts,
+    type ThreadPollOpts,
+    watchServerStateErrors,
 } from "./conversation.ts";
+import { __resetBootForTest, __setBootStateForTest, type BootState } from "./boot.ts";
 import { activeAsk, queuedCount } from "./asks.ts";
 import { __resetNoticesForTest, currentNotice } from "./notice.ts";
 import { chatStatus } from "./status.ts";
 import { readFileReference, readPlanCard, readPresentation } from "../../modules/harness/chat_printer.ts";
 import type { LiveAskPart, LiveTextPart, LiveToolCallPart, Part } from "../../types/session.ts";
+import { conversationSummary, threadListOf } from "../../test_support/threads.ts";
+import { __resetOpenThreadForTest, openThread, refreshOpenThread, type ThreadOpts } from "./thread.ts";
 
 // The conversation state is a module singleton (one chat screen at a time), so reset it between
 // cases. resetHotState() clears messages/stream/error/adapter state and returns status to idle.
@@ -172,6 +180,7 @@ function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () =
         fetchTurn: (analysisId, threadId, turnId) => okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", ...end }),
         reloadTranscript: async () => undefined,
         healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
+        transcript: { fetchThread: () => okAsync(null), fetchMessages: () => okAsync(messageList([])) },
     };
 }
 
@@ -193,7 +202,7 @@ function messageList(list: ChatMessage[]): MessageList {
 
 /** Load options whose read gives `list`. */
 function loadOf(list: ChatMessage[]): LoadOpts {
-    return { fetchMessages: () => okAsync(messageList(list)) };
+    return { fetchThread: () => okAsync(null), fetchMessages: () => okAsync(messageList(list)) };
 }
 
 function findPart<T extends Part>(pred: (p: Part) => p is T): T | undefined {
@@ -434,8 +443,7 @@ describe("send() drives the adapter over the turn stream", () => {
         test("a sub-agent's frames update the running tool's activity line and create no block of their own", async () => {
             const activity = await activityDuring((emit) => {
                 void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis", input: {} });
-                // The route gives no frame for an `iteration`, thus only the tool frame reaches the hook.
-                void emit({ type: "iteration", source: SUB, index: 1, final: false } as LoopEvent);
+                void emit({ type: "iteration", source: SUB, index: 1, final: false });
                 void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers", input: {} });
             });
             // The activity carries the sub-agent's newest work, attributed to who is doing it.
@@ -445,6 +453,16 @@ describe("send() drives the adapter over the turn stream", () => {
             // Exactly ONE tool block: the top-level call. The sub-agent's own tool never became one.
             expect(tools.length).toBe(1);
             expect((tools[0] as LiveToolCallPart).toolName).toBe("plan_analysis");
+        });
+
+        // A sub-agent spends most of a long call in a model request, before its first tool call too, and
+        // an empty line there reads as a wedged call.
+        test("a sub-agent that starts a model request shows its thinking line", async () => {
+            const activity = await activityDuring((emit) => {
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis", input: {} });
+                void emit({ type: "iteration", source: SUB, index: 0, final: false });
+            });
+            expect(activity).toBe("planner: thinking");
         });
 
         test("the INNERMOST sub-agent owns the line — a shallower caller does not overwrite it", async () => {
@@ -1143,6 +1161,7 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
     function countingLoad(list: ChatMessage[]): LoadOpts & { reads: () => number } {
         let reads = 0;
         return {
+            fetchThread: () => okAsync(null),
             fetchMessages: () => {
                 reads++;
                 return okAsync(messageList(list));
@@ -1193,14 +1212,14 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
 
 describe("loadMessages reads absence and failure apart", () => {
     test("a thread with no row (404) mounts an empty transcript and raises nothing", async () => {
-        await loadMessages(AID, SID, { fetchMessages: () => errAsync(THREAD_NOT_FOUND) });
+        await loadMessages(AID, SID, { fetchThread: () => okAsync(null), fetchMessages: () => errAsync(THREAD_NOT_FOUND) });
         expect(messages.length).toBe(0);
         expect(errorMsg()).toBeNull();
         expect(chatStatus()).toBe("idle");
     });
 
     test("a failed read raises the load banner", async () => {
-        await loadMessages(AID, SID, { fetchMessages: () => errAsync(PREPARE_FAILED) });
+        await loadMessages(AID, SID, { fetchThread: () => okAsync(null), fetchMessages: () => errAsync(PREPARE_FAILED) });
         expect(errorMsg()).toContain("Failed to load the conversation");
         expect(chatStatus()).toBe("error");
     });
@@ -1217,7 +1236,10 @@ describe("loadMessages staleness guard", () => {
         const oldGate = new Promise<void>((r) => {
             releaseOld = r;
         });
-        const oldLoad: LoadOpts = { fetchMessages: () => ResultAsync.fromSafePromise(oldGate.then(() => messageList(chatText("old", "old-msg")))) };
+        const oldLoad: LoadOpts = {
+            fetchThread: () => okAsync(null),
+            fetchMessages: () => ResultAsync.fromSafePromise(oldGate.then(() => messageList(chatText("old", "old-msg")))),
+        };
 
         const parked = loadMessages(AID, SID, oldLoad); // blocks on oldGate at its read
         await loadMessages(AID, SID, loadOf(chatText("new", "new-msg"))); // starts later, completes first
@@ -1247,6 +1269,7 @@ describe("a turn supersedes a transcript load in flight", () => {
         });
         return {
             load: {
+                fetchThread: () => okAsync(null),
                 fetchMessages: () =>
                     ResultAsync.fromSafePromise(
                         gate.then(() => messageList([{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }])),
@@ -1390,6 +1413,7 @@ describe("MESSAGE_CAP answers to the display alone", () => {
         // restore the coupling.
         let seen: unknown[] = [];
         const load: LoadOpts = {
+            fetchThread: () => okAsync(null),
             fetchMessages: (...args: unknown[]) => {
                 seen = args;
                 return okAsync(messageList([]));
@@ -1553,6 +1577,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
             releaseInitial = r;
         });
         const initialLoad: LoadOpts = {
+            fetchThread: () => okAsync(null),
             fetchMessages: () =>
                 ResultAsync.fromSafePromise(
                     initialGate.then(() => messageList([{ id: "old", role: "assistant", parts: [{ type: "text", text: "never-mounted" }] }])),
@@ -1787,5 +1812,254 @@ describe("hasPromptHistory", () => {
         const { has, list } = await agreementFor([user(), assistant("a1")]);
         expect(has).toBe(false);
         expect(list).toBe(0);
+    });
+});
+
+// A different client (a second TUI, a CLI command, the GUI) can write to the open thread, and the server
+// pushes nothing. The poll reads the stamp of the thread, and a send reads it too, thus the screen holds
+// what the model reads before the next turn of this client.
+describe("the open thread that a different client changes", () => {
+    afterEach(() => __resetOpenThreadForTest());
+
+    const said = (id: string, role: "user" | "assistant", text: string): ChatMessage => ({ id, role, parts: [{ type: "text", text }] });
+    const texts = (): string[] =>
+        messages.map((m) => {
+            const part = m.parts[0];
+            return part?.type === "text" ? part.text : "";
+        });
+
+    /** The server side of the open thread: its stamp, its transcript, and if a turn runs on it. A case changes them as a different client would. */
+    function sharedThread(): {
+        state: { updatedAt: string; title: string; list: ChatMessage[]; running: boolean };
+        opts: ThreadPollOpts;
+        messageReads: () => number;
+    } {
+        const state = {
+            updatedAt: "2026-10-03T10:00:00.000Z",
+            title: "first question",
+            list: [said("u1", "user", "first question"), said("a1", "assistant", "first answer")],
+            running: false,
+        };
+        let messageReads = 0;
+        const turns = (): TurnList => {
+            const running: TurnSummary[] = state.running
+                ? [{ turnId: "turn-of-the-gui", threadId: SID, analysisId: AID, status: "running", startedAt: "2026-10-03T10:04:00.000Z" }]
+                : [];
+            return { turns: running, total: running.length, page: 0, perPage: 1, hasMore: false };
+        };
+        return {
+            state,
+            opts: {
+                fetchThread: () => okAsync(conversationSummary({ id: SID, resourceId: AID, title: state.title, updatedAt: state.updatedAt })),
+                fetchMessages: () => {
+                    messageReads += 1;
+                    return okAsync(messageList(state.list));
+                },
+                fetchTurns: () => okAsync(turns()),
+            },
+            messageReads: () => messageReads,
+        };
+    }
+
+    /** One turn of a different client: its question and its answer land, and the stamp of the thread moves. */
+    function turnOfTheGui(thread: ReturnType<typeof sharedThread>): void {
+        thread.state.list = [...thread.state.list, said("u2", "user", "question of the GUI"), said("a2", "assistant", "answer to the GUI")];
+        thread.state.updatedAt = "2026-10-03T10:05:00.000Z";
+    }
+
+    test("a poll reads the transcript again when a different client wrote to the thread", async () => {
+        const thread = sharedThread();
+        await loadMessages(AID, SID, thread.opts);
+        expect(texts()).toEqual(["first question", "first answer"]);
+
+        turnOfTheGui(thread);
+        await pollOpenThread(AID, SID, thread.opts);
+
+        expect(texts()).toEqual(["first question", "first answer", "question of the GUI", "answer to the GUI"]);
+    });
+
+    test("a poll reads no transcript when the thread did not change", async () => {
+        const thread = sharedThread();
+        await loadMessages(AID, SID, thread.opts);
+
+        await pollOpenThread(AID, SID, thread.opts);
+
+        expect(thread.messageReads()).toBe(1);
+    });
+
+    test("a reload keeps each message that did not change, thus its block does not mount again", async () => {
+        const thread = sharedThread();
+        await loadMessages(AID, SID, thread.opts);
+        const first = messages[0];
+
+        turnOfTheGui(thread);
+        await pollOpenThread(AID, SID, thread.opts);
+
+        expect(messages.length).toBe(4);
+        expect(messages[0]).toBe(first);
+    });
+
+    test("a poll reads no transcript while a turn of this client runs on the thread", async () => {
+        const thread = sharedThread();
+        await loadMessages(AID, SID, thread.opts);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const sending = send({ sessionId: SID, analysisId: AID, userText: "my question" }, { ...fakeServer(done(), () => gate), transcript: thread.opts });
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(chatStatus()).toBe("busy");
+
+        // The opening of this turn moved the stamp. The live turn already shows it.
+        thread.state.updatedAt = "2026-10-03T10:06:00.000Z";
+        await pollOpenThread(AID, SID, thread.opts);
+
+        expect(thread.messageReads()).toBe(1);
+        expect(texts()).toContain("my question");
+        release();
+        await sending;
+    });
+
+    test("a turn of a different client shows while it runs, and stops showing when it ends", async () => {
+        const thread = sharedThread();
+        await loadMessages(AID, SID, thread.opts);
+
+        thread.state.running = true;
+        await pollOpenThread(AID, SID, thread.opts);
+        expect(otherClientTurn()).toBe(true);
+
+        thread.state.running = false;
+        await pollOpenThread(AID, SID, thread.opts);
+        expect(otherClientTurn()).toBe(false);
+    });
+
+    test("a send reads the transcript again first when the thread changed since its last read", async () => {
+        const thread = sharedThread();
+        await loadMessages(AID, SID, thread.opts);
+
+        turnOfTheGui(thread);
+        await send(
+            { sessionId: SID, analysisId: AID, userText: "my question" },
+            { ...fakeServer(done({ fallbackText: "my answer" })), transcript: thread.opts },
+        );
+
+        expect(texts()).toEqual(["first question", "first answer", "question of the GUI", "answer to the GUI", "my question", "my answer"]);
+    });
+
+    /** The rail of the open thread, read through `getThread` as the bind and the end of a turn read it. */
+    function railReads(getThread: ThreadOpts["getThread"]): ThreadOpts {
+        return { ready: () => true, listThreads: () => okAsync(threadListOf([])), getThread, notify: () => {} };
+    }
+
+    test("a poll gives the rail the title that a different client gave the open thread", async () => {
+        const thread = sharedThread();
+        await loadMessages(AID, SID, thread.opts);
+        await refreshOpenThread(AID, SID, railReads(thread.opts.fetchThread));
+        expect(openThread()).toMatchObject({ kind: "loaded", thread: { title: "first question" } });
+
+        thread.state.title = "renamed in the GUI";
+        thread.state.updatedAt = "2026-10-03T10:05:00.000Z";
+        await pollOpenThread(AID, SID, thread.opts);
+
+        expect(openThread()).toMatchObject({ kind: "loaded", thread: { title: "renamed in the GUI" } });
+    });
+
+    test("the first turn of a different client on a new conversation shows: its row on the rail and its messages", async () => {
+        // A new conversation has an id and no row. The first turn makes the row, and here a different client makes it.
+        const state: { row: ThreadSummary | null; list: ChatMessage[] } = { row: null, list: [] };
+        const opts: ThreadPollOpts = {
+            fetchThread: () => okAsync(state.row),
+            fetchMessages: () => (state.row === null ? errAsync(THREAD_NOT_FOUND) : okAsync(messageList(state.list))),
+            fetchTurns: () => okAsync({ turns: [], total: 0, page: 0, perPage: 1, hasMore: false }),
+        };
+        await loadMessages(AID, SID, opts);
+        await refreshOpenThread(AID, SID, railReads(opts.fetchThread));
+        expect(openThread().kind).toBe("absent");
+
+        state.row = conversationSummary({ id: SID, resourceId: AID, title: "question of the GUI", updatedAt: "2026-10-03T10:05:00.000Z" });
+        state.list = [said("u2", "user", "question of the GUI"), said("a2", "assistant", "answer to the GUI")];
+        await pollOpenThread(AID, SID, opts);
+
+        expect(openThread()).toMatchObject({ kind: "loaded", thread: { title: "question of the GUI" } });
+        expect(texts()).toEqual(["question of the GUI", "answer to the GUI"]);
+    });
+
+    test("a send reads no transcript when the thread did not change", async () => {
+        const thread = sharedThread();
+        await loadMessages(AID, SID, thread.opts);
+
+        await send({ sessionId: SID, analysisId: AID, userText: "my question" }, { ...fakeServer(done()), transcript: thread.opts });
+
+        expect(thread.messageReads()).toBe(1);
+    });
+});
+
+// A refusal of the server state (a stop that drains, a runtime that is not ready, no server at all) says
+// nothing about the conversation. When the server is ready again, its banner and the error state go, and
+// a failure of the model stays: the model can fail the same way again.
+describe("an error of the server state clears at the ready edge of the boot", () => {
+    const READY: BootState = { phase: "ready", model: "m", connection: { provider: "anthropic", mode: "cliproxy" } };
+    const DRAINING: ClientError = {
+        type: "http",
+        status: 503,
+        body: { error: "draining", message: "The Inflexa server is stopping and starts no new chat turn." },
+    };
+    const UNREACHABLE: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:8436", cause: null };
+
+    let dispose: (() => void) | null = null;
+    afterEach(() => {
+        dispose?.();
+        dispose = null;
+        __resetBootForTest();
+    });
+
+    /** Mount the watch with the store ready, as the chat is before the server stops. */
+    function mount(): void {
+        __setBootStateForTest(READY);
+        createRoot((d) => {
+            dispose = d;
+            watchServerStateErrors();
+        });
+    }
+
+    test("a turn that a stopping server refused: the banner and the error state go when the new server is ready", async () => {
+        mount();
+        await send({ sessionId: SID, analysisId: AID, userText: "hi" }, refusingServer(DRAINING));
+        expect(errorMsg()).toContain("draining");
+        expect(chatStatus()).toBe("error");
+
+        __setBootStateForTest({ phase: "failed", message: "No Inflexa server answers.", recovery: "start_server" });
+        __setBootStateForTest({ phase: "booting" });
+        __setBootStateForTest(READY);
+
+        expect(errorMsg()).toBeNull();
+        expect(lastTurnFailure()).toBeNull();
+        expect(chatStatus()).toBe("idle");
+    });
+
+    test("a turn that found no server: the banner and the error state go when a server is ready", async () => {
+        mount();
+        await send({ sessionId: SID, analysisId: AID, userText: "hi" }, refusingServer(UNREACHABLE));
+        expect(chatStatus()).toBe("error");
+
+        __setBootStateForTest({ phase: "booting" });
+        __setBootStateForTest(READY);
+
+        expect(errorMsg()).toBeNull();
+        expect(chatStatus()).toBe("idle");
+    });
+
+    test("a turn that the model failed keeps its banner and its error state", async () => {
+        mount();
+        await send(
+            { sessionId: SID, analysisId: AID, userText: "hi" },
+            fakeServer({ status: "failed", opened: true, failure: { message: "The turn failed: overloaded", detailLines: [] } }),
+        );
+
+        __setBootStateForTest({ phase: "booting" });
+        __setBootStateForTest(READY);
+
+        expect(errorMsg()).toContain("overloaded");
+        expect(chatStatus()).toBe("error");
     });
 });

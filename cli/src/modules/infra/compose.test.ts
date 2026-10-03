@@ -306,23 +306,39 @@ describe("entry-point compose regeneration wiring", () => {
 
     test("`up` regenerates the compose file for the current mode before composeUp", async () => {
         const { currentMode } = seedStaleComposeFile();
+        // `up` runs the login gate of `ensureProxyReady` before the compose steps. A staged credential passes it
+        // with no prompt, and the proxy config that the gate writes is removed with the credential.
+        const credentialPath = join(env.cliproxyAuthDir, "compose-test.json");
+        const configExisted = existsSync(env.cliproxyConfigPath);
+        assertTestSandbox(credentialPath);
+        assertTestSandbox(env.cliproxyConfigPath);
+        mkdirSync(env.cliproxyAuthDir, { recursive: true });
+        writeFileSync(credentialPath, JSON.stringify({ type: "gemini" }));
 
         // mockImplementation (not mockResolvedValue) so each `ok(...)`/`err(...)` is a RETURNED Result the
         // neverthrow lint counts as handled, rather than an unconsumed Result passed as an argument.
         spies.push(spyOn(config, "ensureRuntime").mockImplementation(async () => ok(runtimes.docker)));
         spies.push(spyOn(compose, "composeAvailable").mockResolvedValue(true));
         spies.push(spyOn(compose, "composePullIfMissing").mockImplementation(async () => ok(undefined)));
+        spies.push(spyOn(compose, "composeProxyRunning").mockImplementation(async () => ok(false)));
         let composeAtHandoff = "";
         spies.push(
             spyOn(compose, "composeUp").mockImplementation(async () => {
                 composeAtHandoff = readFileSync(composeFilePath, "utf8");
-                return ok(undefined);
+                // An error ends the gate before the credential probe, which would wait on a proxy that no test runs.
+                return err({ type: "container_start_failed", message: "stub: short-circuit after compose file capture" });
             }),
         );
 
-        await up();
+        try {
+            expect(await up()).toBe(false);
+        } finally {
+            rmSync(credentialPath, { force: true });
+            if (!configExisted) rmSync(env.cliproxyConfigPath, { force: true });
+        }
 
         // The stale opposite-mode file was overwritten for the current mode before the engine hand-off.
+        expect(composeAtHandoff).not.toBe("");
         expect(hasProxyService(composeAtHandoff)).toBe(currentMode === "cliproxy");
     });
 

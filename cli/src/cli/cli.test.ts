@@ -219,3 +219,16 @@ describe("inflexa help & usage (e2e)", () => {
         }
     });
 });
+
+// The test preload names a discovery file and turns the start of a server off, thus a server check that runs
+// first stops the command with "No Inflexa server runs". In a real shell that check starts a background server.
+describe("a terminal UI launch with no TTY (e2e)", () => {
+    test("each launcher refuses before its server check, thus a refused launch starts no server", () => {
+        for (const args of [[], ["new", "headless"], ["resume", "headless"], ["config"]]) {
+            const result = runCli(args);
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain("which needs a TTY");
+            expect(result.stderr).not.toContain("No Inflexa server runs");
+        }
+    });
+});

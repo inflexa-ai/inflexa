@@ -233,14 +233,22 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
 
     // A GET is the open of the analysis, as the launch of a chat was: it records the sighting of the folder
     // and heals a moved one. The search for a moved folder starts in the folder of the client, the `cwd` query.
+    // `touch=false` heals with no sighting: the poll of a chat reads the analysis at each tick, and a sighting
+    // is a write of the anchor row.
     routes.get("/", async (c) => {
         const cwd = c.req.query("cwd");
         if (cwd !== undefined && !isAbsolute(cwd)) {
             return apiError(c, "validation_error", "`cwd` must be an absolute path.", { fieldErrors: { cwd: ["The path must be absolute."] } });
         }
+        const touch = c.req.query("touch");
+        if (touch !== undefined && touch !== "true" && touch !== "false") {
+            return apiError(c, "validation_error", "`touch` must be `true` or `false`.", { fieldErrors: { touch: ["must be true or false"] } });
+        }
         const analysis = loadAnalysis(c);
         if (analysis.isErr()) return analysis.error;
-        return (await analysisDetail(analysis.value, boot.runtime(), opts, { touch: true, searchRoots: cwd === undefined ? undefined : [cwd] })).match(
+        return (
+            await analysisDetail(analysis.value, boot.runtime(), opts, { touch: touch !== "false", searchRoots: cwd === undefined ? undefined : [cwd] })
+        ).match(
             (detail) => c.json(detail),
             (e) => internalError(c, e, "read the analysis"),
         );

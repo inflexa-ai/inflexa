@@ -92,6 +92,7 @@ describe("plan.explore-steps", () => {
                 }),
             reloadTranscript: async () => undefined,
             healRetract: unexpected("healRetract"),
+            transcript: { fetchThread: () => okAsync(null), fetchMessages: unexpected("fetchMessages") },
         };
         await send({ sessionId: "session-1", analysisId: "analysis-1", userText: "show plan" }, opts);
         expect(command.enabled?.(workspace)).toBe(true);

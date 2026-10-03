@@ -86,14 +86,6 @@ function projectFromRow(r: ProjectRow): Project {
 
 const PROJECT_COLS = "id, created_at, updated_at, name, description, tags";
 
-/** Every project, newest first. */
-export function listProjects(): Result<Project[], DbError> {
-    return tryQuery("listProjects", (conn) => {
-        const rows = conn.query(`SELECT ${PROJECT_COLS} FROM projects ORDER BY created_at DESC`).all() as ProjectRow[];
-        return rows.map(projectFromRow);
-    });
-}
-
 /** A project with the count of the analyses grouped under it. */
 export type ProjectWithCount = {
     project: Project;
@@ -129,22 +121,6 @@ export function findProjectByRef(ref: IdOrName): Result<Project | null, DbError>
             .query(`SELECT ${PROJECT_COLS} FROM projects WHERE id = $ref OR name = $ref ORDER BY (id = $ref) DESC LIMIT 1`)
             .get({ $ref: ref }) as ProjectRow | null;
         return row ? projectFromRow(row) : null;
-    });
-}
-
-/** How many analyses are grouped under a project. `0` when the project has none (or does not exist). */
-export function countAnalysesByProject(projectId: string): Result<number, DbError> {
-    return tryQuery("countAnalysesByProject", (conn) => {
-        const row = conn.query("SELECT COUNT(*) AS n FROM analyses WHERE project_id = ?").get(projectId) as { n: number };
-        return row.n;
-    });
-}
-
-/** How many analyses are homed at an anchor. `0` when it has none (or does not exist) — used by `prune` to show what a dead anchor would take with it. */
-export function countAnalysesByAnchor(anchorId: string): Result<number, DbError> {
-    return tryQuery("countAnalysesByAnchor", (conn) => {
-        const row = conn.query("SELECT COUNT(*) AS n FROM analyses WHERE anchor_id = ?").get(anchorId) as { n: number };
-        return row.n;
     });
 }
 

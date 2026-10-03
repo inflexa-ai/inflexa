@@ -282,11 +282,13 @@ export function describeBootError(e: HarnessBootError): string {
         case "ingress_failed":
             return "Could not bind the local callback listener (loopback, ephemeral port) — check for exhausted ports or a restrictive firewall.";
         case "runtime_already_active":
-            // Accepted-for-now limitation of the embedded-runtime topology (one DBOS engine,
-            // executor "local", per machine). The fix is the client–server split — a single
-            // `inflexa serve` daemon owning the runtime, commands as HTTP clients — tracked
-            // with full context in inflexa-ai/inf-cli#33.
-            return `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime. Only one harness runtime per machine at a time — wait for it to finish or stop that process.`;
+            // One DBOS engine with the executor "local" for each machine. The local server holds it, thus the
+            // holder is usually the server, and a dev `run --plan` meets this while a server runs. The message
+            // cannot tell the two holders apart: this module does not read the discovery file of the client.
+            return (
+                `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime, and only one can run on a machine.\n` +
+                "  If it is the Inflexa server (`inflexa server status` shows its pid), stop it with `inflexa server stop`. Otherwise wait for that process to end."
+            );
         case "runtime_boot_failed":
             return `Harness runtime failed to boot: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
         default: {

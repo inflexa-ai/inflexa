@@ -1,13 +1,13 @@
 import { err, type Result } from "neverthrow";
 
 import pkg from "../../package.json";
-import { API_VERSION, type ServerBootError, type ServerIdentity, type ServerState } from "../api/server.ts";
+import { API_VERSION, SIGN_IN_REQUIRED, type ServerBootError, type ServerIdentity, type ServerState } from "../api/server.ts";
 import { causeDetailLines, describeCause } from "../lib/cause.ts";
 import { env } from "../lib/env.ts";
 import { getLogger } from "../lib/log.ts";
 import { resolveHarnessConfig, resolveModelConnection } from "../modules/harness/config.ts";
 import { bootHarnessRuntime, describeBootError, type HarnessBootError, type HarnessRuntime } from "../modules/harness/runtime.ts";
-import { ensureProxyReady } from "../modules/infra/setup.ts";
+import { ensureProxyReady, ProxyError } from "../modules/infra/setup.ts";
 import { collectStoreDebris } from "../modules/libs/store.ts";
 
 /** The boot of the harness runtime inside the server, as the routes see it. */
@@ -120,9 +120,12 @@ async function bootServerRuntime(): Promise<Result<HarnessRuntime, ServerBootErr
 
     // The boot never asks for a provider login, even when the terminal of `inflexa serve` is interactive: a
     // prompt there would stop the boot until someone answers it. A missing or dead login fails the boot with
-    // the remedy. The user runs `inflexa setup`, and a client then sends `POST /api/v1/server/boot`.
+    // the remedy. The user runs `inflexa up`, which signs in and then sends `POST /api/v1/server/boot`.
     const infra = await ensureProxyReady(connection.mode, { interactiveLogin: false });
-    if (infra.isErr()) return err({ reason: "infra_unready", message: infra.error.message, detailLines: [] });
+    if (infra.isErr()) {
+        const signIn = infra.error instanceof ProxyError && infra.error.signInRequired;
+        return err({ reason: signIn ? SIGN_IN_REQUIRED : "infra_unready", message: infra.error.message, detailLines: [] });
+    }
 
     const config = resolveHarnessConfig();
     if (config.configError) return err(fromHarnessBootError({ type: "harness_config_invalid", issues: config.configError.issues }));
