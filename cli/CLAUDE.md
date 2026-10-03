@@ -689,6 +689,22 @@ spec is the contract.
   port, the bearer token, and the versions. A client reads it at each request.
   `INFLEXA_SERVER_FILE` names a different file, and a client under this variable
   starts no server.
+- **The sign-in.** The boot of the server never asks for a provider login. A
+  missing or dead login fails the boot with the reason `sign_in_required`.
+  `inflexa up` in a terminal signs in. Then it asks the failed server to boot again
+  (`POST /api/v1/server/boot`). The TUI offers the sign-in in a dialog, and it runs
+  `inflexa up` in its own terminal.
+- **The other clients.** The server pushes nothing. The TUI sees the work of a
+  different client through its poll (`watchSidebarData`, `src/tui/hooks/sidebar_live.ts`):
+  each 5 s with active work, and each 15 s when idle. A tick probes the server, and
+  it reads the runs, the analysis, the usage, and the open thread.
+- **The Host and Origin check.** The server answers only a request whose `Host`
+  header is `127.0.0.1:<port>` or `localhost:<port>`. An `Origin` header must name
+  the same address. Each other request gets 403 `forbidden`. A route test that
+  calls `request()` on the app sends no socket, thus it passes the check.
+- **The dev web page.** A dev server serves a web page of the API at `/gui/`.
+  `bun scripts/poc_gui.ts` prints its URL with the token, and `--open` opens it in
+  the browser.
 - **The command kinds.** `registerAction(command, kind, policy, handler)` takes a
   `CommandKind`. An `instance` command connects to the server, or starts one,
   before its action runs. A `machine` command and a `standalone` command run with

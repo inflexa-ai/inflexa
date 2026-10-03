@@ -51,37 +51,15 @@ consumer of a role's model identity SHALL receive that role's resolved value.
 
 ### Requirement: Palette commands switch an agent's model through a listing picker
 
-The command palette SHALL offer `Switch chat model`, `Switch sandbox model`, and
-`Switch utility model` commands under the dedicated `Provider` palette category,
-enabled only when the runtime of the local server is booted. Each SHALL open a
-picker listing the shared connection's models dynamically, which the local server
-reads (`GET /api/v1/models`) — the proxy's `/models` in cliproxy mode; in direct
-mode, `{baseURL}/models` for BOTH protocols, derived from the SAME configured
-`baseURL` the chat path uses, never a re-derived variant — marking the selected
-role's current model (`GET /api/v1/agents`).
+The command palette MUST offer `Switch chat model`, `Switch sandbox model`, and `Switch utility model` under the `Provider` category. Each command MUST be enabled only when the runtime of the local server is booted. Each command MUST open a picker that lists the models of the shared connection, which the local server reads (`GET /api/v1/models`). In cliproxy mode the source is the `/models` route of the proxy. In direct mode the source is `{baseURL}/models` for both protocols. That `baseURL` MUST be the configured one that the chat path uses, never a variant. The picker MUST mark the current model of the role (`GET /api/v1/agents`).
 
-When listing fails, the picker SHALL degrade to free-text model entry, pre-filled
-with the role's current model, rather than blocking the switch. The picker SHALL
-also offer a manual-entry row when listing succeeds. That row SHALL remain
-offered whatever the user typed into the filter. Backing out of the manual field
-SHALL return to the listing.
+The server MUST stop one listing after 10 s, the headers and the body together, because the route lifts the idle timeout of the connection. A listing that failed MUST give `models: null` with `reason`, one clause for a person. When the listing fails, the picker MUST degrade to free-text model entry, pre-filled with the current model of the role. It MUST show the reason under the field. The picker MUST also offer a manual-entry row when the listing succeeds. That row MUST stay offered for each filter text. Back from the manual field MUST return to the listing.
 
-In direct mode, listing and validation SHALL authenticate exactly as chat does:
-configured `auth` resolves its credential source and applies only its named
-scheme; only absent `auth` uses static env-key resolution. Credential-source
-failure SHALL degrade through the existing listing/validation paths rather than
-crash.
+In direct mode, the listing and the validation MUST authenticate as the chat does. A configured `auth` resolves its credential source and applies only its named scheme. Only an absent `auth` uses the static env-key resolution. A credential-source failure MUST degrade through the listing and validation paths, and it MUST NOT crash.
 
-For Anthropic protocol, a committed listed or free-text selection SHALL be
-accessibility-validated with the bounded unbilled `count_tokens` check. A
-definite `not_found_error` SHALL keep the dialog open and persist nothing; a 200
-or inconclusive timeout/network/other-status outcome SHALL commit. OpenAI-
-compatible connections SHALL commit without that validation request. The picker
-SHALL commit through `PUT /api/v1/agents/:role`: the server runs the validation,
-refuses a definite `not_found_error` with 400 `validation_error`, and otherwise
-writes the model and the effort of `models.agents.<role>` in ONE config write,
-immediately, independent of when the runtime can apply it. One write means that
-a failure can never leave the model changed and the effort not.
+For the Anthropic protocol, a committed listed or free-text selection MUST pass the bounded `count_tokens` check of accessibility, which has no cost. A definite `not_found_error` MUST keep the dialog open and persist nothing. A 200, or an inconclusive timeout, network, or other-status outcome, MUST commit. An OpenAI-compatible connection MUST commit with no validation request.
+
+The picker MUST commit through `PUT /api/v1/agents/:role`. The server runs the validation, and it refuses a definite `not_found_error` with 400 `validation_error`. Otherwise it writes the model and the effort of `models.agents.<role>` in ONE config write, at once, apart from when the runtime can apply it. With one write, a failure cannot change the model and leave the effort.
 
 #### Scenario: Picker lists live models and marks the current one
 
@@ -117,6 +95,12 @@ a failure can never leave the model changed and the effort not.
 
 - **WHEN** the user commits a model and `count_tokens` times out
 - **THEN** the selection persists through the existing inconclusive-accept rule
+
+#### Scenario: A hung endpoint gives a reason
+
+- **GIVEN** a model endpoint that accepts the connection and sends no answer
+- **WHEN** the user opens the picker
+- **THEN** the server ends the listing after 10 s, and the picker shows the free-text field with the timeout as the cause
 
 ### Requirement: A switch applies live only when no agent work is in flight
 
