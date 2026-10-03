@@ -20,7 +20,7 @@ function seamsFor(opts: {
     readProxyKey?: () => Promise<Result<string, ChatSetupError>>;
     modelApiKey?: string | undefined;
     resolveAuthCredential?: ListModelsSeams["resolveAuthCredential"];
-    fetch: (url: string, headers: Record<string, string>) => Promise<Response>;
+    fetch: ListModelsSeams["fetch"];
 }): ListModelsSeams {
     return {
         resolveConnection: () => opts.connection,
@@ -246,6 +246,16 @@ describe("listConnectionModels — expected failures degrade on the Result chann
         const result = await listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: rec.fetch }));
 
         expect(result._unsafeUnwrapErr()).toEqual({ type: "unreachable", detail: "connect ECONNREFUSED" });
+    });
+
+    test("an endpoint that never answers is timed_out at the bound, not a request with no end", async () => {
+        const hung: ListModelsSeams["fetch"] = (_url, _headers, signal) =>
+            new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+        const listing = listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: hung }), 50);
+        const outcome = await Promise.race([listing, Promise.sleep(1000).then(() => "no answer" as const)]);
+
+        expect(outcome).not.toBe("no answer");
+        if (outcome !== "no answer") expect(outcome._unsafeUnwrapErr()).toEqual({ type: "timed_out", afterMs: 50 });
     });
 
     test("a non-ok response is unreachable naming the status", async () => {

@@ -38,7 +38,7 @@ import {
 } from "../../api/conversation.ts";
 import { findAnalysesByRef } from "../../db/primary_query.ts";
 import { causeDetailLines, describeCause, findAuthCause } from "../../lib/cause.ts";
-import { rmResult } from "../../lib/fs.ts";
+import { rmResultAsync, type FsError } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
 import { locateExistingOutputDir } from "../../modules/analysis/output.ts";
 import { resolveModelConnection, type ModelConnectionIdentity } from "../../modules/harness/config.ts";
@@ -87,8 +87,8 @@ export type ConversationRouteOpts = {
     readonly flushPendingAdds: () => void;
     /** The workspace root of an analysis. Real: `locateExistingOutputDir` over the analysis row. */
     readonly workspaceRoot: (analysisId: string) => WorkspaceRootLookup;
-    /** Remove one report page folder by force. `true` when the folder is gone. Real: `rmResult`. */
-    readonly removeDir: (dir: string) => boolean;
+    /** Remove one report page folder by force. Ok when the folder is gone. Real: `rmResultAsync`. */
+    readonly removeDir: (dir: string) => ResultAsync<void, FsError>;
     readonly sse: SseOpts;
 };
 
@@ -103,7 +103,7 @@ export const DEFAULT_CONVERSATION_ROUTE_OPTS: ConversationRouteOpts = {
     readCredentialVerdict,
     flushPendingAdds: () => void startPendingFlushChild(),
     workspaceRoot,
-    removeDir: (dir) => rmResult(dir, "remove a report page folder").isOk(),
+    removeDir: (dir) => rmResultAsync(dir, "remove a report page folder"),
     sse: DEFAULT_SSE_OPTS,
 };
 
@@ -231,7 +231,7 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         if (purged.isErr()) return internalError(c, purged.error, "purge a thread");
         if (purged.value === null) return threadNotFound(c);
         const erased = [...purged.value];
-        return c.json<PurgedThread>({ purged: erased, pages: reclaimReportPages(analysisId, erased, body.value.files, opts) });
+        return c.json<PurgedThread>({ purged: erased, pages: await reclaimReportPages(analysisId, erased, body.value.files, opts) });
     });
 
     routes.get("/:analysisId/threads/:threadId/messages", runtime, async (c) => {
@@ -692,7 +692,12 @@ function workspaceRoot(analysisId: string): WorkspaceRootLookup {
  * Remove the report page folder of each erased thread, and report what is still on disk. The removal is
  * forced, thus a thread that owns no page costs one call and reports success.
  */
-function reclaimReportPages(analysisId: string, erased: readonly string[], files: "keep" | "remove", opts: ConversationRouteOpts): ReportPageFate {
+async function reclaimReportPages(
+    analysisId: string,
+    erased: readonly string[],
+    files: "keep" | "remove",
+    opts: ConversationRouteOpts,
+): Promise<ReportPageFate> {
     if (files === "keep") return { kind: "kept" };
     const lookup = opts.workspaceRoot(analysisId);
     if (lookup.kind === "absent") return { kind: "removed" };
@@ -710,7 +715,7 @@ function reclaimReportPages(analysisId: string, erased: readonly string[], files
             unnamed = true;
             continue;
         }
-        if (!opts.removeDir(dir)) stayed.push(dir);
+        if ((await opts.removeDir(dir)).isErr()) stayed.push(dir);
     }
     if (stayed.length === 0 && !unnamed) return { kind: "removed" };
     return { kind: "stayed", dirs: stayed };

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { toChatFrame, type EmitFn, type EventSource, type PlanPart, type RunCardPart } from "@inflexa-ai/harness";
 
+import type { ClientOpts } from "../../../client/api.ts";
+import { fakeClient } from "../../../test_support/fake_client.ts";
 import { createChatPrinter, type ChatSink, type PrinterOptions } from "./chat.ts";
 
 /**
@@ -10,16 +12,32 @@ import { createChatPrinter, type ChatSink, type PrinterOptions } from "./chat.ts
  * route translates each event with `toChatFrame`, and the text delta of the root
  * provider gets the source of the root agent.
  */
-function harness(options?: PrinterOptions): { emit: (e: Parameters<EmitFn>[0]) => void; finishTurn: (t?: string) => void; out: () => string; errs: string[] } {
+function harness(options?: PrinterOptions): {
+    emit: (e: Parameters<EmitFn>[0]) => void;
+    emitCard: (e: Parameters<EmitFn>[0]) => Promise<void>;
+    finishTurn: (t?: string) => void;
+    out: () => string;
+    errs: string[];
+} {
     const outChunks: string[] = [];
     const errs: string[] = [];
     const sink: ChatSink = { out: (s) => outChunks.push(s), errLine: (s) => errs.push(s) };
     const printer = createChatPrinter(sink, options);
+    // A frame that is not a card of openable entries prints before `frame` first waits, thus `emit` needs no wait.
     const emit = (e: Parameters<EmitFn>[0]): void => {
         const frame = toChatFrame(e, { agentId: "chat", callPath: ["chat"] });
-        if (frame !== null) printer.frame(frame);
+        if (frame !== null) void printer.frame(frame);
     };
-    return { emit, finishTurn: printer.finishTurn, out: () => outChunks.join(""), errs };
+    const emitCard = async (e: Parameters<EmitFn>[0]): Promise<void> => {
+        const frame = toChatFrame(e, { agentId: "chat", callPath: ["chat"] });
+        if (frame !== null) await printer.frame(frame);
+    };
+    return { emit, emitCard, finishTurn: printer.finishTurn, out: () => outChunks.join(""), errs };
+}
+
+/** A server that resolves the one entry of a card to `path`. */
+function serverResolving(kind: string, path: string): ClientOpts {
+    return fakeClient(() => ({ status: 200, body: { entries: [{ kind, path, degraded: false }] } })).opts;
 }
 
 /** Top-level provenance (callPath length 1) — passes the sub-agent depth filter. */
@@ -165,9 +183,31 @@ describe("createChatPrinter", () => {
         expect(h.out()).toContain("x <- 1");
     });
 
-    test("show_file openables print one line per entry with an OSC 8 file:// link and the plain path visible", () => {
-        const h = harness({ analysisId: "a1", resolvePath: () => "/ws/figures/volcano.png" });
-        h.emit({
+    test("an openable entry links the path that the server resolves with `materialize`, not a path of this process", async () => {
+        const server = fakeClient(() => ({
+            status: 200,
+            body: { entries: [{ kind: "echart", path: "/srv/ws/presentations/pres-chart.html", degraded: false }] },
+        }));
+        const h = harness({ analysisId: "a1", client: server.opts });
+        await h.emitCard({
+            type: "data-presentation",
+            source: TOP,
+            data: { id: "pres-chart", title: "Volcano", content: { kind: "echart", spec: { series: [] } } },
+        });
+
+        expect(server.requests).toEqual([
+            {
+                method: "POST",
+                path: "/api/v1/analyses/a1/artifacts/resolve",
+                body: { entries: [{ kind: "echart", presId: "pres-chart", spec: { series: [] } }], materialize: true },
+            },
+        ]);
+        expect(h.out()).toContain("\x1b]8;;file:///srv/ws/presentations/pres-chart.html");
+    });
+
+    test("show_file openables print one line per entry with an OSC 8 file:// link and the plain path visible", async () => {
+        const h = harness({ analysisId: "a1", client: serverResolving("workspace-file", "/ws/figures/volcano.png") });
+        await h.emitCard({
             type: "data-file-reference",
             source: TOP,
             data: { id: "g", title: "Figures", files: [{ path: "runs/r/figures/volcano.png", caption: "A vs B" }] },
@@ -179,18 +219,22 @@ describe("createChatPrinter", () => {
         expect(out).toContain("A vs B"); // the caption
     });
 
-    test("an echart presentation resolves through the injected cache resolver and links to it", () => {
-        const h = harness({ analysisId: "a1", resolvePath: () => "/cache/pres-chart.html" });
-        h.emit({ type: "data-presentation", source: TOP, data: { id: "pres-chart", title: "Volcano", content: { kind: "echart", spec: { series: [] } } } });
+    test("an echart presentation resolves through the server and links to the file that it wrote", async () => {
+        const h = harness({ analysisId: "a1", client: serverResolving("echart", "/cache/pres-chart.html") });
+        await h.emitCard({
+            type: "data-presentation",
+            source: TOP,
+            data: { id: "pres-chart", title: "Volcano", content: { kind: "echart", spec: { series: [] } } },
+        });
         const out = h.out();
         expect(out).toContain("Volcano");
         expect(out).toContain("/cache/pres-chart.html");
         expect(out).toContain("\x1b]8;;file:///cache/pres-chart.html");
     });
 
-    test("a path with a space percent-encodes the file:// link target but keeps the plain path visible", () => {
-        const h = harness({ analysisId: "a1", resolvePath: () => "/ws/my figures/volcano plot.png" });
-        h.emit({
+    test("a path with a space percent-encodes the file:// link target but keeps the plain path visible", async () => {
+        const h = harness({ analysisId: "a1", client: serverResolving("workspace-file", "/ws/my figures/volcano plot.png") });
+        await h.emitCard({
             type: "data-file-reference",
             source: TOP,
             data: { id: "g", title: "Figures", files: [{ path: "runs/r/figures/volcano plot.png" }] },

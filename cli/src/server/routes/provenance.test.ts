@@ -192,4 +192,10 @@ describe("GET {A}/provenance/lineage", () => {
             expect(await response.json()).toMatchObject({ error: "validation_error" });
         }
     });
+
+    test("a bad depth names the query parameter of the route, not a flag of the CLI", async () => {
+        const response = await get("lineage?ref=x&depth=0");
+
+        expect(await response.json()).toMatchObject({ error: "validation_error", message: '`depth` must be a positive integer, got "0".' });
+    });
 });

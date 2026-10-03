@@ -46,6 +46,8 @@ export type PruneAnchorsRequest = {
     dryRun?: boolean;
     /** Prune only these anchors, for example the ones that a dry run showed. Each one must still be dead. */
     anchorIds?: string[];
+    /** The absolute folder of the client. The search for a moved anchor folder starts there, not in the folder of the server. */
+    cwd?: string;
 };
 
 /** An anchor whose folder is gone and that no reconciliation can find again. */

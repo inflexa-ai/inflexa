@@ -157,6 +157,15 @@ describe("POST /api/v1/anchors/prune", () => {
         expect(getAnchor("D1")._unsafeUnwrap()).not.toBeNull();
     });
 
+    test("an anchor folder that moved under the folder of the client is not dead", async () => {
+        const moved = tmp();
+        writeMarker(moved, "M1")._unsafeUnwrap();
+        insertAnchor({ id: "M1", createdAt: 1, updatedAt: 1, cachedPath: "/gone/M1", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+
+        const response = (await (await post(anchorRoutes(readyBoot, opts().opts), "/prune", { dryRun: true, cwd: moved })).json()) as PruneAnchorsResponse;
+        expect(response.dead).toEqual([]);
+    });
+
     test("prunes only the named anchors, and keeps an anchor whose analysis is busy", async () => {
         seedDead("D1", ["a1"]);
         seedDead("D2", ["b1"]);
