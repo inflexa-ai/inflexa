@@ -93,4 +93,9 @@ describe("ChatEventSchema", () => {
         expect(started.type).toBe("tool-started");
         expect(finished).toMatchObject({ type: "tool-finished", outcome: "denied" });
     });
+
+    it("parses the iteration of a sub-agent", () => {
+        const nested = { agentId: "literature-reviewer", callPath: ["conversation-agent", "literature-reviewer"] };
+        expect(ChatEventSchema.parse({ type: "iteration", source: nested })).toEqual({ type: "iteration", source: nested });
+    });
 });

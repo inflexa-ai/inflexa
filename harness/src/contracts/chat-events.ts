@@ -72,6 +72,15 @@ export type ToolCallOutcome = ToolOutcome | "incomplete";
  */
 export type ToolCallDetail = string;
 
+/**
+ * A sub-agent loop started a request to its model. Only a sub-agent gives this frame, thus a consumer that
+ * keeps the root frames only (`isRootFrame`) never sees it. A host reads it as "the sub-agent thinks".
+ */
+export interface IterationEvent {
+    type: "iteration";
+    source: EventSource;
+}
+
 /** A tool call has been dispatched. */
 export interface ToolStartedEvent {
     type: "tool-started";
@@ -144,7 +153,7 @@ export interface ChatErrorEvent {
 }
 
 /** The discriminated union of all chat-stream events. */
-export type ChatEvent = TextDeltaEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent;
+export type ChatEvent = TextDeltaEvent | IterationEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent;
 
 /** A `data-*` part as a frame, with the source of its emitter when the emitter stamped one. */
 export type ChatPartFrame = ChatPart & { source?: EventSource };

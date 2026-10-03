@@ -10,9 +10,14 @@ const topLevel = { agentId: "conversation-agent", callPath: ["conversation-agent
 const nested = { agentId: "literature-reviewer", callPath: ["conversation-agent", "literature-reviewer"] };
 
 describe("toChatFrame", () => {
-    test("gives no frame for a loop iteration", () => {
+    test("gives no frame for an iteration of the root agent", () => {
         const ev: EmitEvent = { type: "iteration", source: topLevel, index: 0, final: false };
         expect(toChatFrame(ev, fallback)).toBeNull();
+    });
+
+    test("gives the frame of an iteration of a sub-agent, with its source only", () => {
+        const ev: EmitEvent = { type: "iteration", source: nested, index: 2, final: false };
+        expect(toChatFrame(ev, fallback)).toEqual({ type: "iteration", source: nested });
     });
 
     test("gives the frame of a top-level tool-started", () => {
@@ -239,6 +244,7 @@ describe("applyChatFrame", () => {
             [],
             [
                 { type: "tool-started", toolUseId: "tu_1", name: "literature_review", source: SOURCE },
+                { type: "iteration", source: sub },
                 { type: "tool-started", toolUseId: "tu_2", name: "search_pubmed", source: sub },
                 { type: "tool-finished", toolUseId: "tu_2", name: "search_pubmed", outcome: "ok", source: sub },
                 { type: "data-presentation", id: "hidden", content: { kind: "markdown", body: "child" }, source: sub },
@@ -247,6 +253,12 @@ describe("applyChatFrame", () => {
         );
         expect(terminal).toBeNull();
         expect(messages[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "literature_review" }]);
+    });
+
+    test("an iteration frame of the root agent makes no part", () => {
+        const { messages, terminal } = applyMany([], [{ type: "iteration", source: SOURCE }]);
+        expect(terminal).toBeNull();
+        expect(messages).toEqual([]);
     });
 
     test("keeps the source of a data part frame out of the part", () => {
