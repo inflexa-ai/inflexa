@@ -33,6 +33,7 @@ export {
 export {
     EventSourceSchema,
     TextDeltaEventSchema,
+    IterationEventSchema,
     ToolStartedEventSchema,
     ToolFinishedEventSchema,
     FinishEventSchema,
