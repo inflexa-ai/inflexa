@@ -140,6 +140,42 @@ describe("GET /api/v1/models", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ models: null, reason: "the model endpoint gave no answer within 10 s" });
     });
+
+    // Bun 1.4.0 checks the idle timeout on a tick of about 4 s, thus a 1 s timeout closes a quiet request within
+    // about 4 s, and a handler of 5.5 s outlives it. The control routes pin the two sides: a quiet GET closes, and
+    // a request with a body stays open, which is why only a route with no body calls `holdConnection`.
+    test("over a real listener, a listing slower than the idle timeout of Bun.serve still gets its response", async () => {
+        const slowMs = 5_500;
+        const app = routesWith({
+            listModels: async () => {
+                await Promise.sleep(slowMs);
+                return ok([{ id: "claude-opus-4-8", efforts: ["low"] }]);
+            },
+        });
+        app.get("/quiet-control", async (c) => {
+            await Promise.sleep(slowMs);
+            return c.text("answered");
+        });
+        app.post("/body-control", async (c) => {
+            await c.req.json();
+            await Promise.sleep(slowMs);
+            return c.text("answered");
+        });
+        const server = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 1, fetch: app.fetch });
+        const outcome = (path: string, init?: RequestInit): Promise<string> =>
+            fetch(`http://127.0.0.1:${server.port}${path}`, init).then(
+                async (response) => `${response.status} ${await response.text()}`,
+                (cause: unknown) => `failed: ${String(cause)}`,
+            );
+        try {
+            const [models, quiet, withBody] = await Promise.all([outcome("/models"), outcome("/quiet-control"), outcome("/body-control", json("POST", {}))]);
+            expect(models).toBe(`200 ${JSON.stringify({ models: [{ id: "claude-opus-4-8", efforts: ["low"] }] })}`);
+            expect(quiet).toContain("The socket connection was closed unexpectedly");
+            expect(withBody).toBe("200 answered");
+        } finally {
+            await server.stop(true);
+        }
+    }, 15_000);
 });
 
 describe("the settings", () => {

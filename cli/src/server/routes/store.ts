@@ -29,7 +29,7 @@ import {
 } from "../../modules/libs/store_flight.ts";
 import { readTransferReports, startImageTransfer, type TransferReport, type TransferStart, type TransferStartError } from "../../modules/libs/transfers.ts";
 import { TRANSFER_KINDS } from "../../types/store.ts";
-import { apiError, holdConnection, internalError, readBody, type ServerEnv } from "../http.ts";
+import { apiError, internalError, readBody, type ServerEnv } from "../http.ts";
 
 /** The work behind the store routes. Production passes {@link DEFAULT_STORE_ROUTE_OPTS}; a test replaces the parts that spawn or start a container. */
 export type StoreRouteOpts = {
@@ -82,7 +82,6 @@ export function storeRoutes(opts: StoreRouteOpts = DEFAULT_STORE_ROUTE_OPTS): Ho
     });
 
     routes.post("/store/transfers", async (c) => {
-        holdConnection(c);
         const body = await readBody(c, startTransferBody);
         if (body.isErr()) return body.error;
         const { kind, update } = body.value;
@@ -155,7 +154,6 @@ export function storeRoutes(opts: StoreRouteOpts = DEFAULT_STORE_ROUTE_OPTS): Ho
 export function farmLinkRoutes(opts: Pick<StoreRouteOpts, "storeRoot"> = DEFAULT_STORE_ROUTE_OPTS): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
     routes.post("/farm/link", async (c) => {
-        holdConnection(c);
         const analysisId = c.req.param("analysisId") ?? "";
         const body = await readBody(c, farmLinkBody);
         if (body.isErr()) return body.error;
