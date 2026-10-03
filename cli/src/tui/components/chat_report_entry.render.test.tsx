@@ -2,14 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { createMockMouse } from "@opentui/core/testing";
 import { errAsync, okAsync } from "neverthrow";
-import type { ChatMessage, DbError, Pool, StoredMessage, Thread } from "@inflexa-ai/harness";
+import type { ChatMessage } from "@inflexa-ai/harness/contracts/index.js";
 
-import { reportThread, threadPageOf } from "../../test_support/threads.ts";
+import type { ThreadSummary } from "../../api/conversation.ts";
+import type { ClientError } from "../../client/api.ts";
+import { reportSummary, threadListOf } from "../../test_support/threads.ts";
 import { Chat } from "./chat.tsx";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
-import { loadMessages, type LoadSeams, resetHotState } from "../hooks/conversation.ts";
-import { __resetReportChildrenForTest, refreshReportChildren, type ReportChildrenSeams } from "../hooks/report_children.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import { loadMessages, type LoadOpts, resetHotState, setError } from "../hooks/conversation.ts";
+import { __resetReportChildrenForTest, refreshReportChildren, type ReportChildrenOpts } from "../hooks/report_children.ts";
 import type { Analysis } from "../../types/analysis.ts";
 
 // Where a report entry SITS is the whole rule, and a position exists only as painted rows. A props
@@ -24,15 +25,11 @@ import type { Analysis } from "../../types/analysis.ts";
 const SID = "thread-parent";
 const AID = "a1";
 
-// The seams read only `.pool` off the handle and the fakes ignore it, thus a partial stand-in cast keeps
-// the case offline.
-const fakePool = {} as unknown as Pool;
-const fakeRuntime = { pool: fakePool } as unknown as HarnessRuntime;
-const dbErr: DbError = { type: "query_failed", op: "test", cause: new Error("boom") };
+// A failed request to the server, which the listing gives instead of rows.
+const serverGone: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://test", cause: new Error("boom") };
 
-// `Chat` reads `.id` for the transcript load and `.anchorId` for the welcome block. The anchor id names
-// no row, thus the lookup resolves to null and the block renders nothing, which is correct with a
-// transcript mounted.
+// `Chat` reads `.id` for the transcript load. The workspace has no anchor, thus the welcome block names
+// no folder, which is correct with a transcript mounted.
 const ANALYSIS = { id: AID, name: "Alpha", anchorId: "anchor-absent", projectId: null } as unknown as Analysis;
 
 // What the entry's open bound, recorded so a click is assertable. Cleared between cases.
@@ -43,6 +40,7 @@ const ws = {
     sessionId: SID,
     workingDir: "/work",
     project: null,
+    anchor: null,
     openDialog: () => {},
     closeDialog: () => {},
     openSession: (threadId: string | null) => {
@@ -70,40 +68,36 @@ const ROWS: FixtureRow[] = [
     { seq: 15, role: "assistant" },
 ];
 
-/** A read and a replay that model the store: one row in, one message of that row's role out. */
-function transcriptSeams(rows: FixtureRow[]): LoadSeams {
-    return {
-        runtime: () => fakeRuntime,
-        // One turn carrying every fixture row: the replay below reads rows, not turn boundaries.
-        loadAll: () => okAsync([rows] as unknown as StoredMessage[][]),
-        toChat: (loaded) =>
-            (loaded as unknown as FixtureRow[]).map((r): ChatMessage => ({
-                id: `id-${r.seq}`,
-                role: r.role,
-                parts: [
-                    { type: "text", text: `${r.role} ${r.seq}` },
-                    ...(r.spawns ?? []).map((threadId) => ({
-                        type: "data-child-session-started" as const,
-                        threadId,
-                        parentThreadId: SID,
-                        threadType: "report" as const,
-                    })),
-                ],
+/** A transcript read that models the server replay: one row in, one message of that row's role out. */
+function transcriptRead(rows: FixtureRow[]): LoadOpts {
+    const messages = rows.map((r): ChatMessage => ({
+        id: `id-${r.seq}`,
+        role: r.role,
+        parts: [
+            { type: "text", text: `${r.role} ${r.seq}` },
+            ...(r.spawns ?? []).map((threadId) => ({
+                type: "data-child-session-started" as const,
+                threadId,
+                parentThreadId: SID,
+                threadType: "report" as const,
             })),
-    };
+        ],
+    }));
+    // One turn carrying every fixture row: the replay reads rows, not turn boundaries.
+    return { fetchThread: () => okAsync(null), fetchMessages: () => okAsync({ messages, total: 1, page: 0, perPage: 1, hasMore: false }) };
 }
 
 /**
  * The report-children listing. `"unreadable"` is the degrade arm, where the read itself failed.
  *
- * A live page models the store in one more way: the store hides an archived row unless the listing is
+ * A live page models the server in one more way: the store hides an archived row unless the listing is
  * widened, and this listing never widens it. Thus a case that is about an archived child hands back the
  * live rows alone, exactly as the real read does.
  */
-function childrenSeams(page: Thread[] | "unreadable"): ReportChildrenSeams {
+function childrenRead(page: ThreadSummary[] | "unreadable"): ReportChildrenOpts {
     return {
-        runtime: () => fakeRuntime,
-        listThreads: () => (page === "unreadable" ? errAsync(dbErr) : okAsync(threadPageOf(page))),
+        ready: () => true,
+        listThreads: () => (page === "unreadable" ? errAsync(serverGone) : okAsync(threadListOf(page))),
     };
 }
 
@@ -124,7 +118,7 @@ function cellOf(frame: string, needle: string): { x: number; y: number } {
  * Mount the real `Chat`, seed the two stores it reads, and hand back one frame.
  *
  * The seeding comes AFTER the mount, and it must: `Chat` installs `watchReportChildren`, whose first
- * effect run reads through the production seams, and with no booted runtime that run clears the listing.
+ * effect run reads through the production options, and with no ready server that run clears the listing.
  * Anything seeded before the mount is wiped by it.
  *
  * The renderer is destroyed in a `finally`. An undisposed renderer outlives its case and corrupts every
@@ -132,7 +126,7 @@ function cellOf(frame: string, needle: string): { x: number; y: number } {
  */
 async function withChat<T>(
     rows: FixtureRow[],
-    children: Thread[] | "unreadable",
+    children: ThreadSummary[] | "unreadable",
     body: (setup: Awaited<ReturnType<typeof testRender>>, frame: string) => Promise<T> | T,
 ): Promise<T> {
     const setup = await testRender(
@@ -146,8 +140,8 @@ async function withChat<T>(
         { width: 80, height: 40 },
     );
     try {
-        await loadMessages(SID, transcriptSeams(rows));
-        await refreshReportChildren(AID, SID, childrenSeams(children));
+        await loadMessages(AID, SID, transcriptRead(rows));
+        await refreshReportChildren(AID, SID, childrenRead(children));
         // A message body paints through the async markdown renderable, thus one pass can catch the frame
         // before the bodies land. The turn headers and the entries are synchronous either way.
         for (let i = 0; i < 3; i++) {
@@ -161,7 +155,7 @@ async function withChat<T>(
 }
 
 /** One frame of the mounted transcript, for a case that reads the painted order alone. */
-async function frameWith(rows: FixtureRow[], children: Thread[] | "unreadable"): Promise<string> {
+async function frameWith(rows: FixtureRow[], children: ThreadSummary[] | "unreadable"): Promise<string> {
     return withChat(rows, children, (_setup, frame) => frame);
 }
 
@@ -188,7 +182,7 @@ describe("the report entries of a mounted transcript", () => {
     test("the entry paints inside the turn that carries the spawn part", async () => {
         // The part persists at the position of the spawn, thus the entry sits in the reply that asked
         // for the report, above the turn that follows it.
-        const frame = await frameWith(rowsWithSpawns(13, ["child-1"]), [reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID })]);
+        const frame = await frameWith(rowsWithSpawns(13, ["child-1"]), [reportSummary({ id: "child-1", title: "Volcano report", parentThreadId: SID })]);
 
         expect(rowOf(frame, REQUEST_2)).toBeLessThan(rowOf(frame, "Volcano report"));
         expect(rowOf(frame, REPLY_2)).toBeLessThan(rowOf(frame, "Volcano report"));
@@ -199,8 +193,8 @@ describe("the report entries of a mounted transcript", () => {
 
     test("two spawns of one turn paint in part order, at that turn", async () => {
         const frame = await frameWith(rowsWithSpawns(13, ["child-1", "child-2"]), [
-            reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID }),
-            reportThread({ threadId: "child-2", title: "Pathway report", parentThreadId: SID }),
+            reportSummary({ id: "child-1", title: "Volcano report", parentThreadId: SID }),
+            reportSummary({ id: "child-2", title: "Pathway report", parentThreadId: SID }),
         ]);
 
         expect(rowOf(frame, REPLY_2)).toBeLessThan(rowOf(frame, "Volcano report"));
@@ -212,7 +206,7 @@ describe("the report entries of a mounted transcript", () => {
         // The part carries the thread id and no display fields. The listing is the authority for the
         // row, thus a part whose row the listing does not hold — an archived child — renders nothing.
         const frame = await frameWith(rowsWithSpawns(13, ["child-archived"]), [
-            reportThread({ threadId: "child-live", title: "Volcano report", parentThreadId: SID }),
+            reportSummary({ id: "child-live", title: "Volcano report", parentThreadId: SID }),
         ]);
 
         expect(frame).not.toContain("child-archived");
@@ -223,7 +217,7 @@ describe("the report entries of a mounted transcript", () => {
     test("a child that no mounted part claims paints at the tail", async () => {
         // A session spawned before the part became durable has no part to sit at. The tail keeps it
         // reachable, below the newest turn.
-        const frame = await frameWith(ROWS, [reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID })]);
+        const frame = await frameWith(ROWS, [reportSummary({ id: "child-1", title: "Volcano report", parentThreadId: SID })]);
 
         expect(rowOf(frame, REPLY_3)).toBeLessThan(rowOf(frame, "Volcano report"));
         expect(frame).toContain("report session");
@@ -232,7 +226,7 @@ describe("the report entries of a mounted transcript", () => {
     test("a click on the entry opens that report session in place", async () => {
         await withChat(
             rowsWithSpawns(13, ["child-1"]),
-            [reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID })],
+            [reportSummary({ id: "child-1", title: "Volcano report", parentThreadId: SID })],
             async (setup, frame) => {
                 const at = cellOf(frame, "Volcano report");
                 await createMockMouse(setup.renderer).pressDown(at.x, at.y);
@@ -256,17 +250,47 @@ describe("the report entries of a mounted transcript", () => {
         // at the next refresh. The survivors keep their own anchors: one at its part, one at the tail.
         const rows = rowsWithSpawns(11, ["child-1"]).map((r) => (r.seq === 13 ? { ...r, spawns: ["child-2"] } : r));
         const all = [
-            reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID }),
-            reportThread({ threadId: "child-2", title: "Pathway report", parentThreadId: SID, deletedAt: new Date("2026-07-09T09:30:00.000Z") }),
-            reportThread({ threadId: "child-3", title: "Enrichment report", parentThreadId: SID }),
+            reportSummary({ id: "child-1", title: "Volcano report", parentThreadId: SID }),
+            reportSummary({ id: "child-2", title: "Pathway report", parentThreadId: SID, archivedAt: "2026-07-09T09:30:00.000Z" }),
+            reportSummary({ id: "child-3", title: "Enrichment report", parentThreadId: SID }),
         ];
         const frame = await frameWith(
             rows,
-            all.filter((t) => t.deletedAt === null),
+            all.filter((t) => t.archivedAt === undefined),
         );
 
         expect(frame).not.toContain("Pathway report");
         expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, REQUEST_2));
         expect(rowOf(frame, REPLY_3)).toBeLessThan(rowOf(frame, "Enrichment report"));
+    });
+});
+
+// The banner under the stream carries the remedy of a failed turn. A remedy is the part of the message that
+// says what to do, and it comes last, thus a banner cut to one row loses exactly that part.
+describe("the error banner of the chat", () => {
+    afterEach(() => resetHotState());
+
+    test("a message longer than one row wraps, thus the remedy at its end stays on screen", async () => {
+        const setup = await testRender(
+            () => (
+                <WorkspaceContext.Provider value={ws}>
+                    <box width="100%" height="100%">
+                        <Chat onScrollPaneRef={() => {}} />
+                    </box>
+                </WorkspaceContext.Provider>
+            ),
+            { width: 60, height: 20 },
+        );
+        try {
+            setError(
+                "Could not start the turn: No Inflexa server answers at http://127.0.0.1:8436. The next inflexa command that needs one starts it, and `inflexa server status` shows it.",
+            );
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain("Could not start the turn");
+            expect(frame).toContain("shows it.");
+        } finally {
+            setup.renderer.destroy();
+        }
     });
 });

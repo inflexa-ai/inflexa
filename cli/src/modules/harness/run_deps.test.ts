@@ -67,7 +67,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         sandboxEmitters: createSwappableSandboxEmitters(`${modelProvider}/${sandboxModel}`),
         skillsDir: "/tmp/skills",
         refStorePath: "/tmp/refs",
-        farmLockFile: null,
+        farmLockFile: (analysisId) => `/tmp/store/farms/${analysisId}/inflexa.lock`,
         imagePackagesFile: "/tmp/store/image-packages.json",
         extendAnalysisFarm: () => okAsync([]),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },

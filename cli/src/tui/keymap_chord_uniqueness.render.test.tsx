@@ -4,9 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { testRender } from "@opentui/solid";
 
-import { freshDb } from "../test_support/db.ts";
-import { str256 } from "../lib/types.ts";
-import { createAnalysis } from "../modules/analysis/analysis.ts";
+import { asStr256 } from "../lib/types.ts";
 import { App } from "./app.tsx";
 import { dialogClear } from "./components/dialog/dialog_host.tsx";
 import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts";
@@ -15,7 +13,6 @@ import { __resetActivityPanelForTest } from "./hooks/activity_panel.ts";
 import { __resetRunCompletionsForTest } from "./hooks/run_completion.ts";
 import { __resetSidebarLiveForTest } from "./hooks/sidebar_live.ts";
 import { resetHotState } from "./hooks/conversation.ts";
-import { __resetThreadWriteLocksForTest } from "./hooks/thread_write.ts";
 import { dispatchKey, reachableKeys, resolveKeybind, type KeyLike } from "./keymap.ts";
 import type { Analysis } from "../types/analysis.ts";
 
@@ -27,16 +24,24 @@ import type { Analysis } from "../types/analysis.ts";
 // here by name, not in a user's terminal.
 
 let dir = "";
-let analysis: Analysis;
+
+/** The open analysis: a plain row, because `App` reads its fields and the server keeps the rest. */
+const analysis: Analysis = {
+    id: "analysis-chords",
+    createdAt: 0,
+    updatedAt: 0,
+    name: asStr256("chord-test"),
+    slug: "chord-test",
+    anchorId: "anchor-chords",
+    projectId: null,
+};
 
 function key(name: string, mods: Partial<Pick<KeyLike, "ctrl" | "meta" | "option" | "shift">> = {}): KeyLike & { preventDefault: () => void } {
     return { name, ctrl: false, meta: false, option: false, shift: false, ...mods, preventDefault: () => {} };
 }
 
-beforeEach(async () => {
-    freshDb();
+beforeEach(() => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-chords-")));
-    analysis = (await createAnalysis({ cwd: dir, name: str256("chord-test")._unsafeUnwrap(), inputPaths: [] }))._unsafeUnwrap();
     // `ready` opens every gated layer, thus the sweep sees the full table.
     __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
     __setAgentModelsForTest({ current: { conversation: "m", sandbox: "m", utility: "m" }, efforts: null, pending: new Map() });
@@ -50,7 +55,6 @@ afterEach(() => {
     __resetActivityPanelForTest();
     __resetRunCompletionsForTest();
     __resetNoticesForTest();
-    __resetThreadWriteLocksForTest();
     __setBootStateForTest({ phase: "idle" });
 });
 

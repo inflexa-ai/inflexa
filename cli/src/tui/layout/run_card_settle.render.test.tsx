@@ -6,10 +6,11 @@ import { renderFrame } from "../../test_support/tui.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import { RunCardBlock } from "../components/run_card_block.tsx";
 import { MessageBlock, resolveRunCardState } from "./message_block.tsx";
-import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshSeams } from "../hooks/sidebar_live.ts";
+import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from "../hooks/sidebar_live.ts";
 import { loadMessages, messages, promptHistory, resetHotState } from "../hooks/conversation.ts";
-import type { ChatMessage, CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import type { ChatMessage } from "@inflexa-ai/harness/contracts/index.js";
+import type { DataProfileView, RunDetail, RunSummary } from "../../api/runs.ts";
+import type { ClientError } from "../../client/api.ts";
 import type { Part } from "../../types/session.ts";
 
 // A run card is the conversation's memory of a launch. It must never vanish on completion — that is
@@ -20,7 +21,8 @@ import type { Part } from "../../types/session.ts";
 const WIDE = { width: 80, height: 14 };
 const RUN_ID = "11111111-2222-3333-4444-555555555555";
 
-const fakeRuntime = { pool: {} } as unknown as HarnessRuntime;
+/** A failed read of the server, as each refresh read reports it. */
+const READ_FAILED: ClientError = { type: "http", status: 500, body: { error: "internal_error", message: "The server failed to handle the request." } };
 
 /**
  * Poll frames until `needle` appears. `<markdown internalBlockMode="top-level">` parses
@@ -42,59 +44,42 @@ async function frameWith(node: Parameters<typeof testRender>[0], needle: string,
     }
 }
 
-function runRow(over: Partial<CortexRunRow> & { runId: string }): CortexRunRow {
+function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
-        analysisId: "analysis-1",
         threadId: "thread-1",
         workflowName: "executeAnalysis",
+        workflowId: over.runId,
         status: "running",
         startedAt: "2026-07-28T10:00:00.000Z",
         completedAt: null,
         error: null,
-        synthesisStatus: null,
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: null,
         ...over,
     };
 }
 
-function seamsFor(runs: CortexRunRow[], opts: { runsFail?: boolean } = {}): RefreshSeams {
+/** The detail of an active run: one done step and one running step. */
+function runDetail(runId: string): RunDetail {
+    const step = (stepId: string, status: "completed" | "running"): RunDetail["steps"][number] => ({
+        stepId,
+        agentId: "a",
+        status,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+        error: null,
+        attempts: 1,
+        blockedReason: null,
+    });
+    return { ...runRow({ runId }), steps: [step("T1S1", "completed"), step("T1S2", "running")], unattributedUsage: null };
+}
+
+function optsFor(runs: RunSummary[], opts: { runsFail?: boolean } = {}): RefreshOpts {
     return {
-        runtime: () => fakeRuntime,
-        loadProfile: () => okAsync<DataProfileStatus | null, never>(null),
-        loadRuns: () => (opts.runsFail ? errAsync({ type: "query_failed", cause: "boom" } as never) : okAsync(runs)),
-        loadActiveRuns: () => (opts.runsFail ? errAsync({ type: "query_failed", cause: "boom" } as never) : okAsync(runs)),
-        loadSteps: (_pool, runId) =>
-            okAsync([
-                {
-                    runId,
-                    stepId: "T1S1",
-                    analysisId: "analysis-1",
-                    wave: 0,
-                    agentId: "a",
-                    status: "completed",
-                    startedAt: null,
-                    completedAt: null,
-                    attempts: 1,
-                    blockedReason: null,
-                },
-                {
-                    runId,
-                    stepId: "T1S2",
-                    analysisId: "analysis-1",
-                    wave: 0,
-                    agentId: "a",
-                    status: "running",
-                    startedAt: null,
-                    completedAt: null,
-                    attempts: 1,
-                    blockedReason: null,
-                },
-            ] as StepExecutionRow[]),
-        loadPlan: () => okAsync<unknown | null, never>(null),
+        ready: () => true,
+        loadProfile: () => okAsync<DataProfileView, never>({ status: null }),
+        loadRuns: () => (opts.runsFail ? errAsync(READ_FAILED) : okAsync(runs)),
+        loadActiveRuns: () => (opts.runsFail ? errAsync(READ_FAILED) : okAsync(runs)),
+        loadRun: (_analysisId, runId) => okAsync(runDetail(runId)),
     };
 }
 
@@ -176,35 +161,35 @@ describe("run card states", () => {
 
 describe("resolveRunCardState", () => {
     test("an active run resolves to no state — its progress belongs to the rail and the panel", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: RUN_ID })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: RUN_ID })]));
         expect(resolveRunCardState(RUN_ID)).toBeUndefined();
     });
 
     test("a runs read that failed under an active run still does not call it unavailable", async () => {
         // The active-run map and the runs snapshot fail independently, so this pair is reachable: the
         // run is known to be live, and reporting it unresolvable would be a falsehood the card prints.
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: RUN_ID })]));
-        await refreshSidebarData("analysis-1", seamsFor([], { runsFail: true }));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: RUN_ID })]));
+        await refreshSidebarData("analysis-1", optsFor([], { runsFail: true }));
         expect(resolveRunCardState(RUN_ID)).toBeUndefined();
     });
 
     test("a terminal run resolves settled, with its duration and reason", async () => {
         await refreshSidebarData(
             "analysis-1",
-            seamsFor([runRow({ runId: RUN_ID, status: "failed", completedAt: "2026-07-28T10:00:45.000Z", error: "sandbox died" })]),
+            optsFor([runRow({ runId: RUN_ID, status: "failed", completedAt: "2026-07-28T10:00:45.000Z", error: "sandbox died" })]),
         );
         const state = resolveRunCardState(RUN_ID);
         expect(state).toEqual({ kind: "settled", status: "failed", durationMs: 45_000, error: "sandbox died" });
     });
 
     test("a run outside the read window resolves to nothing — not-fetched is not not-found", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "some-other-run" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "some-other-run" })]));
         // Rendering `unavailable` here would put a false negative on every historical card.
         expect(resolveRunCardState(RUN_ID)).toBeUndefined();
     });
 
     test("a failed runs read resolves to unavailable — a positive finding, not a guess", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([], { runsFail: true }));
+        await refreshSidebarData("analysis-1", optsFor([], { runsFail: true }));
         expect(resolveRunCardState(RUN_ID)).toEqual({ kind: "unavailable" });
     });
 });
@@ -225,7 +210,10 @@ describe("synthetic record entries in the transcript", () => {
             chatMessage("r1", "system", "did the run finish yet?"),
             chatMessage("a1", "assistant", "on it"),
         ];
-        await loadMessages("s1", { runtime: () => fakeRuntime, loadAll: () => okAsync([[]]), toChat: () => replayed });
+        await loadMessages("analysis-1", "s1", {
+            fetchThread: () => okAsync(null),
+            fetchMessages: () => okAsync({ messages: replayed, total: replayed.length, page: 0, perPage: replayed.length, hasMore: false }),
+        });
 
         expect(messages.map((m) => m.role)).toEqual(["user", "system", "assistant"]);
         // Not a prompt of the user, thus the history recall never offers it.

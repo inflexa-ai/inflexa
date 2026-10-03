@@ -86,11 +86,27 @@ function projectFromRow(r: ProjectRow): Project {
 
 const PROJECT_COLS = "id, created_at, updated_at, name, description, tags";
 
-/** Every project, newest first. */
-export function listProjects(): Result<Project[], DbError> {
-    return tryQuery("listProjects", (conn) => {
-        const rows = conn.query(`SELECT ${PROJECT_COLS} FROM projects ORDER BY created_at DESC`).all() as ProjectRow[];
-        return rows.map(projectFromRow);
+/** A project with the count of the analyses grouped under it. */
+export type ProjectWithCount = {
+    project: Project;
+    analysisCount: number;
+};
+
+/**
+ * One page of the projects, newest first, each with its analysis count, plus the count of all projects. The
+ * analysis count is a correlated subquery over `idx_analyses_project`, thus one statement serves the page with
+ * no query for each project. `id` breaks a tie of `created_at`, so the pages do not overlap.
+ */
+export function listProjectPage(page: { limit: number; offset: number }): Result<{ items: ProjectWithCount[]; total: number }, DbError> {
+    return tryQuery("listProjectPage", (conn) => {
+        const rows = conn
+            .query(
+                `SELECT ${PROJECT_COLS}, (SELECT COUNT(*) FROM analyses WHERE analyses.project_id = projects.id) AS analysis_count
+                 FROM projects ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+            )
+            .all(page.limit, page.offset) as (ProjectRow & { analysis_count: number })[];
+        const total = (conn.query("SELECT COUNT(*) AS n FROM projects").get() as { n: number }).n;
+        return { items: rows.map((r) => ({ project: projectFromRow(r), analysisCount: r.analysis_count })), total };
     });
 }
 
@@ -105,22 +121,6 @@ export function findProjectByRef(ref: IdOrName): Result<Project | null, DbError>
             .query(`SELECT ${PROJECT_COLS} FROM projects WHERE id = $ref OR name = $ref ORDER BY (id = $ref) DESC LIMIT 1`)
             .get({ $ref: ref }) as ProjectRow | null;
         return row ? projectFromRow(row) : null;
-    });
-}
-
-/** How many analyses are grouped under a project. `0` when the project has none (or does not exist). */
-export function countAnalysesByProject(projectId: string): Result<number, DbError> {
-    return tryQuery("countAnalysesByProject", (conn) => {
-        const row = conn.query("SELECT COUNT(*) AS n FROM analyses WHERE project_id = ?").get(projectId) as { n: number };
-        return row.n;
-    });
-}
-
-/** How many analyses are homed at an anchor. `0` when it has none (or does not exist) — used by `prune` to show what a dead anchor would take with it. */
-export function countAnalysesByAnchor(anchorId: string): Result<number, DbError> {
-    return tryQuery("countAnalysesByAnchor", (conn) => {
-        const row = conn.query("SELECT COUNT(*) AS n FROM analyses WHERE anchor_id = ?").get(anchorId) as { n: number };
-        return row.n;
     });
 }
 
@@ -224,6 +224,47 @@ export function listAnalysesByProject(projectId: string): Result<Analysis[], DbE
     });
 }
 
+/** The analysis with exactly this id, never a name or slug hit. `null` when the row is gone. */
+export function getAnalysis(id: string): Result<Analysis | null, DbError> {
+    return tryQuery("getAnalysis", (conn) => {
+        const row = conn.query(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE id = ?`).get(id) as AnalysisRow | null;
+        return row ? analysisFromRow(row) : null;
+    });
+}
+
+/**
+ * One page of the analyses, newest first, each with the cached path of its anchor, plus the count of all
+ * analyses of the filter. `projectId` narrows to one project. The LEFT JOIN keeps an analysis whose anchor
+ * row is gone, with a `null` path. `id` breaks a tie of `created_at`, so the pages do not overlap.
+ */
+export function listAnalysisPage(page: {
+    projectId: string | null;
+    limit: number;
+    offset: number;
+}): Result<{ items: { analysis: Analysis; anchorPath: string | null }[]; total: number }, DbError> {
+    return tryQuery("listAnalysisPage", (conn) => {
+        const where = page.projectId === null ? "" : "WHERE analyses.project_id = ?";
+        const filter = page.projectId === null ? [] : [page.projectId];
+        const rows = conn
+            .query(
+                `SELECT ${ANALYSIS_COLS_QUALIFIED}, anchors.cached_path AS anchor_cached_path
+                 FROM analyses LEFT JOIN anchors ON anchors.id = analyses.anchor_id ${where}
+                 ORDER BY analyses.created_at DESC, analyses.id DESC LIMIT ? OFFSET ?`,
+            )
+            .all(...filter, page.limit, page.offset) as AnalysisWithAnchorRow[];
+        const total = (conn.query(`SELECT COUNT(*) AS n FROM analyses ${where}`).get(...filter) as { n: number }).n;
+        return { items: rows.map((r) => ({ analysis: analysisFromRow(r), anchorPath: r.anchor_cached_path })), total };
+    });
+}
+
+/** The count of the input refs of an analysis. */
+export function countAnalysisInputs(analysisId: string): Result<number, DbError> {
+    return tryQuery(
+        "countAnalysisInputs",
+        (conn) => (conn.query("SELECT COUNT(*) AS n FROM analysis_inputs WHERE analysis_id = ?").get(analysisId) as { n: number }).n,
+    );
+}
+
 /** An analysis's input refs. `path` is relative-to-anchor when `anchorId` is set, absolute otherwise. */
 export function listAnalysisInputs(analysisId: string): Result<AnalysisInput[], DbError> {
     return tryQuery("listAnalysisInputs", (conn) => {
@@ -239,6 +280,20 @@ export function listAnalysisInputs(analysisId: string): Result<AnalysisInput[], 
             analysisId: r.analysis_id,
             anchorId: r.anchor_id,
         }));
+    });
+}
+
+/**
+ * One page of the input refs of an analysis, in the order of their insert, plus the count of all of them.
+ * The table has no id column, thus the implicit `rowid` orders the pages.
+ */
+export function listAnalysisInputPage(analysisId: string, page: { limit: number; offset: number }): Result<{ items: AnalysisInput[]; total: number }, DbError> {
+    return tryQuery("listAnalysisInputPage", (conn) => {
+        const rows = conn
+            .query("SELECT path, is_dir, analysis_id, anchor_id FROM analysis_inputs WHERE analysis_id = ? ORDER BY rowid LIMIT ? OFFSET ?")
+            .all(analysisId, page.limit, page.offset) as { path: string; is_dir: number; analysis_id: string; anchor_id: string | null }[];
+        const total = (conn.query("SELECT COUNT(*) AS n FROM analysis_inputs WHERE analysis_id = ?").get(analysisId) as { n: number }).n;
+        return { items: rows.map((r) => ({ path: r.path, isDir: r.is_dir === 1, analysisId: r.analysis_id, anchorId: r.anchor_id })), total };
     });
 }
 

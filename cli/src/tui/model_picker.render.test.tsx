@@ -1,19 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ok } from "neverthrow";
 import type { JSX } from "solid-js";
 import { testRender } from "@opentui/solid";
 
-import "../extensions/index.ts"; // installs Response.prototype.jsonWith, which validateModelSelection uses
 import { renderFrame } from "../test_support/tui.ts";
 import { GLYPHS } from "../lib/design_system.ts";
 import { AGENT_EFFORTS } from "../lib/config.ts";
 import { useKeymapRoot } from "./keymap.ts";
 import { DialogOverlay, DialogShowcase, dialogClear, dialogIsOpen, dialogPush } from "./components/dialog/dialog_host.tsx";
-import { commands, effortFor, ModelPickerDialog, modelCommitDecision, modelPickerItems, runModelCommit } from "./commands.tsx";
-import { validateModelSelection, type ListedModel, type ValidateSelectionSeams } from "../modules/harness/model_listing.ts";
-import type { AgentSelection } from "../modules/harness/agent_switch.ts";
-import type { AgentEffort } from "../modules/harness/config.ts";
-import type { ModelAccess } from "../modules/proxy/models.ts";
+import { commands, effortFor, ModelPickerDialog, modelPickerItems, runModelCommit } from "./commands.tsx";
+import type { AgentEffort, AgentSelection, ListedModelView as ListedModel } from "../api/machine.ts";
 
 // The picker's whole job is to present the RIGHT surface for the listing outcome: a SelectDialog over the
 // live models with the agent's current one marked, OR — when listing failed (`models === null`) — a
@@ -22,26 +17,18 @@ import type { ModelAccess } from "../modules/proxy/models.ts";
 // Rendered inert (DialogShowcase gives the null entry handle) so exhibits grab no focus, per the gallery.
 
 const noop = (): void => {};
-// The picking-phase exhibits never commit, so validate is unreachable at rest — a stub keeps the surface inert.
-const validateNoop = async (): Promise<ModelAccess> => "inconclusive";
+// The picking-phase exhibits never commit, so save is unreachable at rest — a stub keeps the surface inert.
+const saveNoop = async (): Promise<string | null> => null;
 
 /** Listed models that each offer the same effort ladder — the full one unless the case names another. */
 function listed(ids: readonly string[], efforts: readonly AgentEffort[] = AGENT_EFFORTS): ListedModel[] {
-    return ids.map((id) => ({ id, efforts }));
+    return ids.map((id) => ({ id, efforts: [...efforts] }));
 }
 
 function pickerNode(models: readonly ListedModel[] | null, current: string) {
     return () => (
         <DialogShowcase>
-            <ModelPickerDialog
-                agent="sandbox"
-                models={models}
-                current={current}
-                currentEffort="medium"
-                validate={validateNoop}
-                onCommit={noop}
-                onCancel={noop}
-            />
+            <ModelPickerDialog agent="sandbox" models={models} current={current} currentEffort="medium" save={saveNoop} onSaved={noop} onCancel={noop} />
         </DialogShowcase>
     );
 }
@@ -74,6 +61,27 @@ describe("ModelPickerDialog", () => {
         expect(frame).toContain("claude-opus-4-8");
     });
 
+    test("listing failure names the reason of the server beside the free-text field", async () => {
+        const frame = await renderFrame(
+            () => (
+                <DialogShowcase>
+                    <ModelPickerDialog
+                        agent="sandbox"
+                        models={null}
+                        listingFailure="no answer in 10 s"
+                        current="claude-opus-4-8"
+                        currentEffort="medium"
+                        save={saveNoop}
+                        onSaved={noop}
+                        onCancel={noop}
+                    />
+                </DialogShowcase>
+            ),
+            { width: 120, height: 24 },
+        );
+        expect(frame).toContain("no answer in 10 s");
+    });
+
     test("the chat agent titles its picker for the conversation agent", async () => {
         const frame = await renderFrame(
             () => (
@@ -83,8 +91,8 @@ describe("ModelPickerDialog", () => {
                         models={listed(["claude-opus-4-8"])}
                         current=""
                         currentEffort="high"
-                        validate={validateNoop}
-                        onCommit={noop}
+                        save={saveNoop}
+                        onSaved={noop}
                         onCancel={noop}
                     />
                 </DialogShowcase>
@@ -103,8 +111,8 @@ describe("ModelPickerDialog", () => {
                         models={listed(["claude-haiku-4-5"])}
                         current=""
                         currentEffort="medium"
-                        validate={validateNoop}
-                        onCommit={noop}
+                        save={saveNoop}
+                        onSaved={noop}
                         onCancel={noop}
                     />
                 </DialogShowcase>
@@ -147,7 +155,7 @@ describe("model picker rows", () => {
 // The effort a row shows when the picker holds an effort the model may not list. The held effort must
 // never show on a model that cannot take it, and must come back on a model that can.
 describe("effortFor", () => {
-    const model = (efforts: readonly AgentEffort[]): ListedModel => ({ id: "m", efforts });
+    const model = (efforts: readonly AgentEffort[]): ListedModel => ({ id: "m", efforts: [...efforts] });
 
     test("a listed effort is kept", () => {
         expect(effortFor(model(AGENT_EFFORTS), "xhigh")).toBe("xhigh");
@@ -208,8 +216,11 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
                     models={listed(["claude-opus-4-8", "claude-sonnet-4-5"])}
                     current="claude-sonnet-4-5"
                     currentEffort="medium"
-                    validate={validateNoop}
-                    onCommit={(m) => committed.push(m)}
+                    save={(m) => {
+                        committed.push(m);
+                        return Promise.resolve(null);
+                    }}
+                    onSaved={noop}
                     onCancel={() => {
                         cancelled = true;
                     }}
@@ -263,8 +274,8 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
                     models={many}
                     current={many[0]!.id}
                     currentEffort="high"
-                    validate={validateNoop}
-                    onCommit={() => {}}
+                    save={saveNoop}
+                    onSaved={() => {}}
                     onCancel={() => {}}
                 />
             ));
@@ -293,8 +304,11 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
                     models={[...listed(["claude-opus-4-8"]), ...listed(["claude-haiku-4-5"], ["low", "medium"])]}
                     current="claude-haiku-4-5"
                     currentEffort="medium"
-                    validate={validateNoop}
-                    onCommit={(selection) => committed.push(selection)}
+                    save={(selection) => {
+                        committed.push(selection);
+                        return Promise.resolve(null);
+                    }}
+                    onSaved={noop}
                     onCancel={() => {}}
                 />
             ));
@@ -329,8 +343,11 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
                     models={listed(["claude-opus-4-8"])}
                     current="claude-opus-4-8"
                     currentEffort="high"
-                    validate={validateNoop}
-                    onCommit={(selection) => committed.push(selection)}
+                    save={(selection) => {
+                        committed.push(selection);
+                        return Promise.resolve(null);
+                    }}
+                    onSaved={noop}
                     onCancel={() => {}}
                 />
             ));
@@ -351,95 +368,46 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
     });
 });
 
-// The commit path is validate → decide → (persist | inline-error), extracted from the dialog so the
-// decision is testable headlessly (the TUI busy/error rendering is PromptDialog's, covered by the dialog
-// gallery). `persist` is the writeAgentModel-bearing effect in production, so "persist not called" is
-// "nothing written". Both the listed-pick and free-text paths funnel through the same `runModelCommit`.
-describe("model commit decision", () => {
-    test("a not_found verdict rejects in-dialog: no persist, an error naming the model", () => {
-        const decision = modelCommitDecision("claude-nope", "not_found");
-        expect(decision.persist).toBe(false);
-        // Narrow to the error arm to read its message (persist:false carries the inline error text).
-        if (decision.persist) throw new Error("expected a rejection");
-        expect(decision.error).toContain("claude-nope");
-        expect(decision.error.toLowerCase()).toContain("account");
-    });
+// The commit path is save → (close | inline-error), extracted from the dialog so the decision is testable
+// headlessly (the TUI busy/error rendering is PromptDialog's, covered by the dialog gallery). The server
+// validates the model (the agents route test covers the refusal), and `save` gives its inline error.
+describe("runModelCommit — save then close-or-report", () => {
+    const pick: AgentSelection = { model: "claude-opus-4-8", effort: "high" };
 
-    test("served and inconclusive both persist (inconclusive-accept)", () => {
-        expect(modelCommitDecision("claude-opus-4-8", "served")).toEqual({ persist: true });
-        expect(modelCommitDecision("claude-opus-4-8", "inconclusive")).toEqual({ persist: true });
-    });
-});
-
-describe("runModelCommit — validate then persist-or-report", () => {
-    function recordingEffects(access: ModelAccess) {
-        const persisted: string[] = [];
+    function recordingEffects(refusal: string | null) {
+        const saved: AgentSelection[] = [];
         const errors: string[] = [];
+        let closed = 0;
         return {
-            persisted,
+            saved,
             errors,
+            closed: () => closed,
             effects: {
-                validate: async (): Promise<ModelAccess> => access,
-                persist: (m: string): void => void persisted.push(m),
+                save: async (selection: AgentSelection): Promise<string | null> => {
+                    saved.push(selection);
+                    return refusal;
+                },
+                onSaved: (): void => {
+                    closed += 1;
+                },
                 reportError: (message: string): void => void errors.push(message),
             },
         };
     }
 
-    test("not_found reports the error and never persists", async () => {
-        const rec = recordingEffects("not_found");
-        await runModelCommit("claude-nope", rec.effects);
-        expect(rec.persisted).toEqual([]);
+    test("a refused model reports the inline error and stays open", async () => {
+        const rec = recordingEffects("This account cannot serve claude-nope. Pick another model, or check your credential.");
+        await runModelCommit({ model: "claude-nope", effort: "high" }, rec.effects);
+        expect(rec.closed()).toBe(0);
         expect(rec.errors[0]).toContain("claude-nope");
     });
 
-    test("served persists and never reports", async () => {
-        const rec = recordingEffects("served");
-        await runModelCommit("claude-opus-4-8", rec.effects);
-        expect(rec.persisted).toEqual(["claude-opus-4-8"]);
+    test("a saved pick closes and never reports", async () => {
+        const rec = recordingEffects(null);
+        await runModelCommit(pick, rec.effects);
+        expect(rec.saved).toEqual([pick]);
+        expect(rec.closed()).toBe(1);
         expect(rec.errors).toEqual([]);
-    });
-
-    test("inconclusive persists (a flaky/absent validation route never blocks a switch)", async () => {
-        const rec = recordingEffects("inconclusive");
-        await runModelCommit("claude-opus-4-8", rec.effects);
-        expect(rec.persisted).toEqual(["claude-opus-4-8"]);
-        expect(rec.errors).toEqual([]);
-    });
-
-    // End-to-end for the openai-compatible protocol: the real validator short-circuits to inconclusive
-    // with NO request, and the commit persists — proving the spec's "commits as before, no validation
-    // request exists" on that protocol through the actual commit path (not a stubbed verdict).
-    test("openai-compatible commits without issuing any validation request", async () => {
-        let fetchCount = 0;
-        let checked = 0;
-        const seams: ValidateSelectionSeams = {
-            resolveConnection: () => ({ mode: "direct", provider: "openai", baseURL: "https://api.example.com/v1", protocol: "openai-compatible", agents: {} }),
-            readProxyKey: async () => ok("sk-proxy"),
-            readModelApiKey: () => "sk-direct",
-            resolveAuthCredential: () => {
-                throw new Error("resolveAuthCredential must not be called without an auth block");
-            },
-            checkModelAccess: async () => {
-                checked++;
-                return "served";
-            },
-            fetch: async () => {
-                fetchCount++;
-                return new Response("{}");
-            },
-        };
-        const persisted: string[] = [];
-        await runModelCommit("gpt-4o", {
-            validate: (m) => validateModelSelection(m, seams),
-            persist: (m) => void persisted.push(m),
-            reportError: () => {
-                throw new Error("openai-compatible must not report an error");
-            },
-        });
-        expect(persisted).toEqual(["gpt-4o"]);
-        expect(fetchCount).toBe(0);
-        expect(checked).toBe(0);
     });
 });
 

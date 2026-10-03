@@ -7,7 +7,7 @@ import { Welcome } from "./welcome.tsx";
 import { ThinkingIndicator } from "./thinking_indicator.tsx";
 import { ScrollPane } from "./scroll_pane.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
-import { getAnchor } from "../../db/primary_query.ts";
+import type { AnchorView } from "../../api/analyses.ts";
 import { chatStatus } from "../hooks/status.ts";
 import { bootState } from "../hooks/boot.ts";
 import { messages, streamText, streamPartId, errorMsg, loadMessages, resetHotState } from "../hooks/conversation.ts";
@@ -16,9 +16,8 @@ import { reportChildren, watchReportChildren } from "../hooks/report_children.ts
 /**
  * The live conversation: the sticky message stream plus the error banner. State (the message store,
  * the streaming buffer, the error) lives in `hooks/conversation.ts`; the transcript arrives through
- * that store's harness emit adapter, not the bus (the bus carries only prov events, for the sidebar),
- * and this component owns only the reactive transcript load tied to the open session and the runtime
- * boot. The `Sidebar` reads the same store's `messageCount`, so the store is shared rather than private here.
+ * that store's adapter of the turn stream of the server, and this component owns only the reactive
+ * transcript load tied to the open session and the server boot. The `Sidebar` reads the same store's `messageCount`, so the store is shared rather than private here.
  */
 export type ChatProps = {
     /**
@@ -52,8 +51,8 @@ export function Chat(props: ChatProps) {
     });
     const tailThreadIds = (): string[] =>
         reportChildren()
-            .filter((child) => !claimedThreadIds().has(child.threadId))
-            .map((child) => child.threadId);
+            .filter((child) => !claimedThreadIds().has(child.id))
+            .map((child) => child.id);
 
     // Turn number per store position, computed ONCE per messages change rather than per row.
     //
@@ -71,8 +70,8 @@ export function Chat(props: ChatProps) {
         return messages.map((m) => (m.role === "system" ? turns : ++turns));
     });
 
-    // Load the transcript from the pg thread, reacting to BOTH the bound thread AND the runtime boot
-    // reaching `ready` — the pg thread read needs the booted pool, and the thread itself is bound only
+    // Load the transcript from the server, reacting to BOTH the bound thread AND the server boot
+    // reaching `ready` — the server reads the thread from Postgres, and the thread itself is bound only
     // at that same edge. On an in-place session swap, reset the hot state before loading the new
     // thread. `on` runs once immediately, then on each thread/phase change.
     createEffect(
@@ -84,21 +83,13 @@ export function Chat(props: ChatProps) {
                 // No thread bound yet (pre-`ready`, or its resolution still in flight) means there is
                 // nothing to read; the chat renders empty until the bind lands and re-fires this effect.
                 // An unscoped chat likewise has no analysis for its cards to resolve against.
-                if (phase === "ready" && ws.analysis && sessionId !== null) void loadMessages(sessionId);
+                if (phase === "ready" && ws.analysis && sessionId !== null) void loadMessages(ws.analysis.id, sessionId);
             },
         ),
     );
 
-    // Anchor for the welcome block. Pure `getAnchor` (NOT `resolveAnchor`, which writes a sighting
-    // heartbeat), so showing the empty-state welcome touches no disk — the no-litter rule.
-    const anchor = createMemo(() => {
-        const a = ws.analysis;
-        if (!a) return null;
-        return getAnchor(a.anchorId).match(
-            (x) => x,
-            () => null,
-        );
-    });
+    // Anchor for the welcome block, from the workspace store, which reads `GET {A}` at each swap.
+    const anchor = (): AnchorView | null => ws.anchor;
 
     return (
         <box flexDirection="column" flexGrow={1} minHeight={0}>
@@ -154,9 +145,11 @@ export function Chat(props: ChatProps) {
             </ScrollPane>
 
             {/* Error banner: onAccent is the readable foreground on the filled error background
-                (replaces the prior bg-reuse hack of painting fg with the app background). */}
+                (replaces the prior bg-reuse hack of painting fg with the app background). It takes the
+                rows of its wrapped text, because the remedy comes last in the message; flexShrink={0}
+                keeps those rows on a short terminal, and the stream yields the squeeze instead. */}
             <Show when={errorMsg()}>
-                <box height={1} width="100%" backgroundColor={theme().error} paddingLeft={1}>
+                <box width="100%" flexShrink={0} backgroundColor={theme().error} paddingLeft={1} paddingRight={1}>
                     <text fg={theme().onAccent}>{errorMsg()}</text>
                 </box>
             </Show>

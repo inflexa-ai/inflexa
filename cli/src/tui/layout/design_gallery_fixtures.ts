@@ -8,15 +8,15 @@
 // Ids are literal `mock-*` sentinels (not `randomUUIDv7()`) precisely so a reader
 // can tell at a glance that a value is fixture data, never a real row.
 
-import type { CortexRunRow, DataProfileStatus, PlanPart, RunCardPart, StepExecutionRow, TextPart } from "@inflexa-ai/harness";
+import type { PlanPart, RunCardPart, TextPart } from "@inflexa-ai/harness/contracts/index.js";
 
 import { formatTokenFigure } from "../../lib/usage_format.ts";
 import type { LiveAskPart, ThinkingPart, FileEditPart, PlanCardStepView } from "../../types/session.ts";
 import type { ToolBlockProps } from "../components/tool_block.tsx";
 import type { ActiveProfileProgress, ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import type { SessionUsageSnapshot } from "../components/dialog/usage_dialog.tsx";
-import type { LlmUsageTotals } from "../../db/primary_query.ts";
-import type { RunStepUsage } from "../components/dialog/run_detail_dialog.tsx";
+import type { UsageTotals } from "../../api/usage.ts";
+import type { DataProfileState, RunDetail, RunStepSummary, RunSummary } from "../../api/runs.ts";
 
 /** A run step's lifecycle state (mirrors `RunStepView.state`). */
 export type StepState = "done" | "running" | "failed" | "queued";
@@ -374,55 +374,48 @@ export const mockLongRun: Run = {
     ],
 };
 
-/** MOCK sample: the harness run ledger for the RUNS details view (newest-first, mixed statuses). */
-export const mockCortexRuns: CortexRunRow[] = [
+/**
+ * MOCK sample: the runs of an analysis for the RUNS details view (newest-first, mixed statuses), in the
+ * wire shape of `GET {A}/runs`.
+ *
+ * Three usage states across three runs, deliberately: the running run reports both arms, the completed
+ * one reports input only (the half figure on a compact row), and the failed one carries NO `usage` —
+ * a run with no ledger rows contributes no figure segment at all rather than a zeroed one.
+ */
+export const mockCortexRuns: RunSummary[] = [
     {
         runId: "mock-run-9a3f4c21",
-        analysisId: "mock-analysis",
         threadId: null,
         workflowName: "executeAnalysis",
+        workflowId: "mock-run-9a3f4c21",
         status: "running",
         startedAt: Date.ago(4 * 60_000),
         completedAt: null,
         error: null,
-        synthesisStatus: null,
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: "mock-plan-8f21",
+        planTitle: "Differential expression across conditions",
+        usage: { calls: 47, inputTokens: 809_200, outputTokens: 40_400 },
     },
     {
         runId: "mock-run-71bd0e55",
-        analysisId: "mock-analysis",
         threadId: null,
         workflowName: "executeAnalysis",
+        workflowId: "mock-run-71bd0e55",
         status: "completed",
         startedAt: Date.ago(3 * 3_600_000),
         completedAt: Date.ago(2 * 3_600_000),
         error: null,
-        synthesisStatus: "produced",
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: "mock-plan-6b0c",
+        planTitle: "Quality control of the raw counts",
+        usage: { calls: 12, inputTokens: 96_100 },
     },
     {
         runId: "mock-run-2c07af90",
-        analysisId: "mock-analysis",
         threadId: null,
         workflowName: "executeAnalysis",
+        workflowId: "mock-run-2c07af90",
         status: "failed",
         startedAt: Date.ago(2 * 86_400_000),
         completedAt: Date.ago(2 * 86_400_000 - 5 * 60_000),
         error: "step_failed",
-        synthesisStatus: null,
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: null,
     },
 ];
 
@@ -431,7 +424,7 @@ export const mockCortexRuns: CortexRunRow[] = [
  * exhibit through the REAL `profileDetailLines` over this fixture, so what it shows is exactly what a
  * loaded profile snapshot composes — no hand-kept line list to drift from the composer.
  */
-export const mockDataProfile: DataProfileStatus = {
+export const mockDataProfile: DataProfileState = {
     status: "completed",
     error: null,
     startedAt: Date.ago(5 * 60_000),
@@ -448,89 +441,10 @@ export const mockDataProfile: DataProfileStatus = {
     seedInputFileIds: ["mock-input-counts", "mock-input-meta"],
 };
 
-/** MOCK sample: the newest run's step ledger — one of each state the RUNS view renders (incl. a failure). */
-export const mockRunSteps: StepExecutionRow[] = [
-    {
-        runId: "mock-run-9a3f4c21",
-        stepId: "qc-normalize",
-        analysisId: "mock-analysis",
-        wave: 0,
-        agentId: "rna-preprocess",
-        status: "completed",
-        startedAt: Date.ago(4 * 60_000),
-        completedAt: Date.ago(3 * 60_000),
-        durationMs: 60_000,
-        error: null,
-        attempts: 1,
-        lastErrorClass: null,
-        finishReason: "stop",
-        hitMaxSteps: false,
-        blockedReason: null,
-        sandboxRef: null,
-        execId: null,
-        childWorkflowId: null,
-    },
-    {
-        runId: "mock-run-9a3f4c21",
-        stepId: "fit-de-model",
-        analysisId: "mock-analysis",
-        wave: 1,
-        agentId: "deseq2",
-        status: "running",
-        startedAt: Date.ago(2 * 60_000),
-        completedAt: null,
-        durationMs: null,
-        error: null,
-        attempts: 1,
-        lastErrorClass: null,
-        finishReason: null,
-        hitMaxSteps: false,
-        blockedReason: null,
-        sandboxRef: null,
-        execId: null,
-        childWorkflowId: null,
-    },
-    {
-        runId: "mock-run-9a3f4c21",
-        stepId: "pathway-enrichment",
-        analysisId: "mock-analysis",
-        wave: 1,
-        agentId: "pathway",
-        status: "failed",
-        startedAt: Date.ago(90_000),
-        completedAt: Date.ago(60_000),
-        durationMs: 30_000,
-        error: "sandbox exited non-zero (exit 1)",
-        attempts: 2,
-        lastErrorClass: "runtime",
-        finishReason: null,
-        hitMaxSteps: false,
-        blockedReason: null,
-        sandboxRef: null,
-        execId: null,
-        childWorkflowId: null,
-    },
-    {
-        runId: "mock-run-9a3f4c21",
-        stepId: "synthesis",
-        analysisId: "mock-analysis",
-        wave: 2,
-        agentId: "synthesis",
-        status: "pending",
-        startedAt: null,
-        completedAt: null,
-        durationMs: null,
-        error: null,
-        attempts: 1,
-        lastErrorClass: null,
-        finishReason: null,
-        hitMaxSteps: false,
-        blockedReason: null,
-        sandboxRef: null,
-        execId: null,
-        childWorkflowId: null,
-    },
-];
+/** MOCK sample: one step of the newest run, with everything a step summary carries beside the named fields. */
+function mockStep(over: Partial<RunStepSummary> & Pick<RunStepSummary, "stepId" | "agentId" | "status">): RunStepSummary {
+    return { startedAt: null, completedAt: null, durationMs: null, error: null, attempts: 1, blockedReason: null, ...over };
+}
 
 /**
  * MOCK: the run-card identity the lifecycle exhibits share, so every state in that block is visibly
@@ -682,41 +596,56 @@ export const mockUsageSnapshotNoFigures: SessionUsageSnapshot = {
  */
 export const mockUsageSnapshotEmpty: SessionUsageSnapshot = { totals: { calls: 0 }, byModel: [], byAgent: [] };
 
-/**
- * MOCK: what each run in {@link mockCortexRuns} consumed, keyed by run id — the shape the runs picker
- * batches in ONE local-ledger read and then hands to the detail dialog as data.
- *
- * Three states across three runs, deliberately: the running run reports both arms, the completed one
- * reports input only (the half figure on a compact row), and the failed one is ABSENT from the map
- * entirely — a run with no ledger rows contributes no figure segment at all rather than a zeroed one.
- */
-export const mockRunUsage: ReadonlyMap<string, LlmUsageTotals> = new Map([
-    ["mock-run-9a3f4c21", { calls: 47, inputTokens: 809_200, outputTokens: 40_400 }],
-    ["mock-run-71bd0e55", { calls: 12, inputTokens: 96_100 }],
-]);
+/** MOCK: what each run in {@link mockCortexRuns} consumed, keyed by run id — read off the rows, which carry it. */
+export const mockRunUsage: ReadonlyMap<string, UsageTotals> = new Map(mockCortexRuns.flatMap((run) => (run.usage ? [[run.runId, run.usage] as const] : [])));
 
 /**
- * MOCK: what {@link mockRunSteps} consumed per step, plus the run-level calls no step accounts for —
- * read per opened run and handed to the detail dialog as data, the same contract {@link mockRunUsage}
- * has for the run itself.
+ * MOCK: the newest run as `GET {A}/run/:runId` gives it to the detail dialog — one step of each state
+ * the RUNS view renders (incl. a failure), each with its own figure, plus the run-level calls no step
+ * accounts for.
  *
- * `pathway-enrichment` is deliberately ABSENT and `synthesis` deliberately reports nothing: a step
- * that never ran and a step whose provider measured nothing both carry no figure, and the exhibit has
- * to show that a run's step list is not a column of figures with holes punched in it.
+ * `pathway-enrichment` deliberately carries no usage and `synthesis` deliberately reports nothing: a
+ * step that never ran and a step whose provider measured nothing both carry no figure, and the exhibit
+ * has to show that a run's step list is not a column of figures with holes punched in it.
  *
- * The three step figures deliberately do not add up to the run's 47 calls / 809.2k above; the
- * `unattributed` remainder is exactly the difference, so the exhibit shows the headline RECONCILING
- * with what is under it. That gap is a real state (planning and any run-level dispatch belong to no
- * step), and showing it closed is the point — a reader who can see 47 calls and count 32 has found
- * what looks like a broken ledger.
+ * The three step figures deliberately do not add up to the run's 47 calls / 809.2k; the
+ * `unattributedUsage` remainder is exactly the difference, so the exhibit shows the headline
+ * RECONCILING with what is under it. That gap is a real state (planning and any run-level dispatch
+ * belong to no step), and showing it closed is the point — a reader who can see 47 calls and count 32
+ * has found what looks like a broken ledger.
  */
-export const mockRunStepUsage: RunStepUsage = {
-    byStep: new Map([
-        ["qc-normalize", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }],
-        ["fit-de-model", { calls: 21, inputTokens: 402_900, outputTokens: 18_700 }],
-        ["synthesis", { calls: 3 }],
-    ]),
-    unattributed: { calls: 15, inputTokens: 284_900, outputTokens: 15_500 },
+export const mockRunDetail: RunDetail = {
+    ...mockCortexRuns[0]!,
+    steps: [
+        mockStep({
+            stepId: "qc-normalize",
+            agentId: "rna-preprocess",
+            status: "completed",
+            startedAt: Date.ago(4 * 60_000),
+            completedAt: Date.ago(3 * 60_000),
+            durationMs: 60_000,
+            usage: { calls: 8, inputTokens: 121_400, outputTokens: 6_200 },
+        }),
+        mockStep({
+            stepId: "fit-de-model",
+            agentId: "deseq2",
+            status: "running",
+            startedAt: Date.ago(2 * 60_000),
+            usage: { calls: 21, inputTokens: 402_900, outputTokens: 18_700 },
+        }),
+        mockStep({
+            stepId: "pathway-enrichment",
+            agentId: "pathway",
+            status: "failed",
+            startedAt: Date.ago(90_000),
+            completedAt: Date.ago(60_000),
+            durationMs: 30_000,
+            error: "sandbox exited non-zero (exit 1)",
+            attempts: 2,
+        }),
+        mockStep({ stepId: "synthesis", agentId: "synthesis", status: "pending", usage: { calls: 3 } }),
+    ],
+    unattributedUsage: { calls: 15, inputTokens: 284_900, outputTokens: 15_500 },
 };
 
 /**

@@ -26,7 +26,7 @@ export type CliResult = { exitCode: number; stdout: string; stderr: string };
  * while its exit-code assertion passes. A file has no capacity limit to hit and no reader to schedule,
  * so it is unaffected by how many other tests are running.
  */
-export function runCli(args: string[], opts?: { cwd?: string }): CliResult {
+export function runCli(args: string[], opts?: { cwd?: string; env?: Record<string, string> }): CliResult {
     const dir = mkdtempSync(join(tmpdir(), `inflexa-cli-${randomUUIDv7()}-`));
     const outPath = join(dir, "stdout");
     const errPath = join(dir, "stderr");
@@ -45,10 +45,47 @@ export function runCli(args: string[], opts?: { cwd?: string }): CliResult {
             // sets XDG after startup), so without this the child silently falls back to the real
             // ~/.local/share DB. `Bun.env` (not `process.env`) is the live env and sidesteps the
             // no-restricted-properties lint.
-            exitCode = Bun.spawnSync(["bun", "run", ENTRY, ...args], { env: { ...Bun.env }, cwd: opts?.cwd, stdout: outFd, stderr: errFd }).exitCode;
+            exitCode = Bun.spawnSync(["bun", "run", ENTRY, ...args], {
+                env: { ...Bun.env, ...opts?.env },
+                cwd: opts?.cwd,
+                stdout: outFd,
+                stderr: errFd,
+            }).exitCode;
         } finally {
             // Closed before the files are read: this end must be done with them for the child's writes
             // to be guaranteed visible, and a spawn that threw must not leak the descriptors either.
+            if (outFd !== undefined) closeSync(outFd);
+            if (errFd !== undefined) closeSync(errFd);
+        }
+        return { exitCode, stdout: readFileSync(outPath, "utf8"), stderr: readFileSync(errPath, "utf8") };
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+/**
+ * {@link runCli}, but the parent waits without a block of its event loop. Use it for an `instance` command
+ * against a server of `startTestServer` (test_support/server.ts): that server runs in THIS process, and the
+ * `Bun.spawnSync` of {@link runCli} blocks the event loop that must answer the requests of the child, thus a
+ * sync run waits on itself until the child gives up. Pass `server.childEnv` as `env`.
+ *
+ * The output goes to files for the reason in {@link runCli}: an async spawn with piped capture reads empty
+ * output under `bun test`, and a file has no reader to schedule.
+ */
+export async function runCliAsync(args: string[], opts?: { cwd?: string; env?: Record<string, string> }): Promise<CliResult> {
+    const dir = mkdtempSync(join(tmpdir(), `inflexa-cli-${randomUUIDv7()}-`));
+    const outPath = join(dir, "stdout");
+    const errPath = join(dir, "stderr");
+    try {
+        let outFd: number | undefined;
+        let errFd: number | undefined;
+        let exitCode: number;
+        try {
+            outFd = openSync(outPath, "w");
+            errFd = openSync(errPath, "w");
+            const proc = Bun.spawn(["bun", "run", ENTRY, ...args], { env: { ...Bun.env, ...opts?.env }, cwd: opts?.cwd, stdout: outFd, stderr: errFd });
+            exitCode = await proc.exited;
+        } finally {
             if (outFd !== undefined) closeSync(outFd);
             if (errFd !== undefined) closeSync(errFd);
         }

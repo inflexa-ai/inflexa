@@ -3,7 +3,9 @@
 ## Purpose
 
 The `inflexa store` command family and the acquisition flights. An approved add joins the pending set, one provisioner run resolves the batch, and the load check gates the commit.
+
 ## Requirements
+
 ### Requirement: The store command family has one policy per command
 
 The CLI MUST expose the `inflexa store` family: `add`, `link`, `ls`,
@@ -46,18 +48,18 @@ merge into the query. A prefix such as `r:name` MUST NOT appear at the
 command surface: an argument that carries one refuses with the `--lang`
 remedy. A flag and a value in the argument that disagree MUST refuse.
 Without `--lang`, the flight searches both ecosystems, and a name that
-both satisfy stops with an ask to the user.
+both satisfy installs nothing and fails its row with the `--lang` remedy.
 
 #### Scenario: One package per call
 
 - **WHEN** `inflexa store add scanpy numpy` runs
 - **THEN** the command refuses with the one-package rule
 
-#### Scenario: A both-hit name asks
+#### Scenario: A both-hit name fails with the --lang remedy
 
 - **GIVEN** a name that PyPI and CRAN both hold, and no `--lang`
 - **WHEN** the add runs
-- **THEN** the user gets an ask that names the two candidates, and nothing installs before the answer
+- **THEN** nothing installs, and the failed row tells the user to run the add again with the `--lang` flag of one candidate
 
 #### Scenario: A pinned argument records its version
 
@@ -75,13 +77,18 @@ An approved `store add` MUST enqueue into a host-side pending set, not start
 its own provisioner run. The pending set MUST persist in the primary
 database, thus a crash loses no approved entry. The flight MUST launch at
 the first of three moments: the end of the agent turn, an explicit flush,
-or 10 seconds after the pending set becomes non-empty. The 10-second gate
+or 10 seconds after the oldest pending add was enqueued. The 10-second gate
 bounds the wait of a long turn. An add approved early must not sit queued
 behind minutes of agent work, because the acquisition can run beside that
-work. The gate anchors on the first observation of a non-empty set. It does
-not slide, thus a burst of asks still lands in one batch. The split of
-one turn into two flights is accepted, and it costs one more container run,
-because the provisioner resolves each spec alone.
+work.
+
+The local server MUST run the gate for its whole life, whatever client is
+open, because an agent add can wait while no TUI runs. The gate anchors on
+the enqueue time of the oldest pending add. It does not slide, thus a
+burst of asks still lands in one batch. After a start, the gate MUST NOT
+start again for one window. The split of one turn into two flights is
+accepted, and it costs one more container run, because the provisioner
+resolves each spec alone.
 
 One provisioner run MUST take the whole claimed set. A direct terminal
 `store add` flushes the whole set at once. A flush can claim the entries
@@ -98,8 +105,14 @@ the flight concurrency cap stays configurable.
 #### Scenario: The gate flushes a long turn
 
 - **GIVEN** an approved add, and an agent turn that continues past the gate
-- **WHEN** 10 seconds pass from the first observation of the pending set
+- **WHEN** 10 seconds pass from the enqueue of the oldest pending add
 - **THEN** the detached flush starts, and the flight runs beside the turn
+
+#### Scenario: The gate runs with no TUI
+
+- **GIVEN** a local server, a queued add, and no open TUI
+- **WHEN** 10 seconds pass from the enqueue of the add
+- **THEN** the server starts the detached flush
 
 #### Scenario: A failing spec drops without the batch
 
@@ -392,49 +405,6 @@ prune the graph nodes whose directories are gone.
 - **WHEN** `store reclaim` runs
 - **THEN** the directory stays, thus the graph keeps every edge resolvable
 
-### Requirement: Debris collects without a command
-
-The app MUST collect debris silently, with no user command. Debris is the
-store content that nothing references: a store directory with no farm link
-and no graph node, and a stale acquire report. The collection MUST run at
-two moments, and no timer exists. The tail of a flush that ended with
-refusals, and one boot pass after the runtime reaches ready.
-
-Both MUST run only when no acquisition flight, no farm composition, and no
-transfer is live. A sandbox run needs no gate of its own. A run reaches
-store content only through the links of its farm, and a linked directory
-is never debris. Both MUST hold the reclaim exclusivity, and both MUST
-yield to live work. Within one process, a second collection MUST join the
-live one, because the exclusivity lock is re-entrant for one pid. An entry
-beside the first would release the lock under it. The collection MUST NOT touch a directory that the
-graph references, thus a pre-fetched package survives. `store reclaim`
-keeps its approval gate, and it removes the same tier plus the graph
-prune.
-
-#### Scenario: A failed acquisition frees itself
-
-- **GIVEN** a flush in which one spec failed its load check
-- **WHEN** the flush tail runs with no other live work
-- **THEN** the never-advertised directories of the failed spec leave the pool
-
-#### Scenario: The collection yields to live work
-
-- **GIVEN** a live acquisition flight
-- **WHEN** the boot pass wakes
-- **THEN** it collects nothing and takes no lock that the flight waits on
-
-#### Scenario: A flush tail beside a live sibling collects nothing
-
-- **GIVEN** two concurrent flights, one that ended with a refusal and one still live
-- **WHEN** the tail of the finished flush runs
-- **THEN** it collects nothing, because the live sibling can hold staged directories
-
-#### Scenario: An advertised package is not debris
-
-- **GIVEN** a committed package that no farm links yet
-- **WHEN** the debris collection runs
-- **THEN** the directory and its node stay
-
 ### Requirement: Analysis creation makes the empty farm
 
 Analysis creation MUST make the farm of the analysis, empty, with its
@@ -525,7 +495,7 @@ name. Migration 10 MUST rebuild the two tables, and it MUST fill
 dedupe of the pending set MUST compare the spelling, the specifier, and
 the track. Two spellings of one fold are two rows, because they are two
 queries. The spelling MUST reach the installer and every render: the
-sidebar pipeline, `store ls`, the refusal messages, and the both-hit ask.
+sidebar pipeline, `store ls`, the refusal messages, and the both-hit remedy.
 The provisioner spec MUST be `formatQuery` of the query. Without `--lang`,
 each ecosystem MUST be probed in the spelling, thus the both-hit guard
 stays armed for a name that both ecosystems hold.
@@ -565,3 +535,82 @@ stays armed for a name that both ecosystems hold.
 - **WHEN** migration 10 runs
 - **THEN** the row carries the spelling `GO.db`, and no `name` column exists
 
+### Requirement: Only store link is a client of the local server
+
+`store link` MUST be a client of the local server. It resolves its
+analysis through the server, and the server links the packages into the
+farm, behind the farm queue of the server. Each other `store` command MUST
+run in its own process, with no server and no server start. A one-shot
+container of a cloud job runs these commands, and it has no local server.
+The hidden worker modes (`store add --run-flush` and
+`store download --run-transfer`) MUST also run with no server. The server
+runs the same store logic for its own clients. The lock files and the
+flight and transfer rows coordinate a command process with the server.
+
+#### Scenario: A store command runs with no server
+
+- **GIVEN** a machine on which no local server runs
+- **WHEN** `inflexa store ls` or `inflexa store download --foreground` runs
+- **THEN** the command runs to its end, and no server starts
+
+#### Scenario: A link goes through the server
+
+- **WHEN** `inflexa store link jinja2==3.1.6 --lang python` runs
+- **THEN** the command connects to the local server, and the server extends the farm
+
+### Requirement: Debris collects with no user command
+
+The app MUST collect debris silently, with no user command. Debris is the
+store content that nothing references: a store directory with no farm link
+and no graph node, and a stale acquire report. The collection MUST run at
+these moments, and no timer exists:
+
+- the tail of a flush that ended with refusals
+- one boot pass after the runtime of the local server reaches ready
+- the delete of a failed flight record through the local server
+
+Each pass MUST run only when no acquisition flight, no farm composition,
+and no transfer is live. A sandbox run needs no gate of its own. A run
+reaches store content only through the links of its farm, and a linked
+directory is never debris. Each pass MUST hold the reclaim exclusivity,
+and each pass MUST yield to live work.
+
+The reclaim lock is re-entrant for one pid, thus it excludes a different
+process only. Within one process, a second collection MUST join the live
+one. Only `store reclaim` runs a reclamation, in its own process. The
+local server runs no reclamation. Thus a reclamation and a collection
+never meet in one process, and the lock file excludes them.
+
+The collection MUST NOT touch a directory that the graph references, thus
+a package that an add fetched before its use stays. `store reclaim` keeps
+its approval gate, and it removes the same tier plus the graph prune.
+
+#### Scenario: A failed acquisition frees itself
+
+- **GIVEN** a flush in which one spec failed its load check
+- **WHEN** the flush tail runs with no other live work
+- **THEN** the never-advertised directories of the failed spec leave the pool
+
+#### Scenario: The collection yields to live work
+
+- **GIVEN** a live acquisition flight
+- **WHEN** the boot pass wakes
+- **THEN** it collects nothing and takes no lock that the flight waits on
+
+#### Scenario: A flush tail beside a live sibling collects nothing
+
+- **GIVEN** two concurrent flights, one that ended with a refusal and one still live
+- **WHEN** the tail of the finished flush runs
+- **THEN** it collects nothing, because the live sibling can hold staged directories
+
+#### Scenario: An advertised package is not debris
+
+- **GIVEN** a committed package that no farm links yet
+- **WHEN** the debris collection runs
+- **THEN** the directory and its node stay
+
+#### Scenario: A collection yields to a reclamation of a different process
+
+- **GIVEN** a `store reclaim` that runs in its own process
+- **WHEN** the boot pass of the local server starts
+- **THEN** the pass collects nothing, and the lock stays with the reclamation

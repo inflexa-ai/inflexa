@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { Writable } from "node:stream";
 
 import { REFERENCE_DATA_CATALOG } from "@inflexa-ai/harness";
 import pkg from "../../../package.json";
@@ -19,6 +20,7 @@ import {
     ensureLiveCredential,
     explicitPostgresFields,
     hasProviderCredential,
+    launchProgress,
     normalizeAdoptedBaseURL,
     probeCredentialSource,
     probeOnce,
@@ -741,11 +743,11 @@ describe("ensureLiveCredential", () => {
         expect(warnings[0]).toContain("inflexa setup");
     });
 
-    test("a 401 on a non-TTY fails actionably naming the forced re-login command", async () => {
+    test("a 401 on a non-TTY fails as a sign-in error that names `inflexa up`, the command that signs in", async () => {
         const { deps, calls } = scripted([{ kind: "unauthorized" }], { isInteractive: () => false });
-        const result = await ensureLiveCredential(deps);
-        expect(result.isErr()).toBe(true);
-        expect(result.isErr() ? result.error.message : "").toContain("inflexa setup --provider");
+        const error = (await ensureLiveCredential(deps))._unsafeUnwrapErr();
+        expect(error.message).toContain("Run `inflexa up` in a terminal");
+        expect(error.signInRequired).toBe(true);
         expect(calls).toEqual(["probe"]);
     });
 
@@ -800,6 +802,24 @@ describe("ensureLiveCredential", () => {
 // How a raw attempt becomes a verdict the policy above can act on. These are the seams where a misread
 // used to turn the launch gate into a spurious re-login: an answering-but-cold-boot empty list read as a
 // dead credential, and a client-key-middleware 401 read as a provider rejection.
+describe("launchProgress", () => {
+    test("with no TTY on the output, a launch step prints plain lines and no animation frames", async () => {
+        const chunks: string[] = [];
+        const output = new Writable({
+            write(chunk: Buffer | string, _encoding, done): void {
+                chunks.push(String(chunk));
+                done();
+            },
+        });
+        const progress = launchProgress(output);
+        progress.start("Verifying provider login");
+        await Promise.sleep(300);
+        progress.stop("Provider login verified");
+
+        expect(chunks.join("")).toBe("Verifying provider login...\nProvider login verified\n");
+    });
+});
+
 describe("classifyModelResolution", () => {
     test("an empty model list is NOT a verdict — it is `not_ready`, waited out for the auth-registration window", () => {
         expect(classifyModelResolution({ type: "no_models" })).toEqual({ kind: "not_ready" });

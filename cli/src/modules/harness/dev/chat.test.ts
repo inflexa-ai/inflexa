@@ -1,66 +1,57 @@
 import { describe, expect, test } from "bun:test";
 import { okAsync, errAsync, type ResultAsync } from "neverthrow";
-import type { DbError, Thread } from "@inflexa-ai/harness";
 
+import type { ThreadSummary } from "../../../api/conversation.ts";
+import type { ClientError } from "../../../client/api.ts";
 import { selectThread } from "./chat.ts";
 
-/** A `Thread` row fixture — override the fields a test cares about. */
-function thread(overrides: Partial<Thread> = {}): Thread {
+/** A `ThreadSummary` fixture — override the fields a test cares about. */
+function thread(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
     return {
-        threadId: "t-1",
-        analysisId: "an-1",
-        title: null,
+        id: "t-1",
+        resourceId: "an-1",
         threadType: "conversation",
-        parentThreadId: null,
-        parentSeq: null,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-        deletedAt: null,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
         ...overrides,
     };
 }
 
-/** A `getThread` seam that resolves to `value` (a row or null). */
-function getThreadOk(value: Thread | null): (id: string) => ResultAsync<Thread | null, DbError> {
+/** A `getThread` read that resolves to `value` (a row, or null for an absent or foreign thread). */
+function getThreadOk(value: ThreadSummary | null): (id: string) => ResultAsync<ThreadSummary | null, ClientError> {
     return () => okAsync(value);
 }
 
-const DB_ERROR: DbError = { type: "query_failed", op: "thread-store.getThread", cause: new Error("db down") } as const;
+const SERVER_GONE: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: new Error("refused") };
 
 describe("selectThread", () => {
-    test("no --thread mints a fresh id and never touches the store", async () => {
+    test("no --thread mints a fresh id and never reads the server", async () => {
         let called = false;
-        const getThread = (): ResultAsync<Thread | null, DbError> => {
+        const getThread = (): ResultAsync<ThreadSummary | null, ClientError> => {
             called = true;
             return okAsync(null);
         };
-        const selection = await selectThread("an-1", undefined, getThread, () => "fresh-id");
+        const selection = await selectThread(undefined, getThread, () => "fresh-id");
         expect(selection).toEqual({ kind: "new", threadId: "fresh-id" });
         expect(called).toBe(false);
     });
 
     test("resume: an owned thread is continued", async () => {
-        const selection = await selectThread("an-1", "t-1", getThreadOk(thread({ threadId: "t-1", analysisId: "an-1" })), () => "unused");
+        const selection = await selectThread("t-1", getThreadOk(thread({ id: "t-1" })), () => "unused");
         expect(selection).toEqual({ kind: "resume", threadId: "t-1" });
     });
 
-    test("resume: an absent thread is refused as not-found", async () => {
-        const selection = await selectThread("an-1", "t-missing", getThreadOk(null), () => "unused");
+    test("resume: an absent or foreign thread (the server gives null for both) is refused as not-found", async () => {
+        const selection = await selectThread("t-missing", getThreadOk(null), () => "unused");
         expect(selection).toEqual({ kind: "not_found" });
     });
 
-    test("resume: a foreign thread is refused as not-found (indistinguishable from absent)", async () => {
-        const selection = await selectThread("an-1", "t-1", getThreadOk(thread({ threadId: "t-1", analysisId: "another-analysis" })), () => "unused");
-        expect(selection).toEqual({ kind: "not_found" });
-    });
-
-    test("resume: a storage fault is surfaced distinctly, not as not-found", async () => {
+    test("resume: a fault is surfaced distinctly, not as not-found", async () => {
         const selection = await selectThread(
-            "an-1",
             "t-1",
-            () => errAsync(DB_ERROR),
+            () => errAsync(SERVER_GONE),
             () => "unused",
         );
-        expect(selection).toEqual({ kind: "lookup_failed", cause: DB_ERROR });
+        expect(selection).toEqual({ kind: "lookup_failed", cause: SERVER_GONE });
     });
 });

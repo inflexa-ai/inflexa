@@ -1,0 +1,237 @@
+## ADDED Requirements
+
+### Requirement: Each action command declares its command kind
+
+Every action command SHALL declare a command kind at its registration site, beside its agent policy. The kind states what the command needs from the local server:
+
+- `instance` — the command is a client of the local server. Before its action runs, it SHALL connect to the server, or start one in the background when none answers (the `local-server` capability owns that connection).
+- `machine` — the command prepares or controls the machine, its package store, or the server itself (`setup`, `up`, `down`, `upgrade`, `serve`, the `server` commands, the `store` commands other than `store link`, the `sandbox` commands, `refs download`, the `auth` login and logout). It SHALL run with no server check.
+- `standalone` — a helper that reads a local file or prints a value (`prov verify-file`, `auth whoami`, `refs list`, `refs verify`, `refs path`). It SHALL run with no server check.
+
+An `instance` command can name options that make it a `machine` command for one run. With any of those options set, the run SHALL skip the server check; without them, it SHALL connect as an `instance` command. The dev `run` command uses this form: `--plan` boots its own runtime, and each other use is a client.
+
+The `store`, `sandbox`, and `refs` commands other than `store link` SHALL stay `machine` or `standalone`. A cloud job runs them on a machine with no local server.
+
+The server check SHALL run inside the action, not in a `preAction` hook. The dry classification of `run_inflexa` stops its parse in a `preAction` hook of the root. An ancestor hook fires before that stop, thus a check in a hook would run during each classification.
+
+#### Scenario: An instance command finds the server before its action
+
+- **WHEN** an `instance` command runs
+- **THEN** the server check runs first, and the action runs only after a server answers
+
+#### Scenario: A machine or standalone command runs with no server
+
+- **WHEN** `inflexa store ls`, `inflexa sandbox status`, `inflexa refs list`, or `inflexa prov verify-file <path>` runs while no server runs
+- **THEN** the command runs, and no server starts
+
+#### Scenario: A machine option skips the check for one run
+
+- **WHEN** the dev `inflexa run --plan <file>` runs
+- **THEN** no server check runs, and `inflexa run --status` still connects to the server
+
+#### Scenario: A dry classification never reaches the server check
+
+- **WHEN** the `run_inflexa` classifier parses an argv that resolves to an `instance` command
+- **THEN** the classification ends in its `preAction` hook, and no server check runs
+
+## MODIFIED Requirements
+
+### Requirement: Default command resolves and acts on context
+
+The system SHALL register a default `inflexa [--analysis <x>] [--project <p>]` command (commander root action) that sends the working folder and the flags to the resolve route of the local server, prints the context description that the server returns first (loud context), then acts by kind: `analysis` → open chat; `anchor` with one analysis → open it, with several → a picker including "start a new one", with none → confirm starting one; `pick` → a picker over the candidates; `empty` → confirm starting a new analysis at cwd; `copy` → surface the copy and direct the user to the move backstop (clone/fork resolution is deferred — see move-backstop). The prompts SHALL run in the terminal of the command, before the renderer takes it. The action lives in `src/tui/app.launch.tsx` as `launchDefault` (it opens a chat).
+
+#### Scenario: Empty directory offers to start one
+
+- **WHEN** `inflexa` runs in a directory with no anchor
+- **THEN** it prints the empty context and asks to start a new analysis here
+- **AND** confirming creates an analysis at cwd and opens chat
+
+#### Scenario: Single analysis opens directly
+
+- **WHEN** `inflexa` runs where context resolves to exactly one analysis
+- **THEN** it prints the context and opens that analysis's chat without a picker
+
+#### Scenario: Multiple analyses show a picker
+
+- **WHEN** context resolves to several analyses
+- **THEN** it prints the context and renders a picker including a "start a new one" option
+
+#### Scenario: Copied folder is not auto-resolved
+
+- **WHEN** context resolves to a copied folder
+- **THEN** it prints that the folder looks like a copy and directs to `inflexa repair` / `inflexa relocate`, without opening or auto-resolving
+
+### Requirement: inflexa new creates and opens an analysis
+
+The system SHALL register `inflexa new [name] [paths...] [--project <p>]` that validates/prompts the name as a `Str256`, resolves each input path against the working folder of the command, and asks the local server to create the analysis at cwd with that name, those absolute input paths, and the project (by id or name). It SHALL print the resolved workspace root, then open chat. There SHALL be no `--output` flag — the workspace location is the anchor-derived rule, not a setting. The action lives in `src/tui/app.launch.tsx` as `launchNew`.
+
+#### Scenario: Create with name and inputs
+
+- **WHEN** `inflexa new "Batch 42" ./data` runs
+- **THEN** an analysis is created with those inputs, its workspace root path is printed, and chat opens
+
+#### Scenario: Missing name is prompted
+
+- **WHEN** `inflexa new` runs with no name
+- **THEN** it prompts for a name, re-asking until a valid `Str256` is given, before creating the analysis
+
+#### Scenario: Non-writable folder is refused with an actionable message
+
+- **WHEN** `inflexa new` runs in a folder the process cannot write to
+- **THEN** the command exits with the creation error's actionable message and no analysis exists
+
+### Requirement: inflexa ls lists analyses
+
+The system SHALL register `inflexa ls [--project <p>]` that lists recent analyses from the analysis list of the local server, page by page, scoped to a project (resolved by id or name) when given. Each line SHALL show the cached anchor path, because a read-only listing reconciles nothing.
+
+#### Scenario: List shows recent analyses
+
+- **WHEN** `inflexa ls` runs with existing analyses
+- **THEN** each analysis is printed with its identifying details
+
+#### Scenario: Scoped by project name
+
+- **WHEN** `inflexa ls --project trial-42` runs
+- **THEN** only analyses grouped under that project (resolved by name) are listed
+
+### Requirement: inflexa resume reopens chat
+
+The system SHALL register `inflexa resume <id|name>` that resolves the analysis through the resolve route of the local server, errors with a non-zero exit when none matches, lists candidates and exits when a name is ambiguous, otherwise opens its chat. The action lives in `src/tui/app.launch.tsx` as `launchResume`.
+
+#### Scenario: Resume by id or name
+
+- **WHEN** `inflexa resume <id-or-name>` matches exactly one analysis
+- **THEN** its chat opens
+
+#### Scenario: No match exits non-zero
+
+- **WHEN** nothing matches
+- **THEN** it prints an error and exits non-zero
+
+#### Scenario: Ambiguous name lists candidates
+
+- **WHEN** a name matches several analyses
+- **THEN** it lists the candidates and exits without opening
+
+### Requirement: inflexa open opens the output directory
+
+The system SHALL register `inflexa open <id|name>` that resolves the analysis through the local server, asks the server for its workspace root (the server creates the folder when it is absent), and then, in the process of the command, opens the path with the platform opener and prints it. The revealed directory is the analysis's single tree — staged inputs, run artifacts, reports, and provenance exports — not a provenance-only side location.
+
+Every surface that opens the workspace — the `inflexa open` command and the TUI palette's equivalent — SHALL print a `workspace_unavailable` error's `message` verbatim. That message already names the folder, the reason, and the remedy; reducing it to its `type` tells the user nothing they can act on.
+
+#### Scenario: Open the workspace root
+
+- **WHEN** `inflexa open <ref>` runs for an existing analysis
+- **THEN** its workspace root is created if needed, the path is printed, and the OS opener is invoked
+
+#### Scenario: Run artifacts are inside the opened directory
+
+- **GIVEN** an analysis with a completed run
+- **WHEN** `inflexa open <ref>` runs
+- **THEN** the opened directory contains that run's artifacts under `runs/<runId>/…`
+
+#### Scenario: An unusable workspace explains itself on every surface
+
+- **GIVEN** an analysis whose anchor folder is missing or not writable
+- **WHEN** the workspace is opened from the CLI or from the TUI command palette
+- **THEN** the printed error names the folder and the remedy, not just an error type
+
+### Requirement: inflexa status prints resolved context
+
+The system SHALL register `inflexa status [--analysis <x>] [--project <p>]` that resolves the context through the local server, prints the context description plus details (anchor path, anchor id, analyses found, or that `inflexa` would start a new analysis here), and launches nothing.
+
+#### Scenario: Status is read-only
+
+- **WHEN** `inflexa status` runs
+- **THEN** it prints the resolved context and details and does not open chat
+
+### Requirement: Commander registry with lazy-imported actions
+
+The commands SHALL be registered by a reusable `buildProgram()` factory in `src/cli/index.ts` that
+returns a fresh commander root, each command lazy-importing its action (a client of the local server
+from the client command layer, a `machine` or `standalone` command from its module, and a
+chat-opening command from `src/tui/app.launch.tsx`). Each action command SHALL register through
+`registerAction(command, kind, policy, handler)`, which takes its command kind and its agent policy
+with the handler. A `cli` root SHALL be derived by calling the factory once at module load, so the
+existing entry point (`src/index.ts`) and the docs generator consume it unchanged; the factory being
+callable more than once is what lets a second instance be built for dry classification (see
+`agent-cli-tool`). Dev-channel commands (`chat`, `profile`, `run` — see `dev-commands`) SHALL be
+registered only when the dev channel is active, so a release build never carries them. Interactive
+confirms and pickers SHALL use the shared clack-based prompts in `src/lib/cli.ts` (`confirm`,
+`select`, `promptText`), declining gracefully on a non-interactive stdin — no bespoke `readline`
+picker.
+
+#### Scenario: Actions are lazy-imported
+
+- **WHEN** a command runs
+- **THEN** only that command's action module is imported, keeping startup paths lean
+
+#### Scenario: The factory builds an independent program each call
+
+- **WHEN** `buildProgram()` is called more than once in a process
+- **THEN** each call returns a fresh commander root with the same command tree, so one instance can be built for real dispatch and another for classification without shared parse state
+
+#### Scenario: Non-interactive prompt declines
+
+- **WHEN** a confirm/pick is reached with a non-interactive stdin
+- **THEN** the prompt layer declines rather than hanging
+
+#### Scenario: Dev commands register by channel
+
+- **WHEN** the registry builds under the release channel without the runtime override
+- **THEN** `chat`, `profile`, and `run` are not registered
+
+### Requirement: inflexa prov lineage traverses a file's provenance
+
+The system SHALL register `inflexa prov lineage <analysis> <ref>` under the
+existing `prov` command group, resolving the analysis by id-or-name through
+the local server and the record reference per the prov-lineage capability —
+an analysis-relative file path, a content hash, an unambiguous hash prefix, a
+search string matched against recorded paths, command lines, and tool names,
+or a record's QName identifier — with options `--forward` (derive-from walk),
+`--depth <n>` (bound the walk; default unbounded up to the prov-lineage safety
+ceiling), and `--format tree|json|dot|mermaid` (default `tree`). The local
+server SHALL flush the recorder, walk the lineage, and render the format; the
+command SHALL print the result. The action SHALL be lazy-imported from
+`src/cli/index.ts`. An analysis with no stored provenance SHALL fail with an
+actionable message, not an empty walk. An unknown `--format` value SHALL fail
+listing the accepted values.
+
+#### Scenario: Lineage from the command line
+
+- **WHEN** `inflexa prov lineage my-analysis runs/run-001/step-de/output/results.csv` is run for an analysis whose document records the file
+- **THEN** stdout renders the backward lineage tree: the producing command (with exit code, step, and run) and its inputs indented beneath, recursively
+
+#### Scenario: The subcommand is discoverable
+
+- **WHEN** `inflexa prov --help` is run
+- **THEN** `lineage` is listed alongside `export`, `verify`, and `verify-file`
+
+#### Scenario: dot format is accepted
+
+- **WHEN** `inflexa prov lineage my-analysis <file> --format dot` is run
+- **THEN** stdout is the Graphviz digraph rendering per the prov-lineage capability, and `--format svg` fails listing `tree`, `json`, `dot`, and `mermaid`
+
+#### Scenario: mermaid format is accepted
+
+- **WHEN** `inflexa prov lineage my-analysis <file> --format mermaid` is run
+- **THEN** stdout is the Mermaid flowchart source rendering per the prov-lineage capability
+
+#### Scenario: A search string works from the command line
+
+- **WHEN** `inflexa prov lineage my-analysis heatmap` is run and no exact path or hash matches but one recorded path contains `heatmap`
+- **THEN** stdout renders that file's lineage exactly as if the full path had been given
+
+### Requirement: inflexa prov verify checks provenance integrity
+
+The system SHALL register `inflexa prov verify <analysis>` under the existing `prov` command group that resolves the analysis by id-or-name through the local server, asks the server to verify the signed chain of the analysis, and prints the result. The action SHALL be lazy-imported from `src/cli/index.ts`.
+
+#### Scenario: Verify subcommand is registered
+
+- **WHEN** `inflexa prov --help` is run
+- **THEN** the `verify` subcommand is listed alongside the existing `export` subcommand
+
+#### Scenario: Verify runs and reports
+
+- **WHEN** `inflexa prov verify my-analysis` is run
+- **THEN** the analysis is resolved, verification is performed, and the result is printed to stdout

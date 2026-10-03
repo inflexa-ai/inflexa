@@ -1,0 +1,65 @@
+import type { Pool } from "@inflexa-ai/harness";
+import { Hono } from "hono";
+import type { ResultAsync } from "neverthrow";
+import { z } from "zod";
+
+import type { DurableWork, ServerActivity, ShutdownAccepted } from "../../api/server.ts";
+import { getLogger } from "../../lib/log.ts";
+import type { ServerBoot } from "../boot.ts";
+import { countLiveDurableWork, type LiveDurableWork } from "../durable_work.ts";
+import { readBody, type ServerEnv } from "../http.ts";
+import type { ServerLifecycle } from "../lifecycle.ts";
+import { profileWorkCount } from "../profile_queue.ts";
+import { runningTurnCount } from "../turns.ts";
+
+/** The reads of `GET /api/v1/server/activity`. Tests replace each one, because no cli test reaches Postgres. */
+export type ServerRouteOpts = {
+    readonly runningTurnCount: () => number;
+    readonly profileWorkCount: () => number;
+    /** The runs and the data profiles with a live workflow. The error channel means the ledger is unreadable. */
+    readonly durableWork: (pool: Pool) => ResultAsync<LiveDurableWork, unknown>;
+};
+
+/** The production {@link ServerRouteOpts}. */
+export const DEFAULT_SERVER_ROUTE_OPTS: ServerRouteOpts = {
+    runningTurnCount,
+    profileWorkCount,
+    durableWork: countLiveDurableWork,
+};
+
+const shutdownBody = z.object({ mode: z.enum(["now", "drain"]) });
+
+/**
+ * The routes under `/api/v1/server`: the boot state, a new boot after a failure, the work that a stop
+ * interrupts, and the stop. None needs the runtime.
+ */
+export function serverRoutes(boot: ServerBoot, lifecycle: ServerLifecycle, opts: ServerRouteOpts = DEFAULT_SERVER_ROUTE_OPTS): Hono<ServerEnv> {
+    const routes = new Hono<ServerEnv>();
+    routes.get("/", (c) => c.json(boot.state()));
+    // 202: the boot runs after the response. The client reads `GET /api/v1/server` until the phase settles.
+    routes.post("/boot", (c) => {
+        void boot.start();
+        return c.json(boot.state(), 202);
+    });
+    routes.get("/activity", async (c) => {
+        const runtime = boot.runtime();
+        const durable: DurableWork =
+            runtime === null
+                ? { state: "no_runtime" }
+                : (await opts.durableWork(runtime.pool)).match(
+                      ({ runs, profiles }): DurableWork => ({ state: "counted", runs, profiles }),
+                      (cause): DurableWork => {
+                          getLogger("server").warn({ err: cause }, "could not count the durable work");
+                          return { state: "unreadable" };
+                      },
+                  );
+        return c.json<ServerActivity>({ stopping: lifecycle.stopping(), turns: opts.runningTurnCount(), profileDrives: opts.profileWorkCount(), durable });
+    });
+    // 202: the stop runs after the response. The client waits for the exit of the pid in the discovery file.
+    routes.post("/shutdown", async (c) => {
+        const body = await readBody(c, shutdownBody);
+        if (body.isErr()) return body.error;
+        return c.json<ShutdownAccepted>(lifecycle.requestShutdown(body.value.mode), 202);
+    });
+    return routes;
+}

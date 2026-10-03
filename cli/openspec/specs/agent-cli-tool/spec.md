@@ -41,9 +41,11 @@ The tool SHALL classify each argv before running it. An argv that classification
 
 ### Requirement: Interactive TUI-launcher commands are blocked from the agent
 
-The commands that exist only to open an interactive terminal UI — bare `inflexa`, `inflexa config`, `inflexa new`, `inflexa resume`, and the dev-channel `inflexa chat` — cannot function as a captured subprocess: with `stdin` ignored and `stdout`/`stderr` piped, there is no terminal to drive. Each SHALL be registered with a `blocked` agent policy whose reason explains this to the model, and the tool SHALL refuse such a command outright — a blocked result WITHOUT prompting for approval and WITHOUT spawning. A blocked command's introspection (its `--help`) SHALL remain allowed, since it runs no UI.
+Some commands exist only to open an interactive terminal UI: bare `inflexa`, `inflexa config`, `inflexa new`, `inflexa resume`, and the dev-channel `inflexa chat`. Such a command cannot work as a captured subprocess, because its `stdin` is ignored and its output is piped. Each MUST have a `blocked` agent policy whose reason tells the model why. The tool MUST refuse such a command with a blocked result, with no approval prompt and no spawn. The introspection of a blocked command (its `--help`) MUST stay permitted, because it runs no UI.
 
-The policy declaration is the courtesy layer, not the safety boundary: every TUI launcher SHALL itself refuse a non-interactive stdin at entry, before doing any other work — so a TUI command misdeclared or unclassified exits non-zero with a clear message instead of hanging, and a launcher that creates state before its first frame (`inflexa new` creates the analysis during target resolution) refuses before any state exists.
+The policy is the courtesy layer, not the safety boundary. Each TUI launcher MUST itself refuse a stdin that is not interactive. The refusal comes before it resolves a target, makes any state of an analysis, or renders a frame. Thus a misdeclared launcher exits non-zero with a clear message and does not hang. `inflexa new` makes the analysis during the resolution of its target, thus it refuses before any state exists.
+
+The launchers bare `inflexa`, `inflexa config`, `inflexa new`, and `inflexa resume` are `instance` commands. Each MUST refuse a stdin that is not interactive before the check of the local server. That check can start a server in the background, and a refused launch MUST NOT leave a server behind. The dev `inflexa chat` refuses at the start of its action, after the check.
 
 #### Scenario: Bare inflexa is refused
 
@@ -73,7 +75,13 @@ The policy declaration is the courtesy layer, not the safety boundary: every TUI
 #### Scenario: A TUI launcher invoked headless fails fast instead of hanging
 
 - **WHEN** a TUI-launching command runs with a non-interactive stdin (a pipe, a script, or a captured subprocess)
-- **THEN** the launcher exits non-zero with a clear message before creating any state or rendering any frame
+- **THEN** the launcher exits non-zero with a clear message before it resolves a target, creates any state of an analysis, or renders any frame
+
+#### Scenario: A headless launch starts no server
+
+- **GIVEN** no local server runs
+- **WHEN** `inflexa new demo` runs with a stdin that is not interactive
+- **THEN** the command exits non-zero with the terminal message, and no server starts
 
 ### Requirement: Infrastructure lifecycle commands are blocked from the agent
 
@@ -315,3 +323,22 @@ This tool's standing invariant is that what the user approves is exactly what ex
 - **GIVEN** a call whose argv does not resolve to a runnable command
 - **WHEN** the tool call is rendered
 - **THEN** the detail names the argv, because the detail is computed before dispatch and does not depend on the verdict
+
+### Requirement: The commands of the local server process are blocked or gated for the agent
+
+The conversation of the agent runs inside the local server, thus a command that starts or stops that server acts on the process of the agent itself. `inflexa serve` and `inflexa server stop` SHALL be registered `blocked`, and the tool SHALL refuse each one outright: a blocked result to the model, WITHOUT prompting for approval and WITHOUT spawning. The reason of `server stop` SHALL tell the model that the stop ends its own turn, and that the user runs it from their own shell. `inflexa server status` SHALL be `auto`, with `json` as its one safe flag, because it reads the discovery file, probes the server, and writes nothing. `inflexa server logs` SHALL be `approval`. The introspection of each (`--help`) SHALL remain allowed.
+
+#### Scenario: inflexa server stop is refused
+
+- **WHEN** the tool is invoked with `["server", "stop"]`
+- **THEN** it returns a blocked result to the model without prompting and without spawning
+
+#### Scenario: inflexa serve is refused
+
+- **WHEN** the tool is invoked with `["serve", "--detach"]`
+- **THEN** it returns a blocked result to the model without prompting and without spawning
+
+#### Scenario: The server status runs free
+
+- **WHEN** the tool is invoked with `["server", "status", "--json"]`
+- **THEN** it spawns without prompting and returns the captured output

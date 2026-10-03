@@ -2,7 +2,7 @@
 
 import type { ChatDataPart, EmitEvent } from "../loop/types.js";
 import type { ChatStreamEvent } from "../providers/types.js";
-import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent } from "./chat-events.js";
+import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent, IterationEvent } from "./chat-events.js";
 import type { ChatPart } from "./chat-parts.js";
 import type { ChatMessage, MessagePart, TextPart, ToolCallPart } from "./message.js";
 import { isReconciling, PART_REGISTRY } from "./part-registry.js";
@@ -24,13 +24,17 @@ function toSource(source: EmitEvent["source"]): EventSource {
 }
 
 /**
- * The frame of one emitted event, or `null` for `iteration` and `done`. A frame of a sub-agent keeps its source, thus a
- * consumer can filter it. A `text-delta` has no source, thus its frame gets `fallbackSource`, the source of the root agent.
- * A part frame is not checked here: {@link checkChatPart} checks it where it arrives.
+ * The frame of one emitted event, or `null` for `done` and for an `iteration` of the root agent. A frame of a sub-agent
+ * keeps its source, thus a consumer can filter it. A `text-delta` has no source, thus its frame gets `fallbackSource`,
+ * the source of the root agent. A part frame is not checked here: {@link checkChatPart} checks it where it arrives.
  */
 export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, fallbackSource: EmitEvent["source"]): ChatFrame | null {
     switch (event.type) {
         case "iteration":
+            // The root loop gives none: a consumer of the root frames, for example the first-frame time of a
+            // browser, must not read the start of a model request as output.
+            return event.source.callPath.length > 1 ? { type: "iteration", source: toSource(event.source) } : null;
+
         case "done":
             return null;
 
@@ -120,13 +124,14 @@ export function applyChatFrame(messages: ChatMessage[], frame: ChatFrame, assist
     if (frame.type === "error") {
         return { messages, terminal: { error: frame } };
     }
+    if (frame.type === "iteration") return { messages, terminal: null };
 
     const partFrame = frame;
     const next = updateAssistant(messages, assistantId, (parts) => applyPartFrame(parts, partFrame));
     return { messages: next, terminal: null };
 }
 
-function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEvent | ChatErrorEvent>): MessagePart[] {
+function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEvent | ChatErrorEvent | IterationEvent>): MessagePart[] {
     switch (frame.type) {
         case "text-delta":
             return mergeTextDelta(parts, frame.text);

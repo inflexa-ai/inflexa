@@ -3,8 +3,12 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { env } from "../lib/env.ts";
-import { runCli } from "../test_support/cli.ts";
+import { runCli, runCliAsync } from "../test_support/cli.ts";
+import { insertAnalysis, insertAnchor } from "../db/primary_mutation.ts";
+import { asStr256 } from "../lib/types.ts";
+import { freshDb } from "../test_support/db.ts";
 import { assertTestSandbox } from "../test_support/sandbox.ts";
+import { startTestServer } from "../test_support/server.ts";
 
 // e2e of the commander registry surface — help text and the error/exit-code contract. No DB needed:
 // --help exits before any action, and unknown option/command errors during parse.
@@ -118,10 +122,16 @@ describe("inflexa help & usage (e2e)", () => {
     // placed AFTER a subcommand (`inflexa project ls --project x`) hard-fail "unknown option",
     // breaking existing invocations. Without it, the shape parses again and runs the command.
     // `project ls` declares no options of its own, so `--project` here can only be the ROOT flag.
-    test("`project ls --project x`-shape (root flag after a subcommand) parses again", () => {
-        const result = runCli(["project", "ls", "--project", "x"]);
-        expect(result.exitCode).toBe(0);
-        expect(result.stderr).not.toContain("unknown option");
+    test("`project ls --project x`-shape (root flag after a subcommand) parses again", async () => {
+        freshDb();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["project", "ls", "--project", "x"], { env: server.childEnv });
+            expect(result.exitCode).toBe(0);
+            expect(result.stderr).not.toContain("unknown option");
+        } finally {
+            await server.stop();
+        }
     });
 
     // The other half of that trade-off: because the root also declares `--analysis`, commander binds
@@ -129,31 +139,96 @@ describe("inflexa help & usage (e2e)", () => {
     // `preAction` hook copies the ancestor's value onto the subcommand, so the flag still reaches the
     // handler. An unresolvable ref is the
     // cheap proof — the message names the ref, which is only reachable if the flag arrived at all.
-    test("`--analysis` after a subcommand reaches the handler despite the root declaring it too", () => {
-        const result = runCli(["geo", "download", "GSE12345", "--analysis", "no-such-analysis-ref"]);
-        expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain("no-such-analysis-ref");
-        // The bare-context message would mean the flag never arrived.
-        expect(result.stderr).not.toContain("No analysis here");
+    test("`--analysis` after a subcommand reaches the handler despite the root declaring it too", async () => {
+        freshDb();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["geo", "download", "GSE12345", "--analysis", "no-such-analysis-ref"], { env: server.childEnv });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain("no-such-analysis-ref");
+            // The bare-context message would mean the flag never arrived.
+            expect(result.stderr).not.toContain("No analysis here");
+        } finally {
+            await server.stop();
+        }
     });
 
     // A fast `fail()` bail-out exits before the event loop turns, so the log file's fd must be
     // ready from construction (lib/log.ts opens it synchronously) or pino's exit-hook flushSync
     // throws "sonic boom is not ready yet" and sprays a stack trace after the command's real
     // message. Pin the quiet exit: the failure message must be the only stderr output.
-    test("a fast fail() exit prints only its message — no log-stream crash on exit", () => {
-        const result = runCli(["prov", "lineage", "nonexistent-analysis", "whatever"]);
-        expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain('No analysis found matching "nonexistent-analysis"');
-        expect(result.stderr).not.toContain("sonic boom");
-        expect(result.stderr).not.toContain("flushSync");
+    test("a fast fail() exit prints only its message — no log-stream crash on exit", async () => {
+        freshDb();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["prov", "lineage", "nonexistent-analysis", "whatever"], { env: server.childEnv });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain('No analysis found matching "nonexistent-analysis"');
+            expect(result.stderr).not.toContain("sonic boom");
+            expect(result.stderr).not.toContain("flushSync");
+        } finally {
+            await server.stop();
+        }
     });
 
-    // An unknown --format must fail listing every accepted value. Option validation runs before
-    // analysis resolution, so the placeholder arguments never need to exist.
-    test("an unknown lineage --format fails listing the accepted values", () => {
-        const result = runCli(["prov", "lineage", "anything", "anything", "--format", "svg"]);
-        expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain('Unknown format "svg". Use "tree", "json", "dot", or "mermaid".');
+    // An unknown --format must fail listing every accepted value. The lineage route validates its query
+    // before it reads the provenance, thus the analysis exists and holds no provenance, and the ref is a
+    // placeholder.
+    test("an unknown lineage --format fails listing the accepted values", async () => {
+        freshDb();
+        insertAnchor({ id: "anc-1", createdAt: 1, updatedAt: 1, cachedPath: "/nonexistent", markerWritten: false, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({
+            id: "ana-1",
+            createdAt: 1,
+            updatedAt: 1,
+            name: asStr256("anything"),
+            slug: "anything",
+            anchorId: "anc-1",
+            projectId: null,
+        })._unsafeUnwrap();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["prov", "lineage", "anything", "anything", "--format", "svg"], { env: server.childEnv });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain('Unknown format "svg". Use "tree", "json", "dot", or "mermaid".');
+        } finally {
+            await server.stop();
+        }
+    });
+
+    // The route names its own query parameter, thus the command must name its own flag.
+    test("a bad lineage --depth fails naming the flag", async () => {
+        freshDb();
+        insertAnchor({ id: "anc-1", createdAt: 1, updatedAt: 1, cachedPath: "/nonexistent", markerWritten: false, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({
+            id: "ana-1",
+            createdAt: 1,
+            updatedAt: 1,
+            name: asStr256("anything"),
+            slug: "anything",
+            anchorId: "anc-1",
+            projectId: null,
+        })._unsafeUnwrap();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["prov", "lineage", "anything", "anything", "--depth", "0"], { env: server.childEnv });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain('--depth must be a positive integer, got "0".');
+        } finally {
+            await server.stop();
+        }
+    });
+});
+
+// The test preload names a discovery file and turns the start of a server off, thus a server check that runs
+// first stops the command with "No Inflexa server runs". In a real shell that check starts a background server.
+describe("a terminal UI launch with no TTY (e2e)", () => {
+    test("each launcher refuses before its server check, thus a refused launch starts no server", () => {
+        for (const args of [[], ["new", "headless"], ["resume", "headless"], ["config"]]) {
+            const result = runCli(args);
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain("which needs a TTY");
+            expect(result.stderr).not.toContain("No Inflexa server runs");
+        }
     });
 });

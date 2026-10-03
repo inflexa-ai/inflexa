@@ -1,38 +1,8 @@
 import { join } from "node:path";
 
-import { dieOn, fail } from "../../lib/cli.ts";
-import { resolveContext, type ContextFlags } from "../analysis/context.ts";
+import { fail } from "../../lib/cli.ts";
 import { isDirWritable } from "../anchor/marker.ts";
 import { downloadGeoSeries, parseByteSize, parseGseAccession, type GeoDownloadError, type GeoProgress } from "./geo.ts";
-
-/**
- * The folder a downloaded Series lands in — the analysis's home folder, not its workspace.
- *
- * Resolution needs an analysis only to reach that folder, so both a resolved analysis and a bare
- * anchor answer the question and neither branch reads the analysis itself. Mirrors how profile/run
- * resolve their target, minus the single-analysis requirement they need and this does not: several
- * analyses in one folder still share the one folder to download into.
- */
-function resolveTargetFolder(flags: ContextFlags): string {
-    const ctx = resolveContext(process.cwd(), flags).match((c) => c, dieOn("Could not resolve the folder to download into"));
-    switch (ctx.kind) {
-        case "analysis":
-        case "anchor":
-            return ctx.anchorPath;
-        case "pick": {
-            // Reachable only through an unmatched `--analysis`: `resolveContext` answers with `pick` for a
-            // ref that matched nothing or for a `--project`, and this command declares no `--project`. So
-            // the ambiguity half of `pick` — "several analyses could match, name one" — cannot arise here,
-            // and a message offering `--analysis` to a user who just passed it would be the unhelpful half.
-            const known = ctx.analyses.length === 0 ? "" : `\nKnown analyses:\n${ctx.analyses.map((a) => `  - ${a.id}  ${a.name}`).join("\n")}`;
-            return fail(`No analysis matches "${flags.analysis}".${known}`);
-        }
-        case "copy":
-            return fail("This folder looks copied — run `inflexa repair` or `inflexa relocate` before downloading into it.");
-        case "empty":
-            return fail("No analysis here — run `inflexa new` to create one, or pass --analysis <id|name>.");
-    }
-}
 
 /**
  * A human way-forward for a failed GEO download.
@@ -99,18 +69,19 @@ function reportProgress(event: GeoProgress): void {
  * Series becomes an input the moment the user asks for it, through the same add-inputs path any local
  * file uses, so this command owns no part of enrollment.
  *
- * The target folder resolves through `resolveContext`, so an agent-driven run with no `--analysis`
- * lands in the chat analysis's folder — `run_inflexa` starts the child there, so the ordinary marker
- * walk-up already points at it.
+ * `resolveFolder` gives the target folder, and the caller resolves it through the server
+ * (`client/commands/geo.ts`). An agent-driven run with no `--analysis` thus lands in the chat analysis's
+ * folder — `run_inflexa` starts the child there, so the ordinary marker walk-up already points at it. It
+ * runs after the two argument checks, thus a bad argument fails before any request.
  */
-export async function runGeoDownload(rawGse: string, flags: ContextFlags, maxSize?: string): Promise<void> {
+export async function runGeoDownload(rawGse: string, maxSize: string | undefined, resolveFolder: () => Promise<string>): Promise<void> {
     const accession = parseGseAccession(rawGse).match(
         (a) => a,
         () => fail(`Not a GEO Series accession: "${rawGse}" (expected e.g. GSE12345).`),
     );
     const maxBytes = maxSize === undefined ? undefined : parseByteSize(maxSize);
     if (maxSize !== undefined && maxBytes === undefined) fail(`Not a size: "${maxSize}" (expected e.g. 500MB, 64GB, or a plain byte count).`);
-    const folder = resolveTargetFolder(flags);
+    const folder = await resolveFolder();
     // Checked before the transfer rather than after: a read-only folder is a property of the user's
     // filesystem with an obvious remedy, and discovering it only once the bytes have moved wastes them.
     if (!isDirWritable(folder)) fail(`${folder} is not writable, so ${accession} cannot be downloaded there.`);

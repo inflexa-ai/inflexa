@@ -1,15 +1,19 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { testRender } from "@opentui/solid";
 
+import type { ServerSettings } from "../api/machine.ts";
+import { fetchSettings } from "../client/machine.ts";
 import { env } from "../lib/env.ts";
+import { startTestServer, type TestServer } from "../test_support/server.ts";
 import { ConfigApp } from "./app_config.tsx";
 import { dialogClear, dialogIsOpen } from "./components/dialog/dialog_host.tsx";
 
 // The embedding-backend wiring drives the REAL ConfigApp (standalone: it installs its own keymap root
-// and DialogOverlay) through the keyboard bus, covering the async/stateful dialog chains that unit tests
+// and DialogOverlay) through the keyboard bus, against a local server in this process (the settings and the
+// embedding-model routes), covering the async/stateful dialog chains that unit tests
 // can't reach: openEmbeddingPicker → startBackendFlow → the api-key fetch chain (SelectDialog on success,
 // free-text prompt on failure, dead-flow guard on supersede) and the custom-GGUF FilePicker flow. Each
 // case asserts the PERSISTED config block (via `s` save + reading env.configPath in the XDG test sandbox),
@@ -20,13 +24,40 @@ import { dialogClear, dialogIsOpen } from "./components/dialog/dialog_host.tsx";
 // test's idiom). The XDG sandbox (test preload) gives every ConfigApp an isolated, defaults-only config.
 const realFetch = globalThis.fetch;
 
-afterEach(() => {
+let server: TestServer;
+
+beforeEach(() => {
+    server = startTestServer();
+});
+
+afterEach(async () => {
     globalThis.fetch = realFetch;
     dialogClear();
+    await server.stop();
     // Leave the shared sandbox config pristine: a saved api-key/local block here would otherwise seed the
     // next test's (and other files') ConfigApp with a non-default embedding backend.
     rmSync(env.configPath, { force: true });
 });
+
+/** The settings screen over the settings of the test server, as `inflexa config` opens it. */
+async function configNode(): Promise<() => ReturnType<typeof ConfigApp>> {
+    const settings: ServerSettings = (await fetchSettings(server.clientOpts))._unsafeUnwrap();
+    return () => <ConfigApp settings={settings} clientOpts={server.clientOpts} />;
+}
+
+/**
+ * Install `stub` as the global fetch for each request that is not to the test server. The embedding-model
+ * route of the server calls the endpoint through the global fetch, and the client reaches the server through
+ * it too, thus only the first must meet the stub.
+ */
+function stubOutsideServer(stub: typeof globalThis.fetch): void {
+    // Test-only replacement of the global fetch: the router is narrower than fetch's overloaded signature;
+    // the cast is sound because afterEach restores the captured real fetch.
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
+        String(input instanceof Request ? input.url : input).startsWith(server.baseUrl)
+            ? realFetch(input, init)
+            : stub(input, init)) as unknown as typeof globalThis.fetch;
+}
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
@@ -113,10 +144,12 @@ async function browseToFixtureGguf(setup: Setup, fixtureName: string): Promise<v
 
 describe("ConfigApp embedding backend wiring (rendered, real keyboard bus)", () => {
     test("api-key happy path: fetched model picker, a 1536 width omits dimensions", async () => {
-        globalThis.fetch = resolvingFetch({
-            data: [{ id: "gpt-4o" }, { id: "text-embedding-3-large" }, { id: "text-embedding-3-small" }],
-        });
-        const setup = await testRender(() => <ConfigApp />, { width: 100, height: 44 });
+        stubOutsideServer(
+            resolvingFetch({
+                data: [{ id: "gpt-4o" }, { id: "text-embedding-3-large" }, { id: "text-embedding-3-small" }],
+            }),
+        );
+        const setup = await testRender(await configNode(), { width: 100, height: 44 });
         try {
             await settle(setup);
             await focusEmbeddingSection(setup);
@@ -155,8 +188,8 @@ describe("ConfigApp embedding backend wiring (rendered, real keyboard bus)", () 
     });
 
     test("api-key happy path: a non-default width records dimensions", async () => {
-        globalThis.fetch = resolvingFetch({ data: [{ id: "text-embedding-3-small" }] });
-        const setup = await testRender(() => <ConfigApp />, { width: 100, height: 44 });
+        stubOutsideServer(resolvingFetch({ data: [{ id: "text-embedding-3-small" }] }));
+        const setup = await testRender(await configNode(), { width: 100, height: 44 });
         try {
             await settle(setup);
             await focusEmbeddingSection(setup);
@@ -187,8 +220,8 @@ describe("ConfigApp embedding backend wiring (rendered, real keyboard bus)", () 
     });
 
     test("fetch failure: warn notice + free-text model prompt still lands the block", async () => {
-        globalThis.fetch = resolvingFetch({ error: "unauthorized" }, 401); // non-2xx → listing fails
-        const setup = await testRender(() => <ConfigApp />, { width: 100, height: 44 });
+        stubOutsideServer(resolvingFetch({ error: "unauthorized" }, 401)); // non-2xx → listing fails
+        const setup = await testRender(await configNode(), { width: 100, height: 44 });
         try {
             await settle(setup);
             await focusEmbeddingSection(setup);
@@ -232,7 +265,7 @@ describe("ConfigApp embedding backend wiring (rendered, real keyboard bus)", () 
         const fixtureName = basename(fixture);
         writeFileSync(join(fixture, "my-model.gguf"), "x");
         const modelPath = join(fixture, "my-model.gguf");
-        const setup = await testRender(() => <ConfigApp />, { width: 100, height: 44 });
+        const setup = await testRender(await configNode(), { width: 100, height: 44 });
         try {
             await settle(setup);
             await focusEmbeddingSection(setup);
@@ -270,7 +303,7 @@ describe("ConfigApp embedding backend wiring (rendered, real keyboard bus)", () 
 
     test("dead-flow guard: a superseded probe's late resolve pushes no dialog and changes no notice", async () => {
         const calls = installControllableFetch();
-        const setup = await testRender(() => <ConfigApp />, { width: 100, height: 44 });
+        const setup = await testRender(await configNode(), { width: 100, height: 44 });
         try {
             await settle(setup);
             await focusEmbeddingSection(setup);
@@ -309,6 +342,84 @@ describe("ConfigApp embedding backend wiring (rendered, real keyboard bus)", () 
     });
 });
 
+describe("ConfigApp secrets (rendered, real keyboard bus)", () => {
+    const secrets = ["pg-secret-1", "sk-secret-1"];
+    const storedSecrets = { telemetry: false, postgres: { password: "pg-secret-1" }, embedding: { mode: "api-key", apiKey: "sk-secret-1" } };
+
+    /** Write the config with a stored password and a stored api key, before the screen reads the settings. */
+    function writeStoredSecrets(): void {
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(env.configPath, JSON.stringify(storedSecrets));
+    }
+
+    test("a stored secret shows `set` and never its value, and a new password reaches the config", async () => {
+        writeStoredSecrets();
+        const setup = await testRender(await configNode(), { width: 100, height: 44 });
+        try {
+            await settle(setup);
+            // The password is the last of the five postgres fields: seven arrow-downs from the top.
+            for (let i = 0; i < 7; i++) setup.mockInput.pressArrow("down");
+            await settle(setup);
+            expect(frame(setup)).toContain("password: set");
+            setup.mockInput.pressArrow("down");
+            await settle(setup);
+            expect(frame(setup)).toContain("key set");
+            expect(secrets.filter((secret) => frame(setup).includes(secret))).toEqual([]);
+
+            setup.mockInput.pressArrow("up");
+            setup.mockInput.pressEnter();
+            await settle(setup);
+            expect(frame(setup)).toContain("postgres.password");
+            expect(secrets.filter((secret) => frame(setup).includes(secret))).toEqual([]);
+            await setup.mockInput.typeText("pg-new-2");
+            setup.mockInput.pressEnter();
+            await settle(setup);
+            setup.mockInput.pressKey("s");
+            await settle(setup);
+
+            // The config file is validated JSON that the server just wrote.
+            const persisted = JSON.parse(readFileSync(env.configPath, "utf8")) as { postgres?: unknown; embedding?: unknown };
+            expect(persisted.postgres).toEqual({ password: "pg-new-2" });
+            expect(persisted.embedding).toEqual({ mode: "api-key", apiKey: "sk-secret-1" });
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("an empty api key keeps the stored key, and the model id is typed with no probe", async () => {
+        writeStoredSecrets();
+        const calls = installControllableFetch();
+        const setup = await testRender(await configNode(), { width: 100, height: 44 });
+        try {
+            await settle(setup);
+            await focusEmbeddingSection(setup);
+            await chooseBackend(setup, API_KEY_CHOICE);
+            expect(frame(setup)).toContain("embedding.apiKey");
+
+            await submitKeyAndDefaultBaseUrl(setup, "");
+            expect(frame(setup)).toContain("embedding.model");
+            await setup.mockInput.typeText("text-embedding-3-large");
+            setup.mockInput.pressEnter();
+            await settle(setup);
+            setup.mockInput.pressEnter(); // accept 1536
+            await settle(setup);
+            expect(frame(setup)).toContain("embedding: api-key — text-embedding-3-large (1536-dim), key set");
+
+            setup.mockInput.pressKey("s");
+            await settle(setup);
+            expect(calls).toEqual([]);
+            expect(persistedEmbedding()).toEqual({
+                mode: "api-key",
+                apiKey: "sk-secret-1",
+                baseURL: "https://api.openai.com/v1",
+                model: "text-embedding-3-large",
+            });
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
 /** A fetch that resolves immediately with `body` as JSON at `status` — the api_models test's stub shape. */
 function resolvingFetch(body: unknown, status = 200): typeof globalThis.fetch {
     // Test-only replacement of the global fetch: the recorder is narrower than fetch's overloaded signature;
@@ -332,13 +443,15 @@ type ProbeCall = {
 function installControllableFetch(): ProbeCall[] {
     const calls: ProbeCall[] = [];
     // Test-only fetch replacement; sound because afterEach restores the captured real fetch.
-    globalThis.fetch = ((input: string | URL | Request): Promise<Response> =>
-        new Promise<Response>((resolve, reject) => {
-            calls.push({
-                url: String(input),
-                resolve: (body, status = 200) => resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })),
-                reject,
-            });
-        })) as unknown as typeof globalThis.fetch;
+    stubOutsideServer(
+        ((input: string | URL | Request): Promise<Response> =>
+            new Promise<Response>((resolve, reject) => {
+                calls.push({
+                    url: String(input),
+                    resolve: (body, status = 200) => resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })),
+                    reject,
+                });
+            })) as unknown as typeof globalThis.fetch,
+    );
     return calls;
 }

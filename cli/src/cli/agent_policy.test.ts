@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { describe, expect, test } from "bun:test";
 
-import { getAgentPolicy, registerAction, setAgentPolicy, type AgentPolicy } from "./agent_policy.ts";
+import { getAgentPolicy, getCommandKind, registerAction, setAgentPolicy, type AgentPolicy, type CommandKind, type RegisterOpts } from "./agent_policy.ts";
 import { buildProgram } from "./index.ts";
 
 describe("agent_policy — stamp round-trips on the Command instance", () => {
@@ -27,7 +27,7 @@ describe("agent_policy — stamp round-trips on the Command instance", () => {
         program.exitOverride();
         const policy: AgentPolicy = { kind: "auto", safeFlags: ["json"] };
         const leaf = program.command("go");
-        registerAction(leaf, policy, () => {});
+        registerAction(leaf, "standalone", policy, () => {});
         leaf.name("renamed");
         expect(getAgentPolicy(leaf)).toBe(policy);
     });
@@ -39,7 +39,7 @@ describe("agent_policy — registerAction couples handler and policy", () => {
         program.exitOverride();
         let seenJson: boolean | undefined;
         const leaf = program.command("go").option("--json", "emit json");
-        registerAction(leaf, { kind: "auto", safeFlags: ["json"] }, async (opts: { json?: boolean }) => {
+        registerAction(leaf, "standalone", { kind: "auto", safeFlags: ["json"] }, async (opts: { json?: boolean }) => {
             seenJson = opts.json;
         });
 
@@ -56,8 +56,11 @@ describe("agent_policy — a subcommand sees the options its ancestors parsed", 
         const program = new Command();
         program.exitOverride();
         program.option("--analysis <id|name>", "root scope").option("--project <name>", "root scope");
-        registerAction(program.command("go").option("--analysis <id|name>", "child scope"), { kind: "approval" }, (options: Record<string, unknown>) =>
-            record(options),
+        registerAction(
+            program.command("go").option("--analysis <id|name>", "child scope"),
+            "standalone",
+            { kind: "approval" },
+            (options: Record<string, unknown>) => record(options),
         );
         return program;
     }
@@ -99,5 +102,68 @@ describe("agent_policy — buildProgram instances do not share stamps", () => {
         expect(aLs).not.toBe(bLs);
         expect(getAgentPolicy(aLs)).toEqual({ kind: "auto", safeFlags: ["project"] });
         expect(getAgentPolicy(bLs)).toEqual({ kind: "auto", safeFlags: ["project"] });
+    });
+});
+
+describe("agent_policy — the command kind decides the server check", () => {
+    /** One leaf of `kind` with a hidden worker flag, and a log of the server check and the handler, in order. */
+    function leaf(kind: CommandKind): { program: Command; calls: string[] } {
+        const calls: string[] = [];
+        const opts: RegisterOpts = {
+            requireServer: async () => {
+                calls.push("server-check");
+            },
+        };
+        const program = new Command();
+        program.exitOverride();
+        const command = program.command("go").option("--run-transfer <kind>", "worker mode");
+        registerAction(command, kind, { kind: "approval" }, () => void calls.push("handler"), opts);
+        return { program, calls };
+    }
+
+    test("an `instance` command finds the server before its handler runs", async () => {
+        const { program, calls } = leaf("instance");
+        await program.parseAsync(["go"], { from: "user" });
+        expect(calls).toEqual(["server-check", "handler"]);
+    });
+
+    test("a `machine` or a `standalone` command runs with no server check", async () => {
+        for (const kind of ["machine", "standalone"] as const) {
+            const { program, calls } = leaf(kind);
+            await program.parseAsync(["go"], { from: "user" });
+            expect(calls).toEqual(["handler"]);
+        }
+    });
+
+    test("a machine flag skips the check for that run only", async () => {
+        const kind: CommandKind = { kind: "instance", machineFlags: ["runTransfer"] };
+        const worker = leaf(kind);
+        await worker.program.parseAsync(["go", "--run-transfer", "catalog"], { from: "user" });
+        expect(worker.calls).toEqual(["handler"]);
+
+        const client = leaf(kind);
+        await client.program.parseAsync(["go"], { from: "user" });
+        expect(client.calls).toEqual(["server-check", "handler"]);
+    });
+
+    test("the check is not a `preAction` hook: a dry parse that stops in a hook of the root never reaches it", async () => {
+        // The argv classifier of `run_inflexa` parses on the side and throws from a root `preAction` hook.
+        const calls: string[] = [];
+        const program = new Command();
+        program.exitOverride();
+        registerAction(program, "instance", { kind: "blocked", reason: "test" }, () => void calls.push("handler"), {
+            requireServer: async () => void calls.push("server-check"),
+        });
+        program.hook("preAction", () => {
+            throw new Error("classified");
+        });
+        await expect(program.parseAsync([], { from: "user" })).rejects.toThrow("classified");
+        expect(calls).toEqual([]);
+    });
+
+    test("the kind is stamped on the Command instance", () => {
+        const { program } = leaf("machine");
+        const go = program.commands.find((c) => c.name() === "go");
+        expect(go === undefined ? undefined : getCommandKind(go)).toBe("machine");
     });
 });

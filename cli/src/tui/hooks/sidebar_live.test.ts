@@ -1,20 +1,22 @@
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
-import { err, ok, okAsync, errAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { createRoot } from "solid-js";
-
-import { Bus } from "../../lib/bus.ts";
-import { GLYPHS } from "../../lib/design_system.ts";
 import { createStore } from "solid-js/store";
+import type { DataProfileResult } from "@inflexa-ai/harness/contracts/index.js";
 
 // Side-effect import: installs `Date.relativeAge` (the loaded-profile timestamp lines call it) via the
 // same central loader the app boots with.
 import "../../extensions/index.ts";
-import type { CortexRunRow, DataProfileResult, DataProfileStatus, DbError, StepExecutionRow } from "@inflexa-ai/harness";
-import type { LlmUsageTotals } from "../../db/primary_query.ts";
-import type { ResolvedHarnessConfig } from "../../modules/harness/config.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
-import type { Workspace } from "../contexts/workspace.ts";
-import { __resetBootForTest, startHarnessBoot, type BootDriver } from "./boot.ts";
+import type { AnalysisView } from "../../api/analyses.ts";
+import type { DataProfileState, DataProfileView, RunDetail, RunStepSummary, RunSummary, StepExecutionStatus } from "../../api/runs.ts";
+import type { UsageTotals } from "../../api/usage.ts";
+import { toAnalysis } from "../../client/analyses.ts";
+import type { ClientError } from "../../client/api.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
+import { asStr256 } from "../../lib/types.ts";
+import { createWorkspace, type Workspace } from "../contexts/workspace.ts";
+import { __resetBootForTest, __setBootStateForTest } from "./boot.ts";
+import { pollOpenThread, resetHotState, type ThreadPollOpts } from "./conversation.ts";
 import { setChatStatus } from "./status.ts";
 import {
     __resetSidebarLiveForTest,
@@ -30,9 +32,8 @@ import {
     runsSnapshot,
     watchSidebarData,
     type ProfileSnapshot,
-    type RefreshSeams,
+    type RefreshOpts,
     type RunsSnapshot,
-    type WatchSeams,
 } from "./sidebar_live.ts";
 
 afterEach(() => {
@@ -41,12 +42,13 @@ afterEach(() => {
     setChatStatus("idle");
 });
 
-// The refresh reads only `.pool` off the handle and the loads ignore it, so a partial stand-in cast
-// keeps every test offline (no Postgres). Mirrors boot.test.ts's `fakeRuntime`.
-const fakeRuntime = { pool: {} } as unknown as HarnessRuntime;
-const dbErr: DbError = { type: "query_failed", op: "test", cause: new Error("boom") };
+/** The options of {@link watchSidebarData}: its refresh and its timer. */
+type WatchOpts = NonNullable<Parameters<typeof watchSidebarData>[1]>;
 
-function profileStatus(over: Partial<DataProfileStatus> = {}): DataProfileStatus {
+/** The client error of a failed read: the server answered 500. */
+const serverErr: ClientError = { type: "http", status: 500, body: { error: "internal_error", message: "The server failed to handle the request." } };
+
+function profileState(over: Partial<DataProfileState> = {}): DataProfileState {
     return {
         status: "completed",
         error: null,
@@ -64,93 +66,89 @@ function profileStatus(over: Partial<DataProfileStatus> = {}): DataProfileStatus
  * profile has no completion stamp and no result yet, and the base builder's defaults describe a
  * finished one — so the overrides are part of the fixture, not noise at each call site.
  */
-function runningProfile(over: Partial<DataProfileStatus> = {}): DataProfileStatus {
-    return profileStatus({ status: "running", startedAt: "2026-07-30T10:00:00.000Z", completedAt: null, result: null, workflowId: "wf-1", ...over });
+function runningProfile(over: Partial<DataProfileState> = {}): DataProfileState {
+    return profileState({ status: "running", startedAt: "2026-07-30T10:00:00.000Z", completedAt: null, result: null, workflowId: "wf-1", ...over });
 }
 
-function runRow(over: Partial<CortexRunRow> = {}): CortexRunRow {
+/** A run in the wire shape of `GET {A}/runs`. */
+function runRow(over: Partial<RunSummary> = {}): RunSummary {
+    const runId = over.runId ?? "run-1";
     return {
-        runId: "run-1",
-        analysisId: "a1",
+        runId,
         threadId: null,
         workflowName: "executeAnalysis",
+        workflowId: runId,
         status: "completed",
         startedAt: "2026-07-08T00:00:00.000Z",
         completedAt: null,
         error: null,
-        synthesisStatus: null,
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: null,
         ...over,
     };
 }
 
-/** Build refresh seams whose reads resolve immediately with the given data. Steps default to empty. */
-function seams(
-    profile: DataProfileStatus | null,
-    runs: CortexRunRow[],
-    runtime: () => HarnessRuntime | null = () => fakeRuntime,
-    steps: StepExecutionRow[] = [],
-): RefreshSeams {
+/** A minimal step of a run detail keyed by id + status — the refresh maps steps → step views via `stepStateOf`. */
+function stepRow(stepId: string, status: StepExecutionStatus, over: Partial<RunStepSummary> = {}): RunStepSummary {
+    return { stepId, agentId: "agent", status, startedAt: null, completedAt: null, durationMs: null, error: null, attempts: 1, blockedReason: null, ...over };
+}
+
+/** The `GET {A}/run/:runId` body of `run`, with its steps. */
+function detailOf(run: RunSummary, steps: RunStepSummary[], unattributedUsage: UsageTotals | null = null): RunDetail {
+    return { ...run, steps, unattributedUsage };
+}
+
+/** The `GET {A}/data-profile` body of a row, or of a never-profiled analysis. */
+function viewOf(profile: DataProfileState | null, usage?: UsageTotals): DataProfileView {
+    if (profile === null) return { status: null };
+    return usage === undefined ? profile : { ...profile, usage };
+}
+
+/** Build refresh options whose reads resolve immediately with the given data. Steps default to empty. */
+function opts(profile: DataProfileState | null, runs: RunSummary[], ready: () => boolean = () => true, steps: RunStepSummary[] = []): RefreshOpts {
     return {
-        runtime,
-        loadProfile: () => okAsync(profile),
+        ready,
+        loadProfile: () => okAsync(viewOf(profile)),
         loadRuns: () => okAsync(runs),
-        // Derived from the same rows, filtered to the non-terminal ones — what the real uncapped
-        // active query returns. Echoing the whole list would let a fixture assert behaviour the
-        // production seam cannot produce.
+        // Derived from the same rows, filtered to the non-terminal ones — what the real `active=true`
+        // read returns. Echoing the whole list would let a fixture assert behaviour the production read
+        // cannot produce.
         loadActiveRuns: () => okAsync(runs.filter((r) => !RUN_STATUS_TERMINAL[r.status])),
-        loadSteps: () => okAsync(steps),
-        loadPlan: () => okAsync(null),
+        loadRun: (_analysisId, runId) => okAsync(detailOf(runs.find((r) => r.runId === runId) ?? runRow({ runId, status: "running" }), steps)),
     };
 }
 
-/** A minimal step-execution row keyed by id + status — the refresh maps rows → step views via `stepStateOf`. */
-function stepRow(stepId: string, status: StepExecutionRow["status"]): StepExecutionRow {
-    return {
-        runId: "run-1",
-        stepId,
-        analysisId: "a1",
-        wave: 0,
-        agentId: "agent",
-        status,
-        startedAt: null,
-        completedAt: null,
-        durationMs: null,
-        error: null,
-        attempts: 1,
-        lastErrorClass: null,
-        finishReason: null,
-        hitMaxSteps: false,
-        blockedReason: null,
-        execId: null,
-        childWorkflowId: null,
-        sandboxRef: null,
-    };
-}
+/** The reads of a tick beside the ledger, for a case about the ledger: a server that answers, and an open thread that the case does not read. */
+const LEDGER_ONLY: Pick<WatchOpts, "checkServer" | "pollThread"> = { checkServer: async () => true, pollThread: async () => {} };
 
-/** Mount `watchSidebarData` in a disposable reactive root; returns the dispose so the test tears it down. */
-function mountWatch(ws: Workspace, watchSeams: WatchSeams): () => void {
+/** The options of a case about the ledger: {@link LEDGER_ONLY} fills the reads that it omits. */
+type LedgerWatchOpts = Omit<WatchOpts, keyof typeof LEDGER_ONLY> & Partial<typeof LEDGER_ONLY>;
+
+/**
+ * Mount `watchSidebarData` in a disposable reactive root; returns the dispose so the test tears it down. A
+ * case that omits the server probe or the thread read gets {@link LEDGER_ONLY}.
+ */
+function mountWatch(ws: Workspace, watchOpts: LedgerWatchOpts): () => void {
     let dispose!: () => void;
     createRoot((d) => {
         dispose = d;
-        watchSidebarData(ws, watchSeams);
+        watchSidebarData(ws, { ...LEDGER_ONLY, ...watchOpts });
     });
     return dispose;
 }
 
-// The watch reads only `workspace.analysis?.id`, so a partial stand-in cast is sound and keeps the
-// trigger tests offline (no reactive store, no lock, no session).
+/** Drive the boot store to `ready`, as `watchServerBoot` does when the server reports it. */
+function bootReady(): void {
+    __setBootStateForTest({ phase: "ready", model: "m", connection: { provider: "anthropic", mode: "cliproxy" } });
+}
+
+// The watch reads only `workspace.analysis?.id`, the bound session, and the scope read, so a partial
+// stand-in cast is sound and keeps the trigger tests offline (no reactive store, no lock, no session).
 function wsFor(id: string | null): Workspace {
     const analysis = id === null ? null : ({ id } as unknown as Workspace["analysis"]);
-    return { analysis } as unknown as Workspace;
+    return { analysis, sessionId: null, refreshScope: () => {} } as unknown as Workspace;
 }
 
 /** Build a `loaded` profile snapshot for the {@link profileDetailLines} composer tests. */
-function loaded(over: Partial<DataProfileStatus> = {}, usage?: LlmUsageTotals): ProfileSnapshot {
+function loaded(over: Partial<DataProfileState> = {}, usage?: UsageTotals): ProfileSnapshot {
     return {
         kind: "loaded",
         usage,
@@ -175,65 +173,57 @@ function loaded(over: Partial<DataProfileStatus> = {}, usage?: LlmUsageTotals): 
     };
 }
 
+/** A profile read that parks until the test releases it with a view. */
+function gatedProfile(): { read: ResultAsync<DataProfileView, ClientError>; release: (view: DataProfileView) => void } {
+    let release!: (view: DataProfileView) => void;
+    const read = ResultAsync.fromSafePromise(
+        new Promise<DataProfileView>((res) => {
+            release = res;
+        }),
+    );
+    return { read, release };
+}
+
 describe("refreshSidebarData — snapshot ladder", () => {
-    test("no-ops to not_ready when the runtime is not booted, issuing no query", async () => {
-        let profileReads = 0;
-        let runReads = 0;
-        let stepReads = 0;
-        let planReads = 0;
+    test("no-ops to not_ready when the runtime is not ready, issuing no request", async () => {
+        let reads = 0;
         // Prime to a loaded state so the reset back to not_ready is observable.
-        await refreshSidebarData("A", seams(profileStatus(), [runRow()]));
+        await refreshSidebarData("A", opts(profileState(), [runRow()]));
         expect(profileSnapshot().kind).toBe("loaded");
 
-        const guarded: RefreshSeams = {
-            runtime: () => null,
-            loadProfile: () => {
-                profileReads += 1;
-                return okAsync(null);
-            },
-            loadRuns: () => {
-                runReads += 1;
-                return okAsync([]);
-            },
-            loadActiveRuns: () => {
-                runReads += 1;
-                return okAsync([]);
-            },
-            loadSteps: () => {
-                stepReads += 1;
-                return okAsync([]);
-            },
-            loadPlan: () => {
-                planReads += 1;
-                return okAsync(null);
-            },
+        const count = <T>(value: T): ResultAsync<T, ClientError> => {
+            reads += 1;
+            return okAsync(value);
+        };
+        const guarded: RefreshOpts = {
+            ready: () => false,
+            loadProfile: () => count<DataProfileView>({ status: null }),
+            loadRuns: () => count<RunSummary[]>([]),
+            loadActiveRuns: () => count<RunSummary[]>([]),
+            loadRun: () => count(detailOf(runRow(), [])),
         };
         await refreshSidebarData("A", guarded);
 
         expect(profileSnapshot().kind).toBe("not_ready");
         expect(runsSnapshot().kind).toBe("not_ready");
-        expect(profileReads).toBe(0);
-        expect(planReads).toBe(0);
-        expect(runReads).toBe(0);
-        expect(stepReads).toBe(0);
+        expect(reads).toBe(0);
     });
 
-    test("a DbError degrades to unavailable, never a crash", async () => {
-        const failing: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => errAsync(dbErr),
-            loadRuns: () => errAsync(dbErr),
-            loadActiveRuns: () => errAsync(dbErr),
-            loadSteps: () => errAsync(dbErr),
-            loadPlan: () => okAsync(null),
+    test("a failed read degrades to unavailable, never a crash", async () => {
+        const failing: RefreshOpts = {
+            ready: () => true,
+            loadProfile: () => errAsync(serverErr),
+            loadRuns: () => errAsync(serverErr),
+            loadActiveRuns: () => errAsync(serverErr),
+            loadRun: () => errAsync(serverErr),
         };
         await refreshSidebarData("A", failing);
         expect(profileSnapshot().kind).toBe("unavailable");
         expect(runsSnapshot().kind).toBe("unavailable");
     });
 
-    test("a null profile row is absent while runs still load", async () => {
-        await refreshSidebarData("A", seams(null, [runRow()]));
+    test("a never-profiled analysis is absent while runs still load", async () => {
+        await refreshSidebarData("A", opts(null, [runRow()]));
         expect(profileSnapshot().kind).toBe("absent");
         const r = runsSnapshot();
         expect(r.kind).toBe("loaded");
@@ -241,7 +231,7 @@ describe("refreshSidebarData — snapshot ladder", () => {
     });
 
     test("a present profile + runs load through", async () => {
-        await refreshSidebarData("A", seams(profileStatus({ status: "completed" }), [runRow(), runRow({ runId: "run-2" })]));
+        await refreshSidebarData("A", opts(profileState({ status: "completed" }), [runRow(), runRow({ runId: "run-2" })]));
         const p = profileSnapshot();
         expect(p.kind).toBe("loaded");
         if (p.kind === "loaded") expect(p.profile.status).toBe("completed");
@@ -253,30 +243,18 @@ describe("refreshSidebarData — snapshot ladder", () => {
 
 describe("refreshSidebarData — staleness guard", () => {
     test("a slow refresh for A does not clobber a later refresh for B", async () => {
-        let releaseA!: (v: DataProfileStatus | null) => void;
-        const gatedA: ResultAsync<DataProfileStatus | null, DbError> = ResultAsync.fromSafePromise(
-            new Promise<DataProfileStatus | null>((res) => {
-                releaseA = res;
-            }),
-        );
-        const seamsA: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => gatedA,
-            loadRuns: () => okAsync([runRow({ status: "running" })]),
-            loadActiveRuns: () => okAsync([runRow({ status: "running" })]),
-            loadSteps: () => okAsync([]),
-            loadPlan: () => okAsync(null),
-        };
-        const seamsB = seams(profileStatus({ status: "completed" }), [runRow({ status: "completed" })]);
+        const gatedA = gatedProfile();
+        const optsA: RefreshOpts = { ...opts(null, [runRow({ status: "running" })]), loadProfile: () => gatedA.read };
+        const optsB = opts(profileState({ status: "completed" }), [runRow({ status: "completed" })]);
 
-        const pA = refreshSidebarData("A", seamsA); // parks on the gated profile read
-        await refreshSidebarData("B", seamsB); // starts + finishes; wins the store
+        const pA = refreshSidebarData("A", optsA); // parks on the gated profile read
+        await refreshSidebarData("B", optsB); // starts + finishes; wins the store
 
         const afterB = profileSnapshot();
         expect(afterB.kind).toBe("loaded");
         if (afterB.kind === "loaded") expect(afterB.profile.status).toBe("completed");
 
-        releaseA(profileStatus({ status: "running" })); // A now resolves — but it is stale
+        gatedA.release(runningProfile()); // A now resolves — but it is stale
         await pA;
 
         const settled = profileSnapshot();
@@ -286,23 +264,20 @@ describe("refreshSidebarData — staleness guard", () => {
     });
 });
 
-// The runs LISTING is windowed to the newest N by `started_at DESC`, which drops the OLDEST running
-// run first — precisely the long analysis these surfaces exist to keep visible. The uncapped active
-// read is what makes that impossible; these pin the merge that consumes it.
+// The runs LISTING is windowed to the newest N by start time, which drops the OLDEST running run
+// first — precisely the long analysis these surfaces exist to keep visible. The uncapped active read
+// is what makes that impossible; these pin the merge that consumes it.
 describe("refreshSidebarData — an active run is never lost to the listing window", () => {
     test("a running run outside the newest-N window is still listed and still tracked", async () => {
         const longRunner = runRow({ runId: "run-old", status: "running", startedAt: "2026-07-28T09:00:00.000Z" });
         // The window holds only newer, finished runs — `run-old` has fallen off it entirely.
         const window = Array.from({ length: 10 }, (_, i) => runRow({ runId: `run-new-${i}`, status: "completed", startedAt: `2026-07-28T1${i}:00:00.000Z` }));
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
+        const o: RefreshOpts = {
+            ...opts(null, [], () => true, [stepRow("s", "running")]),
             loadRuns: () => okAsync(window),
             loadActiveRuns: () => okAsync([longRunner]),
-            loadSteps: () => okAsync([stepRow("s", "running")]),
-            loadPlan: () => okAsync(null),
         };
-        await refreshSidebarData("A", s);
+        await refreshSidebarData("A", o);
 
         const snap = runsSnapshot();
         expect(snap.kind).toBe("loaded");
@@ -316,15 +291,12 @@ describe("refreshSidebarData — an active run is never lost to the listing wind
 
     test("the merge does not duplicate a run present in both reads", async () => {
         const live = runRow({ runId: "run-a", status: "running" });
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
+        const o: RefreshOpts = {
+            ...opts(null, [], () => true, [stepRow("s", "running")]),
             loadRuns: () => okAsync([live, runRow({ runId: "run-b", status: "completed" })]),
             loadActiveRuns: () => okAsync([live]),
-            loadSteps: () => okAsync([stepRow("s", "running")]),
-            loadPlan: () => okAsync(null),
         };
-        await refreshSidebarData("A", s);
+        await refreshSidebarData("A", o);
 
         const snap = runsSnapshot();
         if (snap.kind !== "loaded") throw new Error("expected loaded");
@@ -333,18 +305,14 @@ describe("refreshSidebarData — an active run is never lost to the listing wind
     });
 
     test("a failed active read degrades to the window's own view rather than blanking the section", async () => {
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
+        const o: RefreshOpts = {
+            ...opts(null, [], () => true, [stepRow("s", "running")]),
             loadRuns: () => okAsync([runRow({ runId: "run-a", status: "running" })]),
-            loadActiveRuns: () => errAsync(dbErr),
-            loadSteps: () => okAsync([stepRow("s", "running")]),
-            loadPlan: () => okAsync(null),
+            loadActiveRuns: () => errAsync(serverErr),
         };
-        await refreshSidebarData("A", s);
+        await refreshSidebarData("A", o);
 
-        // Strictly the pre-existing behaviour: the window still lists and tracks what it can see. A
-        // read that adds coverage must never be able to take coverage away.
+        // A read that adds coverage must never be able to take coverage away.
         const snap = runsSnapshot();
         if (snap.kind !== "loaded") throw new Error("expected loaded");
         expect(snap.runs.map((r) => r.runId)).toEqual(["run-a"]);
@@ -356,15 +324,12 @@ describe("refreshSidebarData — an active run is never lost to the listing wind
         // AUTHORITY on what is live. Discarding it because the mere listing blipped would cost the
         // rail block, the panel entry, AND the completion announcement — which returns early unless
         // this snapshot is `loaded` — for a run positively known to be running.
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => errAsync(dbErr),
+        const o: RefreshOpts = {
+            ...opts(null, [], () => true, [stepRow("s", "running")]),
+            loadRuns: () => errAsync(serverErr),
             loadActiveRuns: () => okAsync([runRow({ runId: "run-a", status: "running" })]),
-            loadSteps: () => okAsync([stepRow("s", "running")]),
-            loadPlan: () => okAsync(null),
         };
-        await refreshSidebarData("A", s);
+        await refreshSidebarData("A", o);
 
         const snap = runsSnapshot();
         if (snap.kind !== "loaded") throw new Error("expected loaded, not unavailable");
@@ -373,15 +338,8 @@ describe("refreshSidebarData — an active run is never lost to the listing wind
     });
 
     test("only BOTH run reads failing degrades the section to unavailable", async () => {
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => errAsync(dbErr),
-            loadActiveRuns: () => errAsync(dbErr),
-            loadSteps: () => okAsync([]),
-            loadPlan: () => okAsync(null),
-        };
-        await refreshSidebarData("A", s);
+        const o: RefreshOpts = { ...opts(null, []), loadRuns: () => errAsync(serverErr), loadActiveRuns: () => errAsync(serverErr) };
+        await refreshSidebarData("A", o);
         expect(runsSnapshot().kind).toBe("unavailable");
     });
 });
@@ -389,15 +347,11 @@ describe("refreshSidebarData — an active run is never lost to the listing wind
 describe("refreshSidebarData — sticky run-progress row", () => {
     test("a non-terminal newest run publishes its progress (name, tag, done/total, mapped steps)", async () => {
         const steps = [stepRow("qc", "completed"), stepRow("align", "running"), stepRow("call", "pending")];
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => okAsync([runRow({ runId: "11112222-3333-4444-5555-6666aabbccdd", status: "running", workflowName: "executeAnalysis" })]),
-            loadActiveRuns: () => okAsync([runRow({ runId: "11112222-3333-4444-5555-6666aabbccdd", status: "running", workflowName: "executeAnalysis" })]),
-            loadSteps: () => okAsync(steps),
-            loadPlan: () => okAsync(null),
-        };
-        await refreshSidebarData("A", s);
+        const run = runRow({ runId: "11112222-3333-4444-5555-6666aabbccdd", status: "running", workflowName: "executeAnalysis" });
+        await refreshSidebarData(
+            "A",
+            opts(null, [run], () => true, steps),
+        );
         const p = activeRunProgress().get("11112222-3333-4444-5555-6666aabbccdd");
         expect(p).toBeDefined();
         if (p) {
@@ -409,152 +363,97 @@ describe("refreshSidebarData — sticky run-progress row", () => {
         }
     });
 
-    test("EVERY active run gets its own entry and its own step read", async () => {
+    test("EVERY active run gets its own entry and its own run read", async () => {
         const asked: string[] = [];
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => okAsync([runRow({ runId: "newest", status: "running" }), runRow({ runId: "older", status: "running" })]),
-            loadActiveRuns: () => okAsync([runRow({ runId: "newest", status: "running" }), runRow({ runId: "older", status: "running" })]),
-            loadSteps: (_pool, runId) => {
+        const runs = [runRow({ runId: "newest", status: "running" }), runRow({ runId: "older", status: "running" })];
+        const o: RefreshOpts = {
+            ...opts(null, runs),
+            loadRun: (_analysisId, runId) => {
                 asked.push(runId);
-                return okAsync([stepRow("s", "running")]);
+                return okAsync(
+                    detailOf(
+                        runs.find((r) => r.runId === runId)!,
+                        [stepRow("s", "running")],
+                    ),
+                );
             },
-            loadPlan: () => okAsync(null),
         };
-        await refreshSidebarData("A", s);
+        await refreshSidebarData("A", o);
         // Both, because a second concurrent run having no live surface is the defect this replaces.
         expect(asked.sort()).toEqual(["newest", "older"]);
         expect([...activeRunProgress().keys()].sort()).toEqual(["newest", "older"]);
     });
 
     test("a terminal run's entry is removed while an active sibling's survives", async () => {
-        const s = (olderStatus: "running" | "completed"): RefreshSeams => ({
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => okAsync([runRow({ runId: "live", status: "running" }), runRow({ runId: "older", status: olderStatus })]),
-            loadActiveRuns: () => okAsync([runRow({ runId: "live", status: "running" }), runRow({ runId: "older", status: olderStatus })]),
-            loadSteps: () => okAsync([stepRow("s", "running")]),
-            loadPlan: () => okAsync(null),
-        });
-        await refreshSidebarData("A", s("running"));
+        const o = (olderStatus: "running" | "completed"): RefreshOpts =>
+            opts(null, [runRow({ runId: "live", status: "running" }), runRow({ runId: "older", status: olderStatus })], () => true, [stepRow("s", "running")]);
+        await refreshSidebarData("A", o("running"));
         expect([...activeRunProgress().keys()].sort()).toEqual(["live", "older"]);
 
-        await refreshSidebarData("A", s("completed"));
+        await refreshSidebarData("A", o("completed"));
         expect([...activeRunProgress().keys()]).toEqual(["live"]);
     });
 
-    test("runs and steps are labelled from the plan when one resolves", async () => {
-        const plan = { title: "GSEA cross-species comparison", steps: [{ id: "qc", name: "quality control" }] };
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => okAsync([runRow({ runId: "run-1", status: "running", planId: "plan-1" })]),
-            loadActiveRuns: () => okAsync([runRow({ runId: "run-1", status: "running", planId: "plan-1" })]),
-            loadSteps: () => okAsync([stepRow("qc", "running")]),
-            loadPlan: () => okAsync(plan),
+    test("runs and steps are labelled from the plan title and the step names that the run read carries", async () => {
+        const run = runRow({ runId: "run-1", status: "running", planTitle: "GSEA cross-species comparison" });
+        const o: RefreshOpts = {
+            ...opts(null, [run]),
+            loadRun: () => okAsync(detailOf(run, [stepRow("qc", "running", { name: "quality control" }), stepRow("T1S2", "pending")])),
         };
-        await refreshSidebarData("A", s);
+        await refreshSidebarData("A", o);
         const p = activeRunProgress().get("run-1")!;
         // The plan title replaces "executeAnalysis", which is identical on every ledger row.
         expect(p.name).toBe("GSEA cross-species comparison");
-        // And the step's human name replaces its T{track}S{step}-style slug.
-        expect(p.steps[0]!.label).toBe("quality control");
+        // And the step's human name replaces its T{track}S{step}-style slug; a step with no name keeps it.
+        expect(p.steps.map((s) => s.label)).toEqual(["quality control", "T1S2"]);
     });
 
-    test("several runs of one plan resolve that plan exactly once", async () => {
-        let planReads = 0;
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () =>
-                okAsync([runRow({ runId: "r1", status: "running", planId: "shared" }), runRow({ runId: "r2", status: "running", planId: "shared" })]),
-            loadActiveRuns: () =>
-                okAsync([runRow({ runId: "r1", status: "running", planId: "shared" }), runRow({ runId: "r2", status: "running", planId: "shared" })]),
-            loadSteps: () => okAsync([stepRow("s", "running")]),
-            loadPlan: () => {
-                planReads += 1;
-                return okAsync({ title: "shared plan" });
-            },
-        };
-        await refreshSidebarData("A", s);
-        expect(planReads).toBe(1);
-        expect(activeRunProgress().get("r1")!.name).toBe("shared plan");
-        expect(activeRunProgress().get("r2")!.name).toBe("shared plan");
-    });
-
-    test("all-terminal runs clear the row and fire NO step read (idle costs no step query)", async () => {
-        // Prime with an active run so the clear-to-null is observable.
+    test("all-terminal runs clear the row and fire NO run read (idle costs no step query)", async () => {
+        // Prime with an active run so the clear-to-empty is observable.
         await refreshSidebarData(
             "A",
-            seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
+            opts(null, [runRow({ status: "running" })], () => true, [stepRow("s", "running")]),
         );
         expect(activeRunProgress().size).toBeGreaterThan(0);
 
-        let stepReads = 0;
-
-        let planReads = 0;
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => okAsync([runRow({ status: "completed" }), runRow({ status: "failed" })]),
-            loadActiveRuns: () => okAsync([runRow({ status: "completed" }), runRow({ status: "failed" })]),
-            loadSteps: () => {
-                stepReads += 1;
-                return okAsync([]);
-            },
-            loadPlan: () => {
-                planReads += 1;
-                return okAsync(null);
+        let runReads = 0;
+        const o: RefreshOpts = {
+            ...opts(null, [runRow({ runId: "r1", status: "completed" }), runRow({ runId: "r2", status: "failed" })]),
+            loadRun: () => {
+                runReads += 1;
+                return okAsync(detailOf(runRow(), []));
             },
         };
-        await refreshSidebarData("A", s);
+        await refreshSidebarData("A", o);
         expect(activeRunProgress().size).toBe(0);
-        expect(stepReads).toBe(0);
-        expect(planReads).toBe(0);
+        expect(runReads).toBe(0);
     });
 
-    test("no runs at all → the row stays null, and no step read is issued", async () => {
-        let stepReads = 0;
-        let planReads = 0;
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => okAsync([]),
-            loadActiveRuns: () => okAsync([]),
-            loadSteps: () => {
-                stepReads += 1;
-                return okAsync([]);
-            },
-            loadPlan: () => {
-                planReads += 1;
-                return okAsync(null);
+    test("no runs at all → the row stays empty, and no run read is issued", async () => {
+        let runReads = 0;
+        const o: RefreshOpts = {
+            ...opts(null, []),
+            loadRun: () => {
+                runReads += 1;
+                return okAsync(detailOf(runRow(), []));
             },
         };
-        await refreshSidebarData("A", s);
+        await refreshSidebarData("A", o);
         expect(activeRunProgress().size).toBe(0);
-        expect(stepReads).toBe(0);
-        expect(planReads).toBe(0);
+        expect(runReads).toBe(0);
     });
 
-    test("a step-read DbError keeps the previous row rather than blinking it away", async () => {
+    test("a failed run read keeps the previous row rather than blinking it away", async () => {
         await refreshSidebarData(
             "A",
-            seams(null, [runRow({ runId: "run-x", status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
+            opts(null, [runRow({ runId: "run-x", status: "running" })], () => true, [stepRow("s", "running")]),
         );
         const first = activeRunProgress();
-        expect(first).not.toBeNull();
+        expect(first.has("run-x")).toBe(true);
 
-        // The run is still active but the step read blips → keep the previous snapshot, self-heal next poll.
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => okAsync([runRow({ runId: "run-x", status: "running" })]),
-            loadActiveRuns: () => okAsync([runRow({ runId: "run-x", status: "running" })]),
-            loadSteps: () => errAsync(dbErr),
-            loadPlan: () => okAsync(null),
-        };
-        await refreshSidebarData("A", s);
+        // The run is still active but its read blips → keep the previous snapshot, self-heal next poll.
+        const o: RefreshOpts = { ...opts(null, [runRow({ runId: "run-x", status: "running" })]), loadRun: () => errAsync(serverErr) };
+        await refreshSidebarData("A", o);
         // The previous entry's CONTENT is carried forward — the blip did not blink a genuinely
         // running run away — but re-stamped `stale`, because freshness is a property of THIS refresh
         // and the panel mutes itself on it.
@@ -564,33 +463,28 @@ describe("refreshSidebarData — sticky run-progress row", () => {
         expect(first.get("run-x")!.stale).toBe(false);
 
         // A SECOND consecutive blip carries the same object by IDENTITY, not an equal copy. This is
-        // load-bearing, not an optimization detail: `focusedRun` is a memo over this map and the run
-        // panel's activity effect re-fires on its identity, so minting a new object per tick would
-        // issue a DBOS read every poll for a value that cannot have changed during an outage.
-        await refreshSidebarData("A", s);
+        // load-bearing, not an optimization detail: the panel's focus memo reads this map, and minting
+        // a new object per tick would re-fire each consumer for a value that cannot have changed
+        // during an outage.
+        await refreshSidebarData("A", o);
         expect(activeRunProgress().get("run-x")).toBe(carried!);
     });
 
-    test("a step-read DbError for a DIFFERENT run never shows one run's progress under another", async () => {
+    test("a failed run read for a DIFFERENT run never shows one run's progress under another", async () => {
         // Prime with run A active.
         await refreshSidebarData(
             "A",
-            seams(null, [runRow({ runId: "run-a", status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
+            opts(null, [runRow({ runId: "run-a", status: "running" })], () => true, [stepRow("s", "running")]),
         );
         expect(activeRunProgress().get("run-a")!.tag).toBe(idTail("run-a"));
 
-        // A goes terminal and B takes its place, and B's step read blips. Under the old single-slot
-        // store this was the misattribution hazard — the kept row belonged to A. Keying by run id
-        // makes it unrepresentable: B simply has no entry, and A's is gone because A is terminal.
-        const s: RefreshSeams = {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => okAsync([runRow({ runId: "run-b", status: "running" }), runRow({ runId: "run-a", status: "completed" })]),
-            loadActiveRuns: () => okAsync([runRow({ runId: "run-b", status: "running" }), runRow({ runId: "run-a", status: "completed" })]),
-            loadSteps: () => errAsync(dbErr),
-            loadPlan: () => okAsync(null),
+        // A goes terminal and B takes its place, and B's read blips. Keying by run id makes the
+        // misattribution unrepresentable: B simply has no entry, and A's is gone because A is terminal.
+        const o: RefreshOpts = {
+            ...opts(null, [runRow({ runId: "run-b", status: "running" }), runRow({ runId: "run-a", status: "completed" })]),
+            loadRun: () => errAsync(serverErr),
         };
-        await refreshSidebarData("A", s);
+        await refreshSidebarData("A", o);
         expect(activeRunProgress().has("run-b")).toBe(false);
         expect(activeRunProgress().has("run-a")).toBe(false);
     });
@@ -598,13 +492,13 @@ describe("refreshSidebarData — sticky run-progress row", () => {
     test("the runtime-not-ready no-op clears the row", async () => {
         await refreshSidebarData(
             "A",
-            seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
+            opts(null, [runRow({ status: "running" })], () => true, [stepRow("s", "running")]),
         );
         expect(activeRunProgress().size).toBeGreaterThan(0);
 
         await refreshSidebarData(
             "A",
-            seams(null, [], () => null),
+            opts(null, [], () => false),
         );
         expect(activeRunProgress().size).toBe(0);
     });
@@ -614,39 +508,26 @@ describe("refreshSidebarData — sticky run-progress row", () => {
         const [store, setStore] = createStore<{ analysis: { id: string } | null }>({ analysis: { id: "A" } });
         const ws = store as unknown as Workspace;
 
-        // B's profile read is gated so the reset window (row null) is deterministically observable.
-        let releaseB!: (v: DataProfileStatus | null) => void;
-        const gatedB: ResultAsync<DataProfileStatus | null, DbError> = ResultAsync.fromSafePromise(
-            new Promise<DataProfileStatus | null>((res) => {
-                releaseB = res;
-            }),
-        );
+        // B's profile read is gated so the reset window (row empty) is deterministically observable.
+        const gatedB = gatedProfile();
         const refresh = async (id: string): Promise<void> => {
-            const s: RefreshSeams =
+            const o: RefreshOpts =
                 id === "A"
-                    ? seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")])
-                    : {
-                          runtime: () => fakeRuntime,
-                          loadProfile: () => gatedB,
-                          loadRuns: () => okAsync([]),
-                          loadActiveRuns: () => okAsync([]),
-                          loadSteps: () => okAsync([]),
-                          loadPlan: () => okAsync(null),
-                      };
-            await refreshSidebarData(id, s);
+                    ? opts(null, [runRow({ status: "running" })], () => true, [stepRow("s", "running")])
+                    : { ...opts(null, []), loadProfile: () => gatedB.read };
+            await refreshSidebarData(id, o);
         };
 
         const dispose = mountWatch(ws, { refresh, arm: () => () => {} });
         try {
-            const readyDriver: BootDriver = async () => ok({ conversation: { model: "m" }, pool: {} } as unknown as HarnessRuntime);
-            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver); // Trigger 1 fires refresh(A)
+            bootReady(); // Trigger 1 fires refresh(A)
             await new Promise<void>((r) => setTimeout(r, 0)); // let A's reads settle
             expect(activeRunProgress().size).toBeGreaterThan(0); // A's active run is pinned
 
             setStore("analysis", { id: "B" }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
             expect(activeRunProgress().size).toBe(0); // no stale A entries during the swap window
 
-            releaseB(profileStatus({ status: "completed" })); // let B settle so no read leaks past the test
+            gatedB.release(profileState({ status: "completed" })); // let B settle so no read leaks past the test
             await new Promise<void>((r) => setTimeout(r, 0));
         } finally {
             dispose();
@@ -659,7 +540,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
 // how it is read.
 describe("refreshSidebarData — the profile's panel-subject entry", () => {
     test("a running profile publishes an entry carrying its startedAt and recorded workflowId", async () => {
-        await refreshSidebarData("A", seams(runningProfile({ startedAt: "2026-07-30T10:00:00.000Z", workflowId: "wf-7" }), []));
+        await refreshSidebarData("A", opts(runningProfile({ startedAt: "2026-07-30T10:00:00.000Z", workflowId: "wf-7" }), []));
         // `analysisId` comes from the refresh's argument rather than a ledger column: the entry carries
         // whose profile it is so a consumer holding one entry still knows.
         expect(activeProfileProgress()).toEqual({ analysisId: "A", startedAt: "2026-07-30T10:00:00.000Z", workflowId: "wf-7", stale: false });
@@ -669,7 +550,7 @@ describe("refreshSidebarData — the profile's panel-subject entry", () => {
         // The profile body writes its workflow id as its first durable step, so a freshly-claimed row
         // has none. Withholding the subject would hide the profile for exactly the window in which it
         // just started — absence of the id is a normal state, not a reason to show nothing.
-        await refreshSidebarData("A", seams(runningProfile({ workflowId: null }), []));
+        await refreshSidebarData("A", opts(runningProfile({ workflowId: null }), []));
         const entry = activeProfileProgress();
         expect(entry).not.toBeNull();
         expect(entry?.workflowId).toBeNull();
@@ -677,17 +558,17 @@ describe("refreshSidebarData — the profile's panel-subject entry", () => {
     });
 
     test("a terminal profile publishes none, and clears an entry published on a previous refresh", async () => {
-        await refreshSidebarData("A", seams(runningProfile(), []));
+        await refreshSidebarData("A", opts(runningProfile(), []));
         expect(activeProfileProgress()).not.toBeNull();
 
-        await refreshSidebarData("A", seams(profileStatus({ status: "completed" }), []));
+        await refreshSidebarData("A", opts(profileState({ status: "completed" }), []));
         expect(activeProfileProgress()).toBeNull();
 
         // Failure is the other terminal end and must clear identically — a failed profile is no more
         // "work in flight" than a completed one.
-        await refreshSidebarData("A", seams(runningProfile(), []));
+        await refreshSidebarData("A", opts(runningProfile(), []));
         expect(activeProfileProgress()).not.toBeNull();
-        await refreshSidebarData("A", seams(profileStatus({ status: "failed", error: "boom", result: null }), []));
+        await refreshSidebarData("A", opts(profileState({ status: "failed", error: "boom", result: null }), []));
         expect(activeProfileProgress()).toBeNull();
     });
 
@@ -695,23 +576,36 @@ describe("refreshSidebarData — the profile's panel-subject entry", () => {
         // Two independent decisions, asserted so either can regress alone. A `pending` row carries no
         // start stamp and no workflow, so an entry would be a name beside two blanks — but the poll
         // must keep looking, because seeded-and-queued work will produce something to show.
-        await refreshSidebarData("A", seams(profileStatus({ status: "pending", startedAt: null, completedAt: null, result: null }), []));
+        await refreshSidebarData("A", opts(profileState({ status: "pending", startedAt: null, completedAt: null, result: null }), []));
         expect(activeProfileProgress()).toBeNull();
         expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(true);
+    });
+
+    // The server re-profiles an input change after a debounce and the staging. In that window the row still
+    // describes the old input set, and an idle sidebar must keep looking until the new row lands.
+    test("profile work that the server holds arms the poll before the row shows it", async () => {
+        const withWork = (view: DataProfileView): RefreshOpts => ({ ...opts(null, []), loadProfile: () => okAsync({ ...view, workPending: true }) });
+        await refreshSidebarData("A", withWork(viewOf(profileState({ status: "completed" }))));
+        expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(true);
+        await refreshSidebarData("A", withWork({ status: null }));
+        expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(true);
+
+        await refreshSidebarData("A", opts(profileState({ status: "completed" }), []));
+        expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(false);
     });
 
     test("publishing a profile entry leaves the per-run entries untouched", async () => {
         const active = [runRow({ runId: "run-1", status: "running" })];
         await refreshSidebarData(
             "A",
-            seams(null, active, () => fakeRuntime, [stepRow("s", "running")]),
+            opts(null, active, () => true, [stepRow("s", "running")]),
         );
         const runsOnly = activeRunProgress().get("run-1");
         expect(runsOnly).toBeDefined();
 
         await refreshSidebarData(
             "A",
-            seams(runningProfile(), active, () => fakeRuntime, [stepRow("s", "running")]),
+            opts(runningProfile(), active, () => true, [stepRow("s", "running")]),
         );
         // The rail renders off this map, so a profile joining the panel must not rewrite, reorder, or
         // displace any of it — the two live surfaces share a refresh, not a data set.
@@ -725,13 +619,13 @@ describe("refreshSidebarData — the profile's panel-subject entry", () => {
 // carry-forward the panel's profile subject would vanish and return on any transient blip — which
 // reads as the profile having finished and a new one starting.
 describe("refreshSidebarData — a failed profile read carries the profile entry forward", () => {
-    /** Seams whose profile read fails while every other read succeeds — the isolated profile blip. */
-    function blippedProfile(): RefreshSeams {
-        return { ...seams(null, []), loadProfile: () => errAsync(dbErr) };
+    /** Options whose profile read fails while every other read succeeds — the isolated profile blip. */
+    function blippedProfile(): RefreshOpts {
+        return { ...opts(null, []), loadProfile: () => errAsync(serverErr) };
     }
 
     test("a blip keeps the previous entry and marks it stale; a recovered read clears staleness", async () => {
-        await refreshSidebarData("A", seams(runningProfile({ workflowId: "wf-7" }), []));
+        await refreshSidebarData("A", opts(runningProfile({ workflowId: "wf-7" }), []));
         const fresh = activeProfileProgress()!;
         expect(fresh.stale).toBe(false);
 
@@ -742,14 +636,14 @@ describe("refreshSidebarData — a failed profile read carries the profile entry
         // The section degraded, and that is exactly the failure the entry has to survive.
         expect(profileSnapshot().kind).toBe("unavailable");
 
-        await refreshSidebarData("A", seams(runningProfile({ workflowId: "wf-7" }), []));
+        await refreshSidebarData("A", opts(runningProfile({ workflowId: "wf-7" }), []));
         const recovered = activeProfileProgress();
         expect(recovered?.stale).toBe(false);
         expect(recovered).toEqual(fresh);
     });
 
     test("a second consecutive failure carries the SAME object, not an equal copy", async () => {
-        await refreshSidebarData("A", seams(runningProfile(), []));
+        await refreshSidebarData("A", opts(runningProfile(), []));
         await refreshSidebarData("A", blippedProfile());
         const carried = activeProfileProgress()!;
         expect(carried.stale).toBe(true);
@@ -774,7 +668,7 @@ describe("activeSubjects — a profile never displaces a run", () => {
     test("a profile sorts behind the only active run", async () => {
         await refreshSidebarData(
             "A",
-            seams(runningProfile(), [runRow({ runId: "run-1", status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
+            opts(runningProfile(), [runRow({ runId: "run-1", status: "running" })], () => true, [stepRow("s", "running")]),
         );
         expect(subjectIds()).toEqual(["run-1", "profile"]);
     });
@@ -786,15 +680,15 @@ describe("activeSubjects — a profile never displaces a run", () => {
         ];
         await refreshSidebarData(
             "A",
-            seams(runningProfile(), runs, () => fakeRuntime, [stepRow("s", "running")]),
+            opts(runningProfile(), runs, () => true, [stepRow("s", "running")]),
         );
-        // The runs query's own newest-first order, untouched by the profile joining the set.
+        // The runs read's own newest-first order, untouched by the profile joining the set.
         expect(subjectIds()).toEqual(["newest", "older", "profile"]);
         expect(activeSubjects()[0]?.kind).toBe("run");
     });
 
     test("a profile alone is the only subject", async () => {
-        await refreshSidebarData("A", seams(runningProfile(), []));
+        await refreshSidebarData("A", opts(runningProfile(), []));
         expect(subjectIds()).toEqual(["profile"]);
     });
 
@@ -802,13 +696,13 @@ describe("activeSubjects — a profile never displaces a run", () => {
         const runs = [runRow({ runId: "user-launched", status: "running" })];
         await refreshSidebarData(
             "A",
-            seams(null, runs, () => fakeRuntime, [stepRow("s", "running")]),
+            opts(null, runs, () => true, [stepRow("s", "running")]),
         );
         expect(subjectIds()).toEqual(["user-launched"]);
 
         await refreshSidebarData(
             "A",
-            seams(runningProfile(), runs, () => fakeRuntime, [stepRow("s", "running")]),
+            opts(runningProfile(), runs, () => true, [stepRow("s", "running")]),
         );
         // The later arrival goes to the TAIL, so the run the user launched keeps the head it had.
         expect(subjectIds()).toEqual(["user-launched", "profile"]);
@@ -821,13 +715,13 @@ describe("hasActiveWork — poll arming predicate", () => {
     const noRuns: RunsSnapshot = { kind: "loaded", runs: [] };
 
     test("a pending/running profile is active", () => {
-        expect(hasActiveWork({ kind: "loaded", profile: profileStatus({ status: "running" }) }, noRuns)).toBe(true);
-        expect(hasActiveWork({ kind: "loaded", profile: profileStatus({ status: "pending" }) }, noRuns)).toBe(true);
+        expect(hasActiveWork({ kind: "loaded", profile: profileState({ status: "running" }) }, noRuns)).toBe(true);
+        expect(hasActiveWork({ kind: "loaded", profile: profileState({ status: "pending" }) }, noRuns)).toBe(true);
     });
 
     test("a completed/failed profile alone is not active", () => {
-        expect(hasActiveWork({ kind: "loaded", profile: profileStatus({ status: "completed" }) }, noRuns)).toBe(false);
-        expect(hasActiveWork({ kind: "loaded", profile: profileStatus({ status: "failed", error: "x" }) }, noRuns)).toBe(false);
+        expect(hasActiveWork({ kind: "loaded", profile: profileState({ status: "completed" }) }, noRuns)).toBe(false);
+        expect(hasActiveWork({ kind: "loaded", profile: profileState({ status: "failed", error: "x" }) }, noRuns)).toBe(false);
     });
 
     test("a non-terminal run arms; all-terminal runs do not", () => {
@@ -836,11 +730,11 @@ describe("hasActiveWork — poll arming predicate", () => {
         expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", runs: terminal })).toBe(false);
     });
 
-    test("not_ready snapshots alone are never active (idle costs nothing)", () => {
+    test("not_ready snapshots alone are never active (the poll stays at the idle cadence)", () => {
         expect(hasActiveWork(notReady, { kind: "not_ready" })).toBe(false);
     });
 
-    test("an unavailable snapshot arms — a transient DB blip self-heals via the same 5s poll", () => {
+    test("an unavailable snapshot arms — a transient blip self-heals via the same 5s poll", () => {
         expect(hasActiveWork({ kind: "unavailable" }, { kind: "not_ready" })).toBe(true);
         expect(hasActiveWork(notReady, { kind: "unavailable" })).toBe(true);
         expect(hasActiveWork({ kind: "unavailable" }, { kind: "unavailable" })).toBe(true);
@@ -848,13 +742,12 @@ describe("hasActiveWork — poll arming predicate", () => {
 });
 
 describe("watchSidebarData — triggers and bounded poll", () => {
-    test("reaching ready with an open analysis refreshes", async () => {
+    test("reaching ready with an open analysis refreshes", () => {
         const refreshed: string[] = [];
         const dispose = mountWatch(wsFor("A"), { refresh: async (id) => void refreshed.push(id), arm: () => () => {} });
         try {
             expect(refreshed).toHaveLength(0); // boot idle at mount → no refresh
-            const readyDriver: BootDriver = async () => ok({ conversation: { model: "m" }, pool: {} } as unknown as HarnessRuntime);
-            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
+            bootReady();
             expect(refreshed).toEqual(["A"]); // the ready edge fired the refresh
         } finally {
             dispose();
@@ -876,11 +769,11 @@ describe("watchSidebarData — triggers and bounded poll", () => {
         }
     });
 
-    test("the poll arms on active work, ticks a refresh, and disarms when work goes terminal", async () => {
+    test("the poll speeds up on active work, ticks a refresh, and slows down when work goes terminal", async () => {
         const refreshed: string[] = [];
         const arms: Array<{ fn: () => void; ms: number }> = [];
         let disarms = 0;
-        const watchSeams: WatchSeams = {
+        const watchOpts: LedgerWatchOpts = {
             refresh: async (id) => void refreshed.push(id),
             arm: (fn, ms) => {
                 arms.push({ fn, ms });
@@ -889,21 +782,20 @@ describe("watchSidebarData — triggers and bounded poll", () => {
                 };
             },
         };
-        const dispose = mountWatch(wsFor("A"), watchSeams);
+        const dispose = mountWatch(wsFor("A"), watchOpts);
         try {
-            expect(arms).toHaveLength(0); // not_ready snapshots → no work → no interval
+            expect(arms.map((a) => a.ms)).toEqual([15_000]); // not_ready snapshots → no work → the idle cadence
 
-            await refreshSidebarData("A", seams(profileStatus({ status: "running" }), []));
-            expect(arms).toHaveLength(1); // a running profile armed the poll
-            expect(arms[0]?.ms).toBe(5_000);
-            expect(disarms).toBe(0);
+            await refreshSidebarData("A", opts(runningProfile(), []));
+            expect(arms.map((a) => a.ms)).toEqual([15_000, 5_000]); // a running profile re-armed the poll fast
+            expect(disarms).toBe(1);
 
-            arms[0]?.fn(); // a tick refreshes for the open analysis
+            arms[1]?.fn(); // a tick refreshes for the open analysis
             expect(refreshed).toEqual(["A"]);
 
-            await refreshSidebarData("A", seams(profileStatus({ status: "completed" }), []));
-            expect(disarms).toBe(1); // all work terminal → the interval is torn down
-            expect(arms).toHaveLength(1); // and never re-armed
+            await refreshSidebarData("A", opts(profileState({ status: "completed" }), []));
+            expect(disarms).toBe(2); // all work terminal → the fast interval is torn down
+            expect(arms.map((a) => a.ms)).toEqual([15_000, 5_000, 15_000]); // and the idle cadence replaces it
         } finally {
             dispose();
         }
@@ -912,7 +804,7 @@ describe("watchSidebarData — triggers and bounded poll", () => {
     test("disposing the watcher tears down a live interval", async () => {
         const arms: Array<() => void> = [];
         let disarms = 0;
-        const watchSeams: WatchSeams = {
+        const watchOpts: LedgerWatchOpts = {
             refresh: async () => {},
             arm: () => {
                 const disarm = (): void => void (disarms += 1);
@@ -920,17 +812,206 @@ describe("watchSidebarData — triggers and bounded poll", () => {
                 return disarm;
             },
         };
-        const dispose = mountWatch(wsFor("A"), watchSeams);
-        await refreshSidebarData("A", seams(profileStatus({ status: "running" }), []));
-        expect(arms).toHaveLength(1);
-        expect(disarms).toBe(0);
+        const dispose = mountWatch(wsFor("A"), watchOpts);
+        await refreshSidebarData("A", opts(runningProfile(), []));
+        expect(arms).toHaveLength(2); // the idle interval, then the fast one
+        expect(disarms).toBe(1);
         dispose();
-        expect(disarms).toBe(1); // onCleanup disarmed the live interval
+        expect(disarms).toBe(2); // onCleanup disarmed the live interval
+    });
+});
+
+describe("watchSidebarData — an idle TUI sees the work of a different client", () => {
+    test("the idle poll reads again, and the poll speeds up while the work is active", async () => {
+        // The ledger of the server. A different client changes it between two ticks, and the server
+        // sends no notification of the change.
+        let serverRuns: RunSummary[] = [runRow({ runId: "done", status: "completed" })];
+        const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
+        const watchOpts: LedgerWatchOpts = {
+            refresh: (id) => refreshSidebarData(id, opts(profileState(), serverRuns)),
+            arm: (fn, ms) => {
+                const timer = { fn, ms, live: true };
+                timers.push(timer);
+                return () => {
+                    timer.live = false;
+                };
+            },
+        };
+        const liveCadences = (): number[] => timers.filter((t) => t.live).map((t) => t.ms);
+        const tick = async (): Promise<void> => {
+            for (const t of timers.filter((t) => t.live)) t.fn();
+            await new Promise<void>((r) => setTimeout(r, 0));
+        };
+        const listedIds = (): string[] | null => {
+            const snap = runsSnapshot();
+            return snap.kind === "loaded" ? snap.runs.map((r) => r.runId) : null;
+        };
+        const dispose = mountWatch(wsFor("A"), watchOpts);
+        try {
+            await refreshSidebarData("A", opts(profileState(), serverRuns));
+            expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(false);
+
+            serverRuns = [runRow({ runId: "other-client", status: "running" }), ...serverRuns];
+            await tick();
+            expect(listedIds()).toEqual(["other-client", "done"]);
+            expect(liveCadences()).toEqual([5_000]);
+
+            serverRuns = [runRow({ runId: "other-client", status: "completed" }), runRow({ runId: "done", status: "completed" })];
+            await tick();
+            expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(false);
+            expect(liveCadences()).toEqual([15_000]);
+        } finally {
+            dispose();
+        }
+    });
+});
+
+// One poll is the way that a TUI sees what a different client changes: the server pushes nothing. A tick
+// reads the ledger, and when the server answers it also reads the scope of the analysis, the open thread,
+// and the usage of the session.
+describe("watchSidebarData — a tick reads what a different client changes", () => {
+    /** Mount the watcher over `ws`, and give a tick of its live interval that settles the reads it starts. */
+    function mountPoll(ws: Workspace, over: Partial<WatchOpts> = {}): { tick: () => Promise<void>; dispose: () => void } {
+        const timers: { fn: () => void; live: boolean }[] = [];
+        const dispose = mountWatch(ws, {
+            refresh: async () => {},
+            arm: (fn) => {
+                const timer = { fn, live: true };
+                timers.push(timer);
+                return () => {
+                    timer.live = false;
+                };
+            },
+            ...over,
+        });
+        return {
+            tick: async () => {
+                for (const timer of timers.filter((t) => t.live)) timer.fn();
+                for (let i = 0; i < 3; i++) await new Promise<void>((r) => setTimeout(r, 0));
+            },
+            dispose,
+        };
+    }
+
+    test("a tick reads the scope of the analysis: the name and the input count that a different client changed", async () => {
+        let view: AnalysisView = {
+            id: "A",
+            createdAt: "2026-10-03T00:00:00.000Z",
+            updatedAt: "2026-10-03T00:00:00.000Z",
+            name: "before",
+            slug: "before",
+            anchorId: "anchor-a",
+            projectId: null,
+        };
+        let inputCount = 2;
+        const ws = createWorkspace(
+            { analysis: toAnalysis(view), sessionId: null, workingDir: "/work", openDialog: () => {}, closeDialog: () => {}, quit: async () => {} },
+            { abortTurn: () => {}, fetchDetail: async () => ({ ...view, project: null, anchor: null, outputDir: null, inputCount, busy: [] }) },
+        );
+        const poll = mountPoll(ws);
+        try {
+            await new Promise<void>((r) => setTimeout(r, 0));
+            expect(ws.inputCount).toBe(2);
+
+            // A second client renames the analysis and adds an input between two ticks.
+            view = { ...view, name: "renamed by the GUI", slug: "renamed-by-the-gui" };
+            inputCount = 3;
+            await poll.tick();
+
+            expect(ws.analysis?.name).toBe(asStr256("renamed by the GUI"));
+            expect(ws.inputCount).toBe(3);
+        } finally {
+            poll.dispose();
+        }
+    });
+
+    test("a tick reads the open thread of the open analysis", async () => {
+        const reads: [string, string][] = [];
+        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => {} } as unknown as Workspace;
+        const poll = mountPoll(ws, { pollThread: async (analysisId, threadId) => void reads.push([analysisId, threadId]) });
+        try {
+            await poll.tick();
+            expect(reads).toEqual([["A", "T"]]);
+        } finally {
+            poll.dispose();
+        }
+    });
+
+    test("a tick whose server does not answer reads neither the scope nor the thread", async () => {
+        let scopeReads = 0;
+        let threadReads = 0;
+        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => void (scopeReads += 1) } as unknown as Workspace;
+        const poll = mountPoll(ws, { checkServer: async () => false, pollThread: async () => void (threadReads += 1) });
+        try {
+            await poll.tick();
+            expect({ scopeReads, threadReads }).toEqual({ scopeReads: 0, threadReads: 0 });
+        } finally {
+            poll.dispose();
+        }
+    });
+
+    test("the poll runs at the fast cadence while a turn of a different client runs on the open thread", async () => {
+        const live: { ms: number; live: boolean }[] = [];
+        const dispose = mountWatch(wsFor("A"), {
+            refresh: async () => {},
+            arm: (_fn, ms) => {
+                const timer = { ms, live: true };
+                live.push(timer);
+                return () => {
+                    timer.live = false;
+                };
+            },
+        });
+        const cadences = (): number[] => live.filter((t) => t.live).map((t) => t.ms);
+        const turns = (running: boolean): ThreadPollOpts => ({
+            fetchThread: () => okAsync(null),
+            fetchMessages: () => okAsync({ messages: [], total: 0, page: 0, perPage: 0, hasMore: false }),
+            fetchTurns: () =>
+                okAsync({
+                    turns: running
+                        ? [{ turnId: "turn-of-the-gui", threadId: "T", analysisId: "A", status: "running", startedAt: "2026-10-03T10:00:00.000Z" }]
+                        : [],
+                    total: running ? 1 : 0,
+                    page: 0,
+                    perPage: 1,
+                    hasMore: false,
+                }),
+        });
+        try {
+            expect(cadences()).toEqual([15_000]);
+
+            await pollOpenThread("A", "T", turns(true));
+            expect(cadences()).toEqual([5_000]);
+
+            await pollOpenThread("A", "T", turns(false));
+            expect(cadences()).toEqual([15_000]);
+        } finally {
+            dispose();
+            resetHotState();
+        }
+    });
+
+    test("each tick asks the server if it still answers", async () => {
+        const probes: string[] = [];
+        const ws = wsFor("A");
+        const poll = mountPoll(ws, {
+            checkServer: async () => {
+                probes.push("probe");
+                return false;
+            },
+        });
+        try {
+            await poll.tick();
+            await poll.tick();
+            expect(probes).toEqual(["probe", "probe"]);
+        } finally {
+            poll.dispose();
+        }
     });
 });
 
 describe("watchSidebarData — swap resets the snapshots before the new analysis loads", () => {
-    test("a swap immediately renders not_ready, then B's data once its ledger read resolves", async () => {
+    test("a swap immediately renders not_ready, then B's data once its read resolves", async () => {
         // A reactive workspace (real store) so Trigger 1's effect re-runs on the analysis swap — the
         // plain-object `wsFor` stand-in would not repaint.
         const [store, setStore] = createStore<{ analysis: { id: string } | null }>({ analysis: { id: "A" } });
@@ -938,39 +1019,23 @@ describe("watchSidebarData — swap resets the snapshots before the new analysis
 
         // B's profile read is GATED so the reset window (not_ready) is deterministically observable
         // before B's data lands — the same technique the staleness-guard test uses.
-        let releaseB!: (v: DataProfileStatus | null) => void;
-        const gatedB: ResultAsync<DataProfileStatus | null, DbError> = ResultAsync.fromSafePromise(
-            new Promise<DataProfileStatus | null>((res) => {
-                releaseB = res;
-            }),
-        );
+        const gatedB = gatedProfile();
         const refresh = async (id: string): Promise<void> => {
-            const s: RefreshSeams =
-                id === "A"
-                    ? seams(profileStatus({ status: "completed" }), [runRow()])
-                    : {
-                          runtime: () => fakeRuntime,
-                          loadProfile: () => gatedB,
-                          loadRuns: () => okAsync([]),
-                          loadActiveRuns: () => okAsync([]),
-                          loadSteps: () => okAsync([]),
-                          loadPlan: () => okAsync(null),
-                      };
-            await refreshSidebarData(id, s);
+            const o: RefreshOpts = id === "A" ? opts(profileState({ status: "completed" }), [runRow()]) : { ...opts(null, []), loadProfile: () => gatedB.read };
+            await refreshSidebarData(id, o);
         };
 
         const dispose = mountWatch(ws, { refresh, arm: () => () => {} });
         try {
-            const readyDriver: BootDriver = async () => ok({ conversation: { model: "m" }, pool: {} } as unknown as HarnessRuntime);
-            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver); // Trigger 1 fires refresh(A)
-            await new Promise<void>((r) => setTimeout(r, 0)); // let A's ledger reads settle
+            bootReady(); // Trigger 1 fires refresh(A)
+            await new Promise<void>((r) => setTimeout(r, 0)); // let A's reads settle
             expect(profileSnapshot().kind).toBe("loaded"); // A's data is on screen — stale state to clear
 
             setStore("analysis", { id: "B" }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
             expect(profileSnapshot().kind).toBe("not_ready"); // no stale A render during the swap window
             expect(runsSnapshot().kind).toBe("not_ready");
 
-            releaseB(profileStatus({ status: "running" })); // B's read resolves
+            gatedB.release(runningProfile()); // B's read resolves
             await new Promise<void>((r) => setTimeout(r, 0));
             const p = profileSnapshot();
             expect(p.kind).toBe("loaded"); // B's data lands after the window
@@ -1086,7 +1151,14 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
                     category: "biological-sample",
                     scope: "biological",
                     observations: [
-                        { kind: "slot", groupIds: ["per-sample-counts"], slotId: "s1", tokenClass: "alnum", cardinality: 24, sampleValues: ["S01", "S02", "S03", "S04"] },
+                        {
+                            kind: "slot",
+                            groupIds: ["per-sample-counts"],
+                            slotId: "s1",
+                            tokenClass: "alnum",
+                            cardinality: 24,
+                            sampleValues: ["S01", "S02", "S03", "S04"],
+                        },
                     ],
                 },
                 {
@@ -1151,7 +1223,12 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
     });
 
     test("the census omits zero tallies rather than reporting them", () => {
-        const partition = { ...groupsResult().partition!, unclassifiedMembers: 0, unclassifiedFiles: 0, quarantine: { count: 0, totalBytes: 0, reasons: [], sample: [] } };
+        const partition = {
+            ...groupsResult().partition!,
+            unclassifiedMembers: 0,
+            unclassifiedFiles: 0,
+            quarantine: { count: 0, totalBytes: 0, reasons: [], sample: [] },
+        };
         const lines = profileDetailLines(loaded({ result: groupsResult({ partition }) }));
         expect(lines).toContain("census 26 files in 3 groups");
         expect(lines.some((l) => l.includes("unclassified") && l.startsWith("census"))).toBe(false);
@@ -1211,10 +1288,10 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
 // The poll's own overlap guard. `refreshSidebarData` claims the generation token at entry, so a newer
 // refresh CANCELS an older one — unguarded ticks slower than the interval would supersede each other
 // forever and the store would never receive a write. `unavailable` is itself an arming condition, so
-// that failure would be self-sustaining against a degraded database.
+// that failure would be self-sustaining against a degraded server.
 describe("the bounded poll never overlaps itself", () => {
-    /** Watch seams whose `refresh` parks until released, recording each entry. */
-    function parkedRefreshSeams(): { watchSeams: WatchSeams; tick: () => void; entries: () => number; release: () => void } {
+    /** Watch options whose `refresh` parks until released, recording each entry. */
+    function parkedRefresh(): { watchOpts: LedgerWatchOpts; tick: () => void; entries: () => number; release: () => void } {
         const arms: Array<() => void> = [];
         let entries = 0;
         let release!: () => void;
@@ -1222,7 +1299,7 @@ describe("the bounded poll never overlaps itself", () => {
             release = r;
         });
         return {
-            watchSeams: {
+            watchOpts: {
                 refresh: async () => {
                     entries += 1;
                     await gate;
@@ -1241,11 +1318,11 @@ describe("the bounded poll never overlaps itself", () => {
     }
 
     test("N ticks during one slow refresh issue exactly one refresh", async () => {
-        const h = parkedRefreshSeams();
-        const dispose = mountWatch(wsFor("A"), h.watchSeams);
+        const h = parkedRefresh();
+        const dispose = mountWatch(wsFor("A"), h.watchOpts);
         try {
             // Arm the poll: a running profile is active work.
-            await refreshSidebarData("A", seams(profileStatus({ status: "running" }), []));
+            await refreshSidebarData("A", opts(runningProfile(), []));
             const armedAfterEdge = h.entries();
 
             h.tick();
@@ -1254,8 +1331,8 @@ describe("the bounded poll never overlaps itself", () => {
             expect(h.entries()).toBe(armedAfterEdge + 1); // three ticks, one refresh
 
             h.release();
-            await Promise.resolve();
-            await Promise.resolve();
+            // The tick settles after its refresh and the reads beside it, thus a macrotask, not a count of microtasks.
+            await new Promise<void>((r) => setTimeout(r, 0));
 
             // Once the in-flight refresh settles the poll resumes.
             h.tick();
@@ -1266,10 +1343,10 @@ describe("the bounded poll never overlaps itself", () => {
     });
 
     test("a lifecycle edge still refreshes while a poll tick is in flight", async () => {
-        const h = parkedRefreshSeams();
-        const dispose = mountWatch(wsFor("A"), h.watchSeams);
+        const h = parkedRefresh();
+        const dispose = mountWatch(wsFor("A"), h.watchOpts);
         try {
-            await refreshSidebarData("A", seams(profileStatus({ status: "running" }), []));
+            await refreshSidebarData("A", opts(runningProfile(), []));
             const before = h.entries();
 
             h.tick();
@@ -1288,40 +1365,36 @@ describe("the bounded poll never overlaps itself", () => {
 });
 
 // The other half of that guard: it must always come back. A read that never settles would hold a
-// boolean claim for the process lifetime, and because the poll and the run-observation push consult
-// the SAME claim, one stall would freeze every live surface at its last value — no error anywhere,
-// and indistinguishable from a run that stopped progressing.
+// boolean claim for the process lifetime, and that one stall would freeze every live surface at its
+// last value — no error anywhere, and indistinguishable from a run that stopped progressing.
 describe("the in-flight guard is bounded", () => {
     /** 3 × the 5s poll cadence, past which a claim is abandoned — plus a millisecond to clear it. */
     const PAST_THE_BOUND_MS = 3 * 5_000 + 1;
-    const runEvent = (): void => {
-        Bus.emit("inflexa", { type: "run.observed", analysisId: "A", snapshot: { runId: "r1", status: "running", steps: [] } });
-    };
 
     test("a refresh whose reads never settle is abandoned, and the next tick refreshes the store", async () => {
         const arms: Array<() => void> = [];
         let entries = 0;
-        const watchSeams: WatchSeams = {
+        const watchOpts: LedgerWatchOpts = {
             // The first refresh parks FOREVER — the wedged read the bound exists for. Every later one
-            // runs the REAL refresh against immediate seams, so "the next tick proceeds" is asserted
+            // runs the REAL refresh against immediate reads, so "the next tick proceeds" is asserted
             // against a store write rather than against a call count.
             refresh: (analysisId) => {
                 entries += 1;
                 if (entries === 1) return new Promise<void>(() => {});
-                return refreshSidebarData(analysisId, seams(profileStatus({ status: "running" }), [runRow({ runId: "after-the-bound" })]));
+                return refreshSidebarData(analysisId, opts(runningProfile(), [runRow({ runId: "after-the-bound" })]));
             },
             arm: (fn) => {
                 arms.push(fn);
                 return () => {};
             },
         };
-        const dispose = mountWatch(wsFor("A"), watchSeams);
+        const dispose = mountWatch(wsFor("A"), watchOpts);
         const tick = (): void => {
             for (const fn of arms) fn();
         };
         try {
             // A running profile is active work, so the poll arms.
-            await refreshSidebarData("A", seams(profileStatus({ status: "running" }), []));
+            await refreshSidebarData("A", opts(runningProfile(), []));
             expect(arms.length).toBeGreaterThan(0);
 
             tick();
@@ -1334,7 +1407,7 @@ describe("the in-flight guard is bounded", () => {
             expect(entries).toBe(2); // past the bound: the guard is taken and a fresh refresh runs
             // And nothing partial or empty was published in the abandoned refresh's place — the
             // snapshot is still the one the arming refresh wrote.
-            expect(runsSnapshot()).toEqual({ kind: "loaded", runs: [], usageByRun: new Map() });
+            expect(runsSnapshot()).toEqual({ kind: "loaded", runs: [] });
 
             setSystemTime();
             await new Promise<void>((r) => setTimeout(r, 0));
@@ -1345,154 +1418,27 @@ describe("the in-flight guard is bounded", () => {
             dispose();
         }
     });
-
-    test("the run-observation push recovers from the same stall — one guard, both triggers", async () => {
-        let entries = 0;
-        const dispose = mountWatch(wsFor("A"), {
-            refresh: () => {
-                entries += 1;
-                return new Promise<void>(() => {});
-            },
-            arm: () => () => {},
-        });
-        try {
-            runEvent();
-            expect(entries).toBe(1);
-            runEvent();
-            expect(entries).toBe(1); // inside the bound: dropped, exactly as the burst rule says
-
-            setSystemTime(new Date(Date.now() + PAST_THE_BOUND_MS));
-            runEvent();
-            expect(entries).toBe(2); // an event is never left permanently disabled by a wedged read
-        } finally {
-            setSystemTime();
-            dispose();
-        }
-    });
 });
 
-describe("watchSidebarData — run-observation trigger", () => {
-    const runEvent = (analysisId: string): void => {
-        Bus.emit("inflexa", { type: "run.observed", analysisId, snapshot: { runId: "r1", status: "running", steps: [] } });
-    };
-
-    test("a run.observed event for the open analysis refreshes without waiting for the poll", async () => {
-        let refreshes = 0;
-        const dispose = mountWatch(wsFor("A"), { refresh: () => ((refreshes += 1), Promise.resolve()), arm: () => () => {} });
-        const before = refreshes;
-
-        runEvent("A");
-        await new Promise<void>((r) => setTimeout(r, 0));
-        expect(refreshes).toBe(before + 1);
-        dispose();
-    });
-
-    test("an event for a DIFFERENT analysis is ignored", async () => {
-        let refreshes = 0;
-        const dispose = mountWatch(wsFor("A"), { refresh: () => ((refreshes += 1), Promise.resolve()), arm: () => () => {} });
-        const before = refreshes;
-
-        runEvent("OTHER");
-        await new Promise<void>((r) => setTimeout(r, 0));
-        expect(refreshes).toBe(before);
-        dispose();
-    });
-
-    test("a burst arriving faster than a refresh completes is skipped, not queued", async () => {
-        // Same discipline as the poll: a superseding storm would leave the store with no write at
-        // all, because each refresh cancels the last via its generation token.
-        let refreshes = 0;
-        let release: () => void = () => {};
-        const dispose = mountWatch(wsFor("A"), {
-            refresh: () => {
-                refreshes += 1;
-                return new Promise<void>((r) => {
-                    release = r;
-                });
-            },
-            arm: () => () => {},
-        });
-        const before = refreshes;
-
-        runEvent("A");
-        expect(refreshes).toBe(before + 1);
-        runEvent("A");
-        runEvent("A");
-        expect(refreshes).toBe(before + 1); // both dropped while the first is in flight
-
-        release();
-        await new Promise<void>((r) => setTimeout(r, 0));
-        runEvent("A");
-        expect(refreshes).toBe(before + 2); // and it recovers once the in-flight one settles
-        dispose();
-    });
-
-    test("an event never disarms the poll — the bus is in-process, so an out-of-process run needs it", async () => {
-        // A run launched by a separate `inflexa run` emits nothing here; the interval is the only
-        // thing that makes it visible, so the push must not replace it.
-        let arms = 0;
-        const dispose = mountWatch(wsFor("A"), {
-            refresh: () => Promise.resolve(),
-            arm: () => {
-                arms += 1;
-                return () => {};
-            },
-        });
-        await refreshSidebarData(
-            "A",
-            seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
-        );
-        const armedBefore = arms;
-        expect(armedBefore).toBeGreaterThan(0);
-
-        runEvent("A");
-        await new Promise<void>((r) => setTimeout(r, 0));
-        expect(arms).toBe(armedBefore); // still armed, not re-armed and not torn down
-        dispose();
-    });
-});
-
-// The three token-ledger reads the refresh performs alongside its Postgres ones. Every one of them is
-// DECORATIVE — the entity it belongs to renders with or without it — so each case pins two things: the
-// figure reaches the surface that names the entity, and losing the read costs only the figure.
+// The figures ride the reads of the server. Every one of them is DECORATIVE — the entity it belongs to
+// renders with or without it — so each case pins two things: the figure reaches the surface that names
+// the entity, and a missing figure costs only the figure.
 describe("refreshSidebarData — per-entity token figures", () => {
-    /** Seams whose ledger reads answer from the given fixtures; anything omitted reads as nothing recorded. */
-    function ledgerSeams(base: RefreshSeams, over: Partial<RefreshSeams>): RefreshSeams {
-        return { ...base, loadProfileUsage: () => ok({ calls: 0 }), loadRunUsage: () => ok({ calls: 0 }), loadStepUsage: () => ok([]), ...over };
-    }
-
-    test("the profile's totals ride its snapshot, keyed to the analysis being refreshed", async () => {
-        let asked: string[] = [];
-        await refreshSidebarData(
-            "A",
-            ledgerSeams(seams(profileStatus(), []), {
-                loadProfileUsage: (analysisId) => {
-                    asked.push(analysisId);
-                    return ok({ calls: 4, inputTokens: 55_500, outputTokens: 3_200 });
-                },
-            }),
-        );
+    test("the profile's totals ride its snapshot", async () => {
+        const o: RefreshOpts = {
+            ...opts(null, []),
+            loadProfile: () => okAsync(viewOf(profileState(), { calls: 4, inputTokens: 55_500, outputTokens: 3_200 })),
+        };
+        await refreshSidebarData("A", o);
         const snap = profileSnapshot();
         expect(snap.kind).toBe("loaded");
         expect(snap.kind === "loaded" && snap.usage).toEqual({ calls: 4, inputTokens: 55_500, outputTokens: 3_200 });
-        expect(asked).toEqual(["A"]);
-
-        // An analysis that has never profiled has no row to hang a figure on, so no read is issued.
-        asked = [];
-        await refreshSidebarData(
-            "A",
-            ledgerSeams(seams(null, []), {
-                loadProfileUsage: (analysisId) => {
-                    asked.push(analysisId);
-                    return ok({ calls: 4 });
-                },
-            }),
-        );
-        expect(asked).toEqual([]);
+        // The figure rides beside the row, never inside it.
+        expect(snap.kind === "loaded" && "usage" in snap.profile).toBe(false);
     });
 
-    test("a failed profile usage read leaves the profile loaded, without its figure", async () => {
-        await refreshSidebarData("A", ledgerSeams(seams(profileStatus(), []), { loadProfileUsage: () => err(dbErr) }));
+    test("a profile view with no usage leaves the profile loaded, without its figure", async () => {
+        await refreshSidebarData("A", opts(profileState(), []));
         const snap = profileSnapshot();
         // The section keeps everything it had — a missing decoration must never take the entity with it.
         expect(snap.kind).toBe("loaded");
@@ -1500,108 +1446,63 @@ describe("refreshSidebarData — per-entity token figures", () => {
         expect(snap.kind === "loaded" && snap.profile.status).toBe("completed");
     });
 
-    test("each listed run's totals are keyed by its OWN run id, and one failure costs only that row's figure", async () => {
-        const runs = [runRow({ runId: "run-a", status: "completed" }), runRow({ runId: "run-b", status: "completed" })];
-        await refreshSidebarData(
-            "A",
-            ledgerSeams(seams(null, runs), {
-                loadRunUsage: (_analysisId, runId) => (runId === "run-a" ? ok({ calls: 3, inputTokens: 809_200 }) : err(dbErr)),
-            }),
-        );
+    test("each listed run carries its OWN figure, and a run with none still lists", async () => {
+        const runs = [
+            runRow({ runId: "run-a", status: "completed", usage: { calls: 3, inputTokens: 809_200 } }),
+            runRow({ runId: "run-b", status: "completed" }),
+        ];
+        await refreshSidebarData("A", opts(null, runs));
         const snap = runsSnapshot();
         expect(snap.kind).toBe("loaded");
-        const byRun = snap.kind === "loaded" ? snap.usageByRun : undefined;
-        expect(byRun?.get("run-a")).toEqual({ calls: 3, inputTokens: 809_200 });
+        if (snap.kind !== "loaded") return;
+        expect(snap.runs.find((r) => r.runId === "run-a")?.usage).toEqual({ calls: 3, inputTokens: 809_200 });
         // Absent, not zeroed: the row still renders, it just carries no figure.
-        expect(byRun?.has("run-b")).toBe(false);
-        // ...and BOTH runs are still listed, which is the property the figure must never cost.
-        expect(snap.kind === "loaded" && snap.runs.map((r) => r.runId)).toEqual(["run-a", "run-b"]);
+        expect(snap.runs.find((r) => r.runId === "run-b")?.usage).toBeUndefined();
+        expect(snap.runs.map((r) => r.runId)).toEqual(["run-a", "run-b"]);
     });
 
     test("a running step's view carries its own figure, and a step with nothing reported carries none", async () => {
-        await refreshSidebarData(
-            "A",
-            ledgerSeams(
-                seams(null, [runRow({ runId: "run-a", status: "running" })], () => fakeRuntime, [stepRow("qc", "running"), stepRow("align", "pending")]),
-                {
-                    loadStepUsage: () =>
-                        ok([
-                            { stepId: "qc", totals: { calls: 5, inputTokens: 42_600, outputTokens: 1_100 } },
-                            // The run's own calls — the plan and synthesis frames it owns directly. An
-                            // ABSENCE of a step, not a step named this, so it decorates no row.
-                            { stepId: null, totals: { calls: 2, inputTokens: 9_000 } },
-                        ]),
-                },
-            ),
-        );
+        const run = runRow({ runId: "run-a", status: "running" });
+        const o: RefreshOpts = {
+            ...opts(null, [run]),
+            loadRun: () =>
+                okAsync(
+                    detailOf(
+                        run,
+                        [
+                            stepRow("qc", "running", { usage: { calls: 5, inputTokens: 42_600, outputTokens: 1_100 } }),
+                            stepRow("align", "pending", { usage: { calls: 2 } }),
+                        ],
+                        // The run's own calls — the plan and synthesis frames it owns directly. An ABSENCE
+                        // of a step, so it decorates no row.
+                        { calls: 2, inputTokens: 9_000 },
+                    ),
+                ),
+        };
+        await refreshSidebarData("A", o);
         const steps = activeRunProgress().get("run-a")?.steps ?? [];
         expect(steps.map((s) => s.label)).toEqual(["qc", "align"]);
         expect(steps[0]?.usageFigure).toBe(`${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`);
         // A step whose calls reported nothing carries NO figure rather than a zeroed one, and the
-        // run-level group is nowhere among the step rows.
+        // run-level remainder is nowhere among the step rows.
         expect(steps[1]?.usageFigure).toBeUndefined();
         expect(steps.some((s) => s.usageFigure?.includes("9.0k"))).toBe(false);
     });
 
     test("two active runs never see each other's step figures", async () => {
         const runs = [runRow({ runId: "run-a", status: "running" }), runRow({ runId: "run-b", status: "running" })];
-        await refreshSidebarData("A", {
-            ...ledgerSeams(seams(null, runs), {}),
-            loadSteps: () => okAsync([stepRow("s", "running")]),
-            loadStepUsage: (_analysisId, runId) =>
-                ok([{ stepId: "s", totals: runId === "run-a" ? { calls: 1, inputTokens: 800_000 } : { calls: 1, inputTokens: 1_200 } }]),
-        });
+        const o: RefreshOpts = {
+            ...opts(null, runs),
+            loadRun: (_analysisId, runId) =>
+                okAsync(
+                    detailOf(
+                        runs.find((r) => r.runId === runId)!,
+                        [stepRow("s", "running", { usage: runId === "run-a" ? { calls: 1, inputTokens: 800_000 } : { calls: 1, inputTokens: 1_200 } })],
+                    ),
+                ),
+        };
+        await refreshSidebarData("A", o);
         expect(activeRunProgress().get("run-a")?.steps[0]?.usageFigure).toBe(`${GLYPHS.arrowUp}800.0k`);
         expect(activeRunProgress().get("run-b")?.steps[0]?.usageFigure).toBe(`${GLYPHS.arrowUp}1.2k`);
-    });
-
-    test("a failed step usage read leaves every step rendered, without figures", async () => {
-        await refreshSidebarData(
-            "A",
-            ledgerSeams(
-                seams(null, [runRow({ runId: "run-a", status: "running" })], () => fakeRuntime, [stepRow("qc", "running")]),
-                {
-                    loadStepUsage: () => err(dbErr),
-                },
-            ),
-        );
-        const steps = activeRunProgress().get("run-a")?.steps ?? [];
-        expect(steps.map((s) => s.label)).toEqual(["qc"]);
-        expect(steps[0]?.usageFigure).toBeUndefined();
-    });
-
-    test("an idle rail issues NO step usage read — the same zero-query property the step read holds", async () => {
-        let stepUsageReads = 0;
-        const counting = (base: RefreshSeams): RefreshSeams =>
-            ledgerSeams(base, {
-                loadStepUsage: () => {
-                    stepUsageReads += 1;
-                    return ok([]);
-                },
-            });
-
-        // All-terminal runs...
-        await refreshSidebarData("A", counting(seams(null, [runRow({ status: "completed" })])));
-        expect(stepUsageReads).toBe(0);
-        // ...and no runs at all. The read rides the active-run fan-out, so it inherits its arming.
-        await refreshSidebarData("A", counting(seams(null, [])));
-        expect(stepUsageReads).toBe(0);
-
-        // ...but an active run pays for exactly one.
-        await refreshSidebarData("A", counting(seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")])));
-        expect(stepUsageReads).toBe(1);
-    });
-
-    test("a fixture that stubs none of the ledger reads still publishes every entity", async () => {
-        // The three ledger seams are OPTIONAL precisely so a case about run progress is not made to
-        // stub reads it has no claim about — and omitting them must land exactly where a failed read
-        // does: entities present, figures absent.
-        await refreshSidebarData(
-            "A",
-            seams(profileStatus(), [runRow({ runId: "run-a", status: "running" })], () => fakeRuntime, [stepRow("qc", "running")]),
-        );
-        expect(profileSnapshot().kind).toBe("loaded");
-        expect(runsSnapshot().kind).toBe("loaded");
-        expect(activeRunProgress().get("run-a")?.steps[0]?.usageFigure).toBeUndefined();
     });
 });

@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change add-command-palette. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Declarative command registry
 
 The system SHALL define commands in a flat array `commands: Command[]` in `src/tui/commands.tsx`, where adding a command is a single array entry. The `Command` type SHALL carry: a stable dotted `id` (`CommandId`), a `title`, an optional `description`, a `category` (`CommandCategory`, a string-literal union — never raw `string`), an optional display-only `keybind` hint, an optional `enabled(ws: Workspace): boolean` predicate, and a `run(ws: Workspace): void | Promise<void>` action. The `id` SHALL be decoupled from the `title` so a rename does not break dispatch. The `Command`/`CommandId`/`CommandCategory` registry types SHALL co-locate in `commands.tsx` (not `src/types/`), since they are neither persisted entities nor the event contract; the `Workspace` type they reference SHALL be imported from `src/tui/workspace.ts`.
@@ -114,22 +116,22 @@ Palette filtering SHALL use a small subsequence scorer — the shared `subsequen
 
 ### Requirement: Phase-1 commands run in-app over shared cores
 
-The palette SHALL ship the command set that needs no chat swap: Settings (embed the existing config screen as a dialog), Change theme (apply `setTheme` and persist via `writeConfig`), Open output folder (the library-pure `openOutputDir` core for the current analysis, which the `inflexa open` CLI's `runOpen` wraps), Show status (render `resolveContext` / `describeContext` output in a results dialog), List analyses (render `listRecentAnalyses` in a results dialog), New project (a prompt dialog calling `createProject`, with `Str256` validation at the boundary), and Quit (`ctx.quit()`). These commands SHALL reuse the existing library-pure module cores and SHALL surface results via dialogs or `ctx.notify`, never stdout.
+The palette SHALL ship the command set that needs no chat swap: Settings (embed the existing config screen as a dialog), Change theme (apply `setTheme` and persist via `writeConfig`), Open output folder (ask the local server to make sure that the output folder of the current analysis exists, then open the path that the server gives — the route that `inflexa open` uses), Show status (render the context description that the resolve route of the server gives for the chat's working directory, in a results dialog), List analyses (render the analyses that the server lists, in a results dialog), New project (a prompt dialog that makes the project through the server, with `Str256` validation at the boundary), and Quit (`ctx.quit()`). These commands SHALL reach the state of the analyses through the same routes of the local server that the matching text commands use, never through the database or a module that holds state, and SHALL surface results via dialogs or `ctx.notify`, never stdout.
 
 #### Scenario: Open output folder reuses the core
 
 - **WHEN** "Open output folder" runs with an analysis open
-- **THEN** it calls the same `openOutputDir` core that the `inflexa open` command's `runOpen` wraps
+- **THEN** the server makes sure that the folder exists and gives its path, the TUI opens that path, and a notice names it — the same route that the `inflexa open` command uses
 
 #### Scenario: Read-only result renders in a dialog
 
 - **WHEN** "List analyses" runs
-- **THEN** `listRecentAnalyses` results render in a dialog, not to stdout
+- **THEN** the analyses that the server lists render in a dialog, not to stdout
 
 #### Scenario: New project over the shared core
 
 - **WHEN** "New project" is submitted with a valid name
-- **THEN** `createProject` is called and the outcome is shown via `ctx.notify`
+- **THEN** the server makes the project and the outcome is shown via `ctx.notify`
 
 #### Scenario: Open output folder disabled without an analysis
 
@@ -143,7 +145,7 @@ The palette SHALL ship the command set that needs no chat swap: Settings (embed 
 
 ### Requirement: In-place session-switching commands
 
-Building on the reactive chat screen (see the `chat-wiring` capability), the palette SHALL provide Switch analysis, Switch session, New analysis, and New session commands that swap the open chat in place via `ctx.openSession(threadId, workingDir, analysis)` without relaunching the process. Switch analysis SHALL present a picker over `listRecentAnalyses`; Switch session SHALL present a picker over the harness thread store's `listThreads({analysisId, type: "conversation"})` (live conversation threads, most-recently-active first) read over the booted runtime's pool, and SHALL be offered only when an analysis is open and the boot state is `ready` (thread metadata has no pre-`ready` source). The narrowing to the `conversation` type keeps one population in this picker; a report child reaches the user through the report-session navigation instead. New analysis SHALL prompt for a name and create then open it (a deliberate action, so minting its anchor marker is allowed); opening it resolves no existing thread, so a fresh thread id is minted and the row is created by the first turn. New session SHALL mint a fresh thread id inline and swap the open chat onto it in place — no row is written until the first turn creates it, typed `conversation` by the harness default with its title seeded from the message — and SHALL be offered under the same gate as Switch session; a dispatch by id while the boot state is not `ready` SHALL raise a notice (warn on `failed`, an in-progress notice otherwise) and leave the scope unchanged. The Switch session picker SHALL carry a pinned "Start a new session" row that stays present under any filter query and when the analysis has no listed threads; selecting it SHALL act exactly as New session. A New session invoked during a streaming turn SHALL behave as any same-analysis session swap: the reactive chat reset on the `sessionId` change aborts the in-flight turn. Any picker over an empty set SHALL show an empty-state message rather than a blank list.
+Building on the reactive chat screen (see the `chat-wiring` capability), the palette SHALL provide Switch analysis, Switch session, New analysis, and New session commands that swap the open chat in place via `ctx.openSession(threadId, workingDir, analysis)` without relaunching the process. Switch analysis SHALL present a picker over the analyses that the local server lists. Switch session SHALL present a picker over the live conversation threads that the server lists for the analysis with the `conversation` type, most-recently-active first, and SHALL be offered only when an analysis is open and the boot state is `ready` (the server reads thread metadata from Postgres, which has no pre-`ready` source). The narrowing to the `conversation` type keeps one population in this picker; a report child reaches the user through the report-session navigation instead. New analysis SHALL prompt for a name, make the analysis through the server, and open it (a deliberate action, so minting its anchor marker is allowed); opening it resolves no existing thread, so a fresh thread id is minted and the row is created by the first turn. New session SHALL mint a fresh thread id inline and swap the open chat onto it in place — no row is written until the first turn creates it, typed `conversation` by the harness default with its title seeded from the message — and SHALL be offered under the same gate as Switch session; a dispatch by id while the boot state is not `ready` SHALL raise a notice (warn on `failed`, an in-progress notice otherwise) and leave the scope unchanged. The Switch session picker SHALL carry a pinned "Start a new session" row that stays present under any filter query and when the analysis has no listed threads; selecting it SHALL act exactly as New session. A New session invoked during a streaming turn SHALL behave as any same-analysis session swap: the reactive chat reset on the `sessionId` change aborts the in-flight turn. Any picker over an empty set SHALL show an empty-state message rather than a blank list.
 
 #### Scenario: Switch analysis in place
 
@@ -153,7 +155,7 @@ Building on the reactive chat screen (see the `chat-wiring` capability), the pal
 #### Scenario: Switch session lists pg threads
 
 - **WHEN** the user opens "Switch session" with the runtime `ready`
-- **THEN** the picker lists the analysis's live conversation threads from the thread store, most-recently-active first
+- **THEN** the picker lists the analysis's live conversation threads that the server reads from the thread store, most-recently-active first
 
 #### Scenario: The switch picker holds no report session
 
@@ -173,7 +175,7 @@ Building on the reactive chat screen (see the `chat-wiring` capability), the pal
 #### Scenario: New session cannot produce a non-conversation thread
 
 - **WHEN** the first message is sent on a thread id minted by "New session"
-- **THEN** the harness creates the row with its default `conversation` type, because no call on this path accepts a thread type — a construction property the `openSession` signature enforces at compile time, carrying no runtime check for a test to cover
+- **THEN** the harness creates the row with its default `conversation` type, because no call on this path accepts a thread type — a construction property the `openSession` signature and the chat request enforce at compile time, carrying no runtime check for a test to cover
 
 #### Scenario: The switch picker offers creation
 
@@ -197,22 +199,27 @@ Building on the reactive chat screen (see the `chat-wiring` capability), the pal
 
 ### Requirement: Verify provenance command in palette
 
-The system SHALL add a "Verify provenance" entry to the command palette with `id: "prov.verify"`, `category: "Analysis"`, enabled when `ctx.analysis !== null`. The action SHALL lazy-import the verification module, run the check, and display the result via `notify`.
+The system SHALL add a "Verify provenance (internal)" entry to the command palette with `id: "prov.verify"`, `category: "Analysis"`, enabled when `ctx.analysis !== null`. The action SHALL ask the local server to verify the provenance chain of the analysis, format the result with the provenance kernel, which it loads lazily, and display it via `notify`. A request that fails SHALL raise an error notice.
 
 #### Scenario: Verify command appears when analysis is open
 
 - **WHEN** the command palette is opened with an analysis active
-- **THEN** "Verify provenance" is listed in the Analysis category
+- **THEN** "Verify provenance (internal)" is listed in the Analysis category
 
 #### Scenario: Verify command is hidden without an analysis
 
 - **WHEN** the command palette is opened with no analysis active
-- **THEN** "Verify provenance" does not appear
+- **THEN** "Verify provenance (internal)" does not appear
 
 #### Scenario: Verify result is shown as a notice
 
-- **WHEN** the user selects "Verify provenance"
+- **WHEN** the user selects "Verify provenance (internal)"
 - **THEN** a notice is displayed: info for valid/unsigned/empty, warn for no-key, error for tampered
+
+#### Scenario: A failed request gives an error notice
+
+- **WHEN** the user selects "Verify provenance (internal)" and the request to the server fails
+- **THEN** an error notice says that the provenance data could not be read
 
 ### Requirement: Explore plan steps command
 
@@ -313,21 +320,21 @@ The flow MUST ask on every delete, and it MUST test no directory first. The dele
 
 The two answers MUST be "remove" and "keep". Nothing archives a page, thus the two-way choice of the analysis delete does not carry here.
 
-The flow MUST unbind the scope before the removal, and the removal MUST run before the landing. Each step after the erase awaits, thus a bound scope that names an erased thread lets a turn mint the row back. The landing binds a different conversation, thus the removal must not race it.
+The erase and the removal MUST be one request to the local server, which carries the answer. The server MUST remove the pages only after the erase succeeds. The flow MUST unbind the scope after that request and before the landing. The landing is a server round trip, and a bound scope that names an erased thread across it lets a turn mint the row back.
 
 One notice MUST report both the erase and the fate of the files, in place of the success line that the flow raises today. Two notices for one action are two claims about one event.
 
-The removal MUST run after the erase succeeds. A refused erase and a failed erase each leave every file, because the rows that name those pages survive.
+A refused erase and a failed erase each leave every file, because the rows that name those pages survive.
 
 The set of directories MUST come from the ids that the purge gives back. A listing before the erase and the erase itself are two operations. A spawn between them makes a child that the erase removes and the listing never saw.
 
-The flow MUST name each directory through the helper that the harness exports. It MUST spell no directory name of its own, because the layout of a workspace belongs to the harness.
+The server MUST name each directory through the helper that the harness exports. It MUST spell no directory name of its own, because the layout of a workspace belongs to the harness.
 
 The removal MUST be best-effort. The rows are gone when it runs, thus a directory that survives MUST NOT read as a failed delete. An absent directory MUST NOT read as a failure either. The outcome notice MUST name what stayed.
 
-A workspace root that does not resolve MUST remove nothing, and the notice MUST tell its two causes apart. A tree that was never written holds no page, thus the notice MUST report that no page remains. A tree that the host cannot locate can hold one, thus the notice MUST warn and MUST give that cause. One line for both would send the user to the anchor for a page that never existed.
+A workspace root that does not resolve MUST remove nothing, and the notice MUST tell its two causes apart. A tree that was never written holds no page, thus the notice MUST report that no page remains. A tree that the server cannot locate can hold one, thus the notice MUST warn and MUST give that cause. One line for both would send the user to the anchor for a page that never existed.
 
-The flow MUST keep the gate that it has on a running chat turn. A render of a page runs inside a turn, thus that one gate covers a delete that would race a write into the same directory.
+The flow MUST keep the gate that it has on a running chat turn of this client. A render of a page runs inside a turn, thus that one gate covers a delete that would race a write into the same directory.
 
 #### Scenario: A delete with a report child asks about the files
 
@@ -378,6 +385,6 @@ The flow MUST keep the gate that it has on a running chat turn. A render of a pa
 
 #### Scenario: A workspace that the host cannot locate warns
 
-- **GIVEN** an analysis whose workspace tree the host cannot locate
+- **GIVEN** an analysis whose workspace tree the server cannot locate
 - **WHEN** the user confirms the delete and accepts the removal
 - **THEN** the notice warns that the pages stayed, and it gives that cause

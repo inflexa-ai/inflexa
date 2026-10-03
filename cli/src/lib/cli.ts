@@ -7,6 +7,9 @@ import {
     text as clackText,
 } from "@clack/prompts";
 
+import { join } from "node:path";
+
+import { env } from "./env.ts";
 import { shutdown } from "./shutdown.ts";
 
 // CLI-boundary helpers shared by the text command actions: print-and-exit on fatal errors,
@@ -27,6 +30,15 @@ import { shutdown } from "./shutdown.ts";
  * A module that builds a spinner and keeps it inside one function needs nothing from here.
  */
 export type Spinner = ReturnType<typeof clackSpinner>;
+
+/**
+ * The argv that runs this CLI again. A dev run has no compiled binary, so the `bun` runtime executes the
+ * source entry; a release binary IS the `inflexa` executable. This file lives at `src/lib/`, thus the CLI
+ * source entry is one level up.
+ */
+export function selfInvocation(argv: readonly string[]): string[] {
+    return env.isDevelopment ? [process.execPath, join(import.meta.dir, "../index.ts"), ...argv] : [process.execPath, ...argv];
+}
 
 /** Print `message` (with an optional cause) to stderr and exit non-zero — a fatal CLI bail-out. */
 export function fail(message: string, cause?: unknown): never {

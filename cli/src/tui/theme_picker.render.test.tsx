@@ -45,9 +45,12 @@ function stubWorkspace(onClose: () => void): Workspace {
         sessionId: "session-under-test",
         workingDir: process.cwd(),
         project: null,
+        anchor: null,
+        inputCount: null,
         openDialog: () => {},
         closeDialog: onClose,
         openSession: () => {},
+        refreshScope: () => {},
         quit: async () => {},
     };
 }

@@ -6,8 +6,10 @@ import { isAbsolute, join } from "node:path";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import { getAnchor } from "../../db/primary_query.ts";
 import { deleteAnchor } from "../../db/primary_mutation.ts";
-import { classifyInputPath, expandAndResolve, matchInputRefs } from "./input.ts";
-import { canonicalPath, writeMarker } from "../anchor/marker.ts";
+import { expandAndResolve } from "../../lib/paths.ts";
+import { classifyInputPath, matchInputRefs } from "./input.ts";
+import { canonicalPath } from "../../lib/paths.ts";
+import { writeMarker } from "../anchor/marker.ts";
 
 const created: string[] = [];
 

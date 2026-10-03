@@ -1,28 +1,22 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ok } from "neverthrow";
+import { ok, okAsync, type Result } from "neverthrow";
 import { For } from "solid-js";
 import { testRender } from "@opentui/solid";
+import type { ChatFrame } from "@inflexa-ai/harness/contracts/index.js";
 
+import type { ClientError } from "../../client/api.ts";
 import { MessageBlock } from "../layout/message_block.tsx";
-import { messages, send, streamText, streamPartId, resetHotState, type SendSeams } from "./conversation.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import { messages, send, streamText, streamPartId, resetHotState, type SendOpts } from "./conversation.ts";
 
 // Render-level regression for "streamed text vanishes when the turn finishes" (the symptom: live
 // tokens show, then blank at completion). This class of bug only manifests under the real renderer's
-// scheduling — a store-only unit test passes even when broken — so it MUST drive testRender. It now
-// exercises the harness path: `send` mints the assistant message + streaming text part, the adapter
-// accumulates deltas into `streamText`, and the ok outcome flushes a FRESH object into the store. The
+// scheduling — a store-only unit test passes even when broken — so it MUST drive testRender. It
+// exercises the turn stream: `send` mints the assistant message + streaming text part, the adapter
+// accumulates deltas into `streamText`, and the `done` summary flushes a FRESH object into the store. The
 // markdown parse is async, so we poll frames for the expected text.
 const SID = "s1";
 const AID = "a1";
-
-// A stub runtime whose pool/provider are never dereferenced (the fake engine never touches them);
-// `createStreamingChat` reads only `provider.capabilities` at construction.
-const stubRuntime = {
-    pool: {},
-    conversation: { provider: { capabilities: { toolCalling: true } } },
-    agents: { forThread: () => ok({}) },
-} as unknown as HarnessRuntime;
+const ROUTE_SOURCE = { agentId: "chat", callPath: ["chat"] };
 
 afterEach(() => resetHotState());
 
@@ -56,15 +50,24 @@ describe("streamed assistant text survives finalization (rendered)", () => {
             const gate = new Promise<void>((resolve) => {
                 releaseEngine = resolve;
             });
-            const seams: SendSeams = {
-                runtime: () => stubRuntime,
-                runChatTurn: async (args) => {
-                    void args.emit({ type: "text-delta", text: "streamed reply" });
-                    await gate;
-                    return { kind: "ok", opened: true, fallbackText: "" };
-                },
+            // A fake server: its stream sends one delta, parks until released, then ends the turn.
+            async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
+                // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+                yield ok({ type: "text-delta", text: "streamed reply", source: ROUTE_SOURCE });
+                await gate;
+                // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+                yield ok({ type: "finish", source: ROUTE_SOURCE });
+            }
+            const server: SendOpts = {
+                startTurn: () => okAsync({ turnId: "turn-1", frames: frames() }),
+                abortTurn: (_analysisId, _threadId, turnId) => okAsync({ turnId, outcome: "aborting" }),
+                fetchTurn: (analysisId, threadId, turnId) =>
+                    okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", status: "done", opened: true }),
+                reloadTranscript: async () => undefined,
+                transcript: { fetchThread: () => okAsync(null), fetchMessages: () => okAsync({ messages: [], total: 0, page: 0, perPage: 0, hasMore: false }) },
+                healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
             };
-            const pending = send({ sessionId: SID, analysisId: AID, userText: "hello" }, seams);
+            const pending = send({ sessionId: SID, analysisId: AID, userText: "hello" }, server);
 
             expect(await frameWith("streamed reply")).toContain("streamed reply"); // live streaming visible
 

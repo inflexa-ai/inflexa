@@ -102,12 +102,11 @@ export type RunEngineComposition = {
      */
     readonly refStorePath: string;
     /**
-     * Host path of the open analysis's farm `inflexa.lock`, or null when the boot
-     * carried no analysis. The tool re-reads the file per call, thus a farm that a
-     * link extended mid-session answers the next call. Null makes the farm tracks
-     * read as unknown, and the image record still merges.
+     * Host path of the farm `inflexa.lock` of each analysis, resolved with the analysis id of the
+     * session. The tool re-reads the file per call, thus a farm that a link extended mid-session
+     * answers the next call.
      */
-    readonly farmLockFile: string | null;
+    readonly farmLockFile: (analysisId: string) => string;
     /**
      * Host path of the image inventory record at the store root, which the catalog build packs
      * beside the graph. Passed unconditionally, exactly as {@link RunEngineComposition.refStorePath}
@@ -152,7 +151,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         model: comp.sandbox.model,
         skillsDir: comp.skillsDir,
         refStorePath: comp.refStorePath,
-        ...(comp.farmLockFile ? { farmLockFile: comp.farmLockFile } : {}),
+        farmLockFile: comp.farmLockFile,
         imagePackagesFile: comp.imagePackagesFile,
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,

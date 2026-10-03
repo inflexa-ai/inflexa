@@ -1,7 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
-import type { CortexRunRow } from "@inflexa-ai/harness";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
@@ -19,6 +18,7 @@ import {
     runMark,
     idTail,
     shortSessionId,
+    pollTicks,
     RUN_STATUS_TERMINAL,
 } from "../hooks/sidebar_live.ts";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
@@ -27,22 +27,22 @@ import { chatStatus } from "../hooks/status.ts";
 import type { ChatStatus } from "../hooks/status.ts";
 import { notify } from "../hooks/notice.ts";
 import { pendingAddLines, storeFlightLines, transferLabel, transferReports, type PendingAddLine, type StoreFlightLine } from "../hooks/sandbox_gate.tsx";
-import type { TransferReport } from "../../modules/libs/transfers.ts";
+import type { TransferReportView as TransferReport } from "../../api/store.ts";
 import { openThread } from "../hooks/thread.ts";
 import { writeClipboard } from "../../lib/clipboard.ts";
-import type { AgentEffort, AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
-import type { AgentSelection } from "../../modules/harness/agent_switch.ts";
-import { getAnchor, getSessionUsageTotalsIncludingRuns, listAnalysisInputs } from "../../db/primary_query.ts";
-import type { LlmUsageTotals } from "../../db/primary_query.ts";
+import type { AgentEffort, AgentName, AgentSelection } from "../../api/machine.ts";
+import type { ServerConnection } from "../../api/server.ts";
+import type { UsageTotals } from "../../api/usage.ts";
+import { fetchUsage } from "../../client/usage.ts";
+import type { ClientOpts } from "../../client/api.ts";
 import { formatTokenFigure, tokenFigureDetail } from "../../lib/usage_format.ts";
 import type { TokenQuantities } from "../../lib/usage_format.ts";
 import { TokenFigure } from "../components/token_figure.tsx";
 import { Sep } from "../components/separator.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
-import { Bus } from "../../lib/bus.ts";
-import type { StampedEvent } from "../../types/events.ts";
-import type { Anchor } from "../../types/anchor.ts";
-import type { Thread } from "@inflexa-ai/harness";
+import type { AnchorView } from "../../api/analyses.ts";
+import type { ThreadSummary } from "../../api/conversation.ts";
+import type { RunSummary } from "../../api/runs.ts";
 
 /** Props for {@link Sidebar}. Only the live message count is passed; analysis/session/project come from the workspace store, which repaints the sidebar on an in-place swap. */
 export type SidebarProps = {
@@ -63,6 +63,8 @@ export type SidebarProps = {
     onOpenUsage?: () => void;
     /** Open the failed-flight detail dialog for one flight id (wired to the failed rows of PACKAGES). */
     onOpenFailedFlight?: (flightId: string) => void;
+    /** How each read of the rail reaches the local server. The app passes none; a test points it at a fake server. */
+    clientOpts?: ClientOpts;
 };
 
 /**
@@ -174,7 +176,7 @@ function transferLinesOf(reports: readonly TransferReport[]): LiveLine[] {
                     // and the age of the last write is the proof of motion — the
                     // heartbeat of the child moves it.
                     const unpacks = row.phase === "unpacking";
-                    const phaseTail = unpacks ? ` ${GLYPHS.middot} active ${Date.relativeAge(row.updatedAt)}` : "";
+                    const phaseTail = unpacks ? ` ${GLYPHS.middot} active ${Date.relativeAge(Date.parse(row.updatedAt))}` : "";
                     lines.push({
                         glyph: GLYPHS.warning,
                         role: "warning",
@@ -188,7 +190,7 @@ function transferLinesOf(reports: readonly TransferReport[]): LiveLine[] {
                     break;
                 }
                 const moved = row !== null && row.bytesTransferred > 0 ? `${formatRailBytes(row.bytesTransferred)} moved ${GLYPHS.middot} ` : "";
-                const age = row === null ? "" : `active ${Date.relativeAge(row.updatedAt)}`;
+                const age = row === null ? "" : `active ${Date.relativeAge(Date.parse(row.updatedAt))}`;
                 const word = row?.phase === "unpacking" ? "unpacking" : "downloading";
                 lines.push({ glyph: GLYPHS.warning, role: "warning", text: `${label} ${word} ${GLYPHS.middot} ${moved}${age}` });
                 break;
@@ -350,13 +352,13 @@ function AgentModelLine(props: { label: string; agent: AgentName }): JSX.Element
  * ready, when no identity exists yet.
  */
 function ConnectionLine(): JSX.Element {
-    const identity = (): ModelConnectionIdentity | null => {
+    const identity = (): Pick<ServerConnection, "provider" | "mode"> | null => {
         const boot = bootState();
         return boot.phase === "ready" ? boot.connection : null;
     };
     return (
         <Show when={identity()} keyed>
-            {(c: ModelConnectionIdentity) => (
+            {(c: Pick<ServerConnection, "provider" | "mode">) => (
                 <text>
                     <Fg role="fgMuted">{"conn "}</Fg>
                     <Fg role="accent">{c.provider}</Fg>
@@ -436,7 +438,7 @@ export type UsageSection = { kind: "message"; text: string } | { kind: "figure";
  * quantities is not a zero" are claims about this mapping, and a character frame holding two numbers
  * cannot pin WHICH numbers they are.
  */
-export function usageSectionOf(totals: LlmUsageTotals): UsageSection {
+export function usageSectionOf(totals: UsageTotals): UsageSection {
     if (totals.calls === 0) return { kind: "message", text: "no usage recorded" };
     const detail = tokenFigureDetail(totals);
     if (detail.input === null && detail.output === null) {
@@ -461,7 +463,7 @@ export function usageSectionOf(totals: LlmUsageTotals): UsageSection {
 export type EntityFigure = { role: keyof ThemeColors; text: string };
 
 /** Map an entity's ledger totals (absent when the read failed) to its figure line — see {@link EntityFigure}. */
-export function entityFigureOf(totals: LlmUsageTotals | undefined): EntityFigure | null {
+export function entityFigureOf(totals: UsageTotals | undefined): EntityFigure | null {
     if (totals === undefined || totals.calls === 0) return null;
     const figure = formatTokenFigure(totals);
     return figure === "" ? { role: "fgMuted", text: GLYPHS.emDash } : { role: "fg", text: figure };
@@ -584,18 +586,18 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
  * above. The data profile is in NEITHER: its calls carry no thread, so its figures have exactly one
  * home, which is the DATA PROFILE section.
  *
- * USAGE reads the CLI's OWN local token ledger rather than anything behind the booted runtime, so it
- * neither gates on boot state nor arms a timer of its own: the figures are durable locally and
- * readable while the engine is cold. It refreshes on three edges this component already observes —
- * the chat status leaving `busy` (a turn actually completing), a `run.observed` bus event as a run
- * progresses, and `sidebar_live`'s bounded poll, which it rides by reading the snapshots that poll
- * republishes. It deliberately does NOT depend on the conversation's message count: the assistant
+ * USAGE reads the usage ledger of the server (`GET {A}/usage`), which is SQLite and needs nothing
+ * behind the booted runtime, so it neither gates on boot state nor arms a timer of its own: the figures
+ * are readable while the engine is cold. It refreshes on the edges this component already observes —
+ * the chat status leaving `busy` (a turn actually completing), and each tick of `sidebar_live`'s bounded
+ * poll ({@link pollTicks}), thus a run that progresses, or a turn of a different client, shows on the next
+ * tick. It deliberately does NOT depend on the conversation's message count: the assistant
  * message is pushed when a turn STARTS, so a memo keyed on it reads the ledger before any of that
  * turn's calls were recorded, and past the store's message cap the push-and-shift leaves the length
  * unchanged and the memo never fires again.
  *
- * Reads the pure `getAnchor` (NOT `resolveAnchor`, which writes a sighting heartbeat), so
- * rendering the sidebar never touches disk — the no-litter rule for passive flows.
+ * The anchor and the input count come from the workspace store, which reads `GET {A}` at each swap, after
+ * an input change of this client, and at the end of each turn (the agent can change the inputs).
  */
 export function Sidebar(props: SidebarProps) {
     const ws = useWorkspace();
@@ -638,21 +640,13 @@ export function Sidebar(props: SidebarProps) {
     // The bound thread's row, or null in every degraded kind — the SESSION section renders those as
     // muted placeholders rather than a title it does not have. The store (`hooks/thread.ts`) owns the
     // read; the rail only reads its snapshot, the same split as DATA PROFILE / RUNS.
-    const thread = createMemo((): Thread | null => {
+    const thread = createMemo((): ThreadSummary | null => {
         const snap = openThread();
         return snap.kind === "loaded" ? snap.thread : null;
     });
-    // anchor/inputCount null-guard the (currently unreachable) null analysis; the render also wraps
-    // the analysis name in <Show when={ws.analysis}>. The linked project now lives in the workspace
-    // store (resolved once per openSession swap), so the sidebar no longer derives it here.
-    const anchor = createMemo(() => {
-        const a = ws.analysis;
-        if (!a) return null;
-        return getAnchor(a.anchorId).match(
-            (x) => x,
-            () => null,
-        );
-    });
+    // The anchor, the input count, and the linked project live in the workspace store (read from the
+    // server per openSession swap and per refresh edge), so the sidebar no longer derives them here.
+    const anchor = (): AnchorView | null => ws.anchor;
     // The anchor-marker health badge (marker written vs missing), or "" when no anchor exists. Muted
     // to match the surrounding meta text — it flags marker health quietly, without a status color.
     // Below the breakpoint it prefixes the path line; at/above it, the path line is dropped and this
@@ -661,34 +655,10 @@ export function Sidebar(props: SidebarProps) {
         const a = anchor();
         return a ? (a.markerWritten ? GLYPHS.check : GLYPHS.warning) : "";
     };
-    // The input count and the usage total are both DB reads with no reactive dependency of their own,
-    // so bus events tick a version signal each memo reads — the picker (and any future writer) updates
-    // the sidebar live without a session swap. ONE subscription serves both: a second Bus.on for a
-    // second number would be two lifecycles to keep paired with one cleanup. Filtered to THIS analysis
-    // first — every bus member is analysis-scoped, and another analysis's events must move neither
-    // number.
-    const [inputsVersion, setInputsVersion] = createSignal(0);
+    // The usage total is a server read with no reactive dependency of its own, so the turn edge below
+    // ticks a version signal the read effect reads. A run that moves, or a turn of a different client,
+    // shows through the tick count of the poll, which the read effect also reads.
     const [usageVersion, setUsageVersion] = createSignal(0);
-    const onSidebarEvent = (e: StampedEvent): void => {
-        if (ws.analysis?.id !== e.analysisId) return;
-        switch (e.type) {
-            case "prov.input_added":
-            case "prov.input_removed":
-                setInputsVersion((v) => v + 1);
-                break;
-            // A TRIGGER only — the pushed run snapshot is never rendered, and carries no token figures
-            // to render anyway. Re-reading the ledger keeps it the single source with one staleness
-            // rule, the same discipline `hooks/sidebar_live.ts` applies to this event's other consumer.
-            case "run.observed":
-                setUsageVersion((v) => v + 1);
-                break;
-            // Every other provenance member is a chain fact neither number reads.
-            default:
-                break;
-        }
-    };
-    Bus.on("inflexa", onSidebarEvent);
-    onCleanup(() => Bus.off("inflexa", onSidebarEvent));
 
     // Turn completion, stated directly rather than inferred from a store's length: a turn's calls are
     // recorded inside the loop, so the moment the chat stops being busy the ledger already holds them.
@@ -701,44 +671,52 @@ export function Sidebar(props: SidebarProps) {
     let prevStatus: ChatStatus = chatStatus();
     createEffect(() => {
         const status = chatStatus();
-        if (prevStatus === "busy" && status !== "busy") setUsageVersion((v) => v + 1);
+        if (prevStatus === "busy" && status !== "busy") {
+            setUsageVersion((v) => v + 1);
+            // The agent of the turn can change the inputs (`manage_inputs`), and the server pushes nothing.
+            ws.refreshScope();
+        }
         prevStatus = status;
     });
 
-    const inputCount = createMemo(() => {
-        inputsVersion();
-        const a = ws.analysis;
-        if (!a) return 0;
-        return listAnalysisInputs(a.id).match(
-            (xs) => xs.length,
-            () => 0,
-        );
-    });
+    const inputCount = (): number => ws.inputCount ?? 0;
 
     // The open session's cumulative spend — the conversation's own calls AND every run it launched —
-    // read synchronously from the local ledger on the same pattern the ANALYSIS section's reads use.
-    // A SQLite aggregate needs neither the injected-seam indirection nor a poll of its own.
+    // read from the usage ledger of the server (`GET {A}/usage?threadId=`), which needs no poll of its own.
     //
-    // Three triggers, none of them a clock this section owns: the version signal above (bumped on the
-    // busy edge and on `run.observed`), and the two `sidebar_live` snapshots read below. A failed read
-    // is a degraded row, never a thrown render: the rail keeps every other section.
-    const usageSection = createMemo((): UsageSection => {
+    // Three triggers, none of them a clock this section owns: the version signal above, the open
+    // session, and the tick count of the poll read below. A failed read is a degraded row, never
+    // a thrown render: the rail keeps every other section. The section keeps its last answer while a new
+    // read is in flight, thus a refresh does not blink; before the first answer it reads "unavailable".
+    const [usageSection, setUsageSection] = createSignal<UsageSection>({ kind: "message", text: "unavailable" });
+    createEffect(() => {
         usageVersion();
-        // Read for the SUBSCRIPTION, not the value. `sidebar_live` republishes both snapshots as fresh
-        // objects on every refresh it performs — including each tick of the bounded poll it already
-        // arms while work is active and disarms when it is not — so reading them here puts this
-        // section on exactly that cadence. A second interval would be a second thing to keep armed and
-        // disarmed in step with the first, for a figure that is cumulative and whose lag understates.
-        runsSnapshot();
-        profileSnapshot();
+        // Read for the SUBSCRIPTION, not the value: one read for each tick of the poll. The snapshots of
+        // the ledger are not the edge, because a tick writes them two times, and a tick whose ledger read
+        // a newer refresh superseded writes them zero times. A second interval would be a second thing to
+        // keep armed and disarmed in step with the first.
+        pollTicks();
         const a = ws.analysis;
-        if (!a) return { kind: "message", text: "no analysis" };
+        if (!a) return setUsageSection({ kind: "message", text: "no analysis" });
         // A session identity cannot be resolved before boot, and the figure is a session's — so say
         // there is no session rather than silently widening to the analysis, which would report a
         // different question's answer under this section's label.
         const threadId = ws.sessionId;
-        if (threadId === null) return { kind: "message", text: "no open session" };
-        return getSessionUsageTotalsIncludingRuns(a.id, threadId).match(usageSectionOf, (): UsageSection => ({ kind: "message", text: "unavailable" }));
+        if (threadId === null) return setUsageSection({ kind: "message", text: "no open session" });
+        // Only the newest read may paint: an answer that a later trigger outran describes an older
+        // session or an older ledger.
+        let current = true;
+        onCleanup(() => {
+            current = false;
+        });
+        void fetchUsage(a.id, { threadId }, props.clientOpts).match(
+            (view) => {
+                if (current) setUsageSection(usageSectionOf(view.totals));
+            },
+            () => {
+                if (current) setUsageSection({ kind: "message", text: "unavailable" });
+            },
+        );
     });
     const usageQuantities = createMemo((): TokenQuantities | null => {
         const section = usageSection();
@@ -756,12 +734,6 @@ export function Sidebar(props: SidebarProps) {
         const snap = profileSnapshot();
         return entityFigureOf(snap.kind === "loaded" ? snap.usage : undefined);
     });
-    // Each listed run's figures, keyed by run id — the same publish as the rows themselves, so a row
-    // and its figure can never disagree about which read they came from.
-    const runFigures = createMemo((): ReadonlyMap<string, LlmUsageTotals> => {
-        const snap = runsSnapshot();
-        return snap.kind === "loaded" ? (snap.usageByRun ?? new Map()) : new Map();
-    });
 
     // The transfer rows and the package rows ride the gate store's poll: memos,
     // not bare accessors, because a row and its meter must describe the SAME
@@ -772,7 +744,7 @@ export function Sidebar(props: SidebarProps) {
     // DATA PROFILE / RUNS live data comes from the module store (see `hooks/sidebar_live.ts`), which
     // `App` refreshes on lifecycle edges + a bounded poll. The sidebar only reads the snapshots.
     const profileLine = createMemo(() => profileLineOf(profileSnapshot()));
-    const recentRuns = createMemo((): CortexRunRow[] => {
+    const recentRuns = createMemo((): RunSummary[] => {
         const s = runsSnapshot();
         if (s.kind !== "loaded") return [];
         // EVERY active run renders (each carries its own progress block), plus the newest few
@@ -812,11 +784,11 @@ export function Sidebar(props: SidebarProps) {
             backgroundColor={theme().bgRaised}
         >
             {/* The section stack scrolls when it outgrows the rail (the RUNS progress embed makes
-                its height variable) instead of clipping or squeezing sections. Never focused —
-                mouse-wheel only, so the pane's key layer stays disengaged and the rail steals no
-                keys from the chat. Nothing sits below the pane, so the scrollbox 1-cell bleed
-                (see cli/CLAUDE.md Layout) has no chrome row to bleed into. */}
-            <ScrollPane focusOnMount={false} flexGrow={1} minHeight={0} width="100%">
+                its height variable) instead of clipping or squeezing sections. Never focused, not
+                even by a click — mouse-wheel only, so the pane's key layer stays disengaged and the
+                rail steals no keys from the chat. Nothing sits below the pane, so the scrollbox 1-cell
+                bleed (see cli/CLAUDE.md Layout) has no chrome row to bleed into. */}
+            <ScrollPane focusOnMount={false} focusable={false} flexGrow={1} minHeight={0} width="100%">
                 <Section label="SESSION" value={sessionHandle()} onValueActivate={copySessionId}>
                     <Switch>
                         <Match when={openThread().kind === "unresolved"}>
@@ -831,7 +803,7 @@ export function Sidebar(props: SidebarProps) {
                             <text fg={theme().fgMuted}>new conversation</text>
                         </Match>
                         <Match when={thread()} keyed>
-                            {(t: Thread) => (
+                            {(t: ThreadSummary) => (
                                 <>
                                     {/* The title is pg-owned and seeded from the first user message, so a
                                     row can legitimately predate one; say so rather than render a blank line. */}
@@ -857,7 +829,7 @@ export function Sidebar(props: SidebarProps) {
                                     completed-profile line already uses. It may soft-wrap on long locales —
                                     accepted in the fixed-width rail, as it is there. */}
                                     <text fg={theme().fgMuted}>
-                                        {absTime(t.createdAt.toISOString())} {GLYPHS.middot} {props.messageCount()} msgs
+                                        {absTime(t.createdAt)} {GLYPHS.middot} {props.messageCount()} msgs
                                     </text>
                                 </>
                             )}
@@ -874,7 +846,7 @@ export function Sidebar(props: SidebarProps) {
                     </Show>
                     {/* Below the breakpoint the marker badge sits on its own line beside the resolved path. */}
                     <Show when={!isWide() && anchor()} keyed>
-                        {(a: Anchor) => (
+                        {(a: AnchorView) => (
                             <text fg={theme().fgMuted}>
                                 {a.markerWritten ? GLYPHS.check : GLYPHS.warning} {a.cachedPath}
                             </text>
@@ -960,7 +932,8 @@ export function Sidebar(props: SidebarProps) {
                                                     <Fg role="fgMuted">{label()}</Fg>
                                                     <Sep />
                                                     <Fg role="fgMuted">{when}</Fg>
-                                                    <EntityFigureSpan figure={entityFigureOf(runFigures().get(run.runId))} />
+                                                    {/* The figure rides the row itself, from the same read, so the two can never disagree. */}
+                                                    <EntityFigureSpan figure={entityFigureOf(run.usage)} />
                                                 </text>
                                                 {/* This run's live progress, directly under its own row. NON-keyed Show:
                                                 each poll mints a fresh snapshot object, and keyed would tear down and

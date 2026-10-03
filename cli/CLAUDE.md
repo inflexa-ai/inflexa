@@ -73,7 +73,7 @@ package, ask first. The default is to build on what is already here.
 ### Agent command policy — ask, never guess
 
 Each command in the registry (`src/cli/index.ts`) declares an `AgentPolicy` at
-registration, through `registerAction(command, policy, handler)`. That policy
+registration, through `registerAction(command, kind, policy, handler)`. That policy
 decides if the `run_inflexa` tool of the conversation agent can run the command:
 
 - `auto` — prompt-free, with a `safeFlags` allowlist
@@ -402,15 +402,36 @@ feature has its logic, its CLI command actions, and its logic-local types, under
 `src/modules/<domain>/`. Shared infrastructure with no single owner stays in the
 layer directories.
 
+The CLI has two sides of one HTTP API. The **server side** holds the state:
+`src/server/`, `src/modules/`, and `src/db/`. The **client side** reads and changes
+the state only through the API: `src/client/` and `src/tui/`. `src/api/` holds the
+wire types of the two sides. Refer to [The local server](#the-local-server).
+
 - `src/index.ts` — the entry point: the telemetry and log wiring, the shutdown
   hooks, then `cli.parse()`.
 - `src/cli/` — the commander command **registry** (`index.ts`) plus the help
-  format, and nothing else. Each command lazy-imports its action. A text command
-  comes from its module, for example `import("../modules/auth/login.ts")`. A TUI
-  screen comes from `tui/`, for example `import("../tui/app.launch.tsx")`.
-- `src/modules/<domain>/` — the feature slices (refer to [Modules](#modules)):
-  **headless** domain logic, plus the text command actions that operate them. An
-  interactive view is NOT here (refer to `tui/`). Today the slices are:
+  format, and nothing else. Each command lazy-imports its action. The action of
+  most `instance` commands comes from `client/commands/`, for example
+  `import("../client/commands/projects.ts")`. Each other action comes from its
+  module, for example `import("../modules/auth/login.ts")`. A TUI screen comes
+  from `tui/`, for example `import("../tui/app.launch.tsx")`.
+- `src/server/` — the local server (server side). `serve.ts` is the composition
+  root of `inflexa serve`. `app.ts` is the HTTP app with its bearer check, and
+  `routes/` holds the routes of each domain. The other files hold the boot, the
+  stop, the turn registry, the busy gate, the profile queue, and the analysis
+  guard. A route calls the logic of `src/modules/` and the
+  queries of `src/db/`.
+- `src/client/` — the HTTP client of the local server (client side): the
+  discovery and the start of a server (`server.ts`), the request helper (`api.ts`),
+  and one fetcher file for each domain. `client/commands/` holds the action of
+  each `instance` command and of the `server` commands.
+- `src/api/` — the wire types of the API, one file for each domain. It holds types
+  and constants only. A route and its fetcher import the same type, thus the two
+  sides cannot disagree on a shape.
+- `src/modules/<domain>/` — the feature slices (refer to [Modules](#modules)), on
+  the server side: **headless** domain logic that the routes call, plus the
+  command actions that are not in `client/commands/`. An interactive view is NOT
+  here (refer to `tui/`). Today the slices are:
   - `auth/` — the Auth0 device flow, with `login`, `logout`, and `whoami`
   - `proxy/` — the CLIProxyAPI model helpers in `models.ts`: the client API key
     discovery and the default-model rank. The container lifecycle is in `infra/`
@@ -419,8 +440,8 @@ layer directories.
   - `harness/` — the harness embedder. It boots the harness runtime (DBOS, the
     sandbox, the providers) and operates the chat turn, the model-free
     `run --plan` replay engine, the data profiler, and the provenance bridge.
-    Its `dev/` subdirectory holds the dev-channel command surfaces (`chat`,
-    `run`, `profile`) — refer to [The `dev/` subdirectory](#the-dev-subdirectory)
+    Its `dev/` subdirectory holds the dev-channel command surfaces (the `chat`
+    REPL and `run --plan`) — refer to [The `dev/` subdirectory](#the-dev-subdirectory)
   - `embedding/` — the embedding-provider resolution from the configuration, plus
     the in-process bge-small local model: the download, the check, and the
     lifecycle
@@ -430,17 +451,21 @@ layer directories.
     per-analysis farms, the acquisition flights, the catalog transfer, and the
     GHCR refs of the two images (`sandbox-base`, `sandbox-provisioner`) with the
     `sandbox` and `store` command actions
-  - `project/` — the project CRUD command actions (`project new`, `project ls`)
+  - `project/` — `projectForAnalysis`, the project of an analysis. The `project new` and
+    `project ls` commands are clients of the local server in
+    `src/client/commands/projects.ts`
   - `prov/` — the provenance recorder. It is a bus subscriber that builds, signs,
-    and stores the PROV document of each analysis. It gives `prov export` and
-    `prov verify`
+    and stores the PROV document of each analysis. It gives the export, the
+    verification, and the lineage walk that the provenance routes of the local
+    server call. The `prov export`, `prov lineage`, and `prov verify` commands are
+    clients of the server in `src/client/commands/prov.ts`
   - `staging/` — it puts the analysis input files under the `data/` root of the
     analysis workspace. It gives each file a content hash, and it writes the
     `StagedInput` manifest that the harness accepts.
-- `src/db/` — the shared SQLite layer: `primary.ts` (the connection),
+- `src/db/` — the shared SQLite layer (server side): `primary.ts` (the connection),
   `primary_migrations.ts`, `primary_query.ts`, `primary_mutation.ts`, `errors.ts`,
   and `util.ts`. The queries and the mutations stay here, verb-split, beside the
-  migrations. A module imports the functions that it wants.
+  migrations. A module or a route imports the functions that it wants.
 - `src/tui/` — the **presentation layer and app shell**: the entry app, plus the
   shared, app-level, or reusable Solid and opentui code. Today it has `app.tsx`
   (the root chat screen, which each command that opens a chat launches),
@@ -451,8 +476,9 @@ layer directories.
   type and the `noticeColor` mapping, because a notice kind maps onto a palette
   role), and `components/` (the shared, domain-agnostic widgets, below).
 
-  The presentation sits *above* the logic modules. It can import module logic
-  (view to logic), but a module must never import `tui/`. **Where a view lives**
+  The TUI is a client of the local server. It reads and changes the state through
+  `src/client/`, and it obeys the client import rule below. A module must never
+  import `tui/`. **Where a view lives**
   mirrors the `components/` and `modules/<m>/components/` split of Lumen. A shared,
   app-shell, or app-level screen goes here. A view that exactly one feature has
   colocates in that module. `app_config.tsx` is an app-level exception that lives
@@ -533,7 +559,7 @@ layer directories.
     Its **role** makes it different from `components/`: it is shell composition,
     not a reusable widget. It is a deliberate, scoped exception to the
     single-caller rule. A kit part CAN be single-caller, and it CAN import a domain
-    type or query. It stays here even when it is generic and multi-caller, for
+    type or a wire type. It stays here even when it is generic and multi-caller, for
     example `StatusBar`, which `app.tsx` and `app_config.tsx` share. The chat
     status is in the reactive `src/tui/hooks/status.ts` store, which is the pattern
     of `theme.ts`. The app only renders it.
@@ -586,6 +612,18 @@ layer directories.
   to each entity shape and `lib/bus.ts` refers to the events. To home them in a
   module would invert the dependency from infra to feature.
 
+**The client import rule.** A `no-restricted-imports` rule in `eslint.config.js`
+applies it to each static import of a file in `src/tui/` or `src/client/`.
+`src/client/import_boundary.test.ts` pins the rule.
+
+- A client must not import `src/db/`, `src/server/`, `lib/bus.ts`, the harness
+  runtime, or a module of `src/modules/`. The ban also covers a type-only import.
+- A client can import `src/api/`, the rest of `src/lib/`, `src/types/`, and
+  `@inflexa-ai/harness/contracts/*`. It can also import the pure module files that
+  the rule names, for example `modules/harness/plan_dag.ts`.
+- If a client needs a pure helper of a module, move the helper out of the module.
+  Do not add an exception for a module that holds state.
+
 ## Modules
 
 A module under `src/modules/<domain>/` groups each thing about one domain: its
@@ -606,8 +644,10 @@ only, and no barrels, per [Naming conventions](#naming-conventions).
 ### The `dev/` subdirectory
 
 A module whose commands are not all in the release build puts the dev-channel
-ones under `<module>/dev/`. Today that is `modules/harness/dev/`, which holds
-`chat`, `run`, and `profile`. The `dev-commands` spec is the contract.
+ones under `<module>/dev/`. Today that is `modules/harness/dev/`, which holds the
+`chat` REPL and `run --plan`. The dev `profile` command and `run --status` are
+clients of the local server, thus their actions are in `client/commands/runs.ts`.
+The `dev-commands` spec is the contract.
 
 The registration gate in `src/cli/index.ts` decides what a release build carries.
 The directory states the same fact in the tree, where a reader meets it first.
@@ -617,17 +657,69 @@ The directory states the same fact in the tree, where a reader meets it first.
   import `dev/`. A `no-restricted-imports` rule enforces this for a static
   import. It exempts the files under `dev/`, and nothing else. It does NOT see a
   dynamic `import()`, so that one form stays a review item. As a result the
-  registration gate in `src/cli/index.ts` needs no exemption. Its three lazy
-  imports pass on that gap. Thus the gate keeps the guard against a static
+  registration gate in `src/cli/index.ts` needs no exemption. Its lazy imports of
+  `dev/` pass on that gap. Thus the gate keeps the guard against a static
   import — refer to the rule's own comment for the reason.
 - **A shared helper stays outside.** If a product surface and a dev surface both
   call it, the helper belongs in the module that owns its subject, not in `dev/`.
-  `seedProfileLedger` (`profile_trigger.ts`) is the example: the parity trigger is
-  product code, so the shared half must be the one that stays.
+  `planToDag` (`modules/harness/plan_dag.ts`) is the example: the plan card of the
+  TUI and the `chat` REPL both draw a plan with it, thus it stays product code.
 - **Split a mixed file on the channel line.** When one file holds both kinds, the
   product part stays and the dev part moves. `chat_printer.ts` keeps the event
   readers that the TUI and the REPL share. The REPL's printer lives in
   `dev/chat.ts`.
+
+## The local server
+
+One local server for each OS user and each build channel holds the harness
+runtime, the SQLite database, and the package store work. The TUI and each
+`instance` command are clients of its HTTP API under `/api/v1`. The `local-server`
+spec is the contract.
+
+- **Run the dev server.** `bun run dev serve` runs the server of the dev channel in
+  the foreground, on `127.0.0.1:8436`. Ctrl+C stops it. If no server answers, an
+  `instance` command starts `inflexa serve --detach` in the background.
+- **Restart the server after a change.** A server runs the code that it loaded at
+  its start. After you change code on the server side, run
+  `bun run dev server stop`. The next `instance` command starts a server with the
+  new code. `bun run dev server status` and `bun run dev server logs` show the
+  state and the log of the server.
+- **The discovery file.** The server writes `<dataDir>/inflexa/server.dev.json`
+  with mode 0600 (`server.json` for a production build). It holds the pid, the
+  port, the bearer token, and the versions. A client reads it at each request.
+  `INFLEXA_SERVER_FILE` names a different file, and a client under this variable
+  starts no server.
+- **The sign-in.** The boot of the server never asks for a provider login. A
+  missing or dead login fails the boot with the reason `sign_in_required`.
+  `inflexa up` in a terminal signs in. Then it asks the failed server to boot again
+  (`POST /api/v1/server/boot`). The TUI offers the sign-in in a dialog, and it runs
+  `inflexa up` in its own terminal.
+- **The other clients.** The server pushes nothing. The TUI sees the work of a
+  different client through its poll (`watchSidebarData`, `src/tui/hooks/sidebar_live.ts`):
+  each 5 s with active work, and each 15 s when idle. A tick probes the server, and
+  it reads the runs, the analysis, the usage, and the open thread.
+- **The Host and Origin check.** The server answers only a request whose `Host`
+  header is `127.0.0.1:<port>` or `localhost:<port>`. An `Origin` header must name
+  the same address. Each other request gets 403 `forbidden`. A route test that
+  calls `request()` on the app sends no socket, thus it passes the check.
+- **The dev web page.** A dev server serves a web page of the API at `/gui/`.
+  `bun scripts/poc_gui.ts` prints its URL with the token, and `--open` opens it in
+  the browser.
+- **The command kinds.** `registerAction(command, kind, policy, handler)` takes a
+  `CommandKind`. An `instance` command connects to the server, or starts one,
+  before its action runs. A `machine` command and a `standalone` command run with
+  no server. A cloud job runs the `store`, `sandbox`, and `refs` commands with no
+  server, thus they stay `machine` or `standalone`.
+- **The tests.** The test preload sets `INFLEXA_SERVER_FILE`, thus a test never
+  starts a real server. For an e2e test of an `instance` command, call
+  `startTestServer()` (`src/test_support/server.ts`). It serves the routes in the
+  test process on a free port, with its own discovery file. Seed the state through
+  `src/db/` in the test. Give its `childEnv` to `runCliAsync`, never to `runCli`,
+  because a sync spawn blocks the event loop that must answer the child.
+- **The other tests.** A route that needs the runtime gives 503 under
+  `startTestServer()`, unless the test gives a `boot`. A TUI test or a client test
+  uses `fakeClient()` (`src/test_support/fake_client.ts`) and no server. A route
+  test in `src/server/` calls `request()` on the app or on its routes.
 
 ## Global extensions
 
@@ -666,8 +758,10 @@ more buses.
   `prov.recorded` with a nullable `input`.
 - **The event types are in `src/types/events.ts`.** The `BusEvent` discriminated
   union is the contract. Each member today is analysis-scoped provenance (`prov.*`,
-  which carries an `analysisId`). The harness conversation path writes the Solid
-  store directly, and it does not use the bus. A consumer filters by `type`.
+  which carries an `analysisId`). A consumer filters by `type`.
+- **The bus is in the server process.** Only the local server and its modules
+  publish and subscribe. A client never subscribes: it reads an endpoint again at
+  its next read edge.
 - **The design rationale:** a dedicated bus for each domain earns its keep only
   when that domain wants its own subscriber lifecycle, backpressure, or error
   isolation. The bus of inflexa is a fire-and-forget notification channel, with one
@@ -788,16 +882,13 @@ are `dialog/dialog_panel.tsx` (the footer) and `list_core.tsx` (the detail line)
 `yogaNode.getComputedLayout()`, expose the computed boxes. Sweep a range of
 heights, because these bugs depend on the size and a single size hides them.
 
-### Event bus (TUI consumption)
+### Server state in the TUI
 
-The bus contract and its design rationale are in
-[Event bus — one bus, typed events](#event-bus--one-bus-typed-events) above. These
-rules are TUI-specific:
-
-- Subscribe in the component setup with `Bus.on("inflexa", handler)`. Always pair
-  it with `onCleanup(() => Bus.off("inflexa", handler))`.
-- A handler must filter the events by `analysisId`, because each bus member is
-  analysis-scoped provenance. It applies only the domains that it has.
+The TUI does not subscribe to the bus, because the bus is in the server process.
+It reads the state again through `src/client/` on its own edges and schedule.
+Examples are the sidebar refresh, the transfer poll, and the end of its own turn. A
+chat turn and a run stream arrive as SSE frames. Refer to the `local-server` spec,
+"Polls take the place of the bus".
 
 ### Colors
 

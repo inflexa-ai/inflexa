@@ -61,6 +61,9 @@ const anthropicAuthTokenVar = "ANTHROPIC_AUTH_TOKEN";
 // sole `process.env` reader) — see {@link updateNoticeSuppressed}.
 const noUpdateNoticeVar = "INFLEXA_NO_UPDATE_NOTIFIER";
 const ciVar = "CI";
+// The discovery file of a local server that a different owner starts, for example a test server on a free
+// port. A client never starts a server for it. Not in --help: no user flow needs it.
+const serverFileVar = "INFLEXA_SERVER_FILE";
 
 /**
  * The api-key embedding secret's variable NAME. Unlike this file's other variable names it is EXPORTED,
@@ -176,11 +179,12 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
  *     reads or writes the production one.
  *
  * Production values are byte-identical to their historical form, so an installed binary is untouched; dev
- * gets fixed sibling ports (proxy 8318, postgres 8434, admin 8435) and sibling paths (`cliproxy-dev/`,
+ * gets fixed sibling ports (proxy 8318, postgres 8434, admin 8435, server 8436) and sibling paths (`cliproxy-dev/`,
  * `postgres-dev/`, `docker-compose.dev.yml`). Dev Postgres deliberately avoids 8433 — the PRODUCTION DBOS
  * admin server binds it, so a dev Postgres there would EADDRINUSE the first harness boot on a dual-build
- * machine — plus 5432 (system PG) and 5433 (the harness testcontainer). Run together, the full bound-port
- * set is six distinct listeners: prod {8317, 8432, 8433} ∪ dev {8318, 8434, 8435}.
+ * machine — plus 5432 (system PG) and 5433 (the harness testcontainer). The production server takes 8431, so
+ * the production 84xx ports stay one block (8431-8433) below the dev block (8434-8436). Run together, the full
+ * bound-port set is eight distinct listeners: prod {8317, 8431, 8432, 8433} ∪ dev {8318, 8434, 8435, 8436}.
  */
 export type StackPorts = {
     /** Host port the CLIProxyAPI container publishes (also the URL the chat backend connects to). */
@@ -196,11 +200,18 @@ export type StackPorts = {
      * installed prod runtime are provably never contending for a bind.
      */
     readonly admin: number;
+    /**
+     * Host port the local Inflexa server (`inflexa serve`, src/server/) binds on `127.0.0.1`. The server also
+     * writes it to its discovery file, which is where each client reads it.
+     */
+    readonly server: number;
 };
 
-/** Channel-aware host ports for the stack — dev siblings (8318/8434/8435) off the production trio (8317/8432/8433). See {@link StackPorts}. */
+/** Channel-aware host ports for the stack — dev siblings (8318/8434/8435/8436) off the production set (8317/8432/8433/8431). See {@link StackPorts}. */
 export function stackPorts(channel: string | undefined): StackPorts {
-    return isDevelopmentBuild(channel) ? { cliproxy: 8318, postgres: 8434, admin: 8435 } : { cliproxy: 8317, postgres: 8432, admin: 8433 };
+    return isDevelopmentBuild(channel)
+        ? { cliproxy: 8318, postgres: 8434, admin: 8435, server: 8436 }
+        : { cliproxy: 8317, postgres: 8432, admin: 8433, server: 8431 };
 }
 
 /**
@@ -222,7 +233,7 @@ export function isReservedPostgresPort(port: number): boolean {
     return reservedPostgresPorts.includes(port);
 }
 
-/** The five host-side stack paths that must not be shared across build channels. See {@link stackPaths}. */
+/** The host-side stack paths that must not be shared across build channels. See {@link stackPaths}. */
 export type StackPaths = {
     /** CLIProxyAPI config file, bind-mounted into the proxy container. */
     readonly cliproxyConfigPath: string;
@@ -238,6 +249,14 @@ export type StackPaths = {
      * an installed production binary, whose step list can differ.
      */
     readonly setupStatePath: string;
+    /**
+     * The discovery file of the local Inflexa server: its pid, port, bearer token, and versions, written with
+     * mode 0600 after the bind and removed at its stop. Channel-aware, because a dev client must never send
+     * its requests with the token of a production server, or the reverse.
+     */
+    readonly serverFilePath: string;
+    /** The output of a background server (`inflexa serve --detach`). Channel-aware, because two servers must not rotate one file. */
+    readonly serverLogPath: string;
 };
 
 /**
@@ -251,12 +270,16 @@ export function stackPaths(dataDirBase: string, channel: string | undefined): St
     const postgresDir = dev ? "postgres-dev" : "postgres";
     const composeFile = dev ? "docker-compose.dev.yml" : "docker-compose.yml";
     const setupStateFile = dev ? "setup-state.dev.json" : "setup-state.json";
+    const serverFile = dev ? "server.dev.json" : "server.json";
+    const serverLogFile = dev ? "server.dev.log" : "server.log";
     return {
         cliproxyConfigPath: join(dataDirBase, "inflexa", proxyDir, "config.yaml"),
         cliproxyAuthDir: join(dataDirBase, "inflexa", proxyDir, "auth"),
         postgresDataDir: join(dataDirBase, "inflexa", postgresDir),
         composeFilePath: join(dataDirBase, "inflexa", composeFile),
         setupStatePath: join(dataDirBase, "inflexa", setupStateFile),
+        serverFilePath: join(dataDirBase, "inflexa", serverFile),
+        serverLogPath: join(dataDirBase, "inflexa", "logs", serverLogFile),
     };
 }
 
@@ -348,6 +371,18 @@ export const env = Object.freeze({
      * last run failed". See src/modules/infra/setup.ts.
      */
     setupStatePath: stackDirs.setupStatePath,
+    /**
+     * The discovery file of the local Inflexa server: `INFLEXA_SERVER_FILE` when it is set, else the channel
+     * default of {@link StackPaths.serverFilePath}. The server writes it and each client reads it.
+     */
+    serverFilePath: process.env[serverFileVar] || stackDirs.serverFilePath,
+    /**
+     * True when a client can start a server in the background. False under `INFLEXA_SERVER_FILE`: that file
+     * names a server that a different owner starts and stops, for example a test.
+     */
+    serverAutoStart: !process.env[serverFileVar],
+    /** The output of a background server. See {@link StackPaths.serverLogPath}. */
+    serverLogPath: stackDirs.serverLogPath,
     configPath: join(configDir(), "inflexa", "config.json"),
     authPath: join(configDir(), "inflexa", "auth.json"),
     provKeyPath: join(configDir(), "inflexa", "prov_key.json"),
@@ -369,6 +404,8 @@ export const env = Object.freeze({
      * env path. See {@link stackPorts} for the port-family and cross-channel collision-avoidance rationale.
      */
     adminPort: stack.admin,
+    /** Host port that the local Inflexa server binds: the channel default of {@link StackPorts.server}. */
+    serverPort: stack.server,
     /**
      * The build-baked identity of the embedded skills/templates archive — a short hash over the
      * archived file set (see scripts/build.ts), naming the {@link env.contentDir} subdirectory the
@@ -507,7 +544,19 @@ export type EnvDocEntry = { kind: "path"; label: string; description: string; ba
 /** Rendered into the Paths/Environment sections of --help (src/cli/index.ts). */
 export const envDoc: Readonly<
     Record<
-        Exclude<keyof typeof env, "cliproxyPort" | "cliproxyBaseUrl" | "cliproxyApiUrl" | "postgresPort" | "adminPort" | "isDevelopment" | "contentHash">,
+        Exclude<
+            keyof typeof env,
+            | "cliproxyPort"
+            | "cliproxyBaseUrl"
+            | "cliproxyApiUrl"
+            | "postgresPort"
+            | "adminPort"
+            | "serverPort"
+            | "serverFilePath"
+            | "serverAutoStart"
+            | "isDevelopment"
+            | "contentHash"
+        >,
         EnvDocEntry
     >
 > = Object.freeze({
@@ -576,6 +625,12 @@ export const envDoc: Readonly<
         kind: "path",
         label: "setup checkpoint",
         description: "the step a failed `inflexa setup` stopped at; deleted when a run completes",
+        baseVar: dataVar,
+    },
+    serverLogPath: {
+        kind: "path",
+        label: "server log",
+        description: "output of the background local server; it rotates at 10 MiB and keeps one old file (.1)",
         baseVar: dataVar,
     },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },

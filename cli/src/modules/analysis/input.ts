@@ -1,10 +1,10 @@
-import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { ok, err, type Result } from "neverthrow";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { statResult } from "../../lib/fs.ts";
-import { canonicalPath, findMarkerUpwards } from "../anchor/marker.ts";
+import { canonicalPath, expandAndResolve } from "../../lib/paths.ts";
+import { findMarkerUpwards } from "../anchor/marker.ts";
 import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
 
 /**
@@ -18,16 +18,6 @@ import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
  * add path of `addInputs`, a deliberate user action, which is what the no-litter policy
  * demands of a recovery; the marker-present branch of the ensure writes nothing to disk.
  */
-/**
- * Expand a leading `~` to the home directory, then resolve against `cwd` — the front half of
- * input-path classification, shared with existence pre-checks and removal matching so all three
- * agree on what a raw path resolves to.
- */
-export function expandAndResolve(cwd: string, rawPath: string): string {
-    const expanded = rawPath.startsWith("~") ? join(homedir(), rawPath.slice(1)) : rawPath;
-    return resolve(cwd, expanded);
-}
-
 export function classifyInputPath(analysisId: string, rawPath: string, cwd: string): Result<AnalysisInput, DbError> {
     const target = expandAndResolve(cwd, rawPath);
 
@@ -65,24 +55,26 @@ export function classifyInputPath(analysisId: string, rawPath: string, cwd: stri
 /**
  * Inverse of `classifyInputPath`: resolve a stored ref to an absolute path. Anchor-relative
  * refs ride the anchor's live (reconciled) location; `null` when the anchor can't be resolved.
+ * `touch` passes to `resolveAnchor`.
  */
-export function resolveInputPath(input: AnalysisInput): Result<string | null, DbError> {
+export function resolveInputPath(input: AnalysisInput, opts?: { touch?: boolean }): Result<string | null, DbError> {
     if (input.anchorId === null) return ok(input.path);
     // A missing anchor row (null resolved) or unlocated folder (null path) both mean "can't resolve".
-    return resolveAnchor(input.anchorId).map((resolved) => (resolved?.path == null ? null : join(resolved.path, input.path)));
+    return resolveAnchor(input.anchorId, opts).map((resolved) => (resolved?.path == null ? null : join(resolved.path, input.path)));
 }
 
 /**
  * Match raw paths against a set of registered inputs for REMOVAL — by the stored ref `path` OR the
  * resolved absolute path (`{cwd}`-relative raw paths resolve the same way `classifyInputPath` would).
  * Existence on disk is deliberately NOT required: an input whose file was moved or deleted must stay
- * removable. Returns the matched inputs and the raw paths that matched no current input.
+ * removable. Returns the matched inputs and the raw paths that matched no current input. A match is a
+ * lookup, not a sighting of the folder, thus it records no `lastSeen`.
  */
 export function matchInputRefs(inputs: readonly AnalysisInput[], rawPaths: readonly string[], cwd: string): { matched: AnalysisInput[]; notInputs: string[] } {
     const byStored = new Map(inputs.map((i) => [i.path, i]));
     const byAbs = new Map<string, AnalysisInput>();
     for (const input of inputs) {
-        const abs = resolveInputPath(input).unwrapOr(null);
+        const abs = resolveInputPath(input, { touch: false }).unwrapOr(null);
         if (abs !== null) byAbs.set(abs, input);
     }
     const matched: AnalysisInput[] = [];

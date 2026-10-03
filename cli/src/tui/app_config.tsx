@@ -4,10 +4,13 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 
-import { requireInteractiveTerminal } from "../lib/cli.ts";
-import { readConfig, resolvePostgresConfig, writeConfig, type Config } from "../lib/config.ts";
+import type { EmbeddingDefaults, EmbeddingSettings, PostgresSettings, ServerSettings, ServerSettingsValues, SettingsPatch } from "../api/machine.ts";
+import { DEFAULT_CLIENT_OPTS, describeClientError, type ClientOpts } from "../client/api.ts";
+import { fetchEmbeddingModels, fetchSettings, updateSettings } from "../client/machine.ts";
+import { fail, requireInteractiveTerminal } from "../lib/cli.ts";
+import { readConfig, writeConfig } from "../lib/config.ts";
 import { env, isReservedPostgresPort } from "../lib/env.ts";
-import { GLYPHS, themes, themeIds } from "../lib/design_system.ts";
+import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
@@ -19,16 +22,21 @@ import { SelectDialog } from "./components/dialog/select_dialog.tsx";
 import { FilePicker } from "./components/dialog/file_picker.tsx";
 import { ScrollPane } from "./components/scroll_pane.tsx";
 import { runtimes, runtimeIds } from "../lib/container.ts";
-import { listEmbeddingModels } from "../modules/embedding/api_models.ts";
-import { explicitPostgresFields } from "../modules/infra/setup.ts";
-import { DEFAULT_API_BASE_URL, DEFAULT_API_EMBEDDING_DIMENSIONS } from "../modules/embedding/resolve.ts";
-import { LOCAL_EMBEDDING_DIMENSIONS } from "../modules/embedding/local-provider.ts";
 import { claimUpdateNotice } from "../modules/update/notice.ts";
 
-// `-?` strips optionality in the mapping: without it, an optional Config field (e.g. `keybinds`)
-// makes its mapped value `never | undefined`, leaking `undefined` into the indexed union.
-/** Config keys whose value is a boolean — the toggleable settings. */
-type BooleanSettingKey = { [K in keyof Config]-?: Config[K] extends boolean ? K : never }[keyof Config];
+/**
+ * What the settings screen edits: the theme, which is a client key of this machine's config file, and the
+ * server keys, which the server reads and writes (`GET` and `PATCH /api/v1/settings`). The server never sends
+ * a secret, thus `password` and `apiKey` hold only a new value that the user entered.
+ */
+type SettingsDraft = Omit<ServerSettingsValues, "postgres" | "embedding"> & {
+    theme: ThemeId;
+    postgres: PostgresSettings & { password?: string };
+    embedding: EmbeddingSettings & { apiKey?: string };
+};
+
+/** Draft keys whose value is a boolean — the toggleable settings. */
+type BooleanSettingKey = { [K in keyof SettingsDraft]-?: SettingsDraft[K] extends boolean ? K : never }[keyof SettingsDraft];
 
 type Setting = {
     key: BooleanSettingKey;
@@ -75,25 +83,24 @@ const PG_FIELD_LABELS: Record<PgField, string> = {
 type EmbeddingChoice = "builtin" | "custom" | "api-key" | "off";
 
 /**
- * One line describing the active backend for the settings row. NEVER prints the api key — it is a
- * remote secret and this row is always on screen (unlike the local postgres password, which is not).
+ * One line describing the active backend for the settings row. It says only whether an api key is set.
  *
  * The embedding block is a mode-discriminated union, so a single summary is the honest rendering:
  * showing every `embedding.*` field at once would put a model path beside an api key beside a base url,
  * most of them inapplicable to the active backend.
  */
-function embeddingSummary(e: Config["embedding"]): string {
+function embeddingSummary(e: SettingsDraft["embedding"], defaults: EmbeddingDefaults): string {
     switch (e.mode) {
         case "off":
             return "off";
         case "api-key":
-            return `api-key — ${e.model ?? "default model"} (${e.dimensions ?? DEFAULT_API_EMBEDDING_DIMENSIONS}-dim)`;
+            return `api-key — ${e.model ?? "default model"} (${e.dimensions ?? defaults.apiDimensions}-dim), key ${secretState(e.apiKey, e.apiKeySet)}`;
         case "local": {
             // An unset path means a config that never ran setup; it resolves to the built-in location,
             // so it reads as the built-in model rather than as a mystery custom one.
             const path = e.modelPath;
-            if (path === undefined || path === env.embeddingModelPath) return `local — built-in bge-small (${LOCAL_EMBEDDING_DIMENSIONS}-dim)`;
-            return `local — ${basename(path)} (${e.dimensions ?? LOCAL_EMBEDDING_DIMENSIONS}-dim)`;
+            if (path === undefined || path === defaults.builtinModelPath) return `local — built-in bge-small (${defaults.localDimensions}-dim)`;
+            return `local — ${basename(path)} (${e.dimensions ?? defaults.localDimensions}-dim)`;
         }
         default: {
             const _exhaustive: never = e.mode;
@@ -101,6 +108,11 @@ function embeddingSummary(e: Config["embedding"]): string {
             return "off";
         }
     }
+}
+
+/** "set" when the user entered a new secret or the config holds one. The server never sends the secret itself. */
+function secretState(entered: string | undefined, stored: boolean): "set" | "not set" {
+    return entered !== undefined || stored ? "set" : "not set";
 }
 
 const sections: Section[] = [
@@ -119,15 +131,24 @@ const EMBEDDING_SECTION = PG_FIELD_SECTIONS_START + PG_FIELDS.length;
 /** Upper bound on the api-key model probe. A hung endpoint must not keep the "Fetching models…" notice up: the abort trips this timeout, and the fetch then degrades to manual model-id entry like any other listing failure. */
 const MODEL_FETCH_TIMEOUT_MS = 10_000;
 
-export function ConfigApp(props: { onClose?: () => void }) {
+export function ConfigApp(props: { settings: ServerSettings; onClose?: () => void; clientOpts?: ClientOpts }) {
     const renderer = useRenderer();
-    // Read config once; saved and draft both start from it. Focus starts on the first
-    // section (the telemetry toggle) — the top of the form — so every section, including
-    // the toggles, is reachable by walking down from a fixed, predictable origin.
-    // Seed postgres with resolved defaults so the form shows every field even when
-    // config.json has no `postgres` key. These resolved defaults are NOT persisted verbatim —
-    // save() filters the block to explicit non-default choices (see explicitPostgresFields).
-    const initial = { ...readConfig(), postgres: resolvePostgresConfig() };
+    // Saved and draft both start from the server settings and the theme of this machine. Focus starts on
+    // the first section (the telemetry toggle) — the top of the form — so every section, including the
+    // toggles, is reachable by walking down from a fixed, predictable origin. The server resolves the
+    // Postgres defaults, so the form shows every field even when config.json has no `postgres` key; the
+    // server persists only the explicit non-default choices.
+    /* eslint-disable solid/reactivity -- seed-once: the screen mounts once over the settings that its opener read, and the form owns the draft after that */
+    const defaults = props.settings.embeddingDefaults;
+    const clientOpts = props.clientOpts ?? DEFAULT_CLIENT_OPTS;
+    const initial: SettingsDraft = {
+        theme: readConfig().theme,
+        telemetry: props.settings.telemetry,
+        runtime: props.settings.runtime,
+        postgres: props.settings.postgres,
+        embedding: props.settings.embedding,
+    };
+    /* eslint-enable solid/reactivity */
     const [saved, setSaved] = createSignal(initial);
     const [draft, setDraft] = createSignal(initial);
     const [section, setSection] = createSignal(0);
@@ -150,10 +171,10 @@ export function ConfigApp(props: { onClose?: () => void }) {
         if (reason !== "commit") setTheme(saved().theme);
     });
 
-    /** The draft's postgres config — guaranteed non-null (seeded with resolved defaults). */
-    const pgDraft = () => draft().postgres!;
-    /** The saved postgres config — guaranteed non-null (seeded with resolved defaults). */
-    const pgSaved = () => saved().postgres!;
+    /** The draft's postgres connection, resolved by the server. */
+    const pgDraft = () => draft().postgres;
+    /** The saved postgres connection, resolved by the server. */
+    const pgSaved = () => saved().postgres;
 
     /** The draft's embedding block — guaranteed present (the schema defaults it to `{ mode: "off" }`). */
     const embDraft = () => draft().embedding;
@@ -212,7 +233,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 const rt = draft().runtime;
                 // Unset renders both radios empty; index -1 clamps so the first arrow
                 // press lands on the registry's first entry instead of skipping it.
-                const current = rt === undefined ? -1 : runtimeIds.indexOf(rt);
+                const current = rt === null ? -1 : runtimeIds.indexOf(rt);
                 const id = runtimeIds[Math.min(runtimeIds.length - 1, Math.max(0, current + delta))]!;
                 setDraft({ ...draft(), runtime: id });
                 break;
@@ -255,7 +276,10 @@ export function ConfigApp(props: { onClose?: () => void }) {
         dialogPush(() => (
             <PromptDialog
                 title={`postgres.${field}`}
-                value={String(pgDraft()[field])}
+                value={field === "password" ? (pgDraft().password ?? "") : String(pgDraft()[field])}
+                description={
+                    field === "password" ? () => <text fg={theme().fgMuted}>Enter a new password. The server never shows the current one.</text> : undefined
+                }
                 validate={(value) => validatePgField(field, value)}
                 onSubmit={(value: string) => {
                     dialogClose();
@@ -315,7 +339,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
      * to `local` must not inherit the api key (and vice versa), or a stale field from the abandoned
      * backend would ride along in config.json and resurface if the user switched back.
      */
-    function applyEmbedding(next: Config["embedding"]): void {
+    function applyEmbedding(next: SettingsDraft["embedding"]): void {
         setDraft({ ...draft(), embedding: next });
         setNotice(null);
         setQuitArmed(false);
@@ -326,11 +350,18 @@ export function ConfigApp(props: { onClose?: () => void }) {
      * optional `validate` re-asks IN the dialog on a bad value (see PromptDialog), so `onSubmit` — which
      * still closes the dialog before running its continuation — only ever fires for a validated value.
      */
-    function promptField(title: string, value: string, onSubmit: (value: string) => void, validate?: (value: string) => string | undefined): void {
+    function promptField(
+        title: string,
+        value: string,
+        onSubmit: (value: string) => void,
+        validate?: (value: string) => string | undefined,
+        description?: string,
+    ): void {
         dialogPush(() => (
             <PromptDialog
                 title={title}
                 value={value}
+                description={description === undefined ? undefined : () => <text fg={theme().fgMuted}>{description}</text>}
                 validate={validate}
                 onSubmit={(v: string) => {
                     dialogClose();
@@ -378,8 +409,13 @@ export function ConfigApp(props: { onClose?: () => void }) {
                     if (path === undefined) return;
                     // Omit `dimensions` when it equals the built-in width — the local provider defaults to it,
                     // so recording it would only bloat config.json. Mirrors modules/embedding/setup.ts's branch.
-                    promptDimensions("local", LOCAL_EMBEDDING_DIMENSIONS, (dimensions) =>
-                        applyEmbedding({ mode: "local", modelPath: path, ...(dimensions === LOCAL_EMBEDDING_DIMENSIONS ? {} : { dimensions }) }),
+                    promptDimensions("local", defaults.localDimensions, (dimensions) =>
+                        applyEmbedding({
+                            mode: "local",
+                            modelPath: path,
+                            apiKeySet: false,
+                            ...(dimensions === defaults.localDimensions ? {} : { dimensions }),
+                        }),
                     );
                 }}
                 onCancel={() => {}}
@@ -387,72 +423,85 @@ export function ConfigApp(props: { onClose?: () => void }) {
         ));
     }
 
-    /** Key → base URL → (fetched model selection, or free-text on a failed listing) → width. */
+    /**
+     * Key → base URL → (fetched model selection, or free-text on a failed listing) → width. An empty key keeps
+     * the key that the config holds. The client never has that key, thus it cannot list the models with it,
+     * and the user enters the model id.
+     */
     function openApiKeyFlow(): void {
+        const stored = saved().embedding.apiKeySet;
         promptField(
             "embedding.apiKey",
             embDraft().apiKey ?? "",
             (rawKey) => {
-                // Validated non-empty below, so the continuation always has a real key to carry forward.
-                const apiKey = rawKey.trim();
-                promptField("embedding.baseURL", embDraft().baseURL ?? DEFAULT_API_BASE_URL, (rawUrl) => {
-                    const baseURL = rawUrl.trim() === "" ? DEFAULT_API_BASE_URL : rawUrl.trim();
+                // Validated below: an empty key passes only when the config holds one, and `null` keeps it.
+                const apiKey = rawKey.trim() === "" ? null : rawKey.trim();
+                promptField("embedding.baseURL", embDraft().baseURL ?? defaults.apiBaseUrl, (rawUrl) => {
+                    const baseURL = rawUrl.trim() === "" ? defaults.apiBaseUrl : rawUrl.trim();
+                    if (apiKey === null) {
+                        setNotice({ kind: "info", text: "The stored key stays on the server, thus the models cannot be listed — enter the model id." });
+                        promptField("embedding.model", embDraft().model ?? "", (model) => finishApiKey(null, baseURL, model.trim()));
+                        return;
+                    }
                     setNotice({ kind: "info", text: `Fetching models from ${baseURL}…` });
                     // Supersede any prior in-flight probe, then bound this one so a hung endpoint aborts.
                     modelFetchController?.abort();
                     const controller = new AbortController();
                     modelFetchController = controller;
                     const timer = setTimeout(() => controller.abort(), MODEL_FETCH_TIMEOUT_MS);
-                    void listEmbeddingModels(baseURL, apiKey, controller.signal).then((result) => {
+                    // Every listing failure degrades the same way, so they share one branch: an endpoint
+                    // that is offline, gates /models, times out, or names its models unconventionally is
+                    // still configurable by typing the id. A request to the server that failed is one more.
+                    const listing = fetchEmbeddingModels(baseURL, apiKey, controller.signal, clientOpts).match(
+                        (list) => list.models,
+                        () => null,
+                    );
+                    void listing.then((ids) => {
                         clearTimeout(timer);
                         // Unmounted, or a newer probe replaced this one → the flow this continuation targets is
                         // gone; run NOTHING (no setNotice / dialogPush / promptField onto a dead screen). A live
                         // timeout leaves both checks false, so it falls through to the failure branch below.
                         if (disposed || modelFetchController !== controller) return;
                         modelFetchController = null;
-                        result.match(
-                            (ids) => {
-                                setNotice(null);
-                                dialogPush(() => (
-                                    <SelectDialog<string>
-                                        title="Embedding model"
-                                        emptyText="No embedding models matched"
-                                        items={ids.map((id) => ({ value: id, title: id }))}
-                                        onSelect={(id: string) => {
-                                            dialogClose();
-                                            finishApiKey(apiKey, baseURL, id);
-                                        }}
-                                        onCancel={() => {}}
-                                    />
-                                ));
-                            },
-                            // Every listing failure degrades the same way, so they share one branch: an endpoint
-                            // that is offline, gates /models, times out, or names its models unconventionally is
-                            // still configurable by typing the id.
-                            () => {
-                                setNotice({ kind: "warn", text: "Could not list models from that endpoint — enter the model id manually." });
-                                promptField("embedding.model", embDraft().model ?? "", (model) => finishApiKey(apiKey, baseURL, model.trim()));
-                            },
-                        );
+                        if (ids === null) {
+                            setNotice({ kind: "warn", text: "Could not list models from that endpoint — enter the model id manually." });
+                            promptField("embedding.model", embDraft().model ?? "", (model) => finishApiKey(apiKey, baseURL, model.trim()));
+                            return;
+                        }
+                        setNotice(null);
+                        dialogPush(() => (
+                            <SelectDialog<string>
+                                title="Embedding model"
+                                emptyText="No embedding models matched"
+                                items={ids.map((id) => ({ value: id, title: id }))}
+                                onSelect={(id: string) => {
+                                    dialogClose();
+                                    finishApiKey(apiKey, baseURL, id);
+                                }}
+                                onCancel={() => {}}
+                            />
+                        ));
                     });
                 });
             },
-            (value) => (value.trim() === "" ? "An API key is required for api-key mode." : undefined),
+            (value) => (value.trim() === "" && !stored ? "An API key is required for api-key mode." : undefined),
+            stored ? "The config holds a key. Leave this empty to keep it, or enter a new key." : undefined,
         );
     }
 
-    /** The shared tail of both api-key paths: width, then apply. An empty model defers to the harness default. */
-    function finishApiKey(apiKey: string, baseURL: string, model: string): void {
-        promptDimensions("api-key", DEFAULT_API_EMBEDDING_DIMENSIONS, (dimensions) =>
+    /** The shared tail of each api-key path: width, then apply. An empty model defers to the harness default. A `null` key keeps the stored key. */
+    function finishApiKey(apiKey: string | null, baseURL: string, model: string): void {
+        promptDimensions("api-key", defaults.apiDimensions, (dimensions) =>
             // Omit `dimensions` when it equals the api-key default width — resolve.ts passes it straight
             // through and the harness provider falls back to the same 1536 regardless of model, so recording
             // it would only bloat config.json. Mirrors the custom-GGUF branch's built-in-width omission.
             applyEmbedding({
                 mode: "api-key",
-                apiKey,
+                apiKeySet: true,
+                ...(apiKey === null ? {} : { apiKey }),
                 baseURL,
                 ...(model === "" ? {} : { model }),
-                ...(dimensions === DEFAULT_API_EMBEDDING_DIMENSIONS ? {} : { dimensions }),
+                ...(dimensions === defaults.apiDimensions ? {} : { dimensions }),
             }),
         );
     }
@@ -462,10 +511,10 @@ export function ConfigApp(props: { onClose?: () => void }) {
             case "builtin":
                 // The built-in model needs no input: its path is env-managed and its width is fixed, so
                 // recording no `dimensions` lets the provider's own default apply.
-                applyEmbedding({ mode: "local", modelPath: env.embeddingModelPath });
+                applyEmbedding({ mode: "local", modelPath: defaults.builtinModelPath, apiKeySet: false });
                 break;
             case "off":
-                applyEmbedding({ mode: "off" });
+                applyEmbedding({ mode: "off", apiKeySet: false });
                 break;
             case "custom":
                 openCustomGgufFlow();
@@ -489,7 +538,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
                     {
                         value: "builtin",
                         title: "Built-in model",
-                        description: `bge-small-en-v1.5 — ${LOCAL_EMBEDDING_DIMENSIONS}-dim, bundled, no API key or network`,
+                        description: `bge-small-en-v1.5 — ${defaults.localDimensions}-dim, bundled, no API key or network`,
                     },
                     { value: "custom", title: "Your own GGUF", description: "Pick a local model file you already have" },
                     { value: "api-key", title: "API key", description: "A remote OpenAI-compatible embeddings endpoint" },
@@ -516,29 +565,41 @@ export function ConfigApp(props: { onClose?: () => void }) {
         setQuitArmed(false);
     }
 
-    function save() {
+    async function save(): Promise<void> {
         if (!dirty()) {
             setNotice({ kind: "info", text: "No changes to save." });
             return;
         }
         const next = draft();
-        // config.json is shared by both build channels, so a postgres field the user merely ACCEPTED at its
-        // channel default must not be frozen into the file — that would override the other channel's sibling
-        // default and re-create the port collision explicitPostgresFields exists to prevent. Persist only the
-        // fields that differ from their defaults; an all-defaults result drops the `postgres` key entirely
-        // (JSON.stringify omits an `undefined` value). saved() still holds the FULL resolved draft so the
-        // on-screen form keeps every field populated — mirroring how setup returns the full connection for
-        // this-run use but persists only the filtered block.
-        const explicit = explicitPostgresFields(pgDraft());
-        const persisted = Object.keys(explicit).length === 0 ? undefined : explicit;
-        writeConfig({ ...next, postgres: persisted }).match(
-            () => {
-                setSaved(next);
-                setNotice({ kind: "info", text: "Saved." });
-                setQuitArmed(false);
-            },
-            (error) => setNotice({ kind: "error", text: `Failed to save: ${error.type}` }),
-        );
+        // The theme is a client key of this machine. The other keys belong to the server, which persists
+        // only the postgres fields that differ from their channel defaults. saved() still holds the FULL
+        // resolved draft so the on-screen form keeps every field populated.
+        if (next.theme !== saved().theme) {
+            const theme = writeConfig({ ...readConfig(), theme: next.theme });
+            if (theme.isErr()) {
+                setNotice({ kind: "error", text: `Failed to save: ${theme.error.type}` });
+                return;
+            }
+        }
+        // A secret that the user did not enter is absent from the patch, and the server keeps the stored one.
+        const { passwordSet: _passwordSet, ...postgres } = next.postgres;
+        const { apiKeySet: _apiKeySet, ...embedding } = next.embedding;
+        const patch: SettingsPatch = {
+            ...(next.telemetry === saved().telemetry ? {} : { telemetry: next.telemetry }),
+            ...(next.runtime === saved().runtime ? {} : { runtime: next.runtime }),
+            ...(PG_FIELDS.some((f) => next.postgres[f] !== saved().postgres[f]) ? { postgres } : {}),
+            ...(embeddingChanged() ? { embedding } : {}),
+        };
+        if (Object.keys(patch).length > 0) {
+            const updated = await updateSettings(patch, clientOpts);
+            if (updated.isErr()) {
+                setNotice({ kind: "error", text: `Failed to save: ${describeClientError(updated.error)}` });
+                return;
+            }
+        }
+        setSaved(next);
+        setNotice({ kind: "info", text: "Saved." });
+        setQuitArmed(false);
     }
 
     function exit() {
@@ -587,7 +648,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
             { chord: KEYS.q, run: requestExit },
             { chord: KEYS.escape, run: requestExit },
             { chord: { key: "c", ctrl: true }, run: requestExit },
-            { chord: { key: "s" }, run: save },
+            { chord: { key: "s" }, run: () => void save() },
             { chord: KEYS.space, run: toggleFocused },
             {
                 chord: KEYS.enter,
@@ -703,7 +764,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
                         // eslint-disable-next-line solid/reactivity -- PG_FIELDS is static; the index is stable for the row's lifetime, so seeding-once is safe.
                         const fieldSection = PG_FIELD_SECTIONS_START + i();
                         const focused = () => section() === fieldSection;
-                        const value = () => String(pgDraft()[field]);
+                        const value = () => (field === "password" ? secretState(pgDraft().password, pgDraft().passwordSet) : String(pgDraft()[field]));
                         const changed = () => pgDraft()[field] !== pgSaved()[field];
                         return (
                             <box id={`section-${fieldSection}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
@@ -722,7 +783,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
                                 </text>
                                 <Show when={field === "password"}>
                                     <box paddingLeft={4}>
-                                        <text fg={theme().fgMuted}>shown in clear text — local connection credential</text>
+                                        <text fg={theme().fgMuted}>never shown — not set means the default password</text>
                                     </box>
                                 </Show>
                                 <box paddingLeft={4}>
@@ -737,12 +798,12 @@ export function ConfigApp(props: { onClose?: () => void }) {
                     <text fg={theme().fg}>
                         {section() === EMBEDDING_SECTION ? (
                             <Reverse>
-                                embedding: {embeddingSummary(embDraft())}
+                                embedding: {embeddingSummary(embDraft(), defaults)}
                                 {embeddingChanged() ? " *" : ""}
                             </Reverse>
                         ) : (
                             <Fg role="fgMuted">
-                                embedding: {embeddingSummary(embDraft())}
+                                embedding: {embeddingSummary(embDraft(), defaults)}
                                 {embeddingChanged() ? " *" : ""}
                             </Fg>
                         )}
@@ -774,6 +835,11 @@ export function ConfigApp(props: { onClose?: () => void }) {
 
 export async function launchConfig() {
     requireInteractiveTerminal("inflexa config");
+    // The server keys come from the server, before the renderer takes the terminal.
+    const settings = (await fetchSettings()).match(
+        (s) => s,
+        (e) => fail(describeClientError(e)),
+    );
     // Seed the active theme from persisted config before the renderer reads it.
     setTheme(readConfig().theme);
 
@@ -782,7 +848,7 @@ export async function launchConfig() {
     // update question of its own — the chat is where that belongs — so the message is simply dropped here.
     claimUpdateNotice();
 
-    void render(() => <ConfigApp />, {
+    void render(() => <ConfigApp settings={settings} />, {
         exitOnCtrlC: false,
         targetFps: 30,
         screenMode: "alternate-screen",

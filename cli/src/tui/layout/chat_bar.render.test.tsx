@@ -7,7 +7,7 @@ import { setTheme } from "../theme.ts";
 import { RECALL_LABEL } from "../keymap.ts";
 import { sessionScopeOf } from "../app.tsx";
 import type { ThreadSnapshot } from "../hooks/thread.ts";
-import { conversationThread, reportThread } from "../../test_support/threads.ts";
+import { conversationSummary, reportSummary } from "../../test_support/threads.ts";
 import { ChatBar } from "./chat_bar.tsx";
 
 // The footer interrupt hint carries its OWN color: muted for the resting esc / one-press abort forms, warn
@@ -113,7 +113,7 @@ describe("ChatBar footer scope word", () => {
     }
 
     test("a loaded report row reads REPORT in the accent role", async () => {
-        const setup = await renderScope({ kind: "loaded", thread: reportThread() });
+        const setup = await renderScope({ kind: "loaded", thread: reportSummary() });
         try {
             await setup.renderOnce();
             const word = spanFg(setup, "REPORT");
@@ -126,7 +126,7 @@ describe("ChatBar footer scope word", () => {
     });
 
     test("a loaded conversation reads ANALYSIS, muted rather than marked", async () => {
-        const setup = await renderScope({ kind: "loaded", thread: conversationThread() });
+        const setup = await renderScope({ kind: "loaded", thread: conversationSummary() });
         try {
             await setup.renderOnce();
             const word = spanFg(setup, "ANALYSIS");

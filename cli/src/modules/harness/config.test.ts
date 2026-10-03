@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { env } from "../../lib/env.ts";
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { DEFAULT_AGENT_EFFORTS, resolveAgentEfforts, resolveHarnessConfig, resolveModelConnection, writeAgentEffort, writeAgentModel } from "./config.ts";
+import { DEFAULT_AGENT_EFFORTS, resolveAgentEfforts, resolveHarnessConfig, resolveModelConnection, writeAgentModel, writeAgentSelection } from "./config.ts";
 
 // Drives resolveModelConnection through the real readConfig() surface against the sandboxed
 // env.configPath (set by the test preload), exercising the fail-closed + protocol-implication paths
@@ -388,29 +388,30 @@ describe("resolveAgentEfforts — defaults and overrides", () => {
     });
 });
 
-describe("writeAgentEffort — persists models.efforts spread-preserving", () => {
+describe("writeAgentSelection — persists the model and the effort in one write, spread-preserving", () => {
     function readModelsBlock(): Record<string, unknown> {
         const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { models?: Record<string, unknown> };
         return parsed.models ?? {};
     }
 
-    test("writes the agent's effort into models.efforts and round-trips through resolveAgentEfforts", () => {
+    test("writes the agent's model and effort and round-trips through the resolvers", () => {
         writeConfigWithModels(undefined);
-        expect(writeAgentEffort("utility", "low").isOk()).toBe(true);
-        expect(readModelsBlock()).toEqual({ efforts: { utility: "low" } });
+        expect(writeAgentSelection("utility", { model: "claude-haiku-4-5", effort: "low" }).isOk()).toBe(true);
+        expect(readModelsBlock()).toEqual({ agents: { utility: "claude-haiku-4-5" }, efforts: { utility: "low" } });
+        expect(resolveModelConnection().agents).toEqual({ utility: "claude-haiku-4-5" });
         expect(resolveAgentEfforts()).toEqual({ conversation: "high", sandbox: "medium", utility: "low" });
     });
 
-    test("keeps the connection, the agent models, the OTHER efforts, and unrelated top-level keys", () => {
+    test("keeps the connection, the OTHER selections, and unrelated top-level keys", () => {
         writeConfigWithModels({
             connection: { mode: "cliproxy", provider: "anthropic" },
             agents: { conversation: "claude-opus-4-8" },
             efforts: { conversation: "xhigh", sandbox: "low" },
         });
-        expect(writeAgentEffort("sandbox", "high").isOk()).toBe(true);
+        expect(writeAgentSelection("sandbox", { model: "claude-sonnet-4-5", effort: "high" }).isOk()).toBe(true);
         expect(readModelsBlock()).toEqual({
             connection: { mode: "cliproxy", provider: "anthropic" },
-            agents: { conversation: "claude-opus-4-8" },
+            agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
             efforts: { conversation: "xhigh", sandbox: "high" },
         });
         const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { telemetry: boolean };

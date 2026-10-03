@@ -1,7 +1,8 @@
-import { For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import { unwrap } from "solid-js/store";
-import type { ChatMessage, Thread, ToolCallOutcome } from "@inflexa-ai/harness";
+import type { ChatMessage, TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
+import type { ToolCallOutcome } from "@inflexa-ai/harness/contracts/chat-events.js";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { space, GLYPHS, MARKERS, type ThemeColors } from "../../lib/design_system.ts";
@@ -18,11 +19,12 @@ import { CompactionBlock } from "../components/compaction_block.tsx";
 import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { reportChildren } from "../hooks/report_children.ts";
-import { entryDegraded, readFileReference, readPresentation, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
-import { readPlanCard } from "../../modules/harness/chat_printer.ts";
+import { readFileReference, readPlanCard, readPresentation } from "../../modules/harness/chat_printer.ts";
+import type { ResolvedArtifact } from "../../api/artifacts.ts";
+import { resolveArtifacts } from "../../client/artifacts.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
 import { activeRunProgress, runsSnapshot, RUN_STATUS_TERMINAL } from "../hooks/sidebar_live.ts";
-import type { TurnUsage } from "../../modules/harness/turn.ts";
+import type { ThreadSummary } from "../../api/conversation.ts";
 import type { LiveAskPart, OpenableEntry, Part } from "../../types/session.ts";
 
 /**
@@ -86,7 +88,7 @@ export type MessageBlockProps = {
      * duration alone, with no zero and no placeholder, because "no provider reported anything" and
      * "nothing was spent" are different facts and only the second one is a number.
      */
-    turnUsage?: TurnUsage;
+    turnUsage?: TokenUsageRollup;
     /**
      * Assistant-only: the turn was interrupted after it had streamed output, so the header carries a muted
      * "interrupted" marker. Two sources feed one flag — the live abort path sets it directly, and a
@@ -346,7 +348,7 @@ export function MessageBlock(props: MessageBlockProps) {
  */
 export function ReportSessionEntry(props: { threadId: string }) {
     const ws = useWorkspace();
-    const row = (): Thread | undefined => reportChildren().find((child) => child.threadId === props.threadId);
+    const row = (): ThreadSummary | undefined => reportChildren().find((child) => child.id === props.threadId);
     // An unscoped chat has no analysis to open a session against, thus the click does nothing.
     const open = (): void => {
         const analysis = ws.analysis;
@@ -357,8 +359,8 @@ export function ReportSessionEntry(props: { threadId: string }) {
     // legitimately carry none. Say so rather than render a blank line, as the sidebar SESSION rail does.
     return (
         <Show when={row()}>
-            {(child: Accessor<Thread>): JSX.Element => (
-                <ReportSessionBlock title={child().title ?? "untitled"} activityLabel={Date.relativeAge(child().updatedAt.getTime())} onOpen={open} />
+            {(child: Accessor<ThreadSummary>): JSX.Element => (
+                <ReportSessionBlock title={child().title ?? "untitled"} activityLabel={Date.relativeAge(Date.parse(child().updatedAt))} onOpen={open} />
             )}
         </Show>
     );
@@ -368,25 +370,46 @@ export function ReportSessionEntry(props: { threadId: string }) {
  * Wire the openable entries of a harness part (a pixel-shaped presentation, or a file reference) to the
  * pure {@link OpenableCardBlock}: resolve each entry's display path and degraded state at render time
  * (open-time resolution — the part stores only the reference), and hand clicks to the shared opener.
- * Co-located with {@link MessageBlock}, its only caller. Resolution reads the memoized workspace root, so
- * the one-time read per mount is cheap; parts are immutable after receipt, so a static resolution is
- * correct.
+ * Co-located with {@link MessageBlock}, its only caller. The server resolves the whole card in one
+ * request (`POST {A}/artifacts/resolve`); parts are immutable after receipt, so one resolution for each
+ * analysis is correct.
  *
  * The entries resolve against the analysis of the open workspace: the transcript of a session belongs to
  * that analysis, and a swap resets the transcript. Thus a mount outside the workspace provider is a
- * wiring bug, the same rule as {@link ReportSessionEntry}. With no analysis open, no entry resolves, and
- * each one renders degraded.
+ * wiring bug, the same rule as {@link ReportSessionEntry}. Until the server answers, and when it cannot,
+ * no path shows: a row reads "path could not be resolved", and only an `unavailable` entry is degraded,
+ * because that is the one fact the reference itself holds.
  */
 function OpenableCard(props: { title?: string; entries: OpenableEntry[]; folderPath?: string }) {
     const ws = useWorkspace();
     const analysisId = (): string => ws.analysis?.id ?? "";
+    const [resolved, setResolved] = createSignal<readonly ResolvedArtifact[] | null>(null);
+    createEffect(() => {
+        const id = analysisId();
+        setResolved(null);
+        if (id === "") return;
+        // An answer for an analysis that is no longer open must not paint over the rows of the new one.
+        let current = true;
+        onCleanup(() => {
+            current = false;
+        });
+        void resolveArtifacts(id, { entries: props.entries.map((entry) => entry.target), materialize: false }).match(
+            ({ entries }) => {
+                if (current) setResolved(entries);
+            },
+            () => undefined,
+        );
+    });
     const rows = (): OpenableRowView[] =>
-        props.entries.map((entry) => ({
-            name: entry.name,
-            ...(entry.caption !== undefined ? { caption: entry.caption } : {}),
-            path: resolveEntryPath(analysisId(), entry.target),
-            degraded: entryDegraded(analysisId(), entry.target),
-        }));
+        props.entries.map((entry, i) => {
+            const r = resolved()?.[i];
+            return {
+                name: entry.name,
+                ...(entry.caption !== undefined ? { caption: entry.caption } : {}),
+                path: r?.path ?? null,
+                degraded: r?.degraded ?? entry.target.kind === "unavailable",
+            };
+        });
     function openFolder(): void {
         const folderPath = props.folderPath;
         if (folderPath) openArtifactFolder(analysisId(), folderPath);

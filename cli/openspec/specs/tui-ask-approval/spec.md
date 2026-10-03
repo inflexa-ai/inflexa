@@ -3,34 +3,13 @@
 ## Purpose
 
 Define the CLI's approval surface for the harness tool-approval primitive: how
-a chat turn binds `ctx.ask`, how `data-ask` parts become reconciled transcript
-cards, how the docked prompt above the chat bar captures the user's decision
-with focus-gated keys, how answers flow back through the gateway, and the
-surface's deliberate boundaries (REPL deny-by-default, live-turn-only visuals).
+the chat route of the local server binds `ctx.ask` for each turn, how `data-ask`
+parts become reconciled transcript cards, how the docked prompt above the chat
+bar captures the user's decision with focus-gated keys, how answers flow back
+through the answer route to the gateway, and the surface's deliberate
+boundaries (live-turn-only visuals).
 
 ## Requirements
-
-### Requirement: The TUI chat turn binds the ask seam; the REPL stays deny-by-default
-
-The TUI chat turn SHALL pass the harness turn engine a pre-bound `ask` that
-invokes the runtime's ask gateway with the turn's own scope — analysis id,
-thread id, the turn's abort signal, and the turn's guarded emit sink — so the
-gateway's `data-ask` emissions and its poll ride the same signal and sink as
-every other turn event. The REPL chat SHALL NOT bind `ask`: it is a write-only
-surface with no mid-turn input path, so an approval-gated tool call there is
-denied by the harness's deny-by-default realization.
-
-#### Scenario: A TUI turn carries the bound ask
-
-- **GIVEN** a TUI chat turn for an analysis
-- **WHEN** the turn engine assembles the agent-loop options
-- **THEN** `ask` is present and bound to the runtime gateway with that turn's analysis id, thread id, abort signal, and emit sink
-
-#### Scenario: A REPL approval-gated call is denied
-
-- **GIVEN** a REPL chat turn whose tool calls `ctx.ask`
-- **WHEN** the turn runs
-- **THEN** the ask is denied without any prompt and the turn ends with the model-visible denial
 
 ### Requirement: data-ask parts render as ask cards reconciled by ask id
 
@@ -188,20 +167,27 @@ While an ask is docked, the chat composer SHALL act as a second answer path: sub
 - **WHEN** the user submits `y`
 - **THEN** the text is sent to the conversation as a normal message
 
-
 ### Requirement: Answers flow through the gateway and every outcome is handled
 
-The prompt's actions SHALL answer through the runtime gateway by ask id with
-the three-variant reply (`once | always | reject(feedback?)`). An `applied`
-outcome SHALL advance the queue. A `not_found` or `already_terminal` outcome
-SHALL surface a transient notice and still advance the queue — the ledger has
-already moved past that ask, and holding the prompt open would wedge it.
+The prompt's actions SHALL answer through the local server by ask id (`POST {A}/asks/:askId/answer`),
+which hands the answer to the runtime gateway, with the three-variant reply
+(`once | always | reject(feedback?)`). An applied answer SHALL advance the queue. A `not_found` or
+`conflict` refusal (an unknown ask, or an ask that is already answered) SHALL surface a transient
+notice and still advance the queue — the ledger has already moved past that ask, and holding the
+prompt open would wedge it. Any other failure, for example a server that does not answer, SHALL
+surface an error notice and leave the ask queued, so the user can answer it again.
 
 #### Scenario: A stale answer advances with a notice
 
 - **GIVEN** a docked prompt whose ask was already terminal in the ledger
 - **WHEN** the user answers it
 - **THEN** a notice reports the stale outcome and the prompt advances to the next pending ask (or unmounts)
+
+#### Scenario: A failed write keeps the ask
+
+- **GIVEN** a docked prompt for a pending ask
+- **WHEN** the answer request fails because no server answers
+- **THEN** an error notice names the failure, and the prompt keeps the ask, so the user can answer again
 
 ### Requirement: Pending asks stack and settle first-in-first-out
 
@@ -246,6 +232,7 @@ transcript ask card in pending and terminal statuses.
 
 - **WHEN** the design gallery is opened
 - **THEN** exhibits render the choice-mode prompt, the feedback-mode prompt, a queued-count variant, and ask cards across statuses, all from mock data
+
 ### Requirement: One marker vocabulary across the ask's two surfaces
 
 A pending ask SHALL present the same marker glyph wherever it is rendered. The docked prompt and the transcript ask card are two views of one ask, so a marker that changes between them misrepresents them as different things.
@@ -271,3 +258,32 @@ The vocabulary SHALL be drawn on meaning rather than on surface:
 - **WHEN** the chat is thinking (system busy) while an ask is pending (blocked on the user)
 - **THEN** the two states render different markers, so the user can tell which one requires action
 
+### Requirement: Each chat turn of the server binds the ask seam, and each chat surface answers it
+
+The chat route of the local server SHALL pass the harness turn engine a pre-bound `ask` for each
+turn that it runs, for the TUI and for the REPL alike. The `ask` invokes the runtime's ask gateway
+with the turn's own scope — analysis id, thread id, the local ask user id, the turn's abort signal,
+and the frame sink of the turn's stream — so the gateway's `data-ask` emissions and its poll ride
+the same signal and the same stream as every other turn frame. A client SHALL answer an ask through
+the server (`POST {A}/asks/:askId/answer`). The TUI answers through the docked prompt. The REPL
+SHALL hold the stream at a pending ask of the root agent, ask the user to approve once, approve
+always, or reject, and send that answer before it reads on. A canceled REPL prompt SHALL send a
+reject.
+
+#### Scenario: A turn carries the bound ask
+
+- **GIVEN** a chat turn that the server runs for an analysis
+- **WHEN** the turn engine assembles the agent-loop options
+- **THEN** `ask` is present and bound to the runtime gateway with that turn's analysis id, thread id, abort signal, and the frame sink of its stream
+
+#### Scenario: A REPL approval-gated call asks the user
+
+- **GIVEN** a REPL chat turn whose tool calls `ctx.ask`
+- **WHEN** the pending `data-ask` frame of the root agent arrives
+- **THEN** the REPL prompts with the title and the exact command, sends the choice of the user to the server, and the turn continues with that decision
+
+#### Scenario: A canceled REPL prompt rejects
+
+- **GIVEN** a REPL ask prompt for a pending ask
+- **WHEN** the user cancels the prompt
+- **THEN** the REPL sends a reject, and the turn ends with the model-visible denial

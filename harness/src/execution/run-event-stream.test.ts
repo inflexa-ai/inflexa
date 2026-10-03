@@ -12,12 +12,15 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
+import { okAsync } from "neverthrow";
 
 import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import type { ChatPart, StepActivityPart } from "../contracts/chat-parts.js";
+import { insertRun, markRunCanceledIfActive } from "../state/runs.js";
+import type { RunStatus } from "../state/schema.js";
 import { insertStepExecution, queryStepsByRun } from "../state/step-executions.js";
-import { createRunEventStream } from "./run-event-stream.js";
+import { createRunEventStream, type RunEventStreamDeps } from "./run-event-stream.js";
 
 if (DBOS.isInitialized()) {
     await DBOS.shutdown();
@@ -232,6 +235,33 @@ describe("run-event stream — one workflow", () => {
         expect(seen).toHaveLength(3);
         expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("handler threw"))).toBe(true);
     });
+
+    it("settles only after a slow handler has taken the last part", async () => {
+        const runId = rig.nextWorkflowId("run-slow-");
+        const handle = await startEmitter(runId, {
+            before: [summary(runId, "T1S1", "first"), summary(runId, "T1S2", "second"), runCompleted(runId)],
+            after: [],
+            gate: false,
+        });
+        await handle.getResult();
+
+        const seen: ChatPart[] = [];
+        const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
+        await settlesWithin(
+            stream.subscribe({
+                runId,
+                onPart: async (p) => {
+                    await new Promise((r) => setTimeout(r, 200));
+                    seen.push(p);
+                },
+                signal: new AbortController().signal,
+            }),
+            20_000,
+            "subscription with a slow handler",
+        );
+
+        expect(typesOf(seen)).toEqual(["data-step-summary", "data-step-summary", "data-run-completed"]);
+    });
 });
 
 // ── Parent + child fan-in ────────────────────────────────────────────
@@ -409,6 +439,99 @@ describe("run-event stream — lifecycle", () => {
         const activities = seen.filter((p) => p.type === "data-step-activity");
         expect((activities.at(-1) as { phase: string }).phase).toBe("complete");
         expect(typesOf(seen)).toContain("data-run-completed");
+    });
+});
+
+// ── Canceled runs ────────────────────────────────────────────────────
+
+/** A row read that answers each status in turn, and then the last one again. */
+function rowReads(statuses: readonly (RunStatus | null)[]): NonNullable<RunEventStreamDeps["readRunStatus"]> {
+    let index = 0;
+    return () => okAsync(statuses[Math.min(index++, statuses.length - 1)] ?? null);
+}
+
+const noWait = async (): Promise<void> => {};
+
+const canceledPart = (runId: string): ChatPart => ({ type: "data-run-failed", runId, error: "Run canceled", reason: "canceled" });
+
+describe("run-event stream — a canceled run", () => {
+    it("ends an externally canceled run with a terminal part from the run row", async () => {
+        const runId = rig.nextWorkflowId("run-cancel-");
+        (await insertRun(rig.pool, { runId, analysisId: `analysis-${runId}`, workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        await startEmitter(runId, { before: [dagState(runId, ["running"])], after: [runCompleted(runId)], gate: true });
+        await DBOS.getEvent<boolean>(runId, "gated", 30);
+        await DBOS.cancelWorkflow(runId);
+        (await markRunCanceledIfActive(rig.pool, runId, "external_cancel"))._unsafeUnwrap();
+
+        const seen: ChatPart[] = [];
+        const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
+        await settlesWithin(
+            stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
+            20_000,
+            "subscription on a canceled run",
+        );
+
+        expect(typesOf(seen)).toEqual(["data-dag-state", "data-run-failed"]);
+        expect(seen.at(-1)).toEqual(canceledPart(runId));
+    });
+
+    it("adds no part to a run that wrote its own terminal part", async () => {
+        const runId = rig.nextWorkflowId("run-normal-");
+        const handle = await startEmitter(runId, { before: [summary(runId, "T1S1", "only"), runCompleted(runId)], after: [], gate: false });
+        await handle.getResult();
+
+        const seen: ChatPart[] = [];
+        // A row that reads `canceled` proves that the written terminal part, not the row, decides.
+        const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger(), readRunStatus: rowReads(["canceled"]), sleep: noWait });
+        await settlesWithin(
+            stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
+            20_000,
+            "subscription on a completed run",
+        );
+
+        expect(typesOf(seen)).toEqual(["data-step-summary", "data-run-completed"]);
+    });
+
+    it("ends the stream when the row becomes canceled only on a later read", async () => {
+        const runId = rig.nextWorkflowId("run-late-cancel-");
+        const handle = await startEmitter(runId, { before: [dagState(runId, ["running"])], after: [], gate: false });
+        await handle.getResult();
+
+        const seen: ChatPart[] = [];
+        const stream = createRunEventStream({
+            pool: rig.pool,
+            logger: createCapturingLogger(),
+            readRunStatus: rowReads(["running", "running", "canceled"]),
+            sleep: noWait,
+        });
+        await settlesWithin(
+            stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
+            20_000,
+            "subscription on a run whose row converges late",
+        );
+
+        expect(seen.at(-1)).toEqual(canceledPart(runId));
+    });
+
+    it("adds no part when the row stays active past the last read", async () => {
+        const runId = rig.nextWorkflowId("run-never-cancel-");
+        const handle = await startEmitter(runId, { before: [dagState(runId, ["running"])], after: [], gate: false });
+        await handle.getResult();
+
+        const seen: ChatPart[] = [];
+        const stream = createRunEventStream({
+            pool: rig.pool,
+            logger: createCapturingLogger(),
+            readRunStatus: rowReads(["running", "running", "running", "running", "canceled"]),
+            sleep: noWait,
+        });
+        await settlesWithin(
+            stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
+            20_000,
+            "subscription on a run whose row stays active",
+        );
+
+        expect(typesOf(seen)).toEqual(["data-dag-state"]);
     });
 });
 

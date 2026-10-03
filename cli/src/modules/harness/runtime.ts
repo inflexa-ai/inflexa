@@ -282,11 +282,13 @@ export function describeBootError(e: HarnessBootError): string {
         case "ingress_failed":
             return "Could not bind the local callback listener (loopback, ephemeral port) — check for exhausted ports or a restrictive firewall.";
         case "runtime_already_active":
-            // Accepted-for-now limitation of the embedded-runtime topology (one DBOS engine,
-            // executor "local", per machine). The fix is the client–server split — a single
-            // `inflexa serve` daemon owning the runtime, commands as HTTP clients — tracked
-            // with full context in inflexa-ai/inf-cli#33.
-            return `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime. Only one harness runtime per machine at a time — wait for it to finish or stop that process.`;
+            // One DBOS engine with the executor "local" for each machine. The local server holds it, thus the
+            // holder is usually the server, and a dev `run --plan` meets this while a server runs. The message
+            // cannot tell the two holders apart: this module does not read the discovery file of the client.
+            return (
+                `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime, and only one can run on a machine.\n` +
+                "  If it is the Inflexa server (`inflexa server status` shows its pid), stop it with `inflexa server stop`. Otherwise wait for that process to end."
+            );
         case "runtime_boot_failed":
             return `Harness runtime failed to boot: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
         default: {
@@ -490,7 +492,6 @@ export function bootHarnessRuntime(
         config?: ResolvedHarnessConfig;
         connection?: ResolvedModelConnection;
         efforts?: Readonly<Record<AgentName, AgentEffort>>;
-        analysisId?: string;
     } = {},
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     if (active) return Promise.resolve(ok(active));
@@ -500,7 +501,6 @@ export function bootHarnessRuntime(
         options.config ?? resolveHarnessConfig(),
         options.connection ?? resolveModelConnection(),
         options.efforts ?? resolveAgentEfforts(),
-        options.analysisId,
     );
     booting = attempt;
     void attempt.finally(() => {
@@ -630,7 +630,6 @@ async function bootHarnessRuntimeOnce(
     cfg: ResolvedHarnessConfig,
     connection: ResolvedModelConnection,
     efforts: Readonly<Record<AgentName, AgentEffort>>,
-    analysisId?: string,
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     const logger = harnessLogger("harness");
 
@@ -778,12 +777,11 @@ async function bootHarnessRuntimeOnce(
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
     const conn = pgResult.value;
 
-    // The `inflexa.lock` of the open analysis's farm — the inventory of what a sandbox
-    // of THIS process can import. One analysis opens per process (the instance lock
-    // holds that), thus one static path serves the whole boot. The tool re-reads the
-    // file per call, so a farm that grows mid-session reaches the next call unchanged.
-    // A boot with no analysis (a probe) carries none, and the inventory reads unknown.
-    const farmLockFile = analysisId === undefined ? null : join(analysisFarmPath(env.packageStoreDir, analysisId), "inflexa.lock");
+    // The `inflexa.lock` of the farm of each analysis — the inventory of what a sandbox
+    // of that analysis can import. One runtime serves each analysis of the machine, thus
+    // the harness resolves the path with the analysis id of each session. The tool
+    // re-reads the file per call, so a farm that grows mid-session reaches the next call.
+    const farmLockFile = (id: string): string => join(analysisFarmPath(env.packageStoreDir, id), "inflexa.lock");
 
     // The image inventory record the catalog build packs at the store root, beside the graph.
     // The path is static, thus the boot stats nothing: the tool re-reads the file per call, so a
@@ -1121,7 +1119,7 @@ async function bootHarnessRuntimeOnce(
                 embedding,
                 skillsDir: cfg.skillsDir,
                 refStorePath: env.refsDir,
-                ...(farmLockFile ? { farmLockFile } : {}),
+                farmLockFile,
                 imagePackagesFile,
                 // The same farm-extension realization as the step agents (the
                 // composition bundle above): the profiler meets the farm at its
@@ -1163,7 +1161,7 @@ async function bootHarnessRuntimeOnce(
             // agent answers from. Its question is "what does the store hold", and
             // the farm of a new analysis is empty — a farm view here would read
             // every pool package as absent, and the agent would ask for held ones.
-            ...(farmLockFile ? { farmLockFile } : {}),
+            farmLockFile,
             imagePackagesFile,
             readPoolInventory: () => readPoolInventorySections(env.packageStoreDir),
             // The link seam of the conversation side: the pre-launch pass of

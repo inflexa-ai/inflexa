@@ -78,16 +78,16 @@ describe("devCommandsActive", () => {
 // isDevelopmentBuild is split out. Production values are pinned to their historical literals so a prod
 // install is provably untouched; dev gets fixed siblings that must never collide with them.
 describe("stackPorts", () => {
-    test("production → the historical proxy 8317 / postgres 8432 / admin 8433 trio", () => {
+    test("production → the historical proxy 8317 / postgres 8432 / admin 8433 trio, plus the server 8431", () => {
         // 8433 is the DBOS admin default's historical value, so a prod install sees no change to any of the
         // three host ports it binds.
-        expect(stackPorts("production")).toEqual({ cliproxy: 8317, postgres: 8432, admin: 8433 });
+        expect(stackPorts("production")).toEqual({ cliproxy: 8317, postgres: 8432, admin: 8433, server: 8431 });
     });
 
-    test("dev (unset or any non-production channel) → siblings proxy 8318 / postgres 8434 / admin 8435", () => {
-        expect(stackPorts(undefined)).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435 });
-        expect(stackPorts("development")).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435 });
-        expect(stackPorts("beta")).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435 });
+    test("dev (unset or any non-production channel) → siblings proxy 8318 / postgres 8434 / admin 8435 / server 8436", () => {
+        expect(stackPorts(undefined)).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435, server: 8436 });
+        expect(stackPorts("development")).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435, server: 8436 });
+        expect(stackPorts("beta")).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435, server: 8436 });
     });
 
     test("dev postgres port avoids 5433 (the harness testcontainer) and 5432 (system PG)", () => {
@@ -105,17 +105,12 @@ describe("stackPorts", () => {
         expect(stackPorts(undefined).postgres).not.toBe(8433);
     });
 
-    test("no host listener is shared between a dev and a prod runtime — the union of all six ports is disjoint", () => {
-        // Three ports per channel (proxy, postgres, admin). When both channels run at once every host
-        // listener must be distinct, so the union has size 6 — a single shared entry would re-open a bind
-        // collision between a dev and an installed prod stack/runtime.
-        const prod = stackPorts("production");
-        const dev = stackPorts("development");
-        expect(dev.cliproxy).not.toBe(prod.cliproxy);
-        expect(dev.postgres).not.toBe(prod.postgres);
-        expect(dev.admin).not.toBe(prod.admin);
-        const all = [prod.cliproxy, prod.postgres, prod.admin, dev.cliproxy, dev.postgres, dev.admin];
-        expect(new Set(all).size).toBe(6);
+    test("no host listener is shared between a dev and a prod runtime — the union of all ports is disjoint", () => {
+        // When both channels run at once every host listener must be distinct — a single shared entry would
+        // re-open a bind collision between a dev and an installed prod stack/runtime.
+        const prod = Object.values(stackPorts("production"));
+        const dev = Object.values(stackPorts("development"));
+        expect(new Set([...prod, ...dev]).size).toBe(prod.length + dev.length);
     });
 });
 
@@ -129,6 +124,8 @@ describe("stackPaths", () => {
             postgresDataDir: join(base, "inflexa", "postgres"),
             composeFilePath: join(base, "inflexa", "docker-compose.yml"),
             setupStatePath: join(base, "inflexa", "setup-state.json"),
+            serverFilePath: join(base, "inflexa", "server.json"),
+            serverLogPath: join(base, "inflexa", "logs", "server.log"),
         });
     });
 
@@ -139,18 +136,20 @@ describe("stackPaths", () => {
             postgresDataDir: join(base, "inflexa", "postgres-dev"),
             composeFilePath: join(base, "inflexa", "docker-compose.dev.yml"),
             setupStatePath: join(base, "inflexa", "setup-state.dev.json"),
+            serverFilePath: join(base, "inflexa", "server.dev.json"),
+            serverLogPath: join(base, "inflexa", "logs", "server.dev.log"),
         });
     });
 
     test("no stack path is shared across channels — the whole mount/compose surface is disjoint", () => {
         const prod = Object.values(stackPaths(base, "production"));
         const dev = Object.values(stackPaths(base, "development"));
-        // Every prod path is absent from the dev set (and vice versa), and the union is 10 distinct paths:
+        // Every prod path is absent from the dev set (and vice versa), and each path of the union is distinct:
         // a single shared entry would re-open a collision (shared PGDATA, one build rewriting the other's
         // compose file, a dev failure that redirects the wizard of an installed binary, or — worst — a
         // shared proxy credential dir the OAuth rotation would corrupt).
         for (const p of prod) expect(dev).not.toContain(p);
-        expect(new Set([...prod, ...dev]).size).toBe(10);
+        expect(new Set([...prod, ...dev]).size).toBe(prod.length + dev.length);
     });
 });
 

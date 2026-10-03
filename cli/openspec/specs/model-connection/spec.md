@@ -6,7 +6,9 @@ proxy or any direct Anthropic/OpenAI-compatible endpoint), the environment-only 
 (`INFLEXA_MODEL_API_KEY`), boot resolution of the connection into the harness provider, the
 setup-flow connection choice, and the rule that the provider identity is a configured fact â€”
 never derived from a model id. Created by archiving change configure-model-connection.
+
 ## Requirements
+
 ### Requirement: The chat backend is a user-owned model connection
 
 The user config SHALL carry a top-level `models` block whose `connection` field selects the chat
@@ -71,6 +73,12 @@ environment; the endpoint remains configuration authored (or adopted) at setup â
 variables are read only for one-time setup detection (see "Setup detects and adopts ecosystem
 provider environment").
 
+The environment that this resolution reads SHALL be the environment of the local server process,
+because the server boots the runtime and sends each chat request. A server that a client starts in
+the background inherits the environment of that client. A client that runs later with a different
+value does not change the key of a running server: a changed variable SHALL take effect only at the
+next start of the server. The remedy of a refused key SHALL therefore name the restart of the server.
+
 #### Scenario: Explicit override wins over the provider variable
 
 - **WHEN** the connection is `direct` with provider `anthropic`, no `auth` block, and BOTH
@@ -97,6 +105,12 @@ provider environment").
 - **WHEN** a direct-mode session runs to completion, resolving its key from either variable
 - **THEN** `config.json`, the telemetry stream, and the signed provenance document contain no API
   key material
+
+#### Scenario: A key set after the server started does not reach it
+
+- **GIVEN** a direct-mode server that a client started with no key in its environment, and a boot that failed for the missing key
+- **WHEN** the user exports `INFLEXA_MODEL_API_KEY` in a new shell and runs a command
+- **THEN** the running server keeps its failed boot, and the key takes effect when the server starts again from that shell
 
 ### Requirement: Boot resolves the connection to a chat provider via the harness front door
 
@@ -605,4 +619,3 @@ Both arms of `models.connection` MUST accept optional `requestTimeoutMs` and `ma
 - **WHEN** the config carries a zero, negative, or non-integer `requestTimeoutMs`, or a negative or
   non-integer `maxRetries`
 - **THEN** the config resolution reports a config error through the existing config-schema pattern
-

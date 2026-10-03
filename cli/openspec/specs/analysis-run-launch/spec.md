@@ -14,12 +14,14 @@ Lives in `src/modules/harness/dev/run.ts`. The shared wait and status-pool reade
 
 The system MUST give a dedicated command that launches a full `executeAnalysis` run for a resolved analysis from a validated plan.
 
+The command runs with no local server. It resolves the analysis from the local database, and it boots a runtime in its own process. Only one runtime runs on a machine at one time. Thus the command MUST refuse while the local server, or a different process, holds the runtime or the lock of the analysis. The refusal names the process, and it comes before any staging, persistence, or launch.
+
 The command MUST do these steps in this order:
 
 1. Resolve the analysis reference.
 2. Do the pre-flight prerequisite gates. These are the same actionable gates as the profile launch: the sandbox image, the embedding endpoint, the skills directory, the proxy key, the model, and Postgres. The analysis workspace root must also resolve to a writable location.
 3. Validate the plan file. These are the pure parse, schema, and `validatePlan` gates, and they persist nothing.
-4. Boot the embedded runtime.
+4. Claim the lock of the analysis, then boot the embedded runtime.
 5. Stage the analysis's inputs into the analysis workspace (`{workspaceRoot}/data`, with mirror reconciliation). The run engine never downloads.
 6. Seed the harness analysis ledger row.
 7. Persist the validated plan under its deterministic id.
@@ -27,7 +29,7 @@ The command MUST do these steps in this order:
 
 The plan validation MUST come before the boot, per the plan-intake spec. Thus a malformed or invalid plan is refused before any side effect: no boot, no staging, and no ledger row. Only the deterministic-id persistence needs the booted pool.
 
-A passive flow MUST NOT stage, boot, or trigger. A bare `inflexa` launch and the TUI startup are passive flows.
+A passive flow MUST NOT trigger a run. A bare `inflexa` launch and the TUI startup are passive flows. A run starts only from this command, or from the `execute_analysis` tool inside a chat turn in the local server.
 
 An analysis with no resolvable inputs MUST stop before the boot, and give an actionable message. An unresolvable or non-writable workspace root MUST stop the command the same way. There is no fallback location.
 
@@ -57,6 +59,13 @@ An analysis with no resolvable inputs MUST stop before the boot, and give an act
 
 - **WHEN** the analysis has no completed data profile in the harness ledger
 - **THEN** the command gives a warning, because agents orient on the profile summary, and it continues with the launch
+
+#### Scenario: A running local server refuses the launch
+
+- **GIVEN** the local server runs and holds the runtime
+- **WHEN** the command runs
+- **THEN** it exits with a message that names the process that holds the analysis or the runtime
+- **AND** it staged nothing, persisted no plan, and launched no workflow
 
 ### Requirement: Trigger semantics match the harness's own plan-execution flow
 
@@ -111,14 +120,15 @@ If the user interrupts the wait with Ctrl+C, the command MUST detach with DBOS-r
 
 The command MUST offer a status mode. That mode reports the analysis's runs and their steps from the harness ledger.
 
-The status mode MUST NOT boot the runtime, provision anything, or write any state. It reuses the pool of the live runtime when one exists, and it opens a throwaway connection when none does.
+The status mode is a client of the local server. It reads the newest runs of the analysis through the run list route of the server. It reads the steps of each run through the run route, with a fixed number of reads at one time. Each run row shows the title of its plan. A run whose step read fails still prints, with no steps.
 
-A run that a dead process left behind MUST carry the resume-on-next-boot note.
+The status mode MUST NOT boot a runtime in its own process, provision anything, or write any state. A status mode that finds no local server starts one, the same as each instance command, and the server boots the runtime at its start. While the runtime of the server is not ready, the read refuses with the unavailable answer of the server.
 
 #### Scenario: Status never boots
 
-- **WHEN** the status mode is invoked with no runtime active
-- **THEN** run and step states are reported (or "none") and no DBOS launch, listener, staging, or provisioning occurred
+- **WHEN** the status mode is invoked
+- **THEN** run and step states are reported from the local server (or "none")
+- **AND** its own process launched no DBOS, bound no listener, staged nothing, and provisioned nothing
 
 ### Requirement: Kill/resume durability is verified end-to-end
 

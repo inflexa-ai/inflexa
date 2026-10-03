@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
-import { type Result, ok, err } from "neverthrow";
+import { rm } from "node:fs/promises";
+import { type Result, ResultAsync, ok, err } from "neverthrow";
 
 /**
  * Filesystem error for operations that can fail with an OS-level I/O error.
@@ -55,6 +56,14 @@ export function rmResult(path: string, op: string): Result<void, FsError> {
     } catch (cause) {
         return err({ type: "io_failed", op, cause });
     }
+}
+
+/**
+ * Recursively remove a path off the event loop, wrapping the `rm` rejection into `ResultAsync`. An absent
+ * path is a success. The server uses this form, because `rmSync` of a large tree stops each other request.
+ */
+export function rmResultAsync(path: string, op: string): ResultAsync<void, FsError> {
+    return ResultAsync.fromPromise(rm(path, { recursive: true, force: true }), (cause): FsError => ({ type: "io_failed", op, cause }));
 }
 
 /** Stat a path, wrapping `statSync` throws into `Result`. */

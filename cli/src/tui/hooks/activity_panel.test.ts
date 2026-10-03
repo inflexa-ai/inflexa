@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
+import { createStore } from "solid-js/store";
 import { okAsync, errAsync } from "neverthrow";
+import type { StepActivityPart } from "@inflexa-ai/harness/contracts/index.js";
 
-import { __resetSidebarLiveForTest, refreshSidebarData, type ActiveRunProgress, type RefreshSeams } from "./sidebar_live.ts";
+import type { DataProfileState, DataProfileView, RunDetail, RunSummary } from "../../api/runs.ts";
+import type { ClientError } from "../../client/api.ts";
+import type { Workspace } from "../contexts/workspace.ts";
+import { __resetSidebarLiveForTest, refreshSidebarData, type ActiveRunProgress, type RefreshOpts } from "./sidebar_live.ts";
 import {
     __resetActivityPanelForTest,
     activeSubjectCount,
@@ -14,10 +19,8 @@ import {
     activityPanelVisible,
     toggleActivityPanel,
     watchActivityPanel,
-    type ActivityPanelSeams,
+    type ActivityPanelOpts,
 } from "./activity_panel.ts";
-import type { CortexRunRow, DataProfileStatus, StepActivityPart, StepExecutionRow } from "@inflexa-ai/harness";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 
 // The panel store owns three things: which SUBJECT is focused, whether the panel is dismissed, and the
 // focused subject's activity label. The load-bearing decision under test is that the focused subject is
@@ -29,43 +32,38 @@ import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 // activity stream is addressed (a run's stream is its run id; a profile's is the workflow id its ledger
 // row records), so a behaviour that holds for a run is not thereby proven for a profile.
 
-// A fake pool: the store never touches it (the activity subscription is a seam), so an empty object
-// typed through the runtime handle is sufficient.
-const fakeRuntime = { pool: {} } as unknown as HarnessRuntime;
-
-function runRow(over: Partial<CortexRunRow> & { runId: string }): CortexRunRow {
+function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
-        analysisId: "analysis-1",
         threadId: null,
         workflowName: "executeAnalysis",
+        workflowId: over.runId,
         status: "running",
         startedAt: "2026-07-28T10:00:00.000Z",
         completedAt: null,
         error: null,
-        synthesisStatus: null,
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: null,
         ...over,
     };
 }
 
-function stepRow(runId: string, over: Partial<StepExecutionRow> = {}): StepExecutionRow {
+/** The run as `GET {A}/run/:runId` gives it: one running step. */
+function runDetail(run: RunSummary): RunDetail {
     return {
-        runId,
-        stepId: "T1S1",
-        analysisId: "analysis-1",
-        wave: 0,
-        agentId: "bioinformatician",
-        status: "running",
-        startedAt: "2026-07-28T10:00:01.000Z",
-        completedAt: null,
-        attempts: 1,
-        blockedReason: null,
-        ...(over as object),
-    } as StepExecutionRow;
+        ...run,
+        steps: [
+            {
+                stepId: "T1S1",
+                agentId: "bioinformatician",
+                status: "running",
+                startedAt: "2026-07-28T10:00:01.000Z",
+                completedAt: null,
+                durationMs: null,
+                error: null,
+                attempts: 1,
+                blockedReason: null,
+            },
+        ],
+        unattributedUsage: null,
+    };
 }
 
 /**
@@ -82,7 +80,7 @@ const PROFILE_WORKFLOW_ID = "wf-profile-1";
  * row carries no `startedAt` and no workflow id, so it has nothing to show and is deliberately not
  * published (that half of the decision is pinned in `sidebar_live.test.ts`).
  */
-function profileRow(over: Partial<DataProfileStatus> = {}): DataProfileStatus {
+function profileRow(over: Partial<DataProfileState> = {}): DataProfileState {
     return {
         status: "running",
         error: null,
@@ -95,15 +93,21 @@ function profileRow(over: Partial<DataProfileStatus> = {}): DataProfileStatus {
     };
 }
 
-/** Refresh seams over a fixed set of runs (plus an optional profile row); every run reports one running step. */
-function seamsFor(runs: CortexRunRow[], opts: { failStepsFor?: Set<string>; profile?: DataProfileStatus | null } = {}): RefreshSeams {
+/** A client error, for a read that fails. */
+const READ_FAILED: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:0", cause: "boom" };
+
+/** Refresh options over a fixed set of runs (plus an optional profile row); every run reports one running step. */
+function optsFor(runs: RunSummary[], opts: { failRunFor?: Set<string>; profile?: DataProfileState | null } = {}): RefreshOpts {
+    const view: DataProfileView = opts.profile ?? { status: null };
     return {
-        runtime: () => fakeRuntime,
-        loadProfile: () => okAsync<DataProfileStatus | null, never>(opts.profile ?? null),
+        ready: () => true,
+        loadProfile: () => okAsync(view),
         loadRuns: () => okAsync(runs),
         loadActiveRuns: () => okAsync(runs),
-        loadSteps: (_pool, runId) => (opts.failStepsFor?.has(runId) ? errAsync({ type: "query_failed", cause: "boom" } as never) : okAsync([stepRow(runId)])),
-        loadPlan: () => okAsync<unknown | null, never>(null),
+        loadRun: (_analysisId, runId) => {
+            const run = runs.find((r) => r.runId === runId);
+            return run === undefined || opts.failRunFor?.has(runId) ? errAsync(READ_FAILED) : okAsync(runDetail(run));
+        },
     };
 }
 
@@ -155,16 +159,29 @@ function focusedRunSubject(): ActiveRunProgress | null {
     return subject?.kind === "run" ? subject.run : null;
 }
 
-/** One subscription the fake seam opened. Kept after teardown, so a test can fire a LATE part at it. */
+/**
+ * A workspace whose open analysis a test can swap. The panel reads only `analysis.id`, thus a store
+ * with that one field stands in for the whole workspace.
+ */
+function workspaceOn(analysisId: string): { ws: Workspace; open: (id: string) => void } {
+    const [store, setStore] = createStore({ analysis: { id: analysisId } });
+    return { ws: store as unknown as Workspace, open: (id) => setStore("analysis", { id }) };
+}
+
+/** The workspace of each test that does not swap analyses. */
+const WS = workspaceOn("analysis-1").ws;
+
+/** One subscription the fake opened. Kept after teardown, so a test can fire a LATE part at it. */
 type OpenedSubscription = {
+    readonly analysisId: string;
     readonly runId: string;
     /** Hand a part to THIS subscription's handler, whether or not it has been torn down. */
     readonly deliver: (part: StepActivityPart) => void;
     aborted: boolean;
 };
 
-/** Panel seams whose subscription is a push channel the test drives. */
-type FakePanelSeams = ActivityPanelSeams & {
+/** Panel options whose subscription is a push channel the test drives. */
+type FakePanelOpts = ActivityPanelOpts & {
     /** Deliver a part to whichever subscription is currently live (a no-op when none is). */
     push: (part: StepActivityPart) => void;
     /** Every subscription opened, in order, torn-down ones included. */
@@ -174,19 +191,19 @@ type FakePanelSeams = ActivityPanelSeams & {
 };
 
 /**
- * Panel seams over a fake run-event subscription.
+ * Panel options over a fake run stream.
  *
- * `initial` stands in for the replay the real seam performs on attach — the current activity a
+ * `initial` stands in for the replay the real stream performs on attach — the current activity a
  * subscriber joining mid-run receives immediately — and `null` means the run has reported none yet.
  * `push` then drives further updates, which is what lets a test assert the label CHANGING rather
  * than only the value it opened on.
  */
-function panelSeams(initial: string | null): FakePanelSeams {
+function panelOpts(initial: string | null): FakePanelOpts {
     const opened: OpenedSubscription[] = [];
     return {
-        runtime: () => fakeRuntime,
-        subscribeActivity: async (_runtime, options) => {
-            const entry: OpenedSubscription = { runId: options.runId, deliver: options.onActivity, aborted: false };
+        ready: () => true,
+        subscribeActivity: async (options) => {
+            const entry: OpenedSubscription = { analysisId: options.analysisId, runId: options.runId, deliver: options.onActivity, aborted: false };
             opened.push(entry);
             const closed = new Promise<void>((resolve) => {
                 options.signal.addEventListener(
@@ -198,7 +215,7 @@ function panelSeams(initial: string | null): FakePanelSeams {
                     { once: true },
                 );
             });
-            // The real seam delivers asynchronously, so the handler never runs synchronously inside
+            // The real stream delivers asynchronously, so the handler never runs synchronously inside
             // the effect that opened the subscription — mirror that, or the test would prove the
             // store correct under a schedule it never sees.
             await Promise.resolve();
@@ -220,7 +237,7 @@ afterEach(() => {
 
 describe("activity panel focus", () => {
     test("with no active subject the panel is invisible and holds nothing", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([]));
+        await refreshSidebarData("analysis-1", optsFor([]));
         expect(focusedSubject()).toBeNull();
         expect(activityPanelVisible()).toBe(false);
         expect(activeSubjectCount()).toBe(0);
@@ -228,7 +245,7 @@ describe("activity panel focus", () => {
     });
 
     test("with one active run it focuses that run without being asked", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
         expect(focusedRunSubject()?.runId).toBe("run-a");
         expect(activityPanelVisible()).toBe(true);
         expect(activeSubjectCount()).toBe(1);
@@ -236,7 +253,7 @@ describe("activity panel focus", () => {
     });
 
     test("navigation cycles across concurrent runs and wraps past the last", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" }), runRow({ runId: "run-c" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" }), runRow({ runId: "run-c" })]));
         expect(focusedRunSubject()?.runId).toBe("run-a");
         expect(focusedSubjectPosition()).toBe(1);
 
@@ -255,8 +272,8 @@ describe("activity panel focus", () => {
     });
 
     test("runs of different plans are both reachable", async () => {
-        const runs = [runRow({ runId: "run-a", planId: "plan-1" }), runRow({ runId: "run-b", planId: "plan-2" })];
-        await refreshSidebarData("analysis-1", seamsFor(runs));
+        const runs = [runRow({ runId: "run-a", planTitle: "Plan one" }), runRow({ runId: "run-b", planTitle: "Plan two" })];
+        await refreshSidebarData("analysis-1", optsFor(runs));
         expect(activeSubjectCount()).toBe(2);
         focusNextSubject();
         expect(focusedRunSubject()?.runId).toBe("run-b");
@@ -264,63 +281,60 @@ describe("activity panel focus", () => {
 
     test("the focused run terminating auto-advances to the run still active", async () => {
         const both = [runRow({ runId: "run-a" }), runRow({ runId: "run-b" })];
-        await refreshSidebarData("analysis-1", seamsFor(both));
+        await refreshSidebarData("analysis-1", optsFor(both));
         expect(focusedRunSubject()?.runId).toBe("run-a");
 
         // run-a completes; the next refresh drops it from the active set. No user action, no effect —
         // the derived focus simply stops resolving and falls through to the survivor.
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a", status: "completed" }), runRow({ runId: "run-b" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" }), runRow({ runId: "run-b" })]));
         expect(focusedRunSubject()?.runId).toBe("run-b");
         expect(activeSubjectCount()).toBe(1);
         expect(activityPanelVisible()).toBe(true);
     });
 
     test("the last run finishing empties the panel", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
         expect(activityPanelVisible()).toBe(true);
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a", status: "completed" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" })]));
         expect(focusedRunSubject()).toBeNull();
         expect(activityPanelVisible()).toBe(false);
     });
 
     test("advancing steps from the run on screen, not from a stale preference", async () => {
         const three = [runRow({ runId: "run-a" }), runRow({ runId: "run-b" }), runRow({ runId: "run-c" })];
-        await refreshSidebarData("analysis-1", seamsFor(three));
+        await refreshSidebarData("analysis-1", optsFor(three));
         focusNextSubject(); // → run-b, the stored preference
         expect(focusedRunSubject()?.runId).toBe("run-b");
 
         // run-b terminates. The panel shows run-a (first survivor); the STORED preference is still
         // run-b. Advancing must go to run-c — the run after the one being looked at — rather than to
         // whatever follows the dead preference.
-        await refreshSidebarData(
-            "analysis-1",
-            seamsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b", status: "failed" }), runRow({ runId: "run-c" })]),
-        );
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b", status: "failed" }), runRow({ runId: "run-c" })]));
         expect(focusedRunSubject()?.runId).toBe("run-a");
         focusNextSubject();
         expect(focusedRunSubject()?.runId).toBe("run-c");
     });
 
-    test("a step-read blip keeps the run focused and marks it stale rather than advancing", async () => {
+    test("a run-read blip keeps the run focused and marks it stale rather than advancing", async () => {
         const both = [runRow({ runId: "run-a" }), runRow({ runId: "run-b" })];
-        await refreshSidebarData("analysis-1", seamsFor(both));
+        await refreshSidebarData("analysis-1", optsFor(both));
         expect(focusedRunSubject()?.stale).toBe(false);
 
-        await refreshSidebarData("analysis-1", seamsFor(both, { failStepsFor: new Set(["run-a"]) }));
+        await refreshSidebarData("analysis-1", optsFor(both, { failRunFor: new Set(["run-a"]) }));
         // Still run-a, still visible — a blip must never read as completion.
         expect(focusedRunSubject()?.runId).toBe("run-a");
         expect(focusedRunSubject()?.stale).toBe(true);
         expect(activityPanelVisible()).toBe(true);
 
         // And it recovers on the next good read.
-        await refreshSidebarData("analysis-1", seamsFor(both));
+        await refreshSidebarData("analysis-1", optsFor(both));
         expect(focusedRunSubject()?.stale).toBe(false);
     });
 });
 
 describe("activity panel focus across subject kinds", () => {
     test("navigation moves between a run and the profile, wrapping past the last", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })], { profile: profileRow() }));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })], { profile: profileRow() }));
         expect(activeSubjectCount()).toBe(2);
         // The run leads the set by kind, not by recency — a profile can enter without the user having
         // asked for anything, so it is reachable without ever being the thing on screen.
@@ -342,7 +356,7 @@ describe("activity panel focus across subject kinds", () => {
     });
 
     test("the focused profile terminating auto-advances to the run still active", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })], { profile: profileRow() }));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })], { profile: profileRow() }));
         focusNextSubject();
         expect(focusedSubject()?.kind).toBe("profile");
 
@@ -352,7 +366,7 @@ describe("activity panel focus across subject kinds", () => {
         // survivor, so auto-advance has no code of its own to get wrong.
         await refreshSidebarData(
             "analysis-1",
-            seamsFor([runRow({ runId: "run-a" })], { profile: profileRow({ status: "completed", completedAt: "2026-07-28T10:01:00.000Z" }) }),
+            optsFor([runRow({ runId: "run-a" })], { profile: profileRow({ status: "completed", completedAt: "2026-07-28T10:01:00.000Z" }) }),
         );
         expect(focusedSubject()?.kind).toBe("run");
         expect(focusedRunSubject()?.runId).toBe("run-a");
@@ -362,13 +376,13 @@ describe("activity panel focus across subject kinds", () => {
     });
 
     test("a profile finishing with nothing else active empties the panel", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([], { profile: profileRow() }));
+        await refreshSidebarData("analysis-1", optsFor([], { profile: profileRow() }));
         expect(focusedSubject()?.kind).toBe("profile");
         expect(activityPanelVisible()).toBe(true);
 
         await refreshSidebarData(
             "analysis-1",
-            seamsFor([], { profile: profileRow({ status: "failed", completedAt: "2026-07-28T10:01:00.000Z", error: "boom" }) }),
+            optsFor([], { profile: profileRow({ status: "failed", completedAt: "2026-07-28T10:01:00.000Z", error: "boom" }) }),
         );
         // A failed profile is as terminal as a completed one: the panel takes no rows either way.
         expect(focusedSubject()).toBeNull();
@@ -380,7 +394,7 @@ describe("activity panel focus across subject kinds", () => {
 
 describe("activity panel dismissal", () => {
     test("dismissing hides the panel while leaving the run untouched", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
         toggleActivityPanel();
         expect(activityPanelVisible()).toBe(false);
         // The run itself is untouched: it is still active, still focused, still in the rail's snapshot.
@@ -393,7 +407,7 @@ describe("activity panel dismissal", () => {
         // palette precisely because they lost the panel; if the command toggled, a second invocation
         // (or one issued while the panel was already back) would hide it again and read as the
         // command having done nothing.
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
         toggleActivityPanel();
         expect(activityPanelVisible()).toBe(false);
         restoreActivityPanel();
@@ -403,7 +417,7 @@ describe("activity panel dismissal", () => {
     });
 
     test("restore brings it back, and is idempotent when already visible", async () => {
-        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
         toggleActivityPanel();
         expect(activityPanelVisible()).toBe(false);
         restoreActivityPanel();
@@ -414,15 +428,15 @@ describe("activity panel dismissal", () => {
 
     test("a dismissal expires once no run is active, so a later run is not silently invisible", async () => {
         await createRoot(async (dispose) => {
-            watchActivityPanel(panelSeams(null));
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+            watchActivityPanel(WS, panelOpts(null));
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             toggleActivityPanel();
             expect(activityPanelVisible()).toBe(false);
 
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a", status: "completed" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" })]));
             // Nothing active → the dismissal has no referent left, so it clears.
             expect(activityPanelVisible()).toBe(false); // still nothing to show
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-b" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-b" })]));
             expect(activityPanelVisible()).toBe(true);
             dispose();
         });
@@ -432,8 +446,8 @@ describe("activity panel dismissal", () => {
 describe("activity panel activity label", () => {
     test("the focused run's activity is published verbatim", async () => {
         await createRoot(async (dispose) => {
-            watchActivityPanel(panelSeams("Running script deseq2.R"));
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+            watchActivityPanel(WS, panelOpts("Running script deseq2.R"));
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             // Delivery is async; let its microtask settle.
             await Promise.resolve();
             await Promise.resolve();
@@ -449,19 +463,19 @@ describe("activity panel activity label", () => {
         // subscription, so a store that latched its first value — or that only ever read once per
         // focused run — passed the whole suite while the live panel showed a phrase from minutes ago.
         await createRoot(async (dispose) => {
-            const seams = panelSeams("Running script deseq2.R");
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+            const panel = panelOpts("Running script deseq2.R");
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubjectActivity()).toBe("Running script deseq2.R");
 
             // No new run data, no re-focus — only the stream moving on, which is the whole point of
             // taking the label from it.
-            seams.push(activityPart("run-a", "Reading counts.csv"));
+            panel.push(activityPart("run-a", "Reading counts.csv"));
             expect(focusedSubjectActivity()).toBe("Reading counts.csv");
 
-            seams.push(activityPart("run-a", "Writing volcano.png"));
+            panel.push(activityPart("run-a", "Writing volcano.png"));
             expect(focusedSubjectActivity()).toBe("Writing volcano.png");
             dispose();
         });
@@ -469,8 +483,8 @@ describe("activity panel activity label", () => {
 
     test("an unresolvable label is null, never a fabricated placeholder", async () => {
         await createRoot(async (dispose) => {
-            watchActivityPanel(panelSeams(null));
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+            watchActivityPanel(WS, panelOpts(null));
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubjectActivity()).toBeNull();
@@ -480,16 +494,16 @@ describe("activity panel activity label", () => {
 
     test("a step that has settled stops describing work, rather than freezing on its last phrase", async () => {
         await createRoot(async (dispose) => {
-            const seams = panelSeams("Running script deseq2.R");
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+            const panel = panelOpts("Running script deseq2.R");
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubjectActivity()).toBe("Running script deseq2.R");
 
             // The step's own terminal report. The run is still active (the next step has not spoken
             // yet), so the panel stays — but with no activity line, which is the honest reading.
-            seams.push(activityPart("run-a", "Step complete", { phase: "complete" }));
+            panel.push(activityPart("run-a", "Step complete", { phase: "complete" }));
             expect(focusedSubjectActivity()).toBeNull();
             expect(activityPanelVisible()).toBe(true);
             dispose();
@@ -498,24 +512,24 @@ describe("activity panel activity label", () => {
 
     test("with two steps in flight the newest report wins", async () => {
         await createRoot(async (dispose) => {
-            const seams = panelSeams(null);
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+            const panel = panelOpts(null);
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
 
-            seams.push(activityPart("run-a", "Running script qc.R", { stepId: "T1S1" }));
-            seams.push(activityPart("run-a", "Running script enrich.R", { stepId: "T2S1" }));
+            panel.push(activityPart("run-a", "Running script qc.R", { stepId: "T1S1" }));
+            panel.push(activityPart("run-a", "Running script enrich.R", { stepId: "T2S1" }));
             expect(focusedSubjectActivity()).toBe("Running script enrich.R");
 
             // The older step speaking again makes it the newest report — a `Map` keeps a key's
             // original slot on overwrite, so this is what proves the store re-orders on re-report
             // instead of latching whichever step happened to be heard from last.
-            seams.push(activityPart("run-a", "Plotting qc metrics", { stepId: "T1S1" }));
+            panel.push(activityPart("run-a", "Plotting qc metrics", { stepId: "T1S1" }));
             expect(focusedSubjectActivity()).toBe("Plotting qc metrics");
 
             // And a settled step drops out of the running, leaving the other one's phrase.
-            seams.push(activityPart("run-a", "Step complete", { stepId: "T1S1", phase: "complete" }));
+            panel.push(activityPart("run-a", "Step complete", { stepId: "T1S1", phase: "complete" }));
             expect(focusedSubjectActivity()).toBe("Running script enrich.R");
             dispose();
         });
@@ -523,17 +537,17 @@ describe("activity panel activity label", () => {
 
     test("no active run clears the label rather than leaving the last run's showing", async () => {
         await createRoot(async (dispose) => {
-            const seams = panelSeams("Running script deseq2.R");
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+            const panel = panelOpts("Running script deseq2.R");
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubjectActivity()).toBe("Running script deseq2.R");
 
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a", status: "completed" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" })]));
             expect(focusedSubjectActivity()).toBeNull();
             // The run terminating is a teardown edge, not just a focus one.
-            expect(seams.subscribed()).toBeNull();
+            expect(panel.subscribed()).toBeNull();
             dispose();
         });
     });
@@ -542,36 +556,56 @@ describe("activity panel activity label", () => {
 describe("activity panel activity subscription", () => {
     test("one subscription per focused run, held across the sidebar's poll", async () => {
         await createRoot(async (dispose) => {
-            const seams = panelSeams("Running script deseq2.R");
-            watchActivityPanel(seams);
+            const panel = panelOpts("Running script deseq2.R");
+            watchActivityPanel(WS, panel);
             const runs = [runRow({ runId: "run-a" })];
-            await refreshSidebarData("analysis-1", seamsFor(runs));
+            await refreshSidebarData("analysis-1", optsFor(runs));
             await Promise.resolve();
-            expect(seams.opened()).toHaveLength(1);
+            expect(panel.opened()).toHaveLength(1);
 
             // Each refresh mints a FRESH progress object for the same run. Re-subscribing on that
             // would replay the run's whole history every poll tick, for a run that has not changed.
-            await refreshSidebarData("analysis-1", seamsFor(runs));
-            await refreshSidebarData("analysis-1", seamsFor(runs));
+            await refreshSidebarData("analysis-1", optsFor(runs));
+            await refreshSidebarData("analysis-1", optsFor(runs));
             await Promise.resolve();
-            expect(seams.opened()).toHaveLength(1);
-            expect(seams.subscribed()).toBe("run-a");
+            expect(panel.opened()).toHaveLength(1);
+            expect(panel.subscribed()).toBe("run-a");
+            dispose();
+        });
+    });
+
+    test("the subscription is opened under the open analysis, and again under the next one after a swap", async () => {
+        await createRoot(async (dispose) => {
+            const panel = panelOpts(null);
+            const { ws, open } = workspaceOn("analysis-1");
+            watchActivityPanel(ws, panel);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await Promise.resolve();
+            expect(panel.opened().map((s) => [s.analysisId, s.runId])).toEqual([["analysis-1", "run-a"]]);
+
+            // The stream route lives under the analysis, so a swap re-opens the stream under the new one
+            // and tears the old one down — even before the sidebar republishes the new analysis's runs.
+            open("analysis-2");
+            expect(panel.opened().map((s) => [s.analysisId, s.runId, s.aborted])).toEqual([
+                ["analysis-1", "run-a", true],
+                ["analysis-2", "run-a", false],
+            ]);
             dispose();
         });
     });
 
     test("moving focus tears the old subscription down and opens one on the new run", async () => {
         await createRoot(async (dispose) => {
-            const seams = panelSeams("Running script deseq2.R");
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
+            const panel = panelOpts("Running script deseq2.R");
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
             await Promise.resolve();
-            expect(seams.subscribed()).toBe("run-a");
+            expect(panel.subscribed()).toBe("run-a");
 
             focusNextSubject();
-            expect(seams.opened()).toHaveLength(2);
-            expect(seams.opened()[0]?.aborted).toBe(true);
-            expect(seams.subscribed()).toBe("run-b");
+            expect(panel.opened()).toHaveLength(2);
+            expect(panel.opened()[0]?.aborted).toBe(true);
+            expect(panel.subscribed()).toBe("run-b");
             // The previous run's phrase must not survive the switch — the panel would be captioning
             // run-b with run-a's work.
             expect(focusedSubjectActivity()).toBeNull();
@@ -584,14 +618,14 @@ describe("activity panel activity subscription", () => {
         // inside an await when it is asked to wind down, so a part CAN arrive after the abort. The
         // generation token is what makes that harmless, and this drives exactly that race.
         await createRoot(async (dispose) => {
-            const seams = panelSeams(null);
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
+            const panel = panelOpts(null);
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
             await Promise.resolve();
-            const stale = seams.opened()[0];
+            const stale = panel.opened()[0];
 
             focusNextSubject();
-            seams.push(activityPart("run-b", "Running script enrich.R"));
+            panel.push(activityPart("run-b", "Running script enrich.R"));
             expect(focusedSubjectActivity()).toBe("Running script enrich.R");
 
             stale?.deliver(activityPart("run-a", "Running script qc.R"));
@@ -601,24 +635,24 @@ describe("activity panel activity subscription", () => {
     });
 
     test("unmounting the screen tears the subscription down", async () => {
-        const seams = panelSeams("Running script deseq2.R");
+        const panel = panelOpts("Running script deseq2.R");
         await createRoot(async (dispose) => {
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
-            expect(seams.subscribed()).toBe("run-a");
+            expect(panel.subscribed()).toBe("run-a");
             dispose();
         });
-        expect(seams.opened()[0]?.aborted).toBe(true);
+        expect(panel.opened()[0]?.aborted).toBe(true);
     });
 
     test("no subscription is opened while the runtime is not booted", async () => {
         await createRoot(async (dispose) => {
-            const seams: FakePanelSeams = { ...panelSeams("Running script deseq2.R"), runtime: () => null };
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+            const panel: FakePanelOpts = { ...panelOpts("Running script deseq2.R"), ready: () => false };
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
-            expect(seams.opened()).toHaveLength(0);
+            expect(panel.opened()).toHaveLength(0);
             expect(focusedSubjectActivity()).toBeNull();
             dispose();
         });
@@ -633,14 +667,14 @@ describe("activity panel activity for a focused profile", () => {
         await createRoot(async (dispose) => {
             // No initial part. A profile's first report lands after the panel has subscribed, and
             // starting from nothing is what makes the two pushes below two OBSERVED changes rather
-            // than one change away from whatever the seam handed over at attach.
-            const seams = panelSeams(null);
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([], { profile: profileRow() }));
+            // than one change away from whatever the stream handed over at attach.
+            const panel = panelOpts(null);
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([], { profile: profileRow() }));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubject()?.kind).toBe("profile");
-            expect(seams.subscribed()).toBe(PROFILE_WORKFLOW_ID);
+            expect(panel.subscribed()).toBe(PROFILE_WORKFLOW_ID);
             expect(focusedSubjectActivity()).toBeNull();
 
             // The profiler's real opening sequence: the sandbox wait, which precedes its agent
@@ -648,11 +682,25 @@ describe("activity panel activity for a focused profile", () => {
             // different values — a store that latched its first report, or that read the stream once
             // per focused subject, would satisfy a constant-label test while the panel showed a line
             // frozen minutes ago.
-            seams.push(profileActivityPart("Starting sandbox", { phase: "sandbox-init" }));
+            panel.push(profileActivityPart("Starting sandbox", { phase: "sandbox-init" }));
             expect(focusedSubjectActivity()).toBe("Starting sandbox");
 
-            seams.push(profileActivityPart("Reading counts.csv"));
+            panel.push(profileActivityPart("Reading counts.csv"));
             expect(focusedSubjectActivity()).toBe("Reading counts.csv");
+            dispose();
+        });
+    });
+
+    test("a profile whose row records no workflow id yet opens no stream and shows no activity", async () => {
+        await createRoot(async (dispose) => {
+            const panel = panelOpts("Starting sandbox");
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([], { profile: profileRow({ workflowId: null }) }));
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(focusedSubject()?.kind).toBe("profile");
+            expect(panel.opened()).toHaveLength(0);
+            expect(focusedSubjectActivity()).toBeNull();
             dispose();
         });
     });
@@ -665,19 +713,19 @@ describe("activity panel activity for a focused profile", () => {
         // so a delivered part belongs to the focused subject by construction. This test exists so that
         // re-adding the check fails a test instead of silently breaking profiles.
         await createRoot(async (dispose) => {
-            const seams = panelSeams(null);
-            watchActivityPanel(seams);
-            await refreshSidebarData("analysis-1", seamsFor([], { profile: profileRow() }));
+            const panel = panelOpts(null);
+            watchActivityPanel(WS, panel);
+            await refreshSidebarData("analysis-1", optsFor([], { profile: profileRow() }));
             await Promise.resolve();
             await Promise.resolve();
-            expect(seams.subscribed()).toBe(PROFILE_WORKFLOW_ID);
+            expect(panel.subscribed()).toBe(PROFILE_WORKFLOW_ID);
 
             // Delivered on the focused subject's OWN subscription, carrying an identifier that matches
             // neither the stream it arrived on nor the analysis the focus keys on.
             const part = profileActivityPart("Reading counts.csv");
             expect(part.runId).not.toBe(PROFILE_WORKFLOW_ID);
             expect(part.runId).not.toBe("analysis-1");
-            seams.push(part);
+            panel.push(part);
             expect(focusedSubjectActivity()).toBe("Reading counts.csv");
             dispose();
         });

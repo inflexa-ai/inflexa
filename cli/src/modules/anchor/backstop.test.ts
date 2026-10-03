@@ -2,20 +2,20 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { errAsync, ok, okAsync, err } from "neverthrow";
-import type { AnalysisPurgeOutcome, DbError as PgError, Pool } from "@inflexa-ai/harness";
+import { errAsync, okAsync } from "neverthrow";
+import type { AnalysisPurgeOutcome, DbError as PgError } from "@inflexa-ai/harness";
 
-import { runCli } from "../../test_support/cli.ts";
-import { closeDb } from "../../db/primary.ts";
+import { runCliAsync } from "../../test_support/cli.ts";
 import { freshDb } from "../../test_support/db.ts";
+import { startTestServer, type TestServer } from "../../test_support/server.ts";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { getAnchor, listAnalysesByAnchor } from "../../db/primary_query.ts";
-import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Anchor } from "../../types/anchor.ts";
 import type { Str256 } from "../../lib/types.ts";
-import { reclaimDeadAnchors, type PruneSeams } from "./backstop.ts";
-import { canonicalPath, writeMarker } from "./marker.ts";
+import { canonicalPath } from "../../lib/paths.ts";
+import { reclaimDeadAnchors, type PurgeAnalysisFn } from "./backstop.ts";
+import { writeMarker } from "./marker.ts";
 
 const created: string[] = [];
 
@@ -34,24 +34,40 @@ afterEach(() => {
     created.length = 0;
 });
 
-describe("inflexa repair (e2e)", () => {
-    test("re-points an anchor's cached path to the marker's current location", () => {
+// `repair` is a client of the local server: the child sends the path to the server of this process, which
+// reads the marker and writes the row of the sandboxed database.
+describe("inflexa repair and prune (e2e)", () => {
+    let server: TestServer;
+
+    beforeEach(() => {
+        server = startTestServer();
+    });
+
+    afterEach(async () => {
+        await server.stop();
+    });
+
+    test("re-points an anchor's cached path to the marker's current location", async () => {
         const moved = tmp();
         writeMarker(moved, "A1")._unsafeUnwrap();
         insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: "/stale/old/path", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
-        closeDb();
 
-        const result = runCli(["repair", moved]);
+        const result = await runCliAsync(["repair", moved], { env: server.childEnv });
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Repaired anchor A1");
         // Read back through the DB: the cached path now matches the marker's (canonical) location.
         expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(canonicalPath(moved));
     });
 
-    test("fails when there is no marker at the path", () => {
+    test("prune with no dead anchor says so and asks nothing", async () => {
+        const result = await runCliAsync(["prune"], { env: server.childEnv });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Nothing to prune.");
+    });
+
+    test("fails when there is no marker at the path", async () => {
         const empty = tmp();
-        closeDb();
-        const result = runCli(["repair", empty]);
+        const result = await runCliAsync(["repair", empty], { env: server.childEnv });
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("No marker");
     });
@@ -61,17 +77,13 @@ describe("inflexa repair (e2e)", () => {
 // the purge is addressed by, so deleting them first strands every footprint beyond any retry — in
 // bulk, and while reporting success. These drive the REAL SQLite store and have each purge read it
 // back, so "the rows were still there when the purge ran" is observed rather than inferred from a
-// recorded call order. Only the Postgres side is faked; there is no container engine in a test.
+// recorded call order. Only the Postgres purge is faked; the server passes the purge over its own pool.
 describe("prune reclaims Postgres before it touches SQLite", () => {
     const DEAD_ANCHOR = "anchor-dead";
-    const CONN: PostgresConnection = { host: "localhost", port: 8432, database: "inflexa", user: "inflexa", password: "pw" };
-    // The seams never touch the pool, so a stand-in cast keeps every case offline. Mirrors the fake
-    // pool the TUI's session and delete-ladder suites use.
-    const fakePool = {} as unknown as Pool;
     const PURGED: AnalysisPurgeOutcome = { threads: 2, messages: 40, workflows: 3, vectorIndexDropped: true };
     const pgErr: PgError = { type: "query_failed", op: "purgeAnalysis", cause: new Error("boom") };
 
-    /** Seed a dead anchor with `count` analyses homed in it, and hand back the anchor row. */
+    /** Seed a dead anchor with `count` analyses homed in it, and hand back the analyses. */
     function seedDeadAnchor(count: number): Analysis[] {
         insertAnchor({ id: DEAD_ANCHOR, createdAt: 1, updatedAt: 1, cachedPath: "/gone/forever", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         const analyses: Analysis[] = [];
@@ -106,56 +118,26 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
     }
 
     /**
-     * Postgres-side seams over a fixed outcome, recording what each purge saw. `sqliteAtPurge` is the
-     * order proof: it captures the live SQLite row set at the instant of each call, so a reclaim that
-     * deleted first would record an empty store here even though every call still happened.
+     * A purge over a fixed outcome, recording what each call saw. `sqliteAtPurge` is the order proof: it
+     * captures the live SQLite row set at the instant of each call, so a reclaim that deleted first would
+     * record an empty store here even though every call still happened.
      */
-    function seams(over: Partial<PruneSeams> = {}): {
-        seams: PruneSeams;
-        purged: string[];
-        sqliteAtPurge: string[][];
-        drains: number;
-        provisions: number;
-    } {
+    function recordingPurge(fail?: (attempt: number) => boolean): { purge: PurgeAnalysisFn; purged: string[]; sqliteAtPurge: string[][] } {
         const purged: string[] = [];
         const sqliteAtPurge: string[][] = [];
-        const state = { drains: 0, provisions: 0 };
-        const base: PruneSeams = {
-            // Counted, because reaching this seam is itself an effect: the real one starts a container
-            // stack and leaves it running, so a prune with nothing to reclaim must never arrive here.
-            ensurePostgres: async () => {
-                state.provisions += 1;
-                return ok<PostgresConnection, PostgresError>(CONN);
-            },
-            openPool: () => fakePool,
-            purgeAnalysis: (_pool, analysisId) => {
-                purged.push(analysisId);
-                sqliteAtPurge.push(survivingAnalysisIds());
-                return okAsync<AnalysisPurgeOutcome, PgError>(PURGED);
-            },
-            drainPool: async () => {
-                state.drains += 1;
-            },
-            ...over,
+        const purge: PurgeAnalysisFn = (analysisId) => {
+            purged.push(analysisId);
+            sqliteAtPurge.push(survivingAnalysisIds());
+            return fail?.(purged.length) ? errAsync<AnalysisPurgeOutcome, PgError>(pgErr) : okAsync<AnalysisPurgeOutcome, PgError>(PURGED);
         };
-        return {
-            seams: base,
-            purged,
-            sqliteAtPurge,
-            get drains() {
-                return state.drains;
-            },
-            get provisions() {
-                return state.provisions;
-            },
-        };
+        return { purge, purged, sqliteAtPurge };
     }
 
     test("every analysis is purged while its SQLite row is still present, and only then deleted", async () => {
         const seeded = seedDeadAnchor(2);
-        const t = seams();
+        const t = recordingPurge();
 
-        const outcome = await reclaimDeadAnchors([deadAnchor()!], t.seams);
+        const outcome = await reclaimDeadAnchors([deadAnchor()!], t.purge);
 
         expect(outcome.isOk()).toBe(true);
         expect(t.purged.toSorted()).toEqual(seeded.map((a) => a.id).toSorted());
@@ -165,69 +147,40 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
         // And afterwards the rows and the anchor are gone, so the prune did complete.
         expect(survivingAnalysisIds()).toEqual([]);
         expect(deadAnchor()).toBeNull();
-        expect(t.drains).toBe(1);
-        // The count the command reports back, which is what decides whether it tells the user a
-        // container stack is still running behind it.
         expect(outcome._unsafeUnwrap()).toEqual({ purged: seeded.length });
     });
 
-    test("an anchor that held no analyses is pruned without provisioning a database at all", async () => {
+    test("an anchor that held no analyses is pruned with no purge at all", async () => {
         insertAnchor({ id: DEAD_ANCHOR, createdAt: 1, updatedAt: 1, cachedPath: "/gone/forever", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
-        const t = seams();
+        const t = recordingPurge();
 
-        const outcome = await reclaimDeadAnchors([deadAnchor()!], t.seams);
+        const outcome = await reclaimDeadAnchors([deadAnchor()!], t.purge);
 
-        // Nothing to reclaim ⇒ the gate is never reached, so the user is not charged a container start
-        // — nor left with a running stack — for a prune that needed no database.
-        expect(t.provisions).toBe(0);
-        expect(t.drains).toBe(0);
+        // Nothing to reclaim ⇒ the purge, and with it the need for a booted runtime, never comes.
         expect(t.purged).toEqual([]);
         // The anchor is still pruned; skipping the reclaim skips only the reclaim.
         expect(outcome._unsafeUnwrap()).toEqual({ purged: 0 });
         expect(deadAnchor()).toBeNull();
     });
 
-    test("a Postgres that cannot be provisioned deletes nothing at all", async () => {
-        const seeded = seedDeadAnchor(2);
-        const pgDown: PostgresError = { type: "runtime_not_ready", message: "no container engine found" };
-        const t = seams({ ensurePostgres: async () => err<PostgresConnection, PostgresError>(pgDown) });
-
-        const outcome = await reclaimDeadAnchors([deadAnchor()!], t.seams);
-
-        expect(outcome._unsafeUnwrapErr()).toEqual({ type: "postgres_unavailable", cause: pgDown });
-        expect(t.purged).toEqual([]);
-        // Nothing was lost — that is what the abort notice claims, and it has to be true.
-        expect(survivingAnalysisIds().toSorted()).toEqual(seeded.map((a) => a.id).toSorted());
-        expect(deadAnchor()).not.toBeNull();
-        // No pool was ever opened, so there is nothing to drain.
-        expect(t.drains).toBe(0);
-    });
-
     test("a failed purge leaves every row standing, and the re-run completes", async () => {
         const seeded = seedDeadAnchor(2);
-        let attempts = 0;
         // Fails on the SECOND analysis: a failure on the first could pass with the deletes running
         // ahead of the purges for every analysis but that one.
-        const failing = seams({
-            purgeAnalysis: () => {
-                attempts += 1;
-                return attempts === 1 ? okAsync<AnalysisPurgeOutcome, PgError>(PURGED) : errAsync<AnalysisPurgeOutcome, PgError>(pgErr);
-            },
-        });
+        const failing = recordingPurge((attempt) => attempt === 2);
 
-        const aborted = await reclaimDeadAnchors([deadAnchor()!], failing.seams);
+        const aborted = await reclaimDeadAnchors([deadAnchor()!], failing.purge);
 
         expect(aborted._unsafeUnwrapErr()).toMatchObject({ type: "purge_failed", cause: pgErr });
         // Including the analysis whose purge DID succeed: the anchor is deleted as a unit, so keeping
         // one of its rows and dropping the other would leave a half-pruned anchor no retry can finish.
         expect(survivingAnalysisIds().toSorted()).toEqual(seeded.map((a) => a.id).toSorted());
         expect(deadAnchor()).not.toBeNull();
-        expect(failing.drains).toBe(1); // the pool it opened is released even on the abort
 
-        // The recovery the abort notice promises: the anchor is still dead, the analyses are still
-        // listed, and the purge is idempotent — so running it again is all it takes.
-        const retry = seams();
-        const outcome = await reclaimDeadAnchors([deadAnchor()!], retry.seams);
+        // The recovery the abort promises: the anchor is still dead, the analyses are still listed, and
+        // the purge is idempotent — so running it again is all it takes.
+        const retry = recordingPurge();
+        const outcome = await reclaimDeadAnchors([deadAnchor()!], retry.purge);
 
         expect(outcome.isOk()).toBe(true);
         expect(retry.purged.toSorted()).toEqual(seeded.map((a) => a.id).toSorted());

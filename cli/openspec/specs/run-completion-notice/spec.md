@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change live-run-observability. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: A run reaching a terminal status announces itself
 
 When a run reaches a terminal status, the TUI SHALL raise a transient notice stating the
@@ -72,153 +74,58 @@ need a loss policy.
 - **WHEN** a solicited notice is raised while completion notices are still queued
 - **THEN** it is shown immediately, and the queued completions are delivered after it
 
-### Requirement: A run's outcome is recorded durably in the conversation thread
+### Requirement: A completion notice is keyed against repeated observation
 
-Alongside the transient notice, the terminal transition SHALL append a durable record of
-the outcome to the analysis's conversation thread, at the point in time the run actually
-finished.
+Every user-visible reaction SHALL be keyed by the run id together with its terminal status. The TUI
+detects a terminal transition from the runs snapshot that its sidebar reads from the local server,
+and the server sends no event when a run ends. A durable-runtime recovery can move a run's row
+through its terminal state again, and a later read observes it again, so a terminal transition can
+be observed more than once; the keying is what stops a second observation producing a duplicate
+notice.
 
-The record SHALL be appended as a synthetic message — one that carries no turn boundary —
-so it neither splits a turn for display paging or the token window, nor gives a tail
-retraction a mid-turn cut point. It SHALL be authored through the harness's synthetic-message
-constructor rather than by hand-assembling its marker.
+A run SHALL be announced only when this client observed it non-terminal and then terminal. Thus the
+first read after the TUI opens an analysis announces no run that had already finished, and a run that
+starts and ends between two reads of this client is not announced. The snapshot covers each run of
+the open analysis, whichever client or process started it. A run of a different analysis SHALL NOT
+be announced while the user is away from it; when the user switches back, the next read announces
+it.
 
-Because the record lives in the thread the next turn's context is assembled from, the
-conversation agent SHALL be able to answer whether a run finished without invoking a tool.
-Appending the record SHALL NOT itself start a turn or cause the agent to respond.
-
-#### Scenario: The outcome survives a reload
-
-- **WHEN** a run completes and the user later reopens the analysis
-- **THEN** the transcript still carries the run's outcome record at its chronological position
-
-#### Scenario: The record does not split a turn
-
-- **WHEN** a run's outcome is appended between two exchanges
-- **THEN** turn grouping, the token window, and tail retraction all behave as though the record were part of the preceding turn
-
-#### Scenario: The agent can answer without a tool call
-
-- **WHEN** a run completes and the user then asks whether it is done
-- **THEN** the run's outcome is present in the context assembled for that turn
-
-#### Scenario: Appending does not provoke a reply
-
-- **WHEN** a run completes while the conversation is idle
-- **THEN** the record is appended and no assistant turn begins
-
-### Requirement: A run's failure message is bounded and delimited in the record
-
-The failure message a record carries SHALL be length-bounded, and a clipped message SHALL be marked
-as clipped. The message is unbounded workflow output and the record enters the token window every
-subsequent turn is assembled from, so one verbose failure would otherwise consume the conversation's
-context budget permanently.
-
-The message SHALL be delimited and labelled as verbatim machine output rather than interpolated into
-the record's prose. It can carry text produced by code running in the sandbox, so it is content of
-unknown provenance placed beside the user's own words; delimiting does not make it trustworthy, it
-makes its boundary legible, so instruction-shaped text inside it reads as a quoted failure message
-rather than as something the conversation said.
-
-#### Scenario: A verbose failure does not consume the context budget
-
-- **WHEN** a run fails with a very long message
-- **THEN** the appended record is bounded and states that the message was truncated
-
-#### Scenario: Instruction-shaped failure text stays quoted
-
-- **WHEN** a failure message contains text shaped like an instruction
-- **THEN** it appears inside the record's delimited machine-output section, not in its prose
-
-### Requirement: Thread writes are serialized, and a racing user message queues
-
-Durable writes to one analysis thread SHALL be serialized: the run-outcome append and a
-chat turn's own append SHALL NOT interleave. The conversation store assumes a single writer
-per thread — turn ordering is the host's responsibility — and a notice appended into the
-middle of an unwinding turn would splice a message between that turn's rows.
-
-A user message submitted while a run-outcome append is in progress SHALL be **queued and
-then processed**, never dropped and never rejected. The composer SHALL accept the input and
-the turn SHALL begin once the append completes, so the wait is invisible beyond a brief
-delay before the assistant starts.
-
-This serialization is distinct from, and SHALL NOT be implemented with, the generation token
-that orders the conversation store's writes. That token exists to make the newest UI
-operation win and silently drop older ones; a user's message and a run's outcome are both
-durable and neither may be discarded in favour of the other.
-
-Conversely, a run terminating while a chat turn is already in flight SHALL defer its append
-until the turn's own append has completed. A completion notice is not time-critical, and the
-transient toast still fires immediately, so deferring the durable record costs the user
-nothing.
-
-Tail retraction is the one exclusion. The durable removal that follows a user's abort SHALL
-NOT wait on this serialization: it is awaited *before* the retract's visible transition
-precisely so the whole change lands as one step, and a queue wait would put a record append's
-latency inside a keystroke's response. The admitted consequence is that a record admitted
-before a retract but landing after its cut attaches to whichever turn is then the tail. That
-is bounded and survivable — no row is lost or duplicated and `seq` stays monotonic — and it
-requires two durable writes to race a single keypress.
-
-#### Scenario: A message sent at the moment a run lands is not lost
-
-- **WHEN** the user submits a message while the run-outcome append is in flight
-- **THEN** the message is accepted, queued, and its turn begins once the append completes
-
-#### Scenario: A run landing mid-turn does not splice the turn
-
-- **WHEN** a run terminates while a chat turn is streaming
-- **THEN** the outcome append waits until the turn's append has completed, and the turn's rows stay contiguous
-
-#### Scenario: The toast does not wait on the thread
-
-- **WHEN** a run terminates while a chat turn is in flight
-- **THEN** the completion notice is shown immediately, even though its durable record is deferred
-
-#### Scenario: Neither writer is discarded
-
-- **WHEN** a user message and a run outcome contend for the same thread
-- **THEN** both are written, in the order they were admitted, and neither is dropped
-
-#### Scenario: A retract is not delayed by a queued record
-
-- **WHEN** the user aborts a turn while a run-outcome record is queued for that thread
-- **THEN** the durable tail removal runs without waiting for the record, and the visible transition is not delayed
-
-### Requirement: Durable reactions are keyed against repeated delivery
-
-Every durable or user-visible reaction SHALL be keyed by the run id together with its
-terminal status — the notice and the thread record alike. The run-observation channel
-re-delivers a run's state after a durable-runtime recovery, so a terminal transition can be
-observed more than once; the keying is what stops a re-delivery producing a duplicate notice
-or a duplicate record.
-
-Purely presentational state SHALL NOT need this keying: rendering from the newest observed
-state is idempotent by construction.
+Purely presentational state SHALL NOT need this keying: rendering from the newest observed state is
+idempotent by construction.
 
 #### Scenario: A recovered run announces once
 
-- **WHEN** the durable runtime recovers and re-delivers a run's terminal state
-- **THEN** no second notice is raised and no second thread record is appended
+- **WHEN** the durable runtime recovers and a later read observes a run's terminal state again
+- **THEN** no second notice is raised
 
 #### Scenario: Distinct runs are not conflated
 
 - **WHEN** two different runs reach terminal statuses
-- **THEN** each produces its own notice and its own record
+- **THEN** each produces its own notice
 
-### Requirement: The announcement path degrades rather than blocking
+#### Scenario: History is not news
 
-A failure to append the durable record SHALL NOT suppress the transient notice, and a
-failure in either SHALL NOT affect the run, the sidebar, or the conversation. Announcement
-is an observation channel; a fault in it SHALL surface as a notice and be survivable.
+- **WHEN** the TUI opens an analysis whose runs had already finished
+- **THEN** no notice is raised for those runs
 
-#### Scenario: A failed append still announces
+#### Scenario: A run that a different client started announces
 
-- **WHEN** the thread append fails for a completed run
-- **THEN** the completion notice is still shown and the failure to record it is surfaced
+- **WHEN** a run that a different client started reaches a terminal status, and this TUI observed it running
+- **THEN** this TUI raises the notice of that run
+
+### Requirement: A failed read of the runs degrades the announcement, never the chat
+
+A failed read of the runs SHALL NOT raise a notice, and a failure in the announcement path SHALL NOT
+affect the run, the sidebar, or the conversation. Announcement is an observation channel: the next
+successful read announces each transition that it observes, and a fault in the channel is
+survivable.
+
+#### Scenario: A failed read raises no false notice
+
+- **WHEN** a read of the runs fails while a run is active
+- **THEN** no notice is raised, and the next successful read announces the run if it then reads terminal
 
 #### Scenario: Announcement faults do not disturb the chat
 
 - **WHEN** the announcement path errors
 - **THEN** the conversation remains usable and no turn is failed or interrupted
-

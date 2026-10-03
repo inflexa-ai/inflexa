@@ -4,6 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { makeSession } from "../../providers/__fixtures__/session.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import {
     createListAvailablePackagesTool,
@@ -557,25 +558,64 @@ describe("list_available_packages — reading the inventory", () => {
     it("the inventory read prefers the pool reader, merges the image record, and reports an unreadable pool", async () => {
         const { farmLockFile, imagePackagesFile } = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        const read = await readInventorySections({
-            farmLockFile,
-            imagePackagesFile,
-            readPoolInventory: async () =>
-                ({
-                    kind: "sections",
-                    sections: [{ title: "Python (pip)", track: "python", packages: [{ name: "scipy", version: "1.16.3" }] }],
-                }) as const,
-        });
-        const unreadable = await readInventorySections({
-            farmLockFile,
-            readPoolInventory: async () => ({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" }) as const,
-        });
+        const read = await readInventorySections(
+            {
+                farmLockFile,
+                imagePackagesFile,
+                readPoolInventory: async () =>
+                    ({
+                        kind: "sections",
+                        sections: [{ title: "Python (pip)", track: "python", packages: [{ name: "scipy", version: "1.16.3" }] }],
+                    }) as const,
+            },
+            "analysis-001",
+        );
+        const unreadable = await readInventorySections(
+            {
+                farmLockFile,
+                readPoolInventory: async () => ({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" }) as const,
+            },
+            "analysis-001",
+        );
 
         // The farm lock holds Seurat and scanpy; a bound pool reader wins, thus
         // the R section of the lock is absent from the read.
         expect(read.kind === "sections" ? read.sections.map((section) => section.title) : []).toEqual(["Python (pip)", "System tools (CLI)", "Node (npm)"]);
         expect(unreadable.kind).toBe("unavailable");
         expect(unreadable.kind === "unavailable" ? unreadable.reason : undefined).toContain("the dependency graph names 1 edge(s)");
+    });
+
+    /** A tool context whose session operates on `analysisId`. */
+    const contextFor = (analysisId: string) => ({ ...makeToolContext().ctx, session: makeSession({ scope: { kind: "analysis", analysisId } }) });
+
+    /** The presence answer of `Seurat`, the package that only the full lock holds. */
+    async function seuratPresent(deps: Parameters<typeof createListAvailablePackagesTool>[0], analysisId: string): Promise<boolean> {
+        const result = (await createListAvailablePackagesTool(deps).execute({ names: ["Seurat"] }, contextFor(analysisId)))._unsafeUnwrap() as {
+            checked: { present: boolean }[];
+        };
+        return result.checked[0]?.present ?? false;
+    }
+
+    it("a function path reads the farm lock of the analysis of the session", async () => {
+        const full = await makeStore();
+        const pythonOnlyDir = await mkdtemp(join(tmpdir(), "packages-"));
+        const pythonOnly = join(pythonOnlyDir, "inflexa.lock");
+        await writeFile(pythonOnly, JSON.stringify({ ...LOCK, packages: LOCK.packages.filter((entry) => entry.track === "python") }));
+        const locks: Record<string, string> = { "analysis-full": full.farmLockFile, "analysis-python": pythonOnly };
+        const farmLockFile = (analysisId: string): string => locks[analysisId] ?? join(pythonOnlyDir, "absent.lock");
+
+        expect(await seuratPresent({ farmLockFile }, "analysis-full")).toBe(true);
+        expect(await seuratPresent({ farmLockFile }, "analysis-python")).toBe(false);
+        // The launch path reads through the same resolution.
+        const launchRead = await readInventorySections({ farmLockFile }, "analysis-python");
+        expect(launchRead.kind === "sections" ? launchRead.sections.flatMap((section) => section.packages.map((entry) => entry.name)) : []).toEqual(["scanpy"]);
+    });
+
+    it("a string path reads the same farm lock for each analysis", async () => {
+        const { farmLockFile } = await makeStore();
+
+        expect(await seuratPresent({ farmLockFile }, "analysis-full")).toBe(true);
+        expect(await seuratPresent({ farmLockFile }, "analysis-python")).toBe(true);
     });
 });
 

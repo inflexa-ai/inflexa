@@ -17,6 +17,11 @@ export const TextDeltaEventSchema = z.object({
     source: EventSourceSchema,
 });
 
+export const IterationEventSchema = z.object({
+    type: z.literal("iteration"),
+    source: EventSourceSchema,
+});
+
 /** Mirrors the `ToolOutcome` union — three states, never a boolean. */
 export const ToolOutcomeSchema = z.enum(["ok", "error", "denied"]);
 
@@ -58,6 +63,7 @@ export const ChatErrorEventSchema = z.object({
 
 export const ChatEventSchema = z.discriminatedUnion("type", [
     TextDeltaEventSchema,
+    IterationEventSchema,
     ToolStartedEventSchema,
     ToolFinishedEventSchema,
     FinishEventSchema,

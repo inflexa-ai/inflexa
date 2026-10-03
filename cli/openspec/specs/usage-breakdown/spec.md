@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change cli-usage-breakdown. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: The ledger is readable at the session, run, and step grains
 
 The CLI SHALL provide read paths reporting an analysis's recorded consumption grouped by session, by run, and — within one run — by step. Each SHALL return per-quantity sums and a call count per group, and SHALL preserve the absent-means-not-reported rule: a quantity no row in a group reported SHALL read back as absent, never as zero.
@@ -89,13 +91,13 @@ The dialog's HEADLINE SHALL use the labelled form of a token figure, and its gro
 
 The headline's output quantity SHALL be aligned to the panel's trailing edge, with input at the leading edge. The two are peers and the reader is comparing them, so each belongs at an edge it can be found at without scanning. Splitting the row into two equal halves and letting each quantity sit at the start of its own half is NOT sufficient: it leaves the output figure floating near the middle of the panel, adjacent to nothing, reading as neither aligned nor deliberate. Quantities nested UNDER an arm stay aligned to that arm rather than to the edge, so the indent continues to read as an indent.
 
-The dialog SHALL read only the local ledger and SHALL open with the harness runtime stopped. It SHALL NOT compute a single combined token figure at any grain: input and output are reported as two figures, with the remaining quantities available only as breakdowns of those two.
+The dialog SHALL read only the local ledger, through the usage route of the local server (`GET {A}/usage` with the thread and one grouping). That route reads SQLite only and needs no harness runtime, thus the dialog SHALL open while the runtime of the server is still starting or failed to boot. It SHALL NOT compute a single combined token figure at any grain: input and output are reported as two figures, with the remaining quantities available only as breakdowns of those two.
 
 A read failure SHALL render an unavailable state inside the dialog rather than preventing it from opening.
 
 #### Scenario: The dialog opens with the durable engine stopped
 
-- **GIVEN** recorded usage and no running harness runtime
+- **GIVEN** recorded usage and a local server whose harness runtime is not ready
 - **WHEN** the user activates the USAGE section
 - **THEN** the dialog opens and shows the session's models and agents
 
@@ -128,8 +130,6 @@ A read failure SHALL render an unavailable state inside the dialog rather than p
 - **GIVEN** a ledger read that fails
 - **WHEN** the dialog opens
 - **THEN** it renders an unavailable state and remains dismissable
-
-## ADDED Requirements
 
 ### Requirement: A grain row is identified without requiring the durable engine
 
