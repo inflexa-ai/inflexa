@@ -1,15 +1,23 @@
 # sidebar-live Specification
 
 ## Purpose
-The sidebar's live-data contract: the DATA PROFILE and RUNS sections source the harness ledger through the booted runtime (never mocks), degrade gracefully pre-ready, refresh on lifecycle edges plus a bounded active-work poll, publish the newest active run's step progress for the RUNS section's in-rail progress embed, and open details flows (profile summary dialog — carrying the keybound re-profile action; the searchable runs picker → run-detail dialog) by section click and leader keybindings. Lives in `src/tui/hooks/sidebar_live.ts`, `src/tui/layout/sidebar.tsx`, and `src/tui/components/dialog/run_detail_dialog.tsx`.
+The sidebar's live-data contract: the DATA PROFILE and RUNS sections source the harness ledger through the routes of the local server (never mocks), degrade gracefully before the runtime of the server is ready, refresh on lifecycle edges plus a bounded active-work poll, publish the newest active run's step progress for the RUNS section's in-rail progress embed, and open details flows (profile summary dialog — carrying the keybound re-profile action; the searchable runs picker → run-detail dialog) by section click and leader keybindings. Lives in `src/tui/hooks/sidebar_live.ts`, `src/tui/layout/sidebar.tsx`, and `src/tui/components/dialog/run_detail_dialog.tsx`.
+
 ## Requirements
+
 ### Requirement: The sidebar renders live ledger data with graceful degradation
 
-The sidebar MUST source its DATA PROFILE and RUNS sections from the harness ledger, through the pool of the booted runtime. The sources are the data-profile status row and the newest runs of the analysis, never mock fixtures. Before the runtime is `ready`, the sections MUST render a muted placeholder, and no read runs. An unprofiled analysis renders "not profiled". A read failure renders an unavailable state. None of these states can crash or block the sidebar. Every state distinguishes itself by glyph and tone from the design system.
+The sidebar MUST source its DATA PROFILE and RUNS sections from the harness ledger, through the data-profile and run routes of the local server. The sources are the data-profile status row and the newest runs of the analysis, never mock fixtures. Before the runtime of the server is `ready`, the sections MUST render a muted placeholder, and no request goes out. An unprofiled analysis renders "not profiled". A read failure renders an unavailable state. None of these states can crash or block the sidebar. Every state distinguishes itself by glyph and tone from the design system.
 
 The RUNS section MUST render **every active run**, not only the newest. An active (non-terminal) run MUST render its own run block directly under its run row: the progress meter, `done/total`, and the bounded step window (the narrow windowed mount, `maxSteps` capped). The block does not show the name or tag heading again, because the run row above is the heading. A terminal run MUST render as a plain one-line row, and the terminal rows stay capped as before. The run id of the row keys the block. Thus the progress of one run under the row of a different run is not representable. The rail scrolls, thus its length tracks live work rather than history.
 
 Live work MUST NOT come from a windowed listing. The runs listing caps at the newest few rows, ordered by start time, and it drops the OLDEST running run first. That run is exactly the long analysis that these surfaces keep visible. Thus the set of active runs MUST come from a separate, uncapped read. The two reads merge, thus a run outside the listing window is still listed and still tracked. The uncapped read is bounded by live concurrency, not by history. Its failure MUST degrade to the view of the listing alone, and it removes no run that the listing sees.
+
+Runs and steps MUST carry a name rather than an opaque id wherever a name exists. A run MUST take the title of its plan, from the persisted plan. The fallback is the workflow name, then the id tail. The stored workflow name is identical on every row, and it identifies nothing. A step MUST take its plan-assigned name, with its step id as the fallback, and it MUST show the agent that owns it.
+
+The rendered state of a step MUST keep the distinctions that the ledger records. A skipped step MUST be distinguishable from one that waits to start. A blocked step MUST surface the recorded reason, and it does not read as an ordinary failure. A retried step MUST show the retry.
+
+The completed-profile line MUST show the absolute completed time (`toLocaleString()`, matching the details dialog), not a relative age. A profile is a durable record, referenced long after it ran. A bare `8h` forces the reader to do date arithmetic that the absolute time answers directly. The RUNS rows keep compact relative ages. An absolute timestamp on every run row would exceed the usable width of the rail, and each row would wrap. The SESSION created time is absolute for the same durable-record reason, per the sidebar requirement of `tui-layout`.
 
 #### Scenario: A long-running run outside the listing window stays observable
 
@@ -21,16 +29,10 @@ Live work MUST NOT come from a windowed listing. The runs listing caps at the ne
 - **WHEN** the uncapped active read fails while the listing succeeds
 - **THEN** the section renders exactly what the listing alone would have shown
 
-Runs and steps MUST carry a name rather than an opaque id wherever a name exists. A run MUST take the title of its plan, from the persisted plan. The fallback is the workflow name, then the id tail. The stored workflow name is identical on every row, and it identifies nothing. A step MUST take its plan-assigned name, with its step id as the fallback, and it MUST show the agent that owns it.
-
-The rendered state of a step MUST keep the distinctions that the ledger records. A skipped step MUST be distinguishable from one that waits to start. A blocked step MUST surface the recorded reason, and it does not read as an ordinary failure. A retried step MUST show the retry.
-
-The completed-profile line MUST show the absolute completed time (`toLocaleString()`, matching the details dialog), not a relative age. A profile is a durable record, referenced long after it ran. A bare `8h` forces the reader to do date arithmetic that the absolute time answers directly. The RUNS rows keep compact relative ages. An absolute timestamp on every run row would exceed the usable width of the rail, and each row would wrap. The SESSION created time is absolute for the same durable-record reason, per the sidebar requirement of `tui-layout`.
-
 #### Scenario: Sections degrade before the runtime is ready
 
-- **WHEN** the sidebar renders while the harness runtime is still booting
-- **THEN** the DATA PROFILE and RUNS sections show muted placeholders and no ledger query runs
+- **WHEN** the sidebar renders while the runtime of the local server is still booting
+- **THEN** the DATA PROFILE and RUNS sections show muted placeholders and no request for them goes out
 
 #### Scenario: Profile states render truthfully
 
@@ -62,102 +64,6 @@ The completed-profile line MUST show the absolute completed time (`toLocaleStrin
 
 - **WHEN** the step ledger holds a blocked step, a skipped step, and a pending step for a rendered run
 - **THEN** the blocked step surfaces its recorded reason, and the skipped step is distinguishable from the pending one
-
-### Requirement: Sidebar data refreshes on lifecycle edges and bounded polling
-
-The sidebar's live data SHALL refresh when the runtime reaches `ready`, when the workspace
-analysis changes, when a chat turn completes, when the profile parity machinery changes ledger
-state outside those edges (a trigger, restart, or clear pokes the store — see `tui-harness-chat`),
-and when a run-observation event is received from the harness; while the last snapshot shows
-active work (a pending/running profile or a non-terminal run) it SHALL additionally poll on a
-bounded interval — and SHALL stop polling once no work is active, so an idle sidebar issues zero
-queries.
-
-A run-observation event SHALL act as a refresh **trigger**, not as a data source: the refresh
-remains the single writer of the store, so ordering, plan resolution, and staleness handling have
-one implementation. Polling SHALL be retained as the backstop for state the observation channel
-cannot carry — a run started by another process, or an event missed while the runtime was still
-booting.
-
-A refresh SHALL claim a monotonic generation token at entry and re-check it after each read, so the
-newest refresh started is the only one that writes. Because that token makes a newer refresh *cancel* an
-older one, the **poll** SHALL additionally skip its tick whenever a refresh is already in flight. Without
-that skip, reads slower than the interval would leave every tick superseded by the next and the store
-would never receive a write at all — and since an `unavailable` snapshot is itself an arming condition,
-a degraded database would be re-queried on every tick behind a permanently frozen section.
-
-Lifecycle-edge refreshes SHALL NOT skip: they carry new information and are required to supersede.
-An observation-triggered refresh SHALL follow the poll's skip rule, not the lifecycle rule — events
-can arrive faster than reads complete, and a burst must not starve the store of writes.
-
-For **every** non-terminal run in the freshly-read snapshot, the refresh SHALL additionally fetch
-that run's steps from the step ledger (inside the same generation-token guard) and publish an
-active-run progress entry — run label, done/total counts, and per-step view states carrying each
-step's name, owning agent, and recorded blocked reason and attempt count where present. The
-published progress SHALL be keyed by run id. A run that reaches a terminal status SHALL have its
-entry removed. When no run is active, no entry SHALL be published and no step query SHALL run,
-preserving the idle-costs-nothing property. Plan resolution SHALL be performed at most once per
-distinct plan within a refresh, so several runs of one plan cost one plan read.
-
-The step-status → view-state mapping SHALL be defined once in the sidebar-live module and shared
-with the run-detail dialog and the run-activity panel, so no surface invents its own reading of a
-ledger status.
-
-#### Scenario: A run launched from chat appears without user action
-
-- **WHEN** the agent launches a run during a turn
-- **THEN** the RUNS section shows the new run after the turn completes, and its status keeps updating while the run is active
-
-#### Scenario: An observation event refreshes without waiting for the poll
-
-- **WHEN** a run-observation event arrives between poll ticks
-- **THEN** a refresh runs and the sections reflect the new state without waiting for the interval
-
-#### Scenario: An input edit's consequences appear without user action
-
-- **WHEN** an input mutation causes the parity machinery to re-trigger or clear the profile
-- **THEN** the DATA PROFILE section reflects the new ledger state (running, or not profiled) without the user touching the sidebar
-
-#### Scenario: Idle costs nothing
-
-- **WHEN** no profile is running and every run is terminal
-- **THEN** no polling interval is active, and no step query runs
-
-#### Scenario: A slow read degrades cadence, not liveness
-
-- **WHEN** a refresh's ledger reads take longer than the poll interval
-- **THEN** the intervening ticks SHALL be skipped rather than superseding the in-flight refresh
-- **AND** that refresh SHALL complete and write its snapshots
-
-#### Scenario: An event burst does not starve the store
-
-- **WHEN** run-observation events arrive faster than a refresh completes
-- **THEN** the events that arrive during an in-flight refresh are skipped rather than superseding it, and a refresh completes and writes
-
-#### Scenario: A recovering database self-heals
-
-- **WHEN** the ledger reads fail (arming the poll via `unavailable`) and then begin succeeding, while each read is slower than the interval
-- **THEN** a refresh SHALL complete and the sections SHALL leave the `unavailable` state
-
-#### Scenario: Every active run publishes live progress
-
-- **WHEN** two runs are non-terminal during a refresh
-- **THEN** a progress entry is published for each, keyed by its run id, carrying its label, done/total, and per-step states
-
-#### Scenario: Progress entry clears on completion
-
-- **WHEN** an active run reaches a terminal status
-- **THEN** the next refresh removes that run's progress entry, leaves other active runs' entries intact, and stops fetching that run's steps
-
-#### Scenario: Several runs of one plan read the plan once
-
-- **WHEN** two active runs share a plan
-- **THEN** the refresh resolves that plan's title once and labels both runs from it
-
-#### Scenario: Seeded pending steps render as queued
-
-- **WHEN** the step ledger returns `pending` (or `skipped`) rows for an active run
-- **THEN** the progress entry shows them in the step window with the queued (hollow) view state and counts them in the `done/total` denominator
 
 ### Requirement: Profile and runs details open from the sidebar
 
@@ -263,9 +169,8 @@ bounded, and its guard released, whether it succeeds, fails, or exceeds its boun
 This is the failure mode the existing skip rule creates and does not close. The guard is claimed
 before the reads and released on their completion, so a read that never settles leaves it claimed
 for the lifetime of the process. That does not merely stall one tick: it disables the bounded poll
-**and** every event-triggered refresh at once, because both consult the same guard. Every live
-surface then freezes at its last value with no error anywhere, which is indistinguishable from a
-run that has stopped progressing.
+for good, and every live surface then freezes at its last value with no error anywhere, which is
+indistinguishable from a run that has stopped progressing.
 
 The bound SHALL be comfortably longer than the poll interval — long enough that a merely slow
 refresh completes and writes its snapshots, which the existing cadence requirement already
@@ -423,7 +328,7 @@ Its two arms SHALL share one row at the section's opposite edges, with the cache
 
 Runs are included deliberately. A conversation's own calls can be a small fraction of what it caused — a chat turn that launches a run may itself spend a few thousand tokens while the run spends hundreds of thousands — and a headline reporting only the former immediately after the user launched the latter understates by orders of magnitude. The rail shows the run's own figure directly above, so the containment is visible rather than concealed. This is a different reading from the session GRAIN reported by `usage-breakdown`, which excludes runs so the grains partition the analysis total; each surface SHALL make clear which reading it shows.
 
-The section's source is the CLI's own local ledger, not the harness ledger behind the booted runtime, so its figure is readable before the runtime is `ready` and while it is stopped. The section SHALL NOT gate itself on boot state.
+The section's source is the local usage ledger, read through the usage route of the local server, not the harness ledger behind the booted runtime. That route needs no harness runtime, so the figure is readable before the runtime is `ready` and after a failed boot. The section SHALL NOT gate itself on boot state.
 
 An analysis with no open session, and a session with no recorded usage, SHALL each render a muted absence distinguished by tone from a zero. A read failure SHALL render an unavailable state and SHALL NOT crash the sidebar or suppress the sections around it, matching how every other section degrades.
 
@@ -446,7 +351,7 @@ An analysis with no open session, and a session with no recorded usage, SHALL ea
 
 #### Scenario: The figures are readable before the runtime boots
 
-- **GIVEN** a session with recorded usage and a runtime that has not reached `ready`
+- **GIVEN** a session with recorded usage and a runtime of the local server that has not reached `ready`
 - **WHEN** the sidebar renders
 - **THEN** the USAGE section shows the session's figures rather than a pre-ready placeholder
 
@@ -457,13 +362,13 @@ An analysis with no open session, and a session with no recorded usage, SHALL ea
 
 #### Scenario: A failed read degrades to unavailable
 
-- **GIVEN** a ledger read that fails
+- **GIVEN** a usage read that fails
 - **WHEN** the sidebar renders
 - **THEN** the USAGE section shows an unavailable state and every other section renders normally
 
 ### Requirement: The usage figure refreshes on turn completion and on the bounded poll
 
-The USAGE section SHALL refresh when the chat status transitions out of its busy state — the turn actually completing — and on the bounded poll this capability already arms while work is active, and on the run-observation event it already observes. It SHALL NOT depend on the conversation's message count.
+The USAGE section SHALL refresh when the chat status transitions out of its busy state — the turn actually completing — and on each refresh of the rail's live data, which includes the bounded poll this capability already arms while work is active. It SHALL NOT depend on the conversation's message count.
 
 The message count is not a turn-completion signal: the assistant message is pushed when the turn STARTS, so the section's last read of a turn happens before any of that turn's calls have been recorded. It also stops changing once the store reaches its message cap, at which point a memo depending on it never fires again. The chat status transition is the completion event stated directly rather than inferred.
 
@@ -599,3 +504,91 @@ When no run is active, no step usage read SHALL run, preserving the idle-costs-n
 - **GIVEN** no active run
 - **WHEN** a refresh runs
 - **THEN** no step usage query is issued
+
+### Requirement: Sidebar data refreshes on lifecycle edges and a bounded poll of the local server
+
+The sidebar's live data SHALL refresh when the runtime of the local server reaches `ready`, when the
+workspace analysis changes, when a chat turn completes, and when a profile drive that this client asked
+for changes ledger state outside those edges (a trigger, restart, or clear pokes the store — see
+`tui-harness-chat`); while the last snapshot shows active work (a pending/running profile or a
+non-terminal run) it SHALL additionally poll on a bounded interval — and SHALL stop polling once no work
+is active, so an idle sidebar issues zero requests.
+
+The local server sends no event when a run or a profile changes. Thus a run that a different client or
+a chat turn of a different client starts, and a re-profile that the server starts after an input
+change, SHALL become visible at the next of these edges, not at once.
+
+A refresh SHALL claim a monotonic generation token at entry and re-check it after each read, so the
+newest refresh started is the only one that writes. Because that token makes a newer refresh *cancel* an
+older one, the **poll** SHALL additionally skip its tick whenever a refresh is already in flight. Without
+that skip, reads slower than the interval would leave every tick superseded by the next and the store
+would never receive a write at all — and since an `unavailable` snapshot is itself an arming condition,
+a degraded server would be re-queried on every tick behind a permanently frozen section.
+
+Lifecycle-edge refreshes SHALL NOT skip: they carry new information and are required to supersede.
+
+For **every** non-terminal run in the freshly-read snapshot, the refresh SHALL additionally read that
+run's detail from the run route of the local server (inside the same generation-token guard): its
+steps, the plan name of each step, and the usage of each step. It SHALL publish an active-run progress
+entry — run label, done/total counts, and per-step view states carrying each step's name, owning agent,
+and recorded blocked reason and attempt count where present. The published progress SHALL be keyed by
+run id. A run that reaches a terminal status SHALL have its entry removed. When no run is active, no
+entry SHALL be published and no run detail SHALL be read, preserving the idle-costs-nothing property.
+A runs page SHALL resolve each distinct plan at most once, so several runs of one plan on one page cost
+one plan read.
+
+The step-status → view-state mapping SHALL be defined once in the sidebar-live module and shared
+with the run-detail dialog and the run-activity panel, so no surface invents its own reading of a
+ledger status.
+
+#### Scenario: A run launched from chat appears without user action
+
+- **WHEN** the agent launches a run during a turn
+- **THEN** the RUNS section shows the new run after the turn completes, and its status keeps updating while the run is active
+
+#### Scenario: A run of a different client shows at the next edge
+
+- **GIVEN** an idle sidebar, with no poll armed
+- **WHEN** a different client of the same server starts a run on the open analysis
+- **THEN** the RUNS section shows the run at the next refresh edge of this client, for example the completion of its next turn
+
+#### Scenario: A profile drive's consequences appear without user action
+
+- **WHEN** the parity drive of a chat open, or a deliberate re-profile, triggers or clears the profile
+- **THEN** the DATA PROFILE section reflects the new ledger state (running, or not profiled) without the user touching the sidebar
+
+#### Scenario: Idle costs nothing
+
+- **WHEN** no profile is running and every run is terminal
+- **THEN** no polling interval is active, and no run detail is read
+
+#### Scenario: A slow read degrades cadence, not liveness
+
+- **WHEN** a refresh's reads take longer than the poll interval
+- **THEN** the intervening ticks SHALL be skipped rather than superseding the in-flight refresh
+- **AND** that refresh SHALL complete and write its snapshots
+
+#### Scenario: A recovering server self-heals
+
+- **WHEN** the reads fail (arming the poll via `unavailable`) and then begin succeeding, while each read is slower than the interval
+- **THEN** a refresh SHALL complete and the sections SHALL leave the `unavailable` state
+
+#### Scenario: Every active run publishes live progress
+
+- **WHEN** two runs are non-terminal during a refresh
+- **THEN** a progress entry is published for each, keyed by its run id, carrying its label, done/total, and per-step states
+
+#### Scenario: Progress entry clears on completion
+
+- **WHEN** an active run reaches a terminal status
+- **THEN** the next refresh removes that run's progress entry, leaves other active runs' entries intact, and stops reading that run's detail
+
+#### Scenario: Several runs of one plan on one page read the plan once
+
+- **WHEN** two runs on one runs page share a plan
+- **THEN** the local server resolves that plan's title once for the page and labels both runs from it
+
+#### Scenario: Seeded pending steps render as queued
+
+- **WHEN** the run detail returns `pending` (or `skipped`) steps for an active run
+- **THEN** the progress entry shows them in the step window with the queued (hollow) view state and counts them in the `done/total` denominator

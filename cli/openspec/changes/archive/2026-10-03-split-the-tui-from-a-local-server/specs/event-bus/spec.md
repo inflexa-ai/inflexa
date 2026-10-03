@@ -1,0 +1,87 @@
+# event-bus Delta
+
+## MODIFIED Requirements
+
+### Requirement: BusEvent type lives in src/types/events.ts
+
+The canonical `BusEvent` union type SHALL be defined in the shared domain-model directory
+`src/types/`, in its event-contract module `src/types/events.ts`. The bus module (`src/lib/bus.ts`)
+SHALL import it from there and MUST NOT define its own `BusEvent` type. The union SHALL contain
+only members with at least one live emitter and consumer — today the analysis-scoped provenance
+members (`prov.*`) and the run observation member (`run.*`); the session-scoped chat members retired
+with the proxy chat engine (the harness conversation path streams its frames to the client and never
+used the bus).
+
+#### Scenario: Bus imports BusEvent from types
+
+- **WHEN** `src/lib/bus.ts` references the `BusEvent` type
+- **THEN** it SHALL import it from `../types/events.ts`
+
+#### Scenario: No circular imports when adding a new event domain
+
+- **WHEN** a new module (e.g., `src/modules/tools/executor.ts`) needs to both emit events via `Bus` and contribute a new variant to `BusEvent`
+- **THEN** it can import `Bus` from `../../lib/bus.ts` and add its event variant to `src/types/events.ts` without creating a circular dependency
+
+#### Scenario: No orphan members
+
+- **WHEN** the `BusEvent` union is inspected
+- **THEN** every member has an emitter and a consumer in `src/` — no vocabulary kept for a deleted engine
+
+### Requirement: Run observation is its own event family on the single bus
+
+`BusEvent` SHALL carry a `run.*` family describing an analysis run's observed state, distinct
+from the `prov.*` provenance family. Both SHALL travel on the one shared bus, separated by type
+string — no second bus instance SHALL be introduced.
+
+The two families SHALL remain independent: a `run.*` member SHALL NOT be derived from, aliased
+to, or emitted as a side effect of a `prov.*` member, and a subscriber to one SHALL be able to
+ignore the other entirely. Provenance events close a signed, hash-chained record written under a
+single-writer instance lock; run observation is a lossy-tolerant channel that drives in-process
+reactions of the process that runs the runtime, for example the busy gauge of the agent switch.
+Overloading one family with the other's job would couple such a reaction to the chain's write
+discipline and force provenance to record step names and agent identities it has no reason to hold.
+
+Each `run.*` member SHALL carry exactly the fields its own action needs, following the existing
+one-event-per-domain-action rule — never one member discriminated by an interior field with
+nullable companions.
+
+#### Scenario: Run and provenance events are separately subscribable
+
+- **WHEN** a subscriber handles only `run.*` events
+- **THEN** it observes run state without receiving or depending on any `prov.*` event, and the provenance recorder is unaffected
+
+#### Scenario: There is still one bus
+
+- **WHEN** the run family is added
+- **THEN** it is published and subscribed through the same single `Bus` instance as every other event
+
+### Requirement: Run events originate from an injected harness callback
+
+`run.*` events SHALL be produced by realizing the harness's run-observation callback at the
+embedder's composition root — the same arrangement by which the provenance emitter is supplied.
+The CLI SHALL NOT subscribe to any event channel owned by the harness; the harness has none, and
+the boundary is a callback the host injects and adapts onto its own bus.
+
+Because the harness re-invokes that callback after a durable-runtime recovery, a subscriber taking
+a durable or user-visible action SHALL key it by run id and observed status. A subscriber that only
+renders SHALL NOT need such keying.
+
+The bus SHALL stay inside the process that runs the runtime: the local server, or a dev command
+that boots its own runtime. A client of the local server, the TUI included, SHALL NOT subscribe to the
+bus. It SHALL observe run state by reading the run routes of the local server on its own refresh edges.
+
+#### Scenario: Events reach the bus through the composition root
+
+- **WHEN** a run's state changes inside the embedded runtime
+- **THEN** the injected callback fires and the corresponding `run.*` event is published on the bus of that process
+
+#### Scenario: Re-delivery does not double a durable reaction
+
+- **WHEN** the runtime recovers and re-invokes the callback for a run it already reported
+- **THEN** subscribers that take durable actions recognise the repeat by run id and status and do not repeat them
+
+#### Scenario: Events are in-process only
+
+- **WHEN** a run executes in the local server and a TUI shows the same analysis
+- **THEN** the `run.*` events of that run reach only the subscribers of the server process
+- **AND** the TUI sees the new run state through a read of the run routes of the local server at its next refresh edge

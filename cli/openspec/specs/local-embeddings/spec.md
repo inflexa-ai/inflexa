@@ -1,7 +1,9 @@
 ## Purpose
 
 Local text embeddings for the cli via a pinned `llama.cpp` `llama-server` sidecar — a GGUF served over loopback with a per-spawn API key — realizing the harness `EmbeddingProvider` seam; the mode-based `embedding` config key that selects between it, a direct OpenAI-compatible endpoint, and off; the setup flow whose picker offers the built-in bge-small model, the user's own local GGUF, an api-key endpoint, or off, and materializes/verifies/records the choice; and `inflexa config`, which reconfigures the backend through a picker plus per-backend follow-up dialogs. The realization is identical in the compiled binary and from source.
+
 ## Requirements
+
 ### Requirement: Local embedding provider realizes the harness EmbeddingProvider seam
 
 The CLI SHALL provide `createLocalEmbeddingProvider(deps): EmbeddingProvider` from `src/modules/embedding/local-provider.ts`, where `EmbeddingProvider` is the harness interface (`embed(texts, session) → ResultAsync<number[][], ProviderError>`). The provider SHALL run the GGUF at `deps.modelPath` (the built-in `bge-small-en-v1.5` q8_0, or a user's own model) via the pinned `llama-server` sidecar and SHALL transport embeddings through the harness's existing OpenAI-shaped embedding provider pointed at the sidecar's loopback endpoint — no bespoke wire client. The advertised width SHALL be `deps.dimensions` when set (a custom GGUF's width, measured at setup), else the built-in default of 384; that ONE value SHALL drive both the sidecar request width and the `provider.dimensions` the harness sizes each index to, so the two can never disagree. The realization SHALL be identical in the compiled binary and in a source checkout. Failures (runtime not materializable, sidecar failed to start or become healthy) SHALL be returned as `err(ProviderError)` with actionable remediation — never thrown.
@@ -234,9 +236,9 @@ Data collection per backend:
 
 - **Built-in model** and **off** SHALL require no follow-up input and apply immediately.
 - **The user's own GGUF** SHALL collect the model file path (a file picker) and then its vector width. The width is ENTERED, not measured: this screen SHALL NOT spawn the sidecar — only `inflexa setup` probes a model — so a mistyped width is possible and is deliberately not guarded here.
-- **api-key** SHALL collect the key and the base URL, then FETCH the endpoint's model listing (`{baseURL}/models`, narrowed to embedding-capable ids) and present the result as a SELECTION rather than free text. A failed, empty, or unusable fetch SHALL fall back to free-text model entry so the flow never dead-ends. The vector width SHALL be collected separately, because the model listing does not carry it.
+- **api-key** SHALL collect the key and the base URL, then FETCH the endpoint's model listing (`{baseURL}/models`, narrowed to embedding-capable ids) through the local server (`GET /api/v1/embedding-models`, with the key in a request header and never in the URL), and present the result as a SELECTION rather than free text. A failed, empty, or unusable fetch SHALL fall back to free-text model entry so the flow never dead-ends. An empty key entry SHALL keep the key that the config holds: the server never gives that key to a client, thus the listing cannot run with it, and the flow SHALL go to free-text model entry. The vector width SHALL be collected separately, because the model listing does not carry it.
 
-Editing SHALL write `config.json` only — it SHALL NOT acquire, download, or verify a model (that remains `inflexa setup`'s job); correctness is enforced at the next run by the readiness gate and the profile dimension probe, exactly as for a hand-edited config. The api key SHALL NOT be printed on the summary row (a remote secret), though its own edit prompt MAY show it.
+The screen SHALL read and save the embedding settings through the local server (`GET` and `PATCH /api/v1/settings`), and the server SHALL write `config.json` only — it SHALL NOT acquire, download, or verify a model (that remains `inflexa setup`'s job). The server reads the setting at its boot, thus a change takes effect at the next boot of the local server, where the readiness gate and the profile dimension probe enforce correctness, exactly as for a hand-edited config. The server SHALL give only whether an api key is set, never the key itself. The api key SHALL NOT be printed on the summary row (a remote secret), and its edit prompt SHALL show only a key that the user entered in this screen.
 
 #### Scenario: The screen shows one embedding row, not per-field rows
 
@@ -274,12 +276,18 @@ Editing SHALL write `config.json` only — it SHALL NOT acquire, download, or ve
 #### Scenario: Config edits do not acquire or verify a model
 
 - **WHEN** the user completes a backend change in `inflexa config`
-- **THEN** only `config.json` SHALL be written — no model is downloaded, copied, or probed; the readiness gate and profile probe enforce correctness at the next run
+- **THEN** only `config.json` SHALL be written — no model is downloaded, copied, or probed; the readiness gate and profile probe enforce correctness at the next boot of the local server
 
 #### Scenario: The api key is not shown on the summary row
 
 - **WHEN** `embedding.apiKey` is set and the embedding row is rendered
 - **THEN** the row SHALL NOT display the key value
+
+#### Scenario: A stored key is kept and never sent to the client
+
+- **GIVEN** a config that holds an api key
+- **WHEN** the user opens `inflexa config`, picks api-key, and leaves the key prompt empty
+- **THEN** the server keeps the stored key, the client never receives it, and the flow asks for the model id as free text
 
 ### Requirement: Embedding model is a build-time embedded asset
 
@@ -443,4 +451,3 @@ Terminating the sidecar SHALL send SIGTERM and escalate to SIGKILL when the proc
 
 - **WHEN** a previous CLI process was killed without running its shutdown chain and its sidecar was reparented to pid 1, and any CLI later spawns a sidecar
 - **THEN** the orphaned process is killed before the new spawn, while a sidecar parented to a different live CLI is left untouched
-

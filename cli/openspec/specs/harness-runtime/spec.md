@@ -1,23 +1,36 @@
 # harness-runtime Specification
 
 ## Purpose
-The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-singleton composition root that provisions/boots the runtime (Postgres readiness, cortex schema, pre-launch ephemeral sweep, workflow registration and conversation-agent build through the harness composition root `assembleCoreRuntime`, DBOS launch), realizes every local seam (data-profile, run-engine, and conversation deps) locally, and tears down gracefully on exit. Owns the single global session-tree base and the sandbox transport choice: the CLI defaults to **poll** (the sandbox is polled for results; no callback listener exists), with the loopback HTTP ingress that bridges sandbox-server callbacks onto DBOS topics reserved for the opt-in callback mode. Lives in `src/modules/harness/`.
+The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-singleton composition root, booted by the local server (and by the dev `run --plan`), that provisions/boots the runtime (Postgres readiness, cortex schema, pre-launch ephemeral sweep, workflow registration and conversation-agent build through the harness composition root `assembleCoreRuntime`, DBOS launch), realizes every local seam (data-profile, run-engine, and conversation deps) locally, and tears down gracefully on exit. Owns the single global session-tree base and the sandbox transport choice: the CLI defaults to **poll** (the sandbox is polled for results; no callback listener exists), with the loopback HTTP ingress that bridges sandbox-server callbacks onto DBOS topics reserved for the opt-in callback mode. Lives in `src/modules/harness/`.
+
 ## Requirements
-### Requirement: On-demand composition of the embedded harness runtime
+
+### Requirement: Composition of the embedded harness runtime
 
 The system SHALL provide a composition module that boots the embedded harness
-runtime on first use and reuses it for the remainder of the process. Boot SHALL
-sequence: ensure Postgres readiness; in callback mode only, start the callback
-listener; register the durable workflows with fully realized deps — sandbox-step
-before execute-analysis, plus data-profile and
-sandbox-hygiene scheduled workflows; run pre-launch migration/hooks; then launch
-DBOS. No ephemeral execution workflow SHALL be registered. Poll transport
-remains the default. Passive flows SHALL NOT boot the runtime. A second boot
-request SHALL return the singleton without re-registration or re-launch.
+runtime and reuses it for the remainder of the process. Two processes SHALL boot
+it: the local server, at its start, after it binds its port; and the dev
+`inflexa run --plan`, before its launch. No other process SHALL boot the runtime:
+the TUI and each instance command reach the runtime of the local server through
+its HTTP API.
+
+The boot SHALL carry no analysis. One runtime serves each analysis of the
+machine, thus each seam whose value depends on the analysis SHALL resolve it from
+the session of each call, never from a value fixed at boot.
+
+Boot SHALL sequence: ensure Postgres readiness; in callback mode only, start the
+callback listener; take the machine-wide runtime lock; register the durable
+workflows with fully realized deps — sandbox-step before execute-analysis, plus
+data-profile and sandbox-hygiene scheduled workflows; run pre-launch
+migration/hooks; then launch DBOS. No ephemeral execution workflow SHALL be
+registered. Poll transport remains the default. A boot that finds the runtime
+lock held by a different live process SHALL fail with an error that names the
+holder pid, and SHALL launch nothing. A second boot request in the same process
+SHALL return the singleton without re-registration or re-launch.
 
 #### Scenario: First trigger boots the runtime in poll mode
 
-- **WHEN** a profile or analysis launch first requests the runtime
+- **WHEN** the start of the local server first requests the runtime
 - **THEN** Postgres is ready, the non-ephemeral workflow cohort is registered, legacy pre-launch migration/hooks run, and DBOS launches in that order
 - **AND** no callback listener is bound
 
@@ -28,7 +41,7 @@ request SHALL return the singleton without re-registration or re-launch.
 
 #### Scenario: Subsequent triggers reuse the runtime
 
-- **WHEN** a second launch is requested in the same process
+- **WHEN** a second boot is requested in the same process
 - **THEN** no re-registration or re-launch occurs
 
 #### Scenario: Unavailable Postgres blocks boot with actionable guidance
@@ -40,6 +53,12 @@ request SHALL return the singleton without re-registration or re-launch.
 
 - **WHEN** recovery resumes any supported in-flight workflow
 - **THEN** its registered name exists in the one pre-launch cohort
+
+#### Scenario: A second runtime on the machine is refused
+
+- **GIVEN** the local server holds the runtime
+- **WHEN** `inflexa run --plan` boots a runtime
+- **THEN** the boot fails with an error that names the pid of the local server, and DBOS is not launched
 
 ### Requirement: Local realizations for every data-profile dependency
 
@@ -365,8 +384,8 @@ pending asks orphaned by a prior process are expired before any new turn runs.
 
 #### Scenario: The runtime handle carries the gateway
 
-- **GIVEN** a booted harness runtime
-- **WHEN** a TUI surface needs to answer an ask
+- **GIVEN** a booted harness runtime in the local server
+- **WHEN** the ask routes of the local server list or answer an ask
 - **THEN** the gateway is reachable from the runtime handle without constructing a second realization
 
 #### Scenario: Orphaned asks are swept at boot
@@ -499,11 +518,23 @@ tool exists for every sandbox agent. The CLI wrapper of a link refusal MUST
 append the remedy text that names `inflexa store add`, because the harness
 error carries only the missing names.
 
+The root MUST bind the farm inventory path, `farmLockFile`, as a function of
+the analysis id: the `inflexa.lock` of `farms/<analysisId>`. The harness
+resolves the path with the analysis id of the session of each read. One
+runtime serves each analysis of the machine, thus a static path would give
+each analysis the package inventory of one farm.
+
 #### Scenario: The farm resolves per analysis
 
 - **GIVEN** two analyses with two farms
 - **WHEN** each starts a sandbox
 - **THEN** each sandbox mounts its own farm at `/mnt/libs/farm`
+
+#### Scenario: The package inventory follows the analysis of the session
+
+- **GIVEN** one runtime and two analyses whose farms hold different packages
+- **WHEN** a sandbox agent of each analysis lists the available packages
+- **THEN** each answer reads the `inflexa.lock` of the farm of its own analysis
 
 #### Scenario: The refusal carries the CLI remedy
 

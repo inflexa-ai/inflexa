@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change cli-token-usage-ledger. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: The CLI realizes the harness UsageRecorder seam at its composition root
 
 The CLI SHALL supply a `UsageRecorder` realization to `assembleCoreRuntime` at the single composition root that builds the harness runtime, so that every `runAgent` invocation the CLI can reach — the conversation turn, the planner and other sub-agent loops, the data-profile agent, and every analysis run step — delivers its records to that one realization. The realization SHALL be constructed once per booted runtime, not per turn or per call.
@@ -136,9 +138,11 @@ The ledger SHALL be queryable by scope id, by run id, and by served model, since
 
 The CLI SHALL provide a read-only `usage` command that reports an analysis's recorded consumption, resolved from the current working context or named by an option. It SHALL report per-quantity sums rather than one combined number, and SHALL break the consumption down by served model and by agent, since "which model spent this" and "which agent spent this" are the questions the capability exists to answer.
 
-The command SHALL read only the local ledger and SHALL NOT require the harness runtime, its database, or any network service to be running. It SHALL declare an `auto` agent policy whose safe-flag allowlist covers its analysis selector.
+The command SHALL be a client of the local server: it reads the local ledger through the usage route of the server, and it starts the server when none answers. That route SHALL read only the local ledger, and SHALL NOT require the harness runtime, its database, or any network service other than the local server. It SHALL declare an `auto` agent policy whose safe-flag allowlist covers its analysis selector.
 
 The command SHALL NOT write. Resolving which analysis to report on SHALL therefore take the non-touching resolve path: a report is not a sighting, and under an `auto` policy an agent may run it unprompted, so recording a folder-liveness heartbeat would make `last_seen` measure agent polling rather than the user's presence. The one write the shared resolver can still perform is repairing a moved anchor's cached path, which is the resolver's own healing behaviour on every read command rather than anything this command initiates.
+
+An analysis with no recorded usage SHALL report that plainly rather than rendering an empty table or zeroed figures.
 
 #### Scenario: Reporting does not record a sighting
 
@@ -146,11 +150,9 @@ The command SHALL NOT write. Resolving which analysis to report on SHALL therefo
 - **WHEN** the usage command reports on it
 - **THEN** the heartbeat is unchanged
 
-An analysis with no recorded usage SHALL report that plainly rather than rendering an empty table or zeroed figures.
-
 #### Scenario: A report is produced with the durable engine stopped
 
-- **GIVEN** a local ledger with recorded rows and no running harness runtime
+- **GIVEN** a local ledger with recorded rows, and a local server whose harness runtime is not ready (still booting, or failed to boot)
 - **WHEN** the usage command runs
 - **THEN** it prints the analysis's consumption and exits successfully
 
@@ -164,4 +166,3 @@ An analysis with no recorded usage SHALL report that plainly rather than renderi
 
 - **WHEN** the usage command runs for an analysis with no recorded calls
 - **THEN** it reports that no usage has been recorded, and does not print zeroed figures
-

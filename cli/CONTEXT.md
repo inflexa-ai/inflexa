@@ -13,14 +13,19 @@ state in a local SQLite database, authenticates the user, and manages the local
 model proxy. It then uses `harness` to plan an analysis and to run it inside the
 Docker sandbox.
 
+One local server process holds the harness runtime and the local stores. The
+TUI, the instance commands, and a later GUI are clients of its HTTP API under
+`/api/v1`. A client that finds no server starts one in the background.
+
 The harness stays host-agnostic. The CLI gives the local seam realizations: the
 local authentication, the artifact registry on the file system, and the billing
 that does nothing.
 
 ## Feature slices (`src/modules/<domain>/`)
 
-The code is in groups by feature, not by layer. A module has its logic, its text
-command actions, and its logic-local types.
+The code is in groups by feature, not by layer. A module is on the server side.
+It has its logic, the command actions that are not in `src/client/commands/`,
+and its logic-local types. The routes of the local server call its logic.
 
 - **`auth/`** — the Auth0 device flow, with `login`, `logout`, and `whoami`. The
   configuration comes from `.env` (`INFLEXA_AUTH0_*`).
@@ -28,9 +33,9 @@ command actions, and its logic-local types.
   and elects the default model: it ranks the models by recency, then it tests
   each one against the unbilled `count_tokens` accessibility check. The container
   lifecycle and the provisioning are in `infra/`.
-- **`analysis/`** — the analysis lifecycle: the creation, the resolution, and the
-  chat-target launcher. The session identity is not here, because a conversation
-  is only in the Postgres thread store of the harness.
+- **`analysis/`** — the analysis lifecycle: the creation, the resolution, the
+  inputs, and the output folder. The session identity is not here, because a
+  conversation is only in the Postgres thread store of the harness.
 - **`anchor/`** — the invisible folder-identity markers (`.inflexa/id`) and the
   lazy reconciliation of the paths.
 - **`harness/`** — the harness embedder. It boots the harness runtime (DBOS, the
@@ -48,11 +53,12 @@ command actions, and its logic-local types.
   images (`sandbox-base`, `sandbox-provisioner`) and the `store` and `sandbox`
   command actions. The vocabulary of the store is in the harness
   [`CONTEXT.md`](../harness/CONTEXT.md).
-- **`project/`** — the project CRUD command actions (`project new` and
-  `project ls`).
+- **`project/`** — the project of an analysis. The `project new` and
+  `project ls` commands are clients of the local server.
 - **`prov/`** — the provenance recorder. It is a bus subscriber that builds,
-  signs, and stores the PROV document of each analysis. It also gives
-  `prov export` and `prov verify`. The PROV dialect itself — the QName
+  signs, and stores the PROV document of each analysis. It also gives the export,
+  the verification, and the lineage walk that the provenance routes of the local
+  server call. The PROV dialect itself — the QName
   derivations, the statements, the crypto primitives, and the sidecar schema —
   comes from `@inflexa-ai/prov-kernel`; the recorder owns only the lifecycle
   around it.
@@ -62,13 +68,21 @@ command actions, and its logic-local types.
 
 ## Shared infrastructure
 
-- **`src/db/`** — the SQLite layer: the connection, the migrations, the
-  verb-split query and mutation, and the errors. The store is a file on the
-  machine of the user, thus it can go out of agreement with the markers on disk.
-  A miss recovers or it degrades. It never fails hard.
+- **`src/server/`** — the local server: `inflexa serve`, the HTTP routes of each
+  domain, the boot of the runtime, the stop, and the coordination that one process
+  needs (the turn registry, the busy gate, the profile queue).
+- **`src/client/`** — the HTTP client of the local server: the discovery, the
+  start of a server, the fetchers, and the actions of the `instance` commands
+  and of the `server` commands.
+- **`src/api/`** — the wire types that the routes and the fetchers share.
+- **`src/db/`** — the SQLite layer, on the server side: the connection, the
+  migrations, the verb-split query and mutation, and the errors. The store is a
+  file on the machine of the user, thus it can go out of agreement with the
+  markers on disk. A miss recovers or it degrades. It never fails hard.
 - **`src/tui/`** — the presentation layer: the Solid and opentui chat app, the
-  keymap engine, the design system, and the shared widgets. The presentation
-  depends on the logic, but a module never imports `tui/`.
+  keymap engine, the design system, and the shared widgets. The TUI is a client of
+  the local server. It must not import `src/db/`, `src/server/`, the bus, or a
+  module that holds state, and a module never imports `tui/`.
 - **`src/lib/`** — non-domain infrastructure (`env`, `config`, `bus`, `log`,
   `otel`, `design_system`).
 - **`src/types/`** — the shared shapes of the persisted entities, and the typed

@@ -2,10 +2,12 @@
 
 ## Purpose
 Local infra/provisioned state — proxy config, compose file, mount sources, and the Postgres substrate — must survive commands running in any order on any on-disk state. Each command provisions its own preconditions, heals what is safely healable, never destroys non-empty user state, never lets a container engine manufacture host state, and translates expected failures into named remediation.
+
 ## Requirements
+
 ### Requirement: Commands are order-independent and self-provisioning
 
-Every infra/provisioning command (`setup`, `up`, the launch-time gates, `sandbox pull`, `profile`) SHALL validate and provision its own preconditions rather than assuming any other command ran first. No sequence of commands, executed in any order against any on-disk state — including state the user deleted or half-created and state a container engine manufactured — SHALL produce a state that no product command can recover from.
+Every infra/provisioning command (`setup`, `up`, the boot of the local server, `sandbox pull`, and the dev `run --plan`, which boots its own runtime) SHALL validate and provision its own preconditions rather than assuming any other command ran first. A client of the local server provisions nothing: the server boot is the gate that its routes depend on. No sequence of commands, executed in any order against any on-disk state — including state the user deleted or half-created and state a container engine manufactured — SHALL produce a state that no product command can recover from.
 
 #### Scenario: `up` before `setup` on a fresh machine
 
@@ -106,4 +108,3 @@ Re-running any infra/provisioning command from any partial state — interrupted
 
 - **WHEN** `inflexa up` runs while the stack is already provisioned and running
 - **THEN** the command succeeds without re-creating or restarting anything
-

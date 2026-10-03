@@ -1,0 +1,45 @@
+## MODIFIED Requirements
+
+### Requirement: Read-only commands are tested end-to-end
+The suite SHALL verify the read-only commands (`inflexa ls`, `inflexa status`,
+`inflexa project ls`) via subprocess against a seeded temp DB: each command runs against a test
+server in the test process that serves that DB, exits 0, and prints the seeded entities to stdout.
+
+#### Scenario: ls lists seeded analyses
+- **WHEN** the temp DB is seeded with analyses and `inflexa ls` runs as a subprocess against the test server
+- **THEN** the process exits 0 and stdout contains the seeded analyses
+
+#### Scenario: project ls lists seeded projects with counts
+- **WHEN** the temp DB is seeded with projects and `inflexa project ls` runs against the test server
+- **THEN** the process exits 0 and stdout lists each project
+
+### Requirement: Write commands are tested end-to-end
+The suite SHALL verify `inflexa project new <name>` via subprocess against a test server: a fresh
+name creates a persisted row (read back from the DB), and a duplicate name exits non-zero with a
+useful error.
+
+#### Scenario: new project persists
+- **WHEN** `inflexa project new "Acme"` runs against a test server over an empty temp DB
+- **THEN** it exits 0 and a `projects` row named "Acme" exists in the DB
+
+#### Scenario: duplicate name fails
+- **WHEN** `inflexa project new "Acme"` runs a second time
+- **THEN** it exits non-zero and stderr explains the name is taken
+
+### Requirement: Anchor backstop commands are tested end-to-end
+The suite SHALL verify `inflexa repair [path]` via subprocess against a test server and a temp
+marker: a valid marker is reconciled and the cached path updated.
+
+#### Scenario: repair reconciles a moved marker
+- **WHEN** a marker exists at a temp path and `inflexa repair <path>` runs against the test server
+- **THEN** it exits 0 and reports the reconciled anchor
+
+## ADDED Requirements
+
+### Requirement: The server check of an instance command is tested end-to-end
+The suite SHALL verify that an instance command with no server to connect to stops before its
+action, with the instruction to start a server.
+
+#### Scenario: no server, no action
+- **WHEN** the test server is stopped and `inflexa project ls` runs as a subprocess
+- **THEN** it exits non-zero and stderr names `inflexa serve`

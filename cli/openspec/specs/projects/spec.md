@@ -2,10 +2,12 @@
 
 ## Purpose
 Optional, metadata-only grouping of analyses — create/list projects, attach/move/clear an analysis's project, and resolve `--project` by id or name — never required by any flow.
+
 ## Requirements
+
 ### Requirement: Create a project
 
-The system SHALL register `inflexa project new <name> [--description <d>] [--tags <t,t,...>]` (`projectNew` in `src/modules/project/project.ts`) that validates `name` as a `Str256` at the CLI boundary, parses tags from the comma-separated list, and calls `createProject` (which mints `id = randomUUIDv7()` and timestamps inline). A duplicate name SHALL be rejected via the `projects.name` `UNIQUE` constraint surfaced as a `constraint_violation`.
+The system SHALL register `inflexa project new <name> [--description <d>] [--tags <t,t,...>]` as a client of the local server. The command SHALL split the comma-separated `--tags` value into a list and send the name, the description, and the tags to `POST /api/v1/projects`. The server SHALL validate `name` as a `Str256`, and it SHALL refuse a tag that holds a comma. It SHALL trim each tag, drop a blank one, and call `createProject`, which mints `id = randomUUIDv7()` and timestamps inline. A duplicate name SHALL be rejected through the `projects.name` `UNIQUE` constraint, which the server answers as 409 `conflict`. The command SHALL print the message of a refusal and exit non-zero.
 
 #### Scenario: Create a project with tags
 
@@ -17,9 +19,14 @@ The system SHALL register `inflexa project new <name> [--description <d>] [--tag
 - **WHEN** `inflexa project new trial-42` runs and a project with that name exists
 - **THEN** it prints "A project named "trial-42" already exists." and exits non-zero without creating a second project
 
+#### Scenario: Blank name is rejected
+
+- **WHEN** `inflexa project new "   "` runs
+- **THEN** the server refuses the name with `validation_error`, and the command exits non-zero without creating a project
+
 ### Requirement: List projects
 
-The system SHALL register `inflexa project ls` (`projectLs`) that lists projects, each with its analysis count (via `countAnalysesByProject`), printing "No projects." when empty.
+The system SHALL register `inflexa project ls` as a client of `GET /api/v1/projects`, which lists projects newest first, each with its analysis count, in pages. The server SHALL read each page with one statement that counts the analyses of each project, never one count query for each project. The command SHALL read the pages until the last one, and SHALL print "No projects." when the list is empty.
 
 #### Scenario: List shows projects with counts
 
@@ -33,7 +40,7 @@ The system SHALL register `inflexa project ls` (`projectLs`) that lists projects
 
 ### Requirement: Attach, move, or clear an analysis's project
 
-The system SHALL register `inflexa analysis set-project <analysis> [project]` (`runSetProject` in `src/modules/analysis/set_project.ts`). It SHALL resolve the analysis via `findAnalysis` and, when a project is given, resolve it via `findProjectByRef` BEFORE writing, then set the analysis's `project_id` in one targeted `updateAnalysisProject` write. An omitted project clears the grouping to null. The project SHALL be resolved (and confirmed to exist) before the write, so a failed lookup never orphans the analysis.
+The system SHALL register `inflexa analysis set-project <analysis> [project]` as a client of the local server. It SHALL resolve the analysis through the resolve route of the server. Then it SHALL send one `PATCH {A}` with the project reference, or with `null` when the project is omitted. The server SHALL resolve the project with `findProjectByRef` BEFORE it writes, then set the analysis's `project_id` in one targeted `updateAnalysisProject` write. An omitted project clears the grouping to null. A project reference that does not resolve SHALL be refused with 404 `not_found` before any write, so a failed lookup never orphans the analysis.
 
 #### Scenario: Attach an analysis to a project
 
@@ -77,4 +84,3 @@ Every analysis operation SHALL continue to work with zero projects; no operation
 
 - **WHEN** a command needs to resolve a project by ref or set an analysis's project
 - **THEN** it calls `findProjectByRef` / `updateAnalysisProject` directly (no `findProject`/`setProject` indirection)
-
