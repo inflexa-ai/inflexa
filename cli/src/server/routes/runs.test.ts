@@ -28,10 +28,11 @@ import type { ServerState } from "../../api/server.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor, upsertLlmUsage } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import type { StampedEvent } from "../../types/events.ts";
 import { freshDb } from "../../test_support/db.ts";
 import type { ServerBoot } from "../boot.ts";
 import type { ServerEnv } from "../http.ts";
-import { __resetProfileQueueForTest, profileWorkInFlight } from "../profile_queue.ts";
+import { __resetProfileQueueForTest, profileWorkInFlight, serializeProfileWork, watchInputDrift } from "../profile_queue.ts";
 import { runRoutes, type RunRoutesOpts } from "./runs.ts";
 
 // The routes under the mount path of the app, with no bearer check and no analysis guard: `app.test.ts` covers
@@ -69,12 +70,19 @@ const UNEXPECTED: RunRoutesOpts = {
     ensureParity: failing("ensureParity"),
     forceReprofile: failing("forceReprofile"),
     readiness: failing("readiness"),
+    sandboxRefusal: failing("sandboxRefusal"),
     healFarm: failing("healFarm"),
 };
 
+/** The routes over a sandbox that can start, unless `opts` gives a refusal. */
 function appWith(opts: Partial<RunRoutesOpts>, boot: ServerBoot = readyBoot): Hono<ServerEnv> {
-    return new Hono<ServerEnv>().route("/api/v1/analyses/:analysisId", runRoutes(boot, { ...UNEXPECTED, ...opts }));
+    return new Hono<ServerEnv>().route(
+        "/api/v1/analyses/:analysisId",
+        runRoutes(boot, { ...UNEXPECTED, sandboxRefusal: () => Promise.resolve(null), ...opts }),
+    );
 }
+
+const IMAGE_REFUSAL = "The sandbox image is not installed. Run `inflexa sandbox pull` to download it.";
 
 /** A run of the ledger, with the fields that the routes read. */
 function runRow(overrides: Partial<CortexRunRow> & Pick<CortexRunRow, "runId" | "analysisId">): CortexRunRow {
@@ -414,6 +422,14 @@ describe("GET {A}/chat-context", () => {
         const app = appWith({ ensureParity: () => Promise.reject(new Error("staging blew up")) });
         expect((await app.request(`/api/v1/analyses/${analysisId}/chat-context`)).status).toBe(500);
     });
+
+    test("a sandbox that cannot start gives the refusal as a failed parity, with no drive", async () => {
+        const analysisId = seedAnalysis();
+        const app = appWith({ sandboxRefusal: () => Promise.resolve(IMAGE_REFUSAL), loadProfile: () => okAsync(null) });
+        const response = await app.request(`/api/v1/analyses/${analysisId}/chat-context`);
+        expect(response.status).toBe(200);
+        expect(((await response.json()) as ChatContext).parity).toEqual({ kind: "failed", reason: IMAGE_REFUSAL, materialized: false });
+    });
 });
 
 describe("GET {A}/data-profile", () => {
@@ -438,6 +454,40 @@ describe("GET {A}/data-profile", () => {
             usage: { calls: 1, inputTokens: 42 },
         });
     });
+
+    test("a profile drive that is queued or runs shows as work that the row does not show yet", async () => {
+        const app = appWith({ loadProfile: () => okAsync(null) });
+        let release: () => void = () => undefined;
+        const drive = serializeProfileWork("x", () => new Promise<void>((resolve) => (release = resolve)));
+        expect((await (await app.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView).toEqual({ status: null, workPending: true });
+
+        release();
+        await drive;
+        await Promise.sleep(0);
+        expect((await (await app.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView).toEqual({ status: null });
+    });
+
+    test("an input change that waits for its re-profile shows as work, until the watch stops", async () => {
+        const app = appWith({ loadProfile: () => okAsync(null) });
+        let handler: (event: StampedEvent) => void = () => undefined;
+        const stop = watchInputDrift({
+            runtime: () => null,
+            analysis: failing("analysis"),
+            reprofile: failing("reprofile"),
+            sandboxRefusal: failing("sandboxRefusal"),
+            schedule: () => () => undefined,
+            subscribe: (h) => {
+                handler = h;
+                return () => undefined;
+            },
+        });
+        // The cast gives the two fields that the watch reads. The bus stamps the others.
+        handler({ type: "prov.input_added", analysisId: "x" } as unknown as StampedEvent);
+        expect((await (await app.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView).toEqual({ status: null, workPending: true });
+
+        stop();
+        expect((await (await app.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView).toEqual({ status: null });
+    });
 });
 
 describe("POST {A}/data-profile/rerun", () => {
@@ -447,6 +497,14 @@ describe("POST {A}/data-profile/rerun", () => {
         const response = await app.request(`/api/v1/analyses/${analysisId}/data-profile/rerun`, { method: "POST" });
         expect(response.status).toBe(202);
         expect((await response.json()) as ProfileRerunResult).toEqual({ outcome: { kind: "already_running", materialized: false } });
+    });
+
+    test("409 `conflict` with the refusal when the sandbox cannot start, with no drive", async () => {
+        const analysisId = seedAnalysis();
+        const app = appWith({ sandboxRefusal: () => Promise.resolve(IMAGE_REFUSAL) });
+        const response = await app.request(`/api/v1/analyses/${analysisId}/data-profile/rerun`, { method: "POST" });
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: "conflict", message: IMAGE_REFUSAL });
     });
 
     test("the drives of one analysis run one at a time, in arrival order", async () => {

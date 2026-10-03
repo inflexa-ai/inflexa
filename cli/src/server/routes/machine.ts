@@ -24,7 +24,13 @@ import { LOCAL_EMBEDDING_DIMENSIONS } from "../../modules/embedding/local-provid
 import { DEFAULT_API_BASE_URL, DEFAULT_API_EMBEDDING_DIMENSIONS } from "../../modules/embedding/resolve.ts";
 import { currentAgentEfforts, currentAgentModels, pendingAgentSelections, requestAgentModelChange } from "../../modules/harness/agent_switch.ts";
 import { AGENT_NAMES, writeAgentSelection } from "../../modules/harness/config.ts";
-import { listConnectionModels, validateModelSelection, type ListedModel, type ListModelsError } from "../../modules/harness/model_listing.ts";
+import {
+    describeListModelsError,
+    listConnectionModels,
+    validateModelSelection,
+    type ListedModel,
+    type ListModelsError,
+} from "../../modules/harness/model_listing.ts";
 import { explicitPostgresFields } from "../../modules/infra/setup.ts";
 import type { ModelAccess } from "../../modules/proxy/models.ts";
 import { apiError, holdConnection, internalError, readBody, type ServerEnv } from "../http.ts";
@@ -147,12 +153,10 @@ export function machineRoutes(opts: MachineRouteOpts = DEFAULT_MACHINE_ROUTE_OPT
     routes.get("/models", async (c) => {
         holdConnection(c);
         // A listing that failed is an ordinary outcome: the client offers a free-text model id.
-        const body: ModelList = {
-            models: (await opts.listModels()).match(
-                (listed) => listed.map((model) => ({ id: model.id, efforts: [...model.efforts] })),
-                () => null,
-            ),
-        };
+        const body: ModelList = (await opts.listModels()).match(
+            (listed): ModelList => ({ models: listed.map((model) => ({ id: model.id, efforts: [...model.efforts] })) }),
+            (error): ModelList => ({ models: null, reason: describeListModelsError(error) }),
+        );
         return c.json(body);
     });
 

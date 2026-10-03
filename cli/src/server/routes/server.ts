@@ -1,11 +1,12 @@
 import type { Pool } from "@inflexa-ai/harness";
 import { Hono } from "hono";
-import { ResultAsync } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import { z } from "zod";
 
 import type { DurableWork, ServerActivity, ShutdownAccepted } from "../../api/server.ts";
 import { getLogger } from "../../lib/log.ts";
 import type { ServerBoot } from "../boot.ts";
+import { countLiveDurableWork, type LiveDurableWork } from "../durable_work.ts";
 import { readBody, type ServerEnv } from "../http.ts";
 import type { ServerLifecycle } from "../lifecycle.ts";
 import { profileWorkCount } from "../profile_queue.ts";
@@ -16,14 +17,14 @@ export type ServerRouteOpts = {
     readonly runningTurnCount: () => number;
     readonly profileWorkCount: () => number;
     /** The runs and the data profiles with a live workflow. The error channel means the ledger is unreadable. */
-    readonly durableWork: (pool: Pool) => ResultAsync<{ runs: number; profiles: number }, unknown>;
+    readonly durableWork: (pool: Pool) => ResultAsync<LiveDurableWork, unknown>;
 };
 
 /** The production {@link ServerRouteOpts}. */
 export const DEFAULT_SERVER_ROUTE_OPTS: ServerRouteOpts = {
     runningTurnCount,
     profileWorkCount,
-    durableWork,
+    durableWork: countLiveDurableWork,
 };
 
 const shutdownBody = z.object({ mode: z.enum(["now", "drain"]) });
@@ -61,30 +62,4 @@ export function serverRoutes(boot: ServerBoot, lifecycle: ServerLifecycle, opts:
         return c.json<ShutdownAccepted>(lifecycle.requestShutdown(body.value.mode), 202);
     });
     return routes;
-}
-
-/**
- * The runs and the data profiles whose durable workflow is live, over each analysis, in one read. A ledger row
- * counts only while a `PENDING` or `ENQUEUED` workflow stands behind it: a crashed host leaves a `running` row
- * for ever, while its workflow settles terminal. The run status set is the one of `queryActiveRunsByAnalysis`
- * of the harness, and a run counts with its `<runId>-N` children, as in the busy gate. A profile row whose
- * workflow id is not recorded yet does not count: its profile drive counts instead.
- */
-function durableWork(pool: Pool): ResultAsync<{ runs: number; profiles: number }, unknown> {
-    return ResultAsync.fromPromise(
-        pool.query<{ runs: string; profiles: string }>({
-            text: `SELECT
-                     (SELECT COUNT(*) FROM cortex_runs r
-                        WHERE r.status IN ('running', 'suspended_insufficient_funds')
-                          AND EXISTS (SELECT 1 FROM dbos.workflow_status ws
-                                       WHERE ws.status IN ('PENDING', 'ENQUEUED')
-                                         AND (ws.workflow_uuid = r.run_id OR ws.workflow_uuid LIKE r.run_id || '-%'))) AS runs,
-                     (SELECT COUNT(*) FROM cortex_analysis_state s
-                        WHERE s.data_profile_status = 'running'
-                          AND EXISTS (SELECT 1 FROM dbos.workflow_status ws
-                                       WHERE ws.status IN ('PENDING', 'ENQUEUED')
-                                         AND ws.workflow_uuid = s.data_profile_workflow_id)) AS profiles`,
-        }),
-        (cause) => cause,
-    ).map((result) => ({ runs: Number(result.rows[0]?.runs ?? 0), profiles: Number(result.rows[0]?.profiles ?? 0) }));
 }

@@ -42,6 +42,10 @@ describe("subAgentActivityLabel", () => {
         expect(subAgentActivityLabel({ type: "tool-finished", source: SUB, toolUseId: "t1", name: "bash", outcome: "ok" })).toBe("planner: bash done");
     });
 
+    test("names the agent that starts a model request", () => {
+        expect(subAgentActivityLabel({ type: "iteration", source: SUB })).toBe("planner: thinking");
+    });
+
     test("a text delta describes no activity", () => {
         expect(subAgentActivityLabel({ type: "text-delta", text: "prose", source: SUB })).toBeNull();
     });

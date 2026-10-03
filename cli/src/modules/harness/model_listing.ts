@@ -85,6 +85,26 @@ export type ListModelsError =
     | { type: "timed_out"; afterMs: number }
     | { type: "no_models" };
 
+/** Why the listing failed, for a person, as one clause that the model picker shows beside its free-text field. */
+export function describeListModelsError(e: ListModelsError): string {
+    switch (e.type) {
+        case "connection_invalid":
+            return `the \`models\` config is not valid: ${e.issues}`;
+        case "key_missing":
+            return "the server has no credential for the model endpoint";
+        case "unreachable":
+            return `the model endpoint did not answer (${e.detail})`;
+        case "timed_out":
+            return `the model endpoint gave no answer within ${Math.round(e.afterMs / 1000)} s`;
+        case "no_models":
+            return "the model endpoint listed no models";
+        default: {
+            const exhaustive: never = e;
+            throw new Error(`unhandled ListModelsError: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}
+
 /**
  * Upper bound on one model listing, the headers and the body together. The server lifts its idle timeout for
  * `GET /api/v1/models`, thus without this bound a hung endpoint holds the request with no end.

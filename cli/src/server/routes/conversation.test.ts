@@ -346,6 +346,7 @@ describe("POST {A}/chat", () => {
                 await args.emit({ type: "iteration", source: { agentId: "chat", callPath: ["chat"] }, index: 0, final: true } as Parameters<
                     RunChatTurnArgs["emit"]
                 >[0]);
+                await args.emit({ type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] }, index: 0, final: false });
                 return { kind: "ok", opened: true, fallbackText: "Hello", turnUsage: { inputTokens: 10, outputTokens: 2 } };
             },
         });
@@ -355,9 +356,11 @@ describe("POST {A}/chat", () => {
         const turnId = response.headers.get(TURN_ID_HEADER);
         expect(turnId).not.toBeNull();
 
-        // `iteration` gives no frame, as `toChatFrame` decides.
+        // An `iteration` of the root agent gives no frame, as `toChatFrame` decides. The TUI draws the thinking
+        // line of a sub-agent from the frame of its `iteration`.
         expect(await framesOf(response)).toEqual([
             { type: "text-delta", text: "Hello", source: { agentId: "chat", callPath: ["chat"] } },
+            { type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] } },
             { type: "finish", source: { agentId: "chat", callPath: ["chat"] }, turnUsage: { inputTokens: 10, outputTokens: 2 } },
         ]);
         const summary = (await (await routes.request(`/${A}/threads/${T}/turns/${turnId}`)).json()) as TurnSummary;
@@ -446,12 +449,30 @@ describe("POST {A}/chat", () => {
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
         const turnId = response.headers.get(TURN_ID_HEADER);
-        const message = "The anthropic endpoint rejected your API key — check INFLEXA_MODEL_API_KEY, then restart the server (`inflexa serve`).";
+        // A detached server holds the port, thus `inflexa serve` cannot start a second one: the remedy stops the
+        // server, and the next command starts one that reads the key again.
+        const message =
+            "The anthropic endpoint rejected your API key — check INFLEXA_MODEL_API_KEY, then run `inflexa server stop`. The next `inflexa` command starts the server with the new key.";
         expect(await framesOf(response)).toEqual([{ type: "error", message, source: { agentId: "chat", callPath: ["chat"] } }]);
         const summary = (await (await routes.request(`/${A}/threads/${T}/turns/${turnId}`)).json()) as TurnSummary;
         expect(summary.status).toBe("failed");
         expect(summary.failure).toMatchObject({ message, auth: { provider: "anthropic", envVar: "INFLEXA_MODEL_API_KEY" } });
         expect(summary.failure?.detailLines.length).toBeGreaterThan(0);
+    });
+
+    test("a refused `cliproxy` login names `inflexa up`, the command that signs in, and not `inflexa serve`", async () => {
+        const routes = routesWith({
+            connection: () => ({ provider: "anthropic", mode: "cliproxy" }),
+            runTurn: (args) => {
+                args.onOpened?.();
+                return Promise.resolve({ kind: "failed", opened: true, cause: { type: "auth", retryable: false, message: "invalid x-api-key" } });
+            },
+        });
+        const frames = await framesOf(await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" })));
+        const error = frames.find((frame) => frame.type === "error");
+        const text = error?.type === "error" ? error.message : "";
+        expect(text).toContain("run `inflexa up` in a terminal to sign in again");
+        expect(text).not.toContain("inflexa serve");
     });
 
     test("a failed `cliproxy` turn names a rate limit that the proxy reports", async () => {

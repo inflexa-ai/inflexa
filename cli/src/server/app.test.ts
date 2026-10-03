@@ -5,8 +5,9 @@ import type { ServerActivity, ServerState, ShutdownMode } from "../api/server.ts
 import type { ClientOpts } from "../client/api.ts";
 import { fetchServerState } from "../client/server.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
-import { idleLifecycle } from "../test_support/server.ts";
-import { buildApp } from "./app.ts";
+import { devCommandsEnabled } from "../lib/env.ts";
+import { idleLifecycle, startTestServer } from "../test_support/server.ts";
+import { buildApp, DEFAULT_APP_OPTS } from "./app.ts";
 import type { ServerBoot } from "./boot.ts";
 import type { ServerLifecycle } from "./lifecycle.ts";
 import { serverRoutes, type ServerRouteOpts } from "./routes/server.ts";
@@ -56,6 +57,93 @@ describe("the bearer check", () => {
         const response = await app.request("/api/v1/nothing", { headers: AUTH });
         expect(response.status).toBe(404);
         expect(await response.json()).toMatchObject({ error: "not_found" });
+    });
+});
+
+describe("the Host and Origin check", () => {
+    const { boot } = fakeBoot({ ...identity, phase: "starting" });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot }, { guiEnabled: () => true });
+    // The Bun server that `Bun.serve` passes as `c.env`. The check reads the bound port from it.
+    const listener = { port: 8436 };
+    const send = async (headers: Record<string, string>, path = "/api/v1/server"): Promise<Response> => await app.request(path, { headers }, listener);
+
+    async function expectForbidden(response: Response, header: "Host" | "Origin"): Promise<void> {
+        expect(response.status).toBe(403);
+        // An error body of the app is an `ApiError`.
+        const body = (await response.json()) as { error: string; message: string };
+        expect(body.error).toBe("forbidden");
+        expect(body.message).toStartWith(`The ${header} header must be`);
+    }
+
+    test("a Host that is not the address of the server gives 403 `forbidden`, before the bearer check", async () => {
+        for (const host of ["rebind.example:8436", "rebind.example", "127.0.0.1:9999", "127.0.0.1", "[::1]:8436", "0.0.0.0:8436"]) {
+            await expectForbidden(await send({ Host: host }), "Host");
+        }
+    });
+
+    test("a request with no Host header gives 403 `forbidden`", async () => {
+        await expectForbidden(await send(AUTH), "Host");
+    });
+
+    test("each path is checked, not only the API", async () => {
+        await expectForbidden(await send({ Host: "rebind.example:8436" }, "/gui/"), "Host");
+    });
+
+    test("each name of the server passes, in each case", async () => {
+        for (const host of ["127.0.0.1:8436", "localhost:8436", "LOCALHOST:8436"]) {
+            expect((await send({ ...AUTH, Host: host })).status).toBe(200);
+        }
+    });
+
+    test("an Origin that is not the server gives 403 `forbidden`", async () => {
+        for (const origin of ["http://rebind.example:8436", "null", "https://127.0.0.1:8436", "http://127.0.0.1:9999", "http://localhost"]) {
+            await expectForbidden(await send({ ...AUTH, Host: "127.0.0.1:8436", Origin: origin }), "Origin");
+        }
+    });
+
+    test("the origin of the server passes, by each of its names", async () => {
+        for (const origin of ["http://127.0.0.1:8436", "http://localhost:8436"]) {
+            expect((await send({ ...AUTH, Host: "127.0.0.1:8436", Origin: origin })).status).toBe(200);
+        }
+    });
+
+    test("a real listener gives its bound port to the check", async () => {
+        const server = startTestServer();
+        try {
+            const auth = { Authorization: `Bearer ${server.token}` };
+            await expectForbidden(await fetch(`${server.baseUrl}/api/v1/server`, { headers: { ...auth, Host: `rebind.example:${server.port}` } }), "Host");
+            await expectForbidden(await fetch(`${server.baseUrl}/api/v1/server`, { headers: { ...auth, Origin: "http://rebind.example" } }), "Origin");
+            expect((await fetch(`${server.baseUrl}/api/v1/server`, { headers: auth })).status).toBe(200);
+        } finally {
+            await server.stop();
+        }
+    });
+});
+
+describe("the web GUI", () => {
+    const deps = { token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot({ ...identity, phase: "starting" }).boot };
+
+    test("serves the page at /gui/ with no bearer token", async () => {
+        const response = await buildApp(deps, { guiEnabled: () => true }).request("/gui/");
+        expect(response.status).toBe(200);
+        expect(response.headers.get("Content-Type")).toStartWith("text/html");
+        expect(await response.text()).toContain("<title>Inflexa (proof of concept)</title>");
+    });
+
+    test("/gui with no trailing slash moves to /gui/, where the page is", async () => {
+        const response = await buildApp(deps, { guiEnabled: () => true }).request("/gui");
+        expect(response.status).toBe(301);
+        expect(response.headers.get("Location")).toBe("/gui/");
+    });
+
+    test("outside the dev channel, /gui/ has no route", async () => {
+        const response = await buildApp(deps, { guiEnabled: () => false }).request("/gui/");
+        expect(response.status).toBe(404);
+        expect(await response.json()).toMatchObject({ error: "not_found" });
+    });
+
+    test("the production app serves the GUI exactly when the dev commands are on", () => {
+        expect(DEFAULT_APP_OPTS.guiEnabled).toBe(devCommandsEnabled);
     });
 });
 

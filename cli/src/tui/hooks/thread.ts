@@ -200,6 +200,26 @@ export async function refreshOpenThread(analysisId: string | null, threadId: str
     );
 }
 
+/**
+ * Apply a row of the open thread that the poll read: a title that a different client gave, or the row that the
+ * first turn of a different client made on a new conversation. Writes only when the snapshot describes this
+ * thread and the row moved, thus the rail does not mount again at each tick. A row of a different thread, or a
+ * snapshot whose own read is in flight (`unresolved`), gets nothing. A report row keeps the parent that the
+ * snapshot already resolved, as {@link refreshOpenThread} does.
+ */
+export function publishThreadRow(threadId: string, row: ThreadSummary | null): void {
+    const held = threadState();
+    if (snapshotThreadId !== threadId || held.kind === "unresolved") return;
+    if (row === null) {
+        if (held.kind !== "absent") setThreadState({ kind: "absent" });
+        return;
+    }
+    if (held.kind === "loaded" && held.thread.updatedAt === row.updatedAt && held.thread.title === row.title) return;
+    const knownParent = held.kind === "loaded" && held.thread.id === threadId ? held.parent : undefined;
+    const carried = row.threadType === "report" && knownParent?.threadId === row.parentThreadId ? knownParent : undefined;
+    setThreadState({ kind: "loaded", thread: row, parent: carried });
+}
+
 // The analysis whose ready-edge resolution is in flight, so a repaint between the effect firing and
 // its listing resolving cannot start a second one — two mints would race and the loser's id would be
 // silently replaced. Cleared by the resolution that OWNS it (see `clearResolutionOf`).

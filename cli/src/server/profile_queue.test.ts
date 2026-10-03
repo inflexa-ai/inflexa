@@ -5,7 +5,14 @@ import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { asStr256 } from "../lib/types.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { StampedEvent } from "../types/events.ts";
-import { __resetProfileQueueForTest, profileWorkInFlight, serializeProfileWork, watchInputDrift, type InputDriftOpts } from "./profile_queue.ts";
+import {
+    __resetProfileQueueForTest,
+    profileWorkInFlight,
+    profileWorkPending,
+    serializeProfileWork,
+    watchInputDrift,
+    type InputDriftOpts,
+} from "./profile_queue.ts";
 
 beforeEach(() => {
     __resetProfileQueueForTest();
@@ -75,11 +82,13 @@ describe("watchInputDrift", () => {
         emit: (event: StampedEvent) => void;
         fire: () => void;
         armed: () => number;
+        delays: number[];
         reprofiled: string[];
         stop: () => void;
     } {
         let handler: ((event: StampedEvent) => void) | null = null;
         const timers = new Set<() => void>();
+        const delays: number[] = [];
         const reprofiled: string[] = [];
         const stop = watchInputDrift({
             runtime: () => runtime,
@@ -88,8 +97,10 @@ describe("watchInputDrift", () => {
                 reprofiled.push(analysis.id);
                 return Promise.resolve({ kind: "triggered", restarted: true, materialized: true });
             },
-            schedule: (fn) => {
+            sandboxRefusal: () => Promise.resolve(null),
+            schedule: (fn, ms) => {
                 timers.add(fn);
+                delays.push(ms);
                 return () => timers.delete(fn);
             },
             subscribe: (h) => {
@@ -108,6 +119,7 @@ describe("watchInputDrift", () => {
                 for (const fn of due) fn();
             },
             armed: () => timers.size,
+            delays,
             reprofiled,
             stop,
         };
@@ -140,6 +152,37 @@ describe("watchInputDrift", () => {
         await Promise.sleep(0);
         expect(noRuntime.reprofiled).toEqual([]);
         expect(gone.reprofiled).toEqual([]);
+    });
+
+    test("an input change whose debounce ends before the ready edge re-profiles after the runtime is ready", async () => {
+        let ready: HarnessRuntime | null = null;
+        const h = harness({ runtime: () => ready });
+        h.emit(added("a"));
+        h.fire();
+        await Promise.sleep(0);
+        expect(h.reprofiled).toEqual([]);
+
+        ready = runtime;
+        h.fire();
+        await Promise.sleep(0);
+        expect(h.reprofiled).toEqual(["a"]);
+    });
+
+    test("an input change waits while the sandbox is not ready, and re-profiles at a later retry", async () => {
+        let refusal: string | null = "The sandbox image is not installed.";
+        const h = harness({ sandboxRefusal: () => Promise.resolve(refusal) });
+        h.emit(added("a"));
+        h.fire();
+        await Promise.sleep(0);
+        expect(h.reprofiled).toEqual([]);
+        expect(profileWorkPending("a")).toBe(true);
+        expect(h.armed()).toBe(1);
+        expect(h.delays).toEqual([500, 30_000]);
+
+        refusal = null;
+        h.fire();
+        await Promise.sleep(0);
+        expect(h.reprofiled).toEqual(["a"]);
     });
 
     test("the unsubscribe cancels the armed timers and ignores later events", () => {

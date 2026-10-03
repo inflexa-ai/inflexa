@@ -64,6 +64,7 @@ describe("streamed assistant text survives finalization (rendered)", () => {
                 fetchTurn: (analysisId, threadId, turnId) =>
                     okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", status: "done", opened: true }),
                 reloadTranscript: async () => undefined,
+                transcript: { fetchThread: () => okAsync(null), fetchMessages: () => okAsync({ messages: [], total: 0, page: 0, perPage: 0, hasMore: false }) },
                 healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
             };
             const pending = send({ sessionId: SID, analysisId: AID, userText: "hello" }, server);

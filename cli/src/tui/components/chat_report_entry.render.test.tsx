@@ -9,7 +9,7 @@ import type { ClientError } from "../../client/api.ts";
 import { reportSummary, threadListOf } from "../../test_support/threads.ts";
 import { Chat } from "./chat.tsx";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
-import { loadMessages, type LoadOpts, resetHotState } from "../hooks/conversation.ts";
+import { loadMessages, type LoadOpts, resetHotState, setError } from "../hooks/conversation.ts";
 import { __resetReportChildrenForTest, refreshReportChildren, type ReportChildrenOpts } from "../hooks/report_children.ts";
 import type { Analysis } from "../../types/analysis.ts";
 
@@ -84,7 +84,7 @@ function transcriptRead(rows: FixtureRow[]): LoadOpts {
         ],
     }));
     // One turn carrying every fixture row: the replay reads rows, not turn boundaries.
-    return { fetchMessages: () => okAsync({ messages, total: 1, page: 0, perPage: 1, hasMore: false }) };
+    return { fetchThread: () => okAsync(null), fetchMessages: () => okAsync({ messages, total: 1, page: 0, perPage: 1, hasMore: false }) };
 }
 
 /**
@@ -262,5 +262,35 @@ describe("the report entries of a mounted transcript", () => {
         expect(frame).not.toContain("Pathway report");
         expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, REQUEST_2));
         expect(rowOf(frame, REPLY_3)).toBeLessThan(rowOf(frame, "Enrichment report"));
+    });
+});
+
+// The banner under the stream carries the remedy of a failed turn. A remedy is the part of the message that
+// says what to do, and it comes last, thus a banner cut to one row loses exactly that part.
+describe("the error banner of the chat", () => {
+    afterEach(() => resetHotState());
+
+    test("a message longer than one row wraps, thus the remedy at its end stays on screen", async () => {
+        const setup = await testRender(
+            () => (
+                <WorkspaceContext.Provider value={ws}>
+                    <box width="100%" height="100%">
+                        <Chat onScrollPaneRef={() => {}} />
+                    </box>
+                </WorkspaceContext.Provider>
+            ),
+            { width: 60, height: 20 },
+        );
+        try {
+            setError(
+                "Could not start the turn: No Inflexa server answers at http://127.0.0.1:8436. The next inflexa command that needs one starts it, and `inflexa server status` shows it.",
+            );
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain("Could not start the turn");
+            expect(frame).toContain("shows it.");
+        } finally {
+            setup.renderer.destroy();
+        }
     });
 });

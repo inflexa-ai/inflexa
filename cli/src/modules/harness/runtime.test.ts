@@ -1077,6 +1077,13 @@ describe("describeBootError", () => {
     test("model_unresolved cooling_down explains the proxy recovers on its own", () => {
         expect(describeBootError({ type: "model_unresolved", cause: { type: "cooling_down" } })).toContain("recovers on its own");
     });
+
+    // The holder is often the local server, which only `inflexa server stop` stops.
+    test("runtime_already_active names the holder and `inflexa server stop`", () => {
+        const message = describeBootError({ type: "runtime_already_active", holderPid: 4821 });
+        expect(message).toContain("pid 4821");
+        expect(message).toContain("inflexa server stop");
+    });
 });
 
 // The launch refusal renders what this wrapper writes, because the harness names

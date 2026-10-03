@@ -42,7 +42,6 @@ import type {
     RunDetail,
     RunStepSummary,
     RunSummary,
-    SandboxImageReadiness,
     SandboxReadiness,
 } from "../../api/runs.ts";
 import type { UsageTotals } from "../../api/usage.ts";
@@ -56,27 +55,16 @@ import {
     listAnalysisUsageByRun,
     listRunUsageByStep,
 } from "../../db/primary_query.ts";
-import { ensureRuntime } from "../../lib/config.ts";
-import { capture } from "../../lib/container.ts";
-import { describeCause } from "../../lib/cause.ts";
 import { env } from "../../lib/env.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
 import { ensureProfileAtParity, forceReprofile, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
-import { isPublishedSandboxImage } from "../../modules/libs/images.ts";
-import {
-    analysisFarmPath,
-    catalogFarmPath,
-    composeFullFarm,
-    describeFarmCompositionError,
-    takeFarmCompositionFailure,
-} from "../../modules/libs/composition.ts";
-import { configuredSandboxImage } from "../../modules/libs/pull.ts";
-import { inspectStoreContent } from "../../modules/libs/store_download.ts";
+import { analysisFarmPath, catalogFarmPath, composeFullFarm, describeFarmCompositionError } from "../../modules/libs/composition.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { ServerBoot } from "../boot.ts";
 import { apiError, holdConnection, internalError, listEnvelope, parsePage, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
-import { serializeProfileWork } from "../profile_queue.ts";
+import { profileWorkPending, serializeProfileWork } from "../profile_queue.ts";
+import { readSandboxReadiness, sandboxRefusal } from "../sandbox_gate.ts";
 
 /**
  * How many plans one runs page loads at the same time. A page holds up to 200 runs, and each distinct plan is
@@ -116,6 +104,8 @@ export type RunRoutesOpts = {
     readonly forceReprofile: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
     /** The image, the store, and the farm verdict for a sandbox of the analysis. */
     readonly readiness: (analysisId: string) => Promise<Omit<SandboxReadiness, "inputCount">>;
+    /** Why a profile drive cannot start a sandbox now, or `null` when it can. Each profile route asks it before its drive. */
+    readonly sandboxRefusal: (analysisId: string) => Promise<string | null>;
     /** Compose the farm of the analysis from the catalog closure, when the farm is missing. */
     readonly healFarm: (analysisId: string) => Promise<FarmHealOutcome>;
 };
@@ -147,6 +137,7 @@ export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     ensureParity: ensureProfileAtParity,
     forceReprofile,
     readiness: readSandboxReadiness,
+    sandboxRefusal,
     healFarm: healAnalysisFarm,
 };
 
@@ -248,7 +239,12 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
         if (analysis.value === null) return analysisNotFound(c, analysisId);
         const target = analysis.value;
 
-        const parity = await queuedDrive(analysisId, () => opts.ensureParity(runtime, target));
+        // A refusal is the outcome of the drive, not an error of the route: the chat opens, and the client shows the reason.
+        const refusal = await opts.sandboxRefusal(analysisId);
+        const parity: Result<ProfileOutcome, unknown> =
+            refusal === null
+                ? await queuedDrive(analysisId, () => opts.ensureParity(runtime, target))
+                : ok({ kind: "failed", reason: refusal, materialized: false });
         if (parity.isErr()) return internalError(c, parity.error, "drive the profile parity");
         const view = await loadProfileView(runtime.pool, analysisId, opts);
         if (view.isErr()) return internalError(c, view.error, "read the data profile");
@@ -273,6 +269,8 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
         if (analysis.value === null) return analysisNotFound(c, analysisId);
         const target = analysis.value;
 
+        const refusal = await opts.sandboxRefusal(analysisId);
+        if (refusal !== null) return apiError(c, "conflict", refusal);
         const outcome = await queuedDrive(analysisId, () => opts.forceReprofile(runtime, target));
         if (outcome.isErr()) return internalError(c, outcome.error, "re-profile the analysis");
         const body: ProfileRerunResult = { outcome: outcome.value };
@@ -335,9 +333,10 @@ async function queuedDrive(analysisId: string, drive: () => Promise<ProfileParit
  */
 function loadProfileView(pool: Pool, analysisId: string, opts: RunRoutesOpts): ResultAsync<DataProfileView, DbError> {
     return opts.loadProfile(pool, analysisId).map((row): DataProfileView => {
+        const work = profileWorkPending(analysisId) ? { workPending: true as const } : {};
         if (row === null) {
             noteDataProfileState(analysisId, false);
-            return { status: null };
+            return { status: null, ...work };
         }
         noteDataProfileState(analysisId, row.status === "pending" || row.status === "running");
         const usage = getAnalysisDataProfileUsageTotals(analysisId).unwrapOr(null);
@@ -350,6 +349,7 @@ function loadProfileView(pool: Pool, analysisId: string, opts: RunRoutesOpts): R
             workflowId: row.workflowId,
             seedInputFileIds: row.seedInputFileIds,
             ...(usage === null ? {} : { usage }),
+            ...work,
         };
     });
 }
@@ -473,36 +473,6 @@ export function planStepNames(plan: unknown): ReadonlyMap<string, string> {
         if (typeof id === "string" && typeof name === "string" && name.trim().length > 0) names.set(id, name.trim());
     }
     return names;
-}
-
-/** The first line of a multi-line message, so a hint with its remedy stays one line. */
-function firstLine(text: string): string {
-    return text.split("\n", 1)[0] ?? text;
-}
-
-/** The state of the configured sandbox image in the container engine, with no pull. */
-async function imageReadiness(image: string): Promise<SandboxImageReadiness> {
-    const engine = await ensureRuntime();
-    if (engine.isErr()) return { state: "engine_error", image, message: firstLine(engine.error.message) };
-    const inspected = await ResultAsync.fromPromise(capture(engine.value, ["image", "inspect", image]), (cause) => cause);
-    if (inspected.isErr()) return { state: "engine_error", image, message: `The container engine is not reachable (${describeCause(inspected.error)}).` };
-    if (inspected.value.code === 0) return { state: "present", image };
-    return isPublishedSandboxImage(image) ? { state: "absent", image } : { state: "custom", image };
-}
-
-/** The production readiness: the engine inspect of the image, the store content, and the farm of the analysis. */
-async function readSandboxReadiness(analysisId: string): Promise<Omit<SandboxReadiness, "inputCount">> {
-    const storeRoot = env.packageStoreDir;
-    const [image, store] = await Promise.all([imageReadiness(configuredSandboxImage()), inspectStoreContent(storeRoot)]);
-    return {
-        image,
-        store,
-        farm: {
-            present: existsSync(join(analysisFarmPath(storeRoot, analysisId), FARM_LOCK_FILE)),
-            catalogPresent: existsSync(join(catalogFarmPath(storeRoot), FARM_LOCK_FILE)),
-            failure: takeFarmCompositionFailure(analysisId)?.reason ?? null,
-        },
-    };
 }
 
 /** The production heal: compose the full farm from the catalog closure, when the farm is missing and the catalog is present. */

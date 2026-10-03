@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { ServerDiscovery } from "../api/server.ts";
 import { buildProgram } from "../cli/index.ts";
 import { readServerDiscovery } from "../client/api.ts";
-import { rotateServerLog, SERVE_DETACHED_CHILD_FLAG, writeServerDiscovery } from "./serve.ts";
+import { rotateServerLog, SERVE_DETACHED_CHILD_FLAG, serverStopLine, writeServerDiscovery } from "./serve.ts";
 
 let dir: string | null = null;
 afterEach(() => {
@@ -65,6 +65,21 @@ describe("the discovery file", () => {
         const path = join(tempDir(), "server.dev.json");
         writeFileSync(path, JSON.stringify(discovery), { mode: 0o000 });
         expect(readServerDiscovery(path)._unsafeUnwrapErr()).toMatchObject({ type: "io_failed" });
+    });
+});
+
+describe("the line that the server log gets at the stop", () => {
+    const at = new Date("2026-10-03T16:46:36.000Z");
+
+    test("a stop that a client asked for names the pid, the time, and the mode", () => {
+        expect(serverStopLine("drain", 4242, at)).toBe(
+            "Inflexa server pid 4242 stops at 2026-10-03T16:46:36.000Z: a client asked for a stop that waits for the chat turns.",
+        );
+        expect(serverStopLine("now", 4242, at)).toBe("Inflexa server pid 4242 stops at 2026-10-03T16:46:36.000Z: a client asked for an immediate stop.");
+    });
+
+    test("a stop with no request of a client is a signal: Ctrl+C, SIGTERM, or SIGHUP", () => {
+        expect(serverStopLine(null, 4242, at)).toBe("Inflexa server pid 4242 stops at 2026-10-03T16:46:36.000Z: the process got a stop signal.");
     });
 });
 

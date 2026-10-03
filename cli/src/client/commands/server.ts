@@ -26,8 +26,10 @@ import {
     hasActiveWork,
     lookupServer,
     removeStaleDiscovery,
+    requestServerBoot,
     requestServerShutdown,
     SERVER_STOP_WAIT_MS,
+    serverClient,
     type ServerLookup,
     type ServerLookupOpts,
 } from "../server.ts";
@@ -381,5 +383,24 @@ export async function stopServerAfterUpgrade(newVersion: string, opts: ServerCom
     (await stopServer(lookup.discovery, "drain", opts)).match(
         () => opts.write(`Stopped the old Inflexa server. The next inflexa command starts inflexa ${newVersion}.\n`),
         (message) => opts.write(`${message}\n`),
+    );
+}
+
+/**
+ * After `inflexa up` made the machine ready: ask a server whose boot failed to boot again. No server, or a server in
+ * a different phase, needs nothing, because a server that boots later finds the ready machine.
+ */
+export async function bootServerAfterUp(opts: ServerCommandOpts = DEFAULT_SERVER_COMMAND_OPTS): Promise<void> {
+    const found = await lookupServer(opts);
+    if (found.isErr()) {
+        opts.write(`Could not read the state of the Inflexa server (${describeServerError(found.error)}).\n`);
+        return;
+    }
+    const lookup = found.value;
+    if (lookup.kind !== "answering" || lookup.state.phase !== "failed") return;
+    const pid = lookup.discovery.pid;
+    (await requestServerBoot(serverClient(lookup.discovery, opts.fetch, opts.probeTimeoutMs))).match(
+        () => opts.write(`The Inflexa server (pid ${pid}) boots again. \`inflexa server status\` shows its phase.\n`),
+        (e) => opts.write(`Could not ask the Inflexa server (pid ${pid}) to boot again: ${describeClientError(e)}\n`),
     );
 }

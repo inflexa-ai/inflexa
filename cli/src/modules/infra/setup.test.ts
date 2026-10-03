@@ -743,11 +743,11 @@ describe("ensureLiveCredential", () => {
         expect(warnings[0]).toContain("inflexa setup");
     });
 
-    test("a 401 on a non-TTY fails actionably naming the forced re-login command", async () => {
+    test("a 401 on a non-TTY fails as a sign-in error that names `inflexa up`, the command that signs in", async () => {
         const { deps, calls } = scripted([{ kind: "unauthorized" }], { isInteractive: () => false });
-        const result = await ensureLiveCredential(deps);
-        expect(result.isErr()).toBe(true);
-        expect(result.isErr() ? result.error.message : "").toContain("inflexa setup --provider");
+        const error = (await ensureLiveCredential(deps))._unsafeUnwrapErr();
+        expect(error.message).toContain("Run `inflexa up` in a terminal");
+        expect(error.signInRequired).toBe(true);
         expect(calls).toEqual(["probe"]);
     });
 

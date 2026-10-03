@@ -1,3 +1,5 @@
+import { ResultAsync } from "neverthrow";
+
 import { Bus } from "../lib/bus.ts";
 import { getLogger } from "../lib/log.ts";
 import { findAnalysesByRef } from "../db/primary_query.ts";
@@ -5,6 +7,7 @@ import { reprofileForInputChange, type ProfileParityOutcome } from "../modules/h
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { StampedEvent } from "../types/events.ts";
+import { sandboxRefusal } from "./sandbox_gate.ts";
 
 // The profile work of each analysis runs one drive at a time. The harness ledger CAS serializes only the
 // workflow dispatch, and it runs after the staging. Thus it cannot serialize the two things that race:
@@ -37,6 +40,17 @@ export function profileWorkCount(): number {
     return queues.size;
 }
 
+/** The analyses with an input change whose timer of {@link watchInputDrift} did not start the drive yet. */
+const changesWaiting = new Set<string>();
+
+/**
+ * True while the server holds profile work of the analysis that its ledger row does not show yet: an input
+ * change that waits for its drive, or a drive that is queued or runs.
+ */
+export function profileWorkPending(analysisId: string): boolean {
+    return changesWaiting.has(analysisId) || profileWorkInFlight(analysisId);
+}
+
 /**
  * Run `work` after each drive of the analysis that is already queued. A rejected predecessor still lets its
  * successors run. The promise carries the outcome of `work`, so a caller still sees its rejection.
@@ -65,14 +79,22 @@ export function serializeProfileWork(analysisId: string, work: () => Promise<voi
  */
 const INPUT_DRIFT_DEBOUNCE_MS = 500;
 
+/**
+ * How long an input change waits before it asks the sandbox gate again. The gate reads the container engine and
+ * the store root, and no event tells the server that a download ended, thus the change asks again on a timer.
+ */
+const SANDBOX_RETRY_MS = 30_000;
+
 /** What {@link watchInputDrift} reads and starts. Tests replace each one. */
 export type InputDriftOpts = {
-    /** The booted runtime, or `null` while the boot is not ready. An input change before `ready` drives nothing. */
+    /** The booted runtime, or `null` while the boot is not ready. An input change before `ready` waits for it. */
     readonly runtime: () => HarnessRuntime | null;
     /** The analysis row, or `null` when it is gone. */
     readonly analysis: (analysisId: string) => Analysis | null;
     /** The re-profile after an input change. Real: {@link reprofileForInputChange}. */
     readonly reprofile: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    /** Why a sandbox cannot start for the analysis now, or `null`. Real: {@link sandboxRefusal}. */
+    readonly sandboxRefusal: (analysisId: string) => Promise<string | null>;
     /** Arm a one-shot timer, and give its cancel. */
     readonly schedule: (fn: () => void, ms: number) => () => void;
     readonly subscribe: (handler: (event: StampedEvent) => void) => () => void;
@@ -88,6 +110,7 @@ export function defaultInputDriftOpts(runtime: () => HarnessRuntime | null): Inp
                 () => null,
             ),
         reprofile: reprofileForInputChange,
+        sandboxRefusal,
         schedule: (fn, ms) => {
             const handle = setTimeout(fn, ms);
             // A half-elapsed debounce must not keep the process alive at shutdown.
@@ -105,33 +128,73 @@ export function defaultInputDriftOpts(runtime: () => HarnessRuntime | null): Inp
  * Re-profile an analysis after its input set changes, from each writer: a route, and the `manage_inputs`
  * tool inside a turn. Each `prov.input_added` and `prov.input_removed` event arms a 500 ms trailing-edge
  * timer for its analysis, and the timer queues one {@link reprofileForInputChange} drive behind the profile
- * work of that analysis. Gives the unsubscribe.
+ * work of that analysis. A timer that fires before the runtime is ready arms again, thus the drive runs at the
+ * first fire after the ready edge. A timer whose sandbox gate refuses arms again after 30 s, thus the change
+ * waits until a sandbox can start. Gives the unsubscribe.
  */
 export function watchInputDrift(opts: InputDriftOpts): () => void {
     const timers = new Map<string, () => void>();
-    const unsubscribe = opts.subscribe((event) => {
-        if (event.type !== "prov.input_added" && event.type !== "prov.input_removed") return;
-        const { analysisId } = event;
+    let stopped = false;
+    function arm(analysisId: string, ms: number = INPUT_DRIFT_DEBOUNCE_MS): void {
+        changesWaiting.add(analysisId);
         timers.get(analysisId)?.();
         timers.set(
             analysisId,
-            opts.schedule(() => {
-                timers.delete(analysisId);
-                // Read at fire time: the runtime can go down, and the analysis can go away, in the window.
-                const runtime = opts.runtime();
+            opts.schedule(() => fire(analysisId), ms),
+        );
+    }
+    function fire(analysisId: string): void {
+        timers.delete(analysisId);
+        // Read at fire time: the runtime can go down, and the analysis can go away, in the window.
+        const runtime = opts.runtime();
+        // The boot gives this watch no ready event, thus the timer arms again. Each wait costs one read of the boot
+        // phase, and a failed boot keeps the change until a later boot is ready.
+        if (runtime === null) {
+            arm(analysisId);
+            return;
+        }
+        void ResultAsync.fromPromise(opts.sandboxRefusal(analysisId), (cause) => cause)
+            .match(
+                (refusal) => refusal,
+                (err) => {
+                    getLogger("server").warn({ err, analysisId }, "the sandbox check of a re-profile threw");
+                    return "the sandbox check failed";
+                },
+            )
+            .then((refusal) => {
+                if (stopped) {
+                    changesWaiting.delete(analysisId);
+                    return;
+                }
+                // A newer input event armed its own timer during the check, and that timer drives the change.
+                if (timers.has(analysisId)) return;
+                if (refusal !== null) {
+                    getLogger("server").debug({ analysisId, reason: refusal }, "the re-profile after an input change waits for the sandbox");
+                    arm(analysisId, SANDBOX_RETRY_MS);
+                    return;
+                }
+                // The queue of the drive takes over in the same synchronous step, thus `profileWorkPending` has no gap.
+                changesWaiting.delete(analysisId);
                 const analysis = opts.analysis(analysisId);
-                if (runtime === null || analysis === null) return;
+                if (analysis === null) return;
                 void serializeProfileWork(analysisId, async () => {
                     const outcome = await opts.reprofile(runtime, analysis);
                     if (outcome.kind === "failed")
                         getLogger("server").warn({ analysisId, reason: outcome.reason }, "the re-profile after an input change failed");
                 }).catch((err: unknown) => getLogger("server").error({ err, analysisId }, "the re-profile after an input change threw"));
-            }, INPUT_DRIFT_DEBOUNCE_MS),
-        );
+            });
+    }
+    const unsubscribe = opts.subscribe((event) => {
+        if (event.type !== "prov.input_added" && event.type !== "prov.input_removed") return;
+        arm(event.analysisId);
     });
     return () => {
+        stopped = true;
         unsubscribe();
-        for (const cancel of timers.values()) cancel();
+        for (const [analysisId, cancel] of timers) {
+            cancel();
+            changesWaiting.delete(analysisId);
+        }
         timers.clear();
     };
 }
@@ -139,4 +202,5 @@ export function watchInputDrift(opts: InputDriftOpts): () => void {
 /** Test hook: forget each queue. Test-only. */
 export function __resetProfileQueueForTest(): void {
     queues.clear();
+    changesWaiting.clear();
 }

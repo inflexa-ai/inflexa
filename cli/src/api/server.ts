@@ -4,9 +4,18 @@ export const API_VERSION = 1;
 /** The phase of the harness runtime boot inside the server. A route that needs the runtime gives 503 `unavailable` until `ready`. */
 export type ServerPhase = "starting" | "ready" | "failed";
 
+/**
+ * The {@link ServerBootError} reason of a provider login that is absent or dead. The boot cannot ask for a login,
+ * thus `inflexa up` in a terminal signs in, then sends `POST /api/v1/server/boot`.
+ */
+export const SIGN_IN_REQUIRED = "sign_in_required";
+
 /** Why the boot failed: one actionable message, and the detail lines of the cause. */
 export type ServerBootError = {
-    /** A stable code: the `type` of the harness boot error, or `infra_unready` for the containers, the proxy, and the embedder. */
+    /**
+     * A stable code: the `type` of the harness boot error, {@link SIGN_IN_REQUIRED}, or `infra_unready` for the
+     * other faults of the containers, the proxy, and the embedder.
+     */
     reason: string;
     /** The remedy, for a person. */
     message: string;

@@ -42,10 +42,11 @@ export type ListedModelView = {
     efforts: AgentEffort[];
 };
 
-/** The body of `GET /api/v1/models`. A listing that failed is `models: null`, and the client offers a free-text id. */
-export type ModelList = {
-    models: ListedModelView[] | null;
-};
+/**
+ * The body of `GET /api/v1/models`. A listing that failed is `models: null` with `reason`, a clause for a person,
+ * and the client offers a free-text id.
+ */
+export type ModelList = { models: ListedModelView[] } | { models: null; reason: string };
 
 /** The body of `GET /api/v1/me`: the identity of the stored session of the server user. */
 export type MeView =

@@ -30,12 +30,11 @@ export type BootIndicatorProps = {
 export function BootIndicator(props: BootIndicatorProps): JSX.Element {
     const [frame, setFrame] = createSignal(0);
     const [age, setAge] = createSignal("0s");
-    // Captured at mount: the host mounts this when boot begins, unmounts it when the runtime is ready
-    // (or the user quits from the failed state).
+    // Captured at mount: the host mounts this for each boot phase, and unmounts it when the runtime is ready.
     const start = Date.now();
-    // The timer keeps ticking if the boot then FAILS (message set) — harmless: the failed branch
-    // ignores frame()/age(), it is a terminal state the user quits from, and onCleanup clears the
-    // interval on unmount. Kept identical to ThinkingIndicator rather than special-casing a stop.
+    // The timer keeps ticking while the boot is FAILED (message set) — harmless: the failed branch
+    // ignores frame()/age(), and onCleanup clears the interval on unmount. Kept identical to
+    // ThinkingIndicator rather than special-casing a stop.
     const timer = setInterval(() => {
         setFrame((f) => (f + 1) % GLYPHS.spinner.length);
         setAge(Date.relativeAge(start));

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok } from "neverthrow";
 
-import { describeClientError, readSseFrames, request, streamRequest, type ClientError, type ClientOpts } from "./api.ts";
+import { describeClientError, readSseFrames, request, setClientSurface, streamRequest, type ClientError, type ClientOpts } from "./api.ts";
 
 const BASE = "http://127.0.0.1:8436";
 
@@ -96,11 +96,27 @@ describe("request", () => {
 });
 
 describe("describeClientError", () => {
-    test("an unreachable server names the command that starts one", () => {
+    test("an unreachable server says that a client starts one, and names the command that shows it", () => {
+        // A client starts the server in the background, thus the foreground `inflexa serve` is not the remedy.
         const refused: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: BASE, cause: null };
         const notRunning: ClientError = { type: "unreachable", reason: "not_running", baseUrl: BASE, cause: null };
-        expect(describeClientError(refused)).toContain("`inflexa serve`");
-        expect(describeClientError(notRunning)).toContain("`inflexa serve`");
+        for (const e of [refused, notRunning]) {
+            expect(describeClientError(e)).toContain("starts it");
+            expect(describeClientError(e)).toContain("`inflexa server status`");
+            expect(describeClientError(e)).not.toContain("`inflexa serve`");
+        }
+    });
+
+    test("inside the chat, an unreachable server names the dialog of the chat and any inflexa command", () => {
+        // A send of the chat does not start a server: it offers the start in a dialog.
+        setClientSurface("chat");
+        try {
+            const refused: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: BASE, cause: null };
+            expect(describeClientError(refused)).toContain("This chat offers to start it, and each `inflexa` command starts it too.");
+            expect(describeClientError(refused)).not.toContain("The next inflexa command");
+        } finally {
+            setClientSurface("command");
+        }
     });
 
     test("an http error carries the message, the status, and the code of the body", () => {

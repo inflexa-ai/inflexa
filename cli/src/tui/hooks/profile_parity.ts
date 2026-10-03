@@ -3,7 +3,7 @@ import type { ResultAsync } from "neverthrow";
 
 import type { ChatContext, DataProfileState, ProfileOutcome, ProfileRerunResult } from "../../api/runs.ts";
 import { describeClientError, type ClientError } from "../../client/api.ts";
-import { fetchChatContext, fetchSandboxReadiness, rerunDataProfile } from "../../client/runs.ts";
+import { fetchChatContext, rerunDataProfile } from "../../client/runs.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Notice } from "../theme.ts";
@@ -51,19 +51,15 @@ const DEFAULT_PARITY_WATCH_OPTS: ParityWatchOpts = {
 };
 
 /**
- * The prerequisite gate for one analysis: `ready` when a sandbox may start, `blocked` when the
- * transfers did not complete or the machine cannot serve one. Injectable so the composition runs
- * offline in a test.
+ * The hold before a profile drive: `ready` when no transfer is live, `blocked` when the transfer state
+ * cannot be read. The server decides if a sandbox can start. Injectable so the composition runs offline
+ * in a test.
  */
-export type SandboxGate = (analysis: Analysis) => Promise<"ready" | "blocked">;
+export type SandboxGate = () => Promise<"ready" | "blocked">;
 
-const realSandboxGate: SandboxGate = async (analysis) => {
-    // An analysis with no inputs profiles nothing, so it needs no store and no image. A failed read
-    // falls through to the gate, which reports what it finds.
-    const readiness = await fetchSandboxReadiness(analysis.id);
-    if (readiness.isOk() && readiness.value.inputCount === 0) return "ready";
-    const { awaitSandboxReady } = await import("./sandbox_gate.tsx");
-    return awaitSandboxReady(analysis.id);
+const realSandboxGate: SandboxGate = async () => {
+    const { awaitTransfersSettled } = await import("./sandbox_gate.tsx");
+    return awaitTransfersSettled();
 };
 
 /** The effectful edges of a gated drive, injectable so the gating decision is unit-tested without the real gate. */
@@ -83,21 +79,20 @@ const DEFAULT_GATED_FORCE_OPTS: GatedDriveOpts = {
 };
 
 /**
- * Auto-parity behind the sandbox gate: hold the drive while the transfers move, then run
- * {@link driveProfileParity}. A blocked gate refuses the drive with its reason already reported, so
- * no sandbox starts against an empty store. The chat itself stays open — only this sandbox-making
- * action waits (the package-store-transfers spec).
+ * Auto-parity behind the transfer hold: hold the drive while the transfers move, then run
+ * {@link driveProfileParity}. A blocked hold drops the drive with its reason already reported. The
+ * chat itself stays open — only this sandbox-making action waits (the package-store-transfers spec).
  */
 export function gatedProfileParity(analysis: Analysis, currentAnalysisId: () => string | null, opts: GatedDriveOpts = DEFAULT_GATED_PARITY_OPTS): void {
-    void opts.gate(analysis).then((verdict) => {
+    void opts.gate().then((verdict) => {
         // A swap during the wait is caught again by `driveProfileParity`'s own guards.
         if (verdict === "ready") opts.drive(analysis, currentAnalysisId);
     });
 }
 
-/** The deliberate re-profile behind the same gate — the force twin of {@link gatedProfileParity}. */
+/** The deliberate re-profile behind the same hold — the force twin of {@link gatedProfileParity}. */
 export function gatedForceReprofile(analysis: Analysis, currentAnalysisId: () => string | null, opts: GatedDriveOpts = DEFAULT_GATED_FORCE_OPTS): void {
-    void opts.gate(analysis).then((verdict) => {
+    void opts.gate().then((verdict) => {
         if (verdict === "ready") opts.drive(analysis, currentAnalysisId);
     });
 }
@@ -211,7 +206,7 @@ export async function driveProfileParity(
     currentAnalysisId: () => string | null,
     opts: ParityDriverOpts = DEFAULT_PARITY_DRIVER_OPTS,
 ): Promise<void> {
-    // A drive that waited on the sandbox gate while the user swapped away is not asked for at all.
+    // A drive that waited on the transfer hold while the user swapped away is not asked for at all.
     if (currentAnalysisId() !== analysis.id) return;
     const context = await opts.check(analysis.id);
     if (currentAnalysisId() !== analysis.id) return;

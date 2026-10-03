@@ -92,7 +92,13 @@ export type DataProfileState = {
  * The body of `GET {A}/data-profile`. `status: null` is an analysis that was never profiled, or whose profile
  * was cleared. Otherwise the ledger row, and what the calls of the profile consumed.
  */
-export type DataProfileView = { status: null } | (DataProfileState & { usage?: UsageTotals });
+export type DataProfileView = ({ status: null } | (DataProfileState & { usage?: UsageTotals })) & {
+    /**
+     * Present while the server holds profile work that the row does not show yet: an input change that waits
+     * for its re-profile, or a drive that is queued or runs. A client reads the row again until it is absent.
+     */
+    workPending?: true;
+};
 
 /**
  * What one profile drive did. `kind` is the profile decision. `materialized` is true when the current input

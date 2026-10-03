@@ -30,6 +30,12 @@ export type ScrollPaneProps = {
      */
     focusOnMount?: boolean;
     /**
+     * False for a pane that the mouse wheel scrolls and that never holds the keys (the sidebar rail). A left
+     * mouse-down focuses the nearest focusable ancestor of its target, and a scrollbox and its scroll bars
+     * are focusable, thus without this a click in the pane takes the focus from the chat composer.
+     */
+    focusable?: boolean;
+    /**
      * Receives the scrollbox renderable on mount — the imperative escape hatch (mirroring
      * `TextArea.onRef`) for hosts that focus the pane or scroll it programmatically.
      */
@@ -111,6 +117,11 @@ export function ScrollPane(props: ScrollPaneProps): JSX.Element {
         <scrollbox
             ref={(r: ScrollBoxRenderable) => {
                 ref = r;
+                if (props.focusable === false) {
+                    r.focusable = false;
+                    r.verticalScrollBar.focusable = false;
+                    r.horizontalScrollBar.focusable = false;
+                }
                 // Focus via microtask — the renderable isn't ready synchronously (the standard pattern).
                 if (props.focusOnMount ?? true) queueMicrotask(() => r.focus());
                 props.onRef?.(r);

@@ -55,24 +55,26 @@ export function classifyInputPath(analysisId: string, rawPath: string, cwd: stri
 /**
  * Inverse of `classifyInputPath`: resolve a stored ref to an absolute path. Anchor-relative
  * refs ride the anchor's live (reconciled) location; `null` when the anchor can't be resolved.
+ * `touch` passes to `resolveAnchor`.
  */
-export function resolveInputPath(input: AnalysisInput): Result<string | null, DbError> {
+export function resolveInputPath(input: AnalysisInput, opts?: { touch?: boolean }): Result<string | null, DbError> {
     if (input.anchorId === null) return ok(input.path);
     // A missing anchor row (null resolved) or unlocated folder (null path) both mean "can't resolve".
-    return resolveAnchor(input.anchorId).map((resolved) => (resolved?.path == null ? null : join(resolved.path, input.path)));
+    return resolveAnchor(input.anchorId, opts).map((resolved) => (resolved?.path == null ? null : join(resolved.path, input.path)));
 }
 
 /**
  * Match raw paths against a set of registered inputs for REMOVAL — by the stored ref `path` OR the
  * resolved absolute path (`{cwd}`-relative raw paths resolve the same way `classifyInputPath` would).
  * Existence on disk is deliberately NOT required: an input whose file was moved or deleted must stay
- * removable. Returns the matched inputs and the raw paths that matched no current input.
+ * removable. Returns the matched inputs and the raw paths that matched no current input. A match is a
+ * lookup, not a sighting of the folder, thus it records no `lastSeen`.
  */
 export function matchInputRefs(inputs: readonly AnalysisInput[], rawPaths: readonly string[], cwd: string): { matched: AnalysisInput[]; notInputs: string[] } {
     const byStored = new Map(inputs.map((i) => [i.path, i]));
     const byAbs = new Map<string, AnalysisInput>();
     for (const input of inputs) {
-        const abs = resolveInputPath(input).unwrapOr(null);
+        const abs = resolveInputPath(input, { touch: false }).unwrapOr(null);
         if (abs !== null) byAbs.set(abs, input);
     }
     const matched: AnalysisInput[] = [];
