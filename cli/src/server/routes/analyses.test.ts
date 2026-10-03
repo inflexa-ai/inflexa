@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { err, errAsync, ok, okAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { AnalysisPurgeOutcome, DbError as PgError, Pool } from "@inflexa-ai/harness";
 
 import type {
@@ -24,7 +24,7 @@ import { createProject, insertAnalysis, insertAnalysisInput, insertAnchor, upser
 import { getAnalysis, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { asStr256 } from "../../lib/types.ts";
-import type { WorkspaceDisposal, WorkspaceError } from "../../modules/analysis/output.ts";
+import { defaultOutputSubdir, disposeWorkspace, type WorkspaceDisposal, type WorkspaceError } from "../../modules/analysis/output.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -267,6 +267,23 @@ describe("GET {A}", () => {
             anchor: { id: a.anchorId, path: dir, cachedPath: dir, markerWritten: true },
         });
     });
+
+    test("`cwd` reconciles a moved anchor folder from the folder of the client, not from the folder of the server", async () => {
+        const before = tmp();
+        const a = seedAnalysis(before);
+        const after = join(tmp(), "moved");
+        renameSync(before, after);
+
+        const detail = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?cwd=${encodeURIComponent(after)}`)).json()) as AnalysisDetail;
+        expect(detail.anchor?.path).toBe(after);
+    });
+
+    test("a relative `cwd` is a 400", async () => {
+        const a = seedAnalysis(tmp());
+        const response = await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?cwd=here`);
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+    });
 });
 
 describe("PATCH {A}", () => {
@@ -335,8 +352,10 @@ describe("DELETE {A} — the ordered delete", () => {
             },
             disposeWorkspace: (_a, mode) => {
                 steps.push(`dispose:${mode}`);
-                if (out.disposalError) return err<WorkspaceDisposal, WorkspaceError>(out.disposalError);
-                return ok<WorkspaceDisposal, WorkspaceError>(mode === "archive" ? { kind: "archived", path: ARCHIVE } : { kind: "deleted", path: "/work/x" });
+                if (out.disposalError) return errAsync<WorkspaceDisposal, WorkspaceError>(out.disposalError);
+                return okAsync<WorkspaceDisposal, WorkspaceError>(
+                    mode === "archive" ? { kind: "archived", path: ARCHIVE } : { kind: "deleted", path: "/work/x" },
+                );
             },
             purgeAnalysis: () => {
                 steps.push("purge");
@@ -397,6 +416,43 @@ describe("DELETE {A} — the ordered delete", () => {
         expect(response.status).toBe(409);
         expect(l.steps).toEqual(["dispose:archive"]);
         expect(getAnalysis(a.id)._unsafeUnwrap()).not.toBeNull();
+    });
+
+    test("a slow remove of the workspace folder holds no other request", async () => {
+        const dir = tmp();
+        const a = seedAnalysis(dir);
+        const b = seedAnalysis(tmp(), "Beta");
+        const root = join(dir, defaultOutputSubdir(a.slug));
+        mkdirSync(root, { recursive: true });
+        let release = (): void => undefined;
+        const removing = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const removed: string[] = [];
+        const opts: AnalysisRouteOpts = {
+            ...IDLE,
+            purgeAnalysis: () => okAsync(PURGED),
+            removeFarm: async () => undefined,
+            disposeWorkspace: (analysis, mode) =>
+                disposeWorkspace(analysis, mode, (path) => {
+                    removed.push(path);
+                    return ResultAsync.fromSafePromise(removing);
+                }),
+        };
+        const app = appWith(readyBoot, opts);
+        let deleted = false;
+        const deleting = Promise.resolve(app.request(`/api/v1/analyses/${a.id}?workspace=delete`, { method: "DELETE" })).then((response) => {
+            deleted = true;
+            return response;
+        });
+
+        expect((await app.request(`/api/v1/analyses/${b.id}`)).status).toBe(200);
+        await Promise.sleep(20);
+        expect(deleted).toBe(false);
+        expect(removed).toEqual([root]);
+
+        release();
+        expect((await deleting).status).toBe(200);
     });
 
     test("409 `busy` while work holds the folder, and 503 `unavailable` with no runtime", async () => {

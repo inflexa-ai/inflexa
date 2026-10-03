@@ -109,7 +109,7 @@ function clientErrorText(e: ClientError): string {
  * happen: a different process holds the lock, or the server does not answer.
  */
 async function workingDirFor(a: Analysis): Promise<string | null> {
-    return (await fetchAnalysis(a.id)).match(
+    return (await fetchAnalysis(a.id, process.cwd())).match(
         (detail) => workingDirOf(detail),
         (e) => {
             notify({ kind: "warn", text: clientErrorText(e) });
@@ -125,7 +125,7 @@ async function workingDirFor(a: Analysis): Promise<string | null> {
  * is modal across clients.
  */
 async function workspaceBusyReason(analysisId: string): Promise<string | null> {
-    return (await fetchAnalysis(analysisId)).match(
+    return (await fetchAnalysis(analysisId, process.cwd())).match(
         (detail) => (detail.busy[0] === undefined ? null : describeBusyReason(detail.busy[0])),
         (e) => `the analysis cannot be read (${clientErrorText(e)})`,
     );

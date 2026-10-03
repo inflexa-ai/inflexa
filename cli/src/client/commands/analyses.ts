@@ -45,7 +45,7 @@ function failClient(e: ClientError): never {
  * A lock that a different process holds stops the launch before the screen is taken, as a plain line.
  */
 async function openTarget(analysisId: string, opts: ClientOpts): Promise<ChatTarget> {
-    const detail = (await fetchAnalysis(analysisId, opts)).match((v) => v, failClient);
+    const detail = (await fetchAnalysis(analysisId, process.cwd(), opts)).match((v) => v, failClient);
     return { workingDir: workingDirOf(detail), analysis: toAnalysis(detail) };
 }
 

@@ -195,4 +195,27 @@ describe("inflexa help & usage (e2e)", () => {
             await server.stop();
         }
     });
+
+    // The route names its own query parameter, thus the command must name its own flag.
+    test("a bad lineage --depth fails naming the flag", async () => {
+        freshDb();
+        insertAnchor({ id: "anc-1", createdAt: 1, updatedAt: 1, cachedPath: "/nonexistent", markerWritten: false, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({
+            id: "ana-1",
+            createdAt: 1,
+            updatedAt: 1,
+            name: asStr256("anything"),
+            slug: "anything",
+            anchorId: "anc-1",
+            projectId: null,
+        })._unsafeUnwrap();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["prov", "lineage", "anything", "anything", "--depth", "0"], { env: server.childEnv });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain('--depth must be a positive integer, got "0".');
+        } finally {
+            await server.stop();
+        }
+    });
 });

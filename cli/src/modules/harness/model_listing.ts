@@ -74,11 +74,22 @@ const ANTHROPIC_VERSION = "2023-06-01";
  * - `connection_invalid` — the `models` config block failed validation (the same fields boot reports);
  * - `key_missing` — no credential to authenticate the listing request (the cliproxy client key is
  *   absent, or `INFLEXA_MODEL_API_KEY` is unset in direct mode);
- * - `unreachable` — the endpoint threw, timed out, or answered non-2xx (`detail` carries the reason);
+ * - `unreachable` — the endpoint threw or answered non-2xx (`detail` carries the reason);
+ * - `timed_out` — the endpoint gave no full answer within `afterMs`;
  * - `no_models` — the endpoint answered but listed nothing (empty `data`, or a body that failed the schema).
  */
 export type ListModelsError =
-    { type: "connection_invalid"; issues: string } | { type: "key_missing" } | { type: "unreachable"; detail: string } | { type: "no_models" };
+    | { type: "connection_invalid"; issues: string }
+    | { type: "key_missing" }
+    | { type: "unreachable"; detail: string }
+    | { type: "timed_out"; afterMs: number }
+    | { type: "no_models" };
+
+/**
+ * Upper bound on one model listing, the headers and the body together. The server lifts its idle timeout for
+ * `GET /api/v1/models`, thus without this bound a hung endpoint holds the request with no end.
+ */
+const LIST_MODELS_TIMEOUT_MS = 10_000;
 
 /**
  * The effectful seams, injectable so the per-mode request-shaping is unit-testable offline (no real
@@ -97,8 +108,8 @@ export type ListModelsSeams = {
     readonly readModelApiKey: (provider: string) => string | undefined;
     /** Resolve the connection's configured `auth` block to a wire credential. Real: `createCredentialSource(auth).get()`. */
     readonly resolveAuthCredential: (auth: ModelAuthConfig) => Promise<Result<Credential, CredentialError>>;
-    /** Issue the GET request with the mode-specific headers. Real: `fetch(url, { headers })`. */
-    readonly fetch: (url: string, headers: Record<string, string>) => Promise<Response>;
+    /** Issue the GET request with the mode-specific headers, aborted by `signal`. Real: `fetch(url, { headers, signal })`. */
+    readonly fetch: (url: string, headers: Record<string, string>, signal: AbortSignal) => Promise<Response>;
 };
 
 const realSeams: ListModelsSeams = {
@@ -106,7 +117,7 @@ const realSeams: ListModelsSeams = {
     readProxyKey: readApiKey,
     readModelApiKey: resolveModelApiKey,
     resolveAuthCredential: (auth) => createCredentialSource(auth).get(),
-    fetch: (url, headers) => fetch(url, { headers }),
+    fetch: (url, headers, signal) => fetch(url, { headers, signal }),
 };
 
 /**
@@ -162,8 +173,12 @@ async function requestFor(
  * OpenAI-compatible `/models`, direct Anthropic `/models` off the `/v1`-terminated root), and parses the shared `{ data: [{ id }] }`
  * response. Returns each model with its efforts, or a {@link ListModelsError} the picker maps to free-text entry — every
  * failure is on the Result channel because listing failure is an ordinary, designed outcome, not a fault.
+ * `timeoutMs` bounds the request.
  */
-export async function listConnectionModels(seams: ListModelsSeams = realSeams): Promise<Result<ListedModel[], ListModelsError>> {
+export async function listConnectionModels(
+    seams: ListModelsSeams = realSeams,
+    timeoutMs: number = LIST_MODELS_TIMEOUT_MS,
+): Promise<Result<ListedModel[], ListModelsError>> {
     const connection = seams.resolveConnection();
     // A malformed `models` block: surface it (same fields boot reports) rather than listing against the
     // silently-substituted default connection.
@@ -173,11 +188,14 @@ export async function listConnectionModels(seams: ListModelsSeams = realSeams): 
     if (requestResult.isErr()) return err(requestResult.error);
     const { url, headers } = requestResult.value;
 
+    const signal = AbortSignal.timeout(timeoutMs);
     let res: Response;
-    // fetch throws on a dead endpoint; bridge that throw into the Result channel.
+    // fetch throws on a dead endpoint and on the abort; bridge that throw into the Result channel. Only the
+    // timer aborts `signal`, thus an aborted signal is the bound, not a dead endpoint.
     try {
-        res = await seams.fetch(url, headers);
+        res = await seams.fetch(url, headers, signal);
     } catch (cause) {
+        if (signal.aborted) return err({ type: "timed_out", afterMs: timeoutMs });
         return err({ type: "unreachable", detail: cause instanceof Error ? cause.message : String(cause) });
     }
     // TODO(extend): a 503 carrying the proxy's `auth_unavailable` cooldown marker (see `isProxyCooldown`
@@ -185,7 +203,9 @@ export async function listConnectionModels(seams: ListModelsSeams = realSeams): 
     // so this surface reports a self-recovering cooldown as an outage; extend `ModelListingError` with a
     // distinct cooldown kind when this listing surface needs the honest message.
     if (!res.ok) return err({ type: "unreachable", detail: `HTTP ${res.status}` });
+    // An abort during the body read reaches `jsonWith` as a parse failure, which gives `null`.
     const models = await res.jsonWith(modelsSchema);
+    if (models === null && signal.aborted) return err({ type: "timed_out", afterMs: timeoutMs });
     if (!models || models.data.length === 0) return err({ type: "no_models" });
     const anthropicWire = connection.mode === "cliproxy" || connection.protocol === "anthropic";
     return ok(models.data.map((m) => ({ id: m.id, efforts: effortsOf(m.capabilities?.effort, anthropicWire) })));

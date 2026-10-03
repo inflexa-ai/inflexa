@@ -44,7 +44,7 @@ const relocateBody = z.union([
     z.object({ from: absolutePath, to: absolutePath, dryRun: z.boolean().optional() }),
 ]);
 
-const pruneBody = z.object({ dryRun: z.boolean().optional(), anchorIds: z.array(z.string()).optional() });
+const pruneBody = z.object({ dryRun: z.boolean().optional(), anchorIds: z.array(z.string()).optional(), cwd: absolutePath.optional() });
 
 /**
  * The routes under `/api/v1/anchors` (draft 6.1): the manual backstop for a moved or a deleted folder. A
@@ -101,7 +101,7 @@ export function anchorRoutes(boot: ServerBoot, opts: AnchorRouteOpts = DEFAULT_A
         holdConnection(c);
         const body = await readBody(c, pruneBody);
         if (body.isErr()) return body.error;
-        const found = findDeadAnchors();
+        const found = findDeadAnchors(body.value.cwd === undefined ? undefined : [body.value.cwd]);
         if (found.isErr()) return internalError(c, found.error, "find the dead anchors");
         const wanted = body.value.anchorIds === undefined ? null : new Set(body.value.anchorIds);
         const selected = found.value.filter((a) => wanted === null || wanted.has(a.id));

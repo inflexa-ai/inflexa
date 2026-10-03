@@ -19,16 +19,16 @@ import { randomUUIDv7 } from "bun";
 import { intro, isCancel, log, outro, select, text } from "@clack/prompts";
 import type { ResultAsync } from "neverthrow";
 import { checkChatPart, type AskPart, type ChatFrame, type ChatPartFrame } from "@inflexa-ai/harness/contracts/index.js";
-import type { OpenableEntry, OpenTarget, PresentationBody } from "../../../types/session.ts";
+import type { OpenableEntry, PresentationBody } from "../../../types/session.ts";
 
 import type { AskReply, ThreadSummary, TurnSummary } from "../../../api/conversation.ts";
-import { describeClientError, type ClientError } from "../../../client/api.ts";
+import { DEFAULT_CLIENT_OPTS, describeClientError, type ClientError, type ClientOpts } from "../../../client/api.ts";
+import { resolveArtifacts } from "../../../client/artifacts.ts";
 import { resolveSingleAnalysisOrFail, type ContextFlags } from "../../../client/commands/analyses.ts";
 import { abortTurn, answerAsk, createChatTurn, fetchThread, fetchTurn } from "../../../client/conversation.ts";
 import { fail } from "../../../lib/cli.ts";
 import { getLogger } from "../../../lib/log.ts";
 import { shutdown } from "../../../lib/shutdown.ts";
-import { materializeTarget } from "../artifact_open.ts";
 import { isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../chat_printer.ts";
 import { planToDag } from "../plan_dag.ts";
 
@@ -217,7 +217,7 @@ async function runTurn(printer: ChatPrinter, sink: ChatSink, analysisId: string,
                 else sink.errLine(`The stream of the turn broke: ${describeClientError(item.error)}`);
                 continue;
             }
-            printer.frame(item.value);
+            await printer.frame(item.value);
             const ask = pendingAsk(item.value);
             // The turn waits on the ask, thus the prompt holds the stream until the user answers.
             if (ask !== null) await answerPendingAsk(analysisId, ask, sink);
@@ -308,7 +308,9 @@ function reportOutcome(summary: TurnSummary, printer: ChatPrinter, sink: ChatSin
 //
 //   1. COPY-ON-RECEIVE. Every branch extracts the strings, ids, and statuses it renders at receipt
 //      and NEVER retains the received frame. Printing is synchronous inside `frame`, so nothing that
-//      happens to a frame after it arrived can change what was already written.
+//      happens to a frame after it arrived can change what was already written. The one wait is a card
+//      of openable entries: its lines wait for the server to resolve the paths of its readout, which is
+//      already a copy, and the REPL reads no next frame until they are written.
 //   2. TOP-LEVEL ONLY. Events whose `source.callPath` is deeper than the top-level agent (sub-agent
 //      traffic: planner, literature reviewer) are routed under the tool call they run inside, never
 //      to the transcript root.
@@ -341,9 +343,10 @@ export type ChatPrinter = {
     /**
      * The sink of the turn stream. Routes sub-agent traffic under the open tool
      * call (rule 2), renders each frame category coarsely, and never retains a
-     * received object (copy-on-receive).
+     * received object (copy-on-receive). It settles when each line of the frame is
+     * written, thus the caller waits for it before it gives the next frame.
      */
-    readonly frame: (frame: ChatFrame) => void;
+    readonly frame: (frame: ChatFrame) => Promise<void>;
     /**
      * Close out the turn. `fallbackText` is the turn's final assistant text
      * (the `fallbackText` of the turn summary): printed only when the turn
@@ -372,15 +375,15 @@ function formatTable(headers: string[], rows: string[][]): string {
 }
 
 /**
- * How the printer resolves an openable entry to the absolute path it links to (materializing `echart`/`svg`
- * into the workspace's `presentations/` directory). Injectable so the printer's openable rendering is
- * unit-testable without a booted workspace; production omits it and gets the real {@link materializeTarget}.
+ * How the printer resolves an openable entry to the absolute path it links to. The server resolves the
+ * entries of a card, and writes each `echart` or `svg` file first (`POST {A}/artifacts/resolve` with
+ * `materialize`), thus the REPL opens what the server wrote.
  */
 export type PrinterOptions = {
     /** The analysis whose workspace root resolves openable references. */
     readonly analysisId?: string;
-    /** Resolve an entry's target to an absolute path (materializing when needed), or `null` when unavailable. */
-    readonly resolvePath?: (analysisId: string, target: OpenTarget) => string | null;
+    /** How the printer reaches the server. Tests replace it. */
+    readonly client?: ClientOpts;
 };
 
 /**
@@ -390,19 +393,13 @@ export type PrinterOptions = {
  */
 export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}): ChatPrinter {
     const analysisId = options.analysisId ?? "";
-    const resolvePath =
-        options.resolvePath ??
-        ((aid: string, target: OpenTarget): string | null =>
-            materializeTarget(aid, target).match(
-                (path) => path,
-                () => null,
-            ));
+    const client = options.client ?? DEFAULT_CLIENT_OPTS;
     let streamedText = false;
     // toolUseId → the primitives needed to close its chip. Storing the extracted
     // name (a string copy) and a timestamp, never the event, keeps copy-on-receive.
     const openTools = new Map<string, { name: string; startedAt: number }>();
 
-    const onFrame = (frame: ChatFrame): void => {
+    const onFrame = async (frame: ChatFrame): Promise<void> => {
         // Rule 2: sub-agent traffic (planner, literature reviewer) never becomes a
         // TRANSCRIPT entry — its tool calls are numerous, and emitting them at the root
         // would bury the conversation. But dropping it outright made a long tool call
@@ -457,13 +454,13 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                     getLogger("chat").warn({ type: frame.type, error: checked.error }, "chat part dropped: it failed the check of its type");
                     return;
                 }
-                renderDataPart(checked.frame);
+                await renderDataPart(checked.frame);
                 return;
             }
         }
     };
 
-    function renderDataPart(part: ChatPartFrame): void {
+    async function renderDataPart(part: ChatPartFrame): Promise<void> {
         switch (part.type) {
             case "data-plan": {
                 const plan = readPlanCard(part);
@@ -489,12 +486,12 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
             case "data-presentation": {
                 const view = readPresentation(part);
                 if (view.shape === "inline") renderInlinePresentation(view.title, view.body);
-                else renderOpenables(view.title, [view.entry]);
+                else await renderOpenables(view.title, [view.entry]);
                 return;
             }
             case "data-file-reference": {
                 const view = readFileReference(part);
-                renderOpenables(view.title, view.entries);
+                await renderOpenables(view.title, view.entries);
                 return;
             }
             case "data-ask":
@@ -531,20 +528,41 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
     }
 
     /** Print openable entries: one line per entry with the resolved path as an OSC 8 `file://` link (plain path visible). */
-    function renderOpenables(title: string | undefined, entries: OpenableEntry[]): void {
+    async function renderOpenables(title: string | undefined, entries: OpenableEntry[]): Promise<void> {
         if (title) sink.out(`\n  [show] ${title}\n`);
-        for (const entry of entries) {
+        const paths = await openablePaths(entries);
+        for (const [index, entry] of entries.entries()) {
             if (entry.target.kind === "unavailable") {
                 sink.out(`    ${entry.name}: ${entry.caption ?? "unavailable"}\n`);
                 continue;
             }
-            const path = resolvePath(analysisId, entry.target);
+            const path = paths[index] ?? null;
             const suffix = entry.caption ? ` — ${entry.caption}` : "";
             // The visible text stays the raw path; the link TARGET is a percent-encoded `file://` URI
             // (via `pathToFileURL`) so spaces / `#` in the path don't truncate or mangle the OSC 8 target.
             if (path) sink.out(`    ${entry.name}  ${hyperlink(pathToFileURL(path).href, path)}${suffix}\n`);
             else sink.out(`    ${entry.name}  (path unavailable)${suffix}\n`);
         }
+    }
+
+    /**
+     * The path to link for each entry, in the order of `entries`, from one request for the whole card. `null` is
+     * an entry that is not ready to open.
+     */
+    async function openablePaths(entries: OpenableEntry[]): Promise<(string | null)[]> {
+        const none = entries.map((): string | null => null);
+        if (entries.every((entry) => entry.target.kind === "unavailable")) return none;
+        return (await resolveArtifacts(analysisId, { entries: entries.map((entry) => entry.target), materialize: true }, client)).match(
+            (resolved) =>
+                entries.map((_, index): string | null => {
+                    const artifact = resolved.entries[index];
+                    return artifact !== undefined && artifact.error === undefined ? artifact.path : null;
+                }),
+            (e) => {
+                sink.errLine(`Could not resolve the paths of the card: ${describeClientError(e)}`);
+                return none;
+            },
+        );
     }
 
     function finishTurn(fallbackText?: string): void {

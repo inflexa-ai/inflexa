@@ -232,11 +232,15 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
     const routes = new Hono<ServerEnv>();
 
     // A GET is the open of the analysis, as the launch of a chat was: it records the sighting of the folder
-    // and heals a moved one.
+    // and heals a moved one. The search for a moved folder starts in the folder of the client, the `cwd` query.
     routes.get("/", async (c) => {
+        const cwd = c.req.query("cwd");
+        if (cwd !== undefined && !isAbsolute(cwd)) {
+            return apiError(c, "validation_error", "`cwd` must be an absolute path.", { fieldErrors: { cwd: ["The path must be absolute."] } });
+        }
         const analysis = loadAnalysis(c);
         if (analysis.isErr()) return analysis.error;
-        return (await analysisDetail(analysis.value, boot.runtime(), opts, { touch: true })).match(
+        return (await analysisDetail(analysis.value, boot.runtime(), opts, { touch: true, searchRoots: cwd === undefined ? undefined : [cwd] })).match(
             (detail) => c.json(detail),
             (e) => internalError(c, e, "read the analysis"),
         );
@@ -495,14 +499,17 @@ function inputViews(inputs: readonly AnalysisInput[]): InputView[] {
     return inputs.map((input) => ({ path: input.path, isDir: input.isDir, anchorId: input.anchorId, absolutePath: absolute.get(input) ?? null }));
 }
 
-/** One analysis with its scope. `touch` records a sighting of the anchor folder, as the open of an analysis does. */
+/**
+ * One analysis with its scope. `touch` records a sighting of the anchor folder, as the open of an analysis
+ * does. `searchRoots` are the folders where the search for a moved anchor folder starts.
+ */
 async function analysisDetail(
     analysis: Analysis,
     runtime: HarnessRuntime | null,
     opts: AnalysisRouteOpts,
-    resolve: { touch: boolean },
+    resolve: { touch: boolean; searchRoots?: string[] },
 ): Promise<Result<AnalysisDetail, DbError>> {
-    const anchor = resolveAnchor(analysis.anchorId, { touch: resolve.touch });
+    const anchor = resolveAnchor(analysis.anchorId, resolve);
     if (anchor.isErr()) return err(anchor.error);
     const inputCount = countAnalysisInputs(analysis.id);
     if (inputCount.isErr()) return err(inputCount.error);
@@ -559,7 +566,7 @@ async function deleteLadder(
         exportOutcome = !exported ? "failed" : flushed ? "written" : "written_unflushed";
     }
 
-    const disposed = opts.disposeWorkspace(a, mode === "keep" ? "archive" : "delete");
+    const disposed = await opts.disposeWorkspace(a, mode === "keep" ? "archive" : "delete");
     if (disposed.isErr()) {
         const e = disposed.error;
         if (e.type === "workspace_unavailable") return apiError(c, "conflict", e.message);

@@ -87,7 +87,7 @@ export type WorkspaceOpts = {
 export const DEFAULT_WORKSPACE_OPTS: WorkspaceOpts = {
     abortTurn: abortConversationTurn,
     fetchDetail: async (analysisId) =>
-        (await fetchAnalysis(analysisId)).match(
+        (await fetchAnalysis(analysisId, process.cwd())).match(
             (detail) => detail,
             () => null,
         ),

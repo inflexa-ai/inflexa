@@ -331,7 +331,7 @@ describe("delete → recreate does not inherit the previous analysis's artifacts
         writeFileSync(join(firstRoot, "runs", "run-1", "result.csv"), "old,data");
 
         // The delete command's order: retire the tree, then drop the row.
-        disposeWorkspace(first, "archive")._unsafeUnwrap();
+        (await disposeWorkspace(first, "archive"))._unsafeUnwrap();
         deleteAnalysis(first.id)._unsafeUnwrap();
 
         const second = (await createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() }))._unsafeUnwrap();
