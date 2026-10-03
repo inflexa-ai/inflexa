@@ -694,12 +694,12 @@ type TurnResult =
 /**
  * Reduce how the turn ended onto the store for the CURRENT turn (the caller's C1 guard has already
  * dropped a superseded turn's result, so `assistantId` still identifies a live message): flush the
- * streamed text (or the engine's `fallbackText` on a delta-less turn), close any open tool chip, stamp
- * what the turn cost (its duration and, when the run reported one, its token rollup), surface a store
- * fault non-fatally, and set the coarse status. `filtered`, `failed`, a refusal, and a lost stream also
- * raise the error banner with an actionable line; `aborted` returns to idle with no error (the user
- * cancelled), having flushed what streamed. A refusal comes before the turn opened, so it pops the empty
- * assistant bubble instead.
+ * streamed text (or the engine's `fallbackText` on a delta-less turn), close any open tool chip of a
+ * turn that ended, stamp what the turn cost (its duration and, when the run reported one, its token
+ * rollup), surface a store fault non-fatally, and set the coarse status. `filtered`, `failed`, a
+ * refusal, and a lost stream also raise the error banner with an actionable line; `aborted` returns to
+ * idle with no error (the user cancelled), having flushed what streamed. A refusal comes before the turn
+ * opened, so it pops the empty assistant bubble instead.
  */
 function finishTurn(result: TurnResult, assistantId: string, startedAt: number): void {
     // The turn is settling: drop any still-pending asks so the docked prompt can never outlive its
@@ -723,11 +723,14 @@ function finishTurn(result: TurnResult, assistantId: string, startedAt: number):
             return;
         }
         case "lost":
-            // The stream broke and the summary was not readable: the server stopped or went away, not the model.
+            // A disconnect does not stop the turn on the server, thus an open call gets no outcome here: an
+            // `error` would contradict what the server records, and the poll mounts that record.
             commitStream();
-            drainOpenTools();
+            openTools.clear();
             setLastTurnFailure([result.detail]);
-            setServerStateError(`The stream of the turn broke: ${result.detail} — ${detailsHint()}`);
+            setServerStateError(
+                `The connection to the turn was lost: ${result.detail}. The turn can still run on the server, and the chat reloads it from there. — ${detailsHint()}`,
+            );
             setChatStatus("error");
             return;
         default: {
