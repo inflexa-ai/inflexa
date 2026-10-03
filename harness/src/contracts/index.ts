@@ -42,6 +42,7 @@ export type {
 export type {
     EventSource,
     TextDeltaEvent,
+    IterationEvent,
     ToolStartedEvent,
     ToolFinishedEvent,
     FinishEvent,

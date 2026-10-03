@@ -401,6 +401,7 @@ export type {
     ChatFrame,
     ChatPartFrame,
     TextDeltaEvent,
+    IterationEvent,
     ToolStartedEvent,
     ToolFinishedEvent,
     ToolOutcome,
