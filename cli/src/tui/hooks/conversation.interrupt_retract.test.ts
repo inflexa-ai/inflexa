@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { errAsync, ok, okAsync, ResultAsync } from "neverthrow";
-import type { ChatMessage, DbError, StoredMessage } from "@inflexa-ai/harness";
+import { errAsync, ok, okAsync, ResultAsync, type Result } from "neverthrow";
+import { toChatFrame, type ChatFrame, type ChatMessage } from "@inflexa-ai/harness/contracts/index.js";
 
+import type { MessageList, RetractResponse, TurnSummary } from "../../api/conversation.ts";
+import type { ClientError } from "../../client/api.ts";
+import type { ChatTurnStream } from "../../client/conversation.ts";
 import {
     abort,
     armInterrupt,
@@ -9,41 +12,131 @@ import {
     errorMsg,
     interruptArmed,
     loadMessages,
-    type LoadSeams,
+    type LoadOpts,
     messages,
     promptHistory,
     resetHotState,
     retract,
-    type RetractSeams,
+    type RetractOpts,
     send,
-    type SendSeams,
+    type SendOpts,
 } from "./conversation.ts";
 import { chatStatus } from "./status.ts";
 import { __resetNoticesForTest, currentNotice } from "./notice.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
-import type { RunChatTurnArgs, TurnOutcome } from "../../modules/harness/turn.ts";
 
 // The conversation state is a module singleton (one chat screen at a time), so reset it between
 // cases. `pendingRetract` is the ONE piece resetHotState does not clear (an orphan is thread-scoped,
 // not session-scoped), so the durable-fault case below uses its own thread id and lets the heal send
 // consume the pending entry — leaving nothing behind for a later case to trip over.
+//
+// The local server is a fake whose turn streams the frames that the chat route sends; the cases drive
+// it with loop events, which the fake translates with `toChatFrame`, as the route does.
 const SID = "s1";
 const AID = "a1";
 const TOP = { agentId: "tui-chat", callPath: ["tui-chat"] };
+// The source that the chat route gives a text delta of the root provider, and its terminal frame.
+const ROUTE_SOURCE = { agentId: "chat", callPath: ["chat"] };
 
-// A stub runtime whose pool/provider are never dereferenced: the fake engine drives the adapter and
-// returns an outcome without touching them (mirrors conversation.test.ts). `createStreamingChat` reads
-// only `provider.capabilities` at construction, so that one field is present.
-const stubRuntime = {
-    pool: {},
-    conversation: { provider: { capabilities: { toolCalling: true } } },
-    agents: { forThread: () => ok({}) },
-} as unknown as HarnessRuntime;
+/** One event that the agent loop emits, which the chat route turns into a frame. */
+type LoopEvent = Parameters<typeof toChatFrame>[0];
+
+/** Send the frame of one loop event to the hook. It resolves after the hook applied the frame. */
+type Emit = (event: LoopEvent) => Promise<void>;
+
+/** What a turn of the fake server ends with: the fields of the summary that `GET {T}/turns/:turnId` gives. */
+type End = Pick<TurnSummary, "status"> & Partial<Pick<TurnSummary, "opened" | "turnUsage" | "fallbackText" | "storeFailed" | "failure">>;
+
+const ABORTED: End = { status: "aborted", opened: true };
+
+/** A refusal or a transport fault, as the client gives it. */
+const SERVER_FAULT: ClientError = { type: "http", status: 500, body: { error: "internal_error", message: "The server failed to handle the request." } };
+
+/**
+ * The frame stream of one turn. Each frame is serialized and parsed again, as the wire does. A frame
+ * resolves its `send` when the reader asks for the next one, which is after the hook applied it.
+ */
+function frameChannel(): { send: (frame: ChatFrame) => Promise<void>; close: () => void; frames: AsyncGenerator<Result<ChatFrame, ClientError>> } {
+    const waiting: { frame: ChatFrame; applied: () => void }[] = [];
+    let closed = false;
+    let wake: (() => void) | null = null;
+    const notify = (): void => {
+        const resume = wake;
+        wake = null;
+        resume?.();
+    };
+    async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
+        for (;;) {
+            const item = waiting.shift();
+            if (item !== undefined) {
+                // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+                yield ok(item.frame);
+                item.applied();
+                continue;
+            }
+            if (closed) return;
+            await new Promise<void>((resolve) => {
+                wake = resolve;
+            });
+        }
+    }
+    return {
+        send: (frame) =>
+            new Promise<void>((applied) => {
+                // The parse gives back the frame that went in: it is JSON by the wire contract.
+                waiting.push({ frame: JSON.parse(JSON.stringify(frame)) as ChatFrame, applied });
+                notify();
+            }),
+        close: () => {
+            closed = true;
+            notify();
+        },
+        frames: frames(),
+    };
+}
+
+/** A fake of the local server, with each abort that the hook sent it. */
+type FakeServer = SendOpts & { readonly aborted: string[] };
+
+/** A server whose turn streams what `drive` emits, then the terminal frame of `end`, and whose summary is `end`. */
+function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () => {}): FakeServer {
+    const aborted: string[] = [];
+    return {
+        aborted,
+        startTurn: () => {
+            const channel = frameChannel();
+            const emit: Emit = (event) => {
+                const frame = toChatFrame(event, ROUTE_SOURCE);
+                return frame === null ? Promise.resolve() : channel.send(frame);
+            };
+            void (async () => {
+                await drive(emit);
+                await channel.send(
+                    end.status === "failed"
+                        ? { type: "error", message: end.failure?.message ?? "The turn failed.", source: ROUTE_SOURCE }
+                        : { type: "finish", source: ROUTE_SOURCE },
+                );
+                channel.close();
+            })();
+            return okAsync({ turnId: "turn-1", frames: channel.frames });
+        },
+        abortTurn: (_analysisId, _threadId, turnId) => {
+            aborted.push(turnId);
+            return okAsync({ turnId, outcome: "aborting" });
+        },
+        fetchTurn: (analysisId, threadId, turnId) => okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", ...end }),
+        reloadTranscript: async () => undefined,
+        healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
+    };
+}
+
+/** A transcript as `GET {T}/messages` gives it. */
+function messageList(list: ChatMessage[]): MessageList {
+    return { messages: list, total: list.length, page: 0, perPage: list.length, hasMore: false };
+}
 
 /**
  * A capture cell for the composer seed, read through `.get()` so control flow never narrows it back to
- * its null initializer — the `seedComposer` closure assigns it out of band (the same reason fakeSeams'
- * `last` is a getter in conversation.test.ts).
+ * its null initializer — the `seedComposer` closure assigns it out of band.
  */
 function seedCell(): { readonly set: (text: string) => void; readonly get: () => string | null } {
     let value: string | null = null;
@@ -55,52 +148,51 @@ function seedCell(): { readonly set: (text: string) => void; readonly get: () =>
     };
 }
 
-/** Build send seams whose fake engine calls `drive(emit)` then returns `outcome` — the non-parked shape. */
-function fakeSeams(outcome: TurnOutcome, drive: (emit: RunChatTurnArgs["emit"]) => void = () => {}): SendSeams {
+/** A retract of the server that gives `outcome`, and keeps the `ifOrphan` of each call. */
+function recordingRetract(outcome: () => ResultAsync<RetractResponse, ClientError> = () => okAsync({ kind: "retracted", messages: 2 })): RetractOpts & {
+    readonly calls: boolean[];
+} {
+    const calls: boolean[] = [];
     return {
-        runtime: () => stubRuntime,
-        runChatTurn: async (args: RunChatTurnArgs): Promise<TurnOutcome> => {
-            drive(args.emit);
-            return outcome;
+        calls,
+        retractTurn: (_analysisId, _threadId, ifOrphan) => {
+            calls.push(ifOrphan);
+            return outcome();
         },
     };
 }
 
-/** A turn parked mid-flight: the engine holds at a gate so the retract/interrupt window can be probed. */
+/** A turn parked mid-flight: the server holds the stream at a gate so the retract/interrupt window can be probed. */
 type ParkedTurn = {
     readonly sendP: Promise<void>;
-    /** The turn's guarded emit sink, captured once the engine parks — races output into the live turn. */
-    readonly emit: () => RunChatTurnArgs["emit"];
-    /** Release the parked engine so it returns the chosen outcome and the turn settles. */
+    /** The emit of the parked turn — races output into the live turn. */
+    readonly emit: Emit;
+    /** Release the parked stream so it sends its terminal frame and the turn settles. */
     readonly release: () => void;
+    readonly server: FakeServer;
 };
 
 /**
- * Start a turn and leave the engine parked at a gate BEFORE it returns. `send` runs synchronously up to
- * `await runChatTurn`, so by the time this returns the module hot state (assistant id, abort controller,
+ * Start a turn and leave its stream parked at a gate BEFORE it ends. `send` runs synchronously up to its
+ * first await, so by the time this returns the module hot state (assistant id, abort controller,
  * `turnSettled`, busy status, the empty assistant shell) is fully armed for a retract/interrupt probe.
  */
-function startBusyTurn(outcome: TurnOutcome, sessionId = SID, analysisId = AID): ParkedTurn {
+function startBusyTurn(end: End, sessionId = SID, analysisId = AID): ParkedTurn {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
         release = r;
     });
-    let emit!: RunChatTurnArgs["emit"];
-    const seams: SendSeams = {
-        runtime: () => stubRuntime,
-        runChatTurn: async (args: RunChatTurnArgs): Promise<TurnOutcome> => {
-            emit = args.emit;
-            await gate;
-            return outcome;
-        },
-    };
-    const sendP = send({ sessionId, analysisId, userText: "original text" }, seams);
-    return { sendP, emit: () => emit, release };
+    let parkedEmit!: Emit;
+    const server = fakeServer(end, async (emit) => {
+        parkedEmit = emit;
+        await gate;
+    });
+    const sendP = send({ sessionId, analysisId, userText: "original text" }, server);
+    return { sendP, emit: (event) => parkedEmit(event), release, server };
 }
 
 // The notice channel is a module singleton too, and it QUEUES rather than replacing — so a notice a
-// previous case left showing would sit in front of the one under test. Drained alongside the hot
-// state; the old replace-on-arrival channel hid the need for this by overwriting whatever was there.
+// previous case left showing would sit in front of the one under test. Drained alongside the hot state.
 beforeEach(() => {
     resetHotState();
     __resetNoticesForTest();
@@ -113,7 +205,7 @@ afterEach(() => {
 describe("canRetract gates the retract window", () => {
     test("false before any turn, true during a busy no-output turn", async () => {
         expect(canRetract()).toBe(false);
-        const { sendP, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "" });
+        const { sendP, release } = startBusyTurn({ status: "done", opened: true });
         expect(canRetract()).toBe(true);
         release();
         await sendP;
@@ -122,30 +214,63 @@ describe("canRetract gates the retract window", () => {
     });
 
     test("flips false the instant a text delta lands", async () => {
-        const { sendP, emit, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "" });
+        const { sendP, emit, release } = startBusyTurn({ status: "done", opened: true });
         expect(canRetract()).toBe(true);
-        void emit()({ type: "text-delta", text: "answering" });
+        await emit({ type: "text-delta", text: "answering" });
         expect(canRetract()).toBe(false);
         release();
         await sendP;
     });
 
     test("flips false the instant a tool part starts", async () => {
-        const { sendP, emit, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "" });
+        const { sendP, emit, release } = startBusyTurn({ status: "done", opened: true });
         expect(canRetract()).toBe(true);
-        void emit()({ type: "tool-started", source: TOP, toolUseId: "t1", name: "read_file", input: {} });
+        await emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "read_file", input: {} });
         expect(canRetract()).toBe(false);
         release();
         await sendP;
     });
 
     test("flips false the instant a card part lands", async () => {
-        const { sendP, emit, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "" });
+        const { sendP, emit, release } = startBusyTurn({ status: "done", opened: true });
         expect(canRetract()).toBe(true);
-        void emit()({ type: "data-plan", source: TOP, data: { id: "p1", planId: "pln-00000001", title: "t", steps: [] } });
+        await emit({ type: "data-plan", source: TOP, data: { id: "p1", planId: "pln-00000001", title: "t", steps: [] } });
         expect(canRetract()).toBe(false);
         release();
         await sendP;
+    });
+});
+
+describe("the abort reaches the server by the turn id", () => {
+    test("an abort during the turn sends the abort of the server for that turn", async () => {
+        const { sendP, emit, release, server } = startBusyTurn(ABORTED);
+        // A frame that the hook applied proves that it reads the stream, thus it knows the turn id.
+        await emit({ type: "text-delta", text: "partial" });
+        abort();
+        release();
+        await sendP;
+        expect(server.aborted).toEqual(["turn-1"]);
+        expect(messages[1]?.interrupted).toBe(true);
+        expect(chatStatus()).toBe("idle");
+    });
+
+    test("an abort before the server named the turn is sent once the id arrives", async () => {
+        let open!: () => void;
+        const opened = new Promise<void>((r) => {
+            open = r;
+        });
+        const server = fakeServer(ABORTED);
+        // The open of the turn waits, thus the abort below comes before the hook knows the turn id.
+        const slowServer: SendOpts = {
+            ...server,
+            startTurn: (analysisId, threadId, message) => ResultAsync.fromSafePromise(opened).andThen(() => server.startTurn(analysisId, threadId, message)),
+        };
+        const sendP = send({ sessionId: SID, analysisId: AID, userText: "original text" }, slowServer);
+        abort();
+        expect(server.aborted).toEqual([]);
+        open();
+        await sendP;
+        expect(server.aborted).toEqual(["turn-1"]);
     });
 });
 
@@ -154,47 +279,36 @@ describe("retract during the no-output window", () => {
         // The nominal no-output retract: a busy turn that produced nothing is taken back before any output.
         // The live store is spliced back to empty (no user/assistant remnants), the durable tail removal
         // runs exactly once and SUCCEEDS, the composer is re-seeded with the original text, and the chat
-        // returns to idle — raising no notice of its own (only the downgrade/fault paths notify). The
-        // notice singleton is not cleared between cases, so we assert the retract left whatever was showing
-        // untouched rather than asserting an absolute null a prior case could have populated.
+        // returns to idle — raising no notice of its own (only the downgrade/fault paths notify).
         const noticeBefore = currentNotice();
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
+        const { sendP, release, server } = startBusyTurn(ABORTED);
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
-        let durableCalls = 0;
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => {
-                durableCalls++;
-                return okAsync({ kind: "retracted" as const, messages: 2 });
-            },
-        };
-        const retractP = retract(seed.set, retractSeams);
+        const retractOpts = recordingRetract();
+        const retractP = retract(seed.set, retractOpts);
         release();
         await retractP;
         await sendP;
 
         expect(messages.length).toBe(0);
-        expect(durableCalls).toBe(1);
+        // The summary says the opening landed, thus the plain retract runs, not the guarded one.
+        expect(retractOpts.calls).toEqual([false]);
         expect(seed.get()).toBe("original text");
         expect(chatStatus()).toBe("idle");
         expect(currentNotice()).toBe(noticeBefore);
+        // The retract stopped the turn through the abort of the server.
+        expect(server.aborted).toEqual(["turn-1"]);
     });
 
     test("a retracted prompt leaves no history entry behind", async () => {
         // Prompt-history recall derives its entries from this same store, so an unsent message must not be
         // recallable: retract means UNSEND, and the text is handed back to the composer anyway. Nothing in
         // `promptHistory` filters retracts — this holds only because the splice below is a real removal.
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
+        const { sendP, release } = startBusyTurn(ABORTED);
         expect(promptHistory()).toEqual(["original text"]);
 
-        const seed = seedCell();
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => okAsync({ kind: "retracted" as const, messages: 2 }),
-        };
-        const retractP = retract(seed.set, retractSeams);
+        const retractP = retract(seedCell().set, recordingRetract());
         release();
         await retractP;
         await sendP;
@@ -204,10 +318,10 @@ describe("retract during the no-output window", () => {
 
     test("the visible transition lands as one step, after the durable removal — never split across it", async () => {
         // Ordering, not just outcome. The transcript losing the message, the text coming back, and the
-        // return to idle are one perceptual event; a database round-trip between any two of them leaves the
+        // return to idle are one perceptual event; a server round-trip between any two of them leaves the
         // user looking at a half-applied state (message gone, composer empty, still spinning) with no clue
         // which way it will resolve. Park the durable removal and assert NOTHING visible has moved yet.
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
+        const { sendP, release } = startBusyTurn(ABORTED);
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
@@ -219,14 +333,11 @@ describe("retract during the no-output window", () => {
         const durableWasReached = new Promise<void>((r) => {
             durableReached = r;
         });
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => {
-                durableReached();
-                return ResultAsync.fromSafePromise(durableGate.then(() => ({ kind: "retracted" as const, messages: 1 })));
-            },
-        };
-        const retractP = retract(seed.set, retractSeams);
+        const retractOpts = recordingRetract(() => {
+            durableReached();
+            return ResultAsync.fromSafePromise(durableGate.then((): RetractResponse => ({ kind: "retracted", messages: 1 })));
+        });
+        const retractP = retract(seed.set, retractOpts);
         release();
         await durableWasReached;
 
@@ -246,23 +357,16 @@ describe("retract during the no-output window", () => {
     });
 
     test("a delta racing the abort settlement downgrades to a plain interrupt", async () => {
-        // The engine aborts, but a delta lands AFTER the retract fired the abort and BEFORE the turn
+        // The server aborts, but a delta lands AFTER the retract fired the abort and BEFORE the turn
         // settles — so the re-validation sees produced output and keeps the message.
-        const { sendP, emit, release } = startBusyTurn({ kind: "aborted", opened: true });
+        const { sendP, emit, release } = startBusyTurn(ABORTED);
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
-        let durableCalls = 0;
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => {
-                durableCalls++;
-                return okAsync({ kind: "retracted" as const, messages: 2 });
-            },
-        };
-        const retractP = retract(seed.set, retractSeams);
+        const retractOpts = recordingRetract();
+        const retractP = retract(seed.set, retractOpts);
         // retract has claimed the token and fired the abort; it is now awaiting settlement. Race output in.
-        void emit()({ type: "text-delta", text: "racing output" });
+        void emit({ type: "text-delta", text: "racing output" });
         release();
         await retractP;
         await sendP;
@@ -271,7 +375,7 @@ describe("retract during the no-output window", () => {
         expect(messages.length).toBe(2);
         expect(messages[0]?.role).toBe("user");
         expect(messages[1]?.role).toBe("assistant");
-        expect(durableCalls).toBe(0);
+        expect(retractOpts.calls).toEqual([]);
         expect(seed.get()).toBeNull();
         expect(chatStatus()).toBe("idle");
         // The kept turn carries its streamed text and the interrupted marker (the plain-interrupt settle).
@@ -285,51 +389,35 @@ describe("retract during the no-output window", () => {
 
     test("an opening that did not land skips the durable retract but still splices and seeds", async () => {
         // The tail of the thread is an EARLIER turn, thus the durable removal must be skipped.
-        const appendError: DbError = { type: "mutation_failed", op: "writeTurn", cause: "boom" };
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: false, appendError });
+        const { sendP, release } = startBusyTurn({ status: "aborted", opened: false, storeFailed: true });
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
-        let durableCalls = 0;
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => {
-                durableCalls++;
-                return okAsync({ kind: "retracted" as const, messages: 1 });
-            },
-        };
-        const retractP = retract(seed.set, retractSeams);
+        const retractOpts = recordingRetract();
+        const retractP = retract(seed.set, retractOpts);
         release();
         await retractP;
         await sendP;
 
         expect(messages.length).toBe(0);
-        expect(durableCalls).toBe(0);
+        expect(retractOpts.calls).toEqual([]);
         expect(seed.get()).toBe("original text");
         expect(chatStatus()).toBe("idle");
     });
 
     test("a fault after the opening keeps the durable retract", async () => {
-        const appendError: DbError = { type: "mutation_failed", op: "writeTurn", cause: "boom" };
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true, appendError });
+        const { sendP, release } = startBusyTurn({ status: "aborted", opened: true, storeFailed: true });
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
-        let durableCalls = 0;
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => {
-                durableCalls++;
-                return okAsync({ kind: "retracted" as const, messages: 3 });
-            },
-        };
-        const retractP = retract(seed.set, retractSeams);
+        const retractOpts = recordingRetract(() => okAsync({ kind: "retracted", messages: 3 }));
+        const retractP = retract(seed.set, retractOpts);
         release();
         await retractP;
         await sendP;
 
         expect(messages.length).toBe(0);
-        expect(durableCalls).toBe(1);
+        expect(retractOpts.calls).toEqual([false]);
         expect(seed.get()).toBe("original text");
     });
 
@@ -337,7 +425,7 @@ describe("retract during the no-output window", () => {
         // The durable removal is committed at the keypress and thread-scoped, so a session swap that
         // supersedes the retract while the removal is in flight still lets it complete — while every
         // remaining UI write (the composer seed) is dropped, and the cleared store stays cleared.
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
+        const { sendP, release } = startBusyTurn(ABORTED);
         expect(canRetract()).toBe(true);
 
         let releaseDurable!: () => void;
@@ -348,25 +436,20 @@ describe("retract during the no-output window", () => {
         const durableCalled = new Promise<void>((r) => {
             durableCalledResolve = r;
         });
-        let durableCalls = 0;
         const seed = seedCell();
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => {
-                durableCalls++;
-                durableCalledResolve();
-                return ResultAsync.fromSafePromise(durableGate.then(() => ({ kind: "retracted" as const, messages: 1 })));
-            },
-        };
-        const retractP = retract(seed.set, retractSeams);
-        release(); // the engine settles → retract splices the store, then parks in the durable removal
+        const retractOpts = recordingRetract(() => {
+            durableCalledResolve();
+            return ResultAsync.fromSafePromise(durableGate.then((): RetractResponse => ({ kind: "retracted", messages: 1 })));
+        });
+        const retractP = retract(seed.set, retractOpts);
+        release(); // the stream ends → retract parks in the durable removal
         await durableCalled; // retract is now awaiting the durable retract
         resetHotState(); // the swap supersedes the retract's remaining writes
         releaseDurable();
         await retractP;
         await sendP;
 
-        expect(durableCalls).toBe(1); // the durable removal ran against the old thread
+        expect(retractOpts.calls).toEqual([false]); // the durable removal ran against the old thread
         expect(seed.get()).toBeNull(); // the composer seed was dropped by the swap
         expect(messages.length).toBe(0); // the cleared store stays cleared
         expect(chatStatus()).toBe("idle");
@@ -376,18 +459,16 @@ describe("retract during the no-output window", () => {
         // A dedicated thread id so the pending-retract flag this leaves is consumed by THIS test's heal
         // send — nothing leaks into another case (resetHotState deliberately does not clear it).
         const THREAD = "retract-heal-thread";
-        const dbErr: DbError = { type: "mutation_failed", op: "retractLastTurn", cause: "transient" };
 
         // Phase 1: the durable retract faults.
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true }, THREAD);
+        const { sendP, release } = startBusyTurn(ABORTED, THREAD);
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => errAsync(dbErr),
-        };
-        const retractP = retract(seed.set, retractSeams);
+        const retractP = retract(
+            seed.set,
+            recordingRetract(() => errAsync(SERVER_FAULT)),
+        );
         release();
         await retractP;
         await sendP;
@@ -399,19 +480,17 @@ describe("retract during the no-output window", () => {
         expect(currentNotice()?.text).toContain("Could not retract");
 
         // Phase 2: the next send on that thread retries the removal once, then proceeds despite a 2nd fault.
-        let healCalls = 0;
-        const healSeams: SendSeams = {
-            runtime: () => stubRuntime,
-            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", opened: true, fallbackText: "answer" }),
-            healRetract: (_pool, threadId) => {
-                healCalls++;
-                expect(threadId).toBe(THREAD);
-                return errAsync(dbErr);
+        const healed: { analysisId: string; threadId: string }[] = [];
+        const healServer: SendOpts = {
+            ...fakeServer({ status: "done", opened: true, fallbackText: "answer" }),
+            healRetract: (analysisId, threadId) => {
+                healed.push({ analysisId, threadId });
+                return errAsync(SERVER_FAULT);
             },
         };
-        await send({ sessionId: THREAD, analysisId: AID, userText: "again" }, healSeams);
+        await send({ sessionId: THREAD, analysisId: AID, userText: "again" }, healServer);
 
-        expect(healCalls).toBe(1); // retried exactly once before appending
+        expect(healed).toEqual([{ analysisId: AID, threadId: THREAD }]); // retried exactly once before appending
         expect(messages.length).toBe(2); // the send proceeded despite the second fault
         expect(messages[0]?.role).toBe("user");
         expect(chatStatus()).toBe("idle");
@@ -424,13 +503,14 @@ describe("retract during the no-output window", () => {
         // would claim a NEWER token below and push the swapped-away session's message into the cleared,
         // swapped-in store.
         const THREAD = "retract-swap-heal-thread";
-        const dbErr: DbError = { type: "mutation_failed", op: "retractLastTurn", cause: "transient" };
 
         // Phase 1: a durable retract faults, leaving the pending-heal flag on THREAD (as in the case above).
-        const { sendP: faultSendP, release: faultRelease } = startBusyTurn({ kind: "aborted", opened: true }, THREAD);
+        const { sendP: faultSendP, release: faultRelease } = startBusyTurn(ABORTED, THREAD);
         expect(canRetract()).toBe(true);
-        const faultSeed = seedCell();
-        const retractP = retract(faultSeed.set, { runtime: () => stubRuntime, retractTurn: () => errAsync(dbErr) });
+        const retractP = retract(
+            seedCell().set,
+            recordingRetract(() => errAsync(SERVER_FAULT)),
+        );
         faultRelease();
         await retractP;
         await faultSendP;
@@ -445,15 +525,14 @@ describe("retract during the no-output window", () => {
         const healWasReached = new Promise<void>((r) => {
             healReached = r;
         });
-        const healSeams: SendSeams = {
-            runtime: () => stubRuntime,
-            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", opened: true, fallbackText: "answer" }),
+        const healServer: SendOpts = {
+            ...fakeServer({ status: "done", opened: true, fallbackText: "answer" }),
             healRetract: () => {
                 healReached();
-                return ResultAsync.fromSafePromise(healGate.then(() => ({ kind: "retracted" as const, messages: 1 })));
+                return ResultAsync.fromSafePromise(healGate.then((): RetractResponse => ({ kind: "retracted", messages: 1 })));
             },
         };
-        const sendP = send({ sessionId: THREAD, analysisId: AID, userText: "swapped away" }, healSeams);
+        const sendP = send({ sessionId: THREAD, analysisId: AID, userText: "swapped away" }, healServer);
         await healWasReached; // the send is parked in the heal await, its token already claimed
         resetHotState(); // the swap claims a newer store-write token and clears the store
         releaseHeal();
@@ -467,16 +546,10 @@ describe("retract during the no-output window", () => {
         // No turn is in flight, so the gate re-check inside retract returns early: nothing is seeded and
         // no durable removal is attempted.
         const seed = seedCell();
-        let durableCalls = 0;
-        await retract(seed.set, {
-            runtime: () => stubRuntime,
-            retractTurn: () => {
-                durableCalls++;
-                return okAsync({ kind: "retracted" as const, messages: 1 });
-            },
-        });
+        const retractOpts = recordingRetract();
+        await retract(seed.set, retractOpts);
         expect(seed.get()).toBeNull();
-        expect(durableCalls).toBe(0);
+        expect(retractOpts.calls).toEqual([]);
     });
 
     test("a second retract during settlement is a no-op — the removal runs once", async () => {
@@ -485,7 +558,7 @@ describe("retract during the no-output window", () => {
         // and bail. The durable removal is deliberately un-token-gated (a swap must not cancel it), so
         // without the guard the second retract would reach it too — deleting the thread's NEW, already-
         // answered tail after the first press removed the orphan. The guard, not the token, keeps it once-only.
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
+        const { sendP, release } = startBusyTurn(ABORTED);
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
@@ -494,19 +567,12 @@ describe("retract during the no-output window", () => {
             seedCalls++;
             seed.set(text);
         };
-        let durableCalls = 0;
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => {
-                durableCalls++;
-                return okAsync({ kind: "retracted" as const, messages: 2 });
-            },
-        };
+        const retractOpts = recordingRetract();
 
         // Fire two retracts WITHOUT awaiting the first: it parks awaiting settlement, so the second sees the
         // guard already set and returns immediately.
-        const first = retract(countingSeed, retractSeams);
-        const second = retract(countingSeed, retractSeams);
+        const first = retract(countingSeed, retractOpts);
+        const second = retract(countingSeed, retractOpts);
         // The window is closed the instant the first retract claimed the guard.
         expect(canRetract()).toBe(false);
         release();
@@ -515,9 +581,9 @@ describe("retract during the no-output window", () => {
 
         // A third press after both settle is likewise inert (idle, no assistant in flight).
         let thirdSeed: string | null = "unset";
-        await retract((text) => (thirdSeed = text), retractSeams);
+        await retract((text) => (thirdSeed = text), retractOpts);
 
-        expect(durableCalls).toBe(1); // the durable seam ran exactly once
+        expect(retractOpts.calls).toEqual([false]); // the durable removal ran exactly once
         expect(messages.length).toBe(0); // spliced exactly once, back to empty
         expect(seedCalls).toBe(1); // the composer was seeded exactly once
         expect(seed.get()).toBe("original text");
@@ -526,55 +592,46 @@ describe("retract during the no-output window", () => {
     });
 });
 
-describe("a rejecting turn engine still settles the turn", () => {
-    test("send completes as a failed turn rather than hanging busy", async () => {
-        // The engine contract is non-rejecting, but if it EVER rejects, `send` must still settle: it catches
-        // the throw, synthesizes the `failed` outcome, and routes it through the normal failure handling —
-        // so the status leaves "busy" for the failure banner rather than wedging there, and `send` itself
-        // resolves without an unhandled rejection.
-        const seams: SendSeams = {
-            runtime: () => stubRuntime,
-            runChatTurn: () => Promise.reject(new Error("engine exploded")),
+describe("a rejecting transport still settles the turn", () => {
+    test("send completes as a lost turn rather than hanging busy", async () => {
+        // The driver of the turn is non-rejecting by contract, but if the transport EVER rejects, `send` must
+        // still settle: it catches the throw and routes it through the lost-stream handling — so the status
+        // leaves "busy" for the failure banner rather than wedging there, and `send` itself resolves without
+        // an unhandled rejection.
+        const server: SendOpts = {
+            ...fakeServer(ABORTED),
+            startTurn: () => new ResultAsync<ChatTurnStream, ClientError>(Promise.reject(new Error("transport exploded"))),
         };
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
 
         expect(chatStatus()).toBe("error");
-        expect(errorMsg()).not.toBeNull();
+        expect(errorMsg()).toContain("transport exploded");
     });
 
-    test("a retract awaiting a rejecting turn resolves instead of hanging", async () => {
-        // A retract parks on the turn's settlement promise. If the engine rejects, WITHOUT the settle-on-throw
-        // guard `settleTurn` would never fire and this retract would await forever. With it, the promise
-        // settles as `failed` and the retract completes (a hang here fails the test by timeout).
+    test("a retract awaiting a rejecting transport resolves, and removes the tail only if it is an orphan", async () => {
+        // A retract parks on the turn's settlement promise. If the transport rejects, WITHOUT the
+        // settle-on-throw guard `settleTurn` would never fire and this retract would await forever. With
+        // it, the promise settles as lost and the retract completes (a hang here fails the test by timeout).
         let reject!: (e: unknown) => void;
-        const gate = new Promise<TurnOutcome>((_resolve, rej) => {
+        const gate = new Promise<Result<ChatTurnStream, ClientError>>((_resolve, rej) => {
             reject = rej;
         });
-        const seams: SendSeams = {
-            runtime: () => stubRuntime,
-            runChatTurn: () => gate,
-        };
-        const sendP = send({ sessionId: SID, analysisId: AID, userText: "original text" }, seams);
+        const server: SendOpts = { ...fakeServer(ABORTED), startTurn: () => new ResultAsync(gate) };
+        const sendP = send({ sessionId: SID, analysisId: AID, userText: "original text" }, server);
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
-        let durableCalls = 0;
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => {
-                durableCalls++;
-                return okAsync({ kind: "retracted" as const, messages: 1 });
-            },
-        };
-        const retractP = retract(seed.set, retractSeams);
-        // The retract has claimed the token, fired the abort, and now awaits settlement. Reject the engine.
-        reject(new Error("engine exploded mid-turn"));
+        const retractOpts = recordingRetract();
+        const retractP = retract(seed.set, retractOpts);
+        // The retract has claimed the token, fired the abort, and now awaits settlement. Reject the transport.
+        reject(new Error("transport exploded mid-turn"));
         await retractP;
         await sendP;
 
         expect(chatStatus()).not.toBe("busy");
-        // A rejection gives no sign that the opening landed, thus the durable removal does not run.
-        expect(durableCalls).toBe(0);
+        // A rejection gives no sign whether the opening landed, thus only the guarded removal runs: it
+        // removes the tail only while that tail has no assistant row.
+        expect(retractOpts.calls).toEqual([true]);
         expect(seed.get()).toBe("original text");
     });
 });
@@ -608,7 +665,7 @@ describe("the interrupt arm window", () => {
     });
 
     test("a turn ending disarms a window armed mid-turn", async () => {
-        const { sendP, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "done" });
+        const { sendP, release } = startBusyTurn({ status: "done", opened: true, fallbackText: "done" });
         armInterrupt();
         expect(interruptArmed()).toBe(true);
         release();
@@ -619,8 +676,8 @@ describe("the interrupt arm window", () => {
 
     test("firing the abort disarms the armed window immediately", async () => {
         // The second interrupt press fires `abort`, and there is nothing left to interrupt — so the window
-        // disarms on the abort path itself, not only later when the engine's unwind reaches finishTurn.
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
+        // disarms on the abort path itself, not only later when the turn's unwind reaches finishTurn.
+        const { sendP, release } = startBusyTurn(ABORTED);
         armInterrupt();
         expect(interruptArmed()).toBe(true);
         abort();
@@ -633,7 +690,7 @@ describe("the interrupt arm window", () => {
         // The turn stays "busy" until settlement, so the interrupt layer stays enabled and a third esc
         // press calls armInterrupt again. With the abort already fired there is nothing left to interrupt,
         // so the re-arm is a no-op — the hint never flips back to armed while the turn is unwinding.
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
+        const { sendP, release } = startBusyTurn(ABORTED);
         armInterrupt();
         abort();
         expect(interruptArmed()).toBe(false);
@@ -646,10 +703,8 @@ describe("the interrupt arm window", () => {
 
 describe("the interrupted marker on an aborted turn", () => {
     test("a turn that streamed output keeps its assistant message with the muted marker", async () => {
-        const seams = fakeSeams({ kind: "aborted", opened: true }, (emit) => {
-            void emit({ type: "text-delta", text: "partial answer" });
-        });
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const server = fakeServer(ABORTED, (emit) => void emit({ type: "text-delta", text: "partial answer" }));
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
 
         expect(messages.length).toBe(2);
         expect(messages[1]?.role).toBe("assistant");
@@ -662,8 +717,7 @@ describe("the interrupted marker on an aborted turn", () => {
     });
 
     test("a turn that produced nothing leaves only the user message and no marker", async () => {
-        const seams = fakeSeams({ kind: "aborted", opened: true });
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeServer(ABORTED));
 
         expect(messages.length).toBe(1);
         expect(messages[0]?.role).toBe("user");
@@ -673,21 +727,15 @@ describe("the interrupted marker on an aborted turn", () => {
 });
 
 describe("the interrupted marker survives a transcript reload", () => {
-    const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
-    // A reconstructed transcript: a user turn, then the interrupted assistant turn carrying its partial —
-    // the durable `interrupted` field is what the reload must carry onto the mounted message.
+    // A replayed transcript: a user turn, then the interrupted assistant turn carrying its partial — the
+    // durable `interrupted` field is what the reload must carry onto the mounted message.
     const interruptedTranscript = (): ChatMessage[] => [
         { id: "u1", role: "user", parts: [{ type: "text", text: "?" }] },
         { id: "a1", role: "assistant", parts: [{ type: "text", text: "partial answer" }], interrupted: true },
     ];
 
     test("a loaded transcript flags the marked message and leaves the unmarked one clean", async () => {
-        const loadSeams: LoadSeams = {
-            runtime: () => stubRuntime,
-            loadAll: () => okAsync(emptyTurns(2)),
-            toChat: () => interruptedTranscript(),
-        };
-        await loadMessages(SID, loadSeams);
+        await loadMessages(AID, SID, { fetchMessages: () => okAsync(messageList(interruptedTranscript())) });
 
         expect(messages.length).toBe(2);
         // The user turn carries no marker; the interrupted assistant turn renders exactly what the live
@@ -705,22 +753,18 @@ describe("the interrupted marker survives a transcript reload", () => {
         // carries a call's terminal state. `incomplete` is not a success and not a failure, and the
         // renderer's mapping to `running` is total, so no reader has to infer anything from an absent
         // value. The message's interruption badge is what says it will never finish.
-        const loadSeams: LoadSeams = {
-            runtime: () => stubRuntime,
-            loadAll: () => okAsync(emptyTurns(1)),
-            toChat: () => [
-                {
-                    id: "a1",
-                    role: "assistant",
-                    interrupted: true,
-                    parts: [
-                        { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "incomplete", detail: "scripts/run.py" },
-                        { type: "tool-call", toolCallId: "t2", toolName: "grep", outcome: "denied" },
-                    ],
-                },
-            ],
-        };
-        await loadMessages(SID, loadSeams);
+        const replay: ChatMessage[] = [
+            {
+                id: "a1",
+                role: "assistant",
+                interrupted: true,
+                parts: [
+                    { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "incomplete", detail: "scripts/run.py" },
+                    { type: "tool-call", toolCallId: "t2", toolName: "grep", outcome: "denied" },
+                ],
+            },
+        ];
+        await loadMessages(AID, SID, { fetchMessages: () => okAsync(messageList(replay)) });
 
         const calls = messages[0]?.parts.filter((p) => p.type === "tool-call") ?? [];
         expect(calls.map((p) => (p.type === "tool-call" ? p.outcome : null))).toEqual(["incomplete", "denied"]);
@@ -733,35 +777,29 @@ describe("the interrupted marker survives a transcript reload", () => {
 // The retract is a first-class store writer (it claims the generation token), so it must supersede a
 // transcript load the same way `send` does — mirrors the load-vs-turn interleaving in conversation.test.ts.
 describe("a transcript load resolving mid-retract", () => {
-    const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
-    // A stale reload the dropped load WOULD have mounted — present so a failure to drop would be visible as
-    // a resurrected message rather than merely an empty store that happened to stay empty.
-    const staleChat = (): ChatMessage[] => [{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }];
-
     test("a load parked mid-retract drops and never resurrects the spliced-away turn", async () => {
-        // A transcript load parks at its page read while a retract runs to completion. The retract claims a
+        // A transcript load parks at its read while a retract runs to completion. The retract claims a
         // newer store-write token, so when the parked load finally resolves it detects the newer generation
         // and drops — the spliced-empty store is never repopulated with the history the load would mount.
         let releaseLoad!: () => void;
         const loadGate = new Promise<void>((r) => {
             releaseLoad = r;
         });
-        const loadSeams: LoadSeams = {
-            runtime: () => stubRuntime,
-            loadAll: () => ResultAsync.fromSafePromise(loadGate.then(() => emptyTurns(1))),
-            toChat: () => staleChat(),
+        // A stale transcript the dropped load WOULD have mounted — present so a failure to drop would be
+        // visible as a resurrected message rather than merely an empty store that happened to stay empty.
+        const staleLoad: LoadOpts = {
+            fetchMessages: () =>
+                ResultAsync.fromSafePromise(
+                    loadGate.then(() => messageList([{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }])),
+                ),
         };
-        const load = loadMessages(SID, loadSeams); // parks at its page read
+        const load = loadMessages(AID, SID, staleLoad); // parks at its read
 
-        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
+        const { sendP, release } = startBusyTurn(ABORTED);
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
-        const retractSeams: RetractSeams = {
-            runtime: () => stubRuntime,
-            retractTurn: () => okAsync({ kind: "retracted" as const, messages: 2 }),
-        };
-        const retractP = retract(seed.set, retractSeams);
+        const retractP = retract(seed.set, recordingRetract());
         release();
         await retractP;
         await sendP;

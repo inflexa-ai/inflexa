@@ -10,7 +10,7 @@ import { setTheme } from "../../theme.ts";
 import { useKeymapRoot } from "../../keymap.ts";
 import { DialogOverlay, dialogClear, dialogClose, dialogPush } from "./dialog_host.tsx";
 import { UsageDialog, type SessionUsageSnapshot } from "./usage_dialog.tsx";
-import type { DbError } from "../../../db/errors.ts";
+import type { ClientError } from "../../../client/api.ts";
 
 // The dialog's PAINTED ladder: the two-armed headline in the LABELLED form, its arms pinned to the
 // panel's opposite EDGES with each breakdown nested under the arm it details, the compact-form
@@ -64,7 +64,7 @@ async function settle(setup: Setup): Promise<string> {
     return setup.captureCharFrame();
 }
 
-function pushUsage(load: () => Result<SessionUsageSnapshot, DbError>): void {
+function pushUsage(load: () => Result<SessionUsageSnapshot, ClientError>): void {
     dialogPush(() => <UsageDialog analysisName="rna-seq-2026" loadUsage={load} onClose={() => dialogClose("cancel")} />);
 }
 
@@ -262,7 +262,7 @@ describe("UsageDialog", () => {
             dialogPush(() => (
                 <UsageDialog
                     analysisName="rna-seq-2026"
-                    loadUsage={() => err<SessionUsageSnapshot, DbError>({ type: "query_failed", op: "test", cause: new Error("boom") })}
+                    loadUsage={() => err<SessionUsageSnapshot, ClientError>({ type: "http", status: 500, body: { error: "internal_error", message: "boom" } })}
                     onClose={() => {
                         closed = true;
                         dialogClose("cancel");

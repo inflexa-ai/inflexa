@@ -1,21 +1,22 @@
 import { randomUUIDv7 } from "bun";
 import { createEffect, createSignal } from "solid-js";
-import { ResultAsync } from "neverthrow";
-import { createThreadStore, type DbError, type Pool, type Thread, type ThreadPage } from "@inflexa-ai/harness";
+import type { ResultAsync } from "neverthrow";
 
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import type { ThreadList, ThreadSummary } from "../../api/conversation.ts";
+import type { ClientError } from "../../client/api.ts";
+import { fetchThread, fetchThreads } from "../../client/conversation.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
-import { bootState, harnessRuntime } from "./boot.ts";
+import { bootState } from "./boot.ts";
 import { notify } from "./notice.ts";
 import { chatStatus, type ChatStatus } from "./status.ts";
 
-// The open chat's Postgres conversation thread — resolution plus the row's metadata — held here (not
-// inside `app.tsx` / `layout/sidebar.tsx`) so the holder is decoupled from its renderers, the same
-// split as `boot.ts` / `sidebar_live.ts`. Postgres is the only store of session identity, and it is
-// reachable only once boot reaches `ready`, so both jobs live behind that edge: `watchOpenThread`
-// binds a thread id into the workspace scope the moment a pool exists, and keeps a snapshot of that
-// thread's row for the sidebar's SESSION section. One chat screen is mounted at a time, so a module
+// The open chat's conversation thread — resolution plus the row's metadata — held here (not inside
+// `app.tsx` / `layout/sidebar.tsx`) so the holder is decoupled from its renderers, the same split as
+// `boot.ts` / `sidebar_live.ts`. The server reads the threads from Postgres, which is reachable only
+// once its boot reaches `ready`, so both jobs live behind that edge: `watchOpenThread` binds a thread
+// id into the workspace scope the moment the server is ready, and keeps a snapshot of that thread's
+// row for the sidebar's SESSION section. One chat screen is mounted at a time, so a module
 // singleton is correct; the snapshot is the only reactive cell (the generation token, the
 // in-flight-resolution marker, and the id the snapshot describes are plain infrastructure, nothing
 // reacts to them).
@@ -39,12 +40,13 @@ export type ThreadParent = { readonly threadId: string; readonly title: string |
  * - `loaded` — the live row, carrying the pg-owned title and timestamps, plus the parent conversation
  *   when the row is a report child whose parent read landed (see {@link refreshOpenThread}).
  */
-export type ThreadSnapshot = { kind: "unresolved" } | { kind: "unavailable" } | { kind: "absent" } | { kind: "loaded"; thread: Thread; parent?: ThreadParent };
+export type ThreadSnapshot =
+    { kind: "unresolved" } | { kind: "unavailable" } | { kind: "absent" } | { kind: "loaded"; thread: ThreadSummary; parent?: ThreadParent };
 
 const [threadState, setThreadState] = createSignal<ThreadSnapshot>({ kind: "unresolved" });
 
 // Which thread the CURRENT snapshot describes. A refresh for a DIFFERENT id must blank the rail
-// synchronously: the row read is a full Postgres round-trip, and until it lands the snapshot still
+// synchronously: the row read is a full server round-trip, and until it lands the snapshot still
 // holds the thread the user just swapped (or deleted) away from — so the SESSION section would keep
 // painting the previous conversation's title for that whole window. A refresh for the SAME id must
 // NOT blank it: a rename poke or a post-turn re-read would otherwise flash the placeholder over a
@@ -55,42 +57,40 @@ let snapshotThreadId: string | null = null;
 export const openThread = threadState;
 
 /**
- * Injectable edges so thread resolution and the metadata read are unit-testable offline (no Postgres,
- * no booted runtime) — mirrors `RefreshSeams` in `sidebar_live.ts`. Production callers omit the
- * argument and get the real booted runtime + harness thread store.
+ * How thread resolution and the metadata read reach the server. Tests replace each one, so both run
+ * offline. Production callers omit the argument.
  */
-export type ThreadSeams = {
-    /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
-    readonly runtime: () => HarnessRuntime | null;
+export type ThreadOpts = {
+    /** True when the server runtime is ready to read the threads. Real: the boot phase is `ready`. */
+    readonly ready: () => boolean;
     /**
      * An analysis's live conversations, most-recently-active first. The listing narrows on the
      * `conversation` type, and the narrow is necessary: the store orders by last activity, thus a
      * report child spawned a moment ago sorts ahead of every conversation. Without the narrow the next
      * launch would open that report child, and the report agent would answer the first message the
-     * user types. Real: `createThreadStore(pool).listThreads` with `type`.
+     * user types. Real: `GET {A}/threads?type=conversation&perPage=1`.
      */
-    readonly listThreads: (pool: Pool, analysisId: string) => ResultAsync<ThreadPage, DbError>;
+    readonly listThreads: (analysisId: string) => ResultAsync<ThreadList, ClientError>;
     /**
-     * One thread's row, or `null` when absent/soft-deleted. The refresh reads the bound thread through
-     * it, and then the parent of a report child through the same seam. Real:
-     * `createThreadStore(pool).getThread`.
+     * One thread's row, or `null` when absent/archived. The refresh reads the bound thread through it,
+     * and then the parent of a report child through the same call. Real: {@link fetchThread}.
      */
-    readonly getThread: (pool: Pool, threadId: string) => ResultAsync<Thread | null, DbError>;
+    readonly getThread: (analysisId: string, threadId: string) => ResultAsync<ThreadSummary | null, ClientError>;
     /** Raise a transient toast. Real: {@link notify}. Injected so the degrade path is observable. */
     readonly notify: (notice: Notice) => void;
 };
 
 /**
- * The production realizations of {@link ThreadSeams}.
+ * The production {@link ThreadOpts}.
  *
  * Exported so a test can observe the narrowing, which lives HERE and nowhere else: `resolveThreadId`
- * applies no filter of its own, and a seam injected in this one's place shows what the FAKE was told
- * rather than what the real one passes to the store.
+ * applies no filter of its own, and a replacement shows what the FAKE was told rather than what the
+ * real one asks the server for.
  */
-export const realThreadSeams: ThreadSeams = {
-    runtime: harnessRuntime,
-    listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId, type: "conversation" }),
-    getThread: (pool, threadId) => createThreadStore(pool).getThread(threadId),
+export const DEFAULT_THREAD_OPTS: ThreadOpts = {
+    ready: () => bootState().phase === "ready",
+    listThreads: (analysisId) => fetchThreads(analysisId, { type: "conversation" }, { page: 0, perPage: 1 }),
+    getThread: (analysisId, threadId) => fetchThread(analysisId, threadId),
     notify,
 };
 
@@ -99,7 +99,7 @@ export const realThreadSeams: ThreadSeams = {
  * else a freshly minted id. A mint is an IDENTITY, not a row — nothing is written here, and the row is
  * created by the first turn, so opening a chat and typing nothing persists nothing anywhere.
  *
- * Returns `null` when the runtime is not booted: the thread store lives in Postgres, which has no
+ * Returns `null` when the server is not ready: the thread store lives in Postgres, which has no
  * pre-`ready` source, so the caller leaves the scope unbound and {@link watchOpenThread} binds one at
  * the ready edge. Minting eagerly there would strand the user on an empty chat while their existing
  * threads sat unread.
@@ -108,13 +108,12 @@ export const realThreadSeams: ThreadSeams = {
  * working chat, and the unread conversations are recoverable through the session picker once the read
  * succeeds again.
  */
-export async function resolveThreadId(analysisId: string, seams: ThreadSeams = realThreadSeams): Promise<string | null> {
-    const runtime = seams.runtime();
-    if (!runtime) return null;
-    return (await seams.listThreads(runtime.pool, analysisId)).match(
-        (page) => page.threads[0]?.threadId ?? randomUUIDv7(),
+export async function resolveThreadId(analysisId: string, opts: ThreadOpts = DEFAULT_THREAD_OPTS): Promise<string | null> {
+    if (!opts.ready()) return null;
+    return (await opts.listThreads(analysisId)).match(
+        (page) => page.threads[0]?.id ?? randomUUIDv7(),
         () => {
-            seams.notify({ kind: "warn", text: "Could not list this analysis's conversations — starting a new one." });
+            opts.notify({ kind: "warn", text: "Could not list this analysis's conversations — starting a new one." });
             return randomUUIDv7();
         },
     );
@@ -127,8 +126,8 @@ export async function resolveThreadId(analysisId: string, seams: ThreadSeams = r
 let metadataGeneration = 0;
 
 /**
- * Re-read the bound thread's row into the {@link openThread} snapshot. `null` (or an unbooted
- * runtime) resets it to `unresolved` — the sidebar's placeholder — and issues no query.
+ * Re-read the bound thread's row into the {@link openThread} snapshot. A `null` analysis or thread (or a
+ * server that is not ready) resets it to `unresolved` — the sidebar's placeholder — and issues no query.
  *
  * A read for a thread the snapshot does not already describe resets it to `unresolved` SYNCHRONOUSLY,
  * before the query, so a swap never paints the previous conversation's title across the round-trip;
@@ -149,12 +148,11 @@ let metadataGeneration = 0;
  * Called by {@link watchOpenThread} on every bind/boot/turn edge, and directly by the rename command,
  * whose write changes the row without changing the bound id (so no reactive edge would fire).
  */
-export async function refreshOpenThread(threadId: string | null, seams: ThreadSeams = realThreadSeams): Promise<void> {
+export async function refreshOpenThread(analysisId: string | null, threadId: string | null, opts: ThreadOpts = DEFAULT_THREAD_OPTS): Promise<void> {
     // Bump BEFORE the guards so even the unresolved path invalidates an in-flight older read — a swap
     // to an unbound scope must not later be overwritten by a slow read from the previous one.
     const mine = ++metadataGeneration;
-    const runtime = seams.runtime();
-    if (!runtime || threadId === null) {
+    if (!opts.ready() || analysisId === null || threadId === null) {
         snapshotThreadId = null;
         setThreadState({ kind: "unresolved" });
         return;
@@ -163,7 +161,7 @@ export async function refreshOpenThread(threadId: string | null, seams: ThreadSe
         snapshotThreadId = threadId;
         setThreadState({ kind: "unresolved" });
     }
-    const res = await seams.getThread(runtime.pool, threadId);
+    const res = await opts.getThread(analysisId, threadId);
     if (mine !== metadataGeneration) return;
     // What the snapshot already knows about this thread's parent. A re-read for the SAME thread — the
     // rename poke, the post-turn refresh — resolves that same parent again, so publishing the row
@@ -172,7 +170,7 @@ export async function refreshOpenThread(threadId: string | null, seams: ThreadSe
     // snapshot. It carries only while the fresh row still names the same parent, so a link that moved
     // is never described by the conversation it left.
     const held = threadState();
-    const knownParent = held.kind === "loaded" && held.thread.threadId === threadId ? held.parent : undefined;
+    const knownParent = held.kind === "loaded" && held.thread.id === threadId ? held.parent : undefined;
     const loaded = res.match(
         (thread) => {
             if (thread === null) {
@@ -183,20 +181,20 @@ export async function refreshOpenThread(threadId: string | null, seams: ThreadSe
             setThreadState({ kind: "loaded", thread, parent: carried });
             return thread;
         },
-        (): Thread | null => {
+        (): ThreadSummary | null => {
             setThreadState({ kind: "unavailable" });
             return null;
         },
     );
     // The store pairs a parent link with a spawn point and writes both only on a spawned thread, so a
     // conversation — and a report row whose link is gone — issues no second query at all.
-    const parentId = loaded?.threadType === "report" ? loaded.parentThreadId : null;
-    if (loaded === null || parentId === null) return;
-    const parent = await seams.getThread(runtime.pool, parentId);
+    const parentId = loaded?.threadType === "report" ? loaded.parentThreadId : undefined;
+    if (loaded === null || parentId === undefined) return;
+    const parent = await opts.getThread(analysisId, parentId);
     if (mine !== metadataGeneration) return;
     parent.match(
         (row) => {
-            if (row !== null) setThreadState({ kind: "loaded", thread: loaded, parent: { threadId: row.threadId, title: row.title } });
+            if (row !== null) setThreadState({ kind: "loaded", thread: loaded, parent: { threadId: row.id, title: row.title ?? null } });
         },
         () => {},
     );
@@ -213,9 +211,9 @@ let resolvingForAnalysisId: string | null = null;
  * An unconditional clear would let a settling resolution for analysis A drop a marker that a later
  * effect run had since re-taken for analysis B, re-opening the double-mint this marker exists to
  * close. Today nothing reaches that interleaving — the scope is never left unbound while `ready`,
- * because `harnessRuntime()` is set before the phase flips (`hooks/boot.ts`), so every `openSession`
- * under `ready` binds a non-null id and the effect short-circuits. That invariant lives in another
- * module and is not this one's to assume: making the release conditional costs a comparison and
+ * because the open of an analysis under `ready` resolves a non-null id (`resolveThreadId`), so every
+ * `openSession` under `ready` binds one and the effect short-circuits. That invariant lives in other
+ * flows and is not this one's to assume: making the release conditional costs a comparison and
  * removes the dependency outright.
  */
 function clearResolutionOf(analysisId: string): void {
@@ -238,7 +236,7 @@ function clearResolutionOf(analysisId: string): void {
  *     so without this the rail would read "new conversation" for the rest of the session. Every later
  *     turn rides the same edge, which is also what keeps the title and activity stamp current.
  */
-export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realThreadSeams): void {
+export function watchOpenThread(workspace: Workspace, opts: ThreadOpts = DEFAULT_THREAD_OPTS): void {
     createEffect(() => {
         const phase = bootState().phase;
         const analysis = workspace.analysis;
@@ -247,11 +245,11 @@ export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realT
         if (resolvingForAnalysisId === analysis.id) return;
         const analysisId = analysis.id;
         resolvingForAnalysisId = analysisId;
-        void resolveThreadId(analysisId, seams).then(
+        void resolveThreadId(analysisId, opts).then(
             (resolved) => {
                 clearResolutionOf(analysisId);
                 if (resolved === null) return;
-                // The listing is a Postgres round-trip, during which the user can swap analyses or a
+                // The listing is a server round-trip, during which the user can swap analyses or a
                 // palette command can bind a thread itself. Both make this resolution stale, and writing it
                 // would swap the user off the chat they just opened — so drop it. The reads here are
                 // deliberately outside the tracking scope (this runs after the effect returned), so they
@@ -274,10 +272,11 @@ export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realT
 
     createEffect(() => {
         const phase = bootState().phase;
+        const analysisId = workspace.analysis?.id ?? null;
         const bound = workspace.sessionId;
-        // Pre-`ready` there is no pool to read the row from, so collapse to the placeholder rather than
+        // Pre-`ready` the server cannot read the row, so collapse to the placeholder rather than
         // showing a bound id's stale metadata from a previous boot.
-        void refreshOpenThread(phase === "ready" ? bound : null, seams);
+        void refreshOpenThread(analysisId, phase === "ready" ? bound : null, opts);
     });
 
     // The turn-completion down-edge. `prev` is closure-local per watcher invocation; seeded to the
@@ -294,7 +293,7 @@ export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realT
     createEffect(() => {
         const status = chatStatus();
         const bound = workspace.sessionId;
-        if (prev === "busy" && status !== "busy" && bound !== null) void refreshOpenThread(bound, seams);
+        if (prev === "busy" && status !== "busy" && bound !== null) void refreshOpenThread(workspace.analysis?.id ?? null, bound, opts);
         prev = status;
     });
 }

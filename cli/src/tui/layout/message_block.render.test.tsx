@@ -6,7 +6,7 @@ import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../lib/design_system.ts";
 import { setTheme } from "../theme.ts";
 import { MessageBlock } from "./message_block.tsx";
 import { formatTokenFigure } from "../../lib/usage_format.ts";
-import type { TurnUsage } from "../../modules/harness/turn.ts";
+import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
 import type { Part } from "../../types/session.ts";
 
 // The interrupted marker is a muted suffix on an assistant turn that streamed before being aborted. A
@@ -26,7 +26,7 @@ function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): 
 }
 
 /** An assistant turn with one body part; the header props under test are passed straight through. */
-function renderAssistant(header: { interrupted?: boolean; durationMs?: number; turnUsage?: TurnUsage } = {}): ReturnType<typeof testRender> {
+function renderAssistant(header: { interrupted?: boolean; durationMs?: number; turnUsage?: TokenUsageRollup } = {}): ReturnType<typeof testRender> {
     const parts: Part[] = [{ type: "text", text: "an answer that began" }];
     return testRender(
         () => (
@@ -80,7 +80,13 @@ describe("MessageBlock interrupted marker", () => {
 // so any surface that added them in would report an inflated figure — 22.2k in / 4.0k out instead of
 // The two headline quantities render as `↑12.4k ↓3.1k`; the other three are breakdowns and never
 // reach this header. Summing the input side would give 23.4k, the output side 4.0k.
-const REPORTED: TurnUsage = { inputTokens: 12_400, outputTokens: 3100, cacheReadInputTokens: 9800, cacheCreationInputTokens: 1200, reasoningTokens: 900 };
+const REPORTED: TokenUsageRollup = {
+    inputTokens: 12_400,
+    outputTokens: 3100,
+    cacheReadInputTokens: 9800,
+    cacheCreationInputTokens: 1200,
+    reasoningTokens: 900,
+};
 
 describe("MessageBlock turn-usage figures", () => {
     afterEach(() => setTheme(DEFAULT_THEME_ID));

@@ -2,7 +2,7 @@ import { type ResultAsync, okAsync } from "neverthrow";
 import {
     createThreadHistory,
     makeLocalAuth,
-    runChatTurn as runHarnessChatTurn,
+    openChatTurn,
     type AgentChat,
     type AgentFinish,
     type AskApproval,
@@ -13,6 +13,8 @@ import {
     type EmitFn,
     type Pool,
     type RetractOutcome,
+    type RunChatTurnDeps,
+    type RunChatTurnParams,
     type ThreadAgentResolver,
     type ThreadHistory,
     type ThreadType,
@@ -24,8 +26,8 @@ import { currentUserEmail } from "../auth/whoami.ts";
 import { enterChatTurn } from "./agent_switch.ts";
 import { provenanceSeam } from "./prov_bridge.ts";
 
-// The headless chat turn engine that the REPL (`dev/chat.ts`) and the TUI chat hook share. It gives the
-// `runChatTurn` of the harness the values of the surface and maps the result. It does no terminal output.
+// The headless chat turn engine that the chat route of the local server runs. It gives the `runChatTurn`
+// of the harness the values of the surface and maps the result. It does no terminal output.
 
 /**
  * What one whole turn spent, per quantity — the harness's own rollup shape, carried
@@ -99,12 +101,20 @@ export type RunChatTurnArgs = {
     readonly threadId: string;
     /** The sanitized user input opening the turn. */
     readonly userInput: string;
+    /**
+     * Runs one time when the turn is open: the thread is ready and the agent is resolved. A refusal never
+     * calls it. The chat route of the server sends its stream headers at this moment.
+     */
+    readonly onOpened?: () => void;
 };
+
+/** The whole harness turn: open it, then run it. `onOpened` runs between the two steps. */
+export type HarnessTurn = (deps: RunChatTurnDeps, params: RunChatTurnParams & { readonly onOpened?: () => void }) => Promise<ChatTurnResult>;
 
 /** Injectable harness edges, thus {@link runChatTurn} is unit-testable offline. */
 export type ChatTurnSeams = {
-    /** The whole chat turn. Real: the `runChatTurn` of the harness. */
-    readonly turn: typeof runHarnessChatTurn;
+    /** The whole chat turn. Real: the `openChatTurn` of the harness, then the `run` of the open turn. */
+    readonly turn: HarnessTurn;
     /**
      * Who sent the message: the email of the signed-in identity, or `null` when the cli can name
      * nobody. Real: `currentUserEmail`. Injectable, because the suite runs with no auth file.
@@ -112,7 +122,16 @@ export type ChatTurnSeams = {
     readonly readAuthor: () => string | null;
 };
 
-const realTurnSeams: ChatTurnSeams = { turn: runHarnessChatTurn, readAuthor: currentUserEmail };
+/** The `runChatTurn` of the harness in its two steps, thus the caller learns the moment that the turn is open. */
+async function openAndRunTurn(deps: RunChatTurnDeps, params: RunChatTurnParams & { readonly onOpened?: () => void }): Promise<ChatTurnResult> {
+    const { analysisId, threadId, userInput, onOpened, ...run } = params;
+    const opened = await openChatTurn(deps, { analysisId, threadId, userInput });
+    if (opened.kind !== "ready") return opened;
+    onOpened?.();
+    return opened.run(run);
+}
+
+const realTurnSeams: ChatTurnSeams = { turn: openAndRunTurn, readAuthor: currentUserEmail };
 
 /**
  * Build the {@link ChatTurnSession} a chat turn runs under. The harness stamps the provenance of the
@@ -135,7 +154,7 @@ export function buildChatSession(analysisId: string, threadId: string): ChatTurn
  * keeps the stored rounds. The caller renders the outcome.
  */
 export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = realTurnSeams): Promise<TurnOutcome> {
-    const { pool, agents, chat, session, emit, signal, analysisId, threadId, userInput, ask, usageRecorder } = args;
+    const { pool, agents, chat, session, emit, signal, analysisId, threadId, userInput, ask, usageRecorder, onOpened } = args;
 
     // An agent switch requested during the turn waits for this token, and the `finally` lands it.
     const leaveChatTurn = enterChatTurn();
@@ -158,6 +177,7 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
                 usageRecorder,
                 startedAtMs: turnStartedAt,
                 ...(ask ? { ask } : {}),
+                ...(onOpened ? { onOpened } : {}),
                 // An empty email is no sender, thus it never reaches the store as a name.
                 ...(author ? { author } : {}),
             },
@@ -188,7 +208,7 @@ function outcomeOfRun(result: Extract<ChatTurnResult, { kind: "ran" }>): TurnOut
     const { opened, outcome } = result;
     const appendError = result.storeError;
     if (appendError) getLogger("harness").warn({ appendError }, "chat turn append failed");
-    // A copy, because the value travels into a Solid store. An absent rollup leaves no key.
+    // A copy, because the value travels into the turn registry. An absent rollup leaves no key.
     const spend = result.turnUsage ? { turnUsage: { ...result.turnUsage } } : {};
     const fallbackText = result.fallbackText ?? "";
     switch (outcome.status) {

@@ -2,13 +2,11 @@ import { createContext, useContext } from "solid-js";
 import { createStore } from "solid-js/store";
 import type { JSX } from "solid-js";
 
-import { projectForAnalysis } from "../../modules/project/project.ts";
-import { acquireInstanceLock, releaseInstanceLock, type LockOutcome } from "../../lib/lock.ts";
+import type { AnalysisDetail, AnchorView } from "../../api/analyses.ts";
+import type { ProjectView } from "../../api/projects.ts";
+import { fetchAnalysis } from "../../client/analyses.ts";
 import { abort as abortConversationTurn } from "../hooks/conversation.ts";
-import { notify } from "../hooks/notice.ts";
-import type { Notice } from "../theme.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import type { Project } from "../../types/project.ts";
 
 /**
  * The open chat's rarely-changed, read-mostly scope plus the in-app capabilities, shared through
@@ -32,14 +30,26 @@ export type Workspace = {
     sessionId: string | null;
     /** The open chat's resolved working directory. */
     workingDir: string;
-    /** The analysis's linked project, resolved from `analysis.projectId`; `null` when unlinked. */
-    project: Project | null;
+    /**
+     * The analysis's linked project, read from the server (`GET {A}`) after each swap; `null` when unlinked,
+     * until the read lands, and when the read fails.
+     */
+    project: ProjectView | null;
+    /** The home folder of the analysis, from the same read. `null` until it lands, and when the anchor row is gone. */
+    anchor: AnchorView | null;
+    /** The count of the inputs of the analysis, from the same read. `null` until it lands. */
+    inputCount: number | null;
     /** Push a modal (picker / prompt / results) onto the dialog stack. */
     openDialog: (render: () => JSX.Element) => void;
     /** Pop the top modal. */
     closeDialog: () => void;
     /** Swap the open chat in place — bind a different thread and/or analysis without a restart. */
     openSession: (threadId: string | null, workingDir: string, analysis: Analysis) => void;
+    /**
+     * Read the project, the anchor, and the input count of the open analysis again: after an input change
+     * of this client, and at the end of a turn, whose agent can change the inputs. The server pushes nothing.
+     */
+    refreshScope: () => void;
     /** Quit the app cleanly (restore the terminal, then exit). */
     quit: () => Promise<void>;
 };
@@ -60,27 +70,27 @@ export type WorkspaceInit = {
 };
 
 /**
- * The effectful edges {@link openSession}'s swap decision drives, injectable so the swap-decision
- * tests run offline (no lock files, no second process, no live turn) — the same seam pattern the boot
- * store and the send path use. Production callers omit it and get the real per-analysis instance lock,
- * the conversation abort, and the notice channel.
+ * What {@link openSession} drives beyond the store. Tests replace each one, thus a swap runs offline (no
+ * server, no live turn).
+ *
+ * The instance lock of an analysis is not here: the server takes it at the first request for the analysis,
+ * and the caller of a swap reads `GET {A}` before it swaps (`openAnalysis` in `commands.tsx`).
  */
-export type WorkspaceSeams = {
-    /** Claim the target analysis's instance lock (real: {@link acquireInstanceLock}). */
-    readonly acquireLock: (key: string) => LockOutcome;
-    /** Release an analysis's instance lock (real: {@link releaseInstanceLock}). */
-    readonly releaseLock: (key: string) => void;
+export type WorkspaceOpts = {
     /** Abort any in-flight chat turn (real: `abort` from `hooks/conversation.ts`). */
     readonly abortTurn: () => void;
-    /** Raise a transient toast (real: {@link notify}). */
-    readonly notify: (notice: Notice) => void;
+    /** One analysis with its scope, or `null` when the read fails (real: `GET {A}`). */
+    readonly fetchDetail: (analysisId: string) => Promise<AnalysisDetail | null>;
 };
 
-const realWorkspaceSeams: WorkspaceSeams = {
-    acquireLock: acquireInstanceLock,
-    releaseLock: releaseInstanceLock,
+/** The production {@link WorkspaceOpts}. */
+export const DEFAULT_WORKSPACE_OPTS: WorkspaceOpts = {
     abortTurn: abortConversationTurn,
-    notify,
+    fetchDetail: async (analysisId) =>
+        (await fetchAnalysis(analysisId)).match(
+            (detail) => detail,
+            () => null,
+        ),
 };
 
 /**
@@ -88,53 +98,50 @@ const realWorkspaceSeams: WorkspaceSeams = {
  * reactivity: a Solid context only transports a value down the tree — it is NOT itself reactive, so
  * for the sidebar/status bar to repaint on an in-place swap the value must be a reactive primitive.
  * Accessors are deliberately avoided, so a `createStore` (which gives plain-property reactive reads)
- * is the mechanism. `openSession` is the SOLE writer of the scope: it sets the four data fields
- * (project re-resolved from the new analysis). The chat hot state is reset reactively by the `Chat`
+ * is the mechanism. `openSession` is the SOLE writer of the scope data: it sets the three scope fields,
+ * and the `GET {A}` read of each swap sets the project, the anchor, and the input count. The chat hot state is reset reactively by the `Chat`
  * component watching `sessionId`, not by a host callback here. The capability fields are never
- * written through the store. `seams` is injected only by tests.
+ * written through the store. `opts` is injected only by tests.
  */
-export function createWorkspace(init: WorkspaceInit, seams: WorkspaceSeams = realWorkspaceSeams): Workspace {
+export function createWorkspace(init: WorkspaceInit, opts: WorkspaceOpts = DEFAULT_WORKSPACE_OPTS): Workspace {
+    // The scope of the server arrives after the swap. A read that lands after a later swap is dropped, thus
+    // the scope of a different analysis never shows. A failed read keeps the last answer.
+    const refreshScope = (analysisId: string): void => {
+        void opts.fetchDetail(analysisId).then((detail) => {
+            if (detail === null || store.analysis?.id !== analysisId) return;
+            setStore({ project: detail.project, anchor: detail.anchor, inputCount: detail.inputCount });
+        });
+    };
     const [store, setStore] = createStore<Workspace>({
         analysis: init.analysis,
         sessionId: init.sessionId,
         workingDir: init.workingDir,
-        project: projectForAnalysis(init.analysis),
+        project: null,
+        anchor: null,
+        inputCount: null,
         openDialog: init.openDialog,
         closeDialog: init.closeDialog,
         quit: init.quit,
         // The store's own setter, captured here so the scope has a single writer. References
         // `store`/`setStore` from the destructuring above — created now, only invoked after the
-        // store exists. This is also the lock chokepoint: as the SOLE scope writer, re-keying the
-        // analysis lock here means no in-process switch can bypass it. Invariant: acquire the target
-        // BEFORE releasing the current, so a refused switch never strands us lockless.
+        // store exists.
         openSession(threadId, workingDir, analysis) {
             const prev = store.analysis;
-            // A same-analysis session switch (prev.id === analysis.id) needs no re-key — we already
-            // hold this analysis's lock (acquire would re-entrantly succeed, release would drop the
-            // lock we still want), so skip the exchange entirely and just swap the session. The abort
-            // for that case is handled reactively by the Chat effect on `sessionId` (resetHotState).
-            if (!prev || prev.id !== analysis.id) {
-                const outcome = seams.acquireLock(analysis.id);
-                if (!outcome.acquired) {
-                    // Refused: the target is live in another process. Name the holder pid so the notice
-                    // is actionable, and abort the swap whole — the current scope and its lock are
-                    // untouched (no partial state). On the reclaim race `acquireInstanceLock` reports an
-                    // unknown holder as `-1` (lock.ts); omit the pid clause then rather than print "(pid
-                    // -1)", which reads as a bug.
-                    const pidClause = outcome.holderPid >= 0 ? ` (pid ${outcome.holderPid})` : "";
-                    seams.notify({ kind: "warn", text: `"${analysis.name}" is already open in another instance${pidClause}.` });
-                    return;
-                }
-                // Abort any in-flight turn BEFORE releasing the old analysis's lock, so no turn keeps
-                // running against an analysis this instance is about to stop holding. The reactive Chat
-                // reset (on the `sessionId` change below) re-aborts and reloads — this only fixes the
-                // ordering (abort → release → swap) that the reactive path alone can't guarantee.
-                seams.abortTurn();
-                if (prev) seams.releaseLock(prev.id);
-            }
-            setStore({ analysis, sessionId: threadId, workingDir, project: projectForAnalysis(analysis) });
+            // A swap to a different analysis aborts any in-flight turn BEFORE the scope moves, so no turn
+            // keeps running against an analysis this chat no longer shows. A same-analysis session switch
+            // leaves that abort to the Chat effect on `sessionId` (resetHotState).
+            if (!prev || prev.id !== analysis.id) opts.abortTurn();
+            if (prev?.id === analysis.id) setStore({ analysis, sessionId: threadId, workingDir });
+            else setStore({ analysis, sessionId: threadId, workingDir, project: null, anchor: null, inputCount: null });
+            // Read again for the same analysis too: a set-project or a rename swaps in place.
+            refreshScope(analysis.id);
+        },
+        refreshScope() {
+            const a = store.analysis;
+            if (a !== null) refreshScope(a.id);
         },
     });
+    if (init.analysis !== null) refreshScope(init.analysis.id);
     return store;
 }
 

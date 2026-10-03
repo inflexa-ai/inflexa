@@ -6,7 +6,8 @@ import type { Anchor, AnchorMarker } from "../../types/anchor.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getAnchor, listAnchors } from "../../db/primary_query.ts";
 import { insertAnchor, touchAnchor, updateAnchorCachedPath } from "../../db/primary_mutation.ts";
-import { canonicalPath, findMarkerUpwards, isDirWritable, readMarker, writeMarker, type MarkerError } from "./marker.ts";
+import { canonicalPath } from "../../lib/paths.ts";
+import { findMarkerUpwards, isDirWritable, readMarker, writeMarker, type MarkerError } from "./marker.ts";
 
 /** Bridge a marker-layer failure into the db-layer error type so callers that return `Result<T, DbError>` can propagate it without widening their error union. */
 function markerToDbError(op: string, e: MarkerError, kind: "query_failed" | "mutation_failed" = "query_failed"): DbError {

@@ -12,6 +12,7 @@ import { DialogOverlay, dialogPush, dialogClose, dialogClear, dialogIsOpen, useD
 import { PromptDialog } from "./prompt_dialog.tsx";
 import { SelectDialog } from "./select_dialog.tsx";
 import { ConfigApp } from "../../app_config.tsx";
+import type { ServerSettings } from "../../../api/machine.ts";
 
 // End-to-end verification of the dialog host STATE MACHINE through the real keyboard bus: close
 // reasons per gesture, the busy veto, stacked-entry state survival + key inertness, the
@@ -517,10 +518,18 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
 });
 
 describe("config screen over the dialog host (the swallowed-keystroke regression)", () => {
+    const settings: ServerSettings = {
+        telemetry: false,
+        runtime: null,
+        postgres: { host: "localhost", port: 5432, database: "inflexa", user: "inflexa", passwordSet: false },
+        embedding: { mode: "off", apiKeySet: false },
+        embeddingDefaults: { apiBaseUrl: "https://api.openai.com/v1", apiDimensions: 1536, localDimensions: 384, builtinModelPath: "/models/bge-small.gguf" },
+    };
+
     test("typing s/q/space into the postgres-field prompt inserts characters and fires no form action", async () => {
-        // Standalone ConfigApp: installs its own keymap root and DialogOverlay. The XDG sandbox
-        // (test preload) gives it an isolated, defaults-only config.
-        const setup = await testRender(() => <ConfigApp />, { width: 90, height: 34 });
+        // Standalone ConfigApp: installs its own keymap root and DialogOverlay. The test never saves, thus
+        // fixed settings need no server.
+        const setup = await testRender(() => <ConfigApp settings={settings} />, { width: 90, height: 34 });
         const settle = makeSettle(setup);
         const frame = () =>
             setup

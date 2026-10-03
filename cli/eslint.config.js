@@ -15,8 +15,9 @@ import { defineConfig } from "eslint/config";
 // its Result: the plugin's handledMethods list has `_unsafeUnwrap` but not the err
 // twin, so a directly-chained `fn()._unsafeUnwrapErr()` — the standard test idiom
 // for asserting an expected Err (CLAUDE.md sanctions both unsafe unwraps in tests) —
-// would otherwise be a false positive. Taught here, once, rather than scattering
-// per-site disables.
+// would otherwise be a false positive. The awaited form of a `ResultAsync`,
+// `(await fn())._unsafeUnwrapErr()`, is the same idiom. Taught here, once, rather
+// than scattering per-site disables.
 const originalRule = neverthrowPlugin.rules["must-use-result"];
 const neverthrow = {
     rules: {
@@ -37,7 +38,8 @@ const neverthrow = {
                     },
                     report: {
                         value(descriptor) {
-                            const parent = descriptor.node?.parent;
+                            const direct = descriptor.node?.parent;
+                            const parent = direct?.type === "AwaitExpression" ? direct.parent : direct;
                             const consumedByUnwrapErr =
                                 parent?.type === "MemberExpression" &&
                                 parent.property?.name === "_unsafeUnwrapErr" &&
@@ -82,6 +84,15 @@ const sharedRestrictedSyntax = [
         message: "Don't read `process.env.NODE_ENV` — use `env.isDevelopment` / `devCommandsEnabled` (baked from INFLEXA_BUILD_CHANNEL). See src/lib/env.ts.",
     },
 ];
+
+// The dev-channel import ban (see the `dev/` block below). Held in a const for the same reason as
+// sharedRestrictedSyntax: the client-boundary block redeclares `no-restricted-imports` for its files, which
+// REPLACES the options of the dev block there, so it must re-list this pattern.
+const devImportPattern = {
+    group: ["**/dev/*", "**/dev/**"],
+    message:
+        "A product file must not import `modules/harness/dev/` — those are dev-channel command surfaces a release build does not carry. If a helper is wanted by both, home it in the module that owns its subject (see CLAUDE.md, 'The `dev/` subdirectory').",
+};
 
 export default defineConfig([
     {
@@ -198,14 +209,14 @@ export default defineConfig([
                 ...sharedRestrictedSyntax,
                 {
                     selector: "CallExpression[callee.property.name='action']",
-                    message: "Don't call commander's `.action()` directly in the registry — use `registerAction(command, policy, handler)` from ./agent_policy.ts so every action command declares an AgentPolicy.",
+                    message: "Don't call commander's `.action()` directly in the registry — use `registerAction(command, kind, policy, handler)` from ./agent_policy.ts so every action command declares a CommandKind and an AgentPolicy.",
                 },
                 {
                     // The computed-member twin of the ban above: `cmd["action"](fn)` reaches the same method
                     // through a string-literal key, which `callee.property.name` does not see (a Literal node
                     // carries `.value`, not `.name`), so it needs its own selector.
                     selector: "CallExpression[callee.type='MemberExpression'][callee.computed=true][callee.property.value='action']",
-                    message: "Don't call commander's `.action()` directly in the registry — use `registerAction(command, policy, handler)` from ./agent_policy.ts so every action command declares an AgentPolicy.",
+                    message: "Don't call commander's `.action()` directly in the registry — use `registerAction(command, kind, policy, handler)` from ./agent_policy.ts so every action command declares a CommandKind and an AgentPolicy.",
                 },
             ],
         },
@@ -246,11 +257,61 @@ export default defineConfig([
             "no-restricted-imports": [
                 "error",
                 {
+                    patterns: [devImportPattern],
+                },
+            ],
+        },
+    },
+    {
+        // The cut between a client and the local server. The TUI (`src/tui/`) and the API client
+        // (`src/client/`) reach server state only through the HTTP API: `src/client/` sends the requests,
+        // and `src/api/` holds the wire types of both sides. Thus a client must not import the server
+        // side: the SQLite layer, the server, the bus, the harness runtime, or a module that holds state
+        // or does I/O.
+        //
+        // The patterns are `regex`, not gitignore `group` globs: a `group` cannot re-include a file under an
+        // excluded folder (`!` cannot undo an excluded parent), and the allow lists below are such files.
+        //
+        // The allow lists are the pure code of the client, from the boundary inventory: the harness
+        // contracts (`toChatFrame`, `applyChatFrame`, `checkChatPart`, the chat and part types), the pure
+        // profile view (`profileCaveats`, `profileDimensions`), `planToDag`, and the part readers of
+        // `chat_printer.ts`. The one allowed module that does I/O is `prov/verify_file.ts`: it reads only an
+        // exported provenance file and its attestation on the machine of the client (draft 6.2). A
+        // type-only import is banned as well, because the client gets each type of the wire from
+        // `src/api/`, never a row type of the server.
+        //
+        // SCOPE: static `import` and re-export only, the same gap as the dev rule above. A test file is in
+        // scope: a TUI test drives the client, not the server state.
+        files: ["src/tui/**/*.{ts,tsx}", "src/client/**/*.{ts,tsx}"],
+        rules: {
+            "no-restricted-imports": [
+                "error",
+                {
                     patterns: [
+                        devImportPattern,
                         {
-                            group: ["**/dev/*", "**/dev/**"],
+                            regex: "(^|/)db/",
+                            message: "A client must not import `src/db/`. Read and write the state through a route of the local server (`src/client/`).",
+                        },
+                        {
+                            regex: "(^|/)server/",
+                            message: "A client must not import `src/server/`. Call the server over HTTP through `src/client/`, and share a wire type through `src/api/`.",
+                        },
+                        {
+                            regex: "(^|/)lib/bus(\\.ts)?$",
+                            message: "A client must not import the bus: it is in-process to the server. Read the state again through a route on the next read edge.",
+                        },
+                        {
+                            regex: "^@inflexa-ai/harness(?!/contracts/|/app/data-profile-view(\\.js)?$)",
                             message:
-                                "A product file must not import `modules/harness/dev/` — those are dev-channel command surfaces a release build does not carry. If a helper is wanted by both, home it in the module that owns its subject (see CLAUDE.md, 'The `dev/` subdirectory').",
+                                "A client must not import the harness runtime. Only `@inflexa-ai/harness/contracts/*` and `@inflexa-ai/harness/app/data-profile-view` are pure. Get each other type from `src/api/`.",
+                        },
+                        {
+                            // `update/` acts only on the `inflexa` binary and its own notice state, which the client and the
+                            // server share. It holds no state of an analysis or of the server.
+                            regex: "(^|/)modules/(?!harness/plan_dag\\.ts$|harness/chat_printer\\.ts$|prov/verify_file\\.ts$|update/)",
+                            message:
+                                "A client must not import a module of `src/modules/` that holds state or does I/O. Call a route of the local server through `src/client/`, or lift a pure helper out of the module.",
                         },
                     ],
                 },

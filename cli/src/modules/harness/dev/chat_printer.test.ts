@@ -1,20 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import type { EmitFn, EventSource, PlanPart, RunCardPart } from "@inflexa-ai/harness";
+import { toChatFrame, type EmitFn, type EventSource, type PlanPart, type RunCardPart } from "@inflexa-ai/harness";
 
 import { createChatPrinter, type ChatSink, type PrinterOptions } from "./chat.ts";
 
 /**
  * A recording sink + printer. `out()` accumulates conversation output; `errs`
- * accumulates diagnostics. `emit` is wrapped to a `void` return — the printer's
- * emit is synchronous, but `EmitFn`'s declared type is `void | Promise<void>`,
- * so the wrapper keeps the call sites free of floating-promise noise.
+ * accumulates diagnostics. `emit` takes the event that the agent loop emits, and
+ * gives the printer the frame that the chat route of the server sends for it: the
+ * route translates each event with `toChatFrame`, and the text delta of the root
+ * provider gets the source of the root agent.
  */
 function harness(options?: PrinterOptions): { emit: (e: Parameters<EmitFn>[0]) => void; finishTurn: (t?: string) => void; out: () => string; errs: string[] } {
     const outChunks: string[] = [];
     const errs: string[] = [];
     const sink: ChatSink = { out: (s) => outChunks.push(s), errLine: (s) => errs.push(s) };
     const printer = createChatPrinter(sink, options);
-    return { emit: (e) => void printer.emit(e), finishTurn: printer.finishTurn, out: () => outChunks.join(""), errs };
+    const emit = (e: Parameters<EmitFn>[0]): void => {
+        const frame = toChatFrame(e, { agentId: "chat", callPath: ["chat"] });
+        if (frame !== null) printer.frame(frame);
+    };
+    return { emit, finishTurn: printer.finishTurn, out: () => outChunks.join(""), errs };
 }
 
 /** Top-level provenance (callPath length 1) — passes the sub-agent depth filter. */

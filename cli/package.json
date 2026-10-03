@@ -52,6 +52,7 @@
         "@opentui/core": "0.4.2",
         "@opentui/solid": "0.4.2",
         "commander": "^15",
+        "hono": "^4.12.34",
         "neverthrow": "^8.2.0",
         "p-queue": "^9.3.3",
         "pino": "^10.3.1",

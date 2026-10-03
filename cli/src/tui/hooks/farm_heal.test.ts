@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { err, ok } from "neverthrow";
+import { okAsync } from "neverthrow";
 import { createRoot } from "solid-js";
 
-import type { TransferReport } from "../../modules/libs/transfers.ts";
+import type { FarmHealOutcome } from "../../api/runs.ts";
+import type { TransferReportView } from "../../api/store.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
@@ -22,8 +23,8 @@ function wsWith(analysis: Analysis | null): Workspace {
 }
 
 /** One catalog transfer report in the row shape, with everything else quiet. */
-function catalogReport(state: "running" | "installed", live: boolean): TransferReport {
-    return { kind: "catalog", row: null, state, live, holderPid: live ? 4242 : null } as unknown as TransferReport;
+function catalogReport(state: "running" | "installed", live: boolean): TransferReportView {
+    return { kind: "catalog", row: null, state, live, holderPid: live ? 4242 : null };
 }
 
 type Recorded = {
@@ -34,19 +35,20 @@ type Recorded = {
     readonly started: () => number;
 };
 
-/** Seams whose answers a test fixes and whose effects record. */
-function recordedSeams(over: Partial<FarmHealSeams>): Recorded {
+/**
+ * Options whose answers a test fixes and whose effects record. `heal` answers as the route does for a
+ * farm-less analysis with the catalog present: it composes.
+ */
+function recordedSeams(over: Partial<FarmHealSeams> & { outcome?: FarmHealOutcome }): Recorded {
     const healed: string[] = [];
     const notices: Notice[] = [];
     const prompts: ((yes: boolean) => void)[] = [];
     let started = 0;
     const seams: FarmHealSeams = {
-        storeRoot: () => "/tmp/store",
-        farmPresent: () => false,
-        catalogPresent: () => true,
-        heal: async (_storeRoot, analysisId) => {
-            healed.push(analysisId);
-            return ok({ farmPath: "/tmp/store/farms/a1", roots: [], storeDirs: ["one", "two"], added: ["one", "two"], tracks: ["python"] });
+        heal: (analysisId) => {
+            const outcome = over.outcome ?? { kind: "composed", packages: 2 };
+            if (outcome.kind === "composed" || outcome.kind === "failed") healed.push(analysisId);
+            return okAsync({ outcome });
         },
         liveCatalogTransfer: () => false,
         confirmDownload: (onAnswer) => {
@@ -93,7 +95,7 @@ describe("watchFarmHeal — the open trigger", () => {
     });
 
     test("a present farm stays untouched: no heal, and no prompt", async () => {
-        const { seams, healed, prompts } = recordedSeams({ farmPresent: () => true });
+        const { seams, healed, prompts } = recordedSeams({ outcome: { kind: "already_present" } });
         const dispose = mount(wsWith(ANALYSIS), seams);
         await settle();
 
@@ -104,7 +106,7 @@ describe("watchFarmHeal — the open trigger", () => {
 
     test("a heal failure surfaces its reason", async () => {
         const { seams, notices } = recordedSeams({
-            heal: async () => err({ type: "farm_locked", analysisId: "a1", holderPid: 7 }),
+            outcome: { kind: "failed", reason: "another process (pid 7) composes this farm right now" },
         });
         const dispose = mount(wsWith(ANALYSIS), seams);
         await settle();
@@ -114,7 +116,7 @@ describe("watchFarmHeal — the open trigger", () => {
     });
 
     test("a live catalog transfer defers to the landing: no heal, and no prompt", async () => {
-        const { seams, healed, prompts } = recordedSeams({ catalogPresent: () => false, liveCatalogTransfer: () => true });
+        const { seams, healed, prompts } = recordedSeams({ outcome: { kind: "no_catalog" }, liveCatalogTransfer: () => true });
         const dispose = mount(wsWith(ANALYSIS), seams);
         await settle();
 
@@ -124,7 +126,7 @@ describe("watchFarmHeal — the open trigger", () => {
     });
 
     test("no catalog and no live transfer prompts for the download, with one consent", async () => {
-        const { seams, prompts, started } = recordedSeams({ catalogPresent: () => false });
+        const { seams, prompts, started } = recordedSeams({ outcome: { kind: "no_catalog" } });
         const dispose = mount(wsWith(ANALYSIS), seams);
         await settle();
 
@@ -142,7 +144,7 @@ describe("watchFarmHeal — the open trigger", () => {
     });
 
     test("a declined prompt starts nothing", async () => {
-        const { seams, prompts, started } = recordedSeams({ catalogPresent: () => false });
+        const { seams, prompts, started } = recordedSeams({ outcome: { kind: "no_catalog" } });
         const dispose = mount(wsWith(ANALYSIS), seams);
         await settle();
 
@@ -156,8 +158,14 @@ describe("watchFarmHeal — the open trigger", () => {
 describe("watchFarmHeal — the landing trigger", () => {
     test("the catalog landing runs the heal for the open farm-less analysis", async () => {
         let present = false;
-        const { seams, healed } = recordedSeams({
-            catalogPresent: () => present,
+        const healed: string[] = [];
+        const { seams } = recordedSeams({
+            // The route composes once the catalog is present, and reports no catalog before.
+            heal: (analysisId) => {
+                if (!present) return okAsync({ outcome: { kind: "no_catalog" } });
+                healed.push(analysisId);
+                return okAsync({ outcome: { kind: "composed", packages: 2 } });
+            },
             liveCatalogTransfer: () => true,
         });
         const dispose = mount(wsWith(ANALYSIS), seams);

@@ -20,10 +20,19 @@ import type { CaptureResult } from "../../lib/container.ts";
 import { FARM_LOCK_KEY_PREFIX } from "./composition.ts";
 import type { ProvisionerRunner } from "./provisioner.ts";
 import { readStoreFlights } from "./store_flight.ts";
+import { runCli } from "../../test_support/cli.ts";
 import { listPendingStoreAdds } from "../../db/primary_query.ts";
 import { transferLockKey } from "./transfers.ts";
 import { cancelCatalogTransfer, storeDownloadPaths } from "./store_download.ts";
-import { collectStoreDebris, describeRequestRefusal, reclaimStore, runStoreAdd, runStoreDownload } from "./store.ts";
+import {
+    collectStoreDebris,
+    createPendingFlushGate,
+    describeRequestRefusal,
+    queueStoreAdd,
+    reclaimStore,
+    runStoreDownload,
+    type PendingFlushOpts,
+} from "./store.ts";
 
 // The silent debris pass: it frees only the tier that nothing references — no
 // farm link AND no graph node — plus the stale acquire reports, and it yields
@@ -238,35 +247,9 @@ describe("runStoreDownload --foreground", () => {
     });
 });
 
-/**
- * Run `fn` with `console.error` captured, and restore the exit code. A refused
- * command marks the process failed, and a leaked code would fail the whole
- * single-process run.
- */
-async function captureRefusal(fn: () => Promise<void>): Promise<{ stderr: string; exitCode: typeof process.exitCode }> {
-    const origLog = console.log;
-    const origError = console.error;
-    const origExitCode = process.exitCode;
-    let stderr = "";
-    console.log = () => undefined;
-    console.error = (msg?: unknown) => {
-        stderr += `${String(msg)}\n`;
-    };
-    try {
-        await fn();
-        return { stderr, exitCode: process.exitCode };
-    } finally {
-        console.log = origLog;
-        console.error = origError;
-        // Bun ignores an `undefined` assignment, thus a captured failure code
-        // clears with an explicit 0.
-        process.exitCode = origExitCode ?? 0;
-    }
-}
-
 describe("the argument of `store add`", () => {
-    test("a pinned argument records the spelling and the specifier", async () => {
-        await captureRefusal(() => runStoreAdd("scanpy==1.11", { version: null, lang: null, analysis: null, queued: true }));
+    test("a pinned argument records the spelling and the specifier", () => {
+        expect(queueStoreAdd("scanpy==1.11", { version: null, lang: null, analysis: null }).isOk()).toBe(true);
 
         const pending = listPendingStoreAdds()._unsafeUnwrap();
         expect(pending).toHaveLength(1);
@@ -274,32 +257,133 @@ describe("the argument of `store add`", () => {
         expect(pending[0]?.specifier).toBe("==1.11");
     });
 
-    test("a prefix at the command surface refuses, and the refusal names the flag", async () => {
+    test("a prefix at the command surface refuses, and the refusal names the flag", () => {
         // The command surface names an ecosystem with `--lang`. Two ways to say
         // one thing is what lets a flag and an argument disagree.
-        const { stderr, exitCode } = await captureRefusal(() => runStoreAdd("r:Seurat", { version: null, lang: null, analysis: null, queued: true }));
+        const refusal = queueStoreAdd("r:Seurat", { version: null, lang: null, analysis: null })._unsafeUnwrapErr();
 
-        expect(stderr).toContain("--lang r");
-        expect(exitCode).toBe(1);
+        expect(refusal.type).toBe("invalid_package");
+        expect(refusal.message).toContain("--lang r");
         expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(0);
     });
 
-    test("a version in the argument and a `--version` that disagree refuse", async () => {
-        const { stderr, exitCode } = await captureRefusal(() => runStoreAdd("scanpy==1.11", { version: "1.12", lang: null, analysis: null, queued: true }));
+    test("a version in the argument and a `--version` that disagree refuse", () => {
+        const refusal = queueStoreAdd("scanpy==1.11", { version: "1.12", lang: null, analysis: null })._unsafeUnwrapErr();
 
-        expect(stderr).toContain("two versions");
-        expect(exitCode).toBe(1);
+        expect(refusal.type).toBe("invalid_package");
+        expect(refusal.message).toContain("two versions");
         expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(0);
     });
 
-    test("an unknown prefix refuses with the flag, and a range specifier refuses with the exact-version rule", async () => {
-        const prefix = await captureRefusal(() => runStoreAdd("bioc:fgsea", { version: null, lang: null, analysis: null, queued: true }));
-        expect(prefix.stderr).toContain("--lang python");
-
-        const range = await captureRefusal(() => runStoreAdd("numpy>=1.26", { version: null, lang: null, analysis: null, queued: true }));
-        expect(range.stderr).toContain(">=");
+    test("an unknown prefix refuses with the flag, and a range specifier refuses with the exact-version rule", () => {
+        expect(queueStoreAdd("bioc:fgsea", { version: null, lang: null, analysis: null })._unsafeUnwrapErr().message).toContain("--lang python");
+        expect(queueStoreAdd("numpy>=1.26", { version: null, lang: null, analysis: null })._unsafeUnwrapErr().message).toContain(">=");
 
         expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(0);
+    });
+
+    test("an empty argument, two names, and an unknown analysis refuse", () => {
+        expect(queueStoreAdd("  ", { version: null, lang: null, analysis: null })._unsafeUnwrapErr().message).toContain("exactly one package");
+        expect(queueStoreAdd("numpy scipy", { version: null, lang: null, analysis: null })._unsafeUnwrapErr().message).toContain("once per package");
+        expect(queueStoreAdd("numpy", { version: null, lang: null, analysis: "no-such-analysis" })._unsafeUnwrapErr().type).toBe("analysis_not_found");
+
+        expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(0);
+    });
+});
+
+describe("the pending flush gate", () => {
+    /** Gate options over a pending set and a clock that the test moves, with the starts recorded. */
+    function gateOver(pending: () => readonly { createdAt: number }[], now: () => number): { opts: PendingFlushOpts; starts: number[] } {
+        const starts: number[] = [];
+        return {
+            starts,
+            opts: {
+                readPending: pending,
+                startFlush: () => {
+                    starts.push(now());
+                    return 4242;
+                },
+                now,
+                pollMs: 2_000,
+                flushAfterMs: 10_000,
+            },
+        };
+    }
+
+    test("the step starts the flush child once the oldest add is 10 s old", () => {
+        let now = 1_000;
+        const { opts, starts } = gateOver(
+            () => [{ createdAt: 1_000 }],
+            () => now,
+        );
+        const gate = createPendingFlushGate(opts);
+
+        gate.step();
+        now = 10_999;
+        gate.step();
+        expect(starts).toEqual([]);
+        now = 11_000;
+        gate.step();
+        expect(starts).toEqual([11_000]);
+    });
+
+    test("an empty set starts nothing", () => {
+        const { opts, starts } = gateOver(
+            () => [],
+            () => 100_000,
+        );
+        createPendingFlushGate(opts).step();
+        expect(starts).toEqual([]);
+    });
+
+    test("the gate starts again only after a full window, so a slow claim does not start a second child", () => {
+        let now = 20_000;
+        const { opts, starts } = gateOver(
+            () => [{ createdAt: 0 }],
+            () => now,
+        );
+        const gate = createPendingFlushGate(opts);
+
+        gate.step();
+        now = 22_000;
+        gate.step();
+        expect(starts).toEqual([20_000]);
+        // The set did not empty: the child could not spawn, thus the gate starts it again after the window.
+        now = 30_000;
+        gate.step();
+        expect(starts).toEqual([20_000, 30_000]);
+    });
+});
+
+describe("the in-process reclaim exclusion", () => {
+    test("a second reclamation in this process refuses, and a debris pass yields, while the first runs", async () => {
+        const root = tempStore();
+        mkdirSync(join(root, "store", DEBRIS_DIR), { recursive: true });
+        let release: () => void = () => undefined;
+        const blocked = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const invocations: (readonly string[])[] = [];
+        const blockingRunner: ProvisionerRunner = async (invocation) => {
+            invocations.push([...invocation.args]);
+            await blocked;
+            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+        };
+
+        const first = reclaimStore({ storeRoot: root }, { run: blockingRunner, flightWaitMs: 50, flightPollMs: 5 });
+        while (invocations.length === 0) await Bun.sleep(5);
+
+        // The lock file is re-entrant for this pid, thus only the in-process exclusion refuses these two.
+        const second = await reclaimStore({ storeRoot: root }, { run: countingRunner(invocations), flightWaitMs: 50, flightPollMs: 5 });
+        expect(second._unsafeUnwrapErr().type).toBe("reclaim_in_flight");
+        const debris = await collectStoreDebris(root, { run: countingRunner(invocations) });
+        expect(debris._unsafeUnwrap().swept).toBe(false);
+
+        release();
+        expect((await first)._unsafeUnwrap().reclaimed).toEqual([DEBRIS_DIR]);
+        expect(invocations).toEqual([["reclaim"]]);
+        // The first run released the exclusion: a new reclamation runs.
+        expect((await reclaimStore({ storeRoot: root }, { run: countingRunner(invocations), flightWaitMs: 50, flightPollMs: 5 })).isOk()).toBe(true);
     });
 });
 
@@ -379,5 +463,56 @@ describe("the in-process debris single-flight", () => {
         expect(runs).toBe(1);
         expect(first._unsafeUnwrap()).toEqual(second._unsafeUnwrap());
         expect(first._unsafeUnwrap().swept).toBe(true);
+    });
+});
+
+// e2e: the real `inflexa` binary over the sandboxed DB, with no server. The env names a discovery file that
+// does not exist, thus a command that needs a server stops at its check, and starts none. A cloud job runs
+// these commands in a one-shot container where no server runs.
+describe("the store commands with no server (e2e)", () => {
+    const noServer = { INFLEXA_SERVER_FILE: join(env.locksDir, "no-server", "server.json") };
+
+    test("`store add --queued` enqueues and starts no flush", () => {
+        const result = runCli(["store", "add", "scanpy==1.11", "--queued"], { env: noServer });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Queued scanpy==1.11 for acquisition.");
+        expect(
+            listPendingStoreAdds()
+                ._unsafeUnwrap()
+                .map((entry) => [entry.spelling, entry.specifier]),
+        ).toEqual([["scanpy", "==1.11"]]);
+    });
+
+    test("`store add` refuses a prefix with the flag remedy, and enqueues nothing", () => {
+        const result = runCli(["store", "add", "r:Seurat", "--queued"], { env: noServer });
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("--lang r");
+        expect(listPendingStoreAdds()._unsafeUnwrap()).toEqual([]);
+    });
+
+    test("`store cancel` with no download says so and exits 0", () => {
+        const result = runCli(["store", "cancel"], { env: noServer });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("No package-store download is running. Nothing changed.");
+    });
+
+    test("`store ls` reports the store", () => {
+        const result = runCli(["store", "ls"], { env: noServer });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain(`  Store    ${env.packageStoreDir}`);
+    });
+
+    test("`store download --foreground` reaches the transfer check, and refuses a live transfer", () => {
+        // This process holds the catalog lock, thus the child reads the transfer as live and must not race it.
+        startTransferRun("catalog", { state: "running", holderPid: process.pid })._unsafeUnwrap();
+        expect(acquireInstanceLock(transferLockKey("catalog")).acquired).toBe(true);
+        try {
+            const result = runCli(["store", "download", "--foreground"], { env: noServer });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain(`A package-store download is already running (pid ${process.pid}). A foreground run must not race it.`);
+        } finally {
+            releaseInstanceLock(transferLockKey("catalog"));
+            settleTransfer("catalog", { state: "canceled", message: null }).unwrapOr(undefined);
+        }
     });
 });

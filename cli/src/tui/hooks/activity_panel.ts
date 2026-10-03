@@ -1,9 +1,10 @@
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { createRunEventStream, type StepActivityPart, type StepPhase } from "@inflexa-ai/harness";
+import type { StepActivityPart, StepPhase } from "@inflexa-ai/harness/contracts/index.js";
 
+import { streamRun } from "../../client/runs.ts";
 import { getLogger } from "../../lib/log.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
-import { harnessRuntime } from "./boot.ts";
+import type { Workspace } from "../contexts/workspace.ts";
+import { bootState } from "./boot.ts";
 import { activeSubjects, type PanelSubject } from "./sidebar_live.ts";
 
 // Which subject the activity panel is showing, whether it is dismissed, and what that subject is
@@ -13,7 +14,7 @@ import { activeSubjects, type PanelSubject } from "./sidebar_live.ts";
 //
 // The store owns NO subject data. Every fact it renders comes from `sidebar_live`'s published subject
 // set; this module holds only the three things that are the panel's own — focus, dismissal, and the
-// live activity the harness's run-event stream reports, which is the one datum the rail deliberately
+// live activity the run stream of the server reports, which is the one datum the rail deliberately
 // does not read (it cannot fit it).
 
 /**
@@ -209,61 +210,57 @@ export function restoreActivityPanel(): void {
     setDismissed(false);
 }
 
-/** Call-time parameters of one {@link ActivityPanelSeams.subscribeActivity}. */
+/** Call-time parameters of one {@link ActivityPanelOpts.subscribeActivity}. */
 export type ActivitySubscription = {
+    /** The analysis whose run or profile this is: the stream route lives under it. */
+    readonly analysisId: string;
     /**
-     * The stream to observe. Named for a run because that is the harness seam's own parameter name,
-     * where the two coincide: an analysis run's stream id IS its run id. A profile deliberately passes
-     * its recorded workflow id here — the stream is keyed by the workflow that writes it, and a
-     * profile's workflow is not a run.
+     * The stream to observe. Named for a run because that is the route's own path segment, where the
+     * two coincide: an analysis run's stream id IS its run id. A profile deliberately passes its
+     * recorded workflow id here — the stream is keyed by the workflow that writes it, and a profile's
+     * workflow is not a run.
      */
     readonly runId: string;
     /**
-     * Receives each step activity the subject reports. The harness seam folds its reconciling parts
+     * Receives each step activity the subject reports. The harness reader folds its reconciling parts
      * latest-wins before delivery, so what arrives is a step's CURRENT value — a subscriber
      * attaching mid-flight converges rather than replaying superseded intermediates.
      */
     readonly onActivity: (part: StepActivityPart) => void;
     /**
-     * Aborting stops delivery. Best-effort by construction — the durability engine's reader exposes
-     * no cancellation, so a part can still arrive after the abort (documented on the harness seam).
-     * That is precisely why {@link watchActivityPanel} also carries a generation token.
+     * Aborting closes the stream. A part already in flight can still arrive after the abort, which is
+     * precisely why {@link watchActivityPanel} also carries a generation token.
      */
     readonly signal: AbortSignal;
 };
 
-/**
- * Injectable edges so {@link watchActivityPanel} is unit-testable offline (no Postgres, no booted runtime)
- * — the `RefreshSeams` / `WatchSeams` pattern from `sidebar_live.ts`.
- */
-export type ActivityPanelSeams = {
-    /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
-    readonly runtime: () => HarnessRuntime | null;
+/** The edges of {@link watchActivityPanel}, injectable so it is unit-testable offline (no server). */
+export type ActivityPanelOpts = {
+    /** Whether the runtime of the server is ready. Real: the boot phase is `ready`. */
+    readonly ready: () => boolean;
     /**
      * Observe one workflow's step activity until it is terminal or the signal aborts. Real:
-     * `createRunEventStream` @ the runtime pool, narrowed to `data-step-activity`.
+     * `GET {A}/run/:runId/stream`, narrowed to `data-step-activity`.
      */
-    readonly subscribeActivity: (runtime: HarnessRuntime, options: ActivitySubscription) => Promise<void>;
+    readonly subscribeActivity: (options: ActivitySubscription) => Promise<void>;
 };
 
-const realActivityPanelSeams: ActivityPanelSeams = {
-    runtime: harnessRuntime,
-    // The panel deliberately does NOT read `readNewestWorkflowStep` / `runWorkflowFamily` /
-    // `friendlyStepLabel` (`modules/harness/dev/status.ts`), which the headless `inflexa run` wait still
-    // uses. Those select the newest row of the durability engine's step cache, and that table records
-    // a step only when it RETURNS — so a completed-step record cannot describe in-flight work. It
-    // names whatever finished last, which around the slowest operation in a run is an instantaneous
-    // internal checkpoint, and the engine's own stream-write bookkeeping lands in the same table and
-    // would be shown verbatim. No repair changes what the source is a record of, which is why this
-    // path takes the event stream instead of a fixed mapper.
-    subscribeActivity: (runtime, { runId, onActivity, signal }) =>
-        createRunEventStream({ pool: runtime.pool }).subscribe({
-            runId,
-            onPart: (part) => {
-                if (part.type === "data-step-activity") onActivity(part);
-            },
-            signal,
-        }),
+const DEFAULT_ACTIVITY_PANEL_OPTS: ActivityPanelOpts = {
+    ready: () => bootState().phase === "ready",
+    // The panel deliberately does NOT read the newest row of the durability engine's step cache, as the
+    // headless `inflexa run` wait once did. That table records a step only when it RETURNS — so a
+    // completed-step record cannot describe in-flight work. It names whatever finished last, which
+    // around the slowest operation in a run is an instantaneous internal checkpoint. No repair changes
+    // what the source is a record of, which is why this path takes the event stream.
+    subscribeActivity: async ({ analysisId, runId, onActivity, signal }) => {
+        const opened = await streamRun(analysisId, runId, signal);
+        // A refused or broken stream costs the activity line only: the subject still renders from the
+        // sidebar snapshots, and the next focus change opens the stream again.
+        if (opened.isErr()) return;
+        for await (const frame of opened.value) {
+            if (frame.isOk() && frame.value.type === "data-step-activity") onActivity(frame.value);
+        }
+    },
 };
 
 // Monotonic token identifying the newest subscription, so a subject the panel has since advanced off
@@ -275,7 +272,8 @@ let activityGeneration = 0;
 
 /**
  * Wire the activity panel's two reactive behaviours. Call once from `App` (inside its reactive
- * root). Both are effects over the module's derived state:
+ * root). Both are effects over the module's derived state, and the stream route lives under the open
+ * analysis of `workspace`:
  *
  *  1. **the activity subscription** — one open stream for the focused subject, keyed on
  *     {@link focusedStreamId} so it survives the sidebar's poll and re-opens only when the stream
@@ -289,19 +287,21 @@ let activityGeneration = 0;
  *     this, not now"; once the work it referred to is over, keeping the panel suppressed would leave
  *     later, unrelated work silently invisible with no indication why.
  */
-export function watchActivityPanel(seams: ActivityPanelSeams = realActivityPanelSeams): void {
+export function watchActivityPanel(workspace: Workspace, opts: ActivityPanelOpts = DEFAULT_ACTIVITY_PANEL_OPTS): void {
     createEffect(() => {
         const runId = focusedStreamId();
-        const runtime = seams.runtime();
+        const analysisId = workspace.analysis?.id ?? null;
+        const ready = opts.ready();
         const mine = ++activityGeneration;
         setStepActivity(new Map());
-        if (runId === null || !runtime) return;
+        if (runId === null || analysisId === null || !ready) return;
 
         const controller = new AbortController();
         onCleanup(() => controller.abort());
 
-        void seams
-            .subscribeActivity(runtime, {
+        void opts
+            .subscribeActivity({
+                analysisId,
                 runId,
                 onActivity: (part) => {
                     if (mine !== activityGeneration) return;
@@ -319,7 +319,7 @@ export function watchActivityPanel(seams: ActivityPanelSeams = realActivityPanel
                 signal: controller.signal,
             })
             .catch((err: unknown) => {
-                // Defensive: the seam contains every stream failure and resolves rather than
+                // Defensive: the subscription contains every stream failure and resolves rather than
                 // rejecting, so arriving here is a defect in it — but an unhandled rejection would
                 // take the TUI process down over a cosmetic channel, which is strictly worse than
                 // losing the label.

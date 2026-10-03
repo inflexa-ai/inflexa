@@ -1,29 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import { testRender } from "@opentui/solid";
-import type { CortexRunRow, DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
+import type { RunDetail, RunStepSummary, RunSummary } from "../../../api/runs.ts";
+import type { UsageTotals } from "../../../api/usage.ts";
+import type { ClientError } from "../../../client/api.ts";
 import { RunDetailDialog, type RunDetailDialogProps } from "./run_detail_dialog.tsx";
 import { GLYPHS } from "../../../lib/design_system.ts";
 
 // The dialog's render-only contract: which metadata lines paint, that the FULL step list renders
-// (no window — every state incl. the seeded pending→queued hollow glyph), and that a failed step
+// (no window — every state incl. the seeded pending→queued hollow glyph), and that a failed detail
 // fetch degrades to the muted line instead of crashing. `runDetailLines` and `stepStateOf` are
 // covered as pure functions elsewhere; only the painted ladder needs a frame.
 
 /**
- * Render the dialog and return its text frame. `settle` extra passes let the `onMount` step fetch
+ * Render the dialog and return its text frame. `settle` extra passes let the `onMount` detail fetch
  * resolve — a `ResultAsync.match` lands on a microtask, after the first paint — so a test asserting
  * on loaded steps must ask for at least one.
  */
-async function frameOf(
-    run: CortexRunRow,
-    loadSteps: RunDetailDialogProps["loadSteps"],
-    settle = 0,
-    usage?: RunDetailDialogProps["usage"],
-    stepUsage?: RunDetailDialogProps["stepUsage"],
-): Promise<string> {
-    const setup = await testRender(() => <RunDetailDialog run={run} loadSteps={loadSteps} usage={usage} stepUsage={stepUsage} onClose={() => {}} />, {
+async function frameOf(run: RunSummary, loadDetail: RunDetailDialogProps["loadDetail"], settle = 0): Promise<string> {
+    const setup = await testRender(() => <RunDetailDialog run={run} loadDetail={loadDetail} onClose={() => {}} />, {
         width: 90,
         height: 36,
     });
@@ -45,32 +41,23 @@ async function frameOf(
     }
 }
 
-function run(overrides: Partial<CortexRunRow> = {}): CortexRunRow {
+function run(overrides: Partial<RunSummary> = {}): RunSummary {
     return {
         runId: "11111111-2222-3333-4444-5555aabbccdd",
-        analysisId: "an-1",
         threadId: null,
         workflowName: "executeAnalysis",
+        workflowId: "11111111-2222-3333-4444-5555aabbccdd",
         status: "completed",
         startedAt: "2026-01-01T00:00:00.000Z",
         completedAt: "2026-01-01T00:05:00.000Z",
         error: null,
-        synthesisStatus: null,
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: null,
         ...overrides,
     };
 }
 
-function step(stepId: string, status: StepExecutionRow["status"]): StepExecutionRow {
+function step(stepId: string, status: RunStepSummary["status"], usage?: UsageTotals): RunStepSummary {
     return {
-        runId: "11111111-2222-3333-4444-5555aabbccdd",
         stepId,
-        analysisId: "an-1",
-        wave: 0,
         agentId: "agent",
         status,
         startedAt: null,
@@ -78,20 +65,20 @@ function step(stepId: string, status: StepExecutionRow["status"]): StepExecution
         durationMs: null,
         error: null,
         attempts: 1,
-        lastErrorClass: null,
-        finishReason: null,
-        hitMaxSteps: false,
         blockedReason: null,
-        sandboxRef: null,
-        execId: null,
-        childWorkflowId: null,
+        ...(usage === undefined ? {} : { usage }),
     };
+}
+
+/** A detail fetch that answers with `steps` and the run's step-less calls. */
+function detailOf(steps: RunStepSummary[], unattributedUsage: UsageTotals | null = null): RunDetailDialogProps["loadDetail"] {
+    return () => okAsync<RunDetail, ClientError>({ ...run(), steps, unattributedUsage });
 }
 
 describe("RunDetailDialog", () => {
     test("paints metadata and the full step list with per-state glyphs", async () => {
         const steps = [step("s1_load", "completed"), step("s2_assoc", "failed"), step("s3_report", "pending")];
-        const frame = await frameOf(run(), () => okAsync<StepExecutionRow[], DbError>(steps), 2);
+        const frame = await frameOf(run(), detailOf(steps), 2);
 
         expect(frame).toContain("status: completed");
         expect(frame).toContain("started ");
@@ -106,15 +93,14 @@ describe("RunDetailDialog", () => {
     });
 
     test("a failed run paints its error lines", async () => {
-        const frame = await frameOf(run({ status: "failed", error: "step s2 blew up" }), () => okAsync<StepExecutionRow[], DbError>([]), 2);
+        const frame = await frameOf(run({ status: "failed", error: "step s2 blew up" }), detailOf([]), 2);
         expect(frame).toContain("status: failed");
         expect(frame).toContain("step s2 blew up");
     });
 
-    test("the run's figures paint beside its other properties, and are absent when none were handed in", async () => {
-        const steps = () => okAsync<StepExecutionRow[], DbError>([]);
-        const withUsage = await frameOf(run(), steps, 2, { calls: 47, inputTokens: 809_200, outputTokens: 40_400 });
-        const without = await frameOf(run(), steps, 2);
+    test("the run's figures paint beside its other properties, and are absent when the row has none", async () => {
+        const withUsage = await frameOf(run({ usage: { calls: 47, inputTokens: 809_200, outputTokens: 40_400 } }), detailOf([]), 2);
+        const without = await frameOf(run(), detailOf([]), 2);
 
         // The LONG form: a `label value` property line among the timings, in a full-width dialog being
         // read deliberately — not the rail's compact decoration on a 37-cell row.
@@ -125,16 +111,14 @@ describe("RunDetailDialog", () => {
     });
 
     test("each step carries its own compact figure, and a step the ledger has nothing for carries none", async () => {
-        const steps = [step("s1_load", "completed"), step("s2_assoc", "completed"), step("s3_report", "completed")];
-        const frame = await frameOf(run(), () => okAsync<StepExecutionRow[], DbError>(steps), 2, undefined, {
-            byStep: new Map([
-                ["s1_load", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }],
-                // Calls recorded whose provider reported no quantity — no figure, never a zeroed one.
-                ["s2_assoc", { calls: 3 }],
-                // `s3_report` is absent from the map entirely: the step made no calls at all.
-            ]),
-            unattributed: null,
-        });
+        const steps = [
+            step("s1_load", "completed", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }),
+            // Calls recorded whose provider reported no quantity — no figure, never a zeroed one.
+            step("s2_assoc", "completed", { calls: 3 }),
+            // `s3_report` has no usage at all: the step made no calls.
+            step("s3_report", "completed"),
+        ];
+        const frame = await frameOf(run(), detailOf(steps), 2);
 
         // The COMPACT form on a step row — the row's subject is the step, and the run's own `usage`
         // property line above it is the surface that spends words.
@@ -147,18 +131,12 @@ describe("RunDetailDialog", () => {
     });
 
     test("a run's step-less spend is shown, not silently dropped between the headline and the steps", async () => {
-        const steps = [step("s1_load", "completed")];
+        const steps = [step("s1_load", "completed", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 })];
         const frame = await frameOf(
-            run(),
-            () => okAsync<StepExecutionRow[], DbError>(steps),
+            run({ usage: { calls: 12, inputTokens: 300_000, outputTokens: 20_000 } }),
+            // A run-level call with no step row to hang on, as the detail route sends it.
+            detailOf(steps, { calls: 4, inputTokens: 178_600, outputTokens: 13_800 }),
             2,
-            { calls: 12, inputTokens: 300_000, outputTokens: 20_000 },
-            {
-                byStep: new Map([["s1_load", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }]]),
-                // What `listRunUsageByStep` returns for `step_id IS NULL` — a run-level call with no
-                // step row to hang on. It is the whole reason the prop is not a bare Map.
-                unattributed: { calls: 4, inputTokens: 178_600, outputTokens: 13_800 },
-            },
         );
 
         expect(frame).toContain("outside any step 178.6k in");
@@ -168,8 +146,9 @@ describe("RunDetailDialog", () => {
         expect(frame).toContain(`${GLYPHS.arrowUp}121.4k`);
     });
 
-    test("a failed step fetch degrades to the muted line, never a crash", async () => {
-        const frame = await frameOf(run(), () => errAsync<StepExecutionRow[], DbError>({ type: "query_failed", op: "test", cause: new Error("boom") }), 2);
+    test("a failed detail fetch degrades to the muted line, never a crash", async () => {
+        const failed: ClientError = { type: "http", status: 500, body: { error: "internal_error", message: "boom" } };
+        const frame = await frameOf(run(), () => errAsync<RunDetail, ClientError>(failed), 2);
         expect(frame).toContain("steps unavailable");
     });
 });

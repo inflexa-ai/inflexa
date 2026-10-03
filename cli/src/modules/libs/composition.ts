@@ -314,15 +314,24 @@ export function describeFarmCompositionError(error: FarmCompositionError): strin
 }
 
 /**
- * The composition failure that a reader has not reported yet.
+ * The composition failures that a reader has not reported yet, keyed by the analysis.
  *
  * The farm provider makes a farm INSIDE the harness, thus it runs after the sandbox
  * gate decided and the user never meets the error type. This holder is the channel
  * back: {@link makeEmptyFarm} records a failure here, and the gate names it at the
  * next sandbox action. The direction is the only one the layering permits, because a
- * module must never import the presentation layer.
+ * module must never import the presentation layer. One process composes the farms of
+ * each analysis, thus a key keeps the failure of one analysis from the gate of another.
  */
-let pendingFailure: FarmCompositionFailure | null = null;
+const pendingFailures = new Map<string, FarmCompositionFailure>();
+
+/** Record the outcome of one composition: a failure replaces the record of its analysis, and a success clears it. */
+function recordCompositionOutcome(analysisId: string, made: Result<unknown, FarmCompositionError>): void {
+    made.match(
+        () => pendingFailures.delete(analysisId),
+        (error) => pendingFailures.set(analysisId, { analysisId, reason: describeFarmCompositionError(error) }),
+    );
+}
 
 /** Why the last composition of one farm did not complete, as the sandbox gate reports it. */
 export type FarmCompositionFailure = {
@@ -333,16 +342,16 @@ export type FarmCompositionFailure = {
 };
 
 /**
- * Read the composition failure that nothing reported yet, and clear it.
+ * Read the composition failure of the analysis that nothing reported yet, and clear it.
  *
  * The read CONSUMES, deliberately. A gate that held the record would refuse every
  * later action on a verdict that a store download or a package acquisition can have
  * fixed, and no later composition could clear it, because the gate itself is what
  * stops that composition from running.
  */
-export function takeFarmCompositionFailure(): FarmCompositionFailure | null {
-    const failure = pendingFailure;
-    pendingFailure = null;
+export function takeFarmCompositionFailure(analysisId: string): FarmCompositionFailure | null {
+    const failure = pendingFailures.get(analysisId) ?? null;
+    pendingFailures.delete(analysisId);
     return failure;
 }
 
@@ -1338,10 +1347,7 @@ export async function makeEmptyFarm(params: {
     // The farm provider calls this inside the harness, thus the user never meets the
     // error type. The record is the channel back to the sandbox gate, which refuses
     // BEFORE an action starts and never sees a harness error.
-    pendingFailure = made.match(
-        () => null,
-        (error) => ({ analysisId: params.analysisId, reason: describeFarmCompositionError(error) }),
-    );
+    recordCompositionOutcome(params.analysisId, made);
     return made;
 }
 
@@ -1411,10 +1417,7 @@ export async function composeFullFarm(
     });
     // The same channel that `makeEmptyFarm` writes: the resolver calls this heal
     // inside the harness, and the sandbox gate is the surface that names a failure.
-    pendingFailure = made.match(
-        () => null,
-        (error) => ({ analysisId: params.analysisId, reason: describeFarmCompositionError(error) }),
-    );
+    recordCompositionOutcome(params.analysisId, made);
     return made;
 }
 

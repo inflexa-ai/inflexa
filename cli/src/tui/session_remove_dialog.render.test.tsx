@@ -1,19 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { okAsync } from "neverthrow";
-import type { DbError, Pool, Thread } from "@inflexa-ai/harness";
 
 import { useKeymapRoot, __resetKeybindCache } from "./keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "./components/dialog/dialog_host.tsx";
 import { WorkspaceContext, type Workspace } from "./contexts/workspace.ts";
-import { deleteSessionFlow, type SessionSeams } from "./commands.tsx";
+import { deleteSessionFlow, type SessionOpts } from "./commands.tsx";
 import { __setBootStateForTest, __resetBootForTest } from "./hooks/boot.ts";
-import type { HarnessRuntime } from "../modules/harness/runtime.ts";
+import { conversationSummary, threadListOf } from "../test_support/threads.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { Notice } from "./theme.ts";
 
 // The removal confirmation is the one surface in the session flows whose CORRECTNESS IS ITS WORDING.
-// `archiveThread` writes a tombstone: the row and every message survive, and the thread only stops
+// `DELETE {T}` writes a tombstone: the row and every message survive, and the thread only stops
 // listing. The dialog is nonetheless the app's strongest irreversibility signal — danger chrome plus
 // typing the name back — so what it says has to match what the store does, or the ritual teaches users
 // to discount it everywhere it IS telling the truth. Notice-text assertions cannot cover that: the
@@ -30,38 +29,22 @@ afterEach(() => {
 });
 
 const ANALYSIS = { id: "a1", name: "Alpha", projectId: null } as unknown as Analysis;
-const fakePool = {} as unknown as Pool;
-const fakeRuntime = { pool: fakePool } as unknown as HarnessRuntime;
 
-function threadRow(): Thread {
-    return {
-        threadId: "thread-1",
-        analysisId: ANALYSIS.id,
-        title: "Cohort survival questions",
-        threadType: "conversation",
-        parentThreadId: null,
-        parentSeq: null,
-        createdAt: new Date("2026-07-08T00:00:00.000Z"),
-        updatedAt: new Date("2026-07-08T01:00:00.000Z"),
-        // The flow only ever confirms against a LIVE conversation, so the row it reads carries no
-        // tombstone.
-        deletedAt: null,
-    };
-}
+/** The flow only ever confirms against a LIVE conversation, so the row it reads carries no tombstone. */
+const THREAD = conversationSummary({ id: "thread-1", resourceId: ANALYSIS.id });
 
-function seams(notices: Notice[]): SessionSeams {
+/** Session options whose server answers stand still: the read gives {@link THREAD}, and each write succeeds. */
+function sessionOpts(notices: Notice[]): SessionOpts {
     return {
-        runtime: () => fakeRuntime,
-        listThreads: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
-        listReportChildren: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
-        getThread: () => okAsync(threadRow()),
+        ready: () => true,
+        listThreads: () => okAsync(threadListOf([])),
+        listReportChildren: () => okAsync(threadListOf([])),
+        getThread: () => okAsync(THREAD),
         updateTitle: () => okAsync(null),
-        listThreadsWithArchived: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
-        archiveThread: () => okAsync<void, DbError>(undefined),
-        unarchiveThread: () => okAsync<void, DbError>(undefined),
-        purgeThread: () => okAsync<readonly string[], DbError>([]),
-        workspaceRootFor: () => ({ kind: "unlocatable" }),
-        removeReportSessionDir: async () => true,
+        listThreadsWithArchived: () => okAsync(threadListOf([])),
+        archiveThread: () => okAsync(undefined),
+        unarchiveThread: () => okAsync(undefined),
+        purgeThread: () => okAsync({ purged: [], pages: { kind: "kept" } }),
         chatBusy: () => false,
         resolveThreadId: async () => "thread-2",
         workingDirFor: () => "/work",
@@ -104,7 +87,7 @@ async function openRemoveDialog() {
     );
 
     __setBootStateForTest({ phase: "ready", model: "claude-test", connection: { provider: "anthropic", mode: "cliproxy" } });
-    await deleteSessionFlow(ws, seams(notices));
+    await deleteSessionFlow(ws, sessionOpts(notices));
     await Promise.resolve();
     await setup.renderOnce();
     return setup;

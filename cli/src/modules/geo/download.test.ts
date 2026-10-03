@@ -3,12 +3,12 @@ import { chmodSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { closeDb } from "../../db/primary.ts";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { asStr256 } from "../../lib/types.ts";
-import { runCli } from "../../test_support/cli.ts";
+import { runCliAsync } from "../../test_support/cli.ts";
 import { freshDb } from "../../test_support/db.ts";
+import { startTestServer, type TestServer } from "../../test_support/server.ts";
 import { writeMarker } from "../anchor/marker.ts";
 import { describeGeoDownloadError } from "./download.ts";
 import { parseByteSize } from "./geo.ts";
@@ -38,11 +38,15 @@ function analysisOn(id: string, name: string, anchorId: string): void {
     insertAnalysis({ id, createdAt: 1, updatedAt: 1, name: asStr256(name), slug: name, anchorId, projectId: null })._unsafeUnwrap();
 }
 
+let server: TestServer;
+
 beforeEach(() => {
     freshDb();
+    server = startTestServer();
 });
 
-afterEach(() => {
+afterEach(async () => {
+    await server.stop();
     // Several tests leave a folder read-only to trip the writability guard; restore the write bit first
     // or the temp directory outlives the run.
     for (const dir of created) {
@@ -57,58 +61,51 @@ afterEach(() => {
 // `downloadGeoSeries` is reached. Reordering any of them past the transfer would silently turn these into
 // tests that call NCBI, which is the reason the pre-check's position is commented at its call site.
 //
-// EVERY test closes the database before spawning, whether or not it seeded anything. The child opens the
-// same sandboxed file this process has open, and a connection still held here leaves it unable to start:
-// it exits 1 having printed NOTHING, so the exit-code assertion passes and only the message assertion
-// fails. That failure needs the write volume of a full-suite run to appear at all — a single test file
-// leaves too little behind — so an omission here is invisible in exactly the run used to check it.
+// The child is a client of the test server of this process, which resolves the folder against the sandboxed
+// database that the test seeded. The child opens no database, thus the test keeps its connection open.
 describe("inflexa geo download — argument gates (e2e)", () => {
-    test("a malformed accession is refused before the target folder is even resolved", () => {
+    test("a malformed accession is refused before the target folder is even resolved", async () => {
         // A bare folder: had the accession gate run AFTER resolution, this would fail with "No analysis here".
         const dir = tmp();
-        closeDb();
-        const result = runCli(["geo", "download", "GSM12345"], { cwd: dir });
+        const result = await runCliAsync(["geo", "download", "GSM12345"], { cwd: dir, env: server.childEnv });
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain('Not a GEO Series accession: "GSM12345"');
         expect(result.stderr).not.toContain("No analysis here");
     });
 
-    test("an unparseable --max-size is refused before resolution, and a valid one is not", () => {
+    test("an unparseable --max-size is refused before resolution, and a valid one is not", async () => {
         const dir = tmp();
-        closeDb();
-        const bad = runCli(["geo", "download", "GSE12345", "--max-size", "banana"], { cwd: dir });
+        const bad = await runCliAsync(["geo", "download", "GSE12345", "--max-size", "banana"], { cwd: dir, env: server.childEnv });
         expect(bad.exitCode).toBe(1);
         expect(bad.stderr).toContain('Not a size: "banana"');
         expect(bad.stderr).not.toContain("No analysis here");
 
         // The same run with a parseable size gets past the gate and fails at resolution instead — which is
         // what proves the first assertion was the size gate rather than resolution failing for both.
-        const good = runCli(["geo", "download", "GSE12345", "--max-size", "500MB"], { cwd: dir });
+        const good = await runCliAsync(["geo", "download", "GSE12345", "--max-size", "500MB"], { cwd: dir, env: server.childEnv });
         expect(good.exitCode).toBe(1);
         expect(good.stderr).toContain("No analysis here");
     });
 });
 
 describe("inflexa geo download — target folder resolution (e2e)", () => {
-    test("a folder with no marker says how to start, not how to disambiguate", () => {
+    test("a folder with no marker says how to start, not how to disambiguate", async () => {
         const dir = tmp();
-        closeDb();
-        const result = runCli(["geo", "download", "GSE12345"], { cwd: dir });
+        const result = await runCliAsync(["geo", "download", "GSE12345"], { cwd: dir, env: server.childEnv });
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain("No analysis here — run `inflexa new` to create one, or pass --analysis <id|name>.");
     });
 
-    test("an anchor holding several analyses still resolves to the one shared folder", () => {
+    test("an anchor holding several analyses still resolves to the one shared folder", async () => {
         const dir = tmp();
         anchorAt("A1", dir);
         analysisOn("an1", "alpha", "A1");
         analysisOn("an2", "beta", "A1");
-        closeDb();
         // The read-only bit turns the pre-transfer writability guard into a resolution probe: its message
         // names the folder that was resolved, and the run stops before any request.
         chmodSync(dir, 0o555);
 
-        const result = runCli(["geo", "download", "GSE12345"], { cwd: dir });
+        const result = await runCliAsync(["geo", "download", "GSE12345"], { cwd: dir, env: server.childEnv });
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain(`${dir} is not writable, so GSE12345 cannot be downloaded there.`);
         // The design claim this pins: unlike the commands that need exactly one analysis, this one wants a
@@ -116,27 +113,25 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
         expect(result.stderr).not.toContain("--analysis");
     });
 
-    test("a marker whose anchor row the database no longer has still resolves to the marker's folder", () => {
+    test("a marker whose anchor row the database no longer has still resolves to the marker's folder", async () => {
         const dir = tmp();
         writeMarker(dir, "A9")._unsafeUnwrap();
-        closeDb();
         chmodSync(dir, 0o555);
 
         // Routine desync, not an error: the row is gone, the marker is not, and the folder is what was asked for.
-        const result = runCli(["geo", "download", "GSE12345"], { cwd: dir });
+        const result = await runCliAsync(["geo", "download", "GSE12345"], { cwd: dir, env: server.childEnv });
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain(`${dir} is not writable`);
     });
 
-    test("--analysis targets that analysis's home folder, not the working directory", () => {
+    test("--analysis targets that analysis's home folder, not the working directory", async () => {
         const home = tmp();
         const elsewhere = tmp();
         anchorAt("A2", home);
         analysisOn("an3", "gamma", "A2");
-        closeDb();
         chmodSync(home, 0o555);
 
-        const result = runCli(["geo", "download", "gse12345", "--analysis", "gamma"], { cwd: elsewhere });
+        const result = await runCliAsync(["geo", "download", "gse12345", "--analysis", "gamma"], { cwd: elsewhere, env: server.childEnv });
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain(`${home} is not writable`);
         expect(result.stderr).not.toContain(elsewhere);
@@ -144,13 +139,12 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
         expect(result.stderr).toContain("GSE12345");
     });
 
-    test("an unmatched --analysis names the ref and lists the analyses that do exist", () => {
+    test("an unmatched --analysis names the ref and lists the analyses that do exist", async () => {
         anchorAt("A4", tmp());
         analysisOn("an4", "delta", "A4");
         analysisOn("an5", "epsilon", "A4");
-        closeDb();
 
-        const result = runCli(["geo", "download", "GSE12345", "--analysis", "nope"]);
+        const result = await runCliAsync(["geo", "download", "GSE12345", "--analysis", "nope"], { env: server.childEnv });
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain('No analysis matches "nope"');
         expect(result.stderr).toContain("Known analyses:");
@@ -158,31 +152,29 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
         expect(result.stderr).toContain("epsilon");
     });
 
-    test("a copied folder is refused with the repair/relocate way forward", () => {
+    test("a copied folder is refused with the repair/relocate way forward", async () => {
         const original = tmp();
         const copy = tmp();
         anchorAt("A3", original);
         // The same marker in a second place while the original still exists — a copied folder, not a moved one.
         writeMarker(copy, "A3")._unsafeUnwrap();
-        closeDb();
 
-        const result = runCli(["geo", "download", "GSE12345"], { cwd: copy });
+        const result = await runCliAsync(["geo", "download", "GSE12345"], { cwd: copy, env: server.childEnv });
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain("This folder looks copied — run `inflexa repair` or `inflexa relocate` before downloading into it.");
     });
 
-    test("the download never claims the analysis instance lock", () => {
+    test("the download never claims the analysis instance lock", async () => {
         const dir = tmp();
         anchorAt("A5", dir);
         analysisOn("an6", "held", "A5");
-        closeDb();
         chmodSync(dir, 0o555);
 
         // Held by THIS process, whose pid is alive, so a child that tried to claim it would see a live
         // foreign holder and refuse. This is the regression guard for "safe to run beside a live TUI".
         acquireInstanceLock("an6");
         try {
-            const result = runCli(["geo", "download", "GSE12345", "--analysis", "held"], { cwd: dir });
+            const result = await runCliAsync(["geo", "download", "GSE12345", "--analysis", "held"], { cwd: dir, env: server.childEnv });
             expect(result.stderr).toContain(`${dir} is not writable`);
             expect(result.stderr).not.toContain("already open in another instance");
         } finally {

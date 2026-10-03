@@ -21,13 +21,13 @@ import { enumerateInputPaths, isInputSetMaterialized, stageInputs, type StagedIn
 import { noteDataProfileState } from "./agent_switch.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 
-// The headless data-profile drives. Three entry points, none writing terminal/TUI output — the
-// reactive hook (`tui/hooks/profile_parity.ts`) maps their discriminated outcome to a notice:
-// `ensureProfileAtParity` is the managed check the TUI fires when a chat opens on `ready` (and after an
-// analysis swap); `reprofileForInputChange` is what the input-mutation edge fires; `forceReprofile` is
-// the deliberate re-profile the palette/dialog action drives. All own the DECISION — enumerate →
-// status branch → materialize → seed → trigger — and share the materialize → seed core with `inflexa
-// profile` (`seedProfileLedger` below), so the ledger contract stays single-sourced.
+// The headless data-profile drives. Three entry points, none writing terminal/TUI output — the local
+// server runs each one in the profile queue of the analysis and sends the discriminated outcome to its
+// client: `ensureProfileAtParity` is the managed check of `GET {A}/chat-context`, which a client sends
+// when a chat opens; `reprofileForInputChange` is what the input-change watch of the server fires;
+// `forceReprofile` is the deliberate re-profile of `POST {A}/data-profile/rerun`. All own the DECISION —
+// enumerate → status branch → materialize → seed → trigger — and share the materialize → seed core
+// (`seedProfileLedger` below), so the ledger contract stays single-sourced.
 //
 // Only a real input mutation re-profiles. A chat open never does: re-profiling is invoked by the party
 // that changed the input set, at the moment it changes, and this process is that party for a local
@@ -43,15 +43,10 @@ import type { HarnessRuntime } from "./runtime.ts";
 
 /**
  * Seed the harness ledger row and build the {@link DataProfileTriggerParams} for `staged` — the ONE
- * construction its two callers share: the parity auto-trigger below, and the dev `inflexa profile`
- * command. The field mapping IS the ledger contract, so it lives in exactly one place, and drift
- * between the two callers would corrupt the ledger.
+ * construction each drive below shares. The field mapping IS the ledger contract, so it lives in
+ * exactly one place, and drift between two copies would corrupt the ledger.
  *
- * That one place is here rather than beside the command, because the dependency runs one way: a
- * product file must never import the dev directory, so of the pair it is the product caller that
- * must hold the shared half.
- *
- * `context` stays null — neither caller has goal text at profile time, and a fabricated one would
+ * `context` stays null — no drive has goal text at profile time, and a fabricated one would
  * pollute the agent prompt. `inputFileIds` is the staged manifest's file ids, the auth is the local
  * OSS value, and the manifest rides into the trigger params verbatim.
  */
@@ -117,9 +112,8 @@ export type ProfileParityOutcome =
 /**
  * The effectful seams, injectable so the condition-ladder tests run offline (no Postgres, no Docker,
  * no model). Production callers pass nothing and get the real harness reads + enumerate + staging +
- * the shared `seedProfileLedger`. The `stage`/`seed`/`trigger` seams are the same functions `inflexa
- * profile` drives, so a happy-path test with the real `seed` asserts the exact params the command
- * builds; `retryClaim`/`run` mirror that command's failed-row recovery, driven by {@link forceReprofile}.
+ * {@link seedProfileLedger}, so a happy-path test with the real `seed` asserts the exact params a drive
+ * builds; `retryClaim`/`run` are the failed-row recovery, driven by {@link forceReprofile}.
  */
 export type ProfileParitySeams = {
     /** Reset an orphaned `running` ledger row (best-effort self-heal). */
@@ -136,7 +130,7 @@ export type ProfileParitySeams = {
     readonly materialized: typeof isInputSetMaterialized;
     /** Content-hash + link the inputs into the workspace tree — the only step that writes the tree. */
     readonly stage: typeof stageInputs;
-    /** Seed the ledger row + build the trigger params (the construction shared with `inflexa profile`). */
+    /** Seed the ledger row + build the trigger params (refer to {@link seedProfileLedger}). */
     readonly seed: typeof seedProfileLedger;
     /** CAS-claim pending/completed rows and dispatch the workflow. */
     readonly trigger: typeof triggerDataProfile;
@@ -190,8 +184,8 @@ async function materializeInputs(analysis: Analysis, dataDir: string, seams: Pro
 }
 
 /**
- * Seed the ledger row from a materialized manifest and build the trigger params — the construction
- * shared with `inflexa profile`. Split from materialization because seeding is the first step that
+ * Seed the ledger row from a materialized manifest and build the trigger params. Split from
+ * materialization because seeding is the first step that
  * COMMITS to a (re-)trigger, and materialization no longer implies one: a `failed` row whose input set
  * is unchanged stops short of here. The trigger itself is not here either — parity and force reach the
  * ledger's `failed` state by different routes, so each caller owns that step.
@@ -205,23 +199,21 @@ async function seedFromManifest(
     const seedResult = await seams.seed(runtime.pool, analysis.id, staged);
     if (seedResult.isErr()) return err(`could not seed the analysis state (${seedResult.error.type})`);
 
-    // Feed the agent-switch gauge's data-profile START half. This is the ONE
-    // shared choke both TUI entry points (`ensureProfileAtParity`, `forceReprofile`) reach exactly when a
-    // (re-)trigger has been decided — the seed just landed and a trigger is imminent — so a single note
-    // here marks the sandbox agent busy synchronously, closing the fail-open window between dispatch and
-    // the sidebar poll catching up (the gauge's SETTLE half). The `inflexa profile` CLI path (profile.ts)
-    // is deliberately NOT instrumented: it runs in a separate, blocking process with no live palette to
-    // request an agent switch, so its gauge is moot. A trigger that then faults leaves the token busy until
-    // the SETTLE observer clears it on the ledger row's terminal state (fail-closed if that never comes:
-    // the pending selection waits; config is already the durable truth).
+    // Feed the agent-switch gauge's data-profile START half. This is the ONE shared choke each drive
+    // reaches exactly when a (re-)trigger has been decided — the seed just landed and a trigger is
+    // imminent — so a single note here marks the sandbox agent busy synchronously, closing the fail-open
+    // window between dispatch and the next `GET {A}/data-profile` read (the gauge's SETTLE half). A
+    // trigger that then faults leaves the token busy until that read clears it on the ledger row's
+    // terminal state (fail-closed if that never comes: the pending selection waits; config is already the
+    // durable truth).
     noteDataProfileState(analysis.id, true);
     return ok(seedResult.value);
 }
 
 /**
  * Resurrect a `failed` ledger row: claim its `failed → running` transition, then start the workflow for
- * the now-claimed row — the recovery `inflexa profile` performs (`runProfile` in profile.ts). The
- * trigger's CAS claims only pending/completed rows, so this is the only route back out of `failed`.
+ * the now-claimed row. The trigger's CAS claims only pending/completed rows, so this is the only route
+ * back out of `failed`.
  * Shared by both entry points, which arrive from opposite directions: the ladder when an input mutation
  * re-profiles a `failed` row (the failure is not evidence about the set now on disk), force whenever its
  * trigger reports the row was `failed`. Both have already materialized, hence `materialized: true`.

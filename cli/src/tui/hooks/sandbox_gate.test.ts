@@ -1,25 +1,32 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
 
+import type { SandboxReadiness } from "../../api/runs.ts";
+import type { StoreState, TransferReportView } from "../../api/store.ts";
 import type { Notice } from "../theme.ts";
-import type { TransferReport } from "../../modules/libs/transfers.ts";
-import { awaitSandboxReady, refreshTransferState, __resetSandboxGateForTest, type SandboxGateSeams } from "./sandbox_gate.tsx";
+import {
+    awaitSandboxReady,
+    pendingAddLines,
+    refreshTransferState,
+    storeFlightLines,
+    transferReports,
+    __resetSandboxGateForTest,
+    type SandboxGateSeams,
+} from "./sandbox_gate.tsx";
 
 // The gate holds a sandbox-making action while a transfer is live, and it
 // refuses a terminal state with the retry command. It starts NO TRANSFER and
 // it opens NO consent — the seams below carry no transfer start and no
-// dialog, which makes that structural rather than asserted. The one start the
-// poll owns is the pending-set flush child, whose consent each add's ask
-// already carried; its default stub starts nothing and records nothing.
+// dialog, which makes that structural rather than asserted.
 
-/** One report in the shape the rows give, with everything else quiet. */
-function report(kind: TransferReport["kind"], state: TransferReport["state"], live: boolean, message: string | null = null): TransferReport {
+/** One report in the wire shape of `GET /api/v1/store`, with everything else quiet. */
+function report(kind: TransferReportView["kind"], state: TransferReportView["state"], live: boolean, message: string | null = null): TransferReportView {
     const row =
         state === null
             ? null
             : {
-                  id: kind,
-                  createdAt: 0,
-                  updatedAt: 0,
+                  createdAt: "1970-01-01T00:00:00.000Z",
+                  updatedAt: "1970-01-01T00:00:00.000Z",
                   state,
                   bytesTransferred: 0,
                   totalBytes: null,
@@ -27,29 +34,36 @@ function report(kind: TransferReport["kind"], state: TransferReport["state"], li
                   totalLayers: null,
                   digest: null,
                   message,
-                  holderPid: live ? 4242 : null,
                   phase: null,
               };
     return { kind, row, state, live, holderPid: live ? 4242 : null };
 }
 
-/** A seam set whose fields a test overrides. The defaults describe a machine with everything present. */
+/** A store read that answers with `transfers` and nothing else. */
+function storeWith(transfers: readonly TransferReportView[]): ReturnType<SandboxGateSeams["readStore"]> {
+    const store: StoreState = { transfers: [...transfers], flights: [], pendingAdds: [] };
+    return okAsync(store);
+}
+
+/** A readiness read of `GET {A}/sandbox-readiness`. The defaults describe a machine with everything present. */
+function machine(over: Partial<SandboxReadiness> = {}): ReturnType<SandboxGateSeams["readiness"]> {
+    return okAsync({
+        image: { state: "present", image: "ghcr.io/inflexa-ai/sandbox-base:latest" },
+        store: "installed",
+        farm: { present: true, catalogPresent: true, failure: null },
+        inputCount: 1,
+        ...over,
+    });
+}
+
+/** An option set whose fields a test overrides. The defaults describe a machine with everything present. */
 function seams(over: Partial<SandboxGateSeams> & { notices?: Notice[] }): SandboxGateSeams {
     const notices = over.notices ?? [];
     return {
-        storeRoot: () => "/tmp/store",
-        readTransfers: () => [],
-        readFlights: () => [],
-        readPending: () => [],
-        inspect: async () => "installed",
-        takeFarmFailure: () => null,
-        sandboxImage: () => "ghcr.io/inflexa-ai/sandbox-base:latest",
-        imageReadiness: async () => ({ kind: "present" }),
+        readStore: () => storeWith([]),
+        readiness: () => machine(),
         notify: (notice) => notices.push(notice),
         pollMs: 5,
-        pendingFlushAfterMs: 10_000,
-        now: () => Date.now(),
-        startFlush: () => null,
         ...over,
     };
 }
@@ -60,7 +74,7 @@ afterEach(() => {
 
 describe("awaitSandboxReady", () => {
     test("passes when nothing moves and the machine holds the image and the store", async () => {
-        expect(await awaitSandboxReady(seams({}))).toBe("ready");
+        expect(await awaitSandboxReady("a1", seams({}))).toBe("ready");
     });
 
     test("waits while a transfer is live, and decides only after it settles", async () => {
@@ -68,13 +82,13 @@ describe("awaitSandboxReady", () => {
         const notices: Notice[] = [];
         const gate = seams({
             notices,
-            readTransfers: () => {
+            readStore: () => {
                 reads += 1;
-                return reads < 3 ? [report("catalog", "running", true)] : [report("catalog", "installed", false)];
+                return storeWith(reads < 3 ? [report("catalog", "running", true)] : [report("catalog", "installed", false)]);
             },
         });
 
-        expect(await awaitSandboxReady(gate)).toBe("ready");
+        expect(await awaitSandboxReady("a1", gate)).toBe("ready");
         expect(reads).toBeGreaterThanOrEqual(3);
         // The hold names what it waits for, one time.
         expect(notices.filter((notice) => notice.text.includes("Waiting for the catalog transfer"))).toHaveLength(1);
@@ -84,13 +98,13 @@ describe("awaitSandboxReady", () => {
         const notices: Notice[] = [];
         const gate = seams({
             notices,
-            inspect: async () => "missing",
-            readTransfers: () => [report("catalog", "running", true)],
+            readiness: () => machine({ store: "missing" }),
+            readStore: () => storeWith([report("catalog", "running", true)]),
         });
 
         // The store cannot serve a sandbox before the catalog lands, and the
         // landing of a multi-gigabyte download is not a wait a launch can hold.
-        expect(await awaitSandboxReady(gate)).toBe("blocked");
+        expect(await awaitSandboxReady("a1", gate)).toBe("blocked");
         expect(notices.some((notice) => notice.kind === "error" && notice.text.includes("in flight") && notice.text.includes("Launch again"))).toBe(true);
     });
 
@@ -98,11 +112,11 @@ describe("awaitSandboxReady", () => {
         const notices: Notice[] = [];
         const gate = seams({
             notices,
-            imageReadiness: async () => ({ kind: "absent" }),
-            readTransfers: () => [report("runtime_image", "failed", false, "The disk ran out.")],
+            readiness: () => machine({ image: { state: "absent", image: "ghcr.io/inflexa-ai/sandbox-base:latest" } }),
+            readStore: () => storeWith([report("runtime_image", "failed", false, "The disk ran out.")]),
         });
 
-        expect(await awaitSandboxReady(gate)).toBe("blocked");
+        expect(await awaitSandboxReady("a1", gate)).toBe("blocked");
         const text = notices.map((notice) => notice.text).join("\n");
         expect(text).toContain("`inflexa sandbox pull`");
         expect(text).toContain("The disk ran out.");
@@ -112,11 +126,11 @@ describe("awaitSandboxReady", () => {
         const notices: Notice[] = [];
         const gate = seams({
             notices,
-            inspect: async () => "missing",
-            readTransfers: () => [report("catalog", "declined", false)],
+            readiness: () => machine({ store: "missing" }),
+            readStore: () => storeWith([report("catalog", "declined", false)]),
         });
 
-        expect(await awaitSandboxReady(gate)).toBe("blocked");
+        expect(await awaitSandboxReady("a1", gate)).toBe("blocked");
         const text = notices.map((notice) => notice.text).join("\n");
         expect(text).toContain("declined at setup");
         expect(text).toContain("`inflexa store download`");
@@ -124,119 +138,70 @@ describe("awaitSandboxReady", () => {
 
     test("a locally built store passes, because the filesystem decides and not the row", async () => {
         const gate = seams({
-            inspect: async () => "local",
+            readiness: () => machine({ store: "local" }),
             // The catalog row can say whatever a dead run left; the content wins.
-            readTransfers: () => [report("catalog", "canceled", false)],
+            readStore: () => storeWith([report("catalog", "canceled", false)]),
         });
 
-        expect(await awaitSandboxReady(gate)).toBe("ready");
+        expect(await awaitSandboxReady("a1", gate)).toBe("ready");
     });
 
     test("reports a recorded farm failure once, and the next action composes again", async () => {
         const notices: Notice[] = [];
-        let failure: { analysisId: string; reason: string } | null = { analysisId: "a1", reason: "the catalog farm is absent" };
+        // The server consumes the record at the read, so the second read reports no failure.
+        let failure: string | null = "the catalog farm is absent";
         const gate = seams({
             notices,
-            takeFarmFailure: () => {
+            readiness: (analysisId) => {
+                expect(analysisId).toBe("a1");
                 const taken = failure;
                 failure = null;
-                return taken;
+                return machine({ farm: { present: true, catalogPresent: true, failure: taken } });
             },
         });
 
-        expect(await awaitSandboxReady(gate)).toBe("blocked");
+        expect(await awaitSandboxReady("a1", gate)).toBe("blocked");
         expect(notices.map((notice) => notice.text).join("\n")).toContain("the catalog farm is absent");
         // The read CONSUMED the record, thus the next action is not refused on it.
-        expect(await awaitSandboxReady(gate)).toBe("ready");
+        expect(await awaitSandboxReady("a1", gate)).toBe("ready");
     });
 });
 
-describe("the pending flush gate", () => {
-    const PENDING = [{ ecosystem: "python" as const, spelling: "polars", specifier: "" }];
+describe("the store poll", () => {
+    test("publishes the transfers, the flights, and the pending adds of one read", async () => {
+        const store: StoreState = {
+            transfers: [report("catalog", "running", true)],
+            flights: [
+                {
+                    id: "python::polars::",
+                    spec: "polars (python)",
+                    state: "running",
+                    subscribers: 1,
+                    progress: "resolving",
+                    message: null,
+                    failure: null,
+                    updatedAt: "1970-01-01T00:00:00.000Z",
+                },
+            ],
+            pendingAdds: [{ flightKey: "any::rpy2::", spec: "rpy2", analysisId: null, createdAt: "1970-01-01T00:00:00.000Z" }],
+        };
 
-    // Each test drives the clock of the gate by hand. A real sleep against the bound leaves a margin
-    // of a few milliseconds, and a busy CI machine oversleeps it.
+        const read = await refreshTransferState({ readStore: () => okAsync(store) });
 
-    test("the poll starts the flush child once the pending set outwaits the gate", () => {
-        let clock = 1_000;
-        const starts: number[] = [];
-        const gate = seams({
-            readPending: () => PENDING,
-            pendingFlushAfterMs: 20,
-            now: () => clock,
-            startFlush: () => {
-                starts.push(clock);
-                return 4242;
-            },
-        });
-
-        refreshTransferState(gate);
-        expect(starts).toHaveLength(0);
-        clock += 19;
-        refreshTransferState(gate);
-        expect(starts).toHaveLength(0);
-        clock += 1;
-        refreshTransferState(gate);
-
-        expect(starts).toEqual([1_020]);
+        expect(read._unsafeUnwrap()).toEqual(store.transfers);
+        expect(transferReports()).toEqual(store.transfers);
+        expect(storeFlightLines().map((flight) => flight.spec)).toEqual(["polars (python)"]);
+        expect(pendingAddLines()).toEqual([{ spec: "rpy2" }]);
     });
 
-    test("a set that empties before the gate fires starts nothing, and the anchor clears", () => {
-        let clock = 1_000;
-        let pending = PENDING;
-        let started = 0;
+    test("a store that does not answer blocks the gate with the instruction of the client", async () => {
+        const notices: Notice[] = [];
         const gate = seams({
-            readPending: () => pending,
-            pendingFlushAfterMs: 20,
-            now: () => clock,
-            startFlush: () => {
-                started += 1;
-                return 4242;
-            },
+            notices,
+            readStore: () => errAsync({ type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: null }),
         });
 
-        refreshTransferState(gate);
-        pending = [];
-        refreshTransferState(gate);
-        clock += 30;
-        refreshTransferState(gate);
-        expect(started).toBe(0);
-
-        // The set returns past the old bound. The empty poll cleared the
-        // anchor, thus this poll arms a new wait, and a kept anchor would
-        // start the child here.
-        pending = PENDING;
-        refreshTransferState(gate);
-        expect(started).toBe(0);
-        clock += 20;
-        refreshTransferState(gate);
-        expect(started).toBe(1);
-    });
-
-    test("the anchor does not slide while the set grows, thus a burst still flushes at the bound", () => {
-        let clock = 1_000;
-        let pending = PENDING;
-        let started = 0;
-        const gate = seams({
-            readPending: () => pending,
-            pendingFlushAfterMs: 40,
-            now: () => clock,
-            startFlush: () => {
-                started += 1;
-                return 4242;
-            },
-        });
-
-        refreshTransferState(gate);
-        clock += 25;
-        // The set GROWS below the bound: a sliding anchor would restart the
-        // wait here, and the fire at the bound below would prove it did not.
-        pending = [...PENDING, { ecosystem: "python" as const, spelling: "rpy2", specifier: "" }];
-        refreshTransferState(gate);
-        expect(started).toBe(0);
-        clock += 15;
-        refreshTransferState(gate);
-
-        expect(started).toBe(1);
+        expect(await awaitSandboxReady("a1", gate)).toBe("blocked");
+        expect(notices.map((notice) => notice.text).join("\n")).toContain("inflexa serve");
     });
 });

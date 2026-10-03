@@ -17,17 +17,8 @@ import type {
     ProvUsedInputRef,
 } from "../../types/prov.ts";
 import { cliProvDigest, provModel, provSubject } from "./document.ts";
-import {
-    computeLineage,
-    formatDot,
-    formatJson,
-    formatMermaid,
-    formatTree,
-    resolveLineageRef,
-    type LineageFileInfo,
-    type LineageJson,
-    type LineageRoots,
-} from "./lineage.ts";
+import { computeLineage, formatDot, formatJson, formatMermaid, formatTree, resolveLineageRef, type LineageFileInfo, type LineageRoots } from "./lineage.ts";
+import type { LineageJson } from "../../api/provenance.ts";
 
 // The traversal is tested against documents built with the REAL builders — the exact record shapes
 // production writes (deterministic QNames, identified relations, shared (path, hash) entity space)

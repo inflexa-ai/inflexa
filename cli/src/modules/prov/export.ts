@@ -1,69 +1,106 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
-import { serializeProvenance } from "./document.ts";
-import { requireAnalysisForProv } from "./prov.ts";
-import { buildAttestation } from "./verify.ts";
-import { ensureOutputDir } from "../analysis/output.ts";
-import { dieOn, fail } from "../../lib/cli.ts";
+import type { ProvAttestation, ProvSigningError } from "@inflexa-ai/prov-kernel";
+import { err, errAsync, ok, okAsync, ResultAsync, type Result } from "neverthrow";
 
-// The export action lives in the `prov` module. Its one cross-module import is `analysis/output.ts`
-// for the default destination (the analysis's own `.inflexa` output folder); `output.ts` imports
+import type { DbError } from "../../db/errors.ts";
+import { mkdirResult, writeFileResult } from "../../lib/fs.ts";
+import type { Analysis } from "../../types/analysis.ts";
+import { resolveOutputDir, type WorkspaceError } from "../analysis/output.ts";
+import { serializeProvenance } from "./document.ts";
+import { buildAttestation } from "./verify.ts";
+
+// The export lives in the `prov` module. Its one cross-module import is `analysis/output.ts` for the
+// default destination (the analysis's own `.inflexa` output folder); `output.ts` imports
 // `anchor`/`env`, NOT `prov`, so this opens no dependency cycle back into `prov`.
 
+/** Why an export wrote nothing, or wrote the document without its attestation. */
+export type ExportProvenanceError =
+    | { type: "output_dir"; error: WorkspaceError }
+    | { type: "serialize"; error: DbError }
+    /** No signing key: provenance is never exported unsigned, thus nothing was written. */
+    | { type: "signing"; error: ProvSigningError }
+    | { type: "write"; path: string; cause: unknown }
+    /** The document landed at `path`, but its attestation did not. */
+    | { type: "attestation_write"; path: string; cause: unknown };
+
+/** Where an export landed. `attestationPath` is absent for PROV-N. */
+export type ExportedProvenance = { path: string; attestationPath?: string };
+
+/** The edges the export reads through. A test replaces them, to assert the ORDER on disk without a signing key or an anchored workspace. */
+export type ExportProvenanceOpts = {
+    /** The default destination folder: the live workspace root of the analysis. */
+    readonly resolveOutputDir: typeof resolveOutputDir;
+    readonly serializeProvenance: typeof serializeProvenance;
+    readonly buildAttestation: typeof buildAttestation;
+};
+
+/** The production {@link ExportProvenanceOpts}. */
+export const DEFAULT_EXPORT_PROVENANCE_OPTS: ExportProvenanceOpts = { resolveOutputDir, serializeProvenance, buildAttestation };
+
 /**
- * `inflexa prov export <analysis> [--format json|provn] [--output <file>]` — serialize an analysis's
- * provenance document. By DEFAULT writes `provenance.<format>` into the analysis's output folder
- * (under `.inflexa/`, created if needed); `--output <file>` overrides the destination. When a
- * signing key is available, a `.sig.json` attestation is written alongside with a content digest
- * and Ed25519 signature for third-party verification.
+ * Serialize the provenance of `analysis` to `output`, or to `provenance.<format>` in its output folder,
+ * with the signed `.sig.json` attestation beside a JSON export. The caller flushes the recorder first.
+ *
+ * The attestation is built BEFORE either file is written, and a signing failure writes neither: an
+ * unsigned document on disk would contradict the rule that provenance is never exported unsigned, and
+ * the delete of an analysis exports on the user's behalf without being asked.
+ *
+ * Only a JSON export gets an attestation. The attestation claims the PROV-JSON payload type, and PROV-N
+ * is a lossy rendering that the chain hash does not cover.
+ *
+ * The signature makes THIS document tamper-evident: a verifier can prove that the exported JSON was not
+ * altered after signing, and its artifact hashes are recomputed host-side from disk. It does NOT attest
+ * that the lineage the document records is a faithful account of what untrusted code did: the
+ * read/write/delete edges are self-reported by hooks inside the sandbox, at the uid of the workload.
  */
-export async function runExportProvenance(ref: string, opts: { format?: string; output?: string }): Promise<void> {
-    const format = parseFormat(opts.format);
-    const analysis = requireAnalysisForProv(ref);
-
-    const document = serializeProvenance(analysis, format).match((s) => s, dieOn("Failed to build provenance"));
-
-    const dest = opts.output ?? ensureOutputDir(analysis).match((dir) => join(dir, `provenance.${format}`), dieOn("Failed to resolve output directory"));
-    try {
-        writeFileSync(dest, document);
-    } catch (cause) {
-        fail(`Failed to write ${dest}`, cause);
-    }
-    console.log(`Wrote ${format} provenance for "${analysis.name}" to ${dest}`);
-
-    // The attestation is only meaningful for JSON exports — the payloadType claim must match the
-    // actual format, and PROV-N is a lossy re-serialization unverifiable against the chain hash.
-    if (format === "json") {
-        await writeAttestation(document, dest);
-    }
+export function exportAnalysisProvenance(
+    analysis: Analysis,
+    format: BuiltinProvFormat,
+    output: string | undefined,
+    opts: ExportProvenanceOpts = DEFAULT_EXPORT_PROVENANCE_OPTS,
+): ResultAsync<ExportedProvenance, ExportProvenanceError> {
+    // An `output` path names a file in a folder that the caller chose, thus the workspace is not resolved for it.
+    const destination: Result<string, ExportProvenanceError> =
+        output === undefined
+            ? opts
+                  .resolveOutputDir(analysis)
+                  .map((dir) => join(dir, `provenance.${format}`))
+                  .mapErr((error): ExportProvenanceError => ({ type: "output_dir", error }))
+            : ok(output);
+    return destination
+        .andThen((path) =>
+            opts
+                .serializeProvenance(analysis, format)
+                .map((document) => ({ path, document }))
+                .mapErr((error): ExportProvenanceError => ({ type: "serialize", error })),
+        )
+        .asyncAndThen(({ path, document }) =>
+            signIfJson(document, format, opts).andThen((attestation) => writeExport(path, document, attestation, output === undefined)),
+        );
 }
 
-/** Write the verification attestation (`<dest>.sig.json`) alongside the exported provenance file. */
-async function writeAttestation(provJson: string, provDest: string): Promise<void> {
-    // The signature makes THIS document tamper-evident: a verifier can prove the exported JSON was
-    // not altered after signing, and its artifact hashes are recomputed host-side from disk, so they
-    // bind the real bytes on disk. It does NOT attest that the operation lineage the document records
-    // is a faithful account of what untrusted code did — those read/write/delete edges are
-    // self-reported by hooks running inside the sandbox at the workload's own uid, so an adversarial
-    // workload can forge or omit them. Signing certifies the document, not the sandbox's self-report.
-    const result = await buildAttestation(provJson);
-    if (result.isErr()) {
-        fail(`Signing failed (${result.error.type}) — provenance is never exported unsigned.`);
-    }
-    const sigDest = `${provDest}.sig.json`;
-    try {
-        writeFileSync(sigDest, JSON.stringify(result.value, null, 2));
-        console.log(`Wrote verification attestation to ${sigDest}`);
-    } catch {
-        // Non-fatal: the provenance file was already written successfully.
-        console.warn(`Warning: could not write attestation to ${sigDest}`);
-    }
+function signIfJson(document: string, format: BuiltinProvFormat, opts: ExportProvenanceOpts): ResultAsync<ProvAttestation | null, ExportProvenanceError> {
+    if (format !== "json") return okAsync(null);
+    return ResultAsync.fromSafePromise(opts.buildAttestation(document)).andThen((attestation) =>
+        attestation.isOk() ? okAsync(attestation.value) : errAsync<ProvAttestation, ExportProvenanceError>({ type: "signing", error: attestation.error }),
+    );
 }
 
-/** Validate the `--format` flag against tsprov's built-in formats, defaulting to `json`. */
-function parseFormat(raw: string | undefined): BuiltinProvFormat {
-    const f = (raw ?? "json").toLowerCase();
-    if (f === "json" || f === "provn") return f;
-    fail(`Unknown format "${raw}". Use "json" or "provn".`);
+function writeExport(
+    path: string,
+    document: string,
+    attestation: ProvAttestation | null,
+    inWorkspace: boolean,
+): Result<ExportedProvenance, ExportProvenanceError> {
+    // The workspace folder is made here, after the signature, thus a signing failure leaves no folder
+    // behind. The folder of an `output` path is not made: the caller chose it.
+    const folder = inWorkspace ? mkdirResult(dirname(path), "exportProvenance:mkdir") : ok(undefined);
+    const written = folder.andThen(() => writeFileResult(path, document, "exportProvenance:write"));
+    if (written.isErr()) return err({ type: "write", path, cause: written.error.cause });
+    if (attestation === null) return ok({ path });
+    const attestationPath = `${path}.sig.json`;
+    return writeFileResult(attestationPath, JSON.stringify(attestation, null, 2), "exportProvenance:attestation")
+        .map((): ExportedProvenance => ({ path, attestationPath }))
+        .mapErr((e): ExportProvenanceError => ({ type: "attestation_write", path, cause: e.cause }));
 }

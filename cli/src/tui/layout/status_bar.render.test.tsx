@@ -7,7 +7,7 @@ import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../lib/design_system.
 import { setTheme } from "../theme.ts";
 import { sessionScopeOf } from "../app.tsx";
 import type { ThreadSnapshot } from "../hooks/thread.ts";
-import { conversationThread, reportThread } from "../../test_support/threads.ts";
+import { conversationSummary, reportSummary } from "../../test_support/threads.ts";
 import { StatusBar } from "./status_bar.tsx";
 
 // The working-directory path is a wide-terminal-only affordance. StatusBar is dumb — it renders
@@ -56,7 +56,7 @@ describe("StatusBar report scope segment", () => {
 
     test("a report thread shows the segment after the analysis name", async () => {
         const frame = await renderFrame(
-            () => <StatusBar title="inflexa" subtitle="rna-seq-2026" scope={scopeFor({ kind: "loaded", thread: reportThread() })} hints={["ctrl+k"]} />,
+            () => <StatusBar title="inflexa" subtitle="rna-seq-2026" scope={scopeFor({ kind: "loaded", thread: reportSummary() })} hints={["ctrl+k"]} />,
             { width: 130, height: 3 },
         );
         const header = frame.split("\n")[0] ?? "";
@@ -67,7 +67,7 @@ describe("StatusBar report scope segment", () => {
 
     test("a conversation shows no scope segment", async () => {
         const frame = await renderFrame(
-            () => <StatusBar title="inflexa" subtitle="rna-seq-2026" scope={scopeFor({ kind: "loaded", thread: conversationThread() })} hints={["ctrl+k"]} />,
+            () => <StatusBar title="inflexa" subtitle="rna-seq-2026" scope={scopeFor({ kind: "loaded", thread: conversationSummary() })} hints={["ctrl+k"]} />,
             { width: 130, height: 3 },
         );
         expect(frame).not.toContain("report");

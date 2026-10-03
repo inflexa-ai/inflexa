@@ -25,6 +25,11 @@ process.env.XDG_CONFIG_HOME = join(sandbox, "config");
 // `bun test` from the repo root, which skips cli/bunfig.toml) and the reset must refuse.
 process.env.INFLEXA_TEST_SANDBOX = sandbox;
 
+// A test never starts a real server. Under this override a client only connects (`env.serverAutoStart`), thus an
+// `instance` command that a test runs with no server fails at its check, and does not spawn a server that binds
+// the dev port and boots the containers. A test server (test_support/server.ts) sets its own file for its child.
+process.env.INFLEXA_SERVER_FILE = join(sandbox, "data", "inflexa", "server.test.json");
+
 // A best-effort reap of the sandbox (the temp DB plus its -wal/-shm sidecars) that does NOT actually
 // clean up: bun:test tears its process down without running exit listeners, so this handler never
 // fires and the sandbox outlives the run — only the OS tmpdir sweep ever reclaims it. The cost is

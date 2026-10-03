@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { EmitFn, EventSource, PlanPart } from "@inflexa-ai/harness";
+import type { PlanPart } from "@inflexa-ai/harness";
+import type { ChatFrame, EventSource } from "@inflexa-ai/harness/contracts/index.js";
 
-import { isSubAgentEvent, readPlanCard } from "./chat_printer.ts";
+import { isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "./chat_printer.ts";
 
 /** Top-level provenance (callPath length 1) — passes the sub-agent depth filter. */
 const TOP: EventSource = { agentId: "cli-chat", callPath: ["cli-chat"] };
@@ -11,28 +12,38 @@ const SUB: EventSource = { agentId: "planner", callPath: ["cli-chat", "planner"]
 // The classification pieces the TUI adapter reuses instead of duplicating.
 describe("isSubAgentEvent", () => {
     test("top-level provenance (callPath length 1) is NOT sub-agent", () => {
-        expect(isSubAgentEvent({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep", input: {} })).toBe(false);
+        expect(isSubAgentEvent({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep" })).toBe(false);
     });
 
     test("deeper provenance (callPath length > 1) IS sub-agent", () => {
-        expect(isSubAgentEvent({ type: "tool-started", source: SUB, toolUseId: "t1", name: "grep", input: {} })).toBe(true);
+        expect(isSubAgentEvent({ type: "tool-started", source: SUB, toolUseId: "t1", name: "grep" })).toBe(true);
     });
 
-    test("an event with no source (a text delta) is never sub-agent", () => {
-        expect(isSubAgentEvent({ type: "text-delta", text: "hi" })).toBe(false);
+    test("a part frame with no source is never sub-agent", () => {
+        expect(isSubAgentEvent({ type: "data-run-card", runId: "r1", title: "t", stepCount: 1 } as ChatFrame)).toBe(false);
     });
 
     test("a malformed source lacking a callPath array falls through as top-level", () => {
-        // `callPath` is external/loop-owned; a non-array must be treated as
-        // top-level rather than throwing (the Array.isArray guard).
+        // `callPath` arrives over the wire; a non-array must be treated as top-level rather than
+        // throwing (the Array.isArray guard).
         const malformed = {
             type: "tool-started",
             source: { agentId: "x", callPath: undefined },
             toolUseId: "t1",
             name: "grep",
-            input: {},
-        } as unknown as Parameters<EmitFn>[0];
+        } as unknown as ChatFrame;
         expect(isSubAgentEvent(malformed)).toBe(false);
+    });
+});
+
+describe("subAgentActivityLabel", () => {
+    test("names the agent and its tool on a start and on a finish", () => {
+        expect(subAgentActivityLabel({ type: "tool-started", source: SUB, toolUseId: "t1", name: "bash" })).toBe("planner: bash");
+        expect(subAgentActivityLabel({ type: "tool-finished", source: SUB, toolUseId: "t1", name: "bash", outcome: "ok" })).toBe("planner: bash done");
+    });
+
+    test("a text delta describes no activity", () => {
+        expect(subAgentActivityLabel({ type: "text-delta", text: "prose", source: SUB })).toBeNull();
     });
 });
 
@@ -138,5 +149,81 @@ describe("readPlanCard", () => {
         expect(card.steps[0]!.depends_on).toEqual(["S0"]);
         expect(card.steps[0]!.constraints).toEqual(["fast"]);
         expect(card.steps[0]!.resources).toEqual({ cpu: 2, memoryGb: 4, gpuCount: 0 });
+    });
+});
+
+describe("readPresentation", () => {
+    test("text-shaped markdown/code/table become inline bodies", () => {
+        expect(readPresentation({ type: "data-presentation", id: "p", title: "T", content: { kind: "markdown", body: "hi" } })).toEqual({
+            shape: "inline",
+            title: "T",
+            body: { kind: "markdown", body: "hi" },
+        });
+        expect(readPresentation({ type: "data-presentation", id: "p", content: { kind: "code", code: "x", language: "r" } })).toEqual({
+            shape: "inline",
+            title: undefined,
+            body: { kind: "code", code: "x", language: "r" },
+        });
+        expect(readPresentation({ type: "data-presentation", id: "p", content: { kind: "table", headers: ["a"], rows: [["1"]] } })).toEqual({
+            shape: "inline",
+            title: undefined,
+            body: { kind: "table", headers: ["a"], rows: [["1"]], caption: undefined },
+        });
+    });
+
+    test("echart becomes an openable entry carrying the deep-copied spec + pres id + dataPath", () => {
+        const spec = { series: [{ type: "scatter" }] };
+        const out = readPresentation({
+            type: "data-presentation",
+            id: "pres-chart",
+            title: "Volcano",
+            content: { kind: "echart", spec, dataPath: "runs/r/out.csv" },
+        });
+        expect(out.shape).toBe("card");
+        if (out.shape === "card" && out.entry.target.kind === "echart") {
+            expect(out.entry.target.presId).toBe("pres-chart");
+            expect(out.entry.target.dataPath).toBe("runs/r/out.csv");
+            // Deep copy: mutating the source spec does not reach the readout (copy-on-receive).
+            spec.series[0]!.type = "MUTATED";
+            expect(out.entry.target.spec).toEqual({ series: [{ type: "scatter" }] });
+        }
+    });
+
+    test("a structure card, which has no renderer here, degrades to an inline note (observed, not swallowed)", () => {
+        const out = readPresentation({
+            type: "data-presentation",
+            id: "p",
+            content: {
+                kind: "structure",
+                format: "pdb",
+                url: "https://alphafold.ebi.ac.uk/files/AF-P04637-F1-model_v4.pdb",
+                provider: "alphafold",
+                accession: "P04637",
+                version: 4,
+            },
+        });
+        expect(out.shape).toBe("inline");
+        if (out.shape === "inline" && out.body.kind === "markdown") expect(out.body.body).toContain("unsupported presentation: structure");
+    });
+});
+
+describe("readFileReference", () => {
+    test("each file becomes an openable entry; a multi-file gallery carries its containing folder", () => {
+        const out = readFileReference({
+            type: "data-file-reference",
+            id: "g",
+            title: "Figures",
+            files: [{ path: "runs/r/figures/a.png" }, { path: "runs/r/figures/b.png", caption: "heatmap" }],
+        });
+        expect(out.title).toBe("Figures");
+        expect(out.entries.map((e) => e.name)).toEqual(["a.png", "b.png"]);
+        expect(out.entries[1]?.caption).toBe("heatmap");
+        expect(out.folderPath).toBe("runs/r/figures");
+    });
+
+    test("a single-file reference carries no folder affordance", () => {
+        const out = readFileReference({ type: "data-file-reference", id: "g", files: [{ path: "runs/r/out.csv" }] });
+        expect(out.entries[0]?.name).toBe("out.csv");
+        expect(out.folderPath).toBeUndefined();
     });
 });
