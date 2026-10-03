@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
-import { err, errAsync, ok, okAsync, type ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import type { AnswerOutcome, AskGateway, AskReply, ChatFrame, DbError, PendingAsk, StoredMessage, Thread, ThreadPage, ThreadStore } from "@inflexa-ai/harness";
 
 import type { ServerState } from "../../api/server.ts";
@@ -124,7 +124,7 @@ function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes> {
         readCredentialVerdict: () => Promise.resolve(err({ type: "no_key" })),
         flushPendingAdds: () => undefined,
         workspaceRoot: () => ({ kind: "absent" }),
-        removeDir: () => true,
+        removeDir: () => okAsync(undefined),
         sse: { pingMs: 60_000, headers: {} },
         ...o,
     });
@@ -229,7 +229,13 @@ describe("the thread routes", () => {
     test("POST {T}/purge erases the subtree and keeps the page folders when asked", async () => {
         const store = memoryStore([conversationThread(), reportThread()]);
         const removed: string[] = [];
-        const routes = routesWith({ store, removeDir: (dir) => removed.push(dir) > 0 });
+        const routes = routesWith({
+            store,
+            removeDir: (dir) => {
+                removed.push(dir);
+                return okAsync(undefined);
+            },
+        });
         const response = await routes.request(`/${A}/threads/${T}/purge`, json("POST", { files: "keep" }));
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ purged: [T, "thread-report"], pages: { kind: "kept" } });
@@ -239,9 +245,34 @@ describe("the thread routes", () => {
 
     test("POST {T}/purge removes the page folder of each erased thread, and names each folder that stayed", async () => {
         const store = memoryStore([conversationThread(), reportThread()]);
-        const routes = routesWith({ store, workspaceRoot: () => ({ kind: "root", root: "/ws" }), removeDir: (dir) => !dir.endsWith("thread-report") });
+        const routes = routesWith({
+            store,
+            workspaceRoot: () => ({ kind: "root", root: "/ws" }),
+            removeDir: (dir) => (dir.endsWith("thread-report") ? errAsync({ type: "io_failed", op: "test", cause: "EACCES" }) : okAsync(undefined)),
+        });
         const body = (await (await routes.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" }))).json()) as PurgedThread;
         expect(body.pages).toEqual({ kind: "stayed", dirs: [join("/ws", "report-sessions", "thread-report")] });
+    });
+
+    test("POST {T}/purge waits for a slow remove of a page folder, and holds no other request meanwhile", async () => {
+        const store = memoryStore([conversationThread(), reportThread()]);
+        let release = (): void => undefined;
+        const removing = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const routes = routesWith({ store, workspaceRoot: () => ({ kind: "root", root: "/ws" }), removeDir: () => ResultAsync.fromSafePromise(removing) });
+        let purged = false;
+        const purging = Promise.resolve(routes.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" }))).then((response) => {
+            purged = true;
+            return response;
+        });
+
+        expect((await routes.request(`/${A}/threads/${T}/turns`)).status).toBe(200);
+        await Promise.sleep(20);
+        expect(purged).toBe(false);
+
+        release();
+        expect(((await (await purging).json()) as PurgedThread).pages).toEqual({ kind: "removed" });
     });
 
     test("POST {T}/purge reports a workspace that does not resolve, and refuses a body with no `files`", async () => {

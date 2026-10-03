@@ -70,7 +70,8 @@ export async function anchorRelocate(
  * goes after the preview is not taken.
  */
 export async function anchorPrune(opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    const preview = (await pruneAnchors({ dryRun: true }, opts)).match((v) => v, failClient);
+    const cwd = process.cwd();
+    const preview = (await pruneAnchors({ dryRun: true, cwd }, opts)).match((v) => v, failClient);
     if (preview.dead.length === 0) {
         console.log("Nothing to prune.");
         return;
@@ -81,7 +82,7 @@ export async function anchorPrune(opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promi
         console.log("Cancelled.");
         return;
     }
-    const outcome = (await pruneAnchors({ anchorIds: preview.dead.map((a) => a.anchorId) }, opts)).match((v) => v, failClient);
+    const outcome = (await pruneAnchors({ anchorIds: preview.dead.map((a) => a.anchorId), cwd }, opts)).match((v) => v, failClient);
     console.log(`Pruned ${outcome.pruned.length} anchor(s).`);
     if (outcome.purged > 0) console.log(`  Reclaimed ${outcome.purged} analysis(es) from Postgres.`);
     for (const s of outcome.skipped)

@@ -47,7 +47,8 @@ export async function provVerify(analysis: ProvAnalysis, opts: ClientOpts = DEFA
  * `inflexa prov lineage <analysis> <ref> [--forward] [--depth n] [--format tree|json|dot|mermaid]` — the
  * server resolves the ref (a file path, content hash, hash prefix, search string, or record QName) in the
  * stored provenance of the analysis and walks its lineage. The server validates each option, and names the
- * candidates of an ambiguous ref.
+ * candidates of an ambiguous ref. This command checks `--depth` first, because the route names its query
+ * parameter, not the flag.
  */
 export async function provLineage(
     analysis: ProvAnalysis,
@@ -55,6 +56,10 @@ export async function provLineage(
     flags: { forward?: boolean; depth?: string; format?: string },
     opts: ClientOpts = DEFAULT_CLIENT_OPTS,
 ): Promise<void> {
+    if (flags.depth !== undefined) {
+        const depth = Number(flags.depth);
+        if (!Number.isInteger(depth) || depth < 1) fail(`--depth must be a positive integer, got "${flags.depth}".`);
+    }
     const view = (await fetchLineage(analysis.id, { ref, ...flags }, opts)).match(
         (v) => v,
         (e) => fail(describeClientError(e)),

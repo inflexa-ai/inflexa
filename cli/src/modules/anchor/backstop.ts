@@ -115,14 +115,15 @@ export function relocateAnchorPrefix(fromPrefix: string, toPrefix: string, opts:
 /**
  * The anchors whose folders are confirmed gone. "Confirmed" means three things together: the anchor had
  * an on-disk marker, its cached folder no longer exists, and reconciliation cannot find it again. A
- * transient or relocatable miss is never selected.
+ * transient or relocatable miss is never selected. `searchRoots` are the folders that the reconciliation
+ * searches first, as in {@link resolveAnchor}.
  */
-export function findDeadAnchors(): Result<Anchor[], DbError> {
+export function findDeadAnchors(searchRoots?: string[]): Result<Anchor[], DbError> {
     return listAnchors().map((anchors) =>
         anchors.filter((a) => {
             if (!a.markerWritten) return false;
             if (existsSync(a.cachedPath)) return false;
-            const refound = resolveAnchor(a.id).match(
+            const refound = resolveAnchor(a.id, { searchRoots }).match(
                 (r) => r?.path ?? null,
                 () => null,
             );

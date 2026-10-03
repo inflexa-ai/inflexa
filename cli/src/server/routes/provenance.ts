@@ -85,7 +85,7 @@ export function provenanceRoutes(): Hono<ServerEnv> {
         const rawDepth = c.req.query("depth");
         const depth = rawDepth === undefined ? undefined : Number(rawDepth);
         if (depth !== undefined && (!Number.isInteger(depth) || depth < 1)) {
-            return apiError(c, "validation_error", `--depth must be a positive integer, got "${rawDepth}".`);
+            return apiError(c, "validation_error", `\`depth\` must be a positive integer, got "${rawDepth}".`);
         }
         const forward = c.req.query("forward") === "true";
 

@@ -202,10 +202,10 @@ describe("disposeWorkspace", () => {
         return home;
     }
 
-    test("archive moves the tree out of analyses/ and keeps its contents", () => {
+    test("archive moves the tree out of analyses/ and keeps its contents", async () => {
         const home = seedWorkspace();
 
-        const outcome = disposeWorkspace(analysis(), "archive")._unsafeUnwrap();
+        const outcome = (await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap();
         expect(outcome.kind).toBe("archived");
 
         expect(existsSync(join(home, ".inflexa", "analyses", "myslug"))).toBe(false);
@@ -214,20 +214,20 @@ describe("disposeWorkspace", () => {
     });
 
     // The whole point: a freed slug must not resolve onto its predecessor's artifacts.
-    test("after archiving, the live slug path is free for a new analysis of the same name", () => {
+    test("after archiving, the live slug path is free for a new analysis of the same name", async () => {
         const home = seedWorkspace();
-        disposeWorkspace(analysis(), "archive")._unsafeUnwrap();
+        (await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap();
         expect(existsSync(join(home, ".inflexa", "analyses", "myslug", "runs"))).toBe(false);
     });
 
-    test("archiving the same slug twice suffixes rather than clobbering the first archive", () => {
+    test("archiving the same slug twice suffixes rather than clobbering the first archive", async () => {
         const home = seedWorkspace();
-        disposeWorkspace(analysis(), "archive")._unsafeUnwrap();
+        (await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap();
 
         // A second analysis takes the freed slug, then is itself deleted.
         mkdirSync(join(home, ".inflexa", "analyses", "myslug"), { recursive: true });
         writeFileSync(join(home, ".inflexa", "analyses", "myslug", "second.txt"), "second");
-        const outcome = disposeWorkspace(analysis(), "archive")._unsafeUnwrap();
+        const outcome = (await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap();
 
         expect(outcome.kind === "archived" && outcome.path.endsWith("myslug-2")).toBe(true);
         // The first archive is untouched.
@@ -235,34 +235,34 @@ describe("disposeWorkspace", () => {
         expect(readFileSync(join(home, `${archivedOutputSubdir("myslug")}-2`, "second.txt"), "utf-8")).toBe("second");
     });
 
-    test("delete removes the tree and archives nothing", () => {
+    test("delete removes the tree and archives nothing", async () => {
         const home = seedWorkspace();
 
-        expect(disposeWorkspace(analysis(), "delete")._unsafeUnwrap().kind).toBe("deleted");
+        expect((await disposeWorkspace(analysis(), "delete"))._unsafeUnwrap().kind).toBe("deleted");
         expect(existsSync(join(home, ".inflexa", "analyses", "myslug"))).toBe(false);
         expect(existsSync(join(home, ".inflexa", "analyses_archived"))).toBe(false);
     });
 
-    test("a never-created tree is `absent`, not an error", () => {
+    test("a never-created tree is `absent`, not an error", async () => {
         anchoredHome();
         insertAnalysis(analysis())._unsafeUnwrap();
-        expect(disposeWorkspace(analysis(), "archive")._unsafeUnwrap().kind).toBe("absent");
+        expect((await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap().kind).toBe("absent");
     });
 
-    test("an unlocatable anchor is `absent` — the tree lived inside the folder that vanished", () => {
+    test("an unlocatable anchor is `absent` — the tree lived inside the folder that vanished", async () => {
         const gone = tmp();
         insertAnchorAt("A1", gone);
         rmSync(gone, { recursive: true, force: true });
-        expect(disposeWorkspace(analysis(), "archive")._unsafeUnwrap().kind).toBe("absent");
+        expect((await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap().kind).toBe("absent");
     });
 
     // The delete flow disposes BEFORE dropping the row precisely so this failure changes nothing.
-    test("a tree that cannot be moved is an err, and the tree survives", () => {
+    test("a tree that cannot be moved is an err, and the tree survives", async () => {
         const home = seedWorkspace();
         // Read-only `.inflexa/` blocks both the archive mkdir and the rename out of `analyses/`.
         chmodSync(join(home, ".inflexa"), 0o555);
         try {
-            expect(disposeWorkspace(analysis(), "archive")._unsafeUnwrapErr().type).toBe("mutation_failed");
+            expect((await disposeWorkspace(analysis(), "archive"))._unsafeUnwrapErr().type).toBe("mutation_failed");
             expect(existsSync(join(home, ".inflexa", "analyses", "myslug", "runs", "run-1", "result.csv"))).toBe(true);
         } finally {
             chmodSync(join(home, ".inflexa"), 0o755);

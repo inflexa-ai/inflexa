@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
 import type { Analysis } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { findAnalysesByRef } from "../../db/primary_query.ts";
-import { mkdirResult, renameResult, rmResult } from "../../lib/fs.ts";
+import { mkdirResult, renameResult, rmResultAsync, type FsError } from "../../lib/fs.ts";
 import { isDirWritable } from "../anchor/marker.ts";
 import { resolveAnchor } from "../anchor/anchor.ts";
 
@@ -205,29 +205,35 @@ function freeArchivePath(anchorPath: string, slug: string): string {
  * `analyses/` either way; `archive` keeps the bytes (the default — a run's artifacts are the
  * user's, not ours to destroy), `delete` does not.
  */
-export function disposeWorkspace(analysis: Analysis, mode: "archive" | "delete"): Result<WorkspaceDisposal, WorkspaceError> {
-    return resolveAnchor(analysis.anchorId, { touch: false }).andThen((resolved): Result<WorkspaceDisposal, WorkspaceError> => {
+export function disposeWorkspace(
+    analysis: Analysis,
+    mode: "archive" | "delete",
+    removeTree: (path: string) => ResultAsync<void, FsError> = (path) => rmResultAsync(path, "disposeWorkspace:delete"),
+): ResultAsync<WorkspaceDisposal, WorkspaceError> {
+    return resolveAnchor(analysis.anchorId, { touch: false }).asyncAndThen((resolved): ResultAsync<WorkspaceDisposal, WorkspaceError> => {
         const anchorPath = resolved?.path ?? null;
         // Drop any cached root up front so the disposal is never shadowed by a stale
         // memo, regardless of which branch we return through below.
         invalidateWorkspaceRoot(analysis.id);
         // The tree lived inside the anchor folder, so an unlocatable folder took it along.
-        if (anchorPath === null) return ok({ kind: "absent" });
+        if (anchorPath === null) return okAsync({ kind: "absent" });
 
         const root = join(anchorPath, defaultOutputSubdir(analysis.slug));
-        if (!existsSync(root)) return ok({ kind: "absent" });
+        if (!existsSync(root)) return okAsync({ kind: "absent" });
 
         if (mode === "delete") {
-            return rmResult(root, "disposeWorkspace:delete")
+            return removeTree(root)
                 .map((): WorkspaceDisposal => ({ kind: "deleted", path: root }))
                 .mapErr((e): WorkspaceError => ({ type: "mutation_failed", op: "disposeWorkspace", cause: e.cause }));
         }
 
         const dest = freeArchivePath(anchorPath, analysis.slug);
-        return mkdirResult(dirname(dest), "disposeWorkspace:mkdir")
-            .andThen(() => renameResult(root, dest, "disposeWorkspace:archive"))
-            .map((): WorkspaceDisposal => ({ kind: "archived", path: dest }))
-            .mapErr((e): WorkspaceError => ({ type: "mutation_failed", op: "disposeWorkspace", cause: e.cause }));
+        return okAsync(undefined).andThen(() =>
+            mkdirResult(dirname(dest), "disposeWorkspace:mkdir")
+                .andThen(() => renameResult(root, dest, "disposeWorkspace:archive"))
+                .map((): WorkspaceDisposal => ({ kind: "archived", path: dest }))
+                .mapErr((e): WorkspaceError => ({ type: "mutation_failed", op: "disposeWorkspace", cause: e.cause })),
+        );
     });
 }
 

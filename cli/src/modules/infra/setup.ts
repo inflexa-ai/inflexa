@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type { Writable } from "node:stream";
 
 import pkg from "../../../package.json";
 
@@ -3016,6 +3017,25 @@ export async function probeOnce(): Promise<ProbeAttempt> {
     return model.isErr() ? classifyModelResolution(model.error) : askProxy(key.value, model.value);
 }
 
+/** The progress of one launch step: a start line, then the outcome line. */
+export type LaunchProgress = {
+    readonly start: (message: string) => void;
+    readonly stop: (message: string) => void;
+};
+
+/**
+ * The progress indicator of a launch step on `output`: a spinner on a terminal, else one plain line for the
+ * start and one for the outcome. A detached server writes its stdout into its log, where each frame of a
+ * spinner would be one more line.
+ */
+export function launchProgress(output: Writable & { isTTY?: boolean } = process.stdout): LaunchProgress {
+    if (output.isTTY === true) return clackSpinner({ output });
+    return {
+        start: (message) => void output.write(`${message}...\n`),
+        stop: (message) => void output.write(`${message}\n`),
+    };
+}
+
 /**
  * Production assembly of {@link ensureLiveCredential}: probe (retrying a proxy that is not answering
  * yet), pre-select the re-login account from the recorded provider slug, and restart the proxy after a
@@ -3024,7 +3044,7 @@ export async function probeOnce(): Promise<ProbeAttempt> {
 async function verifyCredentialAtLaunch(rt: ContainerRuntime, opts: ProxyReadyOpts): Promise<Result<void, ProxyError>> {
     return ensureLiveCredential({
         probe: async () => {
-            const s = clackSpinner();
+            const s = launchProgress();
             s.start("Verifying provider login");
             const probed = await retryWhileUnreachable(probeOnce);
             // A dead login can reach the probe as a cooldown, an empty list, or a 429, and those never
