@@ -44,9 +44,11 @@ export interface EnvironmentStorePaths {
      * importable inside a sandbox. Omit when the host mounts the farm at the
      * sandbox's own path, which makes the container path correct as-is; a host
      * that reads the farm somewhere else must inject the path, or the
-     * inventory reads as unknown.
+     * inventory reads as unknown. A host that keeps one farm for each analysis
+     * gives a function, and each read resolves the path with the analysis id
+     * of its session.
      */
-    readonly farmLockFile?: string;
+    readonly farmLockFile?: string | ((analysisId: string) => string);
     /**
      * Host path of the image inventory record, `image-packages.json` at the
      * root of the package store — the image-owned tools and Node packages
