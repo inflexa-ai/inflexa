@@ -1,35 +1,35 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { testRender } from "@opentui/solid";
 import type { JSX } from "solid-js";
 
-import { freshDb } from "../test_support/db.ts";
+import type { AnalysisList, AnalysisSummary } from "../api/analyses.ts";
+import type { UsageTotals } from "../api/usage.ts";
 import { __setClipboardWriterForTest } from "../lib/clipboard.ts";
 import { contractHome } from "../lib/paths.ts";
-import { str256 } from "../lib/types.ts";
-import { createAnalysis } from "../modules/analysis/analysis.ts";
-import { upsertLlmUsage, type LlmUsageEntry } from "../db/primary_mutation.ts";
+import { fakeClient } from "../test_support/fake_client.ts";
 import { useKeymapRoot } from "./keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "./components/dialog/dialog_host.tsx";
 import { WorkspaceContext, type Workspace } from "./contexts/workspace.ts";
-import { commands } from "./commands.tsx";
+import { DEFAULT_ANALYSIS_DIALOG_OPTS, openSwitchAnalysis, type AnalysisDialogOpts } from "./commands.tsx";
 import type { Analysis } from "../types/analysis.ts";
 
-// The Switch analysis picker is the ONE place the interface reports a whole-analysis total, so this
-// drives the REAL command (`analysis.switch` → its dialog) against a REAL ledger rather than
-// constructing rows by hand: the claim is that the figures a user compares analyses by come from the
-// local SQLite this picker reads at open, with no harness runtime anywhere.
+// The Switch analysis picker is the ONE place the interface reports a whole-analysis total, so this drives
+// the REAL flow (`analysis.switch` → its dialog) against a fake client of the server: the claim is that each
+// row shows the figures and the folder that `GET /api/v1/analyses` gives for it, and that a row with no
+// figures stays listed. The grouped ledger read itself is tested in `server/routes/analyses.test.ts`.
 
 let dirA = "";
 let dirB = "";
+let rows: AnalysisSummary[] = [];
 
 beforeEach(() => {
-    freshDb();
-    // realpath so the anchor markers the analyses mint match macOS's canonical /private/var.
+    // realpath so the folders match the canonical form that the server gives, on macOS too.
     dirA = realpathSync(mkdtempSync(join(tmpdir(), "switch-a-")));
     dirB = realpathSync(mkdtempSync(join(tmpdir(), "switch-b-")));
+    rows = [];
 });
 
 afterEach(() => {
@@ -37,22 +37,36 @@ afterEach(() => {
     for (const dir of [dirA, dirB]) rmSync(dir, { recursive: true, force: true });
 });
 
-async function analysisIn(dir: string, name: string): Promise<Analysis> {
-    writeFileSync(join(dir, "one.txt"), "x");
-    return (await createAnalysis({ cwd: dir, name: str256(name)._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] }))._unsafeUnwrap();
+let next = 0;
+
+/** One row of `GET /api/v1/analyses`, in the folder `dir`, newest last. */
+function analysisIn(dir: string, name: string, usage?: UsageTotals): AnalysisSummary {
+    next += 1;
+    const row: AnalysisSummary = {
+        id: `analysis-${next}`,
+        createdAt: new Date(Date.UTC(2026, 8, next)).toISOString(),
+        updatedAt: new Date(Date.UTC(2026, 8, next)).toISOString(),
+        name,
+        slug: name.toLowerCase(),
+        anchorId: `anchor-${dir}`,
+        projectId: null,
+        anchorPath: dir,
+        ...(usage === undefined ? {} : { usage }),
+    };
+    rows.unshift(row);
+    return row;
 }
 
-function usageEntry(analysisId: string, recordKey: string, usage: LlmUsageEntry["usage"]): LlmUsageEntry {
-    return {
-        recordKey,
-        recordedAt: 1_000,
-        agentId: "conversation",
-        callPath: "conversation",
-        scopeKind: "analysis",
-        scopeId: analysisId,
-        threadId: "thr-1",
-        usage,
-    };
+/** The picker options over a fake server that lists `rows`, with `open` as the in-place open. */
+function dialogOpts(open: AnalysisDialogOpts["openAnalysis"] = DEFAULT_ANALYSIS_DIALOG_OPTS.openAnalysis): AnalysisDialogOpts {
+    const client = fakeClient((req) => {
+        if (req.method === "GET" && req.path.startsWith("/api/v1/analyses?")) {
+            const list: AnalysisList = { analyses: rows, total: rows.length, page: 0, perPage: 200, hasMore: false };
+            return { status: 200, body: list };
+        }
+        return { status: 404, body: { error: "not_found", message: `No route for ${req.method} ${req.path}.` } };
+    });
+    return { client: client.opts, openAnalysis: open };
 }
 
 function ws(): Workspace {
@@ -61,9 +75,12 @@ function ws(): Workspace {
         sessionId: null,
         workingDir: dirA,
         project: null,
+        anchor: null,
+        inputCount: null,
         openDialog: () => {},
         closeDialog: () => {},
         openSession: () => {},
+        refreshScope: () => {},
         quit: async () => {},
     };
 }
@@ -94,27 +111,22 @@ async function settle(setup: Setup): Promise<string> {
     return setup.captureCharFrame();
 }
 
-/** Run the real `analysis.switch` command and push the dialog it opens onto the host. */
-function openSwitchPicker(workspace: Workspace): void {
-    const command = commands.find((c) => c.id === "analysis.switch");
-    expect(command).toBeDefined();
-    // The command's whole body is `ctx.openDialog(...)`, so capturing that call IS the production path.
-    void command!.run({ ...workspace, openDialog: (render) => dialogPush(render) });
+/** Run the real `analysis.switch` flow against the fake server and push the dialog it opens onto the host. */
+async function openSwitchPicker(workspace: Workspace, opts: AnalysisDialogOpts = dialogOpts()): Promise<void> {
+    await openSwitchAnalysis({ ...workspace, openDialog: (render) => dialogPush(render) }, opts);
 }
 
 describe("Switch analysis picker figures", () => {
     test("each row carries its OWN analysis's total, and an analysis with none carries no figure", async () => {
-        const spent = await analysisIn(dirA, "rna-seq");
-        const untouched = await analysisIn(dirB, "atac-seq");
-        upsertLlmUsage(usageEntry(spent.id, "a-1", { inputTokens: 767_600, outputTokens: 33_100 }))._unsafeUnwrap();
-        // A row belonging to ANOTHER analysis must not leak into either figure.
-        upsertLlmUsage(usageEntry(untouched.id + "-nope", "a-2", { inputTokens: 999_000 }))._unsafeUnwrap();
+        analysisIn(dirA, "rna-seq", { calls: 1, inputTokens: 767_600, outputTokens: 33_100 });
+        // An analysis with no recorded calls: the ledger gives a zero count and no quantity.
+        analysisIn(dirB, "atac-seq", { calls: 0 });
 
         const workspace = ws();
         const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
-            openSwitchPicker(workspace);
+            await openSwitchPicker(workspace);
             const frame = await settle(setup);
 
             const spentRow = frame.split("\n").find((l) => l.includes("rna-seq"));
@@ -128,7 +140,6 @@ describe("Switch analysis picker figures", () => {
             // every row carries and which says nothing about usage.
             expect(untouchedRow).not.toContain("↑");
             expect(untouchedRow).not.toContain("↓");
-            expect(frame).not.toContain("999.0k");
             // 800.7k is the two arms added — a figure no surface may invent.
             expect(frame).not.toContain("800.7k");
         } finally {
@@ -137,23 +148,19 @@ describe("Switch analysis picker figures", () => {
     });
 
     test("every analysis stays listed and selectable, figures or not", async () => {
-        await analysisIn(dirA, "rna-seq");
-        const second = await analysisIn(dirB, "atac-seq");
-        upsertLlmUsage(usageEntry(second.id, "b-1", { outputTokens: 40 }))._unsafeUnwrap();
+        analysisIn(dirA, "rna-seq");
+        analysisIn(dirB, "atac-seq", { calls: 1, outputTokens: 40 });
 
-        // The spies live on the CONTEXT workspace, not on the one handed to `run`: the dialog reads
-        // `useWorkspace()`, and `openAnalysis` drives the swap through that same value.
+        // The open of the selected analysis is the option the flow takes, thus the spy is there.
         let chosen: Analysis | null = null;
-        const workspace: Workspace = {
-            ...ws(),
-            openSession: (_threadId, _dir, analysis) => {
-                chosen = analysis;
-            },
-        };
+        const opts = dialogOpts(async (_ws, analysis) => {
+            chosen = analysis;
+        });
+        const workspace = ws();
         const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
-            openSwitchPicker(workspace);
+            await openSwitchPicker(workspace, opts);
             await settle(setup);
 
             // A half figure keeps the arm it has rather than inventing the one it lacks. Asserted on
@@ -185,14 +192,14 @@ describe("Switch analysis picker identity", () => {
     test("two analyses of one name are told apart by their anchor headers", async () => {
         // The reason this grouping exists: a slug is unique only WITHIN an anchor, so the same name
         // in two folders produces two rows that are identical down to the character.
-        const inA = await analysisIn(dirA, "A1");
-        const inB = await analysisIn(dirB, "A1");
+        const inA = analysisIn(dirA, "A1");
+        const inB = analysisIn(dirB, "A1");
 
         const workspace = ws();
         const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
-            openSwitchPicker(workspace);
+            await openSwitchPicker(workspace);
             const frame = await settle(setup);
 
             const lines = frame.split("\n");
@@ -212,13 +219,13 @@ describe("Switch analysis picker identity", () => {
     });
 
     test("the row date is absolute, and the cursor row gives the id and the slug", async () => {
-        const only = await analysisIn(dirA, "rna-seq");
+        const only = analysisIn(dirA, "rna-seq");
 
         const workspace = ws();
         const setup = await testRender(harnessNode(workspace), { width: 110, height: 24 });
         try {
             await settle(setup);
-            openSwitchPicker(workspace);
+            await openSwitchPicker(workspace);
             const frame = await settle(setup);
 
             const row = frame.split("\n").find((l) => l.includes("rna-seq")) ?? "";
@@ -235,7 +242,7 @@ describe("Switch analysis picker identity", () => {
     });
 
     test("ctrl+y copies the cursor row's analysis id", async () => {
-        const only = await analysisIn(dirA, "rna-seq");
+        const only = analysisIn(dirA, "rna-seq");
         const copied: string[] = [];
         const restore = __setClipboardWriterForTest(async (text) => {
             copied.push(text);
@@ -245,7 +252,7 @@ describe("Switch analysis picker identity", () => {
         const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
-            openSwitchPicker(workspace);
+            await openSwitchPicker(workspace);
             await settle(setup);
 
             await setup.mockInput.pressKeys(["\x19"]); // ctrl+y
@@ -258,8 +265,8 @@ describe("Switch analysis picker identity", () => {
     });
 
     test("a typed y filters instead of copying — the chord needs ctrl", async () => {
-        await analysisIn(dirA, "rna-seq");
-        await analysisIn(dirB, "yeast");
+        analysisIn(dirA, "rna-seq");
+        analysisIn(dirB, "yeast");
         const copied: string[] = [];
         const restore = __setClipboardWriterForTest(async (text) => {
             copied.push(text);
@@ -269,7 +276,7 @@ describe("Switch analysis picker identity", () => {
         const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
-            openSwitchPicker(workspace);
+            await openSwitchPicker(workspace);
             await settle(setup);
 
             await setup.mockInput.pressKeys(["y"]);

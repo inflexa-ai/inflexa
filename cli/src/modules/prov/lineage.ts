@@ -8,9 +8,10 @@ import {
     type LineageWalk as KernelWalk,
 } from "@inflexa-ai/prov-kernel";
 
-import { dieOn, fail } from "../../lib/cli.ts";
+import type { LineageFormat, LineageJson, LineageJsonNode, LineageView } from "../../api/provenance.ts";
+import type { DbError } from "../../db/errors.ts";
 import { getAnalysisProvenance } from "../../db/primary_query.ts";
-import { requireAnalysisForProv } from "./prov.ts";
+import type { Analysis } from "../../types/analysis.ts";
 
 // The read-side answer to "where did this file come from?" (and, with --forward, "what came from
 // this file?"), over the same stored bytes `export` serializes. The kernel owns the interpretation
@@ -522,20 +523,6 @@ export function formatTree(walk: LineageWalk, opts: { forward: boolean; depth?: 
     return lines.join("\n");
 }
 
-/** A node of the flat JSON graph — kind-discriminated, carrying only the facts that kind has. */
-export type LineageJsonNode =
-    | { kind: "file"; path: string | null; hash: string | null; source: string | null; truncated?: true }
-    | { kind: "command"; command?: string; exitCode?: number; unresolvedScript?: string; runId?: string; stepId?: string }
-    | { kind: "file_tool"; tool?: string; runId?: string; stepId?: string }
-    | { kind: "step" | "activity"; runId?: string; stepId?: string };
-
-/** The flat JSON graph: direction-independent nodes + edges in PROV semantics, plus the walk's roots. */
-export type LineageJson = {
-    roots: string[];
-    nodes: Record<string, LineageJsonNode>;
-    edges: { from: string; to: string; kind: "wasGeneratedBy" | "used" }[];
-};
-
 /** The JSON node for a file entity, carrying `truncated: true` exactly when the walk recorded no expansion of it. */
 function fileJsonNode(node: LineageNode, truncated: boolean): LineageJsonNode {
     const info = toFileInfo(node);
@@ -674,62 +661,80 @@ export function formatMermaid(walk: LineageWalk): string {
     return lines.join("\n");
 }
 
-/** The validated `prov lineage` options, parsed at the CLI boundary. */
-type LineageOptions = { forward: boolean; depth?: number; format: "tree" | "json" | "dot" | "mermaid" };
+/** Why the lineage walk of a stored analysis failed. A `ref` failure carries the message for a person. */
+export type AnalysisLineageError =
+    | { type: "no_provenance"; message: string }
+    | { type: "corrupt"; cause: unknown }
+    | { type: "storage"; cause: DbError }
+    | { type: "ref"; error: LineageRefError; message: string };
 
-/** Validate the raw commander options; any invalid flag fails with the accepted values. */
-function parseOptions(opts: { forward?: boolean; depth?: string; format?: string }): LineageOptions {
-    const format = (opts.format ?? "tree").toLowerCase();
-    if (format !== "tree" && format !== "json" && format !== "dot" && format !== "mermaid")
-        fail(`Unknown format "${opts.format}". Use "tree", "json", "dot", or "mermaid".`);
-    let depth: number | undefined;
-    if (opts.depth !== undefined) {
-        depth = Number(opts.depth);
-        if (!Number.isInteger(depth) || depth < 1) fail(`--depth must be a positive integer, got "${opts.depth}".`);
+/** The one message for a person of each {@link LineageRefError}, with the candidates to pick an exact ref from. */
+function describeRefError(e: LineageRefError, ref: string, analysisName: string): string {
+    switch (e.type) {
+        case "ambiguous_hash": {
+            const list = e.candidates.map((c) => `  ${c.hash ?? "?"}  ${c.path ?? "?"}`).join("\n");
+            return `Hash prefix "${ref}" is ambiguous — candidates:\n${list}`;
+        }
+        case "ambiguous_search": {
+            const list = e.candidates
+                .map((c) => (c.kind === "file" ? `  file      ${c.path ?? "?"}  (hash ${shortHash(c.hash)})` : `  activity  ${c.line}`))
+                .join("\n");
+            const more = e.total - e.candidates.length;
+            return `"${ref}" matches ${e.total} records — candidates:\n${list}${more > 0 ? `\n  + ${more} more` : ""}`;
+        }
+        case "not_found": {
+            const hint = e.knownPaths.length > 0 ? `\nKnown files include:\n${e.knownPaths.map((p) => `  ${p}`).join("\n")}` : "";
+            return `No file matching "${ref}" in the provenance of "${analysisName}".${hint}`;
+        }
+        default: {
+            const exhaustive: never = e;
+            throw new Error(`unhandled lineage ref error: ${JSON.stringify(exhaustive)}`);
+        }
     }
-    return { forward: opts.forward ?? false, depth, format };
 }
 
 /**
- * `inflexa prov lineage <analysis> <ref> [--forward] [--depth n] [--format tree|json|dot|mermaid]`
- * — resolve the ref (a file path, content hash, hash prefix, search string, or record QName) in
- * the analysis's stored provenance document and print its lineage. Reads the same stored bytes
- * `export` serializes — `deriveLineageModel` interprets them under the same unify the flush and
- * export use; an analysis with no recorded provenance fails with an actionable message rather than
- * an empty walk.
+ * Resolve `ref` (a file path, content hash, hash prefix, search string, or record QName) in the stored
+ * provenance document of `analysis`, and render its lineage in `opts.format`. Reads the same stored bytes
+ * that the export serializes — `deriveLineageModel` interprets them under the same unify that the flush and
+ * the export use. An analysis with no recorded provenance fails with an actionable message, not an empty
+ * walk. The caller flushes the recorder first, thus the walk includes the appends of this process.
  */
-export function runProvLineage(analysisRef: string, ref: string, rawOpts: { forward?: boolean; depth?: string; format?: string }): void {
-    const opts = parseOptions(rawOpts);
-
-    const analysis = requireAnalysisForProv(analysisRef);
-
-    const stored = getAnalysisProvenance(analysis.id).match((s) => s, dieOn("Failed to read provenance"));
-    if (stored === null) fail(`No provenance recorded for "${analysis.name}" yet — run an analysis first.`);
-
-    const model = deriveLineageModel(stored).match((m) => m, dieOn("Stored provenance is corrupt"));
-
-    const roots = resolveLineageRef(model, ref).match(
-        (r) => r,
-        (e) => {
-            if (e.type === "ambiguous_hash") {
-                const list = e.candidates.map((c) => `  ${c.hash ?? "?"}  ${c.path ?? "?"}`).join("\n");
-                fail(`Hash prefix "${ref}" is ambiguous — candidates:\n${list}`);
-            }
-            if (e.type === "ambiguous_search") {
-                const list = e.candidates
-                    .map((c) => (c.kind === "file" ? `  file      ${c.path ?? "?"}  (hash ${shortHash(c.hash)})` : `  activity  ${c.line}`))
-                    .join("\n");
-                const more = e.total - e.candidates.length;
-                fail(`"${ref}" matches ${e.total} records — candidates:\n${list}${more > 0 ? `\n  + ${more} more` : ""}`);
-            }
-            const hint = e.knownPaths.length > 0 ? `\nKnown files include:\n${e.knownPaths.map((p) => `  ${p}`).join("\n")}` : "";
-            fail(`No file matching "${ref}" in the provenance of "${analysis.name}".${hint}`);
-        },
-    );
-
-    const walk = computeLineage(model, roots, { forward: opts.forward, depth: opts.depth });
-    if (opts.format === "json") console.log(JSON.stringify(formatJson(walk), null, 2));
-    else if (opts.format === "dot") console.log(formatDot(walk));
-    else if (opts.format === "mermaid") console.log(formatMermaid(walk));
-    else console.log(formatTree(walk, { forward: opts.forward, depth: opts.depth }));
+export function walkAnalysisLineage(
+    analysis: Analysis,
+    ref: string,
+    opts: { forward: boolean; depth?: number; format: LineageFormat },
+): Result<LineageView, AnalysisLineageError> {
+    return getAnalysisProvenance(analysis.id)
+        .mapErr((cause): AnalysisLineageError => ({ type: "storage", cause }))
+        .andThen((stored) =>
+            stored === null
+                ? err<string, AnalysisLineageError>({
+                      type: "no_provenance",
+                      message: `No provenance recorded for "${analysis.name}" yet — run an analysis first.`,
+                  })
+                : ok(stored),
+        )
+        .andThen((stored) => deriveLineageModel(stored).mapErr((e): AnalysisLineageError => ({ type: "corrupt", cause: e.cause })))
+        .andThen((model) =>
+            resolveLineageRef(model, ref)
+                .mapErr((e): AnalysisLineageError => ({ type: "ref", error: e, message: describeRefError(e, ref, analysis.name) }))
+                .map((roots): LineageView => {
+                    const walk = computeLineage(model, roots, { forward: opts.forward, depth: opts.depth });
+                    switch (opts.format) {
+                        case "json":
+                            return { format: "json", lineage: formatJson(walk) };
+                        case "dot":
+                            return { format: "dot", text: formatDot(walk) };
+                        case "mermaid":
+                            return { format: "mermaid", text: formatMermaid(walk) };
+                        case "tree":
+                            return { format: "tree", text: formatTree(walk, { forward: opts.forward, depth: opts.depth }) };
+                        default: {
+                            const exhaustive: never = opts.format;
+                            throw new Error(`unhandled lineage format: ${String(exhaustive)}`);
+                        }
+                    }
+                }),
+        );
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 
-import type { CompactionPart } from "@inflexa-ai/harness";
+import type { CompactionPart } from "@inflexa-ai/harness/contracts/index.js";
 
 import { GLYPHS } from "../../lib/design_system.ts";
 import { MessageBlock } from "./message_block.tsx";

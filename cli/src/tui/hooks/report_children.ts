@@ -1,23 +1,24 @@
 import { createEffect, createSignal, untrack } from "solid-js";
 import type { ResultAsync } from "neverthrow";
-import { createThreadStore, type DbError, type Pool, type Thread, type ThreadPage } from "@inflexa-ai/harness";
 
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import type { ThreadList, ThreadSummary } from "../../api/conversation.ts";
+import type { ClientError } from "../../client/api.ts";
+import { fetchThreads } from "../../client/conversation.ts";
 import type { Workspace } from "../contexts/workspace.ts";
-import { bootState, harnessRuntime } from "./boot.ts";
+import { bootState } from "./boot.ts";
 import { chatStatus, type ChatStatus } from "./status.ts";
 
 // The report sessions spawned from the open conversation thread, held here and not inside
 // `components/chat.tsx`, thus the holder of the state stays separate from its renderer. This is the
-// split of `thread.ts` and `status.ts`. Postgres is the only store of thread identity, thus the
-// listing sits behind the boot-ready edge. One chat screen is mounted at a time, thus a module
-// singleton is correct.
+// split of `thread.ts` and `status.ts`. The server reads the threads from Postgres, thus the listing
+// sits behind the boot-ready edge. One chat screen is mounted at a time, thus a module singleton is
+// correct.
 
 // One frozen empty listing, thus every degraded read gives the same reference and a consumer of the
 // signal reconciles nothing.
-const NO_CHILDREN: readonly Thread[] = Object.freeze([]);
+const NO_CHILDREN: readonly ThreadSummary[] = Object.freeze([]);
 
-const [children, setChildren] = createSignal<readonly Thread[]>(NO_CHILDREN);
+const [children, setChildren] = createSignal<readonly ThreadSummary[]>(NO_CHILDREN);
 
 /**
  * The live report children of the open conversation thread, in the order that the store gives them.
@@ -30,24 +31,24 @@ const [children, setChildren] = createSignal<readonly Thread[]>(NO_CHILDREN);
 export const reportChildren = children;
 
 /**
- * Injectable edges, thus a test drives the listing offline with no Postgres and no booted runtime.
- * This mirrors `ThreadSeams` in `thread.ts`. A production caller omits the argument and gets the real
- * booted runtime and the real harness thread store.
+ * How the listing reaches the server. A test replaces each one, thus it drives the listing offline. This
+ * mirrors `ThreadOpts` in `thread.ts`. A production caller omits the argument.
  */
-export type ReportChildrenSeams = {
-    /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
-    readonly runtime: () => HarnessRuntime | null;
+export type ReportChildrenOpts = {
+    /** True when the server runtime is ready to read the threads. Real: the boot phase is `ready`. */
+    readonly ready: () => boolean;
     /**
      * One thread's live report children. The listing narrows on BOTH the parent id and the `report`
      * type. The type narrow is necessary because a conversation can spawn a thread of another kind
-     * later, and such a thread is not a report. Real: `createThreadStore(pool).listThreads`.
+     * later, and such a thread is not a report. Real: `GET {A}/threads?type=report&parentThreadId=`, one
+     * page of the server default.
      */
-    readonly listThreads: (pool: Pool, analysisId: string, parentThreadId: string) => ResultAsync<ThreadPage, DbError>;
+    readonly listThreads: (analysisId: string, parentThreadId: string) => ResultAsync<ThreadList, ClientError>;
 };
 
-const realReportChildrenSeams: ReportChildrenSeams = {
-    runtime: harnessRuntime,
-    listThreads: (pool, analysisId, parentThreadId) => createThreadStore(pool).listThreads({ analysisId, type: "report", parentThreadId }),
+const DEFAULT_REPORT_CHILDREN_OPTS: ReportChildrenOpts = {
+    ready: () => bootState().phase === "ready",
+    listThreads: (analysisId, parentThreadId) => fetchThreads(analysisId, { type: "report", parentThreadId }, { page: 0, perPage: 100 }),
 };
 
 // Monotonic token that orders every asynchronous write to the listing. A rapid session swap
@@ -65,7 +66,7 @@ let listedParentThreadId: string | null = null;
 
 /**
  * Read the open thread's report children into {@link reportChildren}. A `null` analysis, a `null`
- * thread, or an unbooted runtime resets the listing to empty and issues no query.
+ * thread, or a server that is not ready resets the listing to empty and issues no query.
  *
  * A failed listing degrades to no children and raises no notice. The children are an addition to the
  * transcript, thus their absence costs the reader nothing and a toast for each failed read would
@@ -74,7 +75,7 @@ let listedParentThreadId: string | null = null;
 export async function refreshReportChildren(
     analysisId: string | null,
     parentThreadId: string | null,
-    seams: ReportChildrenSeams = realReportChildrenSeams,
+    opts: ReportChildrenOpts = DEFAULT_REPORT_CHILDREN_OPTS,
 ): Promise<void> {
     // Claim the token BEFORE the guards, thus even the empty path invalidates an older read that is
     // still in flight. A swap to an unbound scope must not take the listing of the previous one.
@@ -83,12 +84,11 @@ export async function refreshReportChildren(
         listedParentThreadId = parentThreadId;
         setChildren(NO_CHILDREN);
     }
-    const runtime = seams.runtime();
-    if (!runtime || analysisId === null || parentThreadId === null) {
+    if (!opts.ready() || analysisId === null || parentThreadId === null) {
         setChildren(NO_CHILDREN);
         return;
     }
-    const res = await seams.listThreads(runtime.pool, analysisId, parentThreadId);
+    const res = await opts.listThreads(analysisId, parentThreadId);
     if (mine !== refreshGeneration) return;
     res.match(
         (page) => setChildren(page.threads),
@@ -105,14 +105,14 @@ export async function refreshReportChildren(
  * would ask for a report, watch the turn finish, and find no entry until they left the conversation
  * and came back.
  */
-export function watchReportChildren(workspace: Workspace, seams: ReportChildrenSeams = realReportChildrenSeams): void {
+export function watchReportChildren(workspace: Workspace, opts: ReportChildrenOpts = DEFAULT_REPORT_CHILDREN_OPTS): void {
     createEffect(() => {
         const ready = bootState().phase === "ready";
         const analysisId = workspace.analysis?.id ?? null;
         const parentThreadId = workspace.sessionId;
-        // Before `ready` there is no pool to list from, thus collapse to empty rather than hold the
-        // children of a previous boot.
-        void refreshReportChildren(ready ? analysisId : null, ready ? parentThreadId : null, seams);
+        // Before `ready` the server cannot list, thus collapse to empty rather than hold the children
+        // of a previous boot.
+        void refreshReportChildren(ready ? analysisId : null, ready ? parentThreadId : null, opts);
     });
 
     // The turn-completion down-edge, the shape `thread.ts` uses for the row of the open thread. `prev`
@@ -128,7 +128,7 @@ export function watchReportChildren(workspace: Workspace, seams: ReportChildrenS
         // The scope reads sit inside `untrack`, thus this effect tracks the status alone. Tracked, they
         // would make a session swap run BOTH effects and issue two listings for one bind.
         if (prev === "busy" && status !== "busy") {
-            untrack(() => void refreshReportChildren(workspace.analysis?.id ?? null, workspace.sessionId, seams));
+            untrack(() => void refreshReportChildren(workspace.analysis?.id ?? null, workspace.sessionId, opts));
         }
         prev = status;
     });

@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { configuredSandboxImage, migrateRetiredSandboxImageOverride, sandboxStatus } from "./pull.ts";
+import { configuredSandboxImage, inspectSandbox, migrateRetiredSandboxImageOverride } from "./pull.ts";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
-// `sandbox status` is a read-only diagnostic: it resolves a runtime for inspection
+// The read of `sandbox status` is a read-only diagnostic: it resolves a runtime for inspection
 // (selectedRuntime() ?? firstReadyRuntime(...)) but must NEVER pin one — pinning is
 // ensureRuntime's job, reserved for commands that create runtime-bound state. This
 // exercises the real resolution seam against the sandboxed env.configPath (test
@@ -38,7 +38,7 @@ afterEach(() => {
  */
 const RUNTIME_PROBE_TIMEOUT_MS = 30_000;
 
-describe("sandboxStatus — read-only, never pins", () => {
+describe("inspectSandbox — read-only, never pins", () => {
     test(
         "does not write the runtime config key when none is selected",
         async () => {
@@ -47,14 +47,7 @@ describe("sandboxStatus — read-only, never pins", () => {
             mkdirSync(dirname(env.configPath), { recursive: true });
             writeFileSync(env.configPath, JSON.stringify({ telemetry: false }));
 
-            // sandboxStatus prints its report to stdout; silence it for the test run.
-            const originalLog = console.log;
-            console.log = (): void => {};
-            try {
-                await sandboxStatus();
-            } finally {
-                console.log = originalLog;
-            }
+            await inspectSandbox();
 
             expect(readConfig().runtime).toBeUndefined();
         },

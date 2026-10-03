@@ -5,6 +5,7 @@ import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc
 // Type-only, so the registry keeps its lazy-import discipline: nothing of the setup module loads until
 // the action runs. It is the shape of `setup`'s answer flags — see the batch options declared below.
 import type { SetupAnswerFlags } from "../modules/infra/setup_answers.ts";
+import type { AnalysisView } from "../api/analyses.ts";
 import { registerAction } from "./agent_policy.ts";
 
 /**
@@ -83,6 +84,7 @@ export function buildProgram(): Command {
     // guard (`requireInteractiveTerminal`, lib/cli.ts) is the structural backstop.
     registerAction(
         cli.option("--analysis <id|name>", "Operate on a specific analysis").option("--project <name>", "Scope to a project"),
+        "instance",
         // The root action fires for flag-only invocations too (`--analysis x`), so the reason must
         // not say "bare" — the agent may have passed flags.
         {
@@ -99,6 +101,7 @@ export function buildProgram(): Command {
 
     registerAction(
         cli.command("config").description("View and change settings"),
+        "instance",
         {
             kind: "blocked",
             reason: "`inflexa config` opens the interactive settings UI, which cannot run as a captured subprocess. It is not available to you.",
@@ -118,6 +121,7 @@ export function buildProgram(): Command {
             .argument("[name]", "Analysis name (prompted when omitted)")
             .argument("[paths...]", "Input files or folders to attach to the analysis")
             .option("--project <name>", "Group the analysis under a project"),
+        "instance",
         // A TUI launcher that creates the analysis during target resolution (before its first
         // frame), so it must be refused before any state exists — hence blocked, not prompted.
         {
@@ -132,18 +136,20 @@ export function buildProgram(): Command {
         },
     );
 
-    // Read-only analysis lister: cached path used deliberately, no reconciliation side effects (ls.ts).
+    // Read-only analysis lister: the cached anchor path, no reconciliation side effects (`GET /api/v1/analyses`).
     registerAction(
         cli.command("ls").description("List recent analyses").option("--project <name>", "Only analyses in this project"),
+        "instance",
         { kind: "auto", safeFlags: ["project"] },
         async (options: { project?: string }) => {
-            const { runLs } = await import("../modules/analysis/ls.ts");
-            runLs({ project: options.project });
+            const { analysisLs } = await import("../client/commands/analyses.ts");
+            await analysisLs({ project: options.project });
         },
     );
 
     registerAction(
         cli.command("resume").description("Reopen an analysis's chat by id or name").argument("<idOrName>", "Analysis to reopen, by id or name"),
+        "instance",
         {
             kind: "blocked",
             reason:
@@ -162,14 +168,15 @@ export function buildProgram(): Command {
             .command("open")
             .description("Open an analysis's workspace (inputs, run artifacts, reports, provenance) in the file browser")
             .argument("<idOrName>", "Analysis whose workspace to open, by id or name"),
+        "instance",
         { kind: "approval" },
         async (idOrName: string) => {
-            const { runOpen } = await import("../modules/analysis/open.ts");
-            runOpen(idOrName);
+            const { analysisOpen } = await import("../client/commands/analyses.ts");
+            await analysisOpen(idOrName);
         },
     );
 
-    // Stays `approval` (not `auto`): `resolveContext` resolves anchors with the default `touch: true`,
+    // Stays `approval` (not `auto`): the resolve route resolves anchors with the default `touch: true`,
     // which writes a `last_seen` heartbeat and can self-heal a cached path (anchor.ts `resolveAnchor`) —
     // an agent auto-running `status` would make that heartbeat measure agent I/O, not folder liveness.
     registerAction(
@@ -178,10 +185,11 @@ export function buildProgram(): Command {
             .description("Print what `inflexa` resolves to right now (loud context)")
             .option("--analysis <id|name>", "Resolve a specific analysis")
             .option("--project <name>", "Scope to a project"),
+        "instance",
         { kind: "approval" },
         async (options: { analysis?: string; project?: string }) => {
-            const { runStatus } = await import("../modules/analysis/status.ts");
-            runStatus({ analysis: options.analysis, project: options.project });
+            const { analysisStatus } = await import("../client/commands/analyses.ts");
+            await analysisStatus({ analysis: options.analysis, project: options.project });
         },
     );
 
@@ -191,12 +199,23 @@ export function buildProgram(): Command {
     // can carry leaves the command read-only, and it is safe-listed on that basis (design Decision 8).
     const usage = cli.command("usage").description("Report an analysis's recorded LLM token usage, by served model and by agent");
 
+    // The analysis of a usage command resolves through the server (`POST /api/v1/analyses/resolve`).
+    // `touch: false` — a report is not a sighting, and these commands are `auto`, thus an agent can run
+    // them unprompted.
+    async function usageAnalysis(ref: string | undefined): Promise<AnalysisView> {
+        const { resolveSingleAnalysisOrFail } = await import("../client/commands/analyses.ts");
+        return resolveSingleAnalysisOrFail({ analysis: ref }, "No analysis here. Run `inflexa` to start or open one, then ask what it has consumed.", {
+            touch: false,
+        });
+    }
+
     registerAction(
         usage.option("--analysis <id|name>", "Operate on a specific analysis"),
+        "instance",
         { kind: "auto", safeFlags: ["analysis"] },
         async (options: { analysis?: string }) => {
-            const { runUsage } = await import("../modules/usage/usage.ts");
-            runUsage({ analysis: options.analysis });
+            const { usageReport } = await import("../client/commands/usage.ts");
+            await usageReport(await usageAnalysis(options.analysis));
         },
     );
 
@@ -209,19 +228,21 @@ export function buildProgram(): Command {
             .command("sessions")
             .description("Report what each of the analysis's conversations consumed")
             .option("--analysis <id|name>", "Operate on a specific analysis"),
+        "instance",
         { kind: "auto", safeFlags: ["analysis"] },
         async (options: { analysis?: string }) => {
-            const { runUsageSessions } = await import("../modules/usage/usage.ts");
-            runUsageSessions({ analysis: options.analysis });
+            const { usageSessions } = await import("../client/commands/usage.ts");
+            await usageSessions(await usageAnalysis(options.analysis));
         },
     );
 
     registerAction(
         usage.command("runs").description("Report what each of the analysis's runs consumed").option("--analysis <id|name>", "Operate on a specific analysis"),
+        "instance",
         { kind: "auto", safeFlags: ["analysis"] },
         async (options: { analysis?: string }) => {
-            const { runUsageRuns } = await import("../modules/usage/usage.ts");
-            runUsageRuns({ analysis: options.analysis });
+            const { usageRuns } = await import("../client/commands/usage.ts");
+            await usageRuns(await usageAnalysis(options.analysis));
         },
     );
 
@@ -231,10 +252,11 @@ export function buildProgram(): Command {
             .description("Report what each step of one run consumed")
             .requiredOption("--run <id>", "The run to report on, by id or by a trailing abbreviation of one")
             .option("--analysis <id|name>", "Operate on a specific analysis"),
+        "instance",
         { kind: "auto", safeFlags: ["analysis", "run"] },
         async (options: { run: string; analysis?: string }) => {
-            const { runUsageSteps } = await import("../modules/usage/usage.ts");
-            runUsageSteps({ run: options.run, analysis: options.analysis });
+            const { usageSteps } = await import("../client/commands/usage.ts");
+            await usageSteps(await usageAnalysis(options.analysis), options.run);
         },
     );
 
@@ -244,30 +266,31 @@ export function buildProgram(): Command {
     // list, so it leaves the command read-only and is safe-listed.
     registerAction(
         inputs.command("ls").description("List the analysis's current inputs").option("--analysis <id|name>", "Operate on a specific analysis"),
+        "instance",
         { kind: "auto", safeFlags: ["analysis"] },
         async (options: { analysis?: string }) => {
-            const { runInputsLs } = await import("../modules/analysis/inputs_command.ts");
-            runInputsLs({ analysis: options.analysis });
+            const { inputsLs } = await import("../client/commands/analyses.ts");
+            await inputsLs({ analysis: options.analysis });
         },
     );
 
-    // `blocked` for the agent, not `approval`: adding inputs mid-chat must run IN the chat's own process
-    // (the manage_inputs tool), because it emits provenance under the analysis lock the chat already
-    // holds — a run_inflexa subprocess would be refused by that lock. This subcommand is the terminal
-    // (human) surface; the lock keeps a standalone add from writing provenance concurrently with a chat.
+    // `blocked` for the agent, not `approval`: during a chat the agent changes the inputs with its
+    // `manage_inputs` tool, which records them in the provenance of the turn. This subcommand is the
+    // terminal (human) surface, a client of the same server.
     registerAction(
         inputs
             .command("add")
             .description("Add files or folders as inputs to the analysis")
             .argument("<paths...>", "Files or folders to add as inputs")
             .option("--analysis <id|name>", "Operate on a specific analysis"),
+        "instance",
         {
             kind: "blocked",
-            reason: "`inflexa inputs add` is the terminal surface for a human. During a chat, add inputs with the `manage_inputs` tool instead — running this as a subprocess would be refused by the analysis lock the chat holds.",
+            reason: "`inflexa inputs add` is the terminal surface for a human. During a chat, add inputs with the `manage_inputs` tool instead.",
         },
         async (paths: string[], options: { analysis?: string }) => {
-            const { runInputsAdd } = await import("../modules/analysis/inputs_command.ts");
-            runInputsAdd({ analysis: options.analysis }, paths);
+            const { inputsAdd } = await import("../client/commands/analyses.ts");
+            await inputsAdd({ analysis: options.analysis }, paths);
         },
     );
 
@@ -277,13 +300,14 @@ export function buildProgram(): Command {
             .description("Remove inputs from the analysis")
             .argument("<paths...>", "Input paths to remove")
             .option("--analysis <id|name>", "Operate on a specific analysis"),
+        "instance",
         {
             kind: "blocked",
-            reason: "`inflexa inputs remove` is the terminal surface for a human. During a chat, remove inputs with the `manage_inputs` tool instead — running this as a subprocess would be refused by the analysis lock the chat holds.",
+            reason: "`inflexa inputs remove` is the terminal surface for a human. During a chat, remove inputs with the `manage_inputs` tool instead.",
         },
         async (paths: string[], options: { analysis?: string }) => {
-            const { runInputsRemove } = await import("../modules/analysis/inputs_command.ts");
-            runInputsRemove({ analysis: options.analysis }, paths);
+            const { inputsRemove } = await import("../client/commands/analyses.ts");
+            await inputsRemove({ analysis: options.analysis }, paths);
         },
     );
 
@@ -294,6 +318,13 @@ export function buildProgram(): Command {
     // unrecognized argument — never a runtime refusal inside a registered command. `INFLEXA_DEV=1`
     // re-enables them on a shipped binary. See the dev-commands spec and env.ts's `devCommandsEnabled`.
     if (devCommandsEnabled()) {
+        // The analysis of a dev client command resolves through the server (`POST /api/v1/analyses/resolve`).
+        // `touch: false` — a dev command is not a sighting of the folder.
+        async function devAnalysis(ref: string | undefined, emptyHint: string): Promise<{ id: string; name: string }> {
+            const { resolveSingleAnalysisOrFail } = await import("../client/commands/analyses.ts");
+            return resolveSingleAnalysisOrFail({ analysis: ref }, emptyHint, { touch: false });
+        }
+
         // The deliberate harness entry point: stages files and boots the embedded
         // runtime, which no passive flow may do (no-litter policy).
         registerAction(
@@ -302,12 +333,13 @@ export function buildProgram(): Command {
                 .description("Stage the analysis's inputs and run a data profile in the harness sandbox")
                 .option("--analysis <id|name>", "Operate on a specific analysis")
                 .option("--status", "Show the profile run state instead of starting a run"),
+            "instance",
             { kind: "approval" },
             async (options: { analysis?: string; status?: boolean }) => {
-                const { runProfile, runProfileStatus } = await import("../modules/harness/dev/profile.ts");
-                const flags = { analysis: options.analysis };
-                if (options.status) await runProfileStatus(flags);
-                else await runProfile(flags);
+                const { profileRun, profileStatus } = await import("../client/commands/runs.ts");
+                const analysis = await devAnalysis(options.analysis, "No analysis here. Run `inflexa` to start one, add inputs, then profile.");
+                if (options.status) await profileStatus(analysis);
+                else await profileRun(analysis);
             },
         );
 
@@ -320,25 +352,30 @@ export function buildProgram(): Command {
                 .argument("[analysis]", "Analysis to operate on, by id or name (default: resolved from the current directory)")
                 .option("--plan <file>", "Path to the JSON analysis plan to execute")
                 .option("--status", "Show this analysis's run history instead of launching a run"),
+            { kind: "instance", machineFlags: ["plan"] },
             { kind: "approval" },
             async (analysis: string | undefined, options: { plan?: string; status?: boolean }) => {
-                const { runAnalysis, runAnalysisStatus } = await import("../modules/harness/dev/run.ts");
-                const flags = { analysis };
-                if (options.status) await runAnalysisStatus(flags);
-                else await runAnalysis(flags, options.plan);
+                if (options.status) {
+                    const { runStatus } = await import("../client/commands/runs.ts");
+                    await runStatus(await devAnalysis(analysis, "No analysis here. Run `inflexa` to start one, add inputs, then `inflexa run`."));
+                    return;
+                }
+                const { runAnalysis } = await import("../modules/harness/dev/run.ts");
+                await runAnalysis({ analysis }, options.plan);
             },
         );
 
-        // The conversational harness entry point: boots the embedded runtime and drives
-        // the conversation agent in a stdout REPL (a dev-channel surface — see chat.ts's
-        // TODO(extend); no passive flow may boot the runtime). A TUI-launcher-family member
-        // (blocked): an interactive prompt loop cannot run as a captured subprocess.
+        // The conversational harness entry point: drives the conversation agent of the local
+        // server in a stdout REPL, as a client of `POST {A}/chat` (a dev-channel surface — see
+        // chat.ts's TODO(extend)). A TUI-launcher-family member (blocked): an interactive prompt
+        // loop cannot run as a captured subprocess.
         registerAction(
             cli
                 .command("chat")
                 .description("Chat with the analysis agent (plan, execute, and inspect runs conversationally)")
                 .argument("[analysis]", "Analysis to operate on, by id or name (default: resolved from the current directory)")
                 .option("--thread <id>", "Resume an existing conversation thread"),
+            "instance",
             {
                 kind: "blocked",
                 reason: "`inflexa chat` opens an interactive prompt loop, which cannot run as a captured subprocess. It is not available to you.",
@@ -350,6 +387,79 @@ export function buildProgram(): Command {
         );
     }
 
+    // The local server: it boots the harness runtime and serves each client over HTTP on 127.0.0.1. Each
+    // `instance` command starts it in the background when none answers. The hidden `--run-detached` is the
+    // detached child of `--detach`; its spelling is pinned against SERVE_DETACHED_CHILD_FLAG by serve.test.ts.
+    registerAction(
+        cli
+            .command("serve")
+            .description("Run the local Inflexa server in the foreground (Ctrl+C stops it), or in the background with --detach")
+            .option("--detach", "Start the server in the background, detached from this terminal, and return when it answers")
+            .addOption(new Option("--run-detached").hideHelp()),
+        "machine",
+        {
+            kind: "blocked",
+            reason:
+                "`inflexa serve` starts the local server, which runs until it is stopped, and this conversation itself runs inside that server. " +
+                "It is not available to you.",
+        },
+        async (options: { detach?: boolean; runDetached?: boolean }) => {
+            const { runServe, runServeDetached } = await import("../server/serve.ts");
+            if (options.runDetached === true) await runServe("detached");
+            else if (options.detach === true) await runServeDetached();
+            else await runServe("foreground");
+        },
+    );
+
+    // The commands of the server process itself. Each is `machine`: none starts a server.
+    const server = cli.command("server").description("Inspect and stop the local Inflexa server");
+
+    // Read-only: the discovery file, a probe, and the activity read. `--json` only shapes the output.
+    registerAction(
+        server
+            .command("status")
+            .description("Show if the local server runs, its pid, port, versions, phase, and active work")
+            .option("--json", "Emit a machine-readable JSON document instead of prose"),
+        "machine",
+        { kind: "auto", safeFlags: ["json"] },
+        async (options: { json?: boolean }) => {
+            const { serverStatus } = await import("../client/commands/server.ts");
+            await serverStatus({ json: options.json ?? false });
+        },
+    );
+
+    registerAction(
+        server
+            .command("stop")
+            .description("Stop the local server and wait for its exit; a run continues at the next start")
+            .option("--drain", "Wait up to 60 s for the running chat turns before the stop aborts them"),
+        "machine",
+        {
+            kind: "blocked",
+            reason:
+                "`inflexa server stop` stops the local server, and this conversation runs inside that server, thus the stop would end your own turn. " +
+                "It is not available to you — ask the user to run it from their own shell.",
+        },
+        async (options: { drain?: boolean }) => {
+            const { serverStop } = await import("../client/commands/server.ts");
+            await serverStop({ mode: options.drain === true ? "drain" : "now" });
+        },
+    );
+
+    registerAction(
+        server
+            .command("logs")
+            .description("Print the path of the server log and its last lines")
+            .option("--lines <n>", "How many of the last lines to print", "50")
+            .option("--follow", "Keep printing the lines that the server appends (Ctrl+C stops)"),
+        "machine",
+        { kind: "approval" },
+        async (options: { lines: string; follow?: boolean }) => {
+            const { serverLogs } = await import("../client/commands/server.ts");
+            await serverLogs({ lines: options.lines, follow: options.follow ?? false });
+        },
+    );
+
     const analysisCmd = cli.command("analysis").description("Manage analyses (grouping)");
 
     registerAction(
@@ -358,10 +468,11 @@ export function buildProgram(): Command {
             .description("Attach, move, or clear an analysis's project grouping (omit project to clear)")
             .argument("<analysis>", "Analysis to move, by id or name")
             .argument("[project]", "Target project, by id or name (omit to clear the grouping)"),
+        "instance",
         { kind: "approval" },
         async (analysisRef: string, projectRef: string | undefined) => {
-            const { runSetProject } = await import("../modules/analysis/set_project.ts");
-            runSetProject(analysisRef, projectRef ?? null);
+            const { analysisSetProject } = await import("../client/commands/analyses.ts");
+            await analysisSetProject(analysisRef, projectRef ?? null);
         },
     );
 
@@ -377,20 +488,28 @@ export function buildProgram(): Command {
             .argument("<name>", "Name for the project")
             .option("--description <text>", "A short description")
             .option("--tags <tags>", "Comma-separated tags"),
+        "instance",
         { kind: "approval" },
         async (name: string, options: { description?: string; tags?: string }) => {
-            const { projectNew } = await import("../modules/project/project.ts");
-            projectNew(name, { description: options.description, tags: options.tags });
+            const { projectNew } = await import("../client/commands/projects.ts");
+            await projectNew(name, { description: options.description, tags: options.tags });
         },
     );
 
-    // Read-only: `listProjects` + per-project count queries (project.ts).
-    registerAction(project.command("ls").description("List projects"), { kind: "auto", safeFlags: [] }, async () => {
-        const { projectLs } = await import("../modules/project/project.ts");
-        projectLs();
+    // Read-only: `GET /api/v1/projects` (client/commands/projects.ts).
+    registerAction(project.command("ls").description("List projects"), "instance", { kind: "auto", safeFlags: [] }, async () => {
+        const { projectLs } = await import("../client/commands/projects.ts");
+        await projectLs();
     });
 
     const prov = cli.command("prov").description("Provenance — the recorded history of an analysis's inputs and actions");
+
+    // The analysis of a provenance command resolves through the server (`POST /api/v1/analyses/resolve`). An
+    // ambiguous name fails with each candidate: a prov command never picks the newest of same-named analyses.
+    async function provAnalysis(ref: string): Promise<AnalysisView> {
+        const { requireAnalysisByRef } = await import("../client/commands/analyses.ts");
+        return requireAnalysisByRef(ref);
+    }
 
     // Stays `approval` (not `auto`): `export` writes the PROV document into the workspace by default.
     registerAction(
@@ -400,10 +519,11 @@ export function buildProgram(): Command {
             .argument("<analysis>", "Analysis whose provenance to export, by id or name")
             .option("--format <format>", "json (PROV-JSON) or provn (PROV-N)", "json")
             .option("--output <file>", "Write to this file instead of the analysis output folder"),
+        "instance",
         { kind: "approval" },
         async (analysisRef: string, options: { format?: string; output?: string }) => {
-            const { runExportProvenance } = await import("../modules/prov/export.ts");
-            await runExportProvenance(analysisRef, { format: options.format, output: options.output });
+            const { provExport } = await import("../client/commands/prov.ts");
+            await provExport(await provAnalysis(analysisRef), { format: options.format, output: options.output });
         },
     );
 
@@ -420,10 +540,11 @@ export function buildProgram(): Command {
             .option("--forward", "Walk forward: what was derived from this file")
             .option("--depth <n>", "Bound the walk to n generation hops (default: unbounded)")
             .option("--format <format>", "tree (human), json (flat graph), dot (Graphviz), or mermaid (flowchart source)", "tree"),
+        "instance",
         { kind: "auto", safeFlags: ["forward", "depth", "format"] },
         async (analysisRef: string, ref: string, options: { forward?: boolean; depth?: string; format?: string }) => {
-            const { runProvLineage } = await import("../modules/prov/lineage.ts");
-            runProvLineage(analysisRef, ref, options);
+            const { provLineage } = await import("../client/commands/prov.ts");
+            await provLineage(await provAnalysis(analysisRef), ref, options);
         },
     );
 
@@ -433,10 +554,11 @@ export function buildProgram(): Command {
             .command("verify")
             .description("Verify the integrity of an analysis's provenance chain and signature")
             .argument("<analysis>", "Analysis whose provenance chain to verify, by id or name"),
+        "instance",
         { kind: "auto", safeFlags: [] },
         async (analysisRef: string) => {
-            const { runVerifyProvenance } = await import("../modules/prov/verify.ts");
-            await runVerifyProvenance(analysisRef);
+            const { provVerify } = await import("../client/commands/prov.ts");
+            await provVerify(await provAnalysis(analysisRef));
         },
     );
 
@@ -446,6 +568,7 @@ export function buildProgram(): Command {
             .command("verify-file")
             .description("Verify an exported provenance file against its .sig.json attestation (no database needed)")
             .argument("<path>", "Exported provenance file to check against its .sig.json attestation"),
+        "standalone",
         { kind: "auto", safeFlags: [] },
         async (path: string) => {
             const { runVerifyFile } = await import("../modules/prov/verify.ts");
@@ -460,10 +583,11 @@ export function buildProgram(): Command {
             .command("repair")
             .description("Reconcile the anchor marker at <path> (default: current directory)")
             .argument("[path]", "Folder whose anchor marker to reconcile (default: current directory)"),
+        "instance",
         { kind: "approval" },
         async (path: string | undefined) => {
-            const { runRepair } = await import("../modules/anchor/backstop.ts");
-            runRepair(path);
+            const { anchorRepair } = await import("../client/commands/anchors.ts");
+            await anchorRepair(path);
         },
     );
 
@@ -475,17 +599,23 @@ export function buildProgram(): Command {
             .argument("[toPath]", "Path the folder lives at now")
             .option("--from <prefix>", "Path prefix to rewrite from (bulk mode)")
             .option("--to <prefix>", "Path prefix to rewrite to (bulk mode)"),
+        "instance",
         { kind: "approval" },
         async (fromPath: string | undefined, toPath: string | undefined, options: { from?: string; to?: string }) => {
-            const { runRelocate } = await import("../modules/anchor/backstop.ts");
-            await runRelocate({ fromPath, toPath, from: options.from, to: options.to });
+            const { anchorRelocate } = await import("../client/commands/anchors.ts");
+            await anchorRelocate({ fromPath, toPath, from: options.from, to: options.to });
         },
     );
 
-    registerAction(cli.command("prune").description("Drop anchors whose folders are confirmed gone and unrecoverable"), { kind: "approval" }, async () => {
-        const { runPrune } = await import("../modules/anchor/backstop.ts");
-        await runPrune();
-    });
+    registerAction(
+        cli.command("prune").description("Drop anchors whose folders are confirmed gone and unrecoverable"),
+        "instance",
+        { kind: "approval" },
+        async () => {
+            const { anchorPrune } = await import("../client/commands/anchors.ts");
+            await anchorPrune();
+        },
+    );
 
     // `blocked`, and not for the usual reason. The command replaces the very file the agent is running
     // from: `run_inflexa` spawns it as a child of this binary, and on Windows the swap renames the running
@@ -493,6 +623,7 @@ export function buildProgram(): Command {
     // no reason to change the tool underneath its own session.
     registerAction(
         cli.command("upgrade").description("Install the newest inflexa release, or name the command that does"),
+        "machine",
         {
             kind: "blocked",
             reason:
@@ -521,6 +652,7 @@ export function buildProgram(): Command {
             // the flag could only ever have failed — `--analysis` is the way to name a target.
             .option("--analysis <id|name>", "Operate on a specific analysis")
             .option("--max-size <size>", "Override the per-Series download ceiling (e.g. 500MB, 64GB)"),
+        "instance",
         // A transfer: a Series is gigabytes over NCBI's link, so the agent's tool gives it no deadline and
         // the downloader ends it when the bytes stop. `--max-size` bounds the SIZE, never the time.
         { kind: "approval", transfer: true },
@@ -533,21 +665,26 @@ export function buildProgram(): Command {
     // Auth verbs grouped under one parent, à la `gh auth login|logout|status`.
     const auth = cli.command("auth").description("Manage authentication (Auth0 device flow)");
 
-    registerAction(auth.command("login").description("Log in via the Auth0 device flow"), { kind: "approval" }, async () => {
+    registerAction(auth.command("login").description("Log in via the Auth0 device flow"), "machine", { kind: "approval" }, async () => {
         const { login } = await import("../modules/auth/login.ts");
         await login();
     });
 
-    registerAction(auth.command("logout").description("Log out and revoke the stored session"), { kind: "approval" }, async () => {
+    registerAction(auth.command("logout").description("Log out and revoke the stored session"), "machine", { kind: "approval" }, async () => {
         const { logout } = await import("../modules/auth/logout.ts");
         await logout();
     });
 
     // Read-only: local JWT decode without any network round-trip (whoami.ts).
-    registerAction(auth.command("whoami").description("Show the logged-in user and session status"), { kind: "auto", safeFlags: [] }, async () => {
-        const { whoami } = await import("../modules/auth/whoami.ts");
-        whoami();
-    });
+    registerAction(
+        auth.command("whoami").description("Show the logged-in user and session status"),
+        "standalone",
+        { kind: "auto", safeFlags: [] },
+        async () => {
+            const { whoami } = await import("../modules/auth/whoami.ts");
+            whoami();
+        },
+    );
 
     // Infrastructure-lifecycle family (`up`, `down`, `setup`): these mutate the very containers this
     // conversation runs on — `down` stops the Postgres the harness session is connected to, so even an
@@ -557,6 +694,7 @@ export function buildProgram(): Command {
     // command unrepresentable.
     registerAction(
         cli.command("up").description("Start the inflexa infrastructure containers (proxy + Postgres)"),
+        "machine",
         {
             kind: "blocked",
             reason:
@@ -574,13 +712,18 @@ export function buildProgram(): Command {
             .command("down")
             .description("Stop the inflexa infrastructure containers")
             .option("--delete-data", "Delete Postgres data and proxy credentials (requires confirmation)"),
+        "machine",
         {
             kind: "blocked",
             reason:
                 "`inflexa down` stops the infrastructure containers — including the database this conversation is running on — " +
                 "and would sever the session. It is not available to you — ask the user to run it from their own shell.",
         },
+        // `down` stops the Postgres of a live server, which is the backend of each client, thus it refuses
+        // while a server answers.
         async (options: { deleteData?: boolean }) => {
+            const { refuseWhileServerAnswers } = await import("../client/server.ts");
+            await refuseWhileServerAnswers("inflexa down");
             const { down } = await import("../modules/infra/lifecycle.ts");
             await down({ deleteData: options.deleteData ?? false });
         },
@@ -649,6 +792,7 @@ export function buildProgram(): Command {
                 "--runtime <runtime>",
                 "Container runtime to provision on: docker|podman. A hard gate — setup fails rather than falling back when it is not ready",
             ),
+        "machine",
         {
             kind: "blocked",
             reason:
@@ -716,6 +860,7 @@ export function buildProgram(): Command {
             .description("List catalog options, links, sizes, and local state")
             .option("--urls", "Also print the exact upstream download URL of every file")
             .option("--json", "Emit a machine-readable JSON document instead of prose (artifact URLs always included; --urls has no effect)"),
+        "standalone",
         { kind: "auto", safeFlags: ["urls", "json"] },
         async (options: { urls?: boolean; json?: boolean }) => {
             const { runRefsList } = await import("../modules/refs/commands.ts");
@@ -731,6 +876,7 @@ export function buildProgram(): Command {
             .argument("[ids...]", "Catalog dataset ids (interactive selection when omitted)")
             .option("--yes", "Skip the download confirmation")
             .option("--force", "Re-fetch even when already installed — repairs damage and refreshes mutable upstreams"),
+        "machine",
         // A transfer: one catalog artifact reaches 2 GB, and the captured readout prints a line for each
         // file that lands, so the whole of a large one is quiet. The downloader watches the bytes instead.
         { kind: "approval", transfer: true },
@@ -747,6 +893,7 @@ export function buildProgram(): Command {
             .description("Verify active managed datasets without changing them")
             .argument("[ids...]", "Catalog dataset ids (all installed datasets when omitted)")
             .option("--json", "Emit a machine-readable JSON document instead of prose"),
+        "standalone",
         { kind: "auto", safeFlags: ["json"] },
         async (ids: string[], options: { json?: boolean }) => {
             const { runRefsVerify } = await import("../modules/refs/commands.ts");
@@ -755,7 +902,7 @@ export function buildProgram(): Command {
     );
 
     // Read-only: prints the store path (commands.ts).
-    registerAction(refs.command("path").description("Print the public host reference-store path"), { kind: "auto", safeFlags: [] }, async () => {
+    registerAction(refs.command("path").description("Print the public host reference-store path"), "standalone", { kind: "auto", safeFlags: [] }, async () => {
         const { runRefsPath } = await import("../modules/refs/commands.ts");
         runRefsPath();
     });
@@ -773,6 +920,7 @@ export function buildProgram(): Command {
             .command("pull")
             .description("Start the two detached image transfers (the runtime image and the provisioner image) and return at once")
             .addOption(new Option("--run-transfer <kind>").hideHelp()),
+        "machine",
         { kind: "approval" },
         async (options: { runTransfer?: string }) => {
             if (options.runTransfer !== undefined) {
@@ -792,6 +940,7 @@ export function buildProgram(): Command {
     // Read-only diagnostic: must not write config (pull.ts); runtime `image inspect` is a query subprocess.
     registerAction(
         sandbox.command("status").description("Show the two images, the live transfer states, and the package-store summary"),
+        "machine",
         { kind: "auto", safeFlags: [] },
         async () => {
             const { sandboxStatus } = await import("../modules/libs/pull.ts");
@@ -802,6 +951,7 @@ export function buildProgram(): Command {
     // `blocked`: an agent must not delete multi-GB assets of the user.
     registerAction(
         sandbox.command("remove").description("Remove the runtime image and the provisioner image from the engine; the store and the farms stay"),
+        "machine",
         { kind: "blocked", reason: "Removing the sandbox images deletes multi-GB assets of the user; only the user runs it." },
         async () => {
             const { sandboxRemove } = await import("../modules/libs/pull.ts");
@@ -828,20 +978,25 @@ export function buildProgram(): Command {
             .option("--analysis <ref>", "Extend the farm of this analysis after the commit (id or name)")
             .addOption(new Option("--queued").hideHelp())
             .addOption(new Option("--run-flush").hideHelp()),
+        "machine",
         { kind: "approval" },
         async (pkg: string | undefined, options: { version?: string; lang?: string; analysis?: string; queued?: boolean; runFlush?: boolean }) => {
-            const { runStoreAdd } = await import("../modules/libs/store.ts");
+            if (options.runFlush === true) {
+                const { flushAndPrint } = await import("../modules/libs/store.ts");
+                await flushAndPrint(env.packageStoreDir);
+                return;
+            }
             if (options.lang !== undefined && options.lang !== "python" && options.lang !== "r") {
                 console.error(`\n  Unknown ecosystem "${options.lang}". Choose python or r.\n`);
                 process.exitCode = 1;
                 return;
             }
+            const { runStoreAdd } = await import("../modules/libs/store.ts");
             await runStoreAdd(pkg, {
                 version: options.version ?? null,
                 lang: options.lang ?? null,
-                analysis: options.analysis === undefined ? null : options.analysis,
-                queued: options.queued,
-                runFlush: options.runFlush,
+                analysis: options.analysis ?? null,
+                queued: options.queued === true,
             });
         },
     );
@@ -858,25 +1013,33 @@ export function buildProgram(): Command {
             .description("Link packages the pool already holds into the farm of one analysis (no download, no container)")
             .argument("<packages...>", "The packages to link (name, or name==version)")
             .option("--analysis <ref>", "The analysis whose farm gains the links (id or name; the analysis of this folder otherwise)")
-            .option("--lang <ecosystem>", "The ecosystem: python or r (asked on a both-hit otherwise)"),
+            .option("--lang <ecosystem>", "The ecosystem: python or r (necessary when both ecosystems hold a name)"),
+        "instance",
         { kind: "auto", safeFlags: ["analysis", "lang"] },
         async (packages: string[], options: { analysis?: string; lang?: string }) => {
-            const { runStoreLink } = await import("../modules/libs/store.ts");
             if (options.lang !== undefined && options.lang !== "python" && options.lang !== "r") {
                 console.error(`\n  Unknown ecosystem "${options.lang}". Choose python or r.\n`);
                 process.exitCode = 1;
                 return;
             }
-            await runStoreLink(packages, {
-                analysis: options.analysis === undefined ? null : options.analysis,
-                lang: options.lang ?? null,
-            });
+            // The `run_inflexa` tool runs its subprocess inside the analysis folder, thus the folder names the
+            // analysis and `--analysis` is the exception. `touch: false` — a link is not a sighting of the folder.
+            const { resolveSingleAnalysisOrFail } = await import("../client/commands/analyses.ts");
+            const analysis = await resolveSingleAnalysisOrFail(
+                { analysis: options.analysis },
+                "`inflexa store link` needs the analysis whose farm gains the links, and this folder anchors none. " +
+                    "Pass `--analysis <id|name>`, and run `inflexa ls` to see the analyses this machine holds.",
+                { touch: false },
+            );
+            const { storeLink } = await import("../client/commands/store.ts");
+            await storeLink(analysis, packages, options.lang);
         },
     );
 
     // Read-only: the packages, the farms, the flights, the queue, the disk.
     registerAction(
         store.command("ls").description("List the packages, the farms, the live flights, and the disk use of the package store"),
+        "machine",
         { kind: "auto", safeFlags: [] },
         async () => {
             const { runStoreLs } = await import("../modules/libs/store.ts");
@@ -894,10 +1057,16 @@ export function buildProgram(): Command {
             .option("--update", "Apply a moved catalog tag (replaces the dependency graph whole)")
             .option("--foreground", "Run the transfer in this process and carry the outcome in the exit code (for a one-shot container)")
             .addOption(new Option("--run-transfer").hideHelp()),
+        "machine",
         { kind: "approval" },
         async (options: { update?: boolean; runTransfer?: boolean; foreground?: boolean }) => {
+            if (options.runTransfer === true) {
+                const { runCatalogTransfer } = await import("../modules/libs/store_download.ts");
+                await runCatalogTransfer({ storeRoot: env.packageStoreDir, update: options.update ?? false });
+                return;
+            }
             const { runStoreDownload } = await import("../modules/libs/store.ts");
-            await runStoreDownload({ update: options.update, runTransfer: options.runTransfer, foreground: options.foreground });
+            await runStoreDownload({ update: options.update, foreground: options.foreground });
         },
     );
 
@@ -905,6 +1074,7 @@ export function buildProgram(): Command {
     // partial staged tree.
     registerAction(
         store.command("cancel").description("Stop the live catalog transfer and remove the partial staged tree; installed content stays"),
+        "machine",
         { kind: "approval" },
         async () => {
             const { runStoreCancel } = await import("../modules/libs/store.ts");
@@ -915,6 +1085,7 @@ export function buildProgram(): Command {
     // `approval`: the reclaim deletes pool content that no farm references.
     registerAction(
         store.command("reclaim").description("Remove store content that no farm references, after a preview inside the exclusivity window"),
+        "machine",
         { kind: "approval" },
         async () => {
             const { runStoreReclaim } = await import("../modules/libs/store.ts");

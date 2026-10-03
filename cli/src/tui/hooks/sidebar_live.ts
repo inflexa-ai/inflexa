@@ -1,55 +1,31 @@
 import { createSignal, createEffect, createMemo, onCleanup } from "solid-js";
-import { ResultAsync, type Result } from "neverthrow";
-import {
-    loadDataProfileStatus,
-    loadPlan,
-    profileCaveats,
-    profileDimensions,
-    queryActiveRunsByAnalysis,
-    queryRunsByAnalysis,
-    queryStepsByRun,
-    type CortexRunRow,
-    type DataProfileGroup,
-    type DataProfilePartition,
-    type DataProfileResult,
-    type DataProfileStatus,
-    type DbError,
-    type Pool,
-    type ProfileDimensionView,
-    type RunStatus,
-    type StepExecutionRow,
-} from "@inflexa-ai/harness";
+import type { ResultAsync } from "neverthrow";
+import type { DataProfileGroup, DataProfilePartition, DataProfileResult } from "@inflexa-ai/harness/contracts/index.js";
+import { profileCaveats, profileDimensions, type ProfileDimensionView } from "@inflexa-ai/harness/app/data-profile-view";
 
-import { Bus } from "../../lib/bus.ts";
+import type { DataProfileState, DataProfileView, RunDetail, RunList, RunStatus, RunSummary, StepExecutionStatus } from "../../api/runs.ts";
+import type { UsageTotals } from "../../api/usage.ts";
+import type { ClientError } from "../../client/api.ts";
+import { fetchDataProfile, fetchRun, fetchRuns } from "../../client/runs.ts";
 import { getLogger } from "../../lib/log.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import { formatTokenFigure, formatTokenFigureLabelled } from "../../lib/usage_format.ts";
-import { getAnalysisDataProfileUsageTotals, getRunUsageTotals, listRunUsageByStep } from "../../db/primary_query.ts";
-import type { LlmUsageByStep, LlmUsageTotals } from "../../db/primary_query.ts";
-// The CLI's own storage error, aliased because this module already imports the harness's identically
-// named `DbError` for the Postgres-backed reads. The two are different unions from different stores,
-// and the ledger reads below are the local SQLite ones.
-import type { DbError as LedgerError } from "../../db/errors.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
-import type { StampedEvent } from "../../types/events.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { RunStepView } from "../components/run_block.tsx";
-import { bootState, harnessRuntime } from "./boot.ts";
+import { bootState } from "./boot.ts";
 import { chatStatus, type ChatStatus } from "./status.ts";
 
 // The sidebar's live ledger data — the data-profile status and the analysis's newest runs — held
 // here (not inside `sidebar.tsx`) so the holder is decoupled from its renderer, the same split as
 // `status.ts` / `boot.ts` / `conversation.ts`. The `Sidebar` reads the two snapshots reactively;
-// `refreshSidebarData` (re)populates them from the booted runtime's pool; `watchSidebarData` wires
-// the lifecycle triggers + the bounded poll from `App`. One chat screen is mounted at a time, so a
+// `refreshSidebarData` (re)populates them from the local server; `watchSidebarData` wires the
+// lifecycle triggers + the bounded poll from `App`. One chat screen is mounted at a time, so a
 // module singleton is correct — and the two snapshots are the only reactive cells (the generation
 // token and the interval handle are plain infrastructure, nothing reacts to them).
 //
-// Polling is the deliberate v1 transport — the harness run-event stream's read side is
-// not OSS-side yet, so this reads ledger rows on lifecycle edges and, ONLY while work is active, a
-// bounded interval. When the harness ships the stream read helper, `refreshSidebarData` is the one
-// swap point.
+// The server sends no notification of a change, so this reads the run and profile endpoints on
+// lifecycle edges and, ONLY while work is active, on a bounded interval.
 
 /**
  * The data-profile section's render input. `not_ready` before the runtime boots (no query is
@@ -62,9 +38,9 @@ export type ProfileSnapshot =
     | { kind: "absent" }
     | {
           kind: "loaded";
-          profile: DataProfileStatus;
+          profile: DataProfileState;
           /**
-           * What the profile's own calls consumed, from the CLI's local token ledger.
+           * What the profile's own calls consumed, from the local token ledger of the server.
            *
            * Carried on the snapshot rather than read by each surface because the profile's figures
            * have exactly one home and two renderers: the rail's DATA PROFILE section and the details
@@ -74,29 +50,17 @@ export type ProfileSnapshot =
            * Absent when the ledger read failed — a missing figure leaves the section rendered without
            * one, and never removes the profile it decorates.
            */
-          usage?: LlmUsageTotals;
+          usage?: UsageTotals;
       };
 
 /**
- * The runs section's render input. `not_ready` before the runtime boots; `unavailable` on a
- * `DbError`; `loaded` carries the newest run rows (possibly empty → the section renders "no runs").
- * There is no `absent` kind — an analysis with no runs is a `loaded` empty array, not an absence.
+ * The runs section's render input. `not_ready` before the runtime boots; `unavailable` on a failed
+ * read; `loaded` carries the newest runs (possibly empty → the section renders "no runs"). Each run
+ * carries its own figure (`usage`), from the same read as the row, so a row and its figure can never
+ * come from two different reads of a moving ledger. There is no `absent` kind — an analysis with no
+ * runs is a `loaded` empty array, not an absence.
  */
-export type RunsSnapshot =
-    | { kind: "not_ready" }
-    | { kind: "unavailable" }
-    | {
-          kind: "loaded";
-          runs: CortexRunRow[];
-          /**
-           * What each listed run consumed, keyed by run id, from the CLI's local token ledger.
-           *
-           * A run missing from the map is a run whose usage read failed — its row still renders, just
-           * without a figure. Published WITH the rows rather than read at render time so a row and
-           * its figure can never come from two different reads of a moving ledger.
-           */
-          usageByRun?: ReadonlyMap<string, LlmUsageTotals>;
-      };
+export type RunsSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | { kind: "loaded"; runs: RunSummary[] };
 
 /**
  * Live progress of ONE non-terminal run — the feed for that run's block in the sidebar RUNS section
@@ -106,7 +70,7 @@ export type RunsSnapshot =
 export type ActiveRunProgress = {
     /** The run this progress belongs to — the map key, carried inline so a consumer holding one entry still knows whose it is. */
     runId: string;
-    /** The run's human label (see {@link runLabelOf}). */
+    /** The run's human label: its plan title, else its id tail (see {@link runLabelOf}). */
     name: string;
     /** The run's short id tail (see {@link idTail}). */
     tag: string;
@@ -466,23 +430,9 @@ export function runMark(status: RunStatus): { glyph: string; role: keyof ThemeCo
     }
 }
 
-/** A run's short label: the workflow name, else the plan id tail, else the run id tail. */
-export function shortRunName(run: CortexRunRow): string {
-    if (run.workflowName.length > 0) return run.workflowName;
-    const id = run.planId ?? run.runId;
-    return id.replace(/-/g, "").slice(-6);
-}
-
-/**
- * The plan's human title, or `null` when the plan is absent, unreadable, or predates titles.
- *
- * Takes `unknown` because the persisted plan is a JSON blob whose schema types `title` as optional:
- * the runtime shape is not guaranteed by the type, so it is checked rather than trusted.
- */
-export function planTitleOf(plan: unknown): string | null {
-    if (typeof plan !== "object" || plan === null || !("title" in plan)) return null;
-    const title = plan.title;
-    return typeof title === "string" && title.trim().length > 0 ? title.trim() : null;
+/** A run's short label: the workflow name, else the run id tail. */
+export function shortRunName(run: Pick<RunSummary, "workflowName" | "runId">): string {
+    return run.workflowName.length > 0 ? run.workflowName : idTail(run.runId);
 }
 
 /**
@@ -492,31 +442,10 @@ export function planTitleOf(plan: unknown): string | null {
  * `"executeAnalysis"` on every row in the ledger and therefore distinguishes nothing — falling back
  * to it would label every unresolvable run identically, which is strictly worse than the id tail
  * the rail has always used for exactly this reason. The readable 3–8-word name the planner wrote
- * lives on the plan, one join away, and is what this exists to surface when it is there.
+ * lives on the plan, and the server sends it as `planTitle` when there is one.
  */
-export function runLabelOf(run: CortexRunRow, plan: unknown): string {
-    return planTitleOf(plan) ?? idTail(run.runId);
-}
-
-/**
- * Each plan step's human name, keyed by the step id the ledger rows carry.
- *
- * Same `unknown` discipline as {@link planTitleOf}: the plan is a stored blob, so every hop is
- * checked. A plan that is missing, malformed, or whose steps carry no names yields an empty map and
- * every step falls back to its slug — a poorer label, never a crash.
- */
-export function planStepNames(plan: unknown): ReadonlyMap<string, string> {
-    const names = new Map<string, string>();
-    if (typeof plan !== "object" || plan === null || !("steps" in plan)) return names;
-    const steps = plan.steps;
-    if (!Array.isArray(steps)) return names;
-    for (const step of steps) {
-        if (typeof step !== "object" || step === null) continue;
-        const id = "id" in step ? step.id : undefined;
-        const name = "name" in step ? step.name : undefined;
-        if (typeof id === "string" && typeof name === "string" && name.trim().length > 0) names.set(id, name.trim());
-    }
-    return names;
+export function runLabelOf(run: Pick<RunSummary, "planTitle" | "runId">): string {
+    return run.planTitle ?? idTail(run.runId);
 }
 
 /** A short, human-scannable tail of a uuid (dashes stripped) — the run tag the run-detail dialog + sidebar progress embed show. */
@@ -542,7 +471,7 @@ export function shortSessionId(threadId: string): string {
 
 /**
  * Map a harness step-execution status onto the design-system run-step state. Pure and
- * exhaustive over {@link StepExecutionRow.status} — a `never`-typed default breaks the build if the
+ * exhaustive over {@link StepExecutionStatus} — a `never`-typed default breaks the build if the
  * harness enum grows, so a new status is classified honestly rather than silently mis-bucketed.
  *
  * The five buckets are `done | running | failed | queued | skipped`; the honest mapping of the seven
@@ -561,7 +490,7 @@ export function shortSessionId(threadId: string): string {
  * runs dialog and the sidebar-live refresh loop share the identical status→state mapping without one
  * reaching into the other.
  */
-export function stepStateOf(status: StepExecutionRow["status"]): RunStepView["state"] {
+export function stepStateOf(status: StepExecutionStatus): RunStepView["state"] {
     switch (status) {
         case "pending":
             return "queued";
@@ -628,7 +557,7 @@ export const RUN_STATUS_TERMINAL: Record<RunStatus, boolean> = {
  * in a non-terminal status, OR an `unavailable` snapshot. This is the sole gate on the poll — pure so
  * the arming decision is unit-testable without a reactive root.
  *
- * `unavailable` arms because it is the `DbError` degrade: a transient DB blip mid-profile/mid-run
+ * `unavailable` arms because it is the failed-read degrade: a transient blip mid-profile/mid-run
  * would otherwise tear the poll down on an idle screen and nothing would ever re-read to recover, so
  * the section would stay stuck at "unavailable" until the next lifecycle edge. Re-arming lets the
  * SAME cheap 5s poll self-heal the moment the read succeeds again. A persistent outage keeps that one
@@ -643,68 +572,53 @@ export function hasActiveWork(profileSnap: ProfileSnapshot, runsSnap: RunsSnapsh
 }
 
 /**
- * Injectable edges so {@link refreshSidebarData} is unit-testable offline (no Postgres, no booted
- * runtime) — mirrors `LoadSeams`/`SendSeams` in `conversation.ts`. Production callers omit the
- * argument and get the real booted runtime + harness ledger reads; tests pass fakes whose reads
- * resolve on the test's schedule, so interleaving two rapid refreshes (the staleness guard) and the
- * `DbError → unavailable` / `null → absent` ladder are exercisable without a database.
+ * The reads of {@link refreshSidebarData}, injectable so the refresh is unit-testable offline (no
+ * server). Production callers omit the argument and get the boot phase and the run and profile
+ * endpoints; tests pass fakes whose reads resolve on the test's schedule, so interleaving two rapid
+ * refreshes (the staleness guard) and the `error → unavailable` / `null → absent` ladder are
+ * exercisable without a server.
  */
-export type RefreshSeams = {
-    /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
-    readonly runtime: () => HarnessRuntime | null;
-    /** Read the data-profile status row. Real: `loadDataProfileStatus`. */
-    readonly loadProfile: (pool: Pool, analysisId: string) => ResultAsync<DataProfileStatus | null, DbError>;
-    /** Read the analysis's newest runs (newest-first, capped). Real: `queryRunsByAnalysis` @ {@link RUNS_LIMIT}. */
-    readonly loadRuns: (pool: Pool, analysisId: string) => ResultAsync<CortexRunRow[], DbError>;
+export type RefreshOpts = {
+    /** Whether the runtime of the server is ready. Real: the boot phase is `ready`. */
+    readonly ready: () => boolean;
+    /** Read the data profile. Real: `GET {A}/data-profile`. */
+    readonly loadProfile: (analysisId: string) => ResultAsync<DataProfileView, ClientError>;
+    /** Read the analysis's newest runs (newest-first, capped). Real: `GET {A}/runs` with `perPage` {@link RUNS_LIMIT}. */
+    readonly loadRuns: (analysisId: string) => ResultAsync<RunSummary[], ClientError>;
     /**
-     * Read EVERY non-terminal run, uncapped. Real: `queryActiveRunsByAnalysis`.
+     * Read EVERY non-terminal run, uncapped. Real: `GET {A}/runs?active=true`.
      *
      * Separate from {@link loadRuns} because the two answer different questions and only one of them
      * may be windowed. `loadRuns` answers "the newest N" — right for a listing. Live work cannot be
      * windowed at all: ordering by start time and capping drops the OLDEST running run first, which
      * is the long analysis this whole surface exists to keep visible. Ten short runs starting after
-     * it would push it off the list, taking its rail block, its panel entry, its completion notice,
-     * and its durable outcome record with it.
+     * it would push it off the list, taking its rail block, its panel entry, and its completion
+     * notice with it.
      */
-    readonly loadActiveRuns: (pool: Pool, analysisId: string) => ResultAsync<CortexRunRow[], DbError>;
-    /** Read a run's step ledger — fired once per NON-TERMINAL run, never for a terminal one. Real: `queryStepsByRun`. */
-    readonly loadSteps: (pool: Pool, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
-    /** Read a stored plan — fired once per DISTINCT plan among the active runs. Real: `loadPlan`. */
-    readonly loadPlan: (pool: Pool, planId: string, analysisId: string) => ResultAsync<unknown | null, DbError>;
-    // The three reads below hit the CLI's OWN SQLite ledger, not the harness pool — which is why they
-    // take no `Pool` and answer synchronously. They are seams for the same reason the Postgres reads
-    // are: this module's tests run with no database open at all, so an unstubbed read would answer
-    // from whatever file the process happened to have.
-    //
-    // OPTIONAL, unlike every read above, and the difference is a real one rather than a convenience.
-    // The six above decide what the sections SHOW: a fixture that omits one is describing a rail with
-    // no runs and no profile. These three decide only what those sections are DECORATED with, and a
-    // failed read of any of them already means "render the entity without its figure" — so an omitted
-    // seam and a failing one land in exactly the same place, and a fixture asserting about step
-    // windowing or run completion is not made to stub three reads it has no claim about.
-    // {@link realRefreshSeams} supplies all three, so production never takes the omitted path.
-    /** Read the data profile's own totals. Real: {@link getAnalysisDataProfileUsageTotals}. */
-    readonly loadProfileUsage?: (analysisId: string) => Result<LlmUsageTotals, LedgerError>;
-    /** Read ONE run's totals — fired once per LISTED run. Real: {@link getRunUsageTotals}. */
-    readonly loadRunUsage?: (analysisId: string, runId: string) => Result<LlmUsageTotals, LedgerError>;
-    /** Read one run's totals grouped by step — fired once per NON-TERMINAL run, never for a terminal one. Real: {@link listRunUsageByStep}. */
-    readonly loadStepUsage?: (analysisId: string, runId: string) => Result<LlmUsageByStep[], LedgerError>;
+    readonly loadActiveRuns: (analysisId: string) => ResultAsync<RunSummary[], ClientError>;
+    /**
+     * Read one run with its steps, the plan names of the steps, and the usage of each step — fired once
+     * per NON-TERMINAL run, never for a terminal one. Real: `GET {A}/run/:runId`.
+     */
+    readonly loadRun: (analysisId: string, runId: string) => ResultAsync<RunDetail, ClientError>;
 };
 
-const realRefreshSeams: RefreshSeams = {
-    runtime: harnessRuntime,
-    loadProfile: loadDataProfileStatus,
-    loadRuns: (pool, analysisId) => queryRunsByAnalysis(pool, analysisId, { limit: RUNS_LIMIT }),
-    loadActiveRuns: queryActiveRunsByAnalysis,
-    loadSteps: queryStepsByRun,
-    loadPlan: (pool, planId, analysisId) => loadPlan(pool, planId, { analysisId }),
-    loadProfileUsage: getAnalysisDataProfileUsageTotals,
-    loadRunUsage: getRunUsageTotals,
-    loadStepUsage: listRunUsageByStep,
+/**
+ * All the active runs in one read. The server caps a page at 200, and the live concurrency of an
+ * analysis is far below that.
+ */
+const ACTIVE_RUNS_PAGE = 200;
+
+const DEFAULT_REFRESH_OPTS: RefreshOpts = {
+    ready: () => bootState().phase === "ready",
+    loadProfile: (analysisId) => fetchDataProfile(analysisId),
+    loadRuns: (analysisId) => fetchRuns(analysisId, { perPage: RUNS_LIMIT }).map((list: RunList) => list.runs),
+    loadActiveRuns: (analysisId) => fetchRuns(analysisId, { active: true, perPage: ACTIVE_RUNS_PAGE }).map((list: RunList) => list.runs),
+    loadRun: (analysisId, runId) => fetchRun(analysisId, runId),
 };
 
 // Monotonic token identifying the newest refresh. Two rapid analysis swaps interleave their async
-// ledger reads, and the older refresh can resolve LAST; without this it would clobber the newer
+// reads, and the older refresh can resolve LAST; without this it would clobber the newer
 // snapshots. Each read's post-await re-check drops a superseded refresh — the last refresh STARTED
 // wins regardless of which finishes last. Module-private: only refreshSidebarData touches it.
 // Mirrors `loadGeneration` in `conversation.ts`.
@@ -714,7 +628,7 @@ let refreshGeneration = 0;
  * Reset BOTH snapshots to `not_ready` together (the torn-pair guarantee), clear the active-run progress
  * snapshot, and invalidate any in-flight refresh. Used at an analysis swap so the previous analysis's DATA
  * PROFILE / RUNS / progress embed never render (nor get dialog-snapshotted) during the swap's
- * one-ledger-round-trip refresh window, and by the test reset hook.
+ * one-round-trip refresh window, and by the test reset hook.
  */
 function resetSnapshots(): void {
     refreshGeneration += 1;
@@ -725,37 +639,34 @@ function resetSnapshots(): void {
 }
 
 /**
- * Repopulate both snapshots (and the active-run progress map) for `analysisId` from the booted
- * runtime's pool. No-ops to `not_ready` (both snapshots) and clears the progress map when the runtime
- * is not booted — the sidebar renders a muted placeholder and no query runs (the no-op guard).
+ * Repopulate both snapshots (and the active-run progress map) for `analysisId` from the local server.
+ * No-ops to `not_ready` (both snapshots) and clears the progress map when the runtime is not ready —
+ * the sidebar renders a muted placeholder and no request goes out (the no-op guard).
  *
- * The profile read `.match`es INDEPENDENTLY of the run reads: a profile `DbError` degrades the
+ * The profile read `.match`es INDEPENDENTLY of the run reads: a failed profile read degrades the
  * profile section to `unavailable` while the runs section still loads, and vice versa — the two
- * sections never share a failure. A null profile row becomes `absent`, and every write is a fresh
- * object so Solid always reconciles.
+ * sections never share a failure. A never-profiled analysis becomes `absent`, and every write is a
+ * fresh object so Solid always reconciles.
  *
  * The RUNS section is the merge of an uncapped non-terminal read (what is live) and a newest-N window
  * (what to list); either failing degrades to the other, and only both failing yields `unavailable`.
- * Every non-terminal run in the merge then gets a step read and publishes an {@link activeRunProgress}
- * entry keyed by its run id — so a terminal-only analysis fires NO step query and stays at zero step
- * reads. One run's failed step read carries that run's previous entry forward, marked `stale`, and
- * cannot affect any other run's entry.
+ * Every non-terminal run in the merge then gets a run read and publishes an {@link activeRunProgress}
+ * entry keyed by its run id — so a terminal-only analysis fires NO run read and stays at zero step
+ * reads. One run's failed read carries that run's previous entry forward, marked `stale`, and cannot
+ * affect any other run's entry.
  *
- * Alongside each of those, the CLI's own token ledger is read for the entity in hand: the profile's
- * totals, each listed run's totals, and each active run's totals grouped by step. Those reads are
- * local, synchronous, and strictly decorative — every one of them failing leaves the same entities
- * rendered, minus their figures. Nothing is read for an entity that is not being published, so the
- * step-usage read inherits the same zero-query-when-idle property as the step read it accompanies.
+ * The figures ride the same reads: the profile's totals on the profile, each listed run's totals on
+ * its row, and each active run's step totals on its steps. A figure the server could not read is
+ * absent, and the entity it decorates still renders.
  *
  * Staleness: the refresh claims a {@link refreshGeneration} token at entry and re-checks it after
  * every await; a refresh superseded by a newer swap silently drops rather than writing stale rows.
  */
-export async function refreshSidebarData(analysisId: string, seams: RefreshSeams = realRefreshSeams): Promise<void> {
-    // Bump BEFORE the runtime guard so even the not_ready path invalidates any in-flight older refresh
+export async function refreshSidebarData(analysisId: string, opts: RefreshOpts = DEFAULT_REFRESH_OPTS): Promise<void> {
+    // Bump BEFORE the ready guard so even the not_ready path invalidates any in-flight older refresh
     // — a swap to an unbooted scope must not later be overwritten by a slow read from the prior scope.
     const myRefresh = ++refreshGeneration;
-    const runtime = seams.runtime();
-    if (!runtime) {
+    if (!opts.ready()) {
         setProfile({ kind: "not_ready" });
         setRuns({ kind: "not_ready" });
         setActiveRun(new Map());
@@ -763,28 +674,29 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
         return;
     }
 
-    // Three awaited-inline reads, kept serial where the fan-outs below are not: these are O(1) in the
+    // Three awaited-inline reads, kept serial where the fan-out below is not: these are O(1) in the
     // run count, so the round trips saved by racing them do not scale, and re-checking the generation
     // token after EACH await lets a superseded refresh drop at the first opportunity instead of only
-    // after the slowest of the three. Each `.match`es INDEPENDENTLY, so a profile `DbError` degrades
-    // the profile section alone.
-    const profileRes = await seams.loadProfile(runtime.pool, analysisId);
+    // after the slowest of the three. Each `.match`es INDEPENDENTLY, so a profile read failure
+    // degrades the profile section alone.
+    const profileRes = await opts.loadProfile(analysisId);
     if (myRefresh !== refreshGeneration) return;
-    const runsRes = await seams.loadRuns(runtime.pool, analysisId);
+    const runsRes = await opts.loadRuns(analysisId);
     if (myRefresh !== refreshGeneration) return;
-    const activeRes = await seams.loadActiveRuns(runtime.pool, analysisId);
+    const activeRes = await opts.loadActiveRuns(analysisId);
     if (myRefresh !== refreshGeneration) return;
-
-    // The profile's own spend, read only when there IS a profile row to hang it on. Local SQLite and
-    // synchronous, so it adds no round trip and cannot be superseded mid-read — the generation token
-    // checked above still holds when it is published below.
-    //
-    // A failed read resolves to `undefined`, which the snapshot renders as "no figure" rather than as
-    // an absent profile: a figure is a decoration, and losing one must never take the entity with it.
-    const profileUsage = profileRes.unwrapOr(null) === null ? undefined : seams.loadProfileUsage?.(analysisId).unwrapOr(undefined);
 
     profileRes.match(
-        (row) => setProfile(row === null ? { kind: "absent" } : { kind: "loaded", profile: row, usage: profileUsage }),
+        (view) => {
+            if (view.status === null) {
+                setProfile({ kind: "absent" });
+                return;
+            }
+            // The figure rides beside the row, never inside it: the row is the ledger truth, the figure a
+            // decoration that an absent read leaves off.
+            const { usage, ...profile } = view;
+            setProfile(usage === undefined ? { kind: "loaded", profile } : { kind: "loaded", profile, usage });
+        },
         () => setProfile({ kind: "unavailable" }),
     );
 
@@ -803,10 +715,10 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     // hide a live profile — which is also why it is left unpinned by the tests rather than encoded as
     // behaviour the ledger would have to keep honouring.
     profileRes.match(
-        (row) =>
+        (view) =>
             setActiveProfile(
-                row !== null && row.status === "running" && row.startedAt !== null
-                    ? { analysisId, startedAt: row.startedAt, workflowId: row.workflowId, stale: false }
+                view.status === "running" && view.startedAt !== null
+                    ? { analysisId, startedAt: view.startedAt, workflowId: view.workflowId, stale: false }
                     : null,
             ),
         () =>
@@ -832,67 +744,37 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     const live = activeRes.unwrapOr(null);
     const listed = runsRes.unwrapOr(null);
     if (live === null && listed === null) {
-        // A runs `DbError` is a transient degrade that itself re-arms the poll (`hasActiveWork`). Keep
+        // A failed runs read is a transient degrade that itself re-arms the poll (`hasActiveWork`). Keep
         // any existing progress entries so a blip does not flash the whole section away and back.
         setRuns({ kind: "unavailable" });
         return;
     }
     const seen = new Set((live ?? []).map((r) => r.runId));
     const merged = [...(live ?? []), ...(listed ?? []).filter((r) => !seen.has(r.runId))];
-    // Each listed run's own figures, published WITH its row so the two can never come from two
-    // different reads of a moving ledger. One indexed aggregate per row against a local WAL file —
-    // the same cost Decision 10 already accepts for the per-run step read, at the same cadence — so
-    // the batched by-run grouping is not worth the second shape it would introduce here (that read
-    // enumerates runs and excludes the profile; this one answers about rows already in hand).
-    // A run whose read fails is simply absent from the map and renders without a figure.
-    const usageByRun = new Map<string, LlmUsageTotals>();
-    for (const run of merged) {
-        const totals = seams.loadRunUsage?.(analysisId, run.runId).unwrapOr(null) ?? null;
-        if (totals !== null) usageByRun.set(run.runId, totals);
-    }
-    setRuns({ kind: "loaded", runs: merged, usageByRun });
+    setRuns({ kind: "loaded", runs: merged });
 
     // EVERY non-terminal run publishes a progress entry, keyed by its run id. A terminal run (or no
-    // runs at all) publishes none, and only a non-terminal run fires a step read — so an idle
-    // analysis still issues zero step queries, the property the poll's arming condition depends on.
+    // runs at all) publishes none, and only a non-terminal run fires a run read — so an idle
+    // analysis still issues zero step reads, the property the poll's arming condition depends on.
     const active = merged.filter((r) => !RUN_STATUS_TERMINAL[r.status]);
     if (active.length === 0) {
         setActiveRun(new Map());
         return;
     }
 
-    // Both fan-outs below are CONCURRENT, not sequential. Each item's read is independent of every
-    // other's, and this path re-runs on every run-observation event — serially it would cost
-    // (distinct plans + active runs) round trips per transition instead of two. `.match` rather than
-    // handing the `ResultAsync` straight to `Promise.all`: it consumes the Result into a plain
-    // promise, which is what keeps the `must-use-result` lint satisfied.
+    // CONCURRENT, not sequential. Each run's read is independent of every other's, and the set is
+    // bounded by the live concurrency of the analysis. `.match` rather than handing the `ResultAsync`
+    // straight to `Promise.all`: it consumes the Result into a plain promise, which is what keeps the
+    // `must-use-result` lint satisfied.
     //
-    // Each distinct plan resolves ONCE. Re-runs of one plan share a `planId`, and a rail showing
-    // three runs of the same plan must not pay three plan reads for one title.
-    const planIds = [...new Set(active.map((r) => r.planId).filter((id): id is string => id !== null))];
-    const planReads = await Promise.all(
-        planIds.map((planId) =>
-            seams.loadPlan(runtime.pool, planId, analysisId).match(
-                (plan) => ({ planId, plan }),
-                // A plan that cannot be read degrades that run's label to its id tail. The rail must
-                // still render; a missing title is a poorer row, never an error.
-                () => null,
-            ),
-        ),
-    );
-    if (myRefresh !== refreshGeneration) return;
-    const plans = new Map<string, unknown>();
-    for (const read of planReads) if (read) plans.set(read.planId, read.plan);
-
-    // A run whose step read blipped resolves to `null` and is simply absent from `fresh`; the
-    // assembly below carries its previous entry forward, so the bounded poll self-heals without
-    // blinking a genuinely running run away. Keying by run id is what makes that safe: the old
-    // single-slot store had to compare tags to avoid showing one run's steps under another's row,
-    // and that mismatch is no longer representable.
-    const stepReads = await Promise.all(
+    // A run whose read blipped resolves to `null` and is simply absent from `fresh`; the assembly
+    // below carries its previous entry forward, so the bounded poll self-heals without blinking a
+    // genuinely running run away. Keying by run id is what makes that safe: one run's steps can never
+    // show under another's row.
+    const runReads = await Promise.all(
         active.map((run) =>
-            seams.loadSteps(runtime.pool, run.runId).match(
-                (stepRows) => ({ run, stepRows }),
+            opts.loadRun(analysisId, run.runId).match(
+                (detail) => detail,
                 () => null,
             ),
         ),
@@ -903,47 +785,31 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     // forward from the PREVIOUS map — and reading that signal here would both track reactivity
     // nothing wants and pin the value to loop-entry rather than write time.
     const fresh = new Map<string, ActiveRunProgress>();
-    for (const read of stepReads) {
-        if (!read) continue;
-        const { run, stepRows } = read;
-        const plan = run.planId === null ? undefined : plans.get(run.planId);
-        const nameByStepId = planStepNames(plan);
-        // This run's per-step figures, read against the SAME run id as the step rows they decorate and
-        // inside the SAME generation guard — so a superseded refresh can never attach one run's spend
-        // to another run's steps. Only runs in `active` reach here, which is what preserves the
-        // idle-costs-nothing property for this read exactly as it holds for the step read itself.
-        //
-        // A failed read yields an empty map, so every step of that run simply carries no figure.
-        const usageByStep = new Map<string, LlmUsageTotals>();
-        for (const group of seams.loadStepUsage?.(analysisId, run.runId).unwrapOr([]) ?? []) {
-            // `stepId: null` is the run's own calls — the plan and synthesis frames it owns directly.
-            // That is an ABSENCE of a step, not a step named this, so it decorates no row here; the
-            // run's row carries it already, inside the run total published above.
-            if (group.stepId !== null) usageByStep.set(group.stepId, group.totals);
-        }
-        const steps: RunStepView[] = stepRows.map((r) => {
+    for (const detail of runReads) {
+        if (!detail) continue;
+        const steps: RunStepView[] = detail.steps.map((step) => {
             // Written once, here, rather than handed down as quantities: the block renders what it is
             // given, and `""` (nothing reported) collapses to an absent field so a step whose
             // providers reported nothing carries no figure instead of a zeroed one.
-            const figure = formatTokenFigure(usageByStep.get(r.stepId) ?? {});
+            const figure = formatTokenFigure(step.usage ?? {});
             return {
                 // The plan's human phrase for the step, falling back to the slug the ledger keys on. This
-                // is the join that answers "what is being worked on" in words: the step row itself
-                // carries only `T{track}S{step}`.
-                label: nameByStepId.get(r.stepId) ?? r.stepId,
-                state: stepStateOf(r.status),
-                startedAt: r.startedAt,
-                agent: r.agentId,
-                blockedReason: r.blockedReason,
-                attempts: r.attempts,
+                // is what answers "what is being worked on" in words: the step row itself carries only
+                // `T{track}S{step}`.
+                label: step.name ?? step.stepId,
+                state: stepStateOf(step.status),
+                startedAt: step.startedAt,
+                agent: step.agentId,
+                blockedReason: step.blockedReason,
+                attempts: step.attempts,
                 usageFigure: figure === "" ? undefined : figure,
             };
         });
-        fresh.set(run.runId, {
-            runId: run.runId,
-            name: runLabelOf(run, plan),
-            tag: idTail(run.runId),
-            startedAt: run.startedAt,
+        fresh.set(detail.runId, {
+            runId: detail.runId,
+            name: runLabelOf(detail),
+            tag: idTail(detail.runId),
+            startedAt: detail.startedAt,
             done: steps.filter((s) => s.state === "done").length,
             total: steps.length,
             steps,
@@ -952,7 +818,7 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     }
 
     setActiveRun((prev) => {
-        // Assembled in `active` order — the runs query's newest-first order — NOT in the order the
+        // Assembled in `active` order — the runs read's newest-first order — NOT in the order the
         // reads happened to succeed. Map iteration order is what every consumer reads as run order:
         // the rail's blocks, and the panel's position indicator and implicit focus. Appending
         // carried-forward entries instead would let a transient blip on one run reorder the whole
@@ -1015,9 +881,12 @@ const realWatchSeams: WatchSeams = {
  *     re-arms only when the arm/disarm decision or the analysis actually changes, keeping the 5s
  *     cadence steady and guaranteeing an idle sidebar issues zero queries.
  *
- * The poll and the run-observation push (trigger 4, wired inline below) share one in-flight guard so
- * they never overlap themselves, and that guard is bounded by {@link REFRESH_BOUND_MS} so a refresh
- * that cannot finish can never disable the ones after it.
+ * The poll ticks share one in-flight guard so they never overlap themselves, and that guard is bounded
+ * by {@link REFRESH_BOUND_MS} so a refresh that cannot finish can never disable the ones after it.
+ *
+ * The server sends no event when a run changes, thus a run that a different client starts shows at
+ * the next of these edges. A caller that learns of a new run, for example from a run card of the
+ * turn, calls {@link refreshSidebarData} itself.
  */
 export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realWatchSeams): void {
     // Trigger 1 — ready + analysis (and analysis swap). On a genuine swap the two snapshots still hold
@@ -1063,19 +932,18 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         const analysisId = workspace.analysis?.id;
         return active && analysisId ? analysisId : null;
     });
-    // A tick fired while the previous refresh is still awaiting Postgres is DROPPED, not queued.
+    // A tick fired while the previous refresh is still awaiting the server is DROPPED, not queued.
     // `refreshSidebarData` claims the generation token at entry, so a newer refresh CANCELS an older
     // one — without this guard, reads slower than the interval would leave every tick superseded by
     // the next and the store would never receive a write at all. That failure is self-sustaining: an
-    // `unavailable` snapshot is itself an arming condition (`hasActiveWork`), so a struggling database
+    // `unavailable` snapshot is itself an arming condition (`hasActiveWork`), so a struggling server
     // would be re-queried every 5s behind a permanently frozen section. Skipping degrades cadence
     // instead. Only the POLL skips: lifecycle edges carry new information and must supersede.
     //
     // The claim is a TIMESTAMPED token, not a boolean, because the guard must be bounded: a read that
-    // never settles would hold a boolean for the process lifetime, and since the poll and the
-    // run-observation trigger consult the same guard, that one stall silently freezes every live
-    // surface at its last value — with no error anywhere, and indistinguishable from a run that
-    // stopped progressing.
+    // never settles would hold a boolean for the process lifetime, and that one stall would silently
+    // freeze every live surface at its last value — with no error anywhere, and indistinguishable from
+    // a run that stopped progressing.
     let inFlight: { readonly startedAt: number } | null = null;
 
     /**
@@ -1107,28 +975,6 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
             if (inFlight === claim) inFlight = null;
         });
     }
-
-    // Trigger 4 — the run-observation push. The embedded runtime reports a run's state change
-    // in-process, and this pokes the SAME refresh the lifecycle edges poke: the event is a TRIGGER,
-    // never a data source. The refresh already owns the generation-token ordering and the plan
-    // resolution, and rendering the pushed payload directly would give the store a second writer
-    // with its own staleness rules.
-    //
-    // It follows the POLL's skip rule rather than the lifecycle rule: events can arrive faster than
-    // a refresh completes, and without the skip every one would supersede the last, leaving the
-    // store with no write at all — the same failure the shared guard prevents.
-    //
-    // Polling stays armed regardless. This channel is in-process only, so a run launched by a
-    // separate `inflexa run` never reaches it; the interval remains the backstop that makes such a
-    // run visible at all.
-    const onRunEvent = (event: StampedEvent): void => {
-        if (event.type !== "run.observed") return;
-        const analysisId = workspace.analysis?.id;
-        if (!analysisId || event.analysisId !== analysisId) return;
-        guardedRefresh(analysisId);
-    };
-    Bus.on("inflexa", onRunEvent);
-    onCleanup(() => Bus.off("inflexa", onRunEvent));
 
     createEffect(() => {
         const key = armKey();

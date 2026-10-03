@@ -1,21 +1,19 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { err, errAsync, ok, okAsync } from "neverthrow";
+import { errAsync, ok, okAsync } from "neverthrow";
 import { testRender } from "@opentui/solid";
+import { createStore } from "solid-js/store";
 import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
 
-import { freshDb } from "../../test_support/db.ts";
 import { renderFrame } from "../../test_support/tui.ts";
-import { str256 } from "../../lib/types.ts";
-import { Bus } from "../../lib/bus.ts";
+import { asStr256 } from "../../lib/types.ts";
 import { DEFAULT_THEME_ID, GLYPHS, size, space, themes } from "../../lib/design_system.ts";
-import { createAnalysis, addInputs } from "../../modules/analysis/analysis.ts";
-import { db } from "../../db/primary.ts";
-import { getAnchor } from "../../db/primary_query.ts";
-import { upsertLlmUsage, type LlmUsageEntry } from "../../db/primary_mutation.ts";
+import type { AnchorView } from "../../api/analyses.ts";
 import { setTheme } from "../theme.ts";
+import type { ClientError, ClientOpts } from "../../client/api.ts";
+import type { UsageTotals, UsageView } from "../../api/usage.ts";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import {
     __resetSidebarLiveForTest,
@@ -25,32 +23,39 @@ import {
     refreshSidebarData,
     relAge,
     shortSessionId,
-    type RefreshSeams,
+    type RefreshOpts,
 } from "../hooks/sidebar_live.ts";
+import type { DataProfileState, DataProfileView, RunDetail, RunStepSummary, RunSummary } from "../../api/runs.ts";
 import { __setClipboardWriterForTest } from "../../lib/clipboard.ts";
 import { __resetNoticesForTest, currentNotice } from "../hooks/notice.ts";
-import { __resetOpenThreadForTest, refreshOpenThread, type ThreadSeams } from "../hooks/thread.ts";
+import { __resetOpenThreadForTest, refreshOpenThread, type ThreadOpts } from "../hooks/thread.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
 import { __resetSandboxGateForTest, __setTransferReportsForTest } from "../hooks/sandbox_gate.tsx";
-import type { TransferReport } from "../../modules/libs/transfers.ts";
+import type { TransferReportView } from "../../api/store.ts";
 import type { TransferPhase } from "../../types/store.ts";
 import { setChatStatus } from "../hooks/status.ts";
 import { entityFigureOf, Sidebar, usageSectionOf } from "./sidebar.tsx";
 import { tokenFigureDetail } from "../../lib/usage_format.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import type { CortexRunRow, DataProfileStatus, DbError, StepExecutionRow, Thread } from "@inflexa-ai/harness";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import type { ThreadSummary } from "../../api/conversation.ts";
 
-// The sidebar's input count is a plain DB read with no reactive dependency — it refreshes only
-// because prov.input_* bus events tick a version signal. This drives the REAL write path
-// (addInputs emits the events itself) and pins the two behaviors that matter: this analysis's
-// events re-read, foreign analyses' events don't.
+// The sidebar reads the anchor and the input count of the workspace store, which reads `GET {A}` of the
+// server. Each case seeds the store directly: a plain analysis row and the scope that the read would give.
 
 let dirA = "";
 let dirB = "";
 
+/** A plain analysis row: the sidebar reads its fields, and the server keeps the rest. */
+function analysisRow(name: string): Analysis {
+    return { id: `analysis-${name}`, createdAt: 0, updatedAt: 0, name: asStr256(name), slug: name, anchorId: `anchor-${name}`, projectId: null };
+}
+
+/** The anchor that `GET {A}` gives for a live folder that holds its marker. */
+function anchorAt(dir: string): AnchorView {
+    return { id: "anchor", path: dir, cachedPath: dir, markerWritten: true };
+}
+
 beforeEach(() => {
-    freshDb();
     // realpath so the anchor/marker paths the analyses mint match macOS's canonical /private/var.
     dirA = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-sidebar-a-")));
     dirB = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-sidebar-b-")));
@@ -81,15 +86,18 @@ afterEach(() => {
 
 // A minimal static Workspace: the test never swaps sessions, so a plain object (not the reactive
 // store) is sufficient — the sidebar reads it like any props object.
-function wsFor(analysis: Analysis, workingDir: string): Workspace {
+function wsFor(analysis: Analysis, workingDir: string, scope: { anchor?: AnchorView; inputCount?: number; refreshScope?: () => void } = {}): Workspace {
     return {
         analysis,
         sessionId: "no-such-session", // no thread snapshot is seeded, so the SESSION detail row stays a placeholder
         workingDir,
         project: null,
+        anchor: scope.anchor ?? null,
+        inputCount: scope.inputCount ?? null,
         openDialog: () => {},
         closeDialog: () => {},
         openSession: () => {},
+        refreshScope: scope.refreshScope ?? (() => {}),
         quit: async () => {},
     };
 }
@@ -110,40 +118,36 @@ function lineContaining(frame: string, needle: string): string {
     return frame.split("\n").find((l) => l.includes(needle)) ?? "";
 }
 
-describe("Sidebar input count follows the bus", () => {
-    test("re-reads on this analysis's input events; ignores a foreign analysis's", async () => {
-        writeFileSync(join(dirA, "one.txt"), "x");
-        writeFileSync(join(dirA, "three.txt"), "x");
-        writeFileSync(join(dirB, "two.txt"), "x");
-        // These analyses need specific inputs to drive the input-event assertions below.
-        const a = (await createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
-        const b = (await createAnalysis({ cwd: dirB, name: str256("bravo")._unsafeUnwrap(), inputPaths: [join(dirB, "two.txt")] }))._unsafeUnwrap();
-
-        const setup = await testRender(
-            () => (
-                <WorkspaceContext.Provider value={wsFor(a, dirA)}>
-                    <box width="100%" height="100%">
-                        <Sidebar messageCount={() => 0} />
-                    </box>
-                </WorkspaceContext.Provider>
-            ),
-            { width: 44, height: 24 },
+describe("Sidebar input count follows the workspace store", () => {
+    test("renders the count of the store, and reads the scope again when a turn ends", async () => {
+        let refreshes = 0;
+        const [ws, setWs] = createStore<Workspace>(
+            wsFor(analysisRow("alpha"), dirA, {
+                anchor: anchorAt(dirA),
+                inputCount: 1,
+                refreshScope: () => {
+                    refreshes += 1;
+                },
+            }),
         );
+
+        const setup = await testRender(sidebarNode(ws), { width: 44, height: 24 });
         try {
             await setup.renderOnce();
             expect(setup.captureCharFrame()).toContain("1 input");
 
-            addInputs(a.id, [join(dirA, "three.txt")], dirA)._unsafeUnwrap();
-            await setup.renderOnce();
+            setWs("inputCount", 2);
             await setup.renderOnce();
             expect(setup.captureCharFrame()).toContain("2 inputs");
 
-            addInputs(b.id, [join(dirB, "two.txt")], dirB)._unsafeUnwrap();
+            // The agent of a turn can change the inputs, and the server pushes nothing: the end of the turn
+            // is the read edge.
+            setChatStatus("busy");
             await setup.renderOnce();
+            expect(refreshes).toBe(0);
+            setChatStatus("idle");
             await setup.renderOnce();
-            const frame = setup.captureCharFrame();
-            expect(frame).toContain("2 inputs");
-            expect(frame).not.toContain("3 inputs");
+            expect(refreshes).toBe(1);
         } finally {
             setup.renderer.destroy();
         }
@@ -151,36 +155,33 @@ describe("Sidebar input count follows the bus", () => {
 });
 
 // The DATA PROFILE / RUNS sections render the `sidebar_live` store's snapshots. These
-// drive the store through `refreshSidebarData`'s injectable reads (no Postgres, no booted runtime)
-// and assert the rendered rail text — the truthfulness the change exists for. A null-analysis
-// workspace keeps the fixture minimal (no thread snapshot, no anchor/input reads), so only the two
-// live sections vary between cases.
-const fakeRuntime = { pool: {} } as unknown as HarnessRuntime;
+// drive the store through `refreshSidebarData`'s injectable reads (no server) and assert the rendered
+// rail text — the truthfulness the change exists for. A null-analysis workspace keeps the fixture
+// minimal (no thread snapshot, no anchor/input reads), so only the two live sections vary between
+// cases. The figures ride the wire data: a profile, a run, or a step with no `usage` carries no figure.
 
-function seams(profile: DataProfileStatus | null, runs: CortexRunRow[], steps: StepExecutionRow[] = [], ledger: Partial<RefreshSeams> = {}): RefreshSeams {
+/** The run detail of `run`, as `GET {A}/run/:runId` gives it: the row, its steps, and no step-less calls. */
+function detailOf(run: RunSummary, steps: RunStepSummary[]): RunDetail {
+    return { ...run, steps, unattributedUsage: null };
+}
+
+function refreshOpts(profile: DataProfileView | null, runs: RunSummary[], steps: RunStepSummary[] = [], over: Partial<RefreshOpts> = {}): RefreshOpts {
     return {
-        runtime: () => fakeRuntime,
-        loadProfile: () => okAsync(profile),
+        ready: () => true,
+        loadProfile: () => okAsync(profile ?? { status: null }),
         loadRuns: () => okAsync(runs),
         loadActiveRuns: () => okAsync(runs),
-        loadSteps: () => okAsync(steps),
-        loadPlan: () => okAsync(null),
-        // The three token-ledger reads default to "nothing recorded", so every case that predates the
-        // figures keeps asserting exactly the rail it always described. A case about a figure supplies
-        // its own through `ledger`.
-        loadProfileUsage: () => ok({ calls: 0 }),
-        loadRunUsage: () => ok({ calls: 0 }),
-        loadStepUsage: () => ok([]),
-        ...ledger,
+        loadRun: (_analysisId, runId) => {
+            const run = runs.find((r) => r.runId === runId) ?? runRow({ runId });
+            return okAsync(detailOf(run, steps));
+        },
+        ...over,
     };
 }
 
-function stepRow(stepId: string, status: StepExecutionRow["status"]): StepExecutionRow {
+function stepRow(stepId: string, status: RunStepSummary["status"]): RunStepSummary {
     return {
-        runId: "run-1",
         stepId,
-        analysisId: "a1",
-        wave: 0,
         agentId: "agent-x",
         status,
         startedAt: status === "pending" ? null : "2026-07-08T00:00:01.000Z",
@@ -188,17 +189,11 @@ function stepRow(stepId: string, status: StepExecutionRow["status"]): StepExecut
         durationMs: null,
         error: null,
         attempts: 1,
-        lastErrorClass: null,
-        finishReason: null,
-        hitMaxSteps: false,
         blockedReason: null,
-        sandboxRef: null,
-        execId: null,
-        childWorkflowId: null,
     };
 }
 
-function completedProfile(fileCount: number): DataProfileStatus {
+function completedProfile(fileCount: number): DataProfileState {
     const files = Array.from({ length: fileCount }, (_, i) => ({ path: `f${i}.csv`, description: "d" }));
     return {
         status: "completed",
@@ -211,22 +206,17 @@ function completedProfile(fileCount: number): DataProfileStatus {
     };
 }
 
-function runRow(over: Partial<CortexRunRow>): CortexRunRow {
+function runRow(over: Partial<RunSummary>): RunSummary {
+    const runId = over.runId ?? "run-1";
     return {
-        runId: "run-1",
-        analysisId: "a1",
+        runId,
         threadId: null,
         workflowName: "executeAnalysis",
+        workflowId: runId,
         status: "running",
         startedAt: "2026-07-08T00:00:00.000Z",
         completedAt: null,
         error: null,
-        synthesisStatus: null,
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: null,
         ...over,
     };
 }
@@ -237,9 +227,12 @@ function liveNode() {
         sessionId: "no-such-session",
         workingDir: "/x",
         project: null,
+        anchor: null,
+        inputCount: null,
         openDialog: () => {},
         closeDialog: () => {},
         openSession: () => {},
+        refreshScope: () => {},
         quit: async () => {},
     } as Workspace;
     return () => (
@@ -261,7 +254,7 @@ describe("Sidebar DATA PROFILE / RUNS live sections", () => {
     });
 
     test("a completed profile shows the file count and the absolute completed time; no runs shows 'no runs'", async () => {
-        await refreshSidebarData("A", seams(completedProfile(2), []));
+        await refreshSidebarData("A", refreshOpts(completedProfile(2), []));
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("2 files");
         // The completed-profile rail line is a durable-record readout: it pins the absolute local
@@ -272,13 +265,13 @@ describe("Sidebar DATA PROFILE / RUNS live sections", () => {
     });
 
     test("a running profile shows 'profiling…'", async () => {
-        await refreshSidebarData("A", seams({ ...completedProfile(0), status: "running", result: null, completedAt: null }, []));
+        await refreshSidebarData("A", refreshOpts({ ...completedProfile(0), status: "running", result: null, completedAt: null }, []));
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("profiling");
     });
 
     test("runs render newest by run-id tail (not the constant workflow name) with a relative age; an unprofiled analysis reads 'not profiled'", async () => {
-        await refreshSidebarData("A", seams(null, [runRow({ runId: "run-aabbccddeeff", status: "running" })]));
+        await refreshSidebarData("A", refreshOpts(null, [runRow({ runId: "run-aabbccddeeff", status: "running" })]));
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         // The row is keyed by the run's id tail — the per-run distinguisher — NOT "executeAnalysis",
         // which is the identical workflow name on every run.
@@ -295,7 +288,7 @@ describe("Sidebar DATA PROFILE / RUNS live sections", () => {
 
 // The SESSION section renders the `hooks/thread.ts` snapshot: a placeholder ladder for every degraded
 // kind, and the pg-owned title + relative age once a row loads. Each case drives the REAL store through
-// `refreshOpenThread`'s injectable reads (no Postgres, no booted runtime) and asserts the rail text.
+// `refreshOpenThread`'s injectable reads (no server) and asserts the rail text.
 // The placeholder strings are shared with DATA PROFILE / RUNS ("runtime not ready", "unavailable"), so
 // every assertion is scoped to the lines the SESSION section owns rather than the whole frame.
 describe("Sidebar SESSION section", () => {
@@ -306,31 +299,29 @@ describe("Sidebar SESSION section", () => {
     // Old enough that the readout sits in the days bucket, and offset half an hour off the boundary so
     // the rendered `Nd..h` token cannot flip between the render and the assertion.
     const CREATED_AT = new Date(Date.now() - (3 * 24 + 4) * 3_600_000 - 30 * 60_000);
-    const dbErr: DbError = { type: "query_failed", op: "test", cause: new Error("boom") };
+    const SESSION_ANALYSIS_ID = "a1";
+    const serverGone: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://test", cause: new Error("boom") };
 
-    function threadRow(over: Partial<Thread> = {}): Thread {
+    function threadRow(over: Partial<ThreadSummary> = {}): ThreadSummary {
         return {
-            threadId: THREAD_ID,
-            analysisId: "a1",
+            id: THREAD_ID,
             title: TITLE,
+            resourceId: SESSION_ANALYSIS_ID,
             threadType: "conversation",
-            parentThreadId: null,
-            parentSeq: null,
-            createdAt: CREATED_AT,
-            updatedAt: CREATED_AT,
-            deletedAt: null,
+            createdAt: CREATED_AT.toISOString(),
+            updatedAt: CREATED_AT.toISOString(),
             ...over,
         };
     }
 
     /**
-     * Thread seams whose row read resolves through `read`. It takes the store's own `(pool, threadId)`
-     * shape, so a case about a report child can answer the child's read and its parent's differently —
-     * the refresh reads both through this one seam.
+     * Thread options whose row read resolves through `read`. It takes the `(analysisId, threadId)` shape
+     * of the client read, so a case about a report child can answer the child's read and its parent's
+     * differently — the refresh reads both through this one read.
      */
-    function threadSeams(read: ThreadSeams["getThread"]): ThreadSeams {
+    function threadOpts(read: ThreadOpts["getThread"]): ThreadOpts {
         return {
-            runtime: () => fakeRuntime,
+            ready: () => true,
             listThreads: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
             getThread: read,
             notify: () => {},
@@ -345,9 +336,12 @@ describe("Sidebar SESSION section", () => {
             sessionId: THREAD_ID,
             workingDir: "/x",
             project: null,
+            anchor: null,
+            inputCount: null,
             openDialog: () => {},
             closeDialog: () => {},
             openSession: () => {},
+            refreshScope: () => {},
             quit: async () => {},
         } as Workspace;
         return () => (
@@ -380,8 +374,9 @@ describe("Sidebar SESSION section", () => {
 
     test("no thread bound yet (pre-ready) shows the runtime placeholder", async () => {
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             null,
-            threadSeams(() => okAsync(threadRow())),
+            threadOpts(() => okAsync(threadRow())),
         );
         const frame = await renderFrame(sessionNode(0), { width: 44, height: 24 });
         expect(sessionHas(frame, "runtime not ready")).toBe(true);
@@ -390,8 +385,9 @@ describe("Sidebar SESSION section", () => {
 
     test("a failed row read degrades to 'unavailable', never a crash or a blank rail", async () => {
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => errAsync(dbErr)),
+            threadOpts(() => errAsync(serverGone)),
         );
         const frame = await renderFrame(sessionNode(0), { width: 44, height: 24 });
         expect(sessionHas(frame, "unavailable")).toBe(true);
@@ -400,8 +396,9 @@ describe("Sidebar SESSION section", () => {
 
     test("a bound id with no row reads 'new conversation' — the first turn has yet to create it", async () => {
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => okAsync(null)),
+            threadOpts(() => okAsync(null)),
         );
         const frame = await renderFrame(sessionNode(0), { width: 44, height: 24 });
         expect(sessionHas(frame, "new conversation")).toBe(true);
@@ -411,8 +408,9 @@ describe("Sidebar SESSION section", () => {
 
     test("a loaded row renders the pg title, its absolute created time, and the live message count", async () => {
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => okAsync(threadRow())),
+            threadOpts(() => okAsync(threadRow())),
         );
         const frame = await renderFrame(sessionNode(7), { width: 44, height: 24 });
 
@@ -437,37 +435,46 @@ describe("Sidebar SESSION section", () => {
 
         // unresolved — nothing bound yet
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             null,
-            threadSeams(() => okAsync(threadRow())),
+            threadOpts(() => okAsync(threadRow())),
         );
         expect(sessionHas(await renderFrame(sessionNode(COUNT), { width: 44, height: 24 }), token)).toBe(false);
 
         // unavailable — the row read failed
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => errAsync(dbErr)),
+            threadOpts(() => errAsync(serverGone)),
         );
         expect(sessionHas(await renderFrame(sessionNode(COUNT), { width: 44, height: 24 }), token)).toBe(false);
 
         // absent — a bound identity whose row the first turn has yet to create
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => okAsync(null)),
+            threadOpts(() => okAsync(null)),
         );
         expect(sessionHas(await renderFrame(sessionNode(COUNT), { width: 44, height: 24 }), token)).toBe(false);
 
         // loaded — the count joins the age on the row's meta line
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => okAsync(threadRow())),
+            threadOpts(() => okAsync(threadRow())),
         );
         expect(sessionHas(await renderFrame(sessionNode(COUNT), { width: 44, height: 24 }), token)).toBe(true);
     });
 
     test("a row whose title the first message has not seeded yet reads 'untitled', not a blank line", async () => {
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => okAsync(threadRow({ title: null }))),
+            threadOpts(() => {
+                // A row the first message has not titled carries no `title` key on the wire.
+                const { title: _untitled, ...row } = threadRow();
+                return okAsync(row);
+            }),
         );
         const frame = await renderFrame(sessionNode(1), { width: 44, height: 24 });
         expect(sessionHas(frame, "untitled")).toBe(true);
@@ -479,17 +486,18 @@ describe("Sidebar SESSION section", () => {
     const PARENT_TITLE = "Cohort survival questions";
 
     /** The open row as a report child of {@link PARENT_ID}, and the conversation it was spawned from. */
-    function reportRow(): Thread {
+    function reportRow(): ThreadSummary {
         return threadRow({ threadType: "report", parentThreadId: PARENT_ID, parentSeq: 4 });
     }
-    function parentRow(): Thread {
-        return threadRow({ threadId: PARENT_ID, title: PARENT_TITLE });
+    function parentRow(): ThreadSummary {
+        return threadRow({ id: PARENT_ID, title: PARENT_TITLE });
     }
 
     test("a report child names the kind and the conversation it reports on", async () => {
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams((_pool, id) => okAsync(id === PARENT_ID ? parentRow() : reportRow())),
+            threadOpts((_analysisId, id) => okAsync(id === PARENT_ID ? parentRow() : reportRow())),
         );
         const frame = await renderFrame(sessionNode(2), { width: 44, height: 24 });
 
@@ -505,8 +513,9 @@ describe("Sidebar SESSION section", () => {
         // signal here: the three surfaces mark one scope, and they have to mark it the same way.
         setTheme("github-light");
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams((_pool, id) => okAsync(id === PARENT_ID ? parentRow() : reportRow())),
+            threadOpts((_analysisId, id) => okAsync(id === PARENT_ID ? parentRow() : reportRow())),
         );
         const setup = await testRender(sessionNode(2), { width: 44, height: 24 });
         try {
@@ -529,8 +538,9 @@ describe("Sidebar SESSION section", () => {
         // Which session is open stays true whether or not its parent resolved, so the degrade costs the
         // title beside the kind and not the line, nor the row above it.
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams((_pool, id) => (id === PARENT_ID ? errAsync(dbErr) : okAsync(reportRow()))),
+            threadOpts((_analysisId, id) => (id === PARENT_ID ? errAsync(serverGone) : okAsync(reportRow()))),
         );
         const frame = await renderFrame(sessionNode(2), { width: 44, height: 24 });
 
@@ -542,8 +552,9 @@ describe("Sidebar SESSION section", () => {
 
     test("a conversation carries no context line at all", async () => {
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => okAsync(threadRow())),
+            threadOpts(() => okAsync(threadRow())),
         );
         const frame = await renderFrame(sessionNode(2), { width: 44, height: 24 });
 
@@ -555,8 +566,9 @@ describe("Sidebar SESSION section", () => {
         // The chip prints four hex digits because 36 characters do not fit the rail; the id is what a
         // user pastes into a command, so the click has to hand over the whole thing.
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => okAsync(threadRow())),
+            threadOpts(() => okAsync(threadRow())),
         );
         const copied: string[] = [];
         const restore = __setClipboardWriterForTest(async (text) => {
@@ -594,8 +606,9 @@ describe("Sidebar SESSION section", () => {
     test("the loaded title paints the theme foreground on a light theme, not the white default", async () => {
         setTheme("github-light");
         await refreshOpenThread(
+            SESSION_ANALYSIS_ID,
             THREAD_ID,
-            threadSeams(() => okAsync(threadRow())),
+            threadOpts(() => okAsync(threadRow())),
         );
         const setup = await testRender(sessionNode(7), { width: 44, height: 24 });
         try {
@@ -618,7 +631,7 @@ describe("Sidebar SESSION section", () => {
 describe("Sidebar RUNS progress embed", () => {
     test("an active newest run renders its bar and step window under the run row, without repeating the id", async () => {
         const steps = [stepRow("s1_cohort_summary", "completed"), stepRow("s2_mutation_assoc", "running"), stepRow("s3_clinical_assoc", "pending")];
-        await refreshSidebarData("A", seams(null, [runRow({ runId: "run-aabbccddeeff", status: "running" })], steps));
+        await refreshSidebarData("A", refreshOpts(null, [runRow({ runId: "run-aabbccddeeff", status: "running" })], steps));
         const frame = await renderFrame(liveNode(), { width: 44, height: 30 });
 
         expect(frame).toContain("1/3");
@@ -634,7 +647,7 @@ describe("Sidebar RUNS progress embed", () => {
     });
 
     test("a terminal newest run renders plain rows — no bar, no step window", async () => {
-        await refreshSidebarData("A", seams(null, [runRow({ runId: "run-aabbccddeeff", status: "completed", completedAt: "2026-07-08T00:01:00.000Z" })]));
+        await refreshSidebarData("A", refreshOpts(null, [runRow({ runId: "run-aabbccddeeff", status: "completed", completedAt: "2026-07-08T00:01:00.000Z" })]));
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain(idTail("run-aabbccddeeff"));
         // A finished run pins its absolute completion time — a durable record read long after a
@@ -653,7 +666,7 @@ describe("Sidebar RUNS progress embed", () => {
         // takes the last 6, so a literal would drift from what the row prints.
         const runIds = ["run-000001", "run-000002", "run-000003", "run-000004"];
         const runs = runIds.map((runId) => runRow({ runId, status: "completed", completedAt: "2026-07-08T00:01:00.000Z" }));
-        await refreshSidebarData("A", seams(null, runs));
+        await refreshSidebarData("A", refreshOpts(null, runs));
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain(idTail("run-000001"));
         expect(frame).toContain(idTail("run-000002"));
@@ -663,7 +676,7 @@ describe("Sidebar RUNS progress embed", () => {
 
     test("short terminals keep the top of the rail intact (the pane scrolls; sections are not squeezed away)", async () => {
         const steps = [stepRow("s1_cohort_summary", "completed"), stepRow("s2_mutation_assoc", "running"), stepRow("s3_clinical_assoc", "pending")];
-        await refreshSidebarData("A", seams(completedProfile(2), [runRow({ status: "running" })], steps));
+        await refreshSidebarData("A", refreshOpts(completedProfile(2), [runRow({ status: "running" })], steps));
         // Size-dependent layout bugs hide at any single size — sweep several short heights.
         for (const height of [10, 14, 18]) {
             const frame = await renderFrame(liveNode(), { width: 44, height });
@@ -677,13 +690,12 @@ describe("Sidebar RUNS progress embed", () => {
  * A live `catalog` transfer whose bytes are complete, at one phase. Complete bytes are the whole
  * point: the bar is already full, so only the tail can tell a working child from a dead one.
  */
-function unpackedCatalogReport(phase: TransferPhase | null, updatedAt: number): TransferReport {
+function unpackedCatalogReport(phase: TransferPhase | null, updatedAt: number): TransferReportView {
     return {
         kind: "catalog",
         row: {
-            id: "catalog",
-            createdAt: updatedAt,
-            updatedAt,
+            createdAt: new Date(updatedAt).toISOString(),
+            updatedAt: new Date(updatedAt).toISOString(),
             state: "running",
             bytesTransferred: 512,
             totalBytes: 512,
@@ -691,7 +703,6 @@ function unpackedCatalogReport(phase: TransferPhase | null, updatedAt: number): 
             totalLayers: 1,
             digest: null,
             message: null,
-            holderPid: 4242,
             phase,
         },
         state: "running",
@@ -822,28 +833,24 @@ describe("Sidebar MODELS connection line", () => {
 // The ANALYSIS anchor-marker badge is shown in exactly one place, chosen by terminal width: its own
 // path line below the breakpoint, or prefixed to the meta line at/above it (where the path is dropped).
 // 119/121 straddle `size.breakpointWide` (120); the rail itself stays a fixed width, so only this
-// terminal-width flip changes here. A real analysis is created so getAnchor returns a live marker.
+// terminal-width flip changes here. The store carries a live anchor with its marker.
 describe("Sidebar responsive ANALYSIS badge + path", () => {
     test("narrow: the badge + path own their line; the meta line carries no badge", async () => {
-        writeFileSync(join(dirA, "one.txt"), "x");
-        const a = (await createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
-        const anchor = getAnchor(a.anchorId)._unsafeUnwrap();
+        const a = analysisRow("alpha");
         // The head of the resolved path is short enough to land on the first wrapped rail line.
-        const pathHead = anchor!.cachedPath.slice(0, 20);
+        const pathHead = dirA.slice(0, 20);
 
-        const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 119, height: 24 });
+        const frame = await renderFrame(sidebarNode(wsFor(a, dirA, { anchor: anchorAt(dirA), inputCount: 1 })), { width: 119, height: 24 });
         expect(frame).toContain(pathHead); // the path renders below the breakpoint
         expect(lineContaining(frame, pathHead)).toContain(GLYPHS.check); // badge leads the path line
         expect(lineContaining(frame, "input")).not.toContain(GLYPHS.check); // meta line has no badge
     });
 
     test("wide: the path line disappears and the badge joins the meta line", async () => {
-        writeFileSync(join(dirA, "one.txt"), "x");
-        const a = (await createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
-        const anchor = getAnchor(a.anchorId)._unsafeUnwrap();
-        const pathHead = anchor!.cachedPath.slice(0, 20);
+        const a = analysisRow("alpha");
+        const pathHead = dirA.slice(0, 20);
 
-        const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 121, height: 24 });
+        const frame = await renderFrame(sidebarNode(wsFor(a, dirA, { anchor: anchorAt(dirA), inputCount: 1 })), { width: 121, height: 24 });
         expect(frame).not.toContain(pathHead); // no path line at/above the breakpoint
         const meta = lineContaining(frame, "input");
         expect(meta).toContain(`${GLYPHS.check} `); // the badge now prefixes the meta line
@@ -855,9 +862,8 @@ describe("Sidebar responsive ANALYSIS badge + path", () => {
 // on the line below — the rail is a fixed width, so this depends on value length, not terminal width.
 describe("Sidebar Section header merge vs stacked fallback", () => {
     test("a short ASCII value shares its section's label row; a middot-bearing handle merges too", async () => {
-        writeFileSync(join(dirA, "one.txt"), "x");
-        const a = (await createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
-        const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 44, height: 24 });
+        const a = analysisRow("alpha");
+        const frame = await renderFrame(sidebarNode(wsFor(a, dirA, { anchor: anchorAt(dirA), inputCount: 1 })), { width: 44, height: 24 });
         expect(lineContaining(frame, "ANALYSIS")).toContain("alpha"); // pure-ASCII name is cell-accurate → merges up
         // The SESSION handle is `S·nosu` — its `·` is GLYPHS.middot, a single-cell registry glyph the fit
         // check trusts as width 1, so the whole handle (well within the rail) merges onto the label row.
@@ -865,22 +871,20 @@ describe("Sidebar Section header merge vs stacked fallback", () => {
     });
 
     test("a value too long to fit stacks below the label, rendered in full (never truncated)", async () => {
-        writeFileSync(join(dirA, "one.txt"), "x");
         const longName = "long-analysis-name-that-will-not-fit";
-        const a = (await createAnalysis({ cwd: dirA, name: str256(longName)._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
-        const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 44, height: 24 });
+        const a = analysisRow(longName);
+        const frame = await renderFrame(sidebarNode(wsFor(a, dirA, { anchor: anchorAt(dirA), inputCount: 1 })), { width: 44, height: 24 });
         expect(lineContaining(frame, "ANALYSIS")).not.toContain(longName); // label row holds only the label
         expect(frame).toContain(longName); // the name renders in full on its own line
     });
 
     test("a non-ASCII (CJK) name stacks even when its .length would fit, since cells ≠ UTF-16 units", async () => {
-        writeFileSync(join(dirA, "one.txt"), "x");
         // `分析proj`: .length is 6, so the old unit-count check would MERGE it onto the label row — but the
         // two CJK glyphs are two cells each, so that fit is measured wrong. The conservative guard stacks
         // any non-ASCII value instead. The ASCII `proj` tail is the reliable capture probe (wide-glyph
         // capture is not); the workspace has no linked project, so `proj` appears only in the name.
-        const a = (await createAnalysis({ cwd: dirA, name: str256("分析proj")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
-        const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 44, height: 24 });
+        const a = analysisRow("分析proj");
+        const frame = await renderFrame(sidebarNode(wsFor(a, dirA, { anchor: anchorAt(dirA), inputCount: 1 })), { width: 44, height: 24 });
         expect(lineContaining(frame, "ANALYSIS")).not.toContain("proj"); // did not merge onto the label row
         expect(frame).toContain("proj"); // stacked on its own full line below the label
     });
@@ -893,7 +897,7 @@ describe("Sidebar Section header merge vs stacked fallback", () => {
 describe("Sidebar RUNS progress embed — window scroll containment", () => {
     // Twelve steps with the frontier at s8: past the rail window's break-even point, and hiding steps on
     // BOTH sides, so each marker renders and can be clicked.
-    function longRunSteps(): StepExecutionRow[] {
+    function longRunSteps(): RunStepSummary[] {
         return [
             ...["s1", "s2", "s3", "s4", "s5", "s6", "s7"].map((id) => stepRow(id, "completed" as const)),
             stepRow("s8", "running"),
@@ -907,9 +911,12 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
             sessionId: "no-such-session",
             workingDir: "/x",
             project: null,
+            anchor: null,
+            inputCount: null,
             openDialog: () => {},
             closeDialog: () => {},
             openSession: () => {},
+            refreshScope: () => {},
             quit: async () => {},
         } as Workspace;
         return () => (
@@ -923,7 +930,7 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
 
     test("clicking an elision marker scrolls the window and does NOT open the runs picker", async () => {
         let opened = 0;
-        await refreshSidebarData("A", seams(null, [runRow({ status: "running" })], longRunSteps()));
+        await refreshSidebarData("A", refreshOpts(null, [runRow({ status: "running" })], longRunSteps()));
         const setup = await testRender(
             runsNode(() => opened++),
             { width: 44, height: 34 },
@@ -949,7 +956,7 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
 
     test("containment is narrow — a click elsewhere in the RUNS section still opens the picker", async () => {
         let opened = 0;
-        await refreshSidebarData("A", seams(null, [runRow({ status: "running" })], longRunSteps()));
+        await refreshSidebarData("A", refreshOpts(null, [runRow({ status: "running" })], longRunSteps()));
         const setup = await testRender(
             runsNode(() => opened++),
             { width: 44, height: 34 },
@@ -969,23 +976,21 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
 });
 
 describe("Sidebar RUNS — concurrent runs", () => {
-    /** A seams bundle whose step read answers per run id, so two runs can differ. */
-    function perRunSeams(runs: CortexRunRow[], stepsByRunId: Record<string, StepExecutionRow[]>, plan: unknown = null): RefreshSeams {
-        return {
-            runtime: () => fakeRuntime,
-            loadProfile: () => okAsync(null),
-            loadRuns: () => okAsync(runs),
-            loadActiveRuns: () => okAsync(runs),
-            loadSteps: (_pool, runId) => okAsync(stepsByRunId[runId] ?? []),
-            loadPlan: () => okAsync(plan),
-        };
+    /** Refresh options whose run read answers per run id, so two runs can differ. */
+    function perRunOpts(runs: RunSummary[], stepsByRunId: Record<string, RunStepSummary[]>): RefreshOpts {
+        return refreshOpts(null, runs, [], {
+            loadRun: (_analysisId, runId) => {
+                const run = runs.find((r) => r.runId === runId) ?? runRow({ runId });
+                return okAsync(detailOf(run, stepsByRunId[runId] ?? []));
+            },
+        });
     }
 
     test("two active runs each render their own block — neither is invisible", async () => {
         const runs = [runRow({ runId: "run-aaaaaaaaaaaa", status: "running" }), runRow({ runId: "run-bbbbbbbbbbbb", status: "running" })];
         await refreshSidebarData(
             "A",
-            perRunSeams(runs, {
+            perRunOpts(runs, {
                 "run-aaaaaaaaaaaa": [stepRow("alpha_step", "completed"), stepRow("alpha_next", "running")],
                 "run-bbbbbbbbbbbb": [stepRow("beta_step", "running"), stepRow("beta_next", "pending")],
             }),
@@ -1005,7 +1010,7 @@ describe("Sidebar RUNS — concurrent runs", () => {
             runRow({ runId: "run-aaaaaaaaaaaa", status: "running" }),
             runRow({ runId: "run-bbbbbbbbbbbb", status: "completed", completedAt: "2026-07-08T00:01:00.000Z" }),
         ];
-        await refreshSidebarData("A", perRunSeams(runs, { "run-aaaaaaaaaaaa": [stepRow("alpha_step", "running")] }));
+        await refreshSidebarData("A", perRunOpts(runs, { "run-aaaaaaaaaaaa": [stepRow("alpha_step", "running")] }));
         const frame = await renderFrame(liveNode(), { width: 44, height: 40 });
 
         expect(frame).toContain("alpha_step");
@@ -1015,14 +1020,12 @@ describe("Sidebar RUNS — concurrent runs", () => {
     });
 
     test("a plan title labels the run row and plan names label its steps", async () => {
-        const plan = { title: "GSEA cross-species comparison", steps: [{ id: "qc_gate", name: "quality control" }] };
+        // The server resolves the plan: the title rides the run, and each step carries its plan name.
         await refreshSidebarData(
             "A",
-            perRunSeams(
-                [runRow({ runId: "run-aaaaaaaaaaaa", status: "running", planId: "plan-1" })],
-                { "run-aaaaaaaaaaaa": [stepRow("qc_gate", "running")] },
-                plan,
-            ),
+            perRunOpts([runRow({ runId: "run-aaaaaaaaaaaa", status: "running", planTitle: "GSEA cross-species comparison" })], {
+                "run-aaaaaaaaaaaa": [{ ...stepRow("qc_gate", "running"), name: "quality control" }],
+            }),
         );
         const frame = await renderFrame(liveNode(), { width: 44, height: 40 });
 
@@ -1036,7 +1039,7 @@ describe("Sidebar RUNS — concurrent runs", () => {
     test("a blocked step shows its reason and a retried step its attempt count", async () => {
         await refreshSidebarData(
             "A",
-            perRunSeams([runRow({ runId: "run-aaaaaaaaaaaa", status: "running" })], {
+            perRunOpts([runRow({ runId: "run-aaaaaaaaaaaa", status: "running" })], {
                 "run-aaaaaaaaaaaa": [
                     { ...stepRow("blocked_step", "blocked"), blockedReason: "reference panel unavailable" },
                     { ...stepRow("retried_step", "running"), attempts: 3 },
@@ -1057,7 +1060,7 @@ describe("Sidebar RUNS — concurrent runs", () => {
     test("a skipped step is visually distinct from a pending one", async () => {
         await refreshSidebarData(
             "A",
-            perRunSeams([runRow({ runId: "run-aaaaaaaaaaaa", status: "running" })], {
+            perRunOpts([runRow({ runId: "run-aaaaaaaaaaaa", status: "running" })], {
                 "run-aaaaaaaaaaaa": [stepRow("doomed_step", "skipped"), stepRow("waiting_step", "pending")],
             }),
         );
@@ -1078,7 +1081,7 @@ describe("Sidebar RUNS — concurrent runs", () => {
         ];
         await refreshSidebarData(
             "A",
-            perRunSeams(runs, {
+            perRunOpts(runs, {
                 "run-aaaaaaaaaaaa": [stepRow("a1", "running"), stepRow("a2", "pending")],
                 "run-bbbbbbbbbbbb": [stepRow("b1", "running"), stepRow("b2", "pending")],
                 "run-cccccccccccc": [stepRow("c1", "running"), stepRow("c2", "pending")],
@@ -1100,14 +1103,15 @@ describe("Sidebar RUNS — concurrent runs", () => {
     });
 });
 
-// The USAGE section reads the CLI's OWN local ledger — no seam, no injected read, no booted runtime —
-// so every case here writes real rows through `upsertLlmUsage` and asserts what the rail rows say. The
-// arithmetic claims ("this pair, never its sum") are asserted on `usageSectionOf` instead: a character
-// frame containing two numbers cannot pin WHICH numbers they are.
+// The USAGE section reads `GET {A}/usage?threadId=` of the local server, so every case here answers that
+// read from a fake server and asserts what the rail rows say. WHICH ledger rows a session holds is the
+// route's claim (`server/routes/usage.test.ts`). The arithmetic claims ("this pair, never its sum") are
+// asserted on `usageSectionOf` instead: a character frame containing two numbers cannot pin WHICH numbers
+// they are.
 describe("Sidebar USAGE section", () => {
-    // The thread the ledger rows below are stamped with, and the one the workspace binds. The section
-    // reports a SESSION, so the two have to agree or every figure resolves to an absence.
+    // The thread the workspace binds. The section reports a SESSION, so the read must name it.
     const THREAD = "thr-1";
+    const REPORTED: UsageTotals = { calls: 1, inputTokens: 12_400, outputTokens: 3_100 };
 
     /**
      * Whether `needle` renders on a line the USAGE section owns — the rows between its label row and
@@ -1124,24 +1128,33 @@ describe("Sidebar USAGE section", () => {
         return (end < 0 ? after : after.slice(0, end)).some((l) => l.includes(needle));
     }
 
-    /** A real analysis (so the rail's anchor/input reads resolve) whose id the ledger rows are scoped to. */
-    async function analysisIn(dir: string, name: string) {
-        writeFileSync(join(dir, "one.txt"), "x");
-        return (await createAnalysis({ cwd: dir, name: str256(name)._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] }))._unsafeUnwrap();
+    /** A plain analysis row that the fake server answers for. */
+    async function analysisIn(_dir: string, name: string): Promise<Analysis> {
+        return analysisRow(name);
     }
 
-    /** One chat-shaped ledger row for `analysisId`; the reported figures are the interesting part. */
-    function usageEntry(analysisId: string, over: Partial<LlmUsageEntry> = {}): LlmUsageEntry {
+    /**
+     * A fake `GET {A}/usage`: each read gets the current `totals`, or a 500 while `totals` is `null`. It
+     * records each requested URL, thus a case can count the reads.
+     */
+    function usageServer(initial: UsageTotals | null) {
+        let totals = initial;
+        const urls: string[] = [];
+        const opts: ClientOpts = {
+            discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
+            fetch: async (url) => {
+                urls.push(url);
+                if (totals === null) return new Response(JSON.stringify({ error: "internal_error", message: "boom" }), { status: 500 });
+                const view: UsageView = { scope: { kind: "thread", threadId: THREAD }, totals };
+                return new Response(JSON.stringify(view), { headers: { "Content-Type": "application/json" } });
+            },
+        };
         return {
-            recordKey: "rec-1",
-            recordedAt: 1_000,
-            agentId: "orchestrator",
-            callPath: "orchestrator",
-            scopeKind: "analysis",
-            scopeId: analysisId,
-            threadId: THREAD,
-            usage: { inputTokens: 12_400, outputTokens: 3_100 },
-            ...over,
+            opts,
+            urls,
+            set(next: UsageTotals | null): void {
+                totals = next;
+            },
         };
     }
 
@@ -1152,15 +1165,35 @@ describe("Sidebar USAGE section", () => {
      * section must never move because of it. A case that wants the figure to advance drives the chat
      * status instead.
      */
-    function usageNode(analysis: Analysis, dir: string, messageCount: () => number) {
+    function usageNode(analysis: Analysis, dir: string, messageCount: () => number, opts: ClientOpts) {
         const ws = { ...wsFor(analysis, dir), sessionId: THREAD };
         return () => (
             <WorkspaceContext.Provider value={ws}>
                 <box width="100%" height="100%">
-                    <Sidebar messageCount={messageCount} />
+                    <Sidebar messageCount={messageCount} clientOpts={opts} />
                 </box>
             </WorkspaceContext.Provider>
         );
+    }
+
+    /** Let the reads in flight answer, then paint: a read resolves after the macrotask that the fake fetch ends in. */
+    async function settle(setup: Awaited<ReturnType<typeof testRender>>): Promise<void> {
+        await Bun.sleep(0);
+        await setup.renderOnce();
+        await Bun.sleep(0);
+        await setup.renderOnce();
+    }
+
+    /** One settled frame of `node`, with the renderer destroyed after the capture. */
+    async function settledFrame(node: Parameters<typeof testRender>[0], area: { width: number; height: number }): Promise<string> {
+        const setup = await testRender(node, area);
+        try {
+            await setup.renderOnce();
+            await settle(setup);
+            return setup.captureCharFrame();
+        } finally {
+            setup.renderer.destroy();
+        }
     }
 
     /** Drive one turn to completion: the calls are recorded inside the loop, so they land before the edge. */
@@ -1169,8 +1202,7 @@ describe("Sidebar USAGE section", () => {
         await setup.renderOnce();
         record();
         setChatStatus("idle");
-        await setup.renderOnce();
-        await setup.renderOnce();
+        await settle(setup);
     }
 
     /** The fg of the first captured span whose text contains `needle`, or undefined if none rendered. */
@@ -1232,38 +1264,28 @@ describe("Sidebar USAGE section", () => {
         });
     });
 
-    test("the session figure includes the run it launched, and excludes the profile that carries no thread", async () => {
+    test("the section asks for the open session, and paints the totals that the server gives for it", async () => {
         const a = await analysisIn(dirA, "alpha");
-        // The real ledger's three shapes: a chat turn, the run that turn launched (carrying the SAME
-        // thread), and the data profile (carrying a run id and no thread at all).
-        upsertLlmUsage(usageEntry(a.id, { recordKey: "chat", usage: { inputTokens: 11_100, outputTokens: 2_900 } }))._unsafeUnwrap();
-        upsertLlmUsage(usageEntry(a.id, { recordKey: "run", runId: "run-1", usage: { inputTokens: 809_200, outputTokens: 40_400 } }))._unsafeUnwrap();
-        upsertLlmUsage(
-            usageEntry(a.id, { recordKey: "profile", threadId: undefined, runId: "data-profile", usage: { inputTokens: 55_500, outputTokens: 3_200 } }),
-        )._unsafeUnwrap();
+        // The session with the run it launched: the server folds the run in (the route pins which rows).
+        const server = usageServer({ calls: 2, inputTokens: 820_300, outputTokens: 43_300 });
 
-        const frame = await renderFrame(
-            usageNode(a, dirA, () => 0),
+        const frame = await settledFrame(
+            usageNode(a, dirA, () => 0, server.opts),
             { width: 44, height: 40 },
         );
 
-        // 11.1k + 809.2k, not 11.1k: reporting the conversation's own calls moments after the user
-        // watched the run spend 74× more is wrong rather than conservative.
+        expect(server.urls[0]).toBe(`http://server.test/api/v1/analyses/${a.id}/usage?threadId=${THREAD}`);
         expect(usageHas(frame, "820.3k in")).toBe(true);
         expect(usageHas(frame, "43.3k out")).toBe(true);
-        // ...and the profile is in NEITHER arm: its calls carry no thread, so no session contains them.
-        expect(usageHas(frame, "875.8k")).toBe(false);
-        expect(usageHas(frame, "55.5k")).toBe(false);
+        expect(usageHas(frame, "863.6k")).toBe(false);
     });
 
     test("the cache counts render beneath the input arm they are part of, never on its line", async () => {
         const a = await analysisIn(dirA, "alpha");
-        upsertLlmUsage(
-            usageEntry(a.id, { usage: { inputTokens: 12_400, outputTokens: 3_100, cacheCreationInputTokens: 2_000, cacheReadInputTokens: 9_000 } }),
-        )._unsafeUnwrap();
+        const server = usageServer({ ...REPORTED, cacheCreationInputTokens: 2_000, cacheReadInputTokens: 9_000 });
 
-        const frame = await renderFrame(
-            usageNode(a, dirA, () => 0),
+        const frame = await settledFrame(
+            usageNode(a, dirA, () => 0, server.opts),
             { width: 44, height: 40 },
         );
 
@@ -1291,18 +1313,18 @@ describe("Sidebar USAGE section", () => {
         expect(usageHas(frame, "9.0k")).toBe(true);
     });
 
-    test("the figures render before the runtime is ready — the ledger is local and needs no boot", async () => {
+    test("the figures render before the runtime is ready — the ledger needs no boot", async () => {
         const a = await analysisIn(dirA, "alpha");
-        upsertLlmUsage(usageEntry(a.id, { usage: { inputTokens: 12_400, outputTokens: 3_100, cacheReadInputTokens: 9_000 } }))._unsafeUnwrap();
+        const server = usageServer({ ...REPORTED, cacheReadInputTokens: 9_000 });
 
-        const frame = await renderFrame(
-            usageNode(a, dirA, () => 0),
+        const frame = await settledFrame(
+            usageNode(a, dirA, () => 0, server.opts),
             { width: 44, height: 40 },
         );
 
         // The Postgres-backed sections are still degraded (nothing has booted)...
         expect(frame).toContain("runtime not ready");
-        // ...and the local ledger reports anyway, as two arms.
+        // ...and the ledger reports anyway, as two arms.
         expect(usageHas(frame, "12.4k in")).toBe(true);
         expect(usageHas(frame, "3.1k out")).toBe(true);
         // Neither a sum of the headline pair (15.5k) nor of everything reported (24.5k) appears.
@@ -1317,11 +1339,12 @@ describe("Sidebar USAGE section", () => {
         setTheme("github-light");
         const a = await analysisIn(dirA, "alpha");
         const setup = await testRender(
-            usageNode(a, dirA, () => 0),
+            usageNode(a, dirA, () => 0, usageServer({ calls: 0 }).opts),
             { width: 44, height: 40 },
         );
         try {
             await setup.renderOnce();
+            await settle(setup);
             expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
             // No zero figure anywhere, in either written form: "nothing recorded" and "zero spent" are
             // different facts, and the absence rule has to hold identically across both.
@@ -1339,15 +1362,15 @@ describe("Sidebar USAGE section", () => {
 
     test("an analysis with no bound session says so rather than widening to the analysis total", async () => {
         const a = await analysisIn(dirA, "alpha");
-        upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
+        const server = usageServer(REPORTED);
         // No thread is resolvable before boot, and the section reports a SESSION — reporting the
         // analysis's total under this label would answer a different question in the same words.
         const ws = { ...wsFor(a, dirA), sessionId: null };
-        const frame = await renderFrame(
+        const frame = await settledFrame(
             () => (
                 <WorkspaceContext.Provider value={ws}>
                     <box width="100%" height="100%">
-                        <Sidebar messageCount={() => 0} />
+                        <Sidebar messageCount={() => 0} clientOpts={server.opts} />
                     </box>
                 </WorkspaceContext.Provider>
             ),
@@ -1355,18 +1378,19 @@ describe("Sidebar USAGE section", () => {
         );
         expect(usageHas(frame, "no open session")).toBe(true);
         expect(usageHas(frame, "12.4k")).toBe(false);
+        expect(server.urls).toEqual([]);
     });
 
     test("reported arms paint the section foreground, so data and absence never read alike", async () => {
         setTheme("github-light");
         const a = await analysisIn(dirA, "alpha");
-        upsertLlmUsage(usageEntry(a.id, { usage: { inputTokens: 12_400, outputTokens: 3_100, cacheReadInputTokens: 9_000 } }))._unsafeUnwrap();
         const setup = await testRender(
-            usageNode(a, dirA, () => 0),
+            usageNode(a, dirA, () => 0, usageServer({ ...REPORTED, cacheReadInputTokens: 9_000 }).opts),
             { width: 44, height: 40 },
         );
         try {
             await setup.renderOnce();
+            await settle(setup);
             const figures = spanFg(setup, "12.4k in");
             expect(figures).toBeDefined();
             expect(figures && rgbToHex(figures)).not.toBe("#ffffff");
@@ -1382,14 +1406,11 @@ describe("Sidebar USAGE section", () => {
         }
     });
 
-    test("a failed ledger read degrades to 'unavailable' and every other section still renders", async () => {
+    test("a failed usage read degrades to 'unavailable' and every other section still renders", async () => {
         const a = await analysisIn(dirA, "alpha");
-        // Drop the table out from under the read: a genuine query failure, not a stubbed one, so the
-        // Result branch the section takes is the one production would take.
-        db()._unsafeUnwrap().run("DROP TABLE llm_usage");
 
-        const frame = await renderFrame(
-            usageNode(a, dirA, () => 0),
+        const frame = await settledFrame(
+            usageNode(a, dirA, () => 0, usageServer(null).opts),
             { width: 44, height: 40 },
         );
 
@@ -1398,22 +1419,24 @@ describe("Sidebar USAGE section", () => {
             expect(frame).toContain(label);
         }
         // The rail still carries the sections' own content, not just their labels.
-        expect(frame).toContain("1 input");
+        expect(frame).toMatch(/\d+ inputs?/);
     });
 
     test("a completed turn advances the figures with no timer elapsing", async () => {
         const a = await analysisIn(dirA, "alpha");
+        const server = usageServer({ calls: 0 });
         const setup = await testRender(
-            usageNode(a, dirA, () => 0),
+            usageNode(a, dirA, () => 0, server.opts),
             { width: 44, height: 40 },
         );
         try {
             await setup.renderOnce();
+            await settle(setup);
             expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
 
             // The turn's calls land in the ledger while it is still busy — the order the real path
             // takes, since the recorder writes inside the loop — and the status edge is the completion.
-            await completeTurn(setup, () => upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap());
+            await completeTurn(setup, () => server.set(REPORTED));
 
             const frame = setup.captureCharFrame();
             expect(usageHas(frame, "12.4k in")).toBe(true);
@@ -1425,18 +1448,19 @@ describe("Sidebar USAGE section", () => {
 
     test("a turn that ends in error still advances the figures — it spent what it spent", async () => {
         const a = await analysisIn(dirA, "alpha");
+        const server = usageServer({ calls: 0 });
         const setup = await testRender(
-            usageNode(a, dirA, () => 0),
+            usageNode(a, dirA, () => 0, server.opts),
             { width: 44, height: 40 },
         );
         try {
             await setup.renderOnce();
+            await settle(setup);
             setChatStatus("busy");
             await setup.renderOnce();
-            upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
+            server.set(REPORTED);
             setChatStatus("error");
-            await setup.renderOnce();
-            await setup.renderOnce();
+            await settle(setup);
             // The edge is "out of busy", not "busy → idle": a failed turn is exactly when a user goes
             // looking at what it cost, and its calls were recorded before it failed.
             expect(usageHas(setup.captureCharFrame(), "12.4k in")).toBe(true);
@@ -1447,23 +1471,23 @@ describe("Sidebar USAGE section", () => {
 
     test("the figures keep advancing once the message count has frozen at the store's cap", async () => {
         const a = await analysisIn(dirA, "alpha");
+        const server = usageServer({ calls: 0 });
         // MESSAGE_CAP (200) reached: past it the store's push-and-shift leaves the length unchanged, so
         // a memo keyed on the count never fires again. This is the defect the trigger change exists to
         // remove — the count is a CONSTANT here for the whole test and the figures still move twice.
         const setup = await testRender(
-            usageNode(a, dirA, () => 200),
+            usageNode(a, dirA, () => 200, server.opts),
             { width: 44, height: 40 },
         );
         try {
             await setup.renderOnce();
+            await settle(setup);
             expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
 
-            await completeTurn(setup, () => upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap());
+            await completeTurn(setup, () => server.set(REPORTED));
             expect(usageHas(setup.captureCharFrame(), "12.4k in")).toBe(true);
 
-            await completeTurn(setup, () =>
-                upsertLlmUsage(usageEntry(a.id, { recordKey: "rec-2", usage: { inputTokens: 600, outputTokens: 100 } }))._unsafeUnwrap(),
-            );
+            await completeTurn(setup, () => server.set({ calls: 2, inputTokens: 13_000, outputTokens: 3_200 }));
             expect(usageHas(setup.captureCharFrame(), "13.0k in")).toBe(true);
         } finally {
             setup.renderer.destroy();
@@ -1472,20 +1496,24 @@ describe("Sidebar USAGE section", () => {
 
     test("an idle rail issues no usage read — nothing repaints without one of the three triggers", async () => {
         const a = await analysisIn(dirA, "alpha");
+        const server = usageServer({ calls: 0 });
         const setup = await testRender(
-            usageNode(a, dirA, () => 0),
+            usageNode(a, dirA, () => 0, server.opts),
             { width: 44, height: 40 },
         );
         try {
             await setup.renderOnce();
+            await settle(setup);
             expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
+            const reads = server.urls.length;
 
             // A row lands with no run active, no turn in flight, and no pending profile. There is no
-            // timer of this section's own, so nothing re-reads — which is only observable as the figure
-            // NOT moving. The re-read the very next test drives is the counter-case that keeps this
-            // from passing on a section that is simply broken.
-            upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
-            for (let i = 0; i < 5; i++) await setup.renderOnce();
+            // timer of this section's own, so nothing re-reads — which is observable as no request and
+            // as the figure NOT moving. The re-read below is the counter-case that keeps this from
+            // passing on a section that is simply broken.
+            server.set(REPORTED);
+            for (let i = 0; i < 5; i++) await settle(setup);
+            expect(server.urls.length).toBe(reads);
             expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
             expect(usageHas(setup.captureCharFrame(), "12.4k")).toBe(false);
 
@@ -1494,8 +1522,7 @@ describe("Sidebar USAGE section", () => {
             setChatStatus("busy");
             await setup.renderOnce();
             setChatStatus("idle");
-            await setup.renderOnce();
-            await setup.renderOnce();
+            await settle(setup);
             expect(usageHas(setup.captureCharFrame(), "12.4k in")).toBe(true);
         } finally {
             setup.renderer.destroy();
@@ -1504,20 +1531,21 @@ describe("Sidebar USAGE section", () => {
 
     test("the live store's refresh advances the figures — the section rides the poll it already arms", async () => {
         const a = await analysisIn(dirA, "alpha");
+        const server = usageServer({ calls: 0 });
         const setup = await testRender(
-            usageNode(a, dirA, () => 0),
+            usageNode(a, dirA, () => 0, server.opts),
             { width: 44, height: 40 },
         );
         try {
             await setup.renderOnce();
+            await settle(setup);
             expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
 
-            upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
+            server.set(REPORTED);
             // What a poll tick does: republish the live snapshots. The section reads them, so it lands
             // on that cadence without a second interval to keep armed and disarmed in step with the first.
-            await refreshSidebarData(a.id, seams(null, [runRow({ status: "running" })]));
-            await setup.renderOnce();
-            await setup.renderOnce();
+            await refreshSidebarData(a.id, refreshOpts(null, [runRow({ status: "running" })]));
+            await settle(setup);
 
             expect(usageHas(setup.captureCharFrame(), "12.4k in")).toBe(true);
         } finally {
@@ -1525,46 +1553,11 @@ describe("Sidebar USAGE section", () => {
         }
     });
 
-    test("a background run's observation advances the figures; a foreign analysis's does not", async () => {
-        const a = await analysisIn(dirA, "alpha");
-        const b = await analysisIn(dirB, "bravo");
-        const setup = await testRender(
-            usageNode(a, dirA, () => 0),
-            { width: 44, height: 40 },
-        );
-        try {
-            await setup.renderOnce();
-            expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
-
-            upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
-
-            // A run in ANOTHER analysis must not re-read this one's ledger — the row above is already
-            // written, so a section that repainted here would be repainting on an unfiltered event.
-            Bus.emit("inflexa", { type: "run.observed", analysisId: b.id, snapshot: { runId: "run-1", status: "running", steps: [] } });
-            await setup.renderOnce();
-            await setup.renderOnce();
-            expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
-
-            // This analysis's observation is the trigger. The event carries no figures — the section
-            // re-reads the ledger rather than rendering anything the payload holds.
-            Bus.emit("inflexa", { type: "run.observed", analysisId: a.id, snapshot: { runId: "run-1", status: "running", steps: [] } });
-            await setup.renderOnce();
-            await setup.renderOnce();
-
-            const frame = setup.captureCharFrame();
-            expect(usageHas(frame, "12.4k in")).toBe(true);
-            expect(usageHas(frame, "3.1k out")).toBe(true);
-        } finally {
-            setup.renderer.destroy();
-        }
-    });
-
     test("clicking the section activates it, with the runtime cold", async () => {
         const a = await analysisIn(dirA, "alpha");
-        upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
-        // `idle`, never `ready`: the whole point of the USAGE section is that it answers from the CLI's
-        // own SQLite with the durable engine, its Postgres, and the model proxy all cold. Booting one
-        // here would make this test unable to fail for the reason it exists.
+        // `idle`, never `ready`: the whole point of the USAGE section is that it answers from the
+        // ledger with the durable engine, its Postgres, and the model proxy all cold. Booting one here
+        // would make this test unable to fail for the reason it exists.
         __setBootStateForTest({ phase: "idle" });
 
         let opened = 0;
@@ -1573,7 +1566,7 @@ describe("Sidebar USAGE section", () => {
             () => (
                 <WorkspaceContext.Provider value={ws}>
                     <box width="100%" height="100%">
-                        <Sidebar messageCount={() => 0} onOpenUsage={() => opened++} />
+                        <Sidebar messageCount={() => 0} onOpenUsage={() => opened++} clientOpts={usageServer(REPORTED).opts} />
                     </box>
                 </WorkspaceContext.Provider>
             ),
@@ -1581,6 +1574,7 @@ describe("Sidebar USAGE section", () => {
         );
         try {
             await setup.renderOnce();
+            await settle(setup);
             const lines = setup.captureCharFrame().split("\n");
             const y = lines.findIndex((l) => l.includes("USAGE"));
             expect(y).toBeGreaterThanOrEqual(0);
@@ -1598,14 +1592,10 @@ describe("Sidebar USAGE section", () => {
         // Every quantity reported, so the section is at its TALLEST (two arms + three nested parts) —
         // the shape most likely to push the rail past a short terminal. Size-dependent layout defects
         // hide at any single height (CLAUDE.md → Layout).
-        upsertLlmUsage(
-            usageEntry(a.id, {
-                usage: { inputTokens: 12_400, outputTokens: 3_100, cacheCreationInputTokens: 2_000, cacheReadInputTokens: 9_000, reasoningTokens: 700 },
-            }),
-        )._unsafeUnwrap();
+        const server = usageServer({ ...REPORTED, cacheCreationInputTokens: 2_000, cacheReadInputTokens: 9_000, reasoningTokens: 700 });
         for (const height of [10, 14, 18, 24, 34, 40]) {
-            const frame = await renderFrame(
-                usageNode(a, dirA, () => 0),
+            const frame = await settledFrame(
+                usageNode(a, dirA, () => 0, server.opts),
                 { width: 44, height },
             );
             expect(frame).toContain("SESSION");
@@ -1615,19 +1605,16 @@ describe("Sidebar USAGE section", () => {
 
     test("every row fits the rail's usable width — no figure or nested part wraps", async () => {
         const a = await analysisIn(dirA, "alpha");
-        upsertLlmUsage(
-            usageEntry(a.id, {
-                usage: {
-                    inputTokens: 820_300,
-                    outputTokens: 43_300,
-                    cacheCreationInputTokens: 120_400,
-                    cacheReadInputTokens: 700_100,
-                    reasoningTokens: 12_800,
-                },
-            }),
-        )._unsafeUnwrap();
-        const frame = await renderFrame(
-            usageNode(a, dirA, () => 0),
+        const server = usageServer({
+            calls: 1,
+            inputTokens: 820_300,
+            outputTokens: 43_300,
+            cacheCreationInputTokens: 120_400,
+            cacheReadInputTokens: 700_100,
+            reasoningTokens: 12_800,
+        });
+        const frame = await settledFrame(
+            usageNode(a, dirA, () => 0, server.opts),
             { width: size.railWidth, height: 40 },
         );
         // The rail's usable content width: its fixed width less the left border and both paddings.
@@ -1660,10 +1647,7 @@ describe("Sidebar per-entity figures", () => {
     }
 
     test("the profile's spend is visible where the profile is named", async () => {
-        await refreshSidebarData(
-            "A",
-            seams(completedProfile(2), [], [], { loadProfileUsage: () => ok({ calls: 4, inputTokens: 55_500, outputTokens: 3_200 }) }),
-        );
+        await refreshSidebarData("A", refreshOpts({ ...completedProfile(2), usage: { calls: 4, inputTokens: 55_500, outputTokens: 3_200 } }, []));
         const frame = await renderFrame(liveNode(), { width: 44, height: 30 });
         const rows = sectionRows(frame, "DATA PROFILE", "RUNS");
         expect(rows.some((l) => l.includes(`${GLYPHS.arrowUp}55.5k`))).toBe(true);
@@ -1675,10 +1659,10 @@ describe("Sidebar per-entity figures", () => {
     test("each run row carries its OWN run's figures", async () => {
         await refreshSidebarData(
             "A",
-            seams(null, [runRow({ runId: "run-aaaaaa", status: "completed" }), runRow({ runId: "run-bbbbbb", status: "completed" })], [], {
-                loadRunUsage: (_analysisId, runId) =>
-                    ok(runId === "run-aaaaaa" ? { calls: 3, inputTokens: 809_200, outputTokens: 40_400 } : { calls: 1, inputTokens: 1_200, outputTokens: 90 }),
-            }),
+            refreshOpts(null, [
+                runRow({ runId: "run-aaaaaa", status: "completed", usage: { calls: 3, inputTokens: 809_200, outputTokens: 40_400 } }),
+                runRow({ runId: "run-bbbbbb", status: "completed", usage: { calls: 1, inputTokens: 1_200, outputTokens: 90 } }),
+            ]),
         );
         const frame = await renderFrame(liveNode(), { width: 44, height: 30 });
         const rows = sectionRows(frame, "RUNS", "USAGE");
@@ -1693,14 +1677,9 @@ describe("Sidebar per-entity figures", () => {
         expect(rows[bRow]).toContain(`${GLYPHS.middot} ${GLYPHS.arrowUp}1.2k`);
     });
 
-    test("a failed usage read leaves the run row rendered, without its figure", async () => {
-        await refreshSidebarData(
-            "A",
-            seams(completedProfile(1), [runRow({ runId: "run-aaaaaa", status: "running" })], [], {
-                loadProfileUsage: () => err({ type: "query_failed", op: "test", cause: new Error("boom") }),
-                loadRunUsage: () => err({ type: "query_failed", op: "test", cause: new Error("boom") }),
-            }),
-        );
+    test("a run and a profile with no usage on the wire render without their figure", async () => {
+        // The server leaves `usage` off an entity whose usage read failed: the wire form of a failed read.
+        await refreshSidebarData("A", refreshOpts(completedProfile(1), [runRow({ runId: "run-aaaaaa", status: "running" })]));
         const frame = await renderFrame(liveNode(), { width: 44, height: 30 });
         // Both entities survive with everything else they carry — a missing decoration must never take
         // the thing it decorates with it.
@@ -1721,7 +1700,7 @@ describe("Sidebar per-entity figures", () => {
     test("an entity with no ledger rows carries no figure line at all", async () => {
         // `calls: 0` is not "reported nothing" — it is "made no calls", and the RUNS section is not the
         // place to announce that a run predates the ledger.
-        await refreshSidebarData("A", seams(completedProfile(1), [runRow({ runId: "run-aaaaaa", status: "completed" })]));
+        await refreshSidebarData("A", refreshOpts(completedProfile(1), [runRow({ runId: "run-aaaaaa", status: "completed" })]));
         const frame = await renderFrame(liveNode(), { width: 44, height: 30 });
         expect(frame).toContain(idTail("run-aaaaaa"));
         expect(frame).not.toContain(GLYPHS.arrowUp);
@@ -1742,9 +1721,7 @@ describe("Sidebar per-entity figures", () => {
         setTheme("github-light");
         await refreshSidebarData(
             "A",
-            seams(null, [runRow({ runId: "run-aaaaaa", status: "completed" })], [], {
-                loadRunUsage: () => ok({ calls: 3, inputTokens: 809_200, outputTokens: 40_400 }),
-            }),
+            refreshOpts(null, [runRow({ runId: "run-aaaaaa", status: "completed", usage: { calls: 3, inputTokens: 809_200, outputTokens: 40_400 } })]),
         );
         const setup = await testRender(liveNode(), { width: 44, height: 30 });
         try {

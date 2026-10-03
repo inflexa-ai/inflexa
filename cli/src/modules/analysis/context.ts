@@ -37,6 +37,9 @@ export type ContextOptions = {
 /**
  * Decide what bare `inflexa` operates on, by the spec's precedence. Pure data — the picker,
  * prompts, and "loud context" printing live in the CLI/TUI layer.
+ *
+ * `cwd` is the folder of the client, and the anchor reconciliation searches from it, never from the
+ * folder of the process: the local server resolves for a client in a different folder.
  */
 export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextOptions): Result<ResolvedContext, DbError> {
     // 1. Explicit flags win outright.
@@ -46,7 +49,7 @@ export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextO
             if (!analysis) return listRecentAnalyses().map((analyses) => ({ kind: "pick", analyses }));
             // The analysis's anchor row may be gone (user edited the DB) — fall back to cwd for display
             // rather than failing; the analysis is still openable.
-            return resolveAnchor(analysis.anchorId, opts).map((resolved) => ({
+            return resolveAnchor(analysis.anchorId, { searchRoots: [cwd], ...opts }).map((resolved) => ({
                 kind: "analysis",
                 analysis,
                 anchorPath: resolvedPathOrCached(resolved) ?? cwd,
@@ -74,7 +77,7 @@ export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextO
         // routine desync, not an error: fall back to the marker's own directory for the anchor path and
         // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
         // user can start an analysis in (which re-establishes the row from the marker).
-        return resolveAnchor(marker.anchorId, opts).andThen((resolved) => {
+        return resolveAnchor(marker.anchorId, { searchRoots: [cwd], ...opts }).andThen((resolved) => {
             const anchorPath = resolvedPathOrCached(resolved) ?? found.dir;
             return listAnalysesForAnchorAt(cwd).map((analyses): ResolvedContext => {
                 const [only] = analyses;

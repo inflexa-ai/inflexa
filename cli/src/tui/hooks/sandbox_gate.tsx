@@ -1,26 +1,20 @@
 import { createSignal, onCleanup } from "solid-js";
+import type { ResultAsync } from "neverthrow";
 
-import { ensureRuntime } from "../../lib/config.ts";
-import { capture } from "../../lib/container.ts";
-import { env } from "../../lib/env.ts";
+import type { PendingAddView, StoreFlightView, StoreState, TransferReportView, TransferStartKind } from "../../api/store.ts";
+import { describeClientError, type ClientError } from "../../client/api.ts";
+import type { SandboxReadiness } from "../../api/runs.ts";
+import { fetchSandboxReadiness } from "../../client/runs.ts";
+import { createTransfer, fetchStore } from "../../client/store.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
-import { isPublishedSandboxImage } from "../../modules/libs/images.ts";
-import { takeFarmCompositionFailure, type FarmCompositionFailure } from "../../modules/libs/composition.ts";
-import { configuredSandboxImage } from "../../modules/libs/pull.ts";
-import { inspectStoreContent, startCatalogTransfer, type StoreContentState } from "../../modules/libs/store_download.ts";
-import { listPendingStoreAdds } from "../../db/primary_query.ts";
-import { startPendingFlushChild } from "../../modules/libs/store.ts";
-import { describeStoreFlightSpec, readStoreFlights, type StoreFlightReport } from "../../modules/libs/store_flight.ts";
-import type { StoreFlightStatus } from "../../types/store.ts";
-import { readTransferReports, startImageTransfer, type TransferReport } from "../../modules/libs/transfers.ts";
 import type { Notice } from "../theme.ts";
 import { notify } from "./notice.ts";
 
 // The sandbox prerequisite gate, held here (not inside `app.tsx`) so the holder of the state is
 // decoupled from its callers. It has two jobs. It publishes the lifecycle of the three detached
-// transfers, which the sidebar renders as one row per live transfer. And it holds each sandbox-making
-// action (`awaitSandboxReady`) while a transfer is live, refusing a terminal state with the retry
-// command.
+// transfers, which the sidebar renders as one row per live transfer: a poll of `GET /api/v1/store`.
+// And it holds each sandbox-making action (`awaitSandboxReady`) while a transfer is live, refusing a
+// terminal state with the retry command.
 //
 // The gate STARTS NO TRANSFER and OPENS NO CONSENT (the package-store-transfers spec). `inflexa
 // setup`, `inflexa sandbox pull`, and `inflexa store download` start the children, and each owns its
@@ -28,35 +22,17 @@ import { notify } from "./notice.ts";
 // command. The deliberate retry surfaces — the sidebar key and the command palette — route through
 // {@link retryTerminalTransfers}, which is a user action and not the gate.
 //
-// The ONE start the poll owns is the pending-set flush child (the 10-second gate of the
-// package-store-management spec). It carries no consent question: the user approved each add at its
-// ask, and the gate only bounds how long the approved set waits — a schedule, not a permission.
-//
 // The FILESYSTEM decides usability, never a row. A store root that `inflexa store add` built carries
 // no catalog receipt and is completely usable; a row that reports `installed` over an absent store
 // keeps the refusal. The rows supply the reason for a hold and the progress the hold reports.
 
 /** One acquisition flight as the sidebar renders it: a live one, or a terminal `failed` record. */
-export type StoreFlightLine = {
-    /** The flight key, which a detail opener passes back to find the row. */
-    readonly id: string;
-    /** The spec of the flight, as a user reads it. */
-    readonly spec: string;
-    /** The state: waiting for a slot under the cap, running, or failed. */
-    readonly state: StoreFlightStatus;
-    /** How many analyses subscribe to the flight. */
-    readonly subscribers: number;
-    /** The newest provisioner line of a running flight, or `null`. */
-    readonly progress: string | null;
-};
+export type StoreFlightLine = StoreFlightView;
 
 /** One enqueued add that no flush took yet, as the pipeline section renders it. */
-export type PendingAddLine = {
-    /** The spec of the add, as a user reads it. */
-    readonly spec: string;
-};
+export type PendingAddLine = Pick<PendingAddView, "spec">;
 
-const [transfers, setTransfers] = createSignal<readonly TransferReport[]>([]);
+const [transfers, setTransfers] = createSignal<readonly TransferReportView[]>([]);
 const [flights, setFlights] = createSignal<readonly StoreFlightLine[]>([]);
 const [pendingAdds, setPendingAdds] = createSignal<readonly PendingAddLine[]>([]);
 
@@ -70,54 +46,23 @@ export const storeFlightLines = flights;
 export const pendingAddLines = pendingAdds;
 
 /**
- * How often the watcher and the gate re-read the rows.
+ * How often the watcher and the gate read the store again.
  *
- * The writers are DIFFERENT PROCESSES (the detached children), so a read is the only way this one
- * learns that a transfer moved. The read is a point lookup against a WAL database, thus it never
+ * The writers are the detached children of the server, so a read is the only way this client learns
+ * that a transfer moved. The server reads a point lookup against a WAL database, thus the read never
  * blocks a writer and it costs nothing measurable at this cadence.
  */
 const TRANSFER_POLL_MS = 2000;
 
-/**
- * How long the pending set may wait before the poll starts the flush child.
- * The turn end flushes first when it comes sooner. The bound exists for the
- * long turn: an add approved early must not sit queued behind minutes of
- * agent work, because the acquisition can run beside that work.
- */
-const PENDING_FLUSH_AFTER_MS = 10_000;
-
-/**
- * When the poll first saw a non-empty pending set, or `null` while it is
- * empty. The anchor does NOT slide on growth, thus a burst of asks still
- * lands in one batch and the wait stays bounded at the gate.
- */
-let pendingSince: number | null = null;
-
-/** The readiness of the sandbox image, as the seam reports it without a pull. */
-export type ImageReadiness =
-    { readonly kind: "present" } | { readonly kind: "absent" } | { readonly kind: "custom" } | { readonly kind: "engine_error"; readonly message: string };
-
 /** The effects the gate operates. Production passes {@link realSandboxGateSeams}; a test injects stubs. */
 export type SandboxGateSeams = {
-    /** The CLI-owned store root the sandbox will mount. Real: `env.packageStoreDir`. */
-    readonly storeRoot: () => string;
-    /** The three transfer reports, lock-corrected. Real: {@link readTransferReports}. */
-    readonly readTransfers: () => readonly TransferReport[];
-    /** The acquisition flights that are live now. Real: {@link readStoreFlights}. */
-    readonly readFlights: () => readonly StoreFlightReport[];
-    /** The pending adds that no flush took yet. Real: the pending-set listing. */
-    readonly readPending: () => readonly { readonly ecosystem: "python" | "r" | null; readonly spelling: string; readonly specifier: string }[];
-    /** The cheap local state of the store content. Real: {@link inspectStoreContent}. */
-    readonly inspect: (root: string) => Promise<StoreContentState>;
+    /** The transfers, the flights, and the pending adds. Real: `GET /api/v1/store`. */
+    readonly readStore: () => ResultAsync<StoreState, ClientError>;
     /**
-     * The farm composition that failed and that nothing reported yet, or `null`. The read CONSUMES it —
-     * refer to {@link takeFarmCompositionFailure}. Real: that function.
+     * The verdict of the machine for a sandbox of the analysis: the image, the store content, and the
+     * farm. The read CONSUMES a recorded farm-composition failure. Real: `GET {A}/sandbox-readiness`.
      */
-    readonly takeFarmFailure: () => FarmCompositionFailure | null;
-    /** The configured sandbox image reference. Real: {@link configuredSandboxImage}. */
-    readonly sandboxImage: () => string;
-    /** Report the image readiness without a pull. Real: an engine inspect. */
-    readonly imageReadiness: (image: string) => Promise<ImageReadiness>;
+    readonly readiness: (analysisId: string) => ResultAsync<SandboxReadiness, ClientError>;
     /** Raise a transient toast. Real: {@link notify}. */
     readonly notify: (notice: Notice) => void;
     /**
@@ -125,10 +70,6 @@ export type SandboxGateSeams = {
      * test that must observe several polls cannot spend the production cadence on each of them.
      */
     readonly pollMs: number;
-    /** How long the pending set may wait before the poll starts the flush child. Real: {@link PENDING_FLUSH_AFTER_MS}. */
-    readonly pendingFlushAfterMs: number;
-    /** Start the detached flush child over the pending set. Real: {@link startPendingFlushChild}. */
-    readonly startFlush: () => number | null;
 };
 
 /** The first line of a multi-line message, so a hint with its remedy stays one toast line. */
@@ -138,78 +79,52 @@ function firstLine(text: string): string {
 
 /** The production seams: the real row reads, the engine image check, and the TUI feedback channel. */
 export const realSandboxGateSeams: SandboxGateSeams = {
-    storeRoot: () => env.packageStoreDir,
-    readTransfers: readTransferReports,
-    readFlights: readStoreFlights,
-    readPending: () => listPendingStoreAdds().unwrapOr([]),
-    inspect: inspectStoreContent,
-    takeFarmFailure: takeFarmCompositionFailure,
-    sandboxImage: configuredSandboxImage,
-    imageReadiness: async (image) => {
-        const rt = await ensureRuntime();
-        if (rt.isErr()) return { kind: "engine_error", message: firstLine(rt.error.message) };
-        try {
-            if ((await capture(rt.value, ["image", "inspect", image])).code === 0) return { kind: "present" };
-        } catch (cause) {
-            return { kind: "engine_error", message: `The container engine is not reachable (${cause instanceof Error ? cause.message : String(cause)}).` };
-        }
-        return isPublishedSandboxImage(image) ? { kind: "absent" } : { kind: "custom" };
-    },
+    readStore: () => fetchStore(),
+    readiness: (analysisId) => fetchSandboxReadiness(analysisId),
     notify,
     pollMs: TRANSFER_POLL_MS,
-    pendingFlushAfterMs: PENDING_FLUSH_AFTER_MS,
-    startFlush: startPendingFlushChild,
 };
 
-/** Refresh the three signals from the rows: the transfers, the flights, and the pending adds that ride the same poll. */
-export function refreshTransferState(seams: SandboxGateSeams = realSandboxGateSeams): readonly TransferReport[] {
-    const reports = seams.readTransfers();
-    setTransfers(reports);
-    setFlights(
-        seams.readFlights().map((flight) => ({
-            id: flight.row.id,
-            spec: describeStoreFlightSpec(flight.row),
-            state: flight.row.state,
-            subscribers: flight.analysisIds.length,
-            progress: flight.row.progress,
-        })),
+/**
+ * Refresh the three signals from `GET /api/v1/store`: the transfers, the flights, and the pending adds.
+ * Gives the transfer reports, or the client error of a failed read. A failed read keeps the signals as
+ * they were: the next poll reads again.
+ */
+export function refreshTransferState(
+    seams: Pick<SandboxGateSeams, "readStore"> = realSandboxGateSeams,
+): ResultAsync<readonly TransferReportView[], ClientError> {
+    return seams.readStore().map((store) => {
+        setTransfers(store.transfers);
+        setFlights(store.flights);
+        setPendingAdds(store.pendingAdds.map((entry) => ({ spec: entry.spec })));
+        return store.transfers;
+    });
+}
+
+/** One poll of the watcher: a failed read changes nothing, and the next poll reads again. */
+async function pollTransferState(seams: Pick<SandboxGateSeams, "readStore">): Promise<void> {
+    (await refreshTransferState(seams)).match(
+        () => undefined,
+        () => undefined,
     );
-    const pending = seams.readPending();
-    setPendingAdds(pending.map((entry) => ({ spec: describeStoreFlightSpec(entry) })));
-    // The 10-second flush gate. The anchor is the first poll that saw the set
-    // non-empty, and firing clears it: the child claims the rows, and the set
-    // empties on a later poll. A child that could not spawn leaves the set
-    // non-empty, thus the next poll re-arms and the gate retries on its own.
-    // The turn-end flush call stays the sweep, and a double start is safe —
-    // the flush child exits at once over an empty or claimed set.
-    if (pending.length === 0) {
-        pendingSince = null;
-    } else if (pendingSince === null) {
-        pendingSince = Date.now();
-    } else if (Date.now() - pendingSince >= seams.pendingFlushAfterMs) {
-        pendingSince = null;
-        seams.startFlush();
-    }
-    return reports;
 }
 
 /**
  * Mirror the detached transfers into the gate signals, for the sidebar to render. Call ONCE from
  * `App`'s setup, inside its reactive owner.
  *
- * A poll and not a subscription, because the writers are DIFFERENT PROCESSES: the rows are the channel
- * between them, and nothing in this process is notified when one changes. The poll stays armed for the
- * whole life of the screen — a transfer that `inflexa store download` starts in another terminal must
- * appear here without the user reopening the app.
+ * A poll and not a subscription, because the server has no notification stream: a transfer that
+ * `inflexa store download` starts in another terminal must appear here without the user reopening the
+ * app. The poll stays armed for the whole life of the screen.
  */
-export function watchTransfers(seams: SandboxGateSeams = realSandboxGateSeams): void {
-    refreshTransferState(seams);
-    const timer = setInterval(() => refreshTransferState(seams), seams.pollMs);
+export function watchTransfers(seams: Pick<SandboxGateSeams, "readStore" | "pollMs"> = realSandboxGateSeams): void {
+    void pollTransferState(seams);
+    const timer = setInterval(() => void pollTransferState(seams), seams.pollMs);
     onCleanup(() => clearInterval(timer));
 }
 
 /** The human label of one transfer kind, as every surface renders it. */
-export function transferLabel(kind: TransferReport["kind"]): string {
+export function transferLabel(kind: TransferReportView["kind"]): string {
     switch (kind) {
         case "runtime_image":
             return "runtime image";
@@ -225,7 +140,7 @@ export function transferLabel(kind: TransferReport["kind"]): string {
 }
 
 /** The retry command of one transfer kind, named in each refusal. */
-function retryCommand(kind: TransferReport["kind"]): string {
+function retryCommand(kind: TransferReportView["kind"]): string {
     return kind === "catalog" ? "`inflexa store download`" : "`inflexa sandbox pull`";
 }
 
@@ -246,10 +161,16 @@ let gateFlowInflight: Promise<"ready" | "blocked"> | null = null;
  * recorded farm-composition failure refuses with its reason. The gate starts nothing and opens no
  * consent in any branch.
  */
-async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
+async function runGateFlow(analysisId: string, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
     let announced = false;
+    let reports: readonly TransferReportView[];
     for (;;) {
-        const reports = refreshTransferState(seams);
+        const read = await refreshTransferState(seams);
+        if (read.isErr()) {
+            seams.notify({ kind: "error", text: describeClientError(read.error) });
+            return "blocked";
+        }
+        reports = read.value;
         const live = reports.filter((report) => report.live);
         if (live.length === 0) break;
         // A live CATALOG transfer over a store that cannot serve yet is the
@@ -260,7 +181,12 @@ async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"
         // catalog UPDATE over a usable store keeps the wait, because the merge
         // into the store root is the hazard the hold exists for.
         if (live.some((report) => report.kind === "catalog")) {
-            const content = await seams.inspect(seams.storeRoot());
+            const machine = await seams.readiness(analysisId);
+            if (machine.isErr()) {
+                seams.notify({ kind: "error", text: describeClientError(machine.error) });
+                return "blocked";
+            }
+            const content = machine.value.store;
             if (content !== "installed" && content !== "local") {
                 seams.notify({ kind: "error", text: "The package-store catalog transfer is in flight. Launch again when it lands." });
                 return "blocked";
@@ -276,23 +202,30 @@ async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"
         await Promise.sleep(seams.pollMs);
     }
 
+    // One read of the machine after the wait: the image, the store, and the farm.
+    const machine = await seams.readiness(analysisId);
+    if (machine.isErr()) {
+        seams.notify({ kind: "error", text: describeClientError(machine.error) });
+        return "blocked";
+    }
+
     // The image half. The engine is the truth of presence; the row of the kind
     // supplies the reason when it is absent.
-    const image = seams.sandboxImage();
-    const readiness = await seams.imageReadiness(image);
-    if (readiness.kind === "engine_error") {
+    const image = machine.value.image.image;
+    const readiness = machine.value.image;
+    if (readiness.state === "engine_error") {
         seams.notify({ kind: "error", text: readiness.message });
         return "blocked";
     }
-    if (readiness.kind === "custom") {
+    if (readiness.state === "custom") {
         seams.notify({
             kind: "error",
             text: `Sandbox image "${image}" is not present, and it is not the published image, thus no registry can supply it. Build it, or set the published image and run \`inflexa sandbox pull\`.`,
         });
         return "blocked";
     }
-    if (readiness.kind === "absent") {
-        const report = seams.readTransfers().find((entry) => entry.kind === "runtime_image");
+    if (readiness.state === "absent") {
+        const report = reports.find((entry) => entry.kind === "runtime_image");
         const detail = report?.state === "failed" && report.row?.message ? ` ${firstLine(report.row.message)}` : "";
         seams.notify({ kind: "error", text: `The sandbox image is not installed.${detail} Run ${retryCommand("runtime_image")} to download it.` });
         return "blocked";
@@ -301,9 +234,9 @@ async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"
     // The store half. The filesystem decides: `installed` is a downloaded
     // catalog, and `local` is a store that `inflexa store add` built — both
     // mount. The catalog row supplies the reason for the rest.
-    const content = await seams.inspect(seams.storeRoot());
+    const content = machine.value.store;
     if (content !== "installed" && content !== "local") {
-        const report = seams.readTransfers().find((entry) => entry.kind === "catalog");
+        const report = reports.find((entry) => entry.kind === "catalog");
         const detail = report?.state === "failed" && report.row?.message ? ` ${firstLine(report.row.message)}` : "";
         const reason =
             report?.state === "declined"
@@ -319,11 +252,11 @@ async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"
     // calls, thus it runs after this gate decided and its error reaches no user
     // surface of its own. The read CONSUMES the record, thus the action after
     // this one composes again.
-    const failure = seams.takeFarmFailure();
+    const failure = machine.value.farm.failure;
     if (failure !== null) {
         seams.notify({
             kind: "error",
-            text: `The package farm of this analysis could not be composed: ${failure.reason}. Run \`inflexa store ls\` to see the store, then try again.`,
+            text: `The package farm of this analysis could not be composed: ${failure}. Run \`inflexa store ls\` to see the store, then try again.`,
         });
         return "blocked";
     }
@@ -332,13 +265,13 @@ async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"
 }
 
 /**
- * Hold a sandbox-making action until the transfers settle and the machine can serve one. Returns
- * `ready` when a sandbox may start, or `blocked` otherwise — the gate reports the reason as it
+ * Hold a sandbox-making action of one analysis until the transfers settle and the machine can serve one.
+ * Returns `ready` when a sandbox may start, or `blocked` otherwise — the gate reports the reason as it
  * decides, so a `blocked` caller starts no sandbox against an empty store.
  */
-export async function awaitSandboxReady(seams: SandboxGateSeams = realSandboxGateSeams): Promise<"ready" | "blocked"> {
+export async function awaitSandboxReady(analysisId: string, seams: SandboxGateSeams = realSandboxGateSeams): Promise<"ready" | "blocked"> {
     if (gateFlowInflight !== null) return gateFlowInflight;
-    gateFlowInflight = runGateFlow(seams).finally(() => {
+    gateFlowInflight = runGateFlow(analysisId, seams).finally(() => {
         gateFlowInflight = null;
     });
     return gateFlowInflight;
@@ -347,42 +280,41 @@ export async function awaitSandboxReady(seams: SandboxGateSeams = realSandboxGat
 /**
  * Retry every transfer that sits in a terminal failure state — the deliberate action behind the
  * sidebar key and the command palette entries. This is a USER action, not the gate: the gate itself
- * starts nothing.
+ * starts nothing. Gives the count of the children that the server started.
  */
-export async function retryTerminalTransfers(): Promise<number> {
+export async function retryTerminalTransfers(start: (kind: TransferStartKind) => ResultAsync<number, ClientError> = startTransfers): Promise<number> {
     let started = 0;
-    for (const report of readTransferReports()) {
+    for (const report of transfers()) {
         if (report.state !== "failed" && report.state !== "declined" && report.state !== "canceled") continue;
-        if (report.kind === "catalog") {
-            const outcome = await startCatalogTransfer({ storeRoot: env.packageStoreDir, update: false });
-            if (outcome.isOk() && outcome.value.type === "started") started += 1;
-            continue;
-        }
-        if (startImageTransfer(report.kind).isOk()) started += 1;
+        started += (await start(report.kind)).unwrapOr(0);
     }
-    refreshTransferState();
+    await pollTransferState(realSandboxGateSeams);
     return started;
 }
 
-/** Test hook: publish transfer reports directly, with no database. Test-only. */
-export function __setTransferReportsForTest(next: readonly TransferReport[]): void {
+/** `POST /api/v1/store/transfers` for one kind: the count of the children that the server started. */
+function startTransfers(kind: TransferStartKind): ResultAsync<number, ClientError> {
+    return createTransfer({ kind }).map((response) => response.starts.filter((start) => start.outcome === "started").length);
+}
+
+/** Test hook: publish transfer reports directly, with no server. Test-only. */
+export function __setTransferReportsForTest(next: readonly TransferReportView[]): void {
     setTransfers(next);
 }
 
-/** Test hook: publish a set of live flights directly, with no database. Test-only. */
+/** Test hook: publish a set of live flights directly, with no server. Test-only. */
 export function __setStoreFlightLinesForTest(next: readonly StoreFlightLine[]): void {
     setFlights(next);
 }
 
-/** Test hook: publish a set of pending adds directly, with no database. Test-only. */
+/** Test hook: publish a set of pending adds directly, with no server. Test-only. */
 export function __setPendingAddLinesForTest(next: readonly PendingAddLine[]): void {
     setPendingAdds(next);
 }
 
-/** Test hook: drop the signals, the in-flight flow, and the flush gate back to idle. Test-only. */
+/** Test hook: drop the signals and the in-flight flow back to idle. Test-only. */
 export function __resetSandboxGateForTest(): void {
     gateFlowInflight = null;
-    pendingSince = null;
     setTransfers([]);
     setFlights([]);
     setPendingAdds([]);

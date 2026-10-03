@@ -71,6 +71,49 @@ export function getAgentPolicy(command: Command): AgentPolicy | undefined {
 }
 
 /**
+ * What a command needs from the local Inflexa server, declared at registration beside its {@link AgentPolicy}:
+ *
+ * - `instance` — the command is a client of the server. Before its action, it connects to the server, and starts
+ *   one in the background when none answers.
+ * - `machine` — the command prepares or controls the machine, its package store, or the server itself
+ *   (`setup`, `up`, `serve`, `store download`), thus it runs without a server.
+ * - `standalone` — a helper that reads a local file or prints a value, and needs no instance.
+ *
+ * The object form is an `instance` command with options that make it a `machine` command for one run, for
+ * example the dev `run --plan`, which boots its own runtime. Each entry is a commander attribute name.
+ */
+export type CommandKind = "instance" | "machine" | "standalone" | { readonly kind: "instance"; readonly machineFlags: readonly string[] };
+
+/** The kind store, keyed on the `Command` instance for the same reason as the policy store above. */
+const kinds = new WeakMap<Command, CommandKind>();
+
+/** Read back the kind stamped on `command`, or `undefined` if the command never went through {@link registerAction}. */
+export function getCommandKind(command: Command): CommandKind | undefined {
+    return kinds.get(command);
+}
+
+/** True when an action of a command of `kind`, invoked with `options`, must find a server before it runs. */
+function needsServer(kind: CommandKind, options: Record<string, unknown>): boolean {
+    if (kind === "instance") return true;
+    if (kind === "machine" || kind === "standalone") return false;
+    return kind.machineFlags.every((flag) => options[flag] === undefined);
+}
+
+/** What {@link registerAction} calls before the action of an `instance` command. Tests replace it. */
+export type RegisterOpts = {
+    /** Gives when a server answers, after it starts one when none answers. Otherwise it stops the process with the reason. */
+    readonly requireServer: () => Promise<void>;
+};
+
+/** The production {@link RegisterOpts}: the connect-or-start of the client. A lazy import, as each command action is. */
+export const DEFAULT_REGISTER_OPTS: RegisterOpts = {
+    requireServer: async () => {
+        const { requireServer } = await import("../client/server.ts");
+        await requireServer();
+    },
+};
+
+/**
  * Give `command` the value of an option IT DECLARES that an ancestor parsed instead.
  *
  * The root declares `--analysis`/`--project` for the bare-`inflexa` flow, and commander binds a
@@ -108,32 +151,43 @@ function hydrateFromAncestors(command: Command): void {
 }
 
 /**
- * Register an action handler on `command` together with its {@link AgentPolicy} — the
- * ONLY sanctioned way to give a command an action, replacing a bare `command.action(fn)`.
+ * Register an action handler on `command` together with its {@link CommandKind} and its {@link AgentPolicy} —
+ * the ONLY sanctioned way to give a command an action, replacing a bare `command.action(fn)`.
  *
- * Because `policy` is a required parameter, an action command declared without a policy
+ * Because `kind` and `policy` are required parameters, an action command declared without either
  * is a TypeScript compile error: this is the outermost of the enforcement layers that
  * make an unclassified command unrepresentable (a registry-scoped ESLint rule bans raw
- * `.action(`, a tree-walk test asserts every action leaf carries a policy, and the tool
- * fails closed on a missing one). Validation of the policy itself lives in tests, never
+ * `.action(`, a tree-walk test asserts every action leaf carries a policy and a kind, and the tool
+ * fails closed on a missing policy). Validation of the policy itself lives in tests, never
  * here — a policy typo must not brick the user's CLI at startup, so this stays pure
  * sync registration with no throws.
  *
  * `Args` is inferred from `handler`, so a typed callback (`(options: {...}) => …`,
  * `(name, paths, options) => …`) keeps its parameter types at the call site with no
- * cast. Works for a subcommand (`registerAction(cli.command("x")…, policy, fn)`) and
+ * cast. Works for a subcommand (`registerAction(cli.command("x")…, kind, policy, fn)`) and
  * for the root, whose action attaches after its own `.option(...)` chain
- * (`registerAction(cli.option(...)…, policy, fn)`).
+ * (`registerAction(cli.option(...)…, kind, policy, fn)`).
  *
  * Registration also makes a command see the options its ancestors parsed —
  * see {@link hydrateFromAncestors}.
+ *
+ * The server check of an `instance` command runs inside the action, not in a `preAction` hook. The
+ * argv classifier of `run_inflexa` (modules/harness/inflexa_classify.ts) stops its dry parse with a
+ * `preAction` hook on the root, and an ancestor hook fires before it. A server check in a hook of the
+ * root would thus run during each classification of a bare `inflexa`.
  */
 export function registerAction<Args extends readonly unknown[]>(
     command: Command,
+    kind: CommandKind,
     policy: AgentPolicy,
     handler: (...args: Args) => void | Promise<void>,
+    opts: RegisterOpts = DEFAULT_REGISTER_OPTS,
 ): Command {
     setAgentPolicy(command, policy);
+    kinds.set(command, kind);
     command.hook("preAction", (_parent, actionCommand) => hydrateFromAncestors(actionCommand));
-    return command.action(handler);
+    return command.action(async (...args: Args) => {
+        if (needsServer(kind, command.opts())) await opts.requireServer();
+        await handler(...args);
+    });
 }

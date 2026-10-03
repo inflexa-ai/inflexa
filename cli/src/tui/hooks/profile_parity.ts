@@ -1,161 +1,85 @@
-import { createEffect, on, onCleanup } from "solid-js";
-import type { DataProfileStatus } from "@inflexa-ai/harness";
+import { createEffect, on } from "solid-js";
+import type { ResultAsync } from "neverthrow";
 
+import type { ChatContext, DataProfileState, ProfileOutcome, ProfileRerunResult } from "../../api/runs.ts";
+import { describeClientError, type ClientError } from "../../client/api.ts";
+import { fetchChatContext, fetchSandboxReadiness, rerunDataProfile } from "../../client/runs.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
-import { Bus } from "../../lib/bus.ts";
-import {
-    ensureProfileAtParity,
-    forceReprofile,
-    reprofileForInputChange,
-    type ProfileDriveCause,
-    type ProfileParityOutcome,
-} from "../../modules/harness/profile_trigger.ts";
-import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
-import { listAnalysisInputs } from "../../db/primary_query.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import type { StampedEvent } from "../../types/events.ts";
 import type { Notice } from "../theme.ts";
 import type { Workspace } from "../contexts/workspace.ts";
-import { bootState, harnessRuntime } from "./boot.ts";
+import { bootState } from "./boot.ts";
 import { notify } from "./notice.ts";
 import { profileSnapshot, refreshSidebarData } from "./sidebar_live.ts";
 
-// The data-profile lifecycle's reactive side, held here (not inside app.tsx) so the
-// wiring lives beside the boot/notice/sidebar hooks it reads. `watchProfileParity` is the one
-// app-level hook App calls in setup; it drives THREE managed-parity edges (boot ready / analysis
-// swap, a live input mutation on the open analysis, and a profile run completing) plus, alongside it,
-// two fire-and-forget drivers map the headless engine's outcome union onto notices: `driveProfileParity`
-// (auto parity — skips stay silent) and `driveForceReprofile` (the deliberate re-profile — skips speak).
-// The drivers + the de-dup memory are module state — the same singleton shape as status.ts / notice.ts,
-// correct because one chat screen is mounted at a time.
+// The data-profile lifecycle's reactive side, held here (not inside app.tsx) so the wiring lives beside
+// the boot/notice/sidebar hooks it reads. `watchProfileParity` is the one app-level hook App calls in
+// setup; it drives TWO managed-parity edges (boot ready / analysis swap, and a profile run completing)
+// through `GET {A}/chat-context`, and two fire-and-forget drivers map the outcome of the server onto
+// notices: `driveProfileParity` (auto parity — skips stay silent) and `driveForceReprofile` (the
+// deliberate re-profile — skips speak).
+//
+// The server owns the rest: it serializes the profile work of each analysis, and it re-profiles after an
+// input change, from any writer. The de-dup memory below is module state — the same singleton shape as
+// status.ts / notice.ts, correct because one chat screen is mounted at a time.
 
 // The analysis id we last fired the BOOT/SWAP parity check for. Module state so a repaint or a settled
 // boot phase never re-fires for an analysis already handled; a genuine swap to a different id fires
-// again. A re-open of the same id after swapping away is harmless — the helper reports already_running /
+// again. A re-open of the same id after swapping away is harmless — the server reports already_running /
 // already_profiled, which the driver treats as a silent skip. NOTE: only the boot/swap edge consults
-// this guard; the input-mutation and completion edges deliberately do NOT (their whole point is to
-// re-check the SAME analysis after its state changed).
+// this guard; the completion edge deliberately does NOT (its whole point is to re-check the SAME
+// analysis after its state changed).
 let lastTriggeredAnalysisId: string | null = null;
 
-// The tail of the profile-work queue. EVERY entry into the profile lifecycle — the three parity edges
-// and the deliberate force — runs its whole stage → seed → trigger sequence through here, one at a time.
-//
-// The harness ledger CAS serializes the workflow DISPATCH, but it runs only after staging, so it cannot
-// serialize the two things that actually race. First, `stageInputs` rm/relinks files under one session
-// tree and then deletes every on-disk file absent from ITS OWN manifest (`reconcileStagedTree`), so a
-// drive holding a stale manifest can delete files another just linked — under a sandbox that is already
-// reading them. Second, the empty-set branch's `clearDataProfile` nulls `seed_input_file_ids`, which
-// landing between another drive's seed and its trigger refuses that drive for an absent seed.
-//
-// The per-analysis instance lock excludes other PROCESSES but is re-entrant per pid (lib/lock.ts), so it
-// cannot serve as the in-process guard. One chat screen with one open analysis is mounted at a time, so
-// an unkeyed queue is correct.
-//
-// Arrivals QUEUE, they do not drop: the edges fire precisely because state changed, so a drive arriving
-// during another must still run afterwards, against the new state. Dropping it would reopen the window
-// those edges were added to close.
-let profileQueueTail: Promise<unknown> = Promise.resolve();
-
-/** Depth, not a boolean: arrivals queue rather than drop, so several drives can be outstanding at once. */
-let profileWorkDepth = 0;
-
-/**
- * True while any profile drive is queued or running. Profiling stages inputs into the analysis
- * workspace's `data/` root, so a caller about to move or retire that tree must wait this out.
- */
-export function profileWorkInFlight(): boolean {
-    return profileWorkDepth > 0;
-}
-
-/**
- * Run `work` after everything already queued. `.then(work, work)` so a rejected predecessor still lets
- * its successors run, and the tail is kept rejection-free so one failure cannot skip every later drive.
- * The returned promise carries `work`'s own outcome, so a caller (or a test) still observes it.
- */
-function serializeProfileWork(work: () => Promise<void>): Promise<void> {
-    profileWorkDepth++;
-    const next = profileQueueTail.then(work, work);
-    profileQueueTail = next.then(
-        () => {},
-        () => {},
-    );
-    // Decrement on the tail, not on `next`: the work is only truly done once its settled outcome
-    // has been folded into the queue, and this branch cannot reject.
-    void profileQueueTail.then(() => {
-        profileWorkDepth--;
-    });
-    return next;
-}
-
-/** Test hook: forget the last-triggered analysis and drain the work queue. Test-only. */
+/** Test hook: forget the last-triggered analysis. Test-only. */
 export function __resetProfileParityForTest(): void {
     lastTriggeredAnalysisId = null;
-    profileQueueTail = Promise.resolve();
-    profileWorkDepth = 0;
 }
 
-// Trailing-edge debounce for the live input-mutation drift check: a batch edit (a multi-file add via
-// the picker) emits a BURST of prov.input_* events, and we want ONE parity check per burst, not one per
-// file. 500ms comfortably outlasts a burst while staying imperceptible for a single edit.
-const DRIFT_DEBOUNCE_MS = 500;
-
 /**
- * The reactive watch's effectful edges, injectable so the boot/swap, live-input, and completion
- * triggers are unit-testable offline (no real parity check, no wall-clock timer) — mirrors `WatchSeams`
- * in `sidebar_live.ts`. Every trigger funnels through `drive` (so one test spy covers all three edges),
- * and `schedule` wraps `setTimeout`/`clearTimeout` into an arm→cancel closure so the debounce is drivable
- * without a fake clock. Production callers omit the argument and get the real edges.
+ * The reactive watch's effectful edge, injectable so the boot/swap and completion triggers are
+ * unit-testable offline. Every trigger funnels through `drive`, so one test spy covers both edges.
+ * Production callers omit the argument and get the real edge.
  */
-export type ParityWatchSeams = {
-    /** Run the profile driver for a live analysis, fire-and-forget. Real: {@link driveProfileParity}. */
-    readonly drive: (runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null, cause: ProfileDriveCause) => void;
-    /** Arm a one-shot trailing-edge timer; returns its cancel. Real: wraps `setTimeout`/`clearTimeout`. */
-    readonly schedule: (fn: () => void, ms: number) => () => void;
+export type ParityWatchOpts = {
+    /** Run the profile driver for a live analysis, fire-and-forget. Real: {@link gatedProfileParity}. */
+    readonly drive: (analysis: Analysis, currentAnalysisId: () => string | null) => void;
 };
 
-const realParityWatchSeams: ParityWatchSeams = {
-    drive: (runtime, analysis, currentAnalysisId, cause) => gatedProfileParity(runtime, analysis, currentAnalysisId, cause),
-    schedule: (fn, ms) => {
-        const handle = setTimeout(fn, ms);
-        // A half-elapsed debounce must never keep the process alive (matters for tests + clean shutdown).
-        handle.unref?.();
-        return () => clearTimeout(handle);
-    },
+const DEFAULT_PARITY_WATCH_OPTS: ParityWatchOpts = {
+    drive: (analysis, currentAnalysisId) => gatedProfileParity(analysis, currentAnalysisId),
 };
 
 /**
  * The prerequisite gate for one analysis: `ready` when a sandbox may start, `blocked` when the
- * transfers did not complete or the store cannot serve one. Injectable so the composition runs
+ * transfers did not complete or the machine cannot serve one. Injectable so the composition runs
  * offline in a test.
  */
 export type SandboxGate = (analysis: Analysis) => Promise<"ready" | "blocked">;
 
 const realSandboxGate: SandboxGate = async (analysis) => {
-    // A cheap ledger read: an analysis with no inputs profiles nothing, so it needs no store and no image.
-    const hasInputs = listAnalysisInputs(analysis.id).match(
-        (inputs) => inputs.length > 0,
-        () => false,
-    );
-    if (!hasInputs) return "ready";
+    // An analysis with no inputs profiles nothing, so it needs no store and no image. A failed read
+    // falls through to the gate, which reports what it finds.
+    const readiness = await fetchSandboxReadiness(analysis.id);
+    if (readiness.isOk() && readiness.value.inputCount === 0) return "ready";
     const { awaitSandboxReady } = await import("./sandbox_gate.tsx");
-    return awaitSandboxReady();
+    return awaitSandboxReady(analysis.id);
 };
 
-/** The effectful seams of a gated drive, injectable so the gating decision is unit-tested without the real gate. */
-export type GatedDriveSeams = {
+/** The effectful edges of a gated drive, injectable so the gating decision is unit-tested without the real gate. */
+export type GatedDriveOpts = {
     readonly gate: SandboxGate;
-    readonly drive: (runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null, cause: ProfileDriveCause) => void;
+    readonly drive: (analysis: Analysis, currentAnalysisId: () => string | null) => void;
 };
 
-const realGatedParitySeams: GatedDriveSeams = {
+const DEFAULT_GATED_PARITY_OPTS: GatedDriveOpts = {
     gate: realSandboxGate,
-    drive: (runtime, analysis, currentAnalysisId, cause) => void driveProfileParity(runtime, analysis, currentAnalysisId, cause),
+    drive: (analysis, currentAnalysisId) => void driveProfileParity(analysis, currentAnalysisId),
 };
 
-const realGatedForceSeams: GatedDriveSeams = {
+const DEFAULT_GATED_FORCE_OPTS: GatedDriveOpts = {
     gate: realSandboxGate,
-    drive: (runtime, analysis, currentAnalysisId) => void driveForceReprofile(runtime, analysis, currentAnalysisId),
+    drive: (analysis, currentAnalysisId) => void driveForceReprofile(analysis, currentAnalysisId),
 };
 
 /**
@@ -164,51 +88,37 @@ const realGatedForceSeams: GatedDriveSeams = {
  * no sandbox starts against an empty store. The chat itself stays open — only this sandbox-making
  * action waits (the package-store-transfers spec).
  */
-export function gatedProfileParity(
-    runtime: HarnessRuntime,
-    analysis: Analysis,
-    currentAnalysisId: () => string | null,
-    cause: ProfileDriveCause,
-    seams: GatedDriveSeams = realGatedParitySeams,
-): void {
-    void seams.gate(analysis).then((verdict) => {
+export function gatedProfileParity(analysis: Analysis, currentAnalysisId: () => string | null, opts: GatedDriveOpts = DEFAULT_GATED_PARITY_OPTS): void {
+    void opts.gate(analysis).then((verdict) => {
         // A swap during the wait is caught again by `driveProfileParity`'s own guards.
-        if (verdict === "ready") seams.drive(runtime, analysis, currentAnalysisId, cause);
+        if (verdict === "ready") opts.drive(analysis, currentAnalysisId);
     });
 }
 
 /** The deliberate re-profile behind the same gate — the force twin of {@link gatedProfileParity}. */
-export function gatedForceReprofile(
-    runtime: HarnessRuntime,
-    analysis: Analysis,
-    currentAnalysisId: () => string | null,
-    seams: GatedDriveSeams = realGatedForceSeams,
-): void {
-    void seams.gate(analysis).then((verdict) => {
-        if (verdict === "ready") seams.drive(runtime, analysis, currentAnalysisId, "inputs_changed");
+export function gatedForceReprofile(analysis: Analysis, currentAnalysisId: () => string | null, opts: GatedDriveOpts = DEFAULT_GATED_FORCE_OPTS): void {
+    void opts.gate(analysis).then((verdict) => {
+        if (verdict === "ready") opts.drive(analysis, currentAnalysisId);
     });
 }
 
 /**
- * Reactively keep the data profile at managed parity. Wires three edges, all fire-and-forget
- * through {@link driveProfileParity}:
+ * Reactively keep the data profile at managed parity. Wires two edges, both fire-and-forget through
+ * `GET {A}/chat-context`:
  *
  *  1. **boot ready / analysis swap** — fire when boot reaches `ready` with an analysis open, and again
  *     whenever the open analysis changes (an in-place swap). De-duped per analysis id so a repaint or a
  *     boot-phase settle does not re-fire; never fires before `ready` (no runtime to trigger against).
- *  2. **live input mutation** — a `prov.input_added`/`prov.input_removed` for the OPEN analysis. This is
- *     the ONLY edge that re-profiles, and it is why the others need not: the mutation happened in this
- *     process, so the change is a recorded fact rather than something a later reader has to infer from
- *     file sizes and mtimes. Debounced (trailing edge) to one drive per burst; the timer's fire re-reads
- *     live state so a swap or teardown during the debounce window is a no-op.
- *  3. **profile run reaching a terminal state** — everything a live run deferred (staging included, since
+ *  2. **profile run reaching a terminal state** — everything a live run deferred (staging included, since
  *     its sandbox was reading the tree) was skipped as `already_running`, so re-check when the run
  *     settles — on `failed` as well as `completed`, or a run that dies leaves the deferred work stranded
  *     until the next open. Free: the sidebar already polls a running profile.
  *
- * Called once from App's setup body (inside its reactive owner). `seams` is injected only by tests.
+ * An input change re-profiles in the server, whichever client or tool made it, thus no edge here
+ * watches the inputs. Called once from App's setup body (inside its reactive owner). `opts` is
+ * injected only by tests.
  */
-export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams = realParityWatchSeams): void {
+export function watchProfileParity(workspace: Workspace, opts: ParityWatchOpts = DEFAULT_PARITY_WATCH_OPTS): void {
     // Edge 1 — boot ready + in-place analysis swap.
     createEffect(
         on(
@@ -216,68 +126,27 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
             ([phase, analysisId]) => {
                 if (phase !== "ready" || analysisId === null) return;
                 if (analysisId === lastTriggeredAnalysisId) return;
-                // `ready` guarantees a booted runtime handle; the analysis is the store's, re-read here
-                // (not the destructured id) so the driver holds the object, not just its id.
-                const runtime = harnessRuntime();
+                // The analysis is the store's, re-read here (not the destructured id) so the driver holds
+                // the object, not just its id.
                 const analysis = workspace.analysis;
-                if (!runtime || !analysis) return;
+                if (!analysis) return;
                 lastTriggeredAnalysisId = analysisId;
                 // Hand the driver a LIVE read of the open analysis (not the captured `analysis`) so it
-                // can detect a mid-check swap when its async work resolves — see `driveProfileParity`.
-                seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null, "open");
+                // can detect a mid-check swap when its request resolves — see `driveProfileParity`.
+                opts.drive(analysis, () => workspace.analysis?.id ?? null);
             },
         ),
     );
 
-    // Edge 2 — a live input mutation on the open analysis, debounced to one re-profile per burst.
-    let driftCancel: (() => void) | null = null;
-    let pendingDriftId: string | null = null;
-    const cancelDrift = (): void => {
-        if (driftCancel) {
-            driftCancel();
-            driftCancel = null;
-        }
-    };
-    const onInputEvent = (e: StampedEvent): void => {
-        if (e.type !== "prov.input_added" && e.type !== "prov.input_removed") return;
-        // Only edits to the analysis on screen, and only once booted (no runtime to drive against
-        // before then). This deliberately does NOT touch `lastTriggeredAnalysisId`: that guard de-dups
-        // edge 1, but an input edit MUST re-fire for the SAME analysis — its set just changed, and this
-        // is the edge that owns that fact.
-        if (bootState().phase !== "ready") return;
-        const openId = workspace.analysis?.id ?? null;
-        if (openId === null || e.analysisId !== openId) return;
-        pendingDriftId = openId;
-        // Trailing edge: each event in a burst re-arms, so only the burst's LAST event's timer fires.
-        cancelDrift();
-        driftCancel = seams.schedule(() => {
-            driftCancel = null;
-            const targetId = pendingDriftId;
-            pendingDriftId = null;
-            // Re-read live at fire time — never the values captured when the event arrived: the debounce
-            // window can outlast a swap or a runtime teardown. If the open analysis moved on (or the
-            // runtime is gone), skip; the driver's own swap guard is the second net.
-            const runtime = harnessRuntime();
-            const analysis = workspace.analysis;
-            if (!runtime || !analysis || analysis.id !== targetId) return;
-            seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null, "inputs_changed");
-        }, DRIFT_DEBOUNCE_MS);
-    };
-    Bus.on("inflexa", onInputEvent);
-    onCleanup(() => {
-        Bus.off("inflexa", onInputEvent);
-        cancelDrift();
-    });
-
-    // Edge 3 — a profile run reaching a terminal state (the running→completed/failed down-edge).
+    // Edge 2 — a profile run reaching a terminal state (the running→completed/failed down-edge).
     // Keyed by analysis id, not just status: the profile snapshot is a SHARED store, so an analysis
     // swap can transition it A-running → B-completed (B's ledger, freshly refreshed) — a status pair
     // that reads as a completion but is not B's. Record the id alongside the previous status and fire
     // only when it is unchanged across the transition, so a swap fabricates no false drive.
-    let prevProfile: { status: DataProfileStatus["status"] | null; analysisId: string | null } = { status: null, analysisId: null };
+    let prevProfile: { status: DataProfileState["status"] | null; analysisId: string | null } = { status: null, analysisId: null };
     createEffect(() => {
         const snap = profileSnapshot();
-        const status: DataProfileStatus["status"] | null = snap.kind === "loaded" ? snap.profile.status : null;
+        const status: DataProfileState["status"] | null = snap.kind === "loaded" ? snap.profile.status : null;
         const analysisId = workspace.analysis?.id ?? null;
         const prev = prevProfile;
         prevProfile = { status, analysisId };
@@ -289,49 +158,9 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
         // observable here for free.
         const settled = status === "completed" || status === "failed";
         if (!(prev.status === "running" && settled && prev.analysisId === analysisId)) return;
-        const runtime = harnessRuntime();
         const analysis = workspace.analysis;
-        if (!runtime || !analysis) return;
-        seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null, "open");
-    });
-
-    // Agent-switch gauge — data-profile SETTLE feed. The gauge's START half is
-    // pushed synchronously at dispatch (profile_trigger.ts `stageAndSeed`); this level-based observer of
-    // the OPEN analysis's profile snapshot — the ledger truth the sidebar already polls, the seam's
-    // intended feed — clears the token when the profile leaves the pending/running window (and notes it
-    // busy again idempotently, so a desync self-heals). Keyed to the open analysis id, never the OLD one:
-    // a profile still running on an analysis we swapped away from is unobservable here, so its token is
-    // left busy (the gauge fails CLOSED — a pending sandbox switch waits; config is already persisted and
-    // the next boot applies it). `inflexa profile`'s own process never reaches this observer, the same
-    // documented fail-closed boundary.
-    let prevGaugeAnalysisId: string | null = null;
-    createEffect(() => {
-        const snap = profileSnapshot();
-        const analysisId = workspace.analysis?.id ?? null;
-        const swapped = analysisId !== prevGaugeAnalysisId;
-        prevGaugeAnalysisId = analysisId;
-        // On a swap the snapshot still holds the previous analysis until `watchSidebarData` resets it (its
-        // effects run AFTER this watcher's — App wires watchProfileParity first), so attributing the
-        // snapshot to the NEW id would mis-key the gauge; skip the swap cycle and act only once the id is
-        // stable across a run (the snapshot then genuinely describes it).
-        if (analysisId === null || swapped) return;
-        switch (snap.kind) {
-            case "loaded":
-                noteDataProfileState(analysisId, snap.profile.status === "pending" || snap.profile.status === "running");
-                return;
-            case "absent":
-                noteDataProfileState(analysisId, false);
-                return;
-            case "not_ready":
-            case "unavailable":
-                // No trustworthy ledger truth (a pre-boot placeholder or a DB blip) — leave the token as
-                // it is so a busy profile is never cleared on an unavailable read.
-                return;
-            default: {
-                const _exhaustive: never = snap;
-                return void _exhaustive;
-            }
-        }
+        if (bootState().phase !== "ready" || !analysis) return;
+        opts.drive(analysis, () => workspace.analysis?.id ?? null);
     });
 }
 
@@ -347,76 +176,61 @@ function couldNotStartNotice(analysis: Analysis, reason: string): Notice {
 
 /**
  * The parity driver's effectful edges, injectable so the outcome→side-effect mapping is unit-testable
- * offline — mirrors the seam bundles in `sidebar_live.ts` (`WatchSeams`) and `profile_trigger.ts`.
- * Production callers omit the argument and get the real edges.
+ * offline. Production callers omit the argument and get the real edges.
  */
-export type ParityDriverSeams = {
-    /** The chat-open drive: materialize, never re-profile. Real: {@link ensureProfileAtParity}. */
-    readonly check: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
-    /** The input-mutation drive: re-profile, because the set demonstrably moved. Real: {@link reprofileForInputChange}. */
-    readonly reprofile: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
-    /** Re-read the sidebar's ledger snapshots for an analysis. Real: {@link refreshSidebarData}. */
+export type ParityDriverOpts = {
+    /** The chat-open drive: materialize, never re-profile. Real: `GET {A}/chat-context`. */
+    readonly check: (analysisId: string) => ResultAsync<ChatContext, ClientError>;
+    /** Re-read the sidebar's snapshots for an analysis. Real: {@link refreshSidebarData}. */
     readonly refreshSidebar: (analysisId: string) => Promise<void>;
     /** Raise a transient toast. Real: {@link notify}. Injected so the swap-guard test can observe it. */
     readonly notify: (notice: Notice) => void;
 };
 
-const realParityDriverSeams: ParityDriverSeams = {
-    check: ensureProfileAtParity,
-    reprofile: reprofileForInputChange,
+const DEFAULT_PARITY_DRIVER_OPTS: ParityDriverOpts = {
+    check: (analysisId) => fetchChatContext(analysisId),
     refreshSidebar: refreshSidebarData,
     notify,
 };
 
 /**
- * Run the helper and map its outcome onto the notice channel; managed-parity skips stay silent.
- * Exported for the unit test — production calls it via {@link watchProfileParity} with the real seams.
+ * Ask the server for the chat context, which runs the parity drive, and map its outcome onto the notice
+ * channel; managed-parity skips stay silent. Exported for the unit test — production calls it via
+ * {@link watchProfileParity} with the real edges.
  *
- * `currentAnalysisId` is a LIVE read of the open analysis, checked once `check` resolves. `check` stages
- * the analysis's inputs (hundreds of ms), during which the user can swap analyses. This is the ONE
- * refresh path not naturally keyed to the current workspace: `refreshSidebarData`'s generation token is
- * last-STARTED-wins, not analysis-keyed, so poking it with this now-stale captured id would tear the OLD
- * analysis's snapshots into the shared store the user is viewing for the NEW one — and a toast about
- * analysis A while B is on screen is the same class of bug. So if the open analysis changed while `check`
- * was in flight, drop BOTH the poke and the notice.
+ * `currentAnalysisId` is a LIVE read of the open analysis. The drive stages the analysis's inputs
+ * (hundreds of ms, or longer), during which the user can swap analyses. `refreshSidebarData`'s
+ * generation token is last-STARTED-wins, not analysis-keyed, so poking it with this now-stale captured
+ * id would tear the OLD analysis's snapshots into the shared store the user is viewing for the NEW one —
+ * and a toast about analysis A while B is on screen is the same class of bug. So if the open analysis
+ * changed while the request was in flight, drop BOTH the poke and the notice. The drive itself is the
+ * server's, and it completes either way.
  */
-export function driveProfileParity(
-    runtime: HarnessRuntime,
+export async function driveProfileParity(
     analysis: Analysis,
     currentAnalysisId: () => string | null,
-    cause: ProfileDriveCause = "open",
-    seams: ParityDriverSeams = realParityDriverSeams,
+    opts: ParityDriverOpts = DEFAULT_PARITY_DRIVER_OPTS,
 ): Promise<void> {
-    return serializeProfileWork(() => runParityDrive(runtime, analysis, currentAnalysisId, cause, seams));
+    // A drive that waited on the sandbox gate while the user swapped away is not asked for at all.
+    if (currentAnalysisId() !== analysis.id) return;
+    const context = await opts.check(analysis.id);
+    if (currentAnalysisId() !== analysis.id) return;
+    context.match(
+        (body) => applyParityOutcome(analysis, body.parity, opts),
+        (e) => opts.notify(couldNotStartNotice(analysis, describeClientError(e))),
+    );
 }
 
 /**
- * {@link driveProfileParity}'s body, run under the shared profile-work queue. Both causes share this
- * outcome mapping: what the user should be told about a trigger, a clear, or a fault does not depend on
- * which edge asked, only on what the ladder did.
+ * The parity outcome mapping. What the user should be told about a trigger, a clear, or a fault does
+ * not depend on which edge asked, only on what the drive did.
  */
-async function runParityDrive(
-    runtime: HarnessRuntime,
-    analysis: Analysis,
-    currentAnalysisId: () => string | null,
-    cause: ProfileDriveCause,
-    seams: ParityDriverSeams,
-): Promise<void> {
-    // Also guard at DEQUEUE time, before `check` stages anything. A drive can sit in the queue while the
-    // user swaps analyses, and `openSession` releases this analysis's instance lock the moment it swaps
-    // away — so a drive that only began staging A's tree AFTER this process released A's lock would race
-    // a second `inflexa` process now holding it and staging the same tree. Skipping a drive whose
-    // analysis is no longer open closes that cross-process window; the post-`check` guard below remains
-    // for a swap that lands mid-check.
-    if (currentAnalysisId() !== analysis.id) return;
-    const outcome = cause === "inputs_changed" ? await seams.reprofile(runtime, analysis) : await seams.check(runtime, analysis);
-    // Swapped analyses while `check` staged files? Drop both the poke and the notice (see the doc above).
-    if (currentAnalysisId() !== analysis.id) return;
+function applyParityOutcome(analysis: Analysis, outcome: ProfileOutcome, opts: ParityDriverOpts): void {
     switch (outcome.kind) {
         case "triggered":
-            seams.notify(profilingNotice(analysis, outcome.restarted));
+            opts.notify(profilingNotice(analysis, outcome.restarted));
             // `triggered` and `cleared` are the TWO lifecycle edges that change ledger state outside the
-            // sidebar's own refresh triggers. For `triggered`: the check just seeded a pending/running
+            // sidebar's own refresh triggers. For `triggered`: the drive just seeded a pending/running
             // data-profile row, but the sidebar snapshotted this analysis as `absent` before the row
             // existed, and on an idle screen no later edge (turn completion, analysis swap) re-reads it —
             // so `hasActiveWork` never arms the poll and the DATA PROFILE section sits on "not profiled"
@@ -424,18 +238,18 @@ async function runParityDrive(
             // `hasActiveWork` arms the poll, and the poll flips the section to completed when the workflow
             // finishes. (`cleared` is the mirror edge — see its case below.) Every other skip and failure
             // changes no ledger state the sidebar needs, so it deliberately does NOT refresh.
-            void seams.refreshSidebar(analysis.id);
+            void opts.refreshSidebar(analysis.id);
             return;
         case "cleared":
-            seams.notify({ kind: "info", text: `Data profile cleared — "${analysis.name}" has no inputs` });
+            opts.notify({ kind: "info", text: `Data profile cleared — "${analysis.name}" has no inputs` });
             // The other ledger-state edge (see `triggered`): the profile row was just nulled because the
             // input set emptied, but the sidebar still holds the old completed snapshot — without a poke
             // the section would keep advertising a profile that no longer exists. Re-read so it falls back
             // to "not profiled".
-            void seams.refreshSidebar(analysis.id);
+            void opts.refreshSidebar(analysis.id);
             return;
         case "failed":
-            seams.notify(couldNotStartNotice(analysis, outcome.reason));
+            opts.notify(couldNotStartNotice(analysis, outcome.reason));
             return;
         case "skipped_failed":
             // Silent on purpose: `skipped_failed` means the failed attempt's own input set is still the
@@ -456,67 +270,63 @@ async function runParityDrive(
 }
 
 /**
- * The force driver's effectful edges — the deliberate-re-profile twin of {@link ParityDriverSeams}.
+ * The force driver's effectful edges — the deliberate-re-profile twin of {@link ParityDriverOpts}.
  * Production callers omit the argument and get the real edges.
  */
-export type ForceDriverSeams = {
-    /** Produce the force outcome for this analysis. Real: {@link forceReprofile}. */
-    readonly force: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
-    /** Re-read the sidebar's ledger snapshots for an analysis. Real: {@link refreshSidebarData}. */
+export type ForceDriverOpts = {
+    /** Ask for the deliberate re-profile. Real: `POST {A}/data-profile/rerun`. */
+    readonly force: (analysisId: string) => ResultAsync<ProfileRerunResult, ClientError>;
+    /** Re-read the sidebar's snapshots for an analysis. Real: {@link refreshSidebarData}. */
     readonly refreshSidebar: (analysisId: string) => Promise<void>;
     /** Raise a transient toast. Real: {@link notify}. */
     readonly notify: (notice: Notice) => void;
 };
 
-const realForceDriverSeams: ForceDriverSeams = {
-    force: forceReprofile,
+const DEFAULT_FORCE_DRIVER_OPTS: ForceDriverOpts = {
+    force: (analysisId) => rerunDataProfile(analysisId),
     refreshSidebar: refreshSidebarData,
     notify,
 };
 
 /**
- * Map a {@link forceReprofile} outcome onto the notice channel for a DELIBERATE re-profile (the palette
- * command / dialog action). Unlike {@link driveProfileParity}, the skips SPEAK: the user asked for a run,
- * so "already running" / "no inputs" are refusals worth a toast, not silent managed-parity no-ops. Shares
- * the mid-check swap guard — if the open analysis changed while `force` staged files, drop both the poke
- * and the notice. Exported for the unit test; production drives it from the palette / dialog action.
+ * Map a deliberate re-profile's outcome onto the notice channel (the palette command / dialog action).
+ * Unlike {@link driveProfileParity}, the skips SPEAK: the user asked for a run, so "already running" /
+ * "no inputs" are refusals worth a toast, not silent managed-parity no-ops. Shares the mid-request swap
+ * guard — if the open analysis changed while the server staged files, drop both the poke and the
+ * notice. Exported for the unit test; production drives it from the palette / dialog action.
  */
-export function driveForceReprofile(
-    runtime: HarnessRuntime,
+export async function driveForceReprofile(
     analysis: Analysis,
     currentAnalysisId: () => string | null,
-    seams: ForceDriverSeams = realForceDriverSeams,
+    opts: ForceDriverOpts = DEFAULT_FORCE_DRIVER_OPTS,
 ): Promise<void> {
-    // Shares the parity queue, not a queue of its own: force and parity both stage into the same
-    // workspace tree and both write the same ledger row, so they must exclude each other too.
-    return serializeProfileWork(() => runForceDrive(runtime, analysis, currentAnalysisId, seams));
-}
-
-/** {@link driveForceReprofile}'s body, run under the shared profile-work queue. */
-async function runForceDrive(runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null, seams: ForceDriverSeams): Promise<void> {
-    const outcome = await seams.force(runtime, analysis);
-    // Swapped analyses while `force` staged files? Drop both the poke and the notice (see driveProfileParity).
+    const result = await opts.force(analysis.id);
     if (currentAnalysisId() !== analysis.id) return;
+    if (result.isErr()) {
+        opts.notify(couldNotStartNotice(analysis, describeClientError(result.error)));
+        return;
+    }
+    const outcome = result.value.outcome;
     switch (outcome.kind) {
         case "triggered":
-            seams.notify(profilingNotice(analysis, outcome.restarted));
+            opts.notify(profilingNotice(analysis, outcome.restarted));
             // Same ledger-visibility gap as the parity `triggered` poke: seed the running snapshot so the
             // sidebar arms its poll and flips to completed when the workflow finishes.
-            void seams.refreshSidebar(analysis.id);
+            void opts.refreshSidebar(analysis.id);
             return;
         case "already_running":
-            seams.notify({ kind: "info", text: "A profile run is already in progress" });
+            opts.notify({ kind: "info", text: "A profile run is already in progress" });
             return;
         case "no_inputs":
-            seams.notify({ kind: "warn", text: "No inputs to profile — add inputs first" });
+            opts.notify({ kind: "warn", text: "No inputs to profile — add inputs first" });
             return;
         case "failed":
-            seams.notify(couldNotStartNotice(analysis, outcome.reason));
+            opts.notify(couldNotStartNotice(analysis, outcome.reason));
             return;
         case "already_profiled":
         case "cleared":
         case "skipped_failed":
-            // Unreachable from `forceReprofile`: force is the user's explicit will, so past its live-run
+            // Unreachable from the force drive: force is the user's explicit will, so past its live-run
             // check it ALWAYS materializes → seeds → triggers. It never compares input sets
             // (`already_profiled`), never consults the already-materialized predicate, never clears an
             // emptied set (an empty enumerate short-circuits to `no_inputs`), and never skips a failed

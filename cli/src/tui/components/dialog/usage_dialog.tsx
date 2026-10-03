@@ -1,5 +1,5 @@
 import { For, Show } from "solid-js";
-import { ok, type Result } from "neverthrow";
+import { okAsync, type Result, type ResultAsync } from "neverthrow";
 import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
@@ -12,15 +12,9 @@ import { DialogPanel } from "./dialog_panel.tsx";
 import { ScrollPane, SCROLL_HINT } from "../scroll_pane.tsx";
 import { Bold, Fg } from "../emphasis.tsx";
 import { TokenFigure } from "../token_figure.tsx";
-import {
-    getSessionUsageTotalsIncludingRuns,
-    listSessionUsageByAgent,
-    listSessionUsageByModel,
-    type LlmUsageByAgent,
-    type LlmUsageByModel,
-    type LlmUsageTotals,
-} from "../../../db/primary_query.ts";
-import type { DbError } from "../../../db/errors.ts";
+import type { UsageTotals } from "../../../api/usage.ts";
+import { DEFAULT_CLIENT_OPTS, type ClientError, type ClientOpts } from "../../../client/api.ts";
+import { fetchUsage } from "../../../client/usage.ts";
 
 // The usage dialog: what the OPEN CONVERSATION has consumed, cut by the model that answered and by
 // the agent that spent it.
@@ -48,8 +42,9 @@ import type { DbError } from "../../../db/errors.ts";
 //     measured zero are different facts, and the call count beside the figures is what tells a
 //     reported-nothing row from a row for work that never happened.
 //
-// It reads the local SQLite ledger only, so it opens with the durable engine, its Postgres, and the
-// model proxy all cold — the same property the sidebar section that launches it has.
+// It reads the usage ledger of the local server (`GET {A}/usage`), which is SQLite only, so it opens
+// with the durable engine, its Postgres, and the model proxy all cold — the same property the sidebar
+// section that launches it has.
 
 /** Everything the dialog paints, gathered in ONE point-in-time read at open. */
 export type SessionUsageSnapshot = {
@@ -59,31 +54,40 @@ export type SessionUsageSnapshot = {
      * the session GRAIN (`inflexa usage sessions`), which excludes runs so the grains still add up to
      * the analysis total; the two differ by the whole of a run, and each surface says which it shows.
      */
-    totals: LlmUsageTotals;
-    /** The same total re-cut by the model that answered. */
-    byModel: LlmUsageByModel[];
+    totals: UsageTotals;
+    /** The same total re-cut by the model that answered. `null` is a call whose endpoint reported no served model. */
+    byModel: { servedModelId: string | null; totals: UsageTotals }[];
     /** The same total re-cut by the agent that spent it. */
-    byAgent: LlmUsageByAgent[];
+    byAgent: { agentId: string; totals: UsageTotals }[];
 };
 
 /**
- * Read one conversation's usage in one go.
+ * Read one conversation's usage in one go: two reads of `GET {A}/usage?threadId=`, one for each grouping.
+ * The headline is the one of the model read, which the model groups partition.
  *
- * All three reads or none: a headline paired with groupings from a partial read would show parts that
- * do not reconcile with the total above them. The caller renders the `Err` as the dialog's
- * unavailable state — the dialog still opens.
+ * Both reads or none: a headline paired with groupings from a partial read would show parts that do
+ * not reconcile with the total above them. The caller renders the `Err` as the dialog's unavailable
+ * state — the dialog still opens. A call that lands between the two reads adds to the agent groups
+ * only; the dialog opens on an idle chat, thus the window is accepted.
  *
  * `threadId` is nullable because the chat's Postgres thread identity is not bound until boot reaches
  * ready. A chat with no thread has recorded nothing under one BY CONSTRUCTION, so there is nothing to
  * ask the ledger; answering with the empty snapshot here rather than making each caller branch lands
  * the dialog on its "no usage recorded" state, which is the honest report for that chat.
  */
-export function readSessionUsage(analysisId: string, threadId: string | null): Result<SessionUsageSnapshot, DbError> {
-    if (threadId === null) return ok({ totals: { calls: 0 }, byModel: [], byAgent: [] });
-    return getSessionUsageTotalsIncludingRuns(analysisId, threadId).andThen((totals) =>
-        listSessionUsageByModel(analysisId, threadId).andThen((byModel) =>
-            listSessionUsageByAgent(analysisId, threadId).map((byAgent) => ({ totals, byModel, byAgent })),
-        ),
+export function readSessionUsage(
+    analysisId: string,
+    threadId: string | null,
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): ResultAsync<SessionUsageSnapshot, ClientError> {
+    if (threadId === null) return okAsync({ totals: { calls: 0 }, byModel: [], byAgent: [] });
+    return fetchUsage(analysisId, { threadId, by: "model" }, opts).andThen((byModel) =>
+        fetchUsage(analysisId, { threadId, by: "agent" }, opts).map((byAgent): SessionUsageSnapshot => ({
+            totals: byModel.totals,
+            byModel: (byModel.groups ?? []).map((g) => ({ servedModelId: g.key, totals: g.totals })),
+            // An agent group always has its id. The fallback keeps a row that the ledger cannot name.
+            byAgent: (byAgent.groups ?? []).map((g) => ({ agentId: g.key ?? NO_SERVED_MODEL, totals: g.totals })),
+        })),
     );
 }
 
@@ -108,7 +112,7 @@ const ROW_INDENT = "  ";
  * well as leaving nowhere honest to print the absent word, which belongs to the figure as a whole and
  * not to either arm.
  */
-function figureOf(totals: LlmUsageTotals): string {
+function figureOf(totals: UsageTotals): string {
     return formatTokenFigure(totals) || NOT_REPORTED;
 }
 
@@ -121,7 +125,7 @@ function figureOf(totals: LlmUsageTotals): string {
  * An absent quantity sorts as `-1` so it falls BELOW a reported `0`, matching SQLite's NULL-last
  * behaviour under DESC — a group that measured nothing belongs under one that measured nothing spent.
  */
-function byConsumption(a: LlmUsageTotals, b: LlmUsageTotals): number {
+function byConsumption(a: UsageTotals, b: UsageTotals): number {
     return (b.inputTokens ?? -1) - (a.inputTokens ?? -1) || (b.outputTokens ?? -1) - (a.outputTokens ?? -1) || b.calls - a.calls;
 }
 
@@ -153,7 +157,7 @@ export type UsageBreakdown = {
  * about this composition — a character frame holding two numbers cannot say WHICH numbers they are.
  */
 export function usageBreakdown(snapshot: SessionUsageSnapshot): UsageBreakdown {
-    const groups: { category: string; label: string; totals: LlmUsageTotals }[] = [
+    const groups: { category: string; label: string; totals: UsageTotals }[] = [
         ...[...snapshot.byModel]
             .sort((a, b) => byConsumption(a.totals, b.totals))
             .map((m) => ({ category: CATEGORY.model, label: m.servedModelId ?? NO_SERVED_MODEL, totals: m.totals })),
@@ -195,10 +199,11 @@ export type UsageDialogProps = {
     analysisName: string | null;
     /**
      * Read the whole snapshot — called ONCE, in the component body, because this is a point-in-time
-     * view (the same contract `RunDetailDialog` gives its run row). An `Err` renders the unavailable
-     * state INSIDE the dialog: a failed read must never be the reason a dialog refuses to open.
+     * view (the same contract `RunDetailDialog` gives its run row). The caller reads the server before it
+     * opens the dialog. An `Err` renders the unavailable state INSIDE the dialog: a failed read must
+     * never be the reason a dialog refuses to open.
      */
-    loadUsage: () => Result<SessionUsageSnapshot, DbError>;
+    loadUsage: () => Result<SessionUsageSnapshot, ClientError>;
     /** Wired to every non-commit close (esc, click-outside, ctrl+c) and the q/enter close keys. */
     onClose: () => void;
 };

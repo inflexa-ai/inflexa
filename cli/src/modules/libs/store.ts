@@ -1,6 +1,10 @@
 /**
- * The `inflexa store` command actions — add, link, ls, download, cancel,
- * reclaim — over the host package store.
+ * The `inflexa store` command actions — add, ls, download, cancel, reclaim —
+ * and the logic of `store link`, over the host package store. Each action runs
+ * in its own process with no server, thus a one-shot container can run it. The
+ * lock files and the flight and transfer rows coordinate it with the local
+ * server, which runs the same logic behind the store routes for the TUI.
+ * `store link` is a client of the farm-link route of the server.
  *
  * The store is a host directory the harness bind-mounts read-only at
  * `/mnt/libs` for EVERY sandbox. Its root is `env.packageStoreDir`, a
@@ -13,8 +17,9 @@
  * and `--analysis`. An approved add ENQUEUES into the pending set, and the
  * flush runs one one-shot provisioner `acquire` for the whole batch — refer to
  * `store_flight.ts` for the two-phase flight. A direct terminal add flushes at
- * once. The agent route enqueues and returns, and the chat flushes the set at
- * the turn end or after the 10-second gate, whichever comes first.
+ * once, in-process. The agent route enqueues and returns, and the server
+ * flushes the set at the turn end or after the 10-second gate, whichever comes
+ * first.
  *
  * `inflexa store link` is the other half, and it is a command of its own. It
  * links what the pool already holds into the farm of one analysis, thus it
@@ -31,7 +36,6 @@ import { existsSync, mkdirSync } from "node:fs";
 import { lstat, readFile, readdir, readlink } from "node:fs/promises";
 import { join } from "node:path";
 
-import { isCancel, select as clackSelect } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -43,7 +47,7 @@ import { acquireInstanceLock, liveInstanceLockHolds, releaseInstanceLock, PACKAG
 import type { IdOrName } from "../../lib/types.ts";
 import { listAnalyses, listPendingStoreAdds } from "../../db/primary_query.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import { findAnalysis, listAnalysesForAnchorAt } from "../analysis/analysis.ts";
+import { findAnalysis } from "../analysis/analysis.ts";
 import {
     describeFarmCompositionError,
     extendFarm,
@@ -67,6 +71,8 @@ import {
     readStoreFlights,
     type FlushDeps,
     type FlushSpecOutcome,
+    type StoreEnqueueError,
+    type StoreFlightSpec,
 } from "./store_flight.ts";
 import { readTransferReport } from "./transfers.ts";
 import { spawnDetachedSelf } from "./transfers.ts";
@@ -103,6 +109,67 @@ export function startPendingFlushChild(): number | null {
     } catch {
         return null;
     }
+}
+
+/** What the pending-flush gate reads and starts, and its cadence. Tests replace each one. */
+export type PendingFlushOpts = {
+    /** The enqueue time of each pending add, epoch millis. */
+    readonly readPending: () => readonly { readonly createdAt: number }[];
+    readonly startFlush: () => number | null;
+    readonly now: () => number;
+    /** How often the timer of {@link watchPendingFlush} reads the pending set. */
+    readonly pollMs: number;
+    /** How long the oldest pending add waits before the gate starts the flush child. */
+    readonly flushAfterMs: number;
+};
+
+/**
+ * The production {@link PendingFlushOpts}: a read each 2 s, and a flush once the oldest add is 10 s old. The
+ * turn end flushes first when it comes sooner. The bound exists for the long turn: an add approved early
+ * must not wait behind minutes of agent work, because the acquisition can run beside that work.
+ */
+export const DEFAULT_PENDING_FLUSH_OPTS: PendingFlushOpts = {
+    readPending: () => listPendingStoreAdds().unwrapOr([]),
+    startFlush: startPendingFlushChild,
+    now: () => Date.now(),
+    pollMs: 2_000,
+    flushAfterMs: 10_000,
+};
+
+/**
+ * The 10-second gate of the pending set, as one step that a timer calls. A step starts the flush child when
+ * the oldest pending add is `flushAfterMs` old, and then not again for `flushAfterMs`. The child claims the
+ * rows, thus a second start inside that window would only meet a claimed set. A start that could not
+ * spawn leaves the set as it is, and the step after the window starts it again.
+ */
+export function createPendingFlushGate(opts: PendingFlushOpts = DEFAULT_PENDING_FLUSH_OPTS): { step(): void } {
+    let lastStart: number | null = null;
+    return {
+        step() {
+            const pending = opts.readPending();
+            if (pending.length === 0) {
+                lastStart = null;
+                return;
+            }
+            const now = opts.now();
+            const oldest = pending.reduce((min, entry) => Math.min(min, entry.createdAt), Number.POSITIVE_INFINITY);
+            if (now - oldest < opts.flushAfterMs) return;
+            if (lastStart !== null && now - lastStart < opts.flushAfterMs) return;
+            lastStart = now;
+            opts.startFlush();
+        },
+    };
+}
+
+/**
+ * Run the pending-flush gate on a timer for the life of the server, whatever client is open: an agent add
+ * of the `run_inflexa` tool enqueues with `--queued`, and the tool tells the agent that the batch starts
+ * within 10 seconds. Gives the stop.
+ */
+export function watchPendingFlush(opts: PendingFlushOpts = DEFAULT_PENDING_FLUSH_OPTS): () => void {
+    const gate = createPendingFlushGate(opts);
+    const timer = setInterval(() => gate.step(), opts.pollMs);
+    return () => clearInterval(timer);
 }
 
 /** Why a store-management action could not complete. Each variant maps to one actionable user message. */
@@ -556,6 +623,12 @@ function danglingGraphNodes(storeRoot: string): readonly string[] {
 }
 
 export async function reclaimStore(params: { readonly storeRoot: string }, deps: ReclaimDeps = {}): Promise<Result<ReclaimOutcome, StoreActionError>> {
+    if (reclaimTakenInProcess) {
+        return err({
+            type: "reclaim_in_flight",
+            message: "This process reclaims the package store already. Wait for that reclamation to finish, then run this command again.",
+        });
+    }
     const lock = acquireInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     if (!lock.acquired) {
         return err({
@@ -563,6 +636,7 @@ export async function reclaimStore(params: { readonly storeRoot: string }, deps:
             message: `Another \`inflexa\` process (pid ${lock.holderPid}) is reclaiming this package store. Wait for it to finish, then run this command again.`,
         });
     }
+    reclaimTakenInProcess = true;
     try {
         const settled = await waitForNoLiveWork(deps.flightWaitMs ?? FLIGHT_WAIT_MS, deps.flightPollMs ?? FLIGHT_POLL_MS);
         if (settled.isErr()) return err(settled.error);
@@ -580,9 +654,21 @@ export async function reclaimStore(params: { readonly storeRoot: string }, deps:
         if (ran.isErr()) return err(ran.error);
         return classifyProvisionerRun(ran.value).map(() => ({ reclaimed: candidates, farmsReaped }));
     } finally {
+        reclaimTakenInProcess = false;
         releaseInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     }
 }
+
+/**
+ * True while a reclamation or a debris pass of THIS process holds the reclaim lock.
+ *
+ * The lock file excludes a different process only: `acquireInstanceLock` is re-entrant for one pid. In the
+ * server, a `store reclaim` route and the boot debris pass meet in one process, thus the second taker would
+ * pass the acquire, and the `finally` of the first would delete the lock under it. This flag keeps the
+ * exclusion of two processes inside one: a second reclamation refuses, and a debris pass yields. The test and
+ * the set have no `await` between them, thus two callers cannot both pass.
+ */
+let reclaimTakenInProcess = false;
 
 /**
  * Remove each farm whose analysis the database no longer holds.
@@ -708,8 +794,10 @@ export async function collectStoreDebris(storeRoot: string, deps: DebrisDeps = {
 let debrisInflight: Promise<Result<DebrisSweepOutcome, StoreActionError>> | null = null;
 
 async function runDebrisPass(storeRoot: string, deps: DebrisDeps): Promise<Result<DebrisSweepOutcome, StoreActionError>> {
+    if (reclaimTakenInProcess) return ok({ swept: false, dirs: [], reports: 0 });
     const lock = acquireInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     if (!lock.acquired) return ok({ swept: false, dirs: [], reports: 0 });
+    reclaimTakenInProcess = true;
     try {
         const liveFlight = readStoreFlights().some((flight) => flight.row.state !== "failed");
         if (liveFlight || liveInstanceLockHolds(FARM_LOCK_KEY_PREFIX).length > 0 || liveInstanceLockHolds(TRANSFER_LOCK_KEY_PREFIX).length > 0) {
@@ -724,6 +812,7 @@ async function runDebrisPass(storeRoot: string, deps: DebrisDeps): Promise<Resul
         if (ran.isErr()) return err(ran.error);
         return classifyProvisionerRun(ran.value).map(() => ({ swept: true, dirs, reports }));
     } finally {
+        reclaimTakenInProcess = false;
         releaseInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     }
 }
@@ -773,12 +862,7 @@ function reportError(error: { readonly message: string }): void {
 /** Why an `--analysis` reference could not become an analysis. Each variant is one user message. */
 type FarmAnalysisError = { readonly type: "analysis_not_found"; readonly message: string } | { readonly type: "query_failed"; readonly message: string };
 
-/**
- * The analysis that a farm-bearing reference names, resolved in ONE query and
- * id first. `store add` and `store link` share it, thus one reference reaches
- * one analysis by one rule, and the two commands refuse an unknown reference
- * with one message.
- */
+/** The analysis that a farm-bearing reference names, resolved in ONE query and id first. */
 function resolveFarmAnalysis(ref: IdOrName): Result<Analysis, FarmAnalysisError> {
     return findAnalysis(ref)
         .mapErr((error): FarmAnalysisError => ({ type: "query_failed", message: `Could not read the analyses (${error.type}).` }))
@@ -870,7 +954,7 @@ function mergeCommandFlags(
     });
 }
 
-/** The flags of `inflexa store add`. */
+/** The flags of `inflexa store add` that shape the add. */
 export type StoreAddOptions = {
     /** One exact version, or `null` for the newest the index serves. */
     readonly version: string | null;
@@ -878,10 +962,6 @@ export type StoreAddOptions = {
     readonly lang: StoreEcosystem | null;
     /** The analysis whose farm the add extends after the commit. */
     readonly analysis: IdOrName | null;
-    /** The agent route: enqueue and return, with no flush. */
-    readonly queued?: boolean;
-    /** The detached flush child: flush the pending set in-process. */
-    readonly runFlush?: boolean;
 };
 
 /** Render one flush outcome as its report lines. */
@@ -958,59 +1038,75 @@ export async function flushAndPrint(storeRoot: string, deps: { readonly flush?: 
     );
 }
 
+/** Why one add did not enter the pending set. Each variant is one message that names the remedy. */
+export type StoreAddRefusal =
+    | { readonly type: "invalid_package"; readonly message: string }
+    | FarmAnalysisError
+    | StoreEnqueueError
+    | { readonly type: "store_root_failed"; readonly message: string; readonly cause: unknown };
+
 /**
- * `inflexa store add` — acquire ONE package into the content-addressed pool.
- *
- * The add ENQUEUES into the pending set. The agent route (`--queued`) returns
- * at once, thus the ask tool answers fast — the chat flushes the set at the
- * turn end or after the 10-second gate. A direct terminal add flushes at
- * once, in-process, and streams the provisioner output.
+ * Enqueue ONE package into the pending set of the content-addressed pool, the
+ * body of `inflexa store add`. The flush is a different step: the agent route
+ * (`--queued`) leaves it to the turn end or to the 10-second gate, and a
+ * direct add flushes at once.
  */
-export async function runStoreAdd(pkg: string | undefined, options: StoreAddOptions): Promise<void> {
-    const storeRoot = env.packageStoreDir;
-
-    if (options.runFlush === true) {
-        await flushAndPrint(storeRoot);
-        return;
-    }
-
-    if (pkg === undefined || pkg.trim() === "") {
-        reportError({
+export function queueStoreAdd(pkg: string, options: StoreAddOptions): Result<StoreFlightSpec, StoreAddRefusal> {
+    if (pkg.trim() === "") {
+        return err({
+            type: "invalid_package",
             message: "`inflexa store add` takes exactly one package. Write `inflexa store add <name>`, with `--version <v>` for one exact version.",
         });
-        return;
     }
     // One package per call is the rule of the command surface. A second name
     // would ride the version flag or the argument list, and commander already
     // refuses extra arguments — this refusal covers the embedded-space form.
     if (/\s/.test(pkg.trim())) {
-        reportError({ message: "`inflexa store add` takes exactly one package per call. Run the command once per package." });
-        return;
+        return err({ type: "invalid_package", message: "`inflexa store add` takes exactly one package per call. Run the command once per package." });
     }
 
     let analysisId: string | null = null;
     if (options.analysis !== null) {
         const target = resolveFarmAnalysis(options.analysis);
-        if (target.isErr()) {
-            reportError(target.error);
-            return;
-        }
+        if (target.isErr()) return err(target.error);
         analysisId = target.value.id;
     }
 
     const asked = commandQuery(pkg).andThen((query) => mergeCommandFlags(query, { version: options.version, lang: options.lang }));
-    if (asked.isErr()) {
-        reportError(asked.error);
-        return;
-    }
+    if (asked.isErr()) return err({ type: "invalid_package", message: asked.error.message });
+    return enqueueStoreAdd({ query: asked.value, analysisId });
+}
 
-    const enqueued = enqueueStoreAdd({ query: asked.value, analysisId });
+/** Make the store root, so that the flush of a direct add has a root to bind. */
+export function ensureStoreRoot(storeRoot: string): Result<void, StoreAddRefusal> {
+    try {
+        mkdirSync(storeRoot, { recursive: true });
+        return ok(undefined);
+    } catch (cause) {
+        return err({
+            type: "store_root_failed",
+            message: `Could not create the package store at ${storeRoot} (${cause instanceof Error ? cause.message : String(cause)}).`,
+            cause,
+        });
+    }
+}
+
+/**
+ * `inflexa store add` — acquire ONE package into the content-addressed pool.
+ *
+ * The add ENQUEUES into the pending set. The agent route (`queued`) returns at
+ * once, thus the ask tool answers fast — the server flushes the set at the
+ * turn end or after the 10-second gate. A direct terminal add flushes at once,
+ * in-process, and streams the provisioner output.
+ */
+export async function runStoreAdd(pkg: string | undefined, options: StoreAddOptions & { readonly queued: boolean }): Promise<void> {
+    const enqueued = queueStoreAdd(pkg ?? "", options);
     if (enqueued.isErr()) {
         reportError(enqueued.error);
         return;
     }
 
-    if (options.queued === true) {
+    if (options.queued) {
         console.log(`Queued ${describeStoreFlightSpec(enqueued.value)} for acquisition. The flight starts at the turn end, or after at most 10 seconds.`);
         console.log("Run `inflexa store ls` to see the queue and the flights.");
         return;
@@ -1018,47 +1114,25 @@ export async function runStoreAdd(pkg: string | undefined, options: StoreAddOpti
 
     // The direct terminal add is the explicit flush: the batch is whatever the
     // pending set holds now, including adds that other approvals enqueued.
-    try {
-        mkdirSync(storeRoot, { recursive: true });
-    } catch (cause) {
-        reportError({ message: `Could not create the package store at ${storeRoot} (${cause instanceof Error ? cause.message : String(cause)}).` });
+    const storeRoot = env.packageStoreDir;
+    const root = ensureStoreRoot(storeRoot);
+    if (root.isErr()) {
+        reportError(root.error);
         return;
     }
     console.log("Acquiring into the package pool (network on, egress allowlisted). This can take some minutes.");
     await flushAndPrint(storeRoot);
 }
 
-/**
- * The analysis whose farm a link call targets: the `--analysis` flag when
- * given, and the analysis the working directory anchors otherwise. The
- * `run_inflexa` tool runs its subprocess INSIDE the analysis folder, thus the
- * marker there names the analysis and the flag is the exception, not the
- * rule. A folder that anchors no analysis, or more than one, refuses with the
- * flag, because a silent pick would link into a farm the caller did not name.
- */
-function resolveLinkTarget(ref: IdOrName | null): Result<Analysis, { readonly message: string }> {
-    if (ref !== null) return resolveFarmAnalysis(ref);
-    const anchored = listAnalysesForAnchorAt(process.cwd()).unwrapOr([]);
-    const [one, second] = anchored;
-    if (one !== undefined && second === undefined) return ok(one);
-    if (one === undefined) {
-        return err({
-            message:
-                "`inflexa store link` needs the analysis whose farm gains the links, and this folder anchors none. " +
-                "Pass `--analysis <id|name>`, and run `inflexa ls` to see the analyses this machine holds.",
-        });
-    }
-    return err({
-        message:
-            `This folder anchors ${anchored.length} analyses (${anchored.map((entry) => entry.name).join(", ")}). ` +
-            "Pass `--analysis <id|name>` to name the one whose farm gains the links.",
-    });
-}
+/** Why a link call changed no farm. `refused` holds one refusal for each package that the pool cannot answer. */
+export type FarmLinkError =
+    | { readonly type: "refused"; readonly message: string }
+    | { readonly type: "graph_unreadable"; readonly message: string }
+    | { readonly type: "farm_not_extended"; readonly message: string };
 
 /**
- * `inflexa store link` — link packages the pool already holds into the farm of
- * one analysis. Without `--analysis`, the analysis of the working directory is
- * the target — refer to {@link resolveLinkTarget}.
+ * Link packages that the pool holds into the farm of one analysis: the body of
+ * the farm-link route of the server, which `inflexa store link` calls.
  *
  * It ACQUIRES nothing. It starts no container, it opens no network connection:
  * it reads the dependency graph, it resolves each requirement against the
@@ -1068,19 +1142,18 @@ function resolveLinkTarget(ref: IdOrName | null): Result<Analysis, { readonly me
  *
  * The whole request set resolves BEFORE one link is written. Thus a call that
  * names a package the pool does not hold reports each refusal at one time, and
- * the farm stays exactly as it was.
+ * the farm stays exactly as it was. A both-hit refuses with the two candidates
+ * and the `--lang` remedy.
  */
-export async function runStoreLink(packages: string[], options: { readonly analysis: IdOrName | null; readonly lang: StoreEcosystem | null }): Promise<void> {
-    const storeRoot = env.packageStoreDir;
-    const target = resolveLinkTarget(options.analysis);
-    if (target.isErr()) {
-        reportError(target.error);
-        return;
-    }
+export async function linkIntoAnalysisFarm(
+    storeRoot: string,
+    analysis: Pick<Analysis, "id" | "name">,
+    packages: readonly string[],
+    lang: StoreEcosystem | null,
+): Promise<Result<{ readonly linked: readonly string[]; readonly storeDirs: number }, FarmLinkError>> {
     const graph = readDepsGraph(storeRoot);
     if (graph.isErr()) {
-        reportError({ message: `Could not read what the package pool holds: ${describeFarmCompositionError(graph.error)}.` });
-        return;
+        return err({ type: "graph_unreadable", message: `Could not read what the package pool holds: ${describeFarmCompositionError(graph.error)}.` });
     }
 
     // Each answer keeps the spelling of its query. The Python shelf of the graph
@@ -1089,7 +1162,7 @@ export async function runStoreLink(packages: string[], options: { readonly analy
     const resolved: { readonly answer: ResolvedRequest; readonly spelling: string }[] = [];
     const refusals: string[] = [];
     for (const requirement of packages) {
-        const asked = commandQuery(requirement).andThen((parsed) => mergeCommandFlags(parsed, { version: null, lang: options.lang }));
+        const asked = commandQuery(requirement).andThen((parsed) => mergeCommandFlags(parsed, { version: null, lang }));
         if (asked.isErr()) {
             refusals.push(asked.error.message);
             continue;
@@ -1100,44 +1173,17 @@ export async function runStoreLink(packages: string[], options: { readonly analy
             resolved.push({ answer: answer.value, spelling: query.spelling });
             continue;
         }
-        // The both-hit stops with an ask on a terminal, because an interactive
-        // command asks the user. A caller with no terminal gets the refusal with
-        // the two candidates as guidance, and it re-runs with `--lang`.
-        if (answer.error.type === "ambiguous_ecosystem" && process.stdin.isTTY) {
-            const chosen = await clackSelect({
-                message: `Both ecosystems hold "${query.spelling}". Which one do you mean?`,
-                options: [
-                    { value: "python" as const, label: `Python (${answer.error.candidates[0]})` },
-                    { value: "r" as const, label: `R (${answer.error.candidates[1]})` },
-                ],
-            });
-            if (!isCancel(chosen)) {
-                const retried = resolvePackageRequest(graph.value, { ...query, track: chosen });
-                if (retried.isOk()) {
-                    resolved.push({ answer: retried.value, spelling: query.spelling });
-                    continue;
-                }
-                refusals.push(describeRequestRefusal(retried.error, query));
-                continue;
-            }
-        }
         refusals.push(describeRequestRefusal(answer.error, query));
     }
-    if (refusals.length > 0) {
-        reportError({ message: refusals.join("\n\n  ") });
-        return;
-    }
+    if (refusals.length > 0) return err({ type: "refused", message: refusals.join("\n\n  ") });
 
-    const analysis = target.value;
     const extended = await extendFarm({ storeRoot, analysisId: analysis.id, roots: resolved.map((item) => item.answer.storeDir) });
-    extended.match(
-        (composition) => {
-            for (const item of resolved) console.log(`Linked ${item.spelling}==${item.answer.version} into the farm of "${analysis.name}".`);
-            console.log(`That farm links ${composition.storeDirs.length} store directories now.`);
-            console.log("A live sandbox of the analysis resolves them at its next import, thus no restart is necessary.");
-        },
-        (error) => reportError({ message: `The farm of "${analysis.name}" was not extended: ${describeFarmCompositionError(error)}.` }),
-    );
+    return extended
+        .map((composition) => ({ linked: resolved.map((item) => `${item.spelling}==${item.answer.version}`), storeDirs: composition.storeDirs.length }))
+        .mapErr((error): FarmLinkError => ({
+            type: "farm_not_extended",
+            message: `The farm of "${analysis.name}" was not extended: ${describeFarmCompositionError(error)}.`,
+        }));
 }
 
 /**
@@ -1193,14 +1239,10 @@ export function describeRequestRefusal(error: RequestResolutionError, query: Pac
  * manifest the registry serves now, the flag leaves the store as it is.
  */
 export async function runStoreDownload(
-    options: { update?: boolean; runTransfer?: boolean; foreground?: boolean },
+    options: { update?: boolean; foreground?: boolean },
     deps: { transfer?: (params: { storeRoot: string; update: boolean }) => Promise<void> } = {},
 ): Promise<void> {
     const storeRoot = env.packageStoreDir;
-    if (options.runTransfer === true) {
-        await runCatalogTransfer({ storeRoot, update: options.update ?? false });
-        return;
-    }
     if (options.foreground === true) {
         // The foreground mode exists for a one-shot container: the pod lives as
         // long as this process, and the exit code is the one signal it reports.

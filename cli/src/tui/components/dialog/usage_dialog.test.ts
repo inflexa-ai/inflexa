@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { ok } from "neverthrow";
 
 import { readSessionUsage, usageBreakdown, type SessionUsageSnapshot } from "./usage_dialog.tsx";
-import type { LlmUsageTotals } from "../../../db/primary_query.ts";
+import type { UsageGrouping, UsageTotals, UsageView } from "../../../api/usage.ts";
+import type { ClientOpts } from "../../../client/api.ts";
 
 // The dialog's arithmetic, tested as pure functions. A character frame cannot carry these claims: it
 // shows that two numbers painted, not WHICH two, and "this figure is never the sum of those" is
@@ -148,20 +150,70 @@ describe("usageBreakdown", () => {
     });
 });
 
+/**
+ * A client whose server answers `GET {A}/usage` with `views[by]` for the grouping of each request, and
+ * records each requested URL. A request that has no view fails the test through a 500.
+ */
+function serverWith(views: Partial<Record<UsageGrouping, UsageView>>, seen: string[]): ClientOpts {
+    return {
+        discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
+        fetch: async (url) => {
+            seen.push(url);
+            const view = views[new URL(url).searchParams.get("by") as UsageGrouping];
+            return view === undefined
+                ? new Response(JSON.stringify({ error: "internal_error", message: "no view" }), { status: 500 })
+                : new Response(JSON.stringify(view), { headers: { "Content-Type": "application/json" } });
+        },
+    };
+}
+
 describe("readSessionUsage", () => {
-    test("an unbound thread answers the empty snapshot without touching the ledger", () => {
-        // No database is open in this process, so a read that reached SQLite would fail rather than
-        // return — which is exactly what makes this assertion about the short-circuit.
-        const snap = readSessionUsage("an-1", null)._unsafeUnwrap();
+    test("an unbound thread answers the empty snapshot without a request", async () => {
+        const seen: string[] = [];
+        const snap = (await readSessionUsage("an-1", null, serverWith({}, seen)))._unsafeUnwrap();
 
         expect(snap).toEqual({ totals: { calls: 0 }, byModel: [], byAgent: [] });
+        expect(seen).toEqual([]);
     });
 
-    test("the empty snapshot renders as no-usage rather than as a zeroed table", () => {
-        const snap: SessionUsageSnapshot = readSessionUsage("an-1", null)._unsafeUnwrap();
-        const totals: LlmUsageTotals = snap.totals;
+    test("the empty snapshot renders as no-usage rather than as a zeroed table", async () => {
+        const snap: SessionUsageSnapshot = (await readSessionUsage("an-1", null))._unsafeUnwrap();
+        const totals: UsageTotals = snap.totals;
 
         expect(totals.calls).toBe(0);
         expect(usageBreakdown(snap).lines).toEqual([]);
+    });
+
+    test("reads the conversation, runs included, once for each grouping, and keeps an absent quantity absent", async () => {
+        const totals: UsageTotals = { calls: 2, inputTokens: 820_300 };
+        const scope = { kind: "thread", threadId: "thr-1" } as const;
+        const seen: string[] = [];
+        const opts = serverWith(
+            {
+                model: { scope, totals, groups: [{ key: null, totals: { calls: 2, inputTokens: 820_300 } }] },
+                agent: { scope, totals, groups: [{ key: "step-executor", totals: { calls: 2, inputTokens: 820_300 } }] },
+            },
+            seen,
+        );
+
+        const snap = (await readSessionUsage("an-1", "thr-1", opts))._unsafeUnwrap();
+
+        expect(seen).toEqual([
+            "http://server.test/api/v1/analyses/an-1/usage?threadId=thr-1&by=model",
+            "http://server.test/api/v1/analyses/an-1/usage?threadId=thr-1&by=agent",
+        ]);
+        expect(snap).toEqual({
+            totals,
+            byModel: [{ servedModelId: null, totals: { calls: 2, inputTokens: 820_300 } }],
+            byAgent: [{ agentId: "step-executor", totals: { calls: 2, inputTokens: 820_300 } }],
+        });
+        expect(snap.totals.outputTokens).toBeUndefined();
+    });
+
+    test("a failed grouping read fails the whole snapshot", async () => {
+        const totals: UsageTotals = { calls: 1, inputTokens: 10 };
+        const opts = serverWith({ model: { scope: { kind: "thread", threadId: "thr-1" }, totals, groups: [] } }, []);
+
+        expect((await readSessionUsage("an-1", "thr-1", opts)).isErr()).toBe(true);
     });
 });

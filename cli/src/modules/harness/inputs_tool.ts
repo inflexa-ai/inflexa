@@ -23,7 +23,8 @@ import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { holdsInstanceLock } from "../../lib/lock.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { addInputs, findAnalysis, removeInput } from "../analysis/analysis.ts";
-import { expandAndResolve, matchInputRefs } from "../analysis/input.ts";
+import { expandAndResolve } from "../../lib/paths.ts";
+import { matchInputRefs } from "../analysis/input.ts";
 
 /** A current input as reported to the agent. */
 type InputEntry = { readonly path: string; readonly isDir: boolean; readonly anchored: boolean };

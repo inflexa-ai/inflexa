@@ -1,7 +1,8 @@
 /**
  * The sandbox images at the command surface: `inflexa sandbox pull`, `inflexa
  * sandbox status`, `inflexa sandbox remove`, and the pre-flight gate of the dev
- * commands.
+ * commands. The local server uses the same transfers and the same read for
+ * the TUI.
  *
  * NO foreground image pull exists anywhere. `sandbox pull` starts the two
  * detached image transfers — the runtime image and the provisioner image — and
@@ -22,7 +23,7 @@ import { ensureRuntime, readConfig, selectedRuntime, writeConfig } from "../../l
 import { capture, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { isPublishedSandboxImage, isRetiredSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
-import { inspectStoreContent } from "./store_download.ts";
+import { inspectStoreContent, type StoreContentState } from "./store_download.ts";
 import { readTransferReports, startImageTransfer, type TransferReport } from "./transfers.ts";
 
 /**
@@ -92,13 +93,6 @@ export async function retiredImagesOnEngine(rt: ContainerRuntime): Promise<{ rea
         return rows;
     } catch {
         return [];
-    }
-}
-
-/** Print one removal hint per retired image the engine holds. It removes nothing. */
-export async function printRetiredImageHints(rt: ContainerRuntime): Promise<void> {
-    for (const image of await retiredImagesOnEngine(rt)) {
-        console.log(`  The retired image ${image.ref} (${image.size}) stays on the engine. Run \`${rt.bin} rmi ${image.ref}\` to free the space.`);
     }
 }
 
@@ -203,6 +197,97 @@ export async function sandboxRemove(): Promise<void> {
     console.log("The package store is untouched. Run `inflexa sandbox pull` to download the images again.");
 }
 
+/** What `inflexa sandbox status` reports: the two images, the retired images on the engine, the transfers, and the store. */
+export type SandboxInspection = {
+    readonly images: readonly {
+        readonly label: "Runtime" | "Provisioner";
+        readonly image: string;
+        /** `null` when no container runtime answers. */
+        readonly present: boolean | null;
+        readonly digest: string | null;
+    }[];
+    /** The bin of the runtime that answered, for the removal hint of a retired image, or `null`. */
+    readonly runtimeBin: string | null;
+    readonly retiredImages: readonly { readonly ref: string; readonly size: string }[];
+    readonly transfers: readonly TransferReport[];
+    readonly storeRoot: string;
+    readonly storeContent: StoreContentState;
+};
+
+/**
+ * The read of `inflexa sandbox status`: the two images (the reference, the
+ * presence, the local digest of each), the retired images that the engine
+ * still holds, the live transfer states, and the store summary.
+ */
+export async function inspectSandbox(): Promise<SandboxInspection> {
+    const sandboxImage = configuredSandboxImage();
+    const provisionerImage = provisionerImageFor(sandboxImage);
+
+    // Status is a read-only diagnostic: use the selected runtime, or detect a ready
+    // one WITHOUT pinning it — a passive inspection must not write config (that is
+    // ensureRuntime's job, reserved for commands that create runtime-bound state).
+    const rt =
+        selectedRuntime() ??
+        (await firstReadyRuntime(runtimeIds.map((id) => runtimes[id]))).match(
+            (detected) => detected,
+            () => null,
+        );
+
+    const images: SandboxInspection["images"][number][] = [];
+    for (const [label, image] of [
+        ["Runtime", sandboxImage],
+        ["Provisioner", provisionerImage],
+    ] as const) {
+        if (rt === null) {
+            images.push({ label, image, present: null, digest: null });
+            continue;
+        }
+        const inspect = await capture(rt, ["image", "inspect", "--format", "{{.Id}}", image]).catch(() => ({ code: 1, stdout: "", stderr: "" }));
+        images.push({ label, image, present: inspect.code === 0, digest: inspect.code === 0 ? inspect.stdout.trim() : null });
+    }
+
+    // The removal hint of the retired baked images. Status is read-only, thus
+    // it hints and never removes — and it never migrates the config either.
+    const retiredImages = rt === null ? [] : await retiredImagesOnEngine(rt);
+
+    return {
+        images,
+        runtimeBin: rt?.bin ?? null,
+        retiredImages,
+        transfers: readTransferReports(),
+        storeRoot: env.packageStoreDir,
+        storeContent: await inspectStoreContent(env.packageStoreDir),
+    };
+}
+
+/** `inflexa sandbox status` — the two images, the retired images on the engine, the live transfer states, and the store summary. */
+export async function sandboxStatus(): Promise<void> {
+    const status = await inspectSandbox();
+    for (const image of status.images) {
+        console.log(`  ${image.label}  ${image.image}`);
+        if (image.present === null) {
+            console.log("    Present  unknown — no container runtime available (start Docker or Podman)");
+        } else if (image.present) {
+            console.log("    Present  yes");
+            console.log(`    Digest   ${image.digest ?? ""}`);
+        } else {
+            console.log("    Present  no — run `inflexa sandbox pull` to download it");
+        }
+    }
+    const bin = status.runtimeBin;
+    if (bin !== null) {
+        for (const image of status.retiredImages) {
+            console.log(`  The retired image ${image.ref} (${image.size}) stays on the engine. Run \`${bin} rmi ${image.ref}\` to free the space.`);
+        }
+    }
+    for (const report of status.transfers) {
+        const line = describeTransferLine(report);
+        if (line !== null) console.log(line);
+    }
+    console.log(`  Store    ${status.storeRoot}`);
+    console.log(`    State  ${status.storeContent}${status.storeContent === "missing" ? " — run `inflexa store download` to obtain the catalog" : ""}`);
+}
+
 /** One line of the transfer block of the status, or `null` for a kind with nothing to report. */
 function describeTransferLine(report: TransferReport): string | null {
     const label = report.kind === "runtime_image" ? "runtime image" : report.kind === "provisioner_image" ? "provisioner image" : "catalog";
@@ -247,54 +332,4 @@ function formatBytes(bytes: number): string {
         unit += 1;
     }
     return `${value.toFixed(1)} ${units[unit]}`;
-}
-
-/**
- * `inflexa sandbox status` — the two images (the reference, the presence, the
- * local digest of each), the live transfer states, and the store summary.
- */
-export async function sandboxStatus(): Promise<void> {
-    const sandboxImage = configuredSandboxImage();
-    const provisionerImage = provisionerImageFor(sandboxImage);
-
-    // Status is a read-only diagnostic: use the selected runtime, or detect a ready
-    // one WITHOUT pinning it — a passive inspection must not write config (that is
-    // ensureRuntime's job, reserved for commands that create runtime-bound state).
-    const rt =
-        selectedRuntime() ??
-        (await firstReadyRuntime(runtimeIds.map((id) => runtimes[id]))).match(
-            (detected) => detected,
-            () => null,
-        );
-
-    for (const [label, image] of [
-        ["Runtime", sandboxImage],
-        ["Provisioner", provisionerImage],
-    ] as const) {
-        console.log(`  ${label}  ${image}`);
-        if (rt === null) {
-            console.log("    Present  unknown — no container runtime available (start Docker or Podman)");
-            continue;
-        }
-        const inspect = await capture(rt, ["image", "inspect", "--format", "{{.Id}}", image]).catch(() => ({ code: 1, stdout: "", stderr: "" }));
-        if (inspect.code === 0) {
-            console.log("    Present  yes");
-            console.log(`    Digest   ${inspect.stdout.trim()}`);
-        } else {
-            console.log("    Present  no — run `inflexa sandbox pull` to download it");
-        }
-    }
-
-    // The removal hint of the retired baked images. Status is read-only, thus
-    // it hints and never removes — and it never migrates the config either.
-    if (rt !== null) await printRetiredImageHints(rt);
-
-    for (const report of readTransferReports()) {
-        const line = describeTransferLine(report);
-        if (line !== null) console.log(line);
-    }
-
-    const content = await inspectStoreContent(env.packageStoreDir);
-    console.log(`  Store    ${env.packageStoreDir}`);
-    console.log(`    State  ${content}${content === "missing" ? " — run `inflexa store download` to obtain the catalog" : ""}`);
 }

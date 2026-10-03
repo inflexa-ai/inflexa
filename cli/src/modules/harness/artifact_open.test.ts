@@ -3,89 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { echartHtml, materializeTarget, readFileReference, readPresentation } from "./artifact_open.ts";
+import { echartHtml, materializeTarget } from "./artifact_open.ts";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { writeMarker } from "../anchor/marker.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../analysis/output.ts";
 import type { OpenTarget } from "../../types/session.ts";
-
-describe("readPresentation", () => {
-    test("text-shaped markdown/code/table become inline bodies", () => {
-        expect(readPresentation({ type: "data-presentation", id: "p", title: "T", content: { kind: "markdown", body: "hi" } })).toEqual({
-            shape: "inline",
-            title: "T",
-            body: { kind: "markdown", body: "hi" },
-        });
-        expect(readPresentation({ type: "data-presentation", id: "p", content: { kind: "code", code: "x", language: "r" } })).toEqual({
-            shape: "inline",
-            title: undefined,
-            body: { kind: "code", code: "x", language: "r" },
-        });
-        expect(readPresentation({ type: "data-presentation", id: "p", content: { kind: "table", headers: ["a"], rows: [["1"]] } })).toEqual({
-            shape: "inline",
-            title: undefined,
-            body: { kind: "table", headers: ["a"], rows: [["1"]], caption: undefined },
-        });
-    });
-
-    test("echart becomes an openable entry carrying the deep-copied spec + pres id + dataPath", () => {
-        const spec = { series: [{ type: "scatter" }] };
-        const out = readPresentation({
-            type: "data-presentation",
-            id: "pres-chart",
-            title: "Volcano",
-            content: { kind: "echart", spec, dataPath: "runs/r/out.csv" },
-        });
-        expect(out.shape).toBe("card");
-        if (out.shape === "card" && out.entry.target.kind === "echart") {
-            expect(out.entry.target.presId).toBe("pres-chart");
-            expect(out.entry.target.dataPath).toBe("runs/r/out.csv");
-            // Deep copy: mutating the source spec does not reach the readout (copy-on-receive).
-            spec.series[0]!.type = "MUTATED";
-            expect(out.entry.target.spec).toEqual({ series: [{ type: "scatter" }] });
-        }
-    });
-
-    test("a structure card, which has no renderer here, degrades to an inline note (observed, not swallowed)", () => {
-        const out = readPresentation({
-            type: "data-presentation",
-            id: "p",
-            content: {
-                kind: "structure",
-                format: "pdb",
-                url: "https://alphafold.ebi.ac.uk/files/AF-P04637-F1-model_v4.pdb",
-                provider: "alphafold",
-                accession: "P04637",
-                version: 4,
-            },
-        });
-        expect(out.shape).toBe("inline");
-        if (out.shape === "inline" && out.body.kind === "markdown") expect(out.body.body).toContain("unsupported presentation: structure");
-    });
-});
-
-describe("readFileReference", () => {
-    test("each file becomes an openable entry; a multi-file gallery carries its containing folder", () => {
-        const out = readFileReference({
-            type: "data-file-reference",
-            id: "g",
-            title: "Figures",
-            files: [{ path: "runs/r/figures/a.png" }, { path: "runs/r/figures/b.png", caption: "heatmap" }],
-        });
-        expect(out.title).toBe("Figures");
-        expect(out.entries.map((e) => e.name)).toEqual(["a.png", "b.png"]);
-        expect(out.entries[1]?.caption).toBe("heatmap");
-        expect(out.folderPath).toBe("runs/r/figures");
-    });
-
-    test("a single-file reference carries no folder affordance", () => {
-        const out = readFileReference({ type: "data-file-reference", id: "g", files: [{ path: "runs/r/out.csv" }] });
-        expect(out.entries[0]?.name).toBe("out.csv");
-        expect(out.folderPath).toBeUndefined();
-    });
-});
 
 describe("echartHtml", () => {
     test("embeds the spec, an SRI-pinned exact-version CDN script, and a visible offline fallback notice", () => {

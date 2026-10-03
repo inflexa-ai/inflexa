@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 
-import { getAgentPolicy, isTransferPolicy } from "../cli/agent_policy.ts";
+import { getAgentPolicy, getCommandKind, isTransferPolicy } from "../cli/agent_policy.ts";
 import { buildProgram } from "../cli/index.ts";
 
 /**
@@ -22,6 +22,10 @@ export type PolicyRow = {
     readonly transfer: boolean;
     /** Every declared option's canonical attributeName on this command. */
     readonly declaredOptions: readonly string[];
+    /** The declared command kind, or `null` when unstamped — the second failure the exhaustiveness test hunts. */
+    readonly commandKind: "instance" | "machine" | "standalone" | null;
+    /** The options that make an `instance` command a `machine` command for one run, else `null`. */
+    readonly machineFlags: readonly string[] | null;
 };
 
 /**
@@ -41,6 +45,7 @@ function hasActionHandler(command: Command): boolean {
 function walk(command: Command, path: readonly string[], rows: PolicyRow[]): void {
     if (hasActionHandler(command)) {
         const policy = getAgentPolicy(command);
+        const kind = getCommandKind(command);
         rows.push({
             grantKey: path.join(" "),
             hasPolicy: policy !== undefined,
@@ -48,6 +53,8 @@ function walk(command: Command, path: readonly string[], rows: PolicyRow[]): voi
             safeFlags: policy?.kind === "auto" ? [...policy.safeFlags] : null,
             transfer: isTransferPolicy(policy),
             declaredOptions: command.options.map((option) => option.attributeName()),
+            commandKind: kind === undefined ? null : typeof kind === "string" ? kind : kind.kind,
+            machineFlags: kind !== undefined && typeof kind !== "string" ? [...kind.machineFlags] : null,
         });
     }
     for (const child of command.commands) walk(child, [...path, child.name()], rows);

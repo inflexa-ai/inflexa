@@ -5,85 +5,88 @@ import { join } from "node:path";
 import { okAsync } from "neverthrow";
 import { testRender } from "@opentui/solid";
 
-import { freshDb } from "../test_support/db.ts";
-import { str256 } from "../lib/types.ts";
-import { createAnalysis } from "../modules/analysis/analysis.ts";
+import type { RunDetail, RunSummary } from "../api/runs.ts";
+import { asStr256 } from "../lib/types.ts";
 import { App } from "./app.tsx";
 import { dialogClear } from "./components/dialog/dialog_host.tsx";
 import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts";
 import { __resetNoticesForTest, currentNotice } from "./hooks/notice.ts";
 import { __resetActivityPanelForTest, focusedSubject, activityPanelVisible, toggleActivityPanel } from "./hooks/activity_panel.ts";
 import { __resetRunCompletionsForTest } from "./hooks/run_completion.ts";
-import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshSeams } from "./hooks/sidebar_live.ts";
+import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from "./hooks/sidebar_live.ts";
 import { resetHotState } from "./hooks/conversation.ts";
-import { __resetThreadWriteLocksForTest } from "./hooks/thread_write.ts";
 import type { Analysis } from "../types/analysis.ts";
-import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
-import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 
 // Every piece of the run-observability work is unit-tested in isolation; what nothing covered is
 // `App`'s own COMPOSITION — that it mounts the panel between the stream and the input, that it calls
 // the two watchers under its reactive owner, and that the panel really contributes zero rows when
-// there is nothing to show. Those are exactly the seams a passing unit suite cannot vouch for, and
+// there is nothing to show. Those are exactly the joints a passing unit suite cannot vouch for, and
 // the panel's placement is load-bearing (it sits under a flexGrow scrollbox, where a row that does
 // not paint its own background lets scrolled content bleed through).
 //
 // This drives the REAL `App` against the REAL stores, seeding run state through `refreshSidebarData`
-// with fake ledger seams — the same door production uses.
-
-const fakeRuntime = { pool: {} } as unknown as HarnessRuntime;
+// with fake reads of the run endpoints — the same door production uses. No server runs: each read
+// that `App` makes on its own fails to find one, and degrades.
 
 let dir = "";
-let analysis: Analysis;
 
-function runRow(over: Partial<CortexRunRow> & { runId: string }): CortexRunRow {
+/** The open analysis: a plain row, because `App` reads its fields and the server keeps the rest. */
+const analysis: Analysis = {
+    id: "analysis-panel",
+    createdAt: 0,
+    updatedAt: 0,
+    name: asStr256("panel-test"),
+    slug: "panel-test",
+    anchorId: "anchor-panel",
+    projectId: null,
+};
+
+function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
-        analysisId: analysis.id,
         threadId: null,
         workflowName: "executeAnalysis",
+        workflowId: over.runId,
         status: "running",
         startedAt: "2026-07-28T10:00:00.000Z",
         completedAt: null,
         error: null,
-        synthesisStatus: null,
-        synthesisReason: null,
-        parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
-        planId: "plan-1",
+        planTitle: "Differential expression",
         ...over,
     };
 }
 
-function seamsFor(runs: CortexRunRow[]): RefreshSeams {
+function optsFor(runs: RunSummary[]): RefreshOpts {
     return {
-        runtime: () => fakeRuntime,
-        loadProfile: () => okAsync<DataProfileStatus | null, never>(null),
+        ready: () => true,
+        loadProfile: () => okAsync({ status: null }),
         loadRuns: () => okAsync(runs),
         loadActiveRuns: () => okAsync(runs.filter((r) => r.status === "running")),
-        loadSteps: (_pool, runId) =>
-            okAsync([
-                {
-                    runId,
-                    stepId: "T1S1",
-                    analysisId: analysis.id,
-                    wave: 0,
-                    agentId: "bioinformatician",
-                    status: "running",
-                    startedAt: null,
-                    completedAt: null,
-                    attempts: 1,
-                    blockedReason: null,
-                },
-            ] as StepExecutionRow[]),
-        loadPlan: () => okAsync<unknown | null, never>({ title: "Differential expression", steps: [{ id: "T1S1", name: "align reads" }] }),
+        loadRun: (_analysisId, runId) => {
+            const detail: RunDetail = {
+                ...runRow({ runId }),
+                steps: [
+                    {
+                        stepId: "T1S1",
+                        name: "align reads",
+                        agentId: "bioinformatician",
+                        status: "running",
+                        startedAt: null,
+                        completedAt: null,
+                        durationMs: null,
+                        error: null,
+                        attempts: 1,
+                        blockedReason: null,
+                    },
+                ],
+                unattributedUsage: null,
+            };
+            return okAsync(detail);
+        },
     };
 }
 
-beforeEach(async () => {
-    freshDb();
+beforeEach(() => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-app-panel-")));
-    analysis = (await createAnalysis({ cwd: dir, name: str256("panel-test")._unsafeUnwrap(), inputPaths: [] }))._unsafeUnwrap();
     // `ready` is what opens the input gate and stops the boot indicator claiming rows of its own.
     __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
     __setAgentModelsForTest({ current: { conversation: "m", sandbox: "m", utility: "m" }, efforts: null, pending: new Map() });
@@ -97,7 +100,6 @@ afterEach(() => {
     __resetActivityPanelForTest();
     __resetRunCompletionsForTest();
     __resetNoticesForTest();
-    __resetThreadWriteLocksForTest();
     __setBootStateForTest({ phase: "idle" });
 });
 
@@ -105,14 +107,14 @@ afterEach(() => {
  * Mount the real `App`, then hand back a `seed` + `frame` pair.
  *
  * Seeding must happen AFTER the mount, not before: `App` installs `watchSidebarData`, whose
- * ready-edge effect immediately refreshes with the PRODUCTION seams — and with no booted runtime
- * those reads clear every snapshot. Anything seeded beforehand is wiped by the app's own first
- * refresh, which is exactly the race that made the first draft of this file flaky.
+ * ready-edge effect immediately refreshes with the PRODUCTION reads — and with no server those reads
+ * degrade every snapshot. Anything seeded beforehand is wiped by the app's own first refresh, which
+ * is exactly the race that made the first draft of this file flaky.
  */
 async function mountApp(size = { width: 100, height: 26 }) {
-    // No sessionId prop: App binds its thread only at the boot-ready edge, and with no booted
-    // runtime that bind no-ops — the scope stays unbound and the transcript stays empty, which is
-    // the blank-chat baseline these frames assert against.
+    // No sessionId prop: App binds its thread only at the boot-ready edge, and with no server that
+    // bind fails — the scope stays unbound and the transcript stays empty, which is the blank-chat
+    // baseline these frames assert against.
     const setup = await testRender(() => <App workingDir={dir} analysis={analysis} />, size);
     const settle = async (): Promise<string> => {
         for (let i = 0; i < 3; i++) {
@@ -123,7 +125,7 @@ async function mountApp(size = { width: 100, height: 26 }) {
     };
     await settle();
     return {
-        seed: (runs: CortexRunRow[]) => refreshSidebarData(analysis.id, seamsFor(runs)),
+        seed: (runs: RunSummary[]) => refreshSidebarData(analysis.id, optsFor(runs)),
         frame: settle,
         destroy: () => setup.renderer.destroy(),
     };
@@ -211,6 +213,9 @@ describe("App composes the run-activity panel", () => {
             // Observed running, then terminal — the edge the watcher reacts to. Driven while App is
             // mounted, so the effect `watchRunCompletions` installed is the one that fires.
             await app.seed([runRow({ runId: "run-a" })]);
+            // With no server, the thread bind of the mount raises its own notice. Clear it, so the
+            // notice below can only be the announcement.
+            __resetNoticesForTest();
             expect(currentNotice()).toBeNull();
 
             await app.seed([runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:02:30.000Z" })]);

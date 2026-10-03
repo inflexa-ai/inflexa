@@ -3021,7 +3021,7 @@ export async function probeOnce(): Promise<ProbeAttempt> {
  * yet), pre-select the re-login account from the recorded provider slug, and restart the proxy after a
  * re-login. A spinner frames each probe so the launch shows why it is pausing for ~a second.
  */
-async function verifyCredentialAtLaunch(rt: ContainerRuntime): Promise<Result<void, ProxyError>> {
+async function verifyCredentialAtLaunch(rt: ContainerRuntime, opts: ProxyReadyOpts): Promise<Result<void, ProxyError>> {
     return ensureLiveCredential({
         probe: async () => {
             const s = clackSpinner();
@@ -3045,7 +3045,7 @@ async function verifyCredentialAtLaunch(rt: ContainerRuntime): Promise<Result<vo
         confirmRelogin: () => confirm("Sign in to the provider again now? Declining continues to the app — provider calls will fail until you sign in."),
         relogin: () => authenticate(rt, providerKindForSlug(resolveModelConnection().provider)),
         restartProxy: () => composeRestartProxy(rt),
-        isInteractive: () => Boolean(process.stdin.isTTY),
+        isInteractive: () => opts.interactiveLogin && Boolean(process.stdin.isTTY),
         // Printed, not logged: this lands in the normal-stdio launch phase right before the confirm
         // prompt takes the terminal, beside ensureProxyReady's own fresh-login notice.
         announce: (message) => console.log(`\n  ${message}`),
@@ -3139,6 +3139,19 @@ async function warnStalePinsAtLaunch(): Promise<void> {
 
 // --- shared entry used by the TUI ------------------------------------------
 
+/** How {@link ensureProxyReady} meets a provider login that is absent or dead. */
+export type ProxyReadyOpts = {
+    /**
+     * Ask for the login, or for a new login, in the terminal when stdin is a TTY. False refuses with the
+     * remedy instead: the server boot runs in the terminal of `inflexa serve`, and a prompt there would stop
+     * the boot until someone answers it.
+     */
+    readonly interactiveLogin: boolean;
+};
+
+/** The {@link ProxyReadyOpts} of a launch in the terminal of the user: the login prompts when stdin is a TTY. */
+export const DEFAULT_PROXY_READY_OPTS: ProxyReadyOpts = { interactiveLogin: true };
+
 /**
  * Make the chat backend's local prerequisites ready before the TUI takes the
  * terminal. The mode-INDEPENDENT phases always run — the container runtime, the
@@ -3151,7 +3164,10 @@ async function warnStalePinsAtLaunch(): Promise<void> {
  * {@link ProxyError} or {@link ContainerRuntimeError} on the error channel with
  * actionable guidance when it can't proceed.
  */
-export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Result<void, ProxyError | ContainerRuntimeError>> {
+export async function ensureProxyReady(
+    mode: "cliproxy" | "direct",
+    opts: ProxyReadyOpts = DEFAULT_PROXY_READY_OPTS,
+): Promise<Result<void, ProxyError | ContainerRuntimeError>> {
     const rtResult = await ensureRuntime();
     if (rtResult.isErr()) return err(rtResult.error);
     const rt = rtResult.value;
@@ -3173,8 +3189,8 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
         }
 
         if (!(await isAuthenticated())) {
-            if (!process.stdin.isTTY) {
-                return err(new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa setup` to sign in to a provider before starting the TUI."));
+            if (!opts.interactiveLogin || !process.stdin.isTTY) {
+                return err(new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa setup` to sign in to a provider, then try again."));
             }
             console.log("\n  CLIProxyAPI isn't authenticated yet — let's sign in.");
             try {
@@ -3244,7 +3260,7 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
                 return err(new ProxyError(`Could not restart the proxy to pick up the changed config or login: ${restarted.error.message}`));
             }
         }
-        const live = await verifyCredentialAtLaunch(rt);
+        const live = await verifyCredentialAtLaunch(rt, opts);
         if (live.isErr()) return err(live.error);
 
         // The probe validated only the AUTO default; the pins chat actually runs on are checked here,
@@ -3264,15 +3280,4 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
     }
 
     return ok(undefined);
-}
-
-/**
- * The exit-on-error variant of {@link ensureProxyReady} for the TUI launch path.
- */
-export async function ensureProxyReadyOrExit(mode: "cliproxy" | "direct"): Promise<void> {
-    const result = await ensureProxyReady(mode);
-    if (result.isErr()) {
-        console.error(`\n  ${result.error.message}\n`);
-        process.exit(1);
-    }
 }

@@ -73,7 +73,7 @@ package, ask first. The default is to build on what is already here.
 ### Agent command policy — ask, never guess
 
 Each command in the registry (`src/cli/index.ts`) declares an `AgentPolicy` at
-registration, through `registerAction(command, policy, handler)`. That policy
+registration, through `registerAction(command, kind, policy, handler)`. That policy
 decides if the `run_inflexa` tool of the conversation agent can run the command:
 
 - `auto` — prompt-free, with a `safeFlags` allowlist
@@ -430,10 +430,14 @@ layer directories.
     per-analysis farms, the acquisition flights, the catalog transfer, and the
     GHCR refs of the two images (`sandbox-base`, `sandbox-provisioner`) with the
     `sandbox` and `store` command actions
-  - `project/` — the project CRUD command actions (`project new`, `project ls`)
+  - `project/` — `projectForAnalysis`, the project of an analysis. The `project new` and
+    `project ls` commands are clients of the local server in
+    `src/client/commands/projects.ts`
   - `prov/` — the provenance recorder. It is a bus subscriber that builds, signs,
-    and stores the PROV document of each analysis. It gives `prov export` and
-    `prov verify`
+    and stores the PROV document of each analysis. It gives the export, the
+    verification, and the lineage walk that the provenance routes of the local
+    server call. The `prov export`, `prov lineage`, and `prov verify` commands are
+    clients of the server in `src/client/commands/prov.ts`
   - `staging/` — it puts the analysis input files under the `data/` root of the
     analysis workspace. It gives each file a content hash, and it writes the
     `StagedInput` manifest that the harness accepts.

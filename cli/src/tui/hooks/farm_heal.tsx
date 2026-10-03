@@ -1,20 +1,10 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { createEffect, on } from "solid-js";
-import type { Result } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 
-import { FARM_LOCK_FILE } from "@inflexa-ai/harness";
-
-import { env } from "../../lib/env.ts";
-import {
-    analysisFarmPath,
-    catalogFarmPath,
-    composeFullFarm,
-    describeFarmCompositionError,
-    type FarmComposition,
-    type FarmCompositionError,
-} from "../../modules/libs/composition.ts";
-import { startCatalogTransfer } from "../../modules/libs/store_download.ts";
+import type { FarmHealResult } from "../../api/runs.ts";
+import { describeClientError, type ClientError } from "../../client/api.ts";
+import { healFarm } from "../../client/runs.ts";
+import { createTransfer } from "../../client/store.ts";
 import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
@@ -37,14 +27,11 @@ import { refreshTransferState, transferReports } from "./sandbox_gate.tsx";
 
 /** The effects the heal triggers operate. Production passes {@link realFarmHealSeams}; a test injects stubs. */
 export type FarmHealSeams = {
-    /** The CLI-owned store root. Real: `env.packageStoreDir`. */
-    readonly storeRoot: () => string;
-    /** Whether the farm of the analysis exists, keyed on its lock file. */
-    readonly farmPresent: (storeRoot: string, analysisId: string) => boolean;
-    /** Whether the catalog farm exists, keyed on its lock file. */
-    readonly catalogPresent: (storeRoot: string) => boolean;
-    /** Compose the full farm from the catalog closure. Real: {@link composeFullFarm}. */
-    readonly heal: (storeRoot: string, analysisId: string) => Promise<Result<FarmComposition, FarmCompositionError>>;
+    /**
+     * Compose the farm of the analysis from the catalog closure when the farm is missing and the catalog
+     * is present. Real: `POST {A}/farm/heal`.
+     */
+    readonly heal: (analysisId: string) => ResultAsync<FarmHealResult, ClientError>;
     /** Whether a catalog transfer runs right now, from the last poll read. */
     readonly liveCatalogTransfer: () => boolean;
     /** Open the one-consent download prompt. The answer callback runs once. */
@@ -58,10 +45,7 @@ export type FarmHealSeams = {
 /** Build the production seams over one workspace, whose dialog stack hosts the prompt. */
 export function realFarmHealSeams(ws: Workspace): FarmHealSeams {
     return {
-        storeRoot: () => env.packageStoreDir,
-        farmPresent: (storeRoot, analysisId) => existsSync(join(analysisFarmPath(storeRoot, analysisId), FARM_LOCK_FILE)),
-        catalogPresent: (storeRoot) => existsSync(join(catalogFarmPath(storeRoot), FARM_LOCK_FILE)),
-        heal: (storeRoot, analysisId) => composeFullFarm({ storeRoot, analysisId }),
+        heal: (analysisId) => healFarm(analysisId),
         liveCatalogTransfer: () => transferReports().some((report) => report.kind === "catalog" && report.live),
         confirmDownload: (onAnswer) => {
             ws.openDialog(() => (
@@ -84,10 +68,21 @@ export function realFarmHealSeams(ws: Workspace): FarmHealSeams {
             ));
         },
         startDownload: async () => {
-            const outcome = await startCatalogTransfer({ storeRoot: env.packageStoreDir, update: false });
-            outcome.match(
-                () => refreshTransferState(),
-                (error) => notify({ kind: "error", text: `The package-store download could not start: ${error.type}. Run \`inflexa store download\`.` }),
+            const outcome = await createTransfer({ kind: "catalog", update: false });
+            const failure = outcome.match(
+                (response) => {
+                    const start = response.starts[0];
+                    return start?.outcome === "failed" ? start.message : null;
+                },
+                (error) => describeClientError(error),
+            );
+            if (failure !== null) {
+                notify({ kind: "error", text: `The package-store download could not start: ${failure} Run \`inflexa store download\`.` });
+                return;
+            }
+            (await refreshTransferState()).match(
+                () => undefined,
+                () => undefined,
             );
         },
         notify,
@@ -105,17 +100,27 @@ const prompted = new Set<string>();
 async function healOpenAnalysis(ws: Workspace, seams: FarmHealSeams): Promise<void> {
     const analysis = ws.analysis;
     if (analysis === null) return;
-    const storeRoot = seams.storeRoot();
-    if (seams.farmPresent(storeRoot, analysis.id)) return;
-    if (seams.catalogPresent(storeRoot)) {
-        const healed = await seams.heal(storeRoot, analysis.id);
-        healed.match(
-            (farm) =>
-                seams.notify({ kind: "info", text: `The package farm of this analysis was composed from the catalog (${farm.storeDirs.length} packages).` }),
-            (error) =>
-                seams.notify({ kind: "error", text: `The package farm of this analysis could not be composed: ${describeFarmCompositionError(error)}.` }),
-        );
+    const healed = await seams.heal(analysis.id);
+    if (healed.isErr()) {
+        seams.notify({ kind: "error", text: `The package farm of this analysis could not be checked: ${describeClientError(healed.error)}` });
         return;
+    }
+    const outcome = healed.value.outcome;
+    switch (outcome.kind) {
+        case "already_present":
+            return;
+        case "composed":
+            seams.notify({ kind: "info", text: `The package farm of this analysis was composed from the catalog (${outcome.packages} packages).` });
+            return;
+        case "failed":
+            seams.notify({ kind: "error", text: `The package farm of this analysis could not be composed: ${outcome.reason}.` });
+            return;
+        case "no_catalog":
+            break;
+        default: {
+            const unreachable: never = outcome;
+            throw new Error(`unhandled farm heal outcome: ${JSON.stringify(unreachable)}`);
+        }
     }
     // A live transfer already carries the landing: the poll edge heals then.
     if (seams.liveCatalogTransfer()) return;

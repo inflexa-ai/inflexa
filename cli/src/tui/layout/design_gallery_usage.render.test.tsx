@@ -3,7 +3,6 @@ import { testRender } from "@opentui/solid";
 import { rgbToHex } from "@opentui/core";
 import { ok, okAsync } from "neverthrow";
 import type { JSX } from "solid-js";
-import type { DbError as HarnessDbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../lib/design_system.ts";
 import { formatTokenFigure, formatTokenFigureLabelled, tokenFigureDetail } from "../../lib/usage_format.ts";
@@ -12,13 +11,12 @@ import { setTheme } from "../theme.ts";
 import { useKeymapRoot } from "../keymap.ts";
 import { DialogOverlay, DialogShowcase, dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
 import { RunDetailDialog } from "../components/dialog/run_detail_dialog.tsx";
-import { UsageDialog, type SessionUsageSnapshot } from "../components/dialog/usage_dialog.tsx";
+import { UsageDialog } from "../components/dialog/usage_dialog.tsx";
 import { RunBlock } from "../components/run_block.tsx";
 import { FixedList } from "../components/fixed_list.tsx";
 import { absTimeShort, idTail, shortRunName } from "../hooks/sidebar_live.ts";
 import { DesignGallery } from "./design_gallery.tsx";
-import { mockCortexRuns, mockLongRun, mockRun, mockRunUsage, mockUsageSnapshot } from "./design_gallery_fixtures.ts";
-import type { DbError as LocalDbError } from "../../db/errors.ts";
+import { mockCortexRuns, mockLongRun, mockRun, mockRunDetail, mockRunUsage, mockUsageSnapshot } from "./design_gallery_fixtures.ts";
 
 // The design gallery is where a token figure gets REVIEWED, so a figure that renders invisible there
 // is worse than one missing: the reviewer signs off on a state nobody could see. This file measures
@@ -107,11 +105,7 @@ function pickerItems(): { value: string; title: string; meta: string }[] {
 function usageDialogExhibit(): JSX.Element {
     return (
         <DialogShowcase>
-            <UsageDialog
-                analysisName="rna-seq-2026"
-                loadUsage={() => ok<SessionUsageSnapshot, LocalDbError>(mockUsageSnapshot)}
-                onClose={() => dialogClear()}
-            />
+            <UsageDialog analysisName="rna-seq-2026" loadUsage={() => ok(mockUsageSnapshot)} onClose={() => dialogClear()} />
         </DialogShowcase>
     );
 }
@@ -184,12 +178,7 @@ const CASES: FigureCase[] = [
         name: "RunDetailDialog — the usage property line",
         node: () => (
             <DialogShowcase>
-                <RunDetailDialog
-                    run={mockCortexRuns[0]!}
-                    loadSteps={() => okAsync<StepExecutionRow[], HarnessDbError>([])}
-                    usage={mockRunUsage.get(mockCortexRuns[0]!.runId)}
-                    onClose={() => dialogClear()}
-                />
+                <RunDetailDialog run={mockCortexRuns[0]!} loadDetail={() => okAsync(mockRunDetail)} onClose={() => dialogClear()} />
             </DialogShowcase>
         ),
         // The LONG form on this line, unlike every other case in this table: a `label value` property
