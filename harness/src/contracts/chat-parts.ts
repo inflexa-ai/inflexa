@@ -393,7 +393,10 @@ export interface RunFailedPart {
     runId: string;
     /** Scrubbed error message (no internal details). */
     error: string;
-    /** The suspend reason of the host, carried unread; present only when the run suspended. */
+    /**
+     * The suspend reason of the host, carried unread, when the run suspended.
+     * `canceled` when an external cancel ended the run. Absent for a failure.
+     */
     reason?: string;
 }
 

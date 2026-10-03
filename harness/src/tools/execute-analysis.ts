@@ -332,7 +332,7 @@ export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = n
  * would pay a file read on every ad hoc launch to learn nothing — while the
  * router, with no resolution, already keeps every entry that parses.
  */
-function adHocPackageResolver(deps: ExecuteAnalysisToolDeps): AdHocRouterDeps["resolvePackages"] {
+function adHocPackageResolver(deps: ExecuteAnalysisToolDeps, analysisId: string): AdHocRouterDeps["resolvePackages"] {
     if (!deps.farmLockFile && !deps.imagePackagesFile && !deps.readPoolInventory) return undefined;
     const inventory: ListAvailablePackagesDeps = {
         ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
@@ -340,7 +340,7 @@ function adHocPackageResolver(deps: ExecuteAnalysisToolDeps): AdHocRouterDeps["r
         ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
     };
     return async (names) => {
-        const read = await readInventorySections(inventory);
+        const read = await readInventorySections(inventory, analysisId);
         // An inventory that cannot answer must not drop a name: the router
         // keeps every parsed entry, and the link pass judges at launch.
         if (read.kind === "unavailable") return null;
@@ -356,7 +356,7 @@ async function persistedAdHocPlan(
     const existing = unwrapOrThrow(await loadPlan(deps.pool, args.planId, { analysisId: args.analysisId }));
     if (existing) return validateStoredPlan(existing, args.planId);
 
-    const resolvePackages = adHocPackageResolver(deps);
+    const resolvePackages = adHocPackageResolver(deps, args.analysisId);
     const route = await routeAdHocRequest(
         {
             provider: deps.utilityProvider,
