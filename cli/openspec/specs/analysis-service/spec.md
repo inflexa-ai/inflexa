@@ -2,7 +2,9 @@
 
 ## Purpose
 The analysis lifecycle — create (writable anchor + unique slug + inputs), rename (moves the workspace), add inputs, list, and resolve by id-or-name (with collision surfacing) — composed over the anchor, path-resolution, and DB layers as library-pure functions.
+
 ## Requirements
+
 ### Requirement: Create an analysis
 
 The system SHALL provide `createAnalysis(opts)` returning `Result<Analysis, WorkspaceError>` (the `DbError` union widened by the actionable `workspace_unavailable` variant) in `src/modules/analysis/analysis.ts` that: ensures `opts.cwd` is a tracked anchor; requires the anchor folder to be writable — a non-writable folder SHALL fail creation with an actionable error before any row is inserted (the workspace at `.inflexa/analyses/<slug>/` is where everything the analysis touches will live, so writability is a precondition of the analysis existing); generates a slug from `opts.name` (kebab-case, lowercased) or a generated handle, unique within the anchor; mints and inserts the `Analysis` with `id = randomUUIDv7()` (inline), `anchorId` = the anchor id, `projectId = opts.projectId ?? null`, `name` the validated `Str256`, and `createdAt`/`updatedAt` timestamps; and adds inputs from `opts.inputPaths` when provided and SHALL NOT enroll any input by default (an omitted/empty `opts.inputPaths` yields an analysis with zero inputs — inputs are user-driven, never the anchor/cwd). There SHALL be no output override (`opts.outputOverride` does not exist) and no persisted output path — the workspace root is always derived from anchor + slug. The `Analysis` SHALL carry no `goals`, `syncedAnalysisId`, or `archivedAt` field.
@@ -108,7 +110,7 @@ The new slug SHALL be computed with the renamed analysis excluded from the colli
 
 The outcome SHALL distinguish three cases rather than collapsing them: the tree moved; there was nothing to move (no tree yet, or an unchanged slug); or a tree may exist and could not be moved. The third case SHALL carry a `moveError` — including when the anchor could not be resolved, which is not the same as "there was no tree" and SHALL NOT be reported as success.
 
-Mid-run renames are NOT excluded by the per-analysis instance lock: that lock excludes other processes, while the analysis's chat turns, data profiles, and durable runs all execute inside the TUI process that offers the rename. The caller SHALL therefore establish that the workspace is quiescent before invoking the rename — no streaming chat turn, no queued or running data profile, and no non-terminal run row for the analysis — and SHALL refuse the rename when quiescence cannot be established (e.g. the run ledger is unreadable). This is the embedder's half of the harness's workspace-root-resolution contract, which requires a resource's root to be stable for the life of a run.
+Mid-run renames are NOT excluded by the per-analysis instance lock: that lock excludes other processes, while the analysis's chat turns, data profiles, and durable runs all execute inside the local server process that serves the rename, for each of its clients. The rename route of the local server SHALL therefore establish that the workspace is quiescent before it invokes the rename — no running chat turn, no queued or running data profile, and no run with a live workflow for the analysis — and SHALL refuse the rename with 409 `busy` and the reason when quiescence cannot be established (e.g. the run ledger is unreadable). A client SHALL read the same reasons before it opens a rename dialog, and the server checks again at the rename itself, because no dialog is modal across clients. This is the embedder's half of the harness's workspace-root-resolution contract, which requires a resource's root to be stable for the life of a run.
 
 #### Scenario: Rename moves the directory with the row
 
@@ -151,9 +153,15 @@ Mid-run renames are NOT excluded by the per-analysis instance lock: that lock ex
 
 #### Scenario: A rename is refused while the workspace is in use
 
-- **GIVEN** an analysis with a streaming chat turn, a running data profile, or a non-terminal run row
+- **GIVEN** an analysis with a running chat turn, a running data profile, or a run with a live workflow
 - **WHEN** the user invokes the rename command
 - **THEN** the command refuses with a reason and opens no dialog
+
+#### Scenario: A rename from a second client is refused while the first client's turn runs
+
+- **GIVEN** a chat turn of one client runs on the analysis
+- **WHEN** a second client of the same server sends the rename
+- **THEN** the server answers 409 `busy` with the chat turn as the reason, and nothing is renamed or moved
 
 ### Requirement: Deleting an analysis retires its workspace
 
@@ -196,4 +204,3 @@ The delete flow SHALL ask the user which mode to use, defaulting to keeping the 
 
 - **WHEN** an analysis that was never opened is deleted
 - **THEN** the disposal reports `absent` and the row is deleted
-

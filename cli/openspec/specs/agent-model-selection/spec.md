@@ -6,7 +6,9 @@ for the two user-facing agents (conversation, sandbox), per-agent resolution and
 construction, the Provider-category palette commands with dynamic model listing, and the
 live/scheduled application semantics gated on agent-work idleness. Created by archiving change
 select-seat-models.
+
 ## Requirements
+
 ### Requirement: Per-agent model configuration over the shared connection
 
 The `models` config block SHALL carry an `agents` map with three model roles —
@@ -51,11 +53,12 @@ consumer of a role's model identity SHALL receive that role's resolved value.
 
 The command palette SHALL offer `Switch chat model`, `Switch sandbox model`, and
 `Switch utility model` commands under the dedicated `Provider` palette category,
-enabled only when the harness runtime is booted. Each SHALL open a picker listing
-the shared connection's models dynamically — the proxy's `/models` in cliproxy
-mode; in direct mode, `{baseURL}/models` for BOTH protocols, derived from the
-SAME configured `baseURL` the chat path uses, never a re-derived variant —
-marking the selected role's current model.
+enabled only when the runtime of the local server is booted. Each SHALL open a
+picker listing the shared connection's models dynamically, which the local server
+reads (`GET /api/v1/models`) — the proxy's `/models` in cliproxy mode; in direct
+mode, `{baseURL}/models` for BOTH protocols, derived from the SAME configured
+`baseURL` the chat path uses, never a re-derived variant — marking the selected
+role's current model (`GET /api/v1/agents`).
 
 When listing fails, the picker SHALL degrade to free-text model entry, pre-filled
 with the role's current model, rather than blocking the switch. The picker SHALL
@@ -73,9 +76,12 @@ For Anthropic protocol, a committed listed or free-text selection SHALL be
 accessibility-validated with the bounded unbilled `count_tokens` check. A
 definite `not_found_error` SHALL keep the dialog open and persist nothing; a 200
 or inconclusive timeout/network/other-status outcome SHALL commit. OpenAI-
-compatible connections SHALL commit without that validation request. Commit
-SHALL write `models.agents.<role>` immediately, independent of when the runtime
-can apply it.
+compatible connections SHALL commit without that validation request. The picker
+SHALL commit through `PUT /api/v1/agents/:role`: the server runs the validation,
+refuses a definite `not_found_error` with 400 `validation_error`, and otherwise
+writes the model and the effort of `models.agents.<role>` in ONE config write,
+immediately, independent of when the runtime can apply it. One write means that
+a failure can never leave the model changed and the effort not.
 
 #### Scenario: Picker lists live models and marks the current one
 
@@ -157,10 +163,14 @@ state SHALL defer.
 
 ### Requirement: The TUI surfaces the connection and the active and pending agent models
 
-The TUI SHALL render from runtime boot/status state the shared connection
-identity and the active model for conversation, sandbox, and utility. It SHALL
-surface any pending role selection until it applies. Boot/status state SHALL
-carry three-role resolved models, pending selections, and connection identity.
+The TUI SHALL render the shared connection identity, and the active model for
+conversation, sandbox, and utility, from the local server: the connection from
+the boot state (`GET /api/v1/server`, at the ready edge), and the role models
+with each pending selection from the agent list (`GET /api/v1/agents`). The
+server has no notification stream, thus the TUI SHALL read the agent list again
+on its read edges: the ready edge of the boot, the edge where its chat stops
+being busy, and after its own save. It SHALL surface any pending role selection
+until a read shows that it applied.
 
 #### Scenario: Status shows the connection and all role models
 
@@ -170,5 +180,4 @@ carry three-role resolved models, pending selections, and connection identity.
 #### Scenario: Pending switch is visible, not silent
 
 - **WHEN** a utility switch is scheduled behind in-flight work
-- **THEN** the TUI shows utility's pending selection and clears it once applied
-
+- **THEN** the TUI shows utility's pending selection, and clears it at the first read edge after the switch applied

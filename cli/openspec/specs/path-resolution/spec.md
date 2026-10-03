@@ -2,7 +2,9 @@
 
 ## Purpose
 Classification and resolution of analysis input path references (anchor-relative when under a tracked anchor, absolute otherwise) and resolution/creation of the per-analysis workspace root — always beside the data at `<anchor>/.inflexa/analyses/<slug>/`; an unresolvable or non-writable anchor is an actionable error, never a fallback.
+
 ## Requirements
+
 ### Requirement: Classify an input path into a reference
 
 The system SHALL provide `classifyInputPath(analysisId, rawPath, cwd)` returning `Result<AnalysisInput, DbError>` in `src/modules/analysis/input.ts`. It SHALL expand a leading `~`, resolve relative paths against `cwd`, determine `isDir` via a filesystem stat, and use `findMarkerUpwards` on the resolved absolute path to decide membership: when a marker is found and the input is genuinely inside the marker directory, store `(anchorId = marker id, path = clean relative path)`; otherwise store `(anchorId = null, path = absolute)`.
@@ -100,9 +102,9 @@ The system SHALL provide `ensureOutputDir(analysis)` returning `Result<string, W
 
 ### Requirement: Resolve a workspace root by analysis id, memoized
 
-The system SHALL provide `workspaceRootForAnalysisId(analysisId)` returning `Result<string, WorkspaceError>` in `src/modules/analysis/output.ts` — the id-only lookup the harness's `resolveWorkspaceRoot` realization and the TUI's card resolver need. An id with no analysis row SHALL be `workspace_unavailable` (an analysis that does not exist has no workspace), never a `DbError`.
+The system SHALL provide `workspaceRootForAnalysisId(analysisId)` returning `Result<string, WorkspaceError>` in `src/modules/analysis/output.ts` — the id-only lookup the harness's `resolveWorkspaceRoot` realization and the artifact resolution of the local server need. An id with no analysis row SHALL be `workspace_unavailable` (an analysis that does not exist has no workspace), never a `DbError`.
 
-The harness calls this once per `read_file`, `grep`, and `stat` the agent issues, and each derivation costs an analysis lookup, an anchor lookup, a marker read, and an `access(2)`. Successful resolutions SHALL therefore be memoized. The memo SHALL be process-local and start empty, so a DBOS-recovered workflow on a fresh process still derives from durable state. Failures SHALL NOT be memoized: the user may be fixing the folder between calls. The memo SHALL be invalidated for an analysis by any in-process action that moves or retires its root (rename, disposal), and SHALL additionally expire on a short TTL so an out-of-process anchor move cannot pin a stale root for the session's lifetime.
+The harness calls this once per `read_file`, `grep`, and `stat` the agent issues, and each derivation costs an analysis lookup, an anchor lookup, a marker read, and an `access(2)`. Successful resolutions SHALL therefore be memoized. The memo SHALL be process-local and start empty, so a DBOS-recovered workflow on a fresh process still derives from durable state. The process is the local server: the routes that rename or retire a workspace run in the same process as the harness, thus their invalidation reaches the memo that the harness reads. Failures SHALL NOT be memoized: the user may be fixing the folder between calls. The memo SHALL be invalidated for an analysis by any in-process action that moves or retires its root (rename, disposal), and SHALL additionally expire on a short TTL so an out-of-process anchor move cannot pin a stale root for the session's lifetime.
 
 The system SHALL expose `invalidateWorkspaceRoot(analysisId?)` — clearing one entry, or the whole memo when the id is omitted.
 
@@ -133,3 +135,21 @@ The system SHALL provide `archivedOutputSubdir(slug)` in `src/modules/analysis/o
 - **WHEN** `archivedOutputSubdir("trial")` is called
 - **THEN** it returns `.inflexa/analyses_archived/trial`, which is not under `.inflexa/analyses/`
 
+### Requirement: A client resolves a path of the user against its own folder
+
+A client of the local server SHALL expand a leading `~` of each path that the user gives, and resolve a relative path against the working folder of the client process, before it sends the path. The local server SHALL accept only an absolute path in a request body where a path of the user goes (an analysis folder, an input to add, an anchor path, an export destination), and SHALL refuse a relative one with 400 `validation_error`. The one exception is an input removal: a relative path there SHALL match only the stored anchor-relative `path` of an input, so an input whose folder is gone stays removable. The server never resolves a path against its own working folder, because that folder is not the folder of the user.
+
+#### Scenario: A relative input resolves in the folder of the command
+
+- **WHEN** `inflexa inputs add data/counts.csv` runs in `/work/study`
+- **THEN** the command sends `/work/study/data/counts.csv` to the server
+
+#### Scenario: A home-relative path expands in the client
+
+- **WHEN** `inflexa repair ~/study` runs
+- **THEN** the command sends the absolute path of `study` under the home folder of the user
+
+#### Scenario: The server refuses a relative path
+
+- **WHEN** a request to add an input (`POST {A}/inputs`) carries the path `data/counts.csv`
+- **THEN** the server answers 400 `validation_error` and changes nothing

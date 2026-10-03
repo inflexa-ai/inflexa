@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The `inflexa chat <analysis>` command — a dev/E2E surface that converses with the harness conversation agent, scoped to a resolved analysis. It is a clack/stdout REPL, not a TUI, and it exercises the whole embedded conversational loop headlessly.
+The `inflexa chat <analysis>` command — a dev/E2E surface that converses with the harness conversation agent, scoped to a resolved analysis. It is a clack/stdout REPL, not a TUI, and it exercises the whole conversational loop of the local server headlessly, as a client of its chat route.
 
 The product conversation surface is the TUI chat (capability `tui-harness-chat`). This REPL is registered only in the dev channel (refer to `dev-commands`), and a release build does not carry it.
 
-Both surfaces drive the same shared turn engine (`src/modules/harness/turn.ts`). Both narrate one event stream through the shared readers in `src/modules/harness/chat_printer.ts`.
+Both surfaces send each turn to the chat route of the local server, which drives the shared turn engine (`src/modules/harness/turn.ts`). Both narrate one event stream through the shared readers in `src/modules/harness/chat_printer.ts`.
 
 Lives in `src/modules/harness/dev/chat.ts`, which holds the REPL and the stdout printer that it builds.
 
@@ -18,9 +18,9 @@ The system MUST give a dedicated `inflexa chat <analysis>` command that converse
 
 The command module MUST carry a `TODO(extend)` comment block that states its standing role. That block names the TUI chat (capability `tui-harness-chat`) as the product conversation surface. It also states that this REPL exists to exercise the harness loop headlessly, and that the channel gate keeps it out of a production build.
 
-A passive flow MUST NOT boot the runtime or start a chat. There are three deliberate boot actions: this command, the `profile` and `run` commands of the dev channel, and an analysis chat that the TUI opens.
+The command MUST be a client of the local server. It boots no runtime and takes no lock in its own process. Before its action, it connects to the local server, and it starts one in the background when none answers (refer to `local-server`). The prerequisites of the runtime are the boot of the server, thus the command runs no pre-flight gate of its own.
 
-Before it boots, the command MUST run the same pre-flight prerequisite gates as the run and profile launches. It MUST acquire the per-analysis instance lock after the resolution and before the boot.
+A turn that the server refuses MUST NOT start. Examples are a runtime that is not ready, an analysis that a different process holds, and a thread that is gone. The REPL MUST print the refusal of the server to stderr, and then show the prompt again.
 
 #### Scenario: The dev surface is marked in code
 
@@ -34,31 +34,34 @@ Before it boots, the command MUST run the same pre-flight prerequisite gates as 
 
 #### Scenario: Failed prerequisite is reported before side effects
 
-- **WHEN** a pre-flight gate fails (the sandbox image, the embedding endpoint, the skills directory, the proxy key, the model, or Postgres)
-- **THEN** the command exits with that gate's actionable message and the runtime was never booted
+- **WHEN** a prerequisite of the runtime fails (the sandbox image, the embedding endpoint, the skills directory, the proxy key, the model, or Postgres)
+- **THEN** the boot of the server fails, the REPL prints the `unavailable` refusal of the server to stderr, and no turn starts
+
+#### Scenario: A turn before the runtime is ready is refused
+
+- **WHEN** the user sends a message while the runtime of the server is still starting
+- **THEN** the REPL prints the `unavailable` refusal of the server to stderr, no turn starts, and the prompt shows again
 
 #### Scenario: Locked analysis is refused before boot
 
 - **WHEN** the analysis is already held by another live inflexa process
-- **THEN** the command prints the conflict to stderr and exits non-zero without booting the runtime
+- **THEN** the REPL prints the `locked` refusal of the server to stderr, and no turn starts
 
 ### Requirement: The turn loop runs through the harness app-fn seam
 
-Each turn MUST be exactly the transport-free sequence of the harness:
+Each REPL turn MUST be one turn of the chat route of the local server (`POST {A}/chat`), the same route that the TUI chat sends to. The REPL MUST NOT run a turn in its own process, and it MUST NOT carry its own copy of the turn body.
 
-1. `prepareChatTurn` — the ownership gate, the title seed, the analysis-status load, and the message assembly.
-2. `runAgent` — with the agent that the harness resolves for the thread's type. It also takes the
-   provider of the booted runtime, a turn-scoped abort signal, the emit sink of the surface, and
-   the pass-through run step.
-3. `appendTurn` — which persists `[userMessage, ...loopOutput]` to the pg thread store.
+The server runs each turn through ONE shared turn-engine module, which runs the chat turn of the harness:
 
-The engine MUST resolve the agent between the prepare step and the run step. It resolves `agents.forThread(threadType)` over the type that the prepare ok result reports. It MUST NOT take a pre-selected agent from a caller.
+1. The harness opens the turn: the ownership gate, the title seed, the analysis-status load, and the message assembly.
+2. The harness runs the agent that it resolves for the thread's type. The run takes the provider of the booted runtime, a turn-scoped abort signal, and the frame sink of the turn.
+3. The harness stores the opening, each round when it completes, and the outcome in the pg thread store.
 
-A type that the harness refuses (`unregistered_thread_type`) MUST end the turn as its own terminal outcome, distinct from a prepare failure. The engine never calls `runAgent` and it persists nothing. This obeys the persistence contract, which appends only on a path that reaches `runAgent`.
+The engine MUST NOT take a pre-selected agent from a caller.
 
-This sequence MUST live in ONE shared turn-engine module that both this REPL and the TUI chat consume. The REPL MUST NOT carry its own copy of the turn body.
+A type that the harness refuses (`unregistered_thread_type`) MUST end before the turn opens. The agent never runs, and nothing is stored. The server refuses the request with a message that names the thread type.
 
-The agent session MUST carry the thread id in its scope, so a plan that runs from chat stamps `cortex_runs.thread_id`. The cli MUST NOT import the DBOS SDK anywhere in the chat path. It MUST NOT issue raw SQL against a harness-owned table there either.
+The agent session MUST carry the thread id in its scope, so a plan that runs from chat stamps `cortex_runs.thread_id`. The cli MUST NOT import the DBOS SDK anywhere in the chat turn path. It MUST NOT issue raw SQL against a harness-owned table there either.
 
 #### Scenario: A turn round-trips the thread machinery
 
@@ -74,18 +77,18 @@ The agent session MUST carry the thread id in its scope, so a plan that runs fro
 #### Scenario: One turn engine serves both surfaces
 
 - **WHEN** the REPL and the TUI each run a turn
-- **THEN** both drive the same exported turn-engine function, and neither carries a private prepare-run-append sequence
+- **THEN** both send `POST {A}/chat` to the local server, and neither runs a private turn sequence
 
 #### Scenario: A conversation thread resolves the conversation agent
 
 - **WHEN** a turn runs on a thread whose type is `conversation`
-- **THEN** the engine hands `runAgent` the agent `agents.forThread("conversation")` resolves, and the turn proceeds as before
+- **THEN** the engine runs the agent that the harness resolves for `conversation`, and the turn proceeds as before
 
 #### Scenario: An unregistered thread type refuses the turn before the loop
 
 - **WHEN** a turn runs on a thread whose type has no registered agent in this build
-- **THEN** the engine returns the unresolved-agent outcome naming the thread type
-- **AND** `runAgent` is never called, nothing is appended to the thread, and the REPL prints the refusal to stderr
+- **THEN** the server refuses the turn with a message that names the thread type
+- **AND** the agent never runs, nothing is appended to the thread, and the REPL prints the refusal to stderr
 
 ### Requirement: Thread selection is new-by-default with explicit resume
 
@@ -110,7 +113,7 @@ The command MUST refuse a thread that does not exist, and a thread that belongs 
 
 ### Requirement: The printer renders the emit stream coarsely and safely
 
-The emit sink of the command MUST render these to stdout:
+The frame sink of the command MUST render these frames of the turn stream to stdout:
 
 - Accumulated `text-delta` content as it arrives, with no paced or typewriter reveal.
 - A one-line tool chip on `tool-started`, closed on `tool-finished`. The chip carries the tool name, the call detail of the harness when the tool gives one, and the outcome.
@@ -121,11 +124,11 @@ The outcome of a chip MUST separate the three harness states: done, error, and d
 
 A text-shaped `data-presentation` part (`markdown`, `code`, `table`) MUST print inline as text. Markdown prints as its source, code prints fenced, and a table prints as aligned text.
 
-A pixel-shaped part MUST print one line for each entry. These parts are an `echart` or `svg` presentation (materialized through the shared cache), and a `data-file-reference` entry. The line carries a kind tag, a title, and the resolved path inside an OSC 8 `file://` hyperlink. The plain path stays visible, for a terminal with no hyperlink support.
+A pixel-shaped part MUST print one line for each entry. These parts are an `echart` or `svg` presentation, and a `data-file-reference` entry. The REPL MUST get the path of each entry of a card from the local server in one request (`POST {A}/artifacts/resolve` with `materialize`), and the server writes each `echart` or `svg` file first. The REPL MUST NOT write an artifact file in its own process. The line carries a kind tag, a title, and the resolved path inside an OSC 8 `file://` hyperlink. The plain path stays visible, for a terminal with no hyperlink support.
 
-A sub-agent event is one whose call path is deeper than the top-level agent. The sink MUST NOT print such an event at the transcript root. If a tool call is open, the sink MUST print the activity label of the event as a subordinate line under that tool call. If no tool call is open, the sink MUST drop the event. Any other conversation-emitted part MUST print a one-line tagged fallback, so the sink observes it rather than swallows it.
+A sub-agent frame is one whose call path is deeper than the top-level agent. The sink MUST NOT print such a frame at the transcript root. If a tool call is open, the sink MUST print the activity label of the frame as a subordinate line under that tool call. If no tool call is open, the sink MUST drop the frame. Any other conversation part MUST print a one-line tagged fallback, so the sink observes it rather than swallows it.
 
-The sink MUST extract what it renders at receipt. It MUST NOT retain a received event or part object, because an in-process emit shares mutable references with the agent loop.
+The sink MUST extract what it renders at receipt, and it MUST NOT retain a received frame or part object. Each frame is a fresh object that the client parsed from the stream, and the sink prints it at receipt. Thus nothing that happens to a frame later changes what the sink wrote.
 
 Diagnostics go to stderr. Only the conversation goes to stdout.
 
@@ -163,7 +166,7 @@ Diagnostics go to stderr. Only the conversation goes to stdout.
 
 #### Scenario: Sub-agent traffic stays out of the transcript
 
-- **WHEN** an inner agent (planner, literature reviewer) emits events during a turn
+- **WHEN** an inner agent (planner, literature reviewer) emits frames during a turn
 - **THEN** no delta and no tool chip of that agent prints at the transcript root
 - **AND** an activity label of that agent prints as a subordinate line under the open tool call
 - **AND** nothing prints for that agent when no tool call is open
@@ -186,21 +189,26 @@ The command MUST NOT auto-approve, auto-execute, or inject a synthetic approval 
 
 ### Requirement: Interrupt aborts the turn, not the process
 
-During a streaming turn, an interrupt (Ctrl+C) MUST abort the in-flight turn through its abort signal, and return to the prompt.
+During a streaming turn, an interrupt (Ctrl+C) MUST send the abort of the turn to the local server (`POST {T}/turns/:turnId/abort`). An interrupt that comes before the server names the turn MUST send the abort when the id arrives. The REPL MUST read the stream to its end, then print the outcome and return to the prompt.
 
-Under the abort contract of the harness, the aborted run RESOLVES with its partial transcript. The engine MUST persist `[userMessage, …partialLoopOutput]`. Thus the tokens already streamed to the terminal enter the thread, and the final assistant message carries the interruption marker of the harness. An abort before any output persists the user's message alone.
+Under the abort contract of the harness, the aborted run RESOLVES with its partial transcript. The harness keeps the opening, each completed round, and the streamed partial. Thus the tokens already streamed to the terminal enter the thread, and the final assistant message carries the interruption marker of the harness. An abort before any output keeps the user's message alone.
 
-At the idle prompt, an interrupt or an EOF MUST exit the REPL cleanly. The command releases each held lock and shuts the runtime down through the existing graceful-shutdown path.
+At the idle prompt, an interrupt or an EOF MUST exit the REPL cleanly through the existing graceful-shutdown path. The REPL holds no runtime and no lock, thus the local server keeps running.
 
-A second interrupt, while an abort is already in flight, can force the process to exit.
+A second interrupt, while an abort is already in flight, MUST end the REPL after the turn unwinds, with the exit code 130.
 
 #### Scenario: Mid-turn interrupt returns to the prompt
 
 - **WHEN** the user presses Ctrl+C while the agent is mid-turn
-- **THEN** the turn's signal aborts, and the user's message and the streamed partial are persisted to the thread
+- **THEN** the server stops the turn, and the user's message and the streamed partial are persisted to the thread
 - **AND** the REPL shows the next prompt in the same process
 
 #### Scenario: At-prompt interrupt exits cleanly
 
 - **WHEN** the user presses Ctrl+C (or EOF) at the idle prompt
-- **THEN** the REPL releases held locks and exits through the graceful-shutdown path
+- **THEN** the REPL exits through the graceful-shutdown path, and the local server keeps running
+
+#### Scenario: A second interrupt ends the REPL after the turn
+
+- **WHEN** the user presses Ctrl+C a second time while the abort of the turn is in flight
+- **THEN** the REPL exits with the code 130 after the turn unwinds
