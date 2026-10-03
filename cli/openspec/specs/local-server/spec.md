@@ -60,7 +60,7 @@ A client MUST read the file again at each request. Thus a client that outlives a
 
 ### Requirement: Each API request carries the bearer token
 
-At its start, the server MUST make a random 256-bit token, and it MUST write the token only to the discovery file. Each request to a path under `/api/` MUST send `Authorization: Bearer <token>`. A missing or different token MUST get 401 `unauthorized`. The server MUST compare the token in constant time. The token proves that the caller is a process of the OS user that can read the file.
+At its start, the server MUST make a random 256-bit token, and it MUST write the token only to the discovery file. Each request to a path under `/api/` MUST send `Authorization: Bearer <token>`. A missing or different token MUST get 401 `unauthorized`. The server MUST compare the token in constant time. The token proves that the caller is a process of the OS user that can read the file. One server serves one OS user, thus each client acts as that user: the ask grants MUST use the one user id `local`, and each client can answer each pending ask.
 
 #### Scenario: A request with no token
 
@@ -268,7 +268,7 @@ The `store` commands run in their own process, with no server. Thus the server M
 
 A route that does the same work as a Cortex route MUST keep the path tail of Cortex without the organization segment. Path segments MUST be kebab-case, a run list MUST be `runs`, and one run MUST be `run/:runId`. JSON fields MUST be camelCase, and timestamps MUST be ISO 8601 strings. The server MUST map each harness row to its wire type, and a client MUST never get a harness row type.
 
-A route that can work for longer than 10 s before its response MUST lift the idle timeout of the connection for that request.
+A route that can work for longer than 10 s before its response, and that a client calls with no request body, MUST lift the idle timeout of the connection for that request. `Bun.serve` closes a silent connection at 10 s only when its request has no body.
 
 #### Scenario: A thread route keeps the Cortex tail
 
