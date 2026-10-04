@@ -1,7 +1,7 @@
 # sqlite-connection Specification
 
 ## Purpose
-TBD - created by archiving change raw-sqlite-db-layer. Update Purpose after archive.
+The connection of the CLI to its SQLite database. The `db()` function opens the connection at the first call, applies the production PRAGMAs, runs the pending migrations, and keeps the connection for the process. A failure comes back as a `DbError` on the `Result` channel.
 ## Requirements
 ### Requirement: Lazy singleton database connection
 The system SHALL open a SQLite database connection lazily on first access and reuse the same connection for all subsequent calls within the process. The `db()` function SHALL return `Result<Database, DbError>` instead of `Database`. On successful initialization, the `Database` instance SHALL be cached so subsequent calls return `ok(cachedDb)` without re-initialization. On failure, the error SHALL NOT be cached — subsequent calls SHALL retry initialization.
@@ -23,15 +23,15 @@ The system SHALL open a SQLite database connection lazily on first access and re
 - **THEN** the system retries initialization and returns `ok(database)` on success
 
 ### Requirement: Database path configuration
-The system SHALL use `~/.local/share/inflexa/agent.db` as the default database path, overridable via the `INFLEXA_DB_PATH` environment variable. The system SHALL create parent directories if they do not exist.
+The system MUST use `inflexa/agent.db` under the data directory as the database path. `src/lib/env.ts` reads the data directory from `XDG_DATA_HOME`, or from `LOCALAPPDATA` on Windows. When that variable is not set, the data directory is `~/.local/share`, or `~/AppData/Local` on Windows. No variable overrides the database path alone. The system MUST make the parent directory if it does not exist.
 
 #### Scenario: Default path
-- **WHEN** `INFLEXA_DB_PATH` is not set
-- **THEN** the database is created at `~/.local/share/inflexa/agent.db`
+- **WHEN** `XDG_DATA_HOME` is not set on Linux or macOS
+- **THEN** the system opens the database at `~/.local/share/inflexa/agent.db`
 
-#### Scenario: Custom path via environment variable
-- **WHEN** `INFLEXA_DB_PATH` is set to `/tmp/test.db`
-- **THEN** the database is created at `/tmp/test.db`
+#### Scenario: Data directory from the environment
+- **WHEN** `XDG_DATA_HOME` is set to `/tmp/data`
+- **THEN** the system opens the database at `/tmp/data/inflexa/agent.db`
 
 #### Scenario: Parent directory creation
 - **WHEN** the database path's parent directory does not exist

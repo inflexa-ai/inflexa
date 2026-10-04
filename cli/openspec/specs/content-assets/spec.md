@@ -1,7 +1,7 @@
 # content-assets Specification
 
 ## Purpose
-TBD - created by archiving change add-bundled-content-assets. Update Purpose after archive.
+How a release binary carries the `skills/` tree and the report page assets. The build embeds them as one archive and records a hash of the content in the binary. The first run of a new binary extracts the archive into a directory that the hash names, and a development build reads the repository trees.
 ## Requirements
 ### Requirement: Release binaries embed the skills and the report page assets
 

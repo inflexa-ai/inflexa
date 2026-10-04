@@ -1,7 +1,7 @@
 # llm-usage-accounting Specification
 
 ## Purpose
-TBD - created by archiving change token-usage-tracking. Update Purpose after archive.
+How the harness records the LLM token usage of each call. Each call gives an attributed `LlmUsageRecord` with a deterministic key to the `UsageRecorder` of the host, and the default recorder does nothing. The chat finish event and the run-event stream also carry the usage rollups of a turn, of a step, and of a run.
 ## Requirements
 ### Requirement: Every LLM call produces an attributed usage record
 
@@ -94,7 +94,7 @@ recorder that blocks MUST NOT make a run slower.
 
 ### Requirement: Usage records are replay-safe via deterministic record keys
 
-When the session carries a `RunFrame`, a record's `recordKey` SHALL compose, in order: the `runId`; the frame's `stepId` when present; the session's provenance call path; the tool-call `invocationId` when the loop runs nested inside a tool dispatch; and the loop's deterministic step name — every component replay-stable, so every replay of the same call yields the identical key and no two distinct calls under one run share one. Step names alone are NOT unique across the loops that share a frame (each loop invocation restarts its names), which is why the call-path and invocation-id components are required, not decorative. Outside a `RunFrame` (the HTTP chat path, where no replay exists) the key SHALL be a freshly minted unique id. Consumers MUST upsert on `recordKey`: the harness guarantees key stability across replays, not at-most-once delivery.
+When the session carries a `RunFrame`, a record's `recordKey` SHALL compose, in order: the `runId`; the frame's `stepId` when present; the session's provenance call path; the tool-call `invocationId` when the loop runs nested inside a tool dispatch, or the workflow id of the attempt for the data-profile loop, whose frame is the same constant for every profile; and the loop's deterministic step name — every component replay-stable, so every replay of the same call yields the identical key and no two distinct calls under one run share one. Step names alone are NOT unique across the loops that share a frame (each loop invocation restarts its names), which is why the call-path and invocation-id components are required, not decorative. Outside a `RunFrame` (the HTTP chat path, where no replay exists) the key SHALL be a freshly minted unique id. Consumers MUST upsert on `recordKey`: the harness guarantees key stability across replays, not at-most-once delivery.
 
 #### Scenario: Two steps of one run yield distinct keys
 
@@ -113,6 +113,12 @@ When the session carries a `RunFrame`, a record's `recordKey` SHALL compose, in 
 - **GIVEN** a loop that dispatches the same sub-agent tool twice in one run
 - **WHEN** the two child loops' calls are recorded
 - **THEN** their key sets SHALL be disjoint, discriminated by the tool-call invocation id
+
+#### Scenario: Two data profiles yield distinct keys
+
+- **GIVEN** two profile attempts, of one analysis or of two analyses, whose loops run under the same constant data-profile frame
+- **WHEN** the first LLM call of each loop is recorded
+- **THEN** the two records SHALL carry distinct `recordKey`s, discriminated by the workflow id of each attempt
 
 #### Scenario: A replayed step body does not double-count
 

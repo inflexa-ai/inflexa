@@ -1,7 +1,7 @@
 # workspace-context Specification
 
 ## Purpose
-TBD - created by archiving change add-workspace-context. Update Purpose after archive.
+The `WorkspaceContext` store of the TUI, which holds the scope of the open chat and the in-app capabilities. The hot state of each frame stays outside the store. `openSession` is the only writer of the session and its folder, and the analysis scope comes from one read through the local server.
 
 ## Requirements
 

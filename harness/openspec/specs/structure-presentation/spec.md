@@ -1,7 +1,7 @@
 # structure-presentation Specification
 
 ## Purpose
-TBD - created by archiving change add-structure-presentation. Update Purpose after archive.
+How the agent shows a predicted protein structure from AlphaFold to the user. `show_user` accepts a structure by URL, and one shared grammar admits only a versioned AlphaFold model file. The card builder makes the content from the parse, and it refuses each URL that the grammar refuses.
 ## Requirements
 ### Requirement: A structure presentation kind names one versioned AlphaFold model file
 

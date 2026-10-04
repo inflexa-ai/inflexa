@@ -1,7 +1,7 @@
 # usage-breakdown Specification
 
 ## Purpose
-TBD - created by archiving change cli-usage-breakdown. Update Purpose after archive.
+How a user reads the recorded token usage of an analysis by session, by run, and by step. Each call belongs to exactly one grain, thus the grains divide the total of the analysis by the place where the work ran. The sidebar opens the breakdown as a dialog, and the `usage` command gives each grain as its own subcommand.
 
 ## Requirements
 

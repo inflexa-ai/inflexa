@@ -1,7 +1,7 @@
 # artifact-open Specification
 
 ## Purpose
-TBD - created by archiving change add-display-realization. Update Purpose after archive.
+How the CLI opens a file, a folder, or a presentation that the agent shows to the user. A card keeps the semantic reference, and the local server resolves it to a location only when the user opens the card. One shared helper in the client process opens that location in the default application of the operating system.
 
 ## Requirements
 

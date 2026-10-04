@@ -1,7 +1,7 @@
 # unit-test-coverage Specification
 
 ## Purpose
-TBD - created by archiving change add-test-suite. Update Purpose after archive.
+The unit tests of the pure helpers of the CLI. The tests cover the value types, the global extensions, the auth and chat helpers, the analysis boundary, the config schema, and the container builders.
 ## Requirements
 ### Requirement: String value-type validation is tested
 The suite SHALL verify `str256`/`asStr256` (`lib/types.ts`): trimming, code-point counting

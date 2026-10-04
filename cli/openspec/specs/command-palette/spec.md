@@ -1,7 +1,7 @@
 # command-palette Specification
 
 ## Purpose
-TBD - created by archiving change add-command-palette. Update Purpose after archive.
+The command palette of the TUI and the registry of commands behind it. The user opens the palette with its chord (Ctrl+K by default), finds a command with a fuzzy search, and runs it in place over the open chat. Each entry point runs a command through one dispatch verb, and each dialog opens on one overlay stack.
 
 ## Requirements
 

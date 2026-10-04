@@ -1,7 +1,7 @@
 # fuzzy-scoring Specification
 
 ## Purpose
-TBD - created by archiving change extract-fuzzy-scorer. Update Purpose after archive.
+The shared fuzzy match of the CLI in `src/lib/fuzzy.ts`. `subsequenceScore` scores a case-insensitive subsequence match, and it prefers a contiguous match and an early first hit. `rankBy` adds the weighted scores of the fields of each item, and the list primitives of the TUI rank their rows with it.
 ## Requirements
 ### Requirement: Shared, dependency-free subsequence scorer
 

@@ -1,7 +1,7 @@
 # prov-run-events Specification
 
 ## Purpose
-TBD - created by archiving change bridge-harness-provenance. Update Purpose after archive.
+The execution events and the report events of the provenance bus, and how the recorder writes them into the signed provenance document. Each event becomes a deterministic PROV record, and a replay of the same event adds nothing. The report events go through the provenance kernel, on the same path as the core events.
 ## Requirements
 ### Requirement: Execution-level provenance events exist in the bus contract
 

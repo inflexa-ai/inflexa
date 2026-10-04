@@ -1,7 +1,7 @@
 # input-scan-manifest Specification
 
 ## Purpose
-TBD - created by archiving change data-profile-orientation. Update Purpose after archive.
+The deterministic scan of the staged input tree that the data profile runs before the profiler agent. The scan reports observable facts, for example the sets of files that share a name template and the slots that vary. The profiler agent decides the groups and their meaning, because the scan cannot know what a set means.
 ## Requirements
 ### Requirement: The scan reports observations; the agent decides the grouping
 
