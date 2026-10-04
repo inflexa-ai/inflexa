@@ -48,6 +48,7 @@ function seams(over: Partial<SandboxGateSeams> & { notices?: Notice[] }): Sandbo
         notify: (notice) => notices.push(notice),
         pollMs: 5,
         pendingFlushAfterMs: 10_000,
+        now: () => Date.now(),
         startFlush: () => null,
         ...over,
     };
@@ -153,31 +154,41 @@ describe("awaitSandboxReady", () => {
 describe("the pending flush gate", () => {
     const PENDING = [{ ecosystem: "python" as const, spelling: "polars", specifier: "" }];
 
-    test("the poll starts the flush child once the pending set outwaits the gate", async () => {
+    // Each test drives the clock of the gate by hand. A real sleep against the bound leaves a margin
+    // of a few milliseconds, and a busy CI machine oversleeps it.
+
+    test("the poll starts the flush child once the pending set outwaits the gate", () => {
+        let clock = 1_000;
         const starts: number[] = [];
         const gate = seams({
             readPending: () => PENDING,
             pendingFlushAfterMs: 20,
+            now: () => clock,
             startFlush: () => {
-                starts.push(Date.now());
+                starts.push(clock);
                 return 4242;
             },
         });
 
         refreshTransferState(gate);
         expect(starts).toHaveLength(0);
-        await Bun.sleep(30);
+        clock += 19;
+        refreshTransferState(gate);
+        expect(starts).toHaveLength(0);
+        clock += 1;
         refreshTransferState(gate);
 
-        expect(starts).toHaveLength(1);
+        expect(starts).toEqual([1_020]);
     });
 
-    test("a set that empties before the gate fires starts nothing, and the anchor clears", async () => {
+    test("a set that empties before the gate fires starts nothing, and the anchor clears", () => {
+        let clock = 1_000;
         let pending = PENDING;
         let started = 0;
         const gate = seams({
             readPending: () => pending,
             pendingFlushAfterMs: 20,
+            now: () => clock,
             startFlush: () => {
                 started += 1;
                 return 4242;
@@ -187,20 +198,29 @@ describe("the pending flush gate", () => {
         refreshTransferState(gate);
         pending = [];
         refreshTransferState(gate);
-        await Bun.sleep(30);
+        clock += 30;
         refreshTransferState(gate);
-
-        // The empty poll cleared the anchor, thus the elapsed time before it
-        // counts for nothing and no child starts.
         expect(started).toBe(0);
+
+        // The set returns past the old bound. The empty poll cleared the
+        // anchor, thus this poll arms a new wait, and a kept anchor would
+        // start the child here.
+        pending = PENDING;
+        refreshTransferState(gate);
+        expect(started).toBe(0);
+        clock += 20;
+        refreshTransferState(gate);
+        expect(started).toBe(1);
     });
 
-    test("the anchor does not slide while the set grows, thus a burst still flushes at the bound", async () => {
+    test("the anchor does not slide while the set grows, thus a burst still flushes at the bound", () => {
+        let clock = 1_000;
         let pending = PENDING;
         let started = 0;
         const gate = seams({
             readPending: () => pending,
             pendingFlushAfterMs: 40,
+            now: () => clock,
             startFlush: () => {
                 started += 1;
                 return 4242;
@@ -208,13 +228,13 @@ describe("the pending flush gate", () => {
         });
 
         refreshTransferState(gate);
-        await Bun.sleep(25);
+        clock += 25;
         // The set GROWS below the bound: a sliding anchor would restart the
-        // wait here, and the fire below would prove it did not.
+        // wait here, and the fire at the bound below would prove it did not.
         pending = [...PENDING, { ecosystem: "python" as const, spelling: "rpy2", specifier: "" }];
         refreshTransferState(gate);
         expect(started).toBe(0);
-        await Bun.sleep(25);
+        clock += 15;
         refreshTransferState(gate);
 
         expect(started).toBe(1);
