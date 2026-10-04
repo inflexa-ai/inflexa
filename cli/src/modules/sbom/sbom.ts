@@ -20,7 +20,7 @@ import { z } from "zod";
 
 import pkg from "../../../package.json";
 import { selectedRuntime } from "../../lib/config.ts";
-import { capture, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
+import { capture, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { provisionerImageFor } from "../libs/images.ts";
 import { configuredSandboxImage } from "../libs/pull.ts";
@@ -51,11 +51,20 @@ const sbomSchema = z
 
 type SbomDocument = z.infer<typeof sbomSchema>;
 
-/** One part of the installation: its key (the prefix of its references), what it is, and its document. */
-type SbomPart = { readonly key: string; readonly label: string; readonly source: string; readonly document: SbomDocument };
+/**
+ * A CycloneDX object that the merge copies without reading most of its fields. The schema validates only the
+ * fields that the merge reads, and every other field passes through as it is, thus its values stay `unknown`.
+ */
+type CdxObject = Record<string, unknown>;
+
+/** The four parts of an installation. The key of a part is the prefix of each of its references. */
+type PartKey = "cli" | "sandbox-base" | "sandbox-provisioner" | "package-store";
+
+/** One part of the installation: its key, what it is, where the document came from, and the document. */
+type SbomPart = { readonly key: PartKey; readonly label: string; readonly source: string; readonly document: SbomDocument };
 
 /** A part that this host does not hold, and why. */
-type MissingPart = { readonly key: string; readonly label: string; readonly reason: string };
+type MissingPart = { readonly key: PartKey; readonly label: string; readonly reason: string };
 
 type PartResult = Result<SbomPart, MissingPart>;
 
@@ -70,22 +79,55 @@ function readCliSbom(): PartResult {
     return ok({ key: "cli", label, source: "embedded in the binary", document });
 }
 
-/** The SBOM that one local image holds. The read runs no pull and no network. */
-async function readImageSbom(rt: ContainerRuntime | null, key: string, image: string): Promise<PartResult> {
-    if (rt === null) return err({ key, label: image, reason: "no container runtime is available (start Docker or Podman)" });
-    const id = await capture(rt, ["image", "inspect", "--format", "{{.Id}}", image]).catch(() => ({ code: 1, stdout: "", stderr: "" }));
-    if (id.code !== 0) return err({ key, label: image, reason: "the image is not on this host — run `inflexa sandbox pull`" });
-    const read = await capture(rt, ["run", "--rm", "--pull=never", "--network=none", "--entrypoint", "cat", image, IMAGE_SBOM_PATH]).catch(() => ({
-        code: 1,
+/** The first line of a command's error output, for one line of a reason. */
+function firstLine(text: string): string {
+    return text.trim().split("\n")[0] ?? "";
+}
+
+/**
+ * The SBOM that one local image holds. The read runs no pull and no network.
+ *
+ * Each failure keeps its own reason: a runtime that is not ready, an image that is not on the host, an image
+ * from a build before the SBOM, and any other error of the runtime, with its first line.
+ */
+async function readImageSbom(runtime: Result<ContainerRuntime, ContainerRuntimeError>, key: PartKey, image: string): Promise<PartResult> {
+    if (runtime.isErr()) return err({ key, label: image, reason: runtime.error.message.replace(/\s+/g, " ").trim() });
+    const rt = runtime.value;
+    // `capture` rejects only when the runtime binary cannot spawn. The readiness probe above found it, thus a
+    // rejection is a fault of the moment, and its text is the reason.
+    const inspect = await capture(rt, ["image", "inspect", "--format", "{{.Id}}", image]).catch((cause: unknown) => ({
+        code: -1,
         stdout: "",
-        stderr: "",
+        stderr: String(cause),
     }));
+    if (inspect.code !== 0) {
+        // Docker says "No such image" and Podman says "image not known" for an image that the host does not hold.
+        const absent = /no such image|no such object|image not known/i.test(inspect.stderr);
+        const reason = absent
+            ? "the image is not on this host — run `inflexa sandbox pull`"
+            : `${rt.label} could not inspect the image: ${firstLine(inspect.stderr)}`;
+        return err({ key, label: image, reason });
+    }
+    // The rejection `cause` is `unknown` for the same reason as the inspect above, and its text is the reason.
+    const read = await capture(rt, ["run", "--rm", "--pull=never", "--network=none", "--entrypoint", "cat", image, IMAGE_SBOM_PATH]).catch(
+        (cause: unknown) => ({
+            code: -1,
+            stdout: "",
+            stderr: String(cause),
+        }),
+    );
     if (read.code !== 0) {
-        return err({ key, label: image, reason: `the image holds no ${IMAGE_SBOM_PATH} (a build before the SBOM) — run \`inflexa sandbox pull\`` });
+        // `cat` names the missing file itself, thus that text marks an image from a build before the SBOM. Any
+        // other failure is an error of the runtime.
+        const absent = /^cat: .*no such file/im.test(read.stderr);
+        const reason = absent
+            ? `the image holds no ${IMAGE_SBOM_PATH} (a build before the SBOM) — run \`inflexa sandbox pull\``
+            : `${rt.label} could not read ${IMAGE_SBOM_PATH} from the image: ${firstLine(read.stderr)}`;
+        return err({ key, label: image, reason });
     }
     const document = JSON.parseWith(read.stdout, sbomSchema);
     if (document === null) return err({ key, label: image, reason: `${IMAGE_SBOM_PATH} is not a CycloneDX document` });
-    return ok({ key, label: image, source: `${image} (local image ${id.stdout.trim()})`, document });
+    return ok({ key, label: image, source: `${image} (local image ${inspect.stdout.trim()})`, document });
 }
 
 /** The SBOM that the package store carries at its root. */
@@ -111,13 +153,20 @@ async function readStoreSbom(storeRoot: string): Promise<PartResult> {
     return ok({ key: "package-store", label, source: path, document });
 }
 
-/** The component tree of one part, with each reference prefixed by the key of the part. */
-function prefixComponents(components: unknown[] | undefined, prefix: string): unknown[] | undefined {
-    if (components === undefined) return undefined;
+/** True when a value is a JSON object. The predicate is sound: it holds after the runtime tests in its body. */
+function isCdxObject(value: unknown): value is CdxObject {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The component tree of one part, with each reference prefixed by the key of the part. A nested `components`
+ * entry that is not an object is not a component, thus the copy leaves it out.
+ */
+function prefixComponents(components: readonly CdxObject[], prefix: PartKey): CdxObject[] {
     return components.map((entry) => {
-        const component = { ...(entry as Record<string, unknown>) };
+        const component: CdxObject = { ...entry };
         if (typeof component["bom-ref"] === "string") component["bom-ref"] = `${prefix}:${component["bom-ref"]}`;
-        if (Array.isArray(component.components)) component.components = prefixComponents(component.components, prefix);
+        if (Array.isArray(component.components)) component.components = prefixComponents(component.components.filter(isCdxObject), prefix);
         return component;
     });
 }
@@ -134,25 +183,23 @@ function bomLink(document: SbomDocument): string | null {
  * parts that hold the same package keep two distinct references. The dependency graph of each part
  * keeps its edges, and the new subject depends on the subject of each part.
  */
-function mergeSboms(parts: readonly SbomPart[], missing: readonly MissingPart[]): Record<string, unknown> {
+function mergeSboms(parts: readonly SbomPart[], missing: readonly MissingPart[]): CdxObject {
     const rootRef = "inflexa-installation";
-    const components: unknown[] = [];
+    const components: CdxObject[] = [];
     const dependencies: Array<{ ref: string; dependsOn: string[] }> = [];
     const partRefs: string[] = [];
 
     for (const part of parts) {
-        const subject = { ...part.document.metadata.component } as Record<string, unknown>;
+        const subject: CdxObject = { ...part.document.metadata.component };
         const subjectRef = `${part.key}:${typeof subject["bom-ref"] === "string" ? subject["bom-ref"] : part.key}`;
         subject["bom-ref"] = subjectRef;
         const link = bomLink(part.document);
-        const references = Array.isArray(subject.externalReferences) ? [...(subject.externalReferences as unknown[])] : [];
+        const references: CdxObject[] = Array.isArray(subject.externalReferences) ? subject.externalReferences.filter(isCdxObject) : [];
         if (link !== null) references.push({ type: "bom", url: link, comment: "the SBOM of this part" });
         if (references.length > 0) subject.externalReferences = references;
-        subject.properties = [
-            ...(Array.isArray(subject.properties) ? (subject.properties as unknown[]) : []),
-            { name: "inflexa:sbom-source", value: part.source },
-        ];
-        subject.components = prefixComponents(part.document.components, part.key) ?? [];
+        const properties: CdxObject[] = Array.isArray(subject.properties) ? subject.properties.filter(isCdxObject) : [];
+        subject.properties = [...properties, { name: "inflexa:sbom-source", value: part.source }];
+        subject.components = prefixComponents(part.document.components ?? [], part.key);
         components.push(subject);
         partRefs.push(subjectRef);
 
@@ -165,9 +212,11 @@ function mergeSboms(parts: readonly SbomPart[], missing: readonly MissingPart[])
     }
     dependencies.push({ ref: rootRef, dependsOn: partRefs });
 
-    const document: Record<string, unknown> = {
+    const document: CdxObject = {
         bomFormat: "CycloneDX",
         specVersion: "1.6",
+        // A v4 UUID, not the `randomUUIDv7()` of the cli identifier rule: the CycloneDX 1.6 schema accepts a
+        // serial number of UUID version 1 to 5 only, thus a v7 serial fails the validation of the document.
         serialNumber: `urn:uuid:${crypto.randomUUID()}`,
         version: 1,
         metadata: {
@@ -200,21 +249,22 @@ export async function sbomAction(): Promise<void> {
     const sandboxImage = configuredSandboxImage();
     const provisionerImage = provisionerImageFor(sandboxImage);
     // A read-only command: use the selected runtime, or detect a ready one WITHOUT pinning it, as
-    // `inflexa sandbox status` does.
-    const rt =
-        selectedRuntime() ??
-        (await firstReadyRuntime(runtimeIds.map((id) => runtimes[id]))).match(
-            (detected) => detected,
-            () => null,
-        );
+    // `inflexa sandbox status` does. A selected runtime gets the same readiness probe, thus a stopped daemon reads
+    // as a stopped daemon, and not as an image that the host does not hold.
+    const selected = selectedRuntime();
+    const runtime = await firstReadyRuntime(selected === null ? runtimeIds.map((id) => runtimes[id]) : [selected]);
 
     const parts: SbomPart[] = [];
     const missing: MissingPart[] = [];
-    const hold = (part: SbomPart): void => void parts.push(part);
-    const lack = (part: MissingPart): void => void missing.push(part);
+    function hold(part: SbomPart): void {
+        parts.push(part);
+    }
+    function lack(part: MissingPart): void {
+        missing.push(part);
+    }
     readCliSbom().match(hold, lack);
-    (await readImageSbom(rt, "sandbox-base", sandboxImage)).match(hold, lack);
-    (await readImageSbom(rt, "sandbox-provisioner", provisionerImage)).match(hold, lack);
+    (await readImageSbom(runtime, "sandbox-base", sandboxImage)).match(hold, lack);
+    (await readImageSbom(runtime, "sandbox-provisioner", provisionerImage)).match(hold, lack);
     (await readStoreSbom(env.packageStoreDir)).match(hold, lack);
 
     console.log(JSON.stringify(mergeSboms(parts, missing), null, 2));
