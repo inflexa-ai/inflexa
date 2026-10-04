@@ -19,6 +19,11 @@
 # Build context is the repo root, matching the other image Dockerfiles: the
 # build reaches images/ for the shared toolchain and the manifest.
 ARG BASE_IMAGE=rocker/r-ver:4.6.0@sha256:6f05a1a8b8c52328f181593923909b01cbfd14c9caea93bf75ddc65e806d8eac
+
+# The SBOM scanner, the same pin as sandbox-base. The SBOM step mounts its
+# binary, thus the binary never lands in a layer.
+FROM anchore/syft:v1.54.0@sha256:0356562f495d432056237fbea5cbc2d4839c9c75cd500784a66de2e7cc95ca7c AS syft
+
 FROM ${BASE_IMAGE}
 # Re-declared after FROM so the assertion RUN can read it.
 ARG BASE_IMAGE
@@ -90,6 +95,29 @@ RUN chmod +x /usr/local/bin/provision /usr/local/bin/emit_deps.py \
 # `PKG_SYSREQS` is the one the vendored pkgdepends reads, and the env form
 # inherits into the pak subprocess.
 ENV PKG_SYSREQS=false
+
+# The SBOM — the last write of the image. The same writer and the same gate as
+# sandbox-base (refer to its Dockerfile): Syft scans this file system, and
+# images/sbom/image-sbom.py gives each component a resolved license, adds the
+# components that no package manager records
+# (images/sandbox-provisioner/sbom-extra.json), and fails the build on a gap.
+# This image has no inventory record, thus the gate checks the licenses and
+# the extra components only. IMAGE_VERSION names the tag that the build
+# publishes, and `local` states a hand build.
+ARG IMAGE_VERSION=local
+ARG TARGETARCH
+RUN --mount=type=bind,from=syft,source=/syft,target=/tmp/syft \
+    --mount=type=bind,source=images/sbom,target=/tmp/sbom \
+    --mount=type=bind,source=images/sandbox-provisioner/sbom-extra.json,target=/tmp/sbom-extra.json \
+    --mount=type=cache,target=/var/cache/inflexa-sbom,sharing=locked \
+    python3 /tmp/sbom/image-sbom.py \
+      --syft /tmp/syft \
+      --extra /tmp/sbom-extra.json \
+      --name ghcr.io/inflexa-ai/sandbox-provisioner \
+      --version "${IMAGE_VERSION}" \
+      --arch "${TARGETARCH}" \
+      --out /opt/inflexa/sbom.cdx.json \
+    && chmod a+r /opt/inflexa/sbom.cdx.json
 
 # Attach the published package to the repo, the same as sandbox-base. GHCR reads
 # this label to link the new package to the repository. A linked package takes

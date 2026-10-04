@@ -48,6 +48,13 @@ COPY images/sandbox-base/provenance/provtrack.c /build/provtrack.c
 RUN gcc -shared -fPIC -O2 -pthread -fstack-protector-strong -Wformat -Wformat-security -o /provtrack.so /build/provtrack.c -ldl
 
 # =============================================================================
+# Stage 2b: the SBOM scanner. The runtime stage mounts its binary for one
+# step, thus the binary never lands in a layer of the image.
+# =============================================================================
+
+FROM anchore/syft:v1.54.0@sha256:0356562f495d432056237fbea5cbc2d4839c9c75cd500784a66de2e7cc95ca7c AS syft
+
+# =============================================================================
 # Stage 3: libs-toolchain — the manifest and the reader scripts. The conda
 # builder and the node builder both branch from this stage.
 # =============================================================================
@@ -478,7 +485,7 @@ COPY images/sandbox-base/provenance/sitecustomize.py /opt/provenance/sitecustomi
 COPY images/sandbox-base/provenance/Rprofile.site /opt/provenance/Rprofile.site
 
 # =============================================================================
-# The baked inventory record — the LAST write of this stage.
+# The baked inventory record — the last write before the SBOM.
 #
 # The image describes itself in one JSON record at
 # /opt/inflexa/image-packages.json. The record joins the two builder
@@ -510,6 +517,39 @@ RUN python3 /tmp/image-record.py \
     && chmod a+r /opt/inflexa/image-packages.json \
     && rm -f /tmp/image-record.py \
        /opt/inflexa/conda.packages.json /opt/inflexa/node.packages.json
+
+# =============================================================================
+# The SBOM — the LAST write of this stage.
+#
+# The image describes its composition in one CycloneDX 1.6 document at
+# /opt/inflexa/sbom.cdx.json. Syft scans the file system of this stage, and
+# images/sbom/image-sbom.py completes the result. The script gives each
+# component a resolved license, and it adds the components that no package
+# manager records (images/sandbox-base/sbom-extra.json). The gate of the script
+# fails the build when a component has no resolved license, or when the image
+# record names a package that the SBOM does not hold. Thus the SBOM comes after
+# the record.
+#
+# The script asks crates.io for the license of each Rust crate in a binary.
+# The cache mount keeps the answers on the builder, thus a later build asks
+# only for a new crate. The scripts, the extra file, and the scanner arrive
+# through bind mounts, thus no layer holds them. The CLI reads the document
+# from the image (`inflexa sbom`), and the build workflow attests it.
+# =============================================================================
+
+RUN --mount=type=bind,from=syft,source=/syft,target=/tmp/syft \
+    --mount=type=bind,source=images/sbom,target=/tmp/sbom \
+    --mount=type=bind,source=images/sandbox-base/sbom-extra.json,target=/tmp/sbom-extra.json \
+    --mount=type=cache,target=/var/cache/inflexa-sbom,sharing=locked \
+    python3 /tmp/sbom/image-sbom.py \
+      --syft /tmp/syft \
+      --extra /tmp/sbom-extra.json \
+      --name ghcr.io/inflexa-ai/sandbox-base \
+      --version "${IMAGE_VERSION}" \
+      --arch "${TARGETARCH}" \
+      --record /opt/inflexa/image-packages.json \
+      --out /opt/inflexa/sbom.cdx.json \
+    && chmod a+r /opt/inflexa/sbom.cdx.json
 
 # The default is the unprivileged workload user. Callback mode and K8s run as
 # uid 1000 throughout. Docker poll mode overrides User to root at create

@@ -1,0 +1,13 @@
+{
+  "components": [
+    {
+      "name": "R",
+      "version": "{env:R_VERSION}",
+      "type": "application",
+      "purl": "pkg:generic/R@{env:R_VERSION}",
+      "licenses": [{ "expression": "GPL-2.0-only OR GPL-3.0-only" }],
+      "supplier": { "name": "The R Foundation", "url": ["https://www.r-project.org"] },
+      "path": "/usr/local/lib/R/bin/R"
+    }
+  ]
+}

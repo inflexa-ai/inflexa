@@ -1,0 +1,56 @@
+{
+  "components": [
+    {
+      "name": "R",
+      "version": "{env:R_VERSION}",
+      "type": "application",
+      "purl": "pkg:generic/R@{env:R_VERSION}",
+      "licenses": [{ "expression": "GPL-2.0-only OR GPL-3.0-only" }],
+      "supplier": { "name": "The R Foundation", "url": ["https://www.r-project.org"] },
+      "path": "/usr/local/lib/R/bin/R"
+    },
+    {
+      "name": "tailwindcss",
+      "version": "{env:TAILWINDCSS_VERSION}",
+      "type": "application",
+      "purl": "pkg:github/tailwindlabs/tailwindcss@{env:TAILWINDCSS_VERSION}",
+      "licenses": [{ "license": { "id": "MIT" } }],
+      "supplier": { "name": "Tailwind Labs", "url": ["https://tailwindcss.com"] },
+      "path": "/usr/local/bin/tailwindcss"
+    },
+    {
+      "name": "Inter",
+      "version": "4.0",
+      "type": "file",
+      "purl": "pkg:github/rsms/inter@v4.0",
+      "licenses": [{ "license": { "id": "OFL-1.1" } }],
+      "supplier": { "name": "Rasmus Andersson", "url": ["https://rsms.me/inter/"] },
+      "path": "/usr/local/share/fonts/Inter*.ttf"
+    },
+    {
+      "name": "JetBrains Mono",
+      "version": "2.304",
+      "type": "file",
+      "purl": "pkg:github/jetbrains/jetbrainsmono@v2.304",
+      "licenses": [{ "license": { "id": "OFL-1.1" } }],
+      "supplier": { "name": "JetBrains", "url": ["https://www.jetbrains.com/lp/mono/"] },
+      "path": "/usr/local/share/fonts/JetBrainsMono*.ttf"
+    },
+    {
+      "name": "provtrack",
+      "version": "{image}",
+      "type": "library",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "supplier": "inflexa",
+      "path": "/opt/provenance/provtrack.so"
+    },
+    {
+      "match": "pkg:golang/github.com/inflexa/sandbox-server",
+      "name": "github.com/inflexa/sandbox-server",
+      "version": "{image}",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "supplier": "inflexa",
+      "path": "/usr/local/bin/sandbox-server"
+    }
+  ]
+}
