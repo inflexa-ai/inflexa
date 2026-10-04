@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the registration-declared agent-availability policy for the `inflexa` CLI's commander registry: the three-kind `AgentPolicy` (`auto` with a `safeFlags` allowlist, `approval`, `blocked` with a mandatory reason) that every action command must declare at its registration site, and the enforcement layers — a compile-required registration helper, a registry-scoped lint ban on raw `.action(`, tree-walk and snapshot tests, and the consuming tool's runtime fail-closed default — that make an unclassified or drifted command a loud failure instead of a silent gap. The policy is a command's floor; explicitly-set flags can only escalate an invocation toward approval, never past a block or down from one.
+Define the registration-declared agent-availability policy for the `inflexa` CLI's commander registry: the three-kind `AgentPolicy` (`auto` with a `safeFlags` allowlist, `approval`, `blocked` with a mandatory reason) that every action command must declare at its registration site, and the enforcement layers — a compile-required registration helper, a registry-scoped lint ban on raw `.action(`, tree-walk and snapshot tests, and the consuming tool's runtime fail-closed default — that make an unclassified or drifted command a loud failure instead of a silent gap. The policy is a command's floor, and explicitly-set flags can only escalate an invocation toward approval, or to a block for a hidden worker mode. No flag lowers a block.
 
 ## Requirements
 

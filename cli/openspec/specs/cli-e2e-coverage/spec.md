@@ -1,7 +1,7 @@
 # cli-e2e-coverage Specification
 
 ## Purpose
-TBD - created by archiving change add-test-suite. Update Purpose after archive.
+The end-to-end tests of the `inflexa` commands. Each test runs the CLI as a subprocess and examines its output, its exit code, and the files that it writes. The tests cover the command surface, the server check of an instance command, and the guarantee that a passive or aborted flow writes nothing.
 
 ## Requirements
 

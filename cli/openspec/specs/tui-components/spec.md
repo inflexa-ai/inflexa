@@ -1,7 +1,7 @@
 # tui-components Specification
 
 ## Purpose
-TBD - created by archiving change extract-tui-components. Update Purpose after archive.
+The shared, domain-agnostic widgets of the TUI in `src/tui/components/`, and the rule for what belongs there. A widget belongs there when it imports no domain code and has more than one caller. The directory also holds the `DialogPanel` chrome that each dialog uses, and `src/tui/theme.ts` holds the one `Notice` type.
 ## Requirements
 ### Requirement: Shared TUI component directory with a membership rule
 

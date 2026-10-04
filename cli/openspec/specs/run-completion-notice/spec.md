@@ -1,7 +1,7 @@
 # run-completion-notice Specification
 
 ## Purpose
-TBD - created by archiving change live-run-observability. Update Purpose after archive.
+How the TUI tells the user that a run reached a terminal status. Each terminal transition raises a transient notice with the run, the outcome, and the duration, and a later notice never replaces an earlier one. The notice does not depend on a visible surface, and a failed read of the runs never breaks the chat.
 
 ## Requirements
 

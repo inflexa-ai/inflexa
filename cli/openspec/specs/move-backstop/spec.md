@@ -51,6 +51,8 @@ The server SHALL keep an anchor when the busy gate of the local server reports w
 
 A failed purge SHALL stop the prune with each SQLite row still present, and the message SHALL say that nothing was lost. Because the purge is idempotent, a second `inflexa prune` after the cause is fixed SHALL complete the prune.
 
+The server MUST run the busy gate of each analysis again directly before its purge. A turn, a run, or a profile can start on an analysis while the purges before it run. When the gate reports work, the server MUST stop the prune with 409 `busy`. The answer MUST name the analysis and the work, and the server MUST delete no SQLite row. A second `inflexa prune` then keeps the anchor of that analysis.
+
 #### Scenario: Prune offers to drop a gone folder's records
 
 - **WHEN** an anchor's folder has been deleted and cannot be re-found
@@ -84,6 +86,12 @@ A failed purge SHALL stop the prune with each SQLite row still present, and the 
 - **GIVEN** a confirmed prune whose purge fails on one analysis
 - **WHEN** the failure is reported
 - **THEN** every SQLite row remains, and a second `inflexa prune` after the cause is fixed completes
+
+#### Scenario: Work that starts during the prune stops it before the purge of its analysis
+
+- **GIVEN** a dead anchor with two analyses, and a chat turn that starts on the second analysis while the server purges the first one
+- **WHEN** the prune reaches the second analysis
+- **THEN** the server answers 409 `busy` with the analysis and the work, it does not purge the second analysis, and every SQLite row remains
 
 ### Requirement: Copied folders are surfaced; clone/fork resolution is deferred
 

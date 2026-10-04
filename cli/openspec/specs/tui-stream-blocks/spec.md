@@ -1,7 +1,7 @@
 # tui-stream-blocks Specification
 
 ## Purpose
-TBD - created by archiving change inflexa-design-system. Update Purpose after archive.
+The blocks that render the parts of the chat stream in the TUI. `MessageBlock` maps each part kind onto a block, and the switch fails the build for a part kind with no renderer. Each block is a themed widget with primitive props in `src/tui/components/`, and the design gallery shows each block state.
 
 ## Requirements
 

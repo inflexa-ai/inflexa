@@ -1,7 +1,7 @@
 # key-bindings Specification
 
 ## Purpose
-TBD - created by archiving change standardize-tui-layout. Update Purpose after archive.
+The keybinding engine of the TUI in `src/tui/keymap.ts`. Each component declares its keys as a reactive layer, and one root handler routes each keystroke to the binding that wins. The engine also gives a mode stack, leader sequences, and app keys that the user can remap in the configuration.
 ## Requirements
 ### Requirement: Central platform-neutral keymap
 

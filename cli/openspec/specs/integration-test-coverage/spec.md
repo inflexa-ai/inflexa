@@ -1,7 +1,7 @@
 # integration-test-coverage Specification
 
 ## Purpose
-TBD - created by archiving change add-test-suite. Update Purpose after archive.
+The integration tests of the storage layer and the file-system layer of the CLI. Each test runs against a temporary SQLite database or a temporary directory. The tests cover the migrations, the query and mutation pairs, the anchor marker and its reconciliation, and the resolution of paths and config files.
 ## Requirements
 ### Requirement: Migration runner is tested
 The suite SHALL verify the SQLite migration runner against a fresh database: all tables and foreign

@@ -1,7 +1,7 @@
 # llm-usage-ledger Specification
 
 ## Purpose
-TBD - created by archiving change cli-token-usage-ledger. Update Purpose after archive.
+How the CLI keeps a local record of the LLM token usage of the harness. The composition root gives the harness one `UsageRecorder`, which writes each record to a SQLite ledger under its record key. The `usage` command reads the ledger and reports the consumption of an analysis by model and by agent.
 
 ## Requirements
 
