@@ -24,6 +24,7 @@ python3 of the provisioner image.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -105,7 +106,8 @@ def python_component(store_dir: Path) -> dict | None:
     version = (fields.get("version") or [""])[0]
     if not name or not version:
         return None
-    normalized = "-".join(name.lower().replace("_", "-").replace(".", "-").split("-"))
+    # The PEP 503 normal form: each run of "-", "_", and "." is one "-".
+    normalized = re.sub(r"[-_.]+", "-", name).lower()
     return {
         "bom-ref": store_dir.name,
         "type": "library",
