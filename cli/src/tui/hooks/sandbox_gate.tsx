@@ -127,6 +127,12 @@ export type SandboxGateSeams = {
     readonly pollMs: number;
     /** How long the pending set may wait before the poll starts the flush child. Real: {@link PENDING_FLUSH_AFTER_MS}. */
     readonly pendingFlushAfterMs: number;
+    /**
+     * The clock of the flush gate, in milliseconds. A seam because the gate compares two readings of it: a
+     * test of the bound that sleeps in real time fails on a busy machine, where a sleep overshoots the margin.
+     * Real: `Date.now`.
+     */
+    readonly now: () => number;
     /** Start the detached flush child over the pending set. Real: {@link startPendingFlushChild}. */
     readonly startFlush: () => number | null;
 };
@@ -158,6 +164,7 @@ export const realSandboxGateSeams: SandboxGateSeams = {
     notify,
     pollMs: TRANSFER_POLL_MS,
     pendingFlushAfterMs: PENDING_FLUSH_AFTER_MS,
+    now: () => Date.now(),
     startFlush: startPendingFlushChild,
 };
 
@@ -185,8 +192,8 @@ export function refreshTransferState(seams: SandboxGateSeams = realSandboxGateSe
     if (pending.length === 0) {
         pendingSince = null;
     } else if (pendingSince === null) {
-        pendingSince = Date.now();
-    } else if (Date.now() - pendingSince >= seams.pendingFlushAfterMs) {
+        pendingSince = seams.now();
+    } else if (seams.now() - pendingSince >= seams.pendingFlushAfterMs) {
         pendingSince = null;
         seams.startFlush();
     }
