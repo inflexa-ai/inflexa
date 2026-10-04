@@ -324,6 +324,230 @@ async function ensureModelCached(): Promise<void> {
     console.log(`cached ${MODEL_ARTIFACT} (${(bytes.length / 1024 / 1024).toFixed(1)} MB)`);
 }
 
+// The license file of the Bun runtime that this build embeds, at the tag of that exact version. Bun links
+// JavaScriptCore and some other libraries statically, and its LICENSE.md names each of them with its license.
+// The SBOM attaches that text to the Bun component. Cached beside the other build-time artifacts, thus an
+// offline rebuild of the same Bun works, and the sweep keeps it while the Bun version stays.
+const BUN_LICENSE_ARTIFACT = `bun-v${Bun.version}-LICENSE.md`;
+
+async function ensureBunLicenseCached(): Promise<string> {
+    const cachedPath = join(LLAMA_CACHE_DIR, BUN_LICENSE_ARTIFACT);
+    if (existsSync(cachedPath)) return await Bun.file(cachedPath).text();
+    const url = `https://raw.githubusercontent.com/oven-sh/bun/bun-v${Bun.version}/LICENSE.md`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        console.error(`error: could not download ${url} — HTTP ${response.status} ${response.statusText}`);
+        process.exit(1);
+    }
+    const text = await response.text();
+    await Bun.write(cachedPath, text);
+    return text;
+}
+
+// The CycloneDX 1.6 shapes that the SBOM of a binary uses.
+type CdxText = { contentType: "text/plain"; content: string };
+type CdxLicense = { expression: string } | { license: { id?: string; name?: string; text?: CdxText } };
+type CdxComponent = {
+    "bom-ref": string;
+    type: "application" | "library" | "machine-learning-model" | "file";
+    name: string;
+    version?: string;
+    description?: string;
+    purl?: string;
+    licenses: CdxLicense[];
+    hashes?: Array<{ alg: "SHA-256"; content: string }>;
+    externalReferences?: Array<{ type: "website" | "distribution" | "vcs"; url: string }>;
+    properties?: Array<{ name: string; value: string }>;
+};
+
+const SUPPLIER = { name: "Inflexa", url: ["https://github.com/inflexa-ai/inflexa"] };
+
+// A license name that names nothing a reader can act on. The same rule as images/sbom/sbom_common.py.
+const UNRESOLVED_LICENSE_NAME = /^(sha256:[0-9a-f]+|file\s+licen[cs]e|see\s+licen[cs]e.*|unknown|noassertion|none|)$/i;
+
+// The syntax of an SPDX expression: license ids joined by AND, OR, and WITH, with parentheses. npm validates
+// the license field of a published package against the SPDX list, thus the syntax test is enough for it.
+const SPDX_EXPRESSION = /^\(?[A-Za-z0-9.+-]+\)?( (AND|OR|WITH) \(?[A-Za-z0-9.+-]+\)?)*$/;
+
+/** The CycloneDX licenses of one npm package: its SPDX expression, or its declared value with the license text. */
+function npmLicenses(pkg: ThirdPartyPackage): CdxLicense[] {
+    if (SPDX_EXPRESSION.test(pkg.license) && pkg.license !== "UNLICENSED") return [{ expression: pkg.license }];
+    if (pkg.licenseText) return [{ license: { name: pkg.license, text: { contentType: "text/plain", content: pkg.licenseText } } }];
+    return [{ license: { name: pkg.license } }];
+}
+
+/** True when a license list is not empty and each entry names a license that a reader can resolve. */
+function licensesResolved(licenses: CdxLicense[]): boolean {
+    return (
+        licenses.length > 0 &&
+        licenses.every((entry) => {
+            if ("expression" in entry) return entry.expression.length > 0;
+            const lic = entry.license;
+            return Boolean(lic.id) || Boolean(lic.text?.content) || (Boolean(lic.name) && !UNRESOLVED_LICENSE_NAME.test(lic.name ?? ""));
+        })
+    );
+}
+
+/** True when the npm platform fields of a package admit the target. A `!` entry excludes a value. */
+function admitsTarget(pkg: ThirdPartyPackage, os: string, cpu: string): boolean {
+    const admits = (allowed: readonly string[] | null, value: string): boolean => {
+        if (allowed === null || allowed.length === 0) return true;
+        if (allowed.includes(`!${value}`)) return false;
+        const positive = allowed.filter((entry) => !entry.startsWith("!"));
+        return positive.length === 0 || positive.includes(value);
+    };
+    // The release links glibc on linux (OPENTUI_LIBC below), thus a musl-only package is not in a binary.
+    const libcAdmits = os !== "linux" || admits(pkg.libc, "glibc");
+    return admits(pkg.os, os) && admits(pkg.cpu, cpu) && libcAdmits;
+}
+
+/** The npm purl of a package: a scope keeps its `@` as `%40`, and a `+` in the version is `%2B`. */
+function npmPurl(name: string, version: string): string {
+    const encodedName = name.startsWith("@") ? `%40${name.slice(1)}` : name;
+    return `pkg:npm/${encodedName}@${version.replace(/\+/g, "%2B")}`;
+}
+
+function sha256Hex(bytes: Uint8Array | string): string {
+    return new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+}
+
+/** The grammars that the binary embeds from the repository (src/tui/grammars), with the hash of each parser. */
+function collectGrammarComponents(): CdxComponent[] {
+    const grammars = [
+        { dir: "python", name: "tree-sitter-python", repo: "tree-sitter/tree-sitter-python" },
+        { dir: "r", name: "tree-sitter-r", repo: "r-lib/tree-sitter-r" },
+        { dir: "json", name: "tree-sitter-json", repo: "tree-sitter/tree-sitter-json" },
+    ];
+    return grammars.map((grammar): CdxComponent => {
+        const wasm = join("src", "tui", "grammars", grammar.dir, `${grammar.name}.wasm`);
+        return {
+            "bom-ref": `grammar:${grammar.name}`,
+            type: "library",
+            name: grammar.name,
+            description: "A tree-sitter parser and its highlight queries, vendored in the repository",
+            purl: `pkg:github/${grammar.repo}`,
+            licenses: [{ license: { id: "MIT" } }],
+            hashes: [{ alg: "SHA-256", content: sha256Hex(readFileSync(wasm)) }],
+            externalReferences: [{ type: "vcs", url: `https://github.com/${grammar.repo}` }],
+        };
+    });
+}
+
+/** The CycloneDX document of the binary of one target. The build stops when a component has no resolved license. */
+function cliSbom(
+    target: (typeof TARGETS)[number],
+    llamaTarget: LlamaTargetKey,
+    packages: ThirdPartyPackage[],
+    bunLicense: string,
+    grammars: CdxComponent[],
+): Record<string, unknown> {
+    const npmOs = target.os === "windows" ? "win32" : target.os;
+    const cliPkg = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
+    const components: CdxComponent[] = packages
+        .filter((pkg) => admitsTarget(pkg, npmOs, target.arch))
+        .map((pkg) => ({
+            "bom-ref": npmPurl(pkg.name, pkg.version),
+            type: "library",
+            name: pkg.name,
+            version: pkg.version,
+            purl: npmPurl(pkg.name, pkg.version),
+            licenses: npmLicenses(pkg),
+            ...(pkg.homepage ? { externalReferences: [{ type: "website", url: pkg.homepage }] } : {}),
+        }));
+
+    components.push({
+        "bom-ref": `pkg:github/oven-sh/bun@bun-v${Bun.version}`,
+        type: "application",
+        name: "bun",
+        version: Bun.version,
+        description: "The Bun runtime that the single-file executable embeds, with the libraries that Bun links statically",
+        purl: `pkg:github/oven-sh/bun@bun-v${Bun.version}`,
+        licenses: [
+            { license: { id: "MIT" } },
+            { license: { name: "Bun LICENSE.md: the licenses of the libraries that Bun links statically", text: { contentType: "text/plain", content: bunLicense } } },
+        ],
+        externalReferences: [{ type: "vcs", url: "https://github.com/oven-sh/bun" }],
+    });
+
+    const llamaPin = (LLAMA_PINS as Record<string, LlamaPin>)[llamaTarget];
+    if (!llamaPin) {
+        console.error(`error: no vendored llama-server pin for build target ${llamaTarget}`);
+        process.exit(1);
+    }
+    components.push({
+        "bom-ref": `pkg:github/ggml-org/llama.cpp@${LLAMA_RUNTIME_TAG}`,
+        type: "application",
+        name: "llama.cpp",
+        version: LLAMA_RUNTIME_TAG,
+        description: "The llama-server release archive of this target, for the local embedding sidecar",
+        purl: `pkg:github/ggml-org/llama.cpp@${LLAMA_RUNTIME_TAG}`,
+        licenses: [{ license: { id: "MIT" } }],
+        hashes: [{ alg: "SHA-256", content: llamaPin.sha256 }],
+        externalReferences: [{ type: "distribution", url: llamaArtifactUrl(LLAMA_RUNTIME_TAG, llamaPin) }],
+        properties: [{ name: "inflexa:artifact", value: llamaPin.artifact }],
+    });
+
+    // MODEL_URL names the Hugging Face repository and the pinned revision of the model file.
+    const model = /^https:\/\/huggingface\.co\/([^/]+)\/([^/]+)\/resolve\/([0-9a-f]+)\//.exec(MODEL_URL);
+    if (!model) {
+        console.error(`error: MODEL_URL is not a pinned Hugging Face file URL: ${MODEL_URL}`);
+        process.exit(1);
+    }
+    const [, modelOwner, modelRepo, modelRevision] = model;
+    components.push({
+        "bom-ref": `pkg:huggingface/${modelOwner}/${modelRepo}@${modelRevision}`,
+        type: "machine-learning-model",
+        name: MODEL_ARTIFACT,
+        version: modelRevision,
+        description: "The embedding model of the local embedding sidecar",
+        purl: `pkg:huggingface/${modelOwner}/${modelRepo}@${modelRevision}`,
+        licenses: [{ license: { id: "MIT" } }],
+        hashes: [{ alg: "SHA-256", content: MODEL_SHA256 }],
+        externalReferences: [{ type: "distribution", url: MODEL_URL }],
+    });
+    components.push(...grammars);
+
+    const unresolved = components.filter((component) => !licensesResolved(component.licenses));
+    if (unresolved.length > 0) {
+        for (const component of unresolved) console.error(`error: no resolved license: ${component.purl ?? component.name}`);
+        console.error(`error: ${unresolved.length} SBOM components have no resolved license — the build stops`);
+        process.exit(1);
+    }
+
+    const subjectRef = `pkg:github/inflexa-ai/inflexa@v${cliPkg.version}`;
+    const document: Record<string, unknown> = {
+        bomFormat: "CycloneDX",
+        specVersion: "1.6",
+        version: 1,
+        metadata: {
+            component: {
+                "bom-ref": subjectRef,
+                type: "application",
+                name: "inflexa",
+                version: cliPkg.version,
+                description: `The Inflexa CLI binary for ${target.os}-${target.arch}`,
+                purl: subjectRef,
+                supplier: SUPPLIER,
+                licenses: [{ license: { id: "Apache-2.0" } }],
+                properties: [{ name: "inflexa:target", value: `${target.os}-${target.arch}` }],
+            },
+            supplier: SUPPLIER,
+            tools: { components: [{ type: "application", name: "cli/scripts/build.ts", supplier: SUPPLIER }] },
+        },
+        components,
+        dependencies: [{ ref: subjectRef, dependsOn: components.map((component) => component["bom-ref"]) }],
+    };
+    // The serial comes from the content, thus a rebuild of the same commit writes the same bytes.
+    const digest = sha256Hex(JSON.stringify(document));
+    const variant = ((parseInt(digest.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0");
+    const serial = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-${variant}${digest.slice(18, 20)}-${digest.slice(20, 32)}`;
+    return { ...document, serialNumber: `urn:uuid:${serial}` };
+}
+
+function renderSbom(document: Record<string, unknown>): string {
+    return `${JSON.stringify(document, null, 1)}\n`;
+}
+
 // Remove every cache file that matches no current pin BEFORE compiling — covering both artifact kinds: the
 // per-target llama-server archives (LLAMA_PINS) and the platform-independent embedding-model GGUF
 // (MODEL_ARTIFACT). The llama archives are tag-named, so a pin bump renames them (new tag → new filenames)
@@ -338,7 +562,7 @@ function sweepLlamaCache(): void {
     if (!existsSync(LLAMA_CACHE_DIR)) return;
     // Widen to Set<string>: LLAMA_PINS is `as const` (and MODEL_ARTIFACT is a literal too), so the artifact
     // names infer a literal union that would reject a plain-string `.has(entry.name)` membership test.
-    const currentArtifacts = new Set<string>([...Object.values(LLAMA_PINS).map((pin) => pin.artifact), MODEL_ARTIFACT]);
+    const currentArtifacts = new Set<string>([...Object.values(LLAMA_PINS).map((pin) => pin.artifact), MODEL_ARTIFACT, BUN_LICENSE_ARTIFACT]);
     for (const entry of readdirSync(LLAMA_CACHE_DIR, { withFileTypes: true })) {
         if (!entry.isFile() || currentArtifacts.has(entry.name)) continue;
         rmSync(join(LLAMA_CACHE_DIR, entry.name), { force: true });
@@ -352,6 +576,15 @@ sweepLlamaCache();
 // embeds the same asset (D7), so a per-target fetch would be wasted work.
 await ensureModelCached();
 
+// The SBOM of each binary (CycloneDX 1.6). The binary embeds its own document, which `inflexa sbom` reads,
+// and the release attaches the same file beside the binary. The sources are the production dependency
+// walk that THIRD-PARTY-NOTICES.txt also uses, plus each embedded part that no package.json names: the Bun
+// runtime, the llama-server archive of the target, the embedding model, and the vendored grammars. The
+// walk runs here, before the compile loop, because each binary embeds its document at compile time.
+const thirdParty = collectThirdPartyLicenses(process.cwd());
+const bunLicenseText = await ensureBunLicenseCached();
+const grammarComponents = collectGrammarComponents();
+
 const plugin = createSolidTransformPlugin();
 for (const target of targets) {
     const name = `inflexa-${target.os}-${target.arch}`;
@@ -359,6 +592,10 @@ for (const target of targets) {
     // Fetch + verify this target's llama-server archive before compiling, so the embedded-asset import
     // resolves and each binary carries exactly its own runtime.
     const llamaTarget = await ensureLlamaArchiveCached(`${target.os}-${target.arch}`);
+
+    // The SBOM of this binary, written beside it and baked into it.
+    const sbomText = renderSbom(cliSbom(target, llamaTarget, thirdParty, bunLicenseText, grammarComponents));
+    await Bun.write(`dist/sbom-${target.os}-${target.arch}.cdx.json`, sbomText);
 
     // resolveWorkerPath prefers the global OTUI_TREE_SITTER_WORKER_PATH over its default, so bake the
     // worker's embedded bunfs path in (the default `new URL("./parser.worker.js", …)` can't find it —
@@ -376,6 +613,10 @@ for (const target of targets) {
         // string literal), matching the __INFLEXA_COMPILED__ precedent — llama_runtime.ts reads it under
         // a `typeof` guard, so a from-source run (no define) sees it undeclared and falls to the download path.
         __INFLEXA_LLAMA_TARGET__: JSON.stringify(llamaTarget),
+        // The SBOM of this binary, as one string. A bare global identifier define, matching the
+        // __INFLEXA_COMPILED__ precedent: modules/sbom/sbom.ts reads it under a `typeof` guard, thus a
+        // from-source run (no define) sees it undeclared and reports that it carries no SBOM.
+        __INFLEXA_SBOM__: JSON.stringify(sbomText),
         // opentui's native loader consults OPENTUI_LIBC on linux to pick the glibc vs musl lib; bake it
         // so the choice cannot be swayed at runtime (per opencode's build; we only ship glibc).
         ...(target.os === "linux" ? { "process.env.OPENTUI_LIBC": JSON.stringify("glibc") } : {}),
@@ -453,7 +694,6 @@ for (const target of targets) {
 // license/NOTICE text of every bundled package must ship alongside the
 // executables. Generated fresh each build because the resolved tree drifts;
 // it is never hand-maintained.
-const thirdParty = collectThirdPartyLicenses(process.cwd());
 await Bun.write("dist/THIRD-PARTY-NOTICES.txt", renderThirdPartyNotices(thirdParty));
 console.log(`wrote dist/THIRD-PARTY-NOTICES.txt (${thirdParty.length} packages)`);
 
@@ -464,6 +704,11 @@ type ThirdPartyPackage = {
     homepage: string | null;
     licenseText: string | null;
     noticeText: string | null;
+    // The npm platform fields. A package that names them installs only on a matching platform, thus the
+    // SBOM of one target leaves out the native packages of the other targets.
+    os: readonly string[] | null;
+    cpu: readonly string[] | null;
+    libc: readonly string[] | null;
 };
 
 // Walk the *production* dependency graph (dependencies + optionalDependencies,
@@ -541,7 +786,11 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
             homepage?: string;
             dependencies?: Record<string, string>;
             optionalDependencies?: Record<string, string>;
+            os?: unknown;
+            cpu?: unknown;
+            libc?: unknown;
         };
+        const stringList = (value: unknown): string[] | null => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : null);
         const pkgName = pkg.name ?? item.name;
         const version = pkg.version ?? "0.0.0";
         const key = `${pkgName}@${version}`;
@@ -553,6 +802,9 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
                 homepage: typeof pkg.homepage === "string" ? pkg.homepage : null,
                 licenseText: readMatchingText(pkgDir, /^(licen[cs]e|copying)/i),
                 noticeText: readMatchingText(pkgDir, /^notice/i),
+                os: stringList(pkg.os),
+                cpu: stringList(pkg.cpu),
+                libc: stringList(pkg.libc),
             });
         }
 
