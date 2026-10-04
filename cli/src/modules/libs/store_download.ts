@@ -94,6 +94,12 @@ const METADATA_DIR = ".inflexa-download";
  */
 const STORE_GRAPH = "deps.json";
 
+/**
+ * The CycloneDX SBOM of the catalog, at the store root. The publisher writes it
+ * (`images/sbom/store-sbom.py`) into the base layer, and `inflexa sbom` reads it.
+ */
+export const STORE_SBOM_FILE = "sbom.cdx.json";
+
 /** How long the merge waits for the store-level metadata mutex before it reports a conflict. */
 const METADATA_MUTEX_WAIT_MS = 30_000;
 
@@ -883,13 +889,13 @@ function metadataMutexTimeout(holderPid: number): StoreDownloadError {
 /**
  * Merge one replaceable record of the catalog into the store root, under the metadata mutex.
  *
- * {@link STORE_GRAPH} and {@link IMAGE_PACKAGES_FILE} both ride this rule. On a plain download the
+ * {@link STORE_GRAPH}, {@link IMAGE_PACKAGES_FILE}, and {@link STORE_SBOM_FILE} ride this rule. On a plain download the
  * record moves in only when the root carries none, exactly as any other top-level entry does. On
  * `--update` the record of the NEW catalog replaces the record of the old one: the two describe
  * different builds, and a kept record would state what the new catalog never resolved.
  *
- * The mutex is here for the graph, whose second writer is the flight commit. The image record has one
- * writer only, and it takes the same lock anyway: an uncontended acquire costs nothing, and one rule
+ * The mutex is here for the graph, whose second writer is the flight commit. The image record and the
+ * SBOM have one writer only, and they take the same lock anyway: an uncontended acquire costs nothing, and one rule
  * in one place is worth more than a second, narrower path.
  */
 async function mergeReplaceableRecord(name: string, staged: string, target: string, replace: boolean): Promise<Result<void, StoreDownloadError>> {
@@ -914,9 +920,9 @@ async function mergeReplaceableRecord(name: string, staged: string, target: stri
  * store add` acquires into the same `store/` pool, and the composition writes an analysis farm
  * beside the published one. A replacement would destroy that work, so the download moves in only
  * what the root does not have. `store/` and `farms/` merge one level deeper, because both owners
- * write into them. Three records ride the update rule instead: `deps.json` and `image-packages.json`
- * ({@link mergeReplaceableRecord}), and the catalog farm ({@link mergeFarms}), because the graph, the
- * template, and the image record describe one build and must move together. Any other top-level entry
+ * write into them. Four records ride the update rule instead: `deps.json`, `image-packages.json`, and
+ * `sbom.cdx.json` ({@link mergeReplaceableRecord}), and the catalog farm ({@link mergeFarms}), because
+ * the graph, the template, the image record, and the SBOM describe one build and must move together. Any other top-level entry
  * moves in only when it is absent.
  *
  * The merge keeps the crash safety of the receipt pattern. Each move is a `rename` inside one
@@ -955,7 +961,7 @@ async function mergeStagedRoot(
                 farmsReplaced.push(...merged.replaced);
                 continue;
             }
-            if (name === STORE_GRAPH || name === IMAGE_PACKAGES_FILE) {
+            if (name === STORE_GRAPH || name === IMAGE_PACKAGES_FILE || name === STORE_SBOM_FILE) {
                 const merged = await mergeReplaceableRecord(name, join(stageRoot, name), to, replacePublisherRecords);
                 if (merged.isErr()) return err(merged.error);
                 continue;

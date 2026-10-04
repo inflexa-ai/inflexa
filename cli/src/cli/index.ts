@@ -922,6 +922,24 @@ export function buildProgram(): Command {
         },
     );
 
+    // `blocked`: the SBOM is an export for the user to run in a terminal and redirect. A conversation
+    // has no use for it.
+    registerAction(
+        cli
+            .command("sbom")
+            .description(
+                "Print the CycloneDX SBOM of this installation: the CLI binary, the two sandbox images, and the package store on this host, merged into one document",
+            ),
+        {
+            kind: "blocked",
+            reason: "`inflexa sbom` is a terminal export for the user, who redirects its output to a file. It is not available to you — ask the user to run it themselves.",
+        },
+        async () => {
+            const { sbomAction } = await import("../modules/sbom/sbom.ts");
+            await sbomAction();
+        },
+    );
+
     cli.addHelpText("after", renderEnvHelp);
 
     return cli;
