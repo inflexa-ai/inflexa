@@ -23,6 +23,7 @@ python3 of the image.
 """
 import argparse
 import glob
+import http.client
 import json
 import os
 import subprocess
@@ -68,7 +69,7 @@ def log(message: str) -> None:
     print(f"image-sbom: {message}", file=sys.stderr, flush=True)
 
 
-def run_syft(syft: str, name: str, version: str) -> dict:
+def run_syft(syft: str, name: str, version: str, cache: str) -> dict:
     with tempfile.NamedTemporaryFile(suffix=".cdx.json", delete=False) as handle:
         raw = handle.name
     command = [
@@ -85,7 +86,22 @@ def run_syft(syft: str, name: str, version: str) -> dict:
     ]
     for pattern in EXCLUDES:
         command += ["--exclude", pattern]
-    env = dict(os.environ, SYFT_CHECK_FOR_APP_UPDATE="false")
+    # Syft writes a cache (the Go module answers of --enrich) below its home.
+    # The build runs as root with the HOME of the image, thus a default cache
+    # makes a root-owned ~/.cache in a layer of the image, and the sandbox
+    # user can then not write there. Each path of Syft goes to the cache mount
+    # instead, which no layer holds.
+    home = Path(cache) / "syft-home"
+    for sub in ("cache", "config"):
+        (home / sub).mkdir(parents=True, exist_ok=True)
+    env = dict(
+        os.environ,
+        SYFT_CHECK_FOR_APP_UPDATE="false",
+        HOME=str(home),
+        XDG_CACHE_HOME=str(home / "cache"),
+        XDG_CONFIG_HOME=str(home / "config"),
+        SYFT_CACHE_DIR=str(home / "cache" / "syft"),
+    )
     subprocess.run(command, check=True, env=env)
     with open(raw) as f:
         document = json.load(f)
@@ -208,7 +224,11 @@ def crate_license(name: str, version: str, cache: Path, state: dict) -> str | No
                 return None
             if error.code not in (429, 500, 502, 503, 504) or attempt == 4:
                 raise
-        except urllib.error.URLError:
+        except (http.client.HTTPException, OSError, ValueError):
+            # urllib wraps only the connection errors in URLError (an OSError).
+            # A dropped keep-alive, a slow read, or a cut body comes from
+            # http.client or from the JSON decoder unwrapped, and each one is
+            # transient.
             if attempt == 4:
                 raise
         time.sleep(2 ** attempt)
@@ -251,7 +271,7 @@ def resolve_licenses(document: dict, args, dpkg_owner: dict, conda_owner: dict) 
                     entry = {"license": {"id": "MIT"}}
                 kept.append(entry)
             text = common.read_text(Path(f"/usr/share/doc/{component['name']}/copyright"))
-            if text and (len(kept) < len(licenses) or any(common.bare_name(entry) for entry in kept)):
+            if text and (not kept or len(kept) < len(licenses) or any(common.bare_name(entry) for entry in kept)):
                 kept.append(common.text_license(f"Text of /usr/share/doc/{component['name']}/copyright", text))
             component["licenses"] = kept
             continue
@@ -394,7 +414,7 @@ def main() -> int:
             record = json.load(f)
 
     log("scanning the image file system with syft")
-    document = run_syft(args.syft, args.name, f"{args.version}-{args.arch}")
+    document = run_syft(args.syft, args.name, f"{args.version}-{args.arch}", args.cache)
 
     dpkg_owner = dpkg_owners()
     conda_by_id, conda_owner = conda_records()

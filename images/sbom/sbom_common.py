@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import uuid
+from email.parser import HeaderParser
 from pathlib import Path
 
 SPEC_VERSION = "1.6"
@@ -122,28 +123,58 @@ CLASSIFIER_SPDX = {
 }
 
 
+def spdx_valid(declared: str) -> bool:
+    """True when a value is an SPDX expression of known ids that obeys the grammar.
+
+    The grammar: an expression is a term, then each AND or OR with a next
+    term. A term is an expression in parentheses, or a known id with an
+    optional "+" and an optional "WITH <exception>".
+    """
+    tokens = declared.replace("(", " ( ").replace(")", " ) ").split()
+    position = 0
+
+    def term() -> bool:
+        nonlocal position
+        if position >= len(tokens):
+            return False
+        token = tokens[position]
+        if token == "(":
+            position += 1
+            if not expression() or position >= len(tokens) or tokens[position] != ")":
+                return False
+            position += 1
+            return True
+        if token.rstrip("+") not in KNOWN_SPDX:
+            return False
+        position += 1
+        if position < len(tokens) and tokens[position] == "WITH":
+            position += 1
+            if position >= len(tokens) or tokens[position] not in KNOWN_SPDX_EXCEPTIONS:
+                return False
+            position += 1
+        return True
+
+    def expression() -> bool:
+        nonlocal position
+        if not term():
+            return False
+        while position < len(tokens) and tokens[position] in ("AND", "OR"):
+            position += 1
+            if not term():
+                return False
+        return True
+
+    return bool(tokens) and expression() and position == len(tokens)
+
+
 def spdx_entry(declared: str) -> dict | None:
-    """A license entry when a declared value is one known SPDX id or an expression of known ids."""
+    """A license entry when a declared value is one known SPDX id or a valid expression of known ids."""
     declared = declared.strip()
     if declared.lower() in KNOWN_SPDX_FOLDED:
         return {"license": {"id": KNOWN_SPDX_FOLDED[declared.lower()]}}
-    tokens = declared.replace("(", " ( ").replace(")", " ) ").split()
-    if len(tokens) == 1 and tokens[0].endswith("+") and tokens[0][:-1] in KNOWN_SPDX:
+    if spdx_valid(declared):
         return {"expression": declared}
-    if not any(token in ("AND", "OR", "WITH") for token in tokens):
-        return None
-    previous = None
-    for token in tokens:
-        if token in ("AND", "OR", "WITH", "(", ")"):
-            previous = token
-            continue
-        if previous == "WITH":
-            if token not in KNOWN_SPDX_EXCEPTIONS:
-                return None
-        elif token.rstrip("+") not in KNOWN_SPDX:
-            return None
-        previous = token
-    return {"expression": declared}
+    return None
 
 
 def read_text(path: Path) -> str | None:
@@ -169,8 +200,11 @@ def entry_resolved(entry: dict) -> bool:
     lic = entry.get("license") or {}
     if lic.get("id"):
         return True
-    if (lic.get("text") or {}).get("content"):
-        return True
+    if "text" in lic:
+        # The name of a text entry is a label. The text decides, thus a text
+        # that holds only "UNKNOWN" resolves nothing.
+        text = ((lic.get("text") or {}).get("content") or "").strip()
+        return bool(text) and not UNRESOLVED_NAME.match(text)
     name = (lic.get("name") or "").strip()
     return bool(name) and not UNRESOLVED_NAME.match(name)
 
@@ -228,21 +262,20 @@ def r_licenses(field: str | None, package_dir: Path) -> list:
 
 
 def parse_metadata(path: Path) -> dict:
-    """The header fields of a Python METADATA or PKG-INFO file. A field can repeat."""
+    """The header fields of a Python METADATA or PKG-INFO file, or of an R DESCRIPTION file.
+
+    The three formats are RFC 822 headers. A field can repeat, and a folded
+    value continues on lines that start with white space. A line of white
+    space only is a part of a folded value, for example a blank line of a
+    License text, and only an empty line ends the headers. The parser of the
+    email module obeys these rules. The lines of a folded value lose their
+    indentation.
+    """
+    message = HeaderParser().parsestr(read_text(path) or "")
     fields: dict[str, list[str]] = {}
-    text = read_text(path) or ""
-    key = None
-    for line in text.splitlines():
-        if not line.strip():
-            break
-        if line[0] in " \t" and key is not None:
-            fields[key][-1] += "\n" + line.strip()
-            continue
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip().lower()
-        fields.setdefault(key, []).append(value.strip())
+    for key, value in message.items():
+        lines = [line.strip() for line in str(value).splitlines()]
+        fields.setdefault(key.strip().lower(), []).append("\n".join(lines).strip())
     return fields
 
 
@@ -311,7 +344,7 @@ def python_licenses(metadata: Path) -> list:
         return entries
     if texts:
         return texts
-    if declared:
+    if declared and not UNRESOLVED_NAME.match(declared):
         return [text_license("License text (METADATA License field)", declared)]
     return []
 

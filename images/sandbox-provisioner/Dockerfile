@@ -104,20 +104,27 @@ ENV PKG_SYSREQS=false
 # This image has no inventory record, thus the gate checks the licenses and
 # the extra components only. IMAGE_VERSION names the tag that the build
 # publishes, and `local` states a hand build.
+# SBOM_STEP=off skips the step, for the store build, which never publishes
+# this image.
 ARG IMAGE_VERSION=local
 ARG TARGETARCH
+ARG SBOM_STEP=on
 RUN --mount=type=bind,from=syft,source=/syft,target=/tmp/syft \
     --mount=type=bind,source=images/sbom,target=/tmp/sbom \
     --mount=type=bind,source=images/sandbox-provisioner/sbom-extra.json,target=/tmp/sbom-extra.json \
     --mount=type=cache,target=/var/cache/inflexa-sbom,sharing=locked \
-    python3 /tmp/sbom/image-sbom.py \
-      --syft /tmp/syft \
-      --extra /tmp/sbom-extra.json \
-      --name ghcr.io/inflexa-ai/sandbox-provisioner \
-      --version "${IMAGE_VERSION}" \
-      --arch "${TARGETARCH}" \
-      --out /opt/inflexa/sbom.cdx.json \
-    && chmod a+r /opt/inflexa/sbom.cdx.json
+    if [ "${SBOM_STEP}" = "off" ]; then \
+      echo "image-sbom: SBOM_STEP=off, thus this build writes no SBOM"; \
+    else \
+      python3 /tmp/sbom/image-sbom.py \
+        --syft /tmp/syft \
+        --extra /tmp/sbom-extra.json \
+        --name ghcr.io/inflexa-ai/sandbox-provisioner \
+        --version "${IMAGE_VERSION}" \
+        --arch "${TARGETARCH}" \
+        --out /opt/inflexa/sbom.cdx.json \
+      && chmod a+r /opt/inflexa/sbom.cdx.json; \
+    fi
 
 # Attach the published package to the repo, the same as sandbox-base. GHCR reads
 # this label to link the new package to the repository. A linked package takes

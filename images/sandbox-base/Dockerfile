@@ -535,21 +535,29 @@ RUN python3 /tmp/image-record.py \
 # only for a new crate. The scripts, the extra file, and the scanner arrive
 # through bind mounts, thus no layer holds them. The CLI reads the document
 # from the image (`inflexa sbom`), and the build workflow attests it.
+#
+# SBOM_STEP=off skips the step. The store build builds this image only to run
+# its checks, and it never publishes it, thus that build writes no SBOM.
 # =============================================================================
 
+ARG SBOM_STEP=on
 RUN --mount=type=bind,from=syft,source=/syft,target=/tmp/syft \
     --mount=type=bind,source=images/sbom,target=/tmp/sbom \
     --mount=type=bind,source=images/sandbox-base/sbom-extra.json,target=/tmp/sbom-extra.json \
     --mount=type=cache,target=/var/cache/inflexa-sbom,sharing=locked \
-    python3 /tmp/sbom/image-sbom.py \
-      --syft /tmp/syft \
-      --extra /tmp/sbom-extra.json \
-      --name ghcr.io/inflexa-ai/sandbox-base \
-      --version "${IMAGE_VERSION}" \
-      --arch "${TARGETARCH}" \
-      --record /opt/inflexa/image-packages.json \
-      --out /opt/inflexa/sbom.cdx.json \
-    && chmod a+r /opt/inflexa/sbom.cdx.json
+    if [ "${SBOM_STEP}" = "off" ]; then \
+      echo "image-sbom: SBOM_STEP=off, thus this build writes no SBOM"; \
+    else \
+      python3 /tmp/sbom/image-sbom.py \
+        --syft /tmp/syft \
+        --extra /tmp/sbom-extra.json \
+        --name ghcr.io/inflexa-ai/sandbox-base \
+        --version "${IMAGE_VERSION}" \
+        --arch "${TARGETARCH}" \
+        --record /opt/inflexa/image-packages.json \
+        --out /opt/inflexa/sbom.cdx.json \
+      && chmod a+r /opt/inflexa/sbom.cdx.json; \
+    fi
 
 # The default is the unprivileged workload user. Callback mode and K8s run as
 # uid 1000 throughout. Docker poll mode overrides User to root at create
