@@ -757,6 +757,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     },
                     runStep: durableStep,
                     resolved: () => accepted !== null,
+                    invocationId: workflowId,
                     usageRecorder: deps.usageRecorder,
                     toolOutputStore: deps.toolOutputStore,
                     isFatalLoopError: (err) => err instanceof DBOSErrors.DBOSWorkflowCancelledError,
