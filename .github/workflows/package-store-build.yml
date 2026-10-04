@@ -89,6 +89,10 @@ jobs:
       contents: read
       # The ORAS push writes the store artifact to GHCR under this repository owner.
       packages: write
+      # The SBOM attestation: a Sigstore signature (id-token) and the
+      # attestation store of the repository (attestations).
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       # Keep the arch list + runner labels in lock-step with
@@ -491,6 +495,31 @@ jobs:
             -c 'cp /opt/inflexa/image-packages.json /mnt/libs/image-packages.json &&
                 chmod a+r /mnt/libs/image-packages.json'
 
+      - name: Write the store SBOM into the store root
+        # The store carries its CycloneDX SBOM at the root, thus the pack
+        # below takes it into the base layer, and `inflexa sbom` reads it from
+        # the store of the user. images/sbom/store-sbom.py lists each pool
+        # directory, which is each distribution the artifact carries, and its
+        # gate fails this step when a directory holds no readable package,
+        # when a farm lock entry is not in the SBOM, or when a component has no
+        # resolved license. The document is deterministic. This is the last
+        # write to the store root, thus it runs after the image record. The
+        # copy in the workspace is the input of the attestation after the push.
+        run: |
+          docker run --rm \
+            --user 0:0 \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            -v "${GITHUB_WORKSPACE}/images/sbom:/sbom:ro" \
+            --entrypoint python3 \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            /sbom/store-sbom.py --root /mnt/libs --farm "$FARM" \
+              --version "$VERSION" --arch "$ARCH" --out /mnt/libs/sbom.cdx.json
+          docker run --rm \
+            -v "${STORE_VOLUME}:/mnt/libs:ro" \
+            --entrypoint cat \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            /mnt/libs/sbom.cdx.json > store-sbom.cdx.json
+
       - name: Pack the store into per-track OCI layers
         # One layer per track plus one base layer. A track layer holds only the
         # content-addressed store directories of that track, which the farm
@@ -590,7 +619,10 @@ jobs:
         # A version tag is immutable in content. Resolve the tag first: absent
         # → push; present with the same layer digests → skip; present with
         # different digests → refuse and stop. Only a push moves the
-        # `latest-<arch>` pointer.
+        # `latest-<arch>` pointer. A push gives the manifest digest to the
+        # SBOM attestation below. A skip gives none, because the push that
+        # published the same layers attested them.
+        id: publish
         run: |
           set -euo pipefail
           REF="${STORE_IMAGE}:${VERSION}-${ARCH}"
@@ -643,8 +675,24 @@ jobs:
               # moves it — a skip must not move it backward.
               oras tag "$REF" "latest-${ARCH}"
               echo "::notice::moved ${STORE_IMAGE}:latest-${ARCH} to $REF."
+              digest=$(oras manifest fetch --descriptor "$REF" \
+                | python3 -c 'import json, sys; print(json.load(sys.stdin)["digest"])')
+              echo "digest=${digest}" >> "$GITHUB_OUTPUT"
               ;;
           esac
+
+      # The attestation binds the store SBOM to the manifest digest that the
+      # push published, and it goes to GHCR beside the artifact. A user
+      # verifies it with `gh attestation verify oci://<store>:<version>-<arch>
+      # --owner inflexa-ai --predicate-type https://cyclonedx.org/bom`.
+      - name: Attest the store SBOM
+        if: steps.publish.outputs.digest != ''
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.STORE_IMAGE }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          sbom-path: store-sbom.cdx.json
+          push-to-registry: true
 
       - name: Cleanup
         if: always()
@@ -655,7 +703,7 @@ jobs:
           # volume cannot go before the container does.
           docker ps -aq --filter "volume=${STORE_VOLUME}" | xargs -r docker rm -f 2>/dev/null || true
           docker volume rm "$STORE_VOLUME" 2>/dev/null || true
-          rm -rf dist lockout load-check.json r-base-loaded.txt current-lock.json
+          rm -rf dist lockout load-check.json r-base-loaded.txt current-lock.json store-sbom.cdx.json
           docker image prune -f 2>/dev/null || true
           docker container prune -f 2>/dev/null || true
 

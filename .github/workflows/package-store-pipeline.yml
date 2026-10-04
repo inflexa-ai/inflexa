@@ -24,6 +24,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # The SBOM attestations of the two images. A called workflow cannot
+      # take more than its caller grants.
+      id-token: write
+      attestations: write
 
   store:
     needs: images
@@ -33,6 +37,9 @@ jobs:
       # The lock commit-back job of the store build writes to the branch.
       contents: write
       packages: write
+      # The SBOM attestation of the store artifact.
+      id-token: write
+      attestations: write
 
   acceptance:
     needs: store
