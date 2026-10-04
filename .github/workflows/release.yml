@@ -204,6 +204,48 @@ jobs:
         with:
           subject-path: cli/dist/inflexa-*
 
+      # Signed SBOM attestations: each binary carries the CycloneDX SBOM that
+      # scripts/build.ts wrote for it and baked into it (`inflexa sbom` reads
+      # the baked copy). A user verifies one with `gh attestation verify
+      # <binary> --repo inflexa-ai/inflexa --predicate-type
+      # https://cyclonedx.org/bom`. The SBOM files are named sbom-*, not
+      # inflexa-*, thus the checksum, provenance, and channel globs above
+      # stay on the binaries.
+      - name: Attest the SBOM of inflexa-darwin-arm64
+        if: steps.gate.outputs.release == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: cli/dist/inflexa-darwin-arm64
+          sbom-path: cli/dist/sbom-darwin-arm64.cdx.json
+
+      - name: Attest the SBOM of inflexa-darwin-x64
+        if: steps.gate.outputs.release == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: cli/dist/inflexa-darwin-x64
+          sbom-path: cli/dist/sbom-darwin-x64.cdx.json
+
+      - name: Attest the SBOM of inflexa-linux-x64
+        if: steps.gate.outputs.release == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: cli/dist/inflexa-linux-x64
+          sbom-path: cli/dist/sbom-linux-x64.cdx.json
+
+      - name: Attest the SBOM of inflexa-linux-arm64
+        if: steps.gate.outputs.release == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: cli/dist/inflexa-linux-arm64
+          sbom-path: cli/dist/sbom-linux-arm64.cdx.json
+
+      - name: Attest the SBOM of inflexa-windows-x64
+        if: steps.gate.outputs.release == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: cli/dist/inflexa-windows-x64.exe
+          sbom-path: cli/dist/sbom-windows-x64.cdx.json
+
       - name: Create tag and GitHub release
         if: steps.gate.outputs.release == 'true'
         working-directory: cli
@@ -238,7 +280,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "v$VERSION" \
             --generate-notes \
-            dist/inflexa-* dist/SHA256SUMS dist/SHA256SUMS.sig dist/SHA256SUMS.pem dist/THIRD-PARTY-NOTICES.txt dist/cli-docs.tar.gz
+            dist/inflexa-* dist/SHA256SUMS dist/SHA256SUMS.sig dist/SHA256SUMS.pem dist/THIRD-PARTY-NOTICES.txt dist/sbom-*.cdx.json dist/cli-docs.tar.gz
           gh release edit "v$VERSION" --draft=false
 
       # Downstream distribution runs as separate dispatched workflows
