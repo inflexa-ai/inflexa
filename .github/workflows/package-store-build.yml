@@ -217,6 +217,7 @@ jobs:
             -f images/sandbox-provisioner/Dockerfile \
             --platform "$PLATFORM" \
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --build-arg "SBOM_STEP=off" \
             -t "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
             .
 
@@ -235,6 +236,7 @@ jobs:
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
             --build-arg "TARGETARCH=${ARCH}" \
             --build-arg "IMAGE_VERSION=${VERSION}" \
+            --build-arg "SBOM_STEP=off" \
             -t "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" \
             .
 
@@ -685,14 +687,27 @@ jobs:
       # push published, and it goes to GHCR beside the artifact. A user
       # verifies it with `gh attestation verify oci://<store>:<version>-<arch>
       # --owner inflexa-ai --predicate-type https://cyclonedx.org/bom`.
+      #
+      # The attestation cannot fail the job. The push and the tag move above
+      # are done, and the lock commit-back runs only after a green job. Thus
+      # a failed attestation must not leave a live store without its lock.
+      # The next step reports it as a warning.
       - name: Attest the store SBOM
+        id: attest_store
         if: steps.publish.outputs.digest != ''
+        continue-on-error: true
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.STORE_IMAGE }}
           subject-digest: ${{ steps.publish.outputs.digest }}
           sbom-path: store-sbom.cdx.json
           push-to-registry: true
+
+      - name: Report a failed SBOM attestation
+        if: steps.attest_store.outcome == 'failure'
+        run: |
+          echo "::warning::The SBOM attestation of ${STORE_IMAGE}:${VERSION}-${ARCH} failed. The store is published without it. Attest the digest again by hand, or publish a new version."
+          echo "| SBOM attestation | failed — refer to the warning |" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup
         if: always()
