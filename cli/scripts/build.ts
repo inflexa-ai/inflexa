@@ -365,37 +365,97 @@ const SUPPLIER = { name: "Inflexa", url: ["https://github.com/inflexa-ai/inflexa
 // A license name that names nothing a reader can act on. The same rule as images/sbom/sbom_common.py.
 const UNRESOLVED_LICENSE_NAME = /^(sha256:[0-9a-f]+|file\s+licen[cs]e|see\s+licen[cs]e.*|unknown|noassertion|none|)$/i;
 
-// The syntax of an SPDX expression: license ids joined by AND, OR, and WITH, with parentheses. npm validates
-// the license field of a published package against the SPDX list, thus the syntax test is enough for it.
-const SPDX_EXPRESSION = /^\(?[A-Za-z0-9.+-]+\)?( (AND|OR|WITH) \(?[A-Za-z0-9.+-]+\)?)*$/;
+// The SPDX ids that an expression can name: the KNOWN_SPDX set of images/sbom/sbom_common.py. The cli shares
+// no code with images/, thus the two sets are copies, and a change to one belongs in the other. A value outside
+// the set is not an error: it stays a declared name, and the license text of the package goes beside it.
+const KNOWN_SPDX = new Set(
+    `0BSD AFL-2.1 AFL-3.0 AGPL-3.0 AGPL-3.0-only AGPL-3.0-or-later Apache-1.1 Apache-2.0 Artistic-1.0
+    Artistic-1.0-Perl Artistic-2.0 BlueOak-1.0.0 BSD-1-Clause BSD-2-Clause BSD-3-Clause BSD-3-Clause-Clear
+    BSD-4-Clause BSL-1.0 bzip2-1.0.6 CC-BY-3.0 CC-BY-4.0 CC-BY-SA-3.0 CC-BY-SA-4.0 CC0-1.0 CDDL-1.0 CDDL-1.1
+    CPL-1.0 ECL-2.0 EPL-1.0 EPL-2.0 EUPL-1.1 EUPL-1.2 GFDL-1.3-only GPL-1.0-or-later GPL-2.0 GPL-2.0-only
+    GPL-2.0-or-later GPL-3.0 GPL-3.0-only GPL-3.0-or-later HPND ISC LGPL-2.0-only LGPL-2.0-or-later LGPL-2.1
+    LGPL-2.1-only LGPL-2.1-or-later LGPL-3.0 LGPL-3.0-only LGPL-3.0-or-later LPL-1.02 MIT MIT-0 MIT-CMU MPL-1.1
+    MPL-2.0 MS-PL NCSA ODbL-1.0 OFL-1.1 OpenSSL PostgreSQL PSF-2.0 Python-2.0 Unicode-3.0 Unicode-DFS-2016
+    Unlicense UPL-1.0 Vim W3C WTFPL X11 Zlib ZPL-2.1`.split(/\s+/),
+);
+
+/** The SPDX exceptions that an expression can name after WITH, the same set as images/sbom/sbom_common.py. */
+const KNOWN_SPDX_EXCEPTIONS = new Set(["LLVM-exception", "Classpath-exception-2.0", "GCC-exception-3.1", "Autoconf-exception-3.0", "Bison-exception-2.2"]);
+
+/**
+ * True when a value is an SPDX expression of known ids that obeys the grammar, the same check as `spdx_valid` in
+ * images/sbom/sbom_common.py. An expression is a term, then each AND or OR with a next term. A term is an
+ * expression in parentheses, or a known id with an optional `+` and an optional `WITH <exception>`. npm only
+ * warns on a license value outside SPDX, thus a published package can declare `UNKNOWN` or `BSD`, and neither
+ * one passes here.
+ */
+function spdxValid(value: string): boolean {
+    const tokens = value.replace(/\(/g, " ( ").replace(/\)/g, " ) ").trim().split(/\s+/).filter((token) => token !== "");
+    let position = 0;
+    function term(): boolean {
+        const token = tokens[position];
+        if (token === undefined) return false;
+        if (token === "(") {
+            position += 1;
+            if (!expression() || tokens[position] !== ")") return false;
+            position += 1;
+            return true;
+        }
+        if (!KNOWN_SPDX.has(token.replace(/\+$/, ""))) return false;
+        position += 1;
+        if (tokens[position] === "WITH") {
+            const exception = tokens[position + 1];
+            if (exception === undefined || !KNOWN_SPDX_EXCEPTIONS.has(exception)) return false;
+            position += 2;
+        }
+        return true;
+    }
+    function expression(): boolean {
+        if (!term()) return false;
+        while (tokens[position] === "AND" || tokens[position] === "OR") {
+            position += 1;
+            if (!term()) return false;
+        }
+        return true;
+    }
+    return tokens.length > 0 && expression() && position === tokens.length;
+}
 
 /** The CycloneDX licenses of one npm package: its SPDX expression, or its declared value with the license text. */
 function npmLicenses(pkg: ThirdPartyPackage): CdxLicense[] {
-    if (SPDX_EXPRESSION.test(pkg.license) && pkg.license !== "UNLICENSED") return [{ expression: pkg.license }];
+    if (spdxValid(pkg.license)) return [{ expression: pkg.license }];
     if (pkg.licenseText) return [{ license: { name: pkg.license, text: { contentType: "text/plain", content: pkg.licenseText } } }];
     return [{ license: { name: pkg.license } }];
 }
 
-/** True when a license list is not empty and each entry names a license that a reader can resolve. */
+/**
+ * True when a license list is not empty and each entry names a license that a reader can resolve, the same rule as
+ * `entry_resolved` in images/sbom/sbom_common.py. The name of a text entry is a label, thus the text decides.
+ */
 function licensesResolved(licenses: CdxLicense[]): boolean {
     return (
         licenses.length > 0 &&
         licenses.every((entry) => {
             if ("expression" in entry) return entry.expression.length > 0;
             const lic = entry.license;
-            return Boolean(lic.id) || Boolean(lic.text?.content) || (Boolean(lic.name) && !UNRESOLVED_LICENSE_NAME.test(lic.name ?? ""));
+            if (lic.id) return true;
+            if (lic.text !== undefined) {
+                const text = lic.text.content.trim();
+                return text.length > 0 && !UNRESOLVED_LICENSE_NAME.test(text);
+            }
+            return Boolean(lic.name) && !UNRESOLVED_LICENSE_NAME.test(lic.name ?? "");
         })
     );
 }
 
 /** True when the npm platform fields of a package admit the target. A `!` entry excludes a value. */
 function admitsTarget(pkg: ThirdPartyPackage, os: string, cpu: string): boolean {
-    const admits = (allowed: readonly string[] | null, value: string): boolean => {
+    function admits(allowed: readonly string[] | null, value: string): boolean {
         if (allowed === null || allowed.length === 0) return true;
         if (allowed.includes(`!${value}`)) return false;
         const positive = allowed.filter((entry) => !entry.startsWith("!"));
         return positive.length === 0 || positive.includes(value);
-    };
+    }
     // The release links glibc on linux (OPENTUI_LIBC below), thus a musl-only package is not in a binary.
     const libcAdmits = os !== "linux" || admits(pkg.libc, "glibc");
     return admits(pkg.os, os) && admits(pkg.cpu, cpu) && libcAdmits;
@@ -442,6 +502,8 @@ function cliSbom(
     grammars: CdxComponent[],
 ): Record<string, unknown> {
     const npmOs = target.os === "windows" ? "win32" : target.os;
+    // An unchecked cast of the cli's own package.json, which the build runs from: `version` is a required field
+    // there, and `bun run build` already refused to start without the file.
     const cliPkg = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
     const components: CdxComponent[] = packages
         .filter((pkg) => admitsTarget(pkg, npmOs, target.arch))
@@ -469,11 +531,7 @@ function cliSbom(
         externalReferences: [{ type: "vcs", url: "https://github.com/oven-sh/bun" }],
     });
 
-    const llamaPin = (LLAMA_PINS as Record<string, LlamaPin>)[llamaTarget];
-    if (!llamaPin) {
-        console.error(`error: no vendored llama-server pin for build target ${llamaTarget}`);
-        process.exit(1);
-    }
+    const llamaPin: LlamaPin = LLAMA_PINS[llamaTarget];
     components.push({
         "bom-ref": `pkg:github/ggml-org/llama.cpp@${LLAMA_RUNTIME_TAG}`,
         type: "application",
@@ -740,6 +798,11 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
         }
     }
 
+    // The string entries of an npm platform field. The type predicate is sound: it holds after a `typeof` test.
+    function stringList(value: unknown): string[] | null {
+        return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : null;
+    }
+
     function readMatchingText(pkgDir: string, matcher: RegExp): string | null {
         let entries: string[];
         try {
@@ -786,11 +849,12 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
             homepage?: string;
             dependencies?: Record<string, string>;
             optionalDependencies?: Record<string, string>;
+            // The npm platform fields are lists of strings by the npm schema, but a hand-written package.json can
+            // hold anything, thus `unknown` and the narrowing of `stringList`.
             os?: unknown;
             cpu?: unknown;
             libc?: unknown;
         };
-        const stringList = (value: unknown): string[] | null => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : null);
         const pkgName = pkg.name ?? item.name;
         const version = pkg.version ?? "0.0.0";
         const key = `${pkgName}@${version}`;
