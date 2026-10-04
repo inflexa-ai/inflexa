@@ -97,11 +97,24 @@ const TRANSFER_DETAIL = "This command downloads data. It has no time limit. ";
 export type ActionDecision = { readonly kind: "blocked"; readonly message: string } | { readonly kind: "ask" } | { readonly kind: "spawn" };
 
 /**
+ * The hidden options that select a worker mode, by commander attribute name, with the spelling the refusal
+ * names. A command starts its detached child with one of these, and that child does work that the argv does
+ * not show: `store add --run-flush` acquires the whole pending set, not the package of the argv.
+ */
+const WORKER_MODE_OPTIONS: ReadonlyMap<string, string> = new Map([
+    ["runFlush", "--run-flush"],
+    ["runTransfer", "--run-transfer"],
+]);
+
+/**
  * Run the policy cascade for a classified action. The order is load-bearing:
  *
  * - No policy → `blocked` (fail closed). Reachable only by bypassing every static
  *   enforcement layer, so the message names it a developer-side gap, not a user
  *   decision to override.
+ * - A worker-mode option → `blocked`, whatever the policy. Only the detached child
+ *   of a command runs a worker mode, so an approval of the argv would approve work
+ *   that the prompt does not show.
  * - `blocked` → refuse with the declared reason. This runs BEFORE any grant/ask
  *   lookup (the caller consults no grant here), so a command reclassified `blocked`
  *   wins over a stale "always" grant that still matches its `grantKey`.
@@ -118,6 +131,17 @@ export function decideAction(policy: AgentPolicy | undefined, grantKey: string, 
                 `\`${grantKey}\` is not classified for agent use: it has no agent policy declared. ` +
                 "This is a gap in run_inflexa's command policy (a developer-side omission), not a decision you or the user can approve around — report it rather than retrying.",
         };
+    }
+    for (const option of setOptions) {
+        const flag = WORKER_MODE_OPTIONS.get(option);
+        if (flag !== undefined) {
+            return {
+                kind: "blocked",
+                message:
+                    `\`${flag}\` is a hidden worker mode of \`${grantKey}\`: only the detached child of the command runs it, and it is not available to you. ` +
+                    `Run \`${grantKey}\` without \`${flag}\`.`,
+            };
+        }
     }
     switch (policy.kind) {
         case "blocked":
@@ -544,7 +568,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // chat's own analysis is appended when the model named none, from the
             // TRUSTED session scope — the same rationale as the cwd below.
             let argv = c.argv;
-            if (argv[0] === "store" && argv[1] === "add" && !argv.includes("--run-flush")) {
+            if (argv[0] === "store" && argv[1] === "add") {
                 const scoped = ctx.session.scope;
                 const extra = ["--queued"];
                 if (!argv.includes("--analysis") && scoped.kind === "analysis") extra.push("--analysis", scoped.analysisId);

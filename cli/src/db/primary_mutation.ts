@@ -525,11 +525,24 @@ export function recordStoreFlightProgress(params: { id: string; progress: string
  *
  * This is how a flight ends, in every outcome. A finished flight is not a cache: a row that survived a
  * failure would dedup the next request for the same spec against work that never landed. The
- * subscriptions go with it through the cascade. It is also the sweep of debris that a killed owner left.
+ * subscriptions go with it through the cascade.
  */
 export function deleteStoreFlight(id: string): Result<number, DbError> {
     return tryMutation("deleteStoreFlight", (conn) => {
         return conn.query("DELETE FROM package_store_flights WHERE id = ?").run(id).changes;
+    });
+}
+
+/**
+ * Remove the flight row that a killed owner left, but only while `holderPid` still holds it. Returns rows
+ * changed: `0` when a different holder claimed the key after the sweep read the row.
+ *
+ * The sweep reads the row, probes the pid, and then deletes. A second process can sweep the same row and
+ * claim the key again in that window, and a delete by id alone would then remove the row of a live flight.
+ */
+export function deleteDeadStoreFlight(params: { id: string; holderPid: number }): Result<number, DbError> {
+    return tryMutation("deleteDeadStoreFlight", (conn) => {
+        return conn.query("DELETE FROM package_store_flights WHERE id = ? AND holder_pid = ?").run(params.id, params.holderPid).changes;
     });
 }
 

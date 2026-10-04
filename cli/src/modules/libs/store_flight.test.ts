@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,10 +6,11 @@ import { join } from "node:path";
 import { err, ok } from "neverthrow";
 
 import { env } from "../../lib/env.ts";
+import * as lockModule from "../../lib/lock.ts";
 import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
 import { db } from "../../db/primary.ts";
 import type { DbError } from "../../db/errors.ts";
-import { listPendingStoreAdds } from "../../db/primary_query.ts";
+import { getStoreFlight, listPendingStoreAdds } from "../../db/primary_query.ts";
 import { claimPendingStoreAdds, claimStoreFlight, deleteStoreFlight, promoteStoreFlightBatch, settleStoreFlightFailure } from "../../db/primary_mutation.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { CaptureResult } from "../../lib/container.ts";
@@ -109,6 +110,31 @@ afterEach(() => {
         deleteStoreFlight(flight.row.id).unwrapOr(0);
         rmSync(instanceLockPath(flight.row.id), { force: true });
     }
+});
+
+describe("the dead-holder sweep", () => {
+    test("keeps a row that a second process claimed again between the list and the delete", () => {
+        const dead = Bun.spawnSync(["true"]);
+        const key = "any::alpha::";
+        claimStoreFlight({ id: key, ecosystem: null, spelling: "alpha", specifier: "", holderPid: dead.pid })._unsafeUnwrap();
+        // The liveness probe runs between the list and the delete of the sweep. A second process that
+        // sweeps the same dead row and claims the key again in that window is the race under test.
+        const realIsPidAlive = lockModule.isPidAlive;
+        const probe = spyOn(lockModule, "isPidAlive").mockImplementation((pid) => {
+            if (pid === dead.pid) {
+                deleteStoreFlight(key).unwrapOr(0);
+                claimStoreFlight({ id: key, ecosystem: null, spelling: "alpha", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+            }
+            return realIsPidAlive(pid);
+        });
+        try {
+            readStoreFlights();
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(getStoreFlight(key)._unsafeUnwrap()?.holderPid).toBe(process.pid);
+    });
 });
 
 describe("the pending set", () => {

@@ -48,7 +48,7 @@ function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
 const EXPECTED_DEV_OFF: Record<string, string> = {
     inflexa: "blocked",
     "inflexa analysis set-project": "approval",
-    "inflexa auth login": "approval",
+    "inflexa auth login": "blocked",
     "inflexa auth logout": "approval",
     "inflexa auth whoami": "auto()",
     "inflexa config": "blocked",
@@ -102,7 +102,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
 const EXPECTED_DEV_ON: Record<string, string> = {
     inflexa: "blocked",
     "inflexa analysis set-project": "approval",
-    "inflexa auth login": "approval",
+    "inflexa auth login": "blocked",
     "inflexa auth logout": "approval",
     "inflexa auth whoami": "auto()",
     "inflexa chat": "blocked",

@@ -272,6 +272,26 @@ describe("run_inflexa — execute", () => {
         expect(result.message.length).toBeGreaterThan(0);
     });
 
+    // A hidden worker mode is the detached child that a command starts, never an agent call. The approval
+    // prompt shows the argv, but `store add numpy --run-flush` acquires the whole pending set, not `numpy`.
+    test.each([
+        ["store add --run-flush", ["store", "add", "numpy", "--run-flush"], "--run-flush"],
+        ["store download --run-transfer", ["store", "download", "--run-transfer"], "--run-transfer"],
+        ["sandbox pull --run-transfer", ["sandbox", "pull", "--run-transfer", "runtime_image"], "--run-transfer"],
+    ])("%s is blocked — never asks, never spawns", async (_label, argv, flag) => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        const result = (await tool.execute({ argv }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        expect(ask.calls.length).toBe(0);
+        expect(sub.calls.length).toBe(0);
+        expect(result.status).toBe("blocked");
+        if (result.status !== "blocked") throw new Error("expected blocked");
+        expect(result.message).toContain(flag);
+    });
+
     test("a blocked command's --help is still introspection and runs", async () => {
         const sub = recordingSubprocess();
         const ask = recordingAsk({ kind: "once" });

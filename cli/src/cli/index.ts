@@ -671,10 +671,23 @@ export function buildProgram(): Command {
     // Auth verbs grouped under one parent, à la `gh auth login|logout|status`.
     const auth = cli.command("auth").description("Manage authentication (Auth0 device flow)");
 
-    registerAction(auth.command("login").description("Log in via the Auth0 device flow"), "machine", { kind: "approval" }, async () => {
-        const { login } = await import("../modules/auth/login.ts");
-        await login();
-    });
+    // `blocked`: the device flow prints the code, then waits with no output until the user confirms it.
+    // `run_inflexa` returns the output of a child only after it exits, thus the user would not see the code,
+    // and the idle bound of the tool can end the wait first.
+    registerAction(
+        auth.command("login").description("Log in via the Auth0 device flow"),
+        "machine",
+        {
+            kind: "blocked",
+            reason:
+                "`inflexa auth login` prints a device code and then waits for the user to confirm it, but this tool shows the output only after the command exits. " +
+                "It is not available to you — ask the user to run `inflexa auth login` in a terminal.",
+        },
+        async () => {
+            const { login } = await import("../modules/auth/login.ts");
+            await login();
+        },
+    );
 
     registerAction(auth.command("logout").description("Log out and revoke the stored session"), "machine", { kind: "approval" }, async () => {
         const { logout } = await import("../modules/auth/logout.ts");
