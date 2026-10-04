@@ -1,7 +1,7 @@
 # default-model-election Specification
 
 ## Purpose
-TBD - created by archiving change add-default-model-election. Update Purpose after archive.
+How the CLI elects the default model from the model listing of the proxy. The rank prefers a model family and then the newest model, and the walk skips only a candidate that the provider definitely does not serve. The process keeps the winner, thus each consumer of the default gets the same model.
 ## Requirements
 ### Requirement: Model candidates rank deterministically by family preference, then recency
 

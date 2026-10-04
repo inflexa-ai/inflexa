@@ -191,7 +191,7 @@ The command MUST NOT auto-approve, auto-execute, or inject a synthetic approval 
 
 During a streaming turn, an interrupt (Ctrl+C) MUST send the abort of the turn to the local server (`POST {T}/turns/:turnId/abort`). An interrupt that comes before the server names the turn MUST send the abort when the id arrives. The REPL MUST read the stream to its end, then print the outcome and return to the prompt.
 
-Under the abort contract of the harness, the aborted run RESOLVES with its partial transcript. The harness keeps the opening, each completed round, and the streamed partial. Thus the tokens already streamed to the terminal enter the thread, and the final assistant message carries the interruption marker of the harness. An abort before any output keeps the user's message alone.
+Under the abort contract of the harness, the aborted run RESOLVES with its partial transcript. The harness keeps the opening, each completed round, and the streamed partial. Thus the tokens already streamed to the terminal enter the thread, and the final assistant message carries the interruption marker of the harness. An abort before any output keeps the user's message with no reply. After the rounds, the harness adds a note that the user interrupted the request. The model reads the note in the next turn, thus it does not continue the request unless the user asks. The transcript does not show the note.
 
 At the idle prompt, an interrupt or an EOF MUST exit the REPL cleanly through the existing graceful-shutdown path. The REPL holds no runtime and no lock, thus the local server keeps running.
 

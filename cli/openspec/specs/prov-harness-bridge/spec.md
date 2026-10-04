@@ -1,7 +1,7 @@
 # prov-harness-bridge Specification
 
 ## Purpose
-TBD - created by archiving change bridge-harness-provenance. Update Purpose after archive.
+How the CLI connects the provenance of the harness to its own provenance bus. One bridge maps each run event and each session event of the harness onto a bus event. An artifact registry adapter changes the registration of a step into command and file events, and the bridge reads the stored document with an attestation.
 ## Requirements
 ### Requirement: The artifact-registry bus adapter translates registration into provenance events
 

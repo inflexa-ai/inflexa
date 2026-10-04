@@ -1,7 +1,7 @@
 # tui-design-tokens Specification
 
 ## Purpose
-TBD - created by archiving change inflexa-design-system. Update Purpose after archive.
+The named layout tokens of the TUI in `src/lib/design_system.ts`: the spacing, the sizes, the strokes, and the dialog size presets. Each layout prop in `src/tui/` reads a token, not a raw number or string. Thus one edit of a token changes each place that uses it.
 ## Requirements
 ### Requirement: Named layout, spacing, and stroke tokens
 

@@ -1,7 +1,7 @@
 # tui-text-emphasis Specification
 
 ## Purpose
-TBD - created by archiving change inflexa-design-system. Update Purpose after archive.
+The text-emphasis components of the TUI in `src/tui/components/emphasis.tsx`. Each call site composes inline bold, italic, underline, dim, reverse, and color text with these components inside one `<text>`. The attribute wrappers carry no color, thus each one must sit inside a resolved foreground.
 ## Requirements
 ### Requirement: Text-emphasis vocabulary exposed as inline JSX components
 

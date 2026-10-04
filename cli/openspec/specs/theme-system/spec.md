@@ -1,7 +1,7 @@
 # theme-system Specification
 
 ## Purpose
-TBD - created by archiving change add-selectable-themes. Update Purpose after archive.
+The selectable color themes of the TUI. A reactive registry of built-in themes gives a semantic token set, and each rendered color pair meets WCAG AA contrast in each theme. The user switches the theme live from the palette or the config screen, and the choice persists in `config.json`.
 ## Requirements
 ### Requirement: Reactive theme registry and accessor
 

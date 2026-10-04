@@ -8,7 +8,7 @@ Define the conversation-agent tool that drives the local `inflexa` CLI as a poli
 
 ### Requirement: The agent drives the inflexa CLI through one subprocess tool
 
-The system SHALL provide exactly one conversation-agent tool (`run_inflexa`) that takes an argv array, runs the `inflexa` CLI as a subprocess, and returns the exit code and captured stdout/stderr to the model. The tool SHALL NOT be a family of per-command tools. Per-command availability SHALL derive solely from the registration-declared agent policy (the `agent-command-policy` capability): the declared policy is a command's floor, explicitly-set options can only escalate an invocation toward approval — never de-escalate it — and within the `approval` tier the in-chat approval prompt remains the security boundary. The surface the agent learns is the CLI's own, discovered through `--help`. Input SHALL be an argv `string[]` passed to the subprocess as an argv array (no shell); a single-element input that contains whitespace SHALL be tokenized shell-style into argv before use, so a model that emits one string still runs safely. Tokenization SHALL happen exactly once — the argv the classifier verdicts on is the same argv displayed for approval and spawned, so the two can never diverge.
+The system SHALL provide exactly one conversation-agent tool (`run_inflexa`) that takes an argv array, runs the `inflexa` CLI as a subprocess, and returns the exit code and captured stdout/stderr to the model. The tool SHALL NOT be a family of per-command tools. Per-command availability SHALL derive solely from the registration-declared agent policy (the `agent-command-policy` capability): the declared policy is a command's floor, explicitly-set options can only escalate an invocation toward approval, or to a block for a hidden worker mode — never de-escalate it — and within the `approval` tier the in-chat approval prompt remains the security boundary. The surface the agent learns is the CLI's own, discovered through `--help`. Input SHALL be an argv `string[]` passed to the subprocess as an argv array (no shell); a single-element input that contains whitespace SHALL be tokenized shell-style into argv before use, so a model that emits one string still runs safely. Tokenization SHALL happen exactly once — the argv the classifier verdicts on is the same argv displayed for approval and spawned, so the two can never diverge.
 
 #### Scenario: A command runs and returns its result
 
@@ -158,6 +158,15 @@ If an action verdict carries no registration-declared policy — reachable only 
 
 - **WHEN** the tool resolves an action whose `Command` carries no stamped policy
 - **THEN** it returns a blocked result to the model without raising an approval and without spawning
+
+### Requirement: A hidden worker mode is blocked from the agent
+
+A command starts its detached child with a hidden worker-mode option: `--run-flush` of `store add`, and `--run-transfer` of `store download` and `sandbox pull`. The child does work that the argv does not show. For example, `store add numpy --run-flush` acquires the whole pending set, not `numpy`. When an invocation sets a worker-mode option, the tool MUST return a blocked result whatever the policy of the command. The tool MUST NOT prompt or spawn, and the reason MUST name the option.
+
+#### Scenario: An agent flush of the pending set is blocked
+
+- **WHEN** the tool is invoked with `["store", "add", "numpy", "--run-flush"]`
+- **THEN** it returns a blocked result that names `--run-flush`, without raising an approval and without spawning
 
 ### Requirement: The standing grant keys on the resolved subcommand path
 

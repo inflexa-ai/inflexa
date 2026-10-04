@@ -1,7 +1,7 @@
 # tui-test-coverage Specification
 
 ## Purpose
-TBD - created by archiving change add-test-suite. Update Purpose after archive.
+The tests of the TUI: the conversation reducer, the stores, the keymap configuration, and the headless render of the core components. The contrast tests read the color of each rendered span, because a character frame proves only that a glyph exists.
 ## Requirements
 ### Requirement: The bus-event reducer is tested
 The suite SHALL verify `applyBusEvent` (`tui/hooks/conversation.ts`) inside a `createRoot` scope for

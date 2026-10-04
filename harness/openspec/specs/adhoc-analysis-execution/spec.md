@@ -1,7 +1,7 @@
 # adhoc-analysis-execution Specification
 
 ## Purpose
-TBD - created by archiving change unify-adhoc-analysis-execution. Update Purpose after archive.
+How the conversation agent launches an analysis through the one `execute_analysis` tool, from an approved plan or from an ad hoc request. An ad hoc request becomes an internal plan of one step, with a specialist and resources that a utility router selects. The stable tool invocation id names the run, thus a second delivery of one invocation starts no second run.
 ## Requirements
 ### Requirement: Unified analysis tool selects plan or ad hoc execution
 

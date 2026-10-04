@@ -1,7 +1,7 @@
 # run-observation-seam Specification
 
 ## Purpose
-TBD - created by archiving change add-run-observation-seams. Update Purpose after archive.
+An optional `observeRun` callback that lets a host observe the state of an analysis run. The parent workflow calls it at each run-state transition with a complete snapshot of the run and its steps. A failure of the callback never changes the run, and a replay can send the same snapshot again.
 ## Requirements
 ### Requirement: The parent workflow accepts an optional host run-observation callback
 

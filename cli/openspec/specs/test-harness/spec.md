@@ -1,7 +1,7 @@
 # test-harness Specification
 
 ## Purpose
-TBD - created by archiving change add-test-suite. Update Purpose after archive.
+The shared test support of the CLI suite, which keeps each test away from the real data of the user. A preload puts each test into a sandbox, and `src/lib/env.ts` refuses each path outside the sandbox. Helpers give a migrated temporary database, a reactive root, a headless render, a CLI subprocess, and a test server.
 
 ## Requirements
 

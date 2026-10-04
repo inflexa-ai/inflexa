@@ -1,7 +1,7 @@
 # tui-layout Specification
 
 ## Purpose
-TBD - created by archiving change standardize-tui-layout. Update Purpose after archive.
+The composition of the chat screen of the TUI from the parts in `src/tui/layout/`. It places the status bar, the message stream, the run-activity panel, the chat bar, and the sidebar that the user can toggle. The focus is always on a widget, and that focus decides the INSERT mode or the NORMAL mode.
 ## Requirements
 ### Requirement: Layout composition kit directory
 

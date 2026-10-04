@@ -106,7 +106,7 @@ The engine passes no cache policy and no conversation budget. Thus the root conv
 
 A type that the harness refuses (`unregistered_thread_type`) MUST end the turn before it opens, and the harness stores nothing. The server refuses the request with a message that names the thread type. The TUI MUST render it through the failed-turn notice path.
 
-A turn that the user interrupts keeps its stored rounds, and the harness closes it as `aborted`. A turn whose run throws also keeps its stored rounds. The harness then adds the failure note, and it closes the turn as `failed`.
+A turn that the user interrupts keeps its stored rounds. The harness then adds the note of the interruption, which the model reads in the next turn and the transcript does not show, and it closes the turn as `aborted`. A turn whose run throws also keeps its stored rounds. The harness then adds the failure note, and it closes the turn as `failed`.
 
 The frame reducer of the TUI MUST consume the harness `contracts/` vocabulary directly, never the event shapes of the cli bus:
 

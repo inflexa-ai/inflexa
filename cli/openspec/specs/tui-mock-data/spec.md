@@ -1,7 +1,7 @@
 # tui-mock-data Specification
 
 ## Purpose
-TBD - created by archiving change inflexa-design-system. Update Purpose after archive.
+The mock data that drives the design gallery of the TUI. The `Part` union adds mock thinking and file-edit parts to the harness parts, and each sample fixture stays in one mock module. No product surface reads a mock fixture, thus no mock value shows as live data.
 
 ## Requirements
 

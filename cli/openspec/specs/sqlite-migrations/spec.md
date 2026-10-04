@@ -1,7 +1,7 @@
 # sqlite-migrations Specification
 
 ## Purpose
-TBD - created by archiving change raw-sqlite-db-layer. Update Purpose after archive.
+The versioned migration runner of the SQLite databases of the CLI. The runner applies each pending migration in version order, in one transaction, and records the version in the `_migrations` table. A failed migration comes back as a `migration_failed` error.
 ## Requirements
 ### Requirement: Migration tracking table
 The system SHALL maintain a `_migrations` table to track which migrations have been applied:
