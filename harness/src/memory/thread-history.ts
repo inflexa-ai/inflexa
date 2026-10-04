@@ -153,7 +153,7 @@ export interface TurnClose {
     /** A rollup that reports no quantity is stored as absent. */
     readonly turnUsage?: TokenUsageRollup;
     readonly turnDurationMs?: number;
-    /** The failure note, stored after the rounds. */
+    /** The note of a failure or of an abort, stored after the rounds. */
     readonly note?: ConversationTurn;
 }
 
