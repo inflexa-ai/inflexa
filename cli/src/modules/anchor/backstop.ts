@@ -4,6 +4,7 @@ import { err, ok, Result, type ResultAsync } from "neverthrow";
 // The harness's Postgres error union, aliased so it never reads as the SQLite `DbError` this file also
 // carries — the two are different stores with different recoveries, and a prune abort has to name which.
 import type { AnalysisPurgeOutcome, DbError as PgError } from "@inflexa-ai/harness";
+import type { BusyReason } from "../../api/analyses.ts";
 import type { Anchor } from "../../types/anchor.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getAnchor, listAnalysesByAnchor, listAnchors } from "../../db/primary_query.ts";
@@ -136,13 +137,17 @@ export function findDeadAnchors(searchRoots?: string[]): Result<Anchor[], DbErro
  * Why a prune stopped. The prune is its own recovery: the folders are still gone, so a new run selects
  * the same anchors, and the purge is idempotent, so a second purge of an analysis costs nothing.
  *
- * `purge_failed` comes before the SQLite stage, thus each anchor and analysis row is still present.
+ * `purge_failed` and `busy` come before the SQLite stage, thus each anchor and analysis row is still present.
+ * `busy` names an analysis that work entered after the check of the caller, and the next run keeps its anchor.
  * `sqlite_failed` carries no such guarantee once the deletes begin: they are combined over an
  * eagerly-built array, so each anchor's pair runs whether or not an earlier one failed, and some rows can
  * already be gone. That is not a state to repair — those analyses were purged before any row was touched,
  * so nothing is orphaned, and the next run finishes the deletes.
  */
-export type PruneError = { type: "purge_failed"; analysisId: string; cause: PgError } | { type: "sqlite_failed"; cause: DbError };
+export type PruneError =
+    | { type: "purge_failed"; analysisId: string; cause: PgError }
+    | { type: "busy"; analysisId: string; reasons: BusyReason[] }
+    | { type: "sqlite_failed"; cause: DbError };
 
 /** What a completed prune did in Postgres: the count of the purged analyses. */
 export type PruneReclaim = {
@@ -170,8 +175,16 @@ export function analysesOfAnchors(dead: readonly Anchor[]): Result<{ anchorId: s
  * exactly what makes the wrong order expensive here.
  *
  * An anchor that held no analyses has no Postgres footprint, thus `purge` is never called for it.
+ *
+ * `busyReasons` is the busy gate of one analysis, the check that the delete of an analysis runs directly
+ * before its own steps. The caller checks each analysis first, and the check runs again directly before
+ * each purge, because a turn, a run, or a profile can start on an analysis while the purges before it run.
  */
-export async function reclaimDeadAnchors(dead: readonly Anchor[], purge: PurgeAnalysisFn): Promise<Result<PruneReclaim, PruneError>> {
+export async function reclaimDeadAnchors(
+    dead: readonly Anchor[],
+    purge: PurgeAnalysisFn,
+    busyReasons: (analysisId: string) => Promise<BusyReason[]>,
+): Promise<Result<PruneReclaim, PruneError>> {
     const listed = analysesOfAnchors(dead);
     if (listed.isErr()) return err({ type: "sqlite_failed", cause: listed.error });
     const analysisIds = listed.value.flatMap((a) => a.analysisIds);
@@ -179,6 +192,8 @@ export async function reclaimDeadAnchors(dead: readonly Anchor[], purge: PurgeAn
     // Sequential, and it stops at the first failure: a purge that cannot complete means the rest of this
     // prune must not proceed, and naming the analysis it stopped on makes the abort actionable.
     for (const analysisId of analysisIds) {
+        const reasons = await busyReasons(analysisId);
+        if (reasons.length > 0) return err({ type: "busy", analysisId, reasons });
         const purged = await purge(analysisId);
         if (purged.isErr()) return err({ type: "purge_failed", analysisId, cause: purged.error });
     }

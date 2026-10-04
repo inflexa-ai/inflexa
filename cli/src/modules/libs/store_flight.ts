@@ -44,6 +44,7 @@ import { countStoreFlightSubscribers, listPendingStoreAdds, listStoreFlights, ty
 import {
     claimPendingStoreAdds,
     claimStoreFlight,
+    deleteDeadStoreFlight,
     deleteStoreFlight,
     enqueuePendingStoreAdd,
     promoteStoreFlightBatch,
@@ -156,7 +157,7 @@ export function readStoreFlights(): readonly StoreFlightReport[] {
     const kept: StoreFlightReport[] = [];
     for (const entry of rows) {
         if (entry.flight.state !== "failed" && !isPidAlive(entry.flight.holderPid)) {
-            deleteStoreFlight(entry.flight.id).unwrapOr(0);
+            deleteDeadStoreFlight({ id: entry.flight.id, holderPid: entry.flight.holderPid }).unwrapOr(0);
             continue;
         }
         kept.push({ row: entry.flight, analysisIds: entry.analysisIds });
