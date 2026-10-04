@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { errAsync, ok, okAsync } from "neverthrow";
 
 import { GLYPHS } from "../lib/design_system.ts";
@@ -29,7 +29,7 @@ import {
 } from "./commands.tsx";
 import type { ThreadList, ThreadSummary } from "../api/conversation.ts";
 import { conversationSummary, threadListOf } from "../test_support/threads.ts";
-import type { ClientOpts } from "../client/api.ts";
+import { DEFAULT_CLIENT_OPTS, type ClientOpts } from "../client/api.ts";
 import type { Workspace } from "./contexts/workspace.ts";
 import type { Notice } from "./theme.ts";
 import type { ClientError } from "../client/api.ts";
@@ -1434,5 +1434,38 @@ describe("analysis delete (client)", () => {
         expect(currentNotice()?.kind).toBe("warn");
         expect(currentNotice()?.text).toContain("harness is not running");
         __resetNoticesForTest();
+    });
+});
+
+// The status view reads what the folder resolves to. It is not an open of the analysis, thus the resolve
+// must record no sighting of the anchor folder, as each other read does.
+describe("view.status", () => {
+    test("resolves the folder of the workspace with no sighting", async () => {
+        const bodies: unknown[] = [];
+        const discover = spyOn(DEFAULT_CLIENT_OPTS, "discover").mockImplementation(() => ok({ baseUrl: "http://server.test", token: "t" }));
+        const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation(async (_url, init) => {
+            bodies.push(JSON.parse(String(init.body)));
+            return new Response(JSON.stringify({ kind: "empty", describe: "no analysis here", cwd: "/work" }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        });
+        let dialogs = 0;
+        const ws = {
+            workingDir: "/work",
+            openDialog: () => {
+                dialogs += 1;
+            },
+        } as unknown as Workspace;
+
+        try {
+            await commands.find((c) => c.id === "view.status")!.run(ws);
+        } finally {
+            discover.mockRestore();
+            fetch.mockRestore();
+        }
+
+        expect(bodies).toEqual([{ cwd: "/work", touch: false }]);
+        expect(dialogs).toBe(1);
     });
 });

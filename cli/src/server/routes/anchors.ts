@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { errAsync } from "neverthrow";
 import { z } from "zod";
 
-import type { BusyReason } from "../../api/analyses.ts";
+import { describeBusyReason, type BusyReason } from "../../api/analyses.ts";
 import type { DeadAnchorView, PruneAnchorsResponse, RelocateAnchorResponse, RepairAnchorResponse, SkippedAnchorView } from "../../api/anchors.ts";
 import { getLogger } from "../../lib/log.ts";
 import {
@@ -139,16 +139,32 @@ export function anchorRoutes(boot: ServerBoot, opts: AnchorRouteOpts = DEFAULT_A
             runtime === null
                 ? () => errAsync({ type: "connection_failed", op: "prune:no_runtime", cause: "the harness runtime is not ready" })
                 : opts.purgeFor(runtime);
-        return (await reclaimDeadAnchors(prunable, purge)).match(
+        return (await reclaimDeadAnchors(prunable, purge, (analysisId) => opts.busyReasons(analysisId, runtime))).match(
             ({ purged }) => c.json({ dryRun: false, dead, pruned: prunable.map((a) => a.id), skipped, purged } satisfies PruneAnchorsResponse),
             (e) => {
-                if (e.type === "sqlite_failed") return internalError(c, e.cause, "delete the rows of the dead anchors");
-                getLogger("server").error({ err: e.cause, analysisId: e.analysisId }, "could not purge an analysis of a dead anchor");
-                return apiError(
-                    c,
-                    "internal_error",
-                    `Could not reclaim the conversations and run history of analysis ${e.analysisId} — nothing was pruned, so nothing was lost. Run \`inflexa prune\` again once the cause is fixed.`,
-                );
+                switch (e.type) {
+                    case "sqlite_failed":
+                        return internalError(c, e.cause, "delete the rows of the dead anchors");
+                    case "busy":
+                        // `reasons[0]!`: the reclaim gives `busy` only for a gate answer that is not empty.
+                        return apiError(
+                            c,
+                            "busy",
+                            `Cannot prune while ${describeBusyReason(e.reasons[0]!)} in analysis ${e.analysisId} — nothing was pruned. Run \`inflexa prune\` again: it keeps the anchor of a busy analysis.`,
+                            { analysisId: e.analysisId, reasons: e.reasons },
+                        );
+                    case "purge_failed":
+                        getLogger("server").error({ err: e.cause, analysisId: e.analysisId }, "could not purge an analysis of a dead anchor");
+                        return apiError(
+                            c,
+                            "internal_error",
+                            `Could not reclaim the conversations and run history of analysis ${e.analysisId} — nothing was pruned, so nothing was lost. Run \`inflexa prune\` again once the cause is fixed.`,
+                        );
+                    default: {
+                        const exhaustive: never = e;
+                        throw new Error(`unhandled prune error: ${JSON.stringify(exhaustive)}`);
+                    }
+                }
             },
         );
     });

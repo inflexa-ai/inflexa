@@ -186,6 +186,37 @@ describe("POST /api/v1/anchors/prune", () => {
         expect(getAnchor("D3")._unsafeUnwrap()).not.toBeNull();
     });
 
+    test("work that starts after the check stops the prune before the purge of its analysis, with each row present", async () => {
+        seedDead("D1", ["a1", "a2"]);
+        // The purge of the first analysis starts a chat turn on the other one: the check of each analysis
+        // passed before the first purge, thus only a check again before each purge can see the turn.
+        const busyNow = new Set<string>();
+        const purged: string[] = [];
+        const raceOpts: AnchorRouteOpts = {
+            busyReasons: async (analysisId) => (busyNow.has(analysisId) ? ["chat_turn"] : []),
+            purgeFor: () => (analysisId) => {
+                purged.push(analysisId);
+                for (const other of ["a1", "a2"]) if (other !== analysisId) busyNow.add(other);
+                return okAsync<AnalysisPurgeOutcome, PgError>(PURGED);
+            },
+        };
+
+        const response = await post(anchorRoutes(readyBoot, raceOpts), "/prune", { anchorIds: ["D1"] });
+
+        expect(response.status).toBe(409);
+        const body = (await response.json()) as ApiError;
+        expect(body.error).toBe("busy");
+        expect(purged).toHaveLength(1);
+        expect(body.message).toContain(purged[0] === "a1" ? "a2" : "a1");
+        expect(
+            listAnalysesByAnchor("D1")
+                ._unsafeUnwrap()
+                .map((a) => a.id)
+                .toSorted(),
+        ).toEqual(["a1", "a2"]);
+        expect(getAnchor("D1")._unsafeUnwrap()).not.toBeNull();
+    });
+
     test("503 `unavailable` with no runtime when a purge is necessary; an anchor with no analyses still goes", async () => {
         seedDead("D1", ["a1"]);
         const t = opts();

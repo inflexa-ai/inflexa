@@ -667,9 +667,10 @@ export function listRunUsageByStep(analysisId: string, runId: string): Result<Ll
  * What an analysis's DATA PROFILE consumed — the grain the profile's rows report under now that they
  * no longer appear among the runs.
  *
- * A grain rather than a group list: the profile runs at most once per analysis, so there is nothing to
- * enumerate, and the ledger identifies its calls by a single synthetic run id the harness stamps
- * (`DATA_PROFILE_RUN_LITERAL`) rather than by anything the CLI mints.
+ * A grain rather than a group list: the ledger identifies the profile calls by a single synthetic run id
+ * the harness stamps (`DATA_PROFILE_RUN_LITERAL`) rather than by anything the CLI mints, so the grain
+ * sums each profile attempt of the analysis. Each attempt records under its own keys, thus a re-profile
+ * adds its calls and never overwrites those of an earlier attempt or of another analysis.
  *
  * The profile carries no thread, so it belongs to no session and cannot be folded into one even in
  * principle — its figures have exactly one home, which is this read. Always answers, like

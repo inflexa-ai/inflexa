@@ -2892,7 +2892,7 @@ export const commands: Command[] = [
         description: "What inflexa resolves to here, plus the model connection",
         category: "View",
         run: async (ctx) => {
-            const contextLine = (await resolveAnalysisContext({ cwd: ctx.workingDir })).match(
+            const contextLine = (await resolveAnalysisContext({ cwd: ctx.workingDir, touch: false })).match(
                 (c) => c.describe,
                 (e) => `Failed to resolve context: ${clientErrorText(e)}`,
             );
