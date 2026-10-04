@@ -495,8 +495,29 @@ describe("runChatTurn", () => {
         const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { signal: controller.signal }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" }, opened: true });
-        expect((await storedRows()).map((row) => row.message.role)).toEqual(["user", "user", "user"]);
+        expect((await storedRows()).map((row) => row.message.role)).toEqual(["user", "user", "user", "user"]);
         expect(await turnRecords()).toEqual([{ status: "aborted", reason: null }]);
+    });
+
+    it("sends the next turn a note that the user interrupted the request, and the replay does not show the note", async () => {
+        const controller = new AbortController();
+        const agents = resolverFor(agentWith([echoTool()]));
+        const aborting = scriptedProvider((): ChatResponse => {
+            controller.abort();
+            return { message: { role: "assistant", content: [{ type: "text", text: "The two groups" }] }, finishReason: "aborted" };
+        });
+        await runChatTurn({ pool, agents }, params(aborting, { signal: controller.signal }));
+        const next = scriptedProvider([makeMessage([textBlock("hello")], "end_turn")]);
+
+        await runChatTurn({ pool, agents }, params(next, { userInput: "say hello", promptCache: "off" }));
+
+        const sent = next.calls[0]!.messages;
+        const opening = sent.findIndex((message) => contentText(message.content) === "say hello");
+        expect(sent[opening - 1]).toMatchObject({
+            role: "user",
+            content: "[The user interrupted the request above. Do not continue it unless the user asks you to.]",
+        });
+        expect(JSON.stringify(storedMessagesToChat(await storedRows()))).not.toContain("The user interrupted");
     });
 
     it("closes failed on an AbortError of a tool under a live signal, and keeps the call with a not-run result", async () => {
@@ -1077,6 +1098,7 @@ describe("runChatTurn — compaction", () => {
             "tool",
             "exchange-user",
             "exchange-assistant",
+            "user",
         ]);
         expect(rows[0]!.turn?.status).toBe("aborted");
     });

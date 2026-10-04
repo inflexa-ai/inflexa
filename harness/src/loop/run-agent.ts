@@ -220,8 +220,10 @@ export interface RunAgentOptions {
      * sub-agent-running tool from its `ctx.invocationId`. It is what separates
      * two dispatches of the *same* sub-agent in one round — they share the run
      * frame, the call path, and every loop-local step name — in the usage
-     * record key. Absent for a loop that is not nested inside a tool dispatch
-     * (a chat turn's root, a workflow step body, a background task).
+     * record key. The data profile gives the workflow id of its attempt,
+     * because each profile runs under the same constant frame. Absent for any
+     * other loop that is not nested inside a tool dispatch (a chat turn's
+     * root, a workflow step body, a background task).
      */
     readonly invocationId?: string;
 }
@@ -933,9 +935,10 @@ export function accountForChatCall(reply: ChatResponse, call: ChatCallAccounting
  * can never be read as one: agent ids are kebab-case identifiers, run ids are
  * UUIDs or the profiler's `data-profile` literal, step ids are path-safe plan
  * ids (`T1S1`, `synthesis`, `profile`), tool-call ids are provider-issued
- * opaque tokens, and the loop's step names are `llm-{n}` / `tool-{name}-{id}`
- * with an optional continuation namespace (`salvage:`, `file-metadata:`,
- * `step-summary:`) — none of them can contain `>`.
+ * opaque tokens, a profile attempt's workflow id is
+ * `dataprofile:{analysisId}:{nonce}`, and the loop's step names are `llm-{n}`
+ * / `tool-{name}-{id}` with an optional continuation namespace (`salvage:`,
+ * `file-metadata:`, `step-summary:`) — none of them can contain `>`.
  */
 const CALL_PATH_DELIMITER = ">";
 
@@ -960,7 +963,9 @@ const CALL_PATH_DELIMITER = ">";
  * - `invocationId` — the same sub-agent dispatched twice in one round has an
  *   identical call path, so only the dispatching tool-call id tells the two
  *   child loops apart. It is replay-stable by the harness-tools contract: a
- *   redelivered call carries the id it was issued under.
+ *   redelivered call carries the id it was issued under. Each data profile
+ *   runs under the same constant frame, thus the workflow id of its attempt
+ *   takes this place, and a replay of the attempt keeps that id.
  * - `stepName` — the loop's own deterministic name, reused rather than
  *   re-derived. Minting a second *naming* scheme here would create two things
  *   that must agree about what "the same call" is, and they would drift.

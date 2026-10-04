@@ -16,7 +16,7 @@ import type { CompactionPolicy } from "../loop/compaction.js";
 import { finalText, runAgent, type AgentFinish, type AgentRound } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
 import type { AgentDefinition, EmitFn } from "../loop/types.js";
-import { compactionExchangeOf } from "../memory/ai-sdk-message-storage.js";
+import { compactionExchangeOf, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { createConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { conversationRecordTurn, createThreadHistory, type ConversationTurn, type TurnClose } from "../memory/thread-history.js";
@@ -353,6 +353,7 @@ async function runOpenTurn(
     await flush({
         status: outcome.status,
         ...(outcome.status === "failed" ? { reason: outcome.reason, note: conversationRecordTurn(failureNote(outcome.reason)) } : {}),
+        ...(outcome.status === "aborted" ? { note: interruptionNote() } : {}),
         ...(turnUsage === undefined ? {} : { turnUsage }),
         turnDurationMs: durationMs,
     });
@@ -407,6 +408,18 @@ function failureReasonOf(err: unknown): string {
     if (providerError?.type === "auth") return "The model endpoint refused the credential.";
     if (providerError !== undefined) return "The model request failed.";
     return "The turn stopped on an internal error.";
+}
+
+/**
+ * The note of an aborted turn. Without it, the next turn reads the request of the aborted turn as open, and
+ * its reply also answers that request. The transcript shows the interruption from the turn record, thus the
+ * note has no display.
+ */
+function interruptionNote(): ConversationTurn {
+    return {
+        modelMessages: [syntheticUserMessage("[The user interrupted the request above. Do not continue it unless the user asks you to.]")],
+        displayMessages: [],
+    };
 }
 
 function failureNote(reason: string): string {
