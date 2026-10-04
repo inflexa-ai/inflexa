@@ -3,7 +3,8 @@ name: Test
 # Runs the unit suites of the independent subsystems. `cli/`, `harness/`, and
 # `prov-kernel/` are self-contained bun packages (each owns its bun.lock), so
 # each is installed and tested in its own job. All three suites use bun:test;
-# `harness/` additionally runs pytest over its Python package asset.
+# `harness/` additionally runs pytest over its Python package asset. The
+# `images` job runs the standard-library suites of the SBOM writers.
 on:
   push:
     branches: [main]
@@ -144,3 +145,17 @@ jobs:
 
       - name: Run tests
         run: bun test
+
+  # The SBOM writers of the images (images/sbom) run in the system python3 of
+  # an image, with the standard library only, thus their suite needs no
+  # install. It holds the Python half of the SPDX conformance check: the
+  # fixture lives beside the TypeScript copy in cli/, and the `cli` job runs
+  # the other half. One red job means that the two copies drifted apart.
+  images:
+    name: test (images)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Run the SBOM writer tests
+        run: python3 -m unittest discover -s images/sbom -v

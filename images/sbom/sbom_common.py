@@ -33,7 +33,9 @@ TEXT_LIMIT = 200_000
 # The SPDX license ids that the writers accept as an id, and as a term of an
 # expression. A declared value outside this set stays a declared name. The
 # set holds the ids that the scanned images and the store hold, not the whole
-# SPDX list.
+# SPDX list. The cli has a TypeScript copy of this set and of spdx_valid
+# (cli/src/modules/sbom/spdx.ts). The two copies read one fixture in their own
+# suites (test_sbom_common.py here), thus a change belongs in both.
 KNOWN_SPDX = frozenset("""
 0BSD AFL-2.1 AFL-3.0 AGPL-3.0 AGPL-3.0-only AGPL-3.0-or-later Apache-1.1
 Apache-2.0 Artistic-1.0 Artistic-1.0-Perl Artistic-2.0 BlueOak-1.0.0
@@ -144,7 +146,8 @@ def spdx_valid(declared: str) -> bool:
                 return False
             position += 1
             return True
-        if token.rstrip("+") not in KNOWN_SPDX:
+        # SPDX permits one "+" after an id, thus only one comes off.
+        if token.removesuffix("+") not in KNOWN_SPDX:
             return False
         position += 1
         if position < len(tokens) and tokens[position] == "WITH":

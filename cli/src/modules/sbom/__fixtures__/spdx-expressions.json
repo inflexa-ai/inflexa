@@ -1,0 +1,253 @@
+{
+    "description": "The conformance fixture of the SPDX expression check of the SBOM license gate. The TypeScript copy (cli/src/modules/sbom/spdx.ts) and the Python copy (images/sbom/sbom_common.py) read this file in their own suites. Each copy must hold exactly the ids and the exceptions below, and it must give each case its `valid` answer.",
+    "known_ids": [
+        "0BSD",
+        "AFL-2.1",
+        "AFL-3.0",
+        "AGPL-3.0",
+        "AGPL-3.0-only",
+        "AGPL-3.0-or-later",
+        "Apache-1.1",
+        "Apache-2.0",
+        "Artistic-1.0",
+        "Artistic-1.0-Perl",
+        "Artistic-2.0",
+        "BSD-1-Clause",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "BSD-3-Clause-Clear",
+        "BSD-4-Clause",
+        "BSL-1.0",
+        "BlueOak-1.0.0",
+        "CC-BY-3.0",
+        "CC-BY-4.0",
+        "CC-BY-SA-3.0",
+        "CC-BY-SA-4.0",
+        "CC0-1.0",
+        "CDDL-1.0",
+        "CDDL-1.1",
+        "CPL-1.0",
+        "ECL-2.0",
+        "EPL-1.0",
+        "EPL-2.0",
+        "EUPL-1.1",
+        "EUPL-1.2",
+        "GFDL-1.3-only",
+        "GPL-1.0-or-later",
+        "GPL-2.0",
+        "GPL-2.0-only",
+        "GPL-2.0-or-later",
+        "GPL-3.0",
+        "GPL-3.0-only",
+        "GPL-3.0-or-later",
+        "HPND",
+        "ISC",
+        "LGPL-2.0-only",
+        "LGPL-2.0-or-later",
+        "LGPL-2.1",
+        "LGPL-2.1-only",
+        "LGPL-2.1-or-later",
+        "LGPL-3.0",
+        "LGPL-3.0-only",
+        "LGPL-3.0-or-later",
+        "LPL-1.02",
+        "MIT",
+        "MIT-0",
+        "MIT-CMU",
+        "MPL-1.1",
+        "MPL-2.0",
+        "MS-PL",
+        "NCSA",
+        "ODbL-1.0",
+        "OFL-1.1",
+        "OpenSSL",
+        "PSF-2.0",
+        "PostgreSQL",
+        "Python-2.0",
+        "UPL-1.0",
+        "Unicode-3.0",
+        "Unicode-DFS-2016",
+        "Unlicense",
+        "Vim",
+        "W3C",
+        "WTFPL",
+        "X11",
+        "ZPL-2.1",
+        "Zlib",
+        "bzip2-1.0.6"
+    ],
+    "known_exceptions": [
+        "Autoconf-exception-3.0",
+        "Bison-exception-2.2",
+        "Classpath-exception-2.0",
+        "GCC-exception-3.1",
+        "LLVM-exception"
+    ],
+    "cases": [
+        {
+            "value": "MIT",
+            "valid": true,
+            "note": "one known id"
+        },
+        {
+            "value": "Apache-2.0",
+            "valid": true,
+            "note": "one known id with a version"
+        },
+        {
+            "value": "GPL-2.0+",
+            "valid": true,
+            "note": "an id with the or-later plus"
+        },
+        {
+            "value": "MIT OR Apache-2.0",
+            "valid": true,
+            "note": "a disjunction"
+        },
+        {
+            "value": "MIT AND BSD-3-Clause",
+            "valid": true,
+            "note": "a conjunction"
+        },
+        {
+            "value": "(MIT OR Apache-2.0) AND Unicode-3.0",
+            "valid": true,
+            "note": "a group then a conjunction"
+        },
+        {
+            "value": "MIT AND (BSD-2-Clause OR ISC)",
+            "valid": true,
+            "note": "a conjunction then a group"
+        },
+        {
+            "value": "((MIT))",
+            "valid": true,
+            "note": "nested parentheses"
+        },
+        {
+            "value": "(AFL-2.1 OR BSD-3-Clause)",
+            "valid": true,
+            "note": "a group that is the whole value, as npm writes it"
+        },
+        {
+            "value": "Apache-2.0 WITH LLVM-exception",
+            "valid": true,
+            "note": "an id with a known exception"
+        },
+        {
+            "value": "GPL-2.0-only WITH Classpath-exception-2.0 OR MIT",
+            "valid": true,
+            "note": "an exception inside a disjunction"
+        },
+        {
+            "value": "  MIT  ",
+            "valid": true,
+            "note": "white space around the value"
+        },
+        {
+            "value": "",
+            "valid": false,
+            "note": "an empty value"
+        },
+        {
+            "value": "   ",
+            "valid": false,
+            "note": "white space only"
+        },
+        {
+            "value": "UNKNOWN",
+            "valid": false,
+            "note": "a marker of an unknown license, which npm only warns on"
+        },
+        {
+            "value": "NOASSERTION",
+            "valid": false,
+            "note": "the SPDX marker of no assertion"
+        },
+        {
+            "value": "NONE",
+            "valid": false,
+            "note": "the SPDX marker of no license"
+        },
+        {
+            "value": "BSD",
+            "valid": false,
+            "note": "a name that is not an SPDX id"
+        },
+        {
+            "value": "mit",
+            "valid": false,
+            "note": "an id in the wrong case: the grammar is case-sensitive"
+        },
+        {
+            "value": "MIT++",
+            "valid": false,
+            "note": "two plus signs: SPDX permits one"
+        },
+        {
+            "value": "MIT OR",
+            "valid": false,
+            "note": "an operator with no right term"
+        },
+        {
+            "value": "OR MIT",
+            "valid": false,
+            "note": "an operator with no left term"
+        },
+        {
+            "value": "AND",
+            "valid": false,
+            "note": "an operator alone"
+        },
+        {
+            "value": "MIT OR OR Apache-2.0",
+            "valid": false,
+            "note": "two operators in a row"
+        },
+        {
+            "value": "MIT Apache-2.0",
+            "valid": false,
+            "note": "two terms with no operator"
+        },
+        {
+            "value": "MIT and Apache-2.0",
+            "valid": false,
+            "note": "an operator in the wrong case"
+        },
+        {
+            "value": "(MIT",
+            "valid": false,
+            "note": "an open group that does not close"
+        },
+        {
+            "value": "MIT)",
+            "valid": false,
+            "note": "a close with no open group"
+        },
+        {
+            "value": "()",
+            "valid": false,
+            "note": "an empty group"
+        },
+        {
+            "value": "MIT WITH",
+            "valid": false,
+            "note": "WITH with no exception"
+        },
+        {
+            "value": "MIT WITH Unknown-exception",
+            "valid": false,
+            "note": "WITH with an exception that is not known"
+        },
+        {
+            "value": "WITH LLVM-exception",
+            "valid": false,
+            "note": "WITH with no id before it"
+        },
+        {
+            "value": "SEE LICENSE IN LICENSE",
+            "valid": false,
+            "note": "the npm pointer to a license file"
+        }
+    ]
+}
