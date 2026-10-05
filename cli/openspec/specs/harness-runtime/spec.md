@@ -1,7 +1,7 @@
 # harness-runtime Specification
 
 ## Purpose
-The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-singleton composition root, booted by the local server (and by the dev `run --plan`), that provisions/boots the runtime (Postgres readiness, cortex schema, pre-launch ephemeral sweep, workflow registration and conversation-agent build through the harness composition root `assembleCoreRuntime`, DBOS launch), realizes every local seam (data-profile, run-engine, and conversation deps) locally, and tears down gracefully on exit. Owns the single global session-tree base and the sandbox transport choice: the CLI defaults to **poll** (the sandbox is polled for results; no callback listener exists), with the loopback HTTP ingress that bridges sandbox-server callbacks onto DBOS topics reserved for the opt-in callback mode. Lives in `src/modules/harness/`.
+The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-singleton composition root, booted by the local server (and by the dev `run --plan`), that provisions/boots the runtime (Postgres readiness, cortex schema, pre-launch ephemeral sweep, workflow registration and conversation-agent build through the harness composition root `assembleCoreRuntime`, DBOS launch), realizes every local seam (data-profile, run-engine, and conversation deps) locally, and tears down gracefully on exit. It owns the single global session-tree base. The runtime binds no listener for the sandboxes, because the harness polls each sandbox and the sandbox initiates nothing. Lives in `src/modules/harness/`.
 
 ## Requirements
 

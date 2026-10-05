@@ -24,7 +24,7 @@ A `json` or a `text` result MUST become a `text` result with the excerpt. An `er
 
 The cut MUST run in `dispatchTool`, the one function that makes the result of a dispatched call. Thus both dispatch paths and each segment of a conversation obey one rule, and no tool carries its own code for the cut. For a step-mode tool, the cut runs inside the durable step of the call. Thus the step output holds the excerpt, and a replay gives the same excerpt.
 
-The excerpt MUST be a function of the text, the reference, and the decision to keep the text. Thus a replay of a workflow-mode tool, which runs the tool again, gives the same bytes.
+The excerpt MUST be a function of the text, the reference, and the decision to keep the text. Thus a call that runs again gives the same bytes. An inline-mode tool on a replay, and a step that did not complete before a recovery, are examples.
 
 #### Scenario: A result at the cap stays whole
 
@@ -84,7 +84,7 @@ The key of a record MUST be `recordKeyFor` over the session, the invocation id o
 
 The reference MUST be `to_` and the first 20 hexadecimal characters of the SHA-256 hash of the key. The analysis id MUST be a part of the identity of a record. The data profile uses the same literal run id for each analysis. Thus only the analysis id keeps the records of two analyses apart.
 
-A `put` MUST be an upsert on the analysis id and the reference. Thus a workflow-mode tool, which runs again on a replay, writes the same row again. The excerpt MUST NOT depend on the outcome of the `put`. When a `put` gives an `err`, the loop MUST log one warn with the tool name and the reference, and the run continues.
+A `put` MUST be an upsert on the analysis id and the reference. Thus a call that runs again on a replay or on a recovery writes the same row again. The excerpt MUST NOT depend on the outcome of the `put`. When a `put` gives an `err`, the loop MUST log one warn with the tool name and the reference, and the run continues.
 
 When the run has no store, or the agent does not declare `read_tool_output`, the loop MUST keep nothing. The excerpt then states that the rest is not kept.
 
@@ -121,8 +121,8 @@ When the run has no store, or the agent does not declare `read_tool_output`, the
 
 #### Scenario: A replay writes the same record
 
-- **GIVEN** a durable run whose workflow-mode tool gave a long result
-- **WHEN** the workflow replays
+- **GIVEN** a durable run whose step-mode call kept a long result, and a host that stopped before the step completed
+- **WHEN** the step runs again on recovery
 - **THEN** the loop puts the same reference and the same text, and the row does not change
 
 #### Scenario: A failed put does not fail the run

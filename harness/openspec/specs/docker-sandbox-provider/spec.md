@@ -2,15 +2,15 @@
 
 ## Purpose
 
-Defines the Docker backend for the harness `SandboxClient` — the
-`createDockerSandboxOps` factory (`harness/src/sandbox/docker-client.ts`) used
-for local development. Sandbox-server runs in a Docker container on the dev
-host; the harness talks to it over `127.0.0.1:{mappedPort}` — the poll transport
-(default) pulls results over that same loopback port, while the opt-in callback
-transport has the sandbox POST HMAC callbacks back over the host network. The
-factory is a thin `dockerode` wrapper: it produces only the backend-specific ops
-(`createSandbox`, `teardown`, `teardownById`, `isAlive`, `listManagedSandboxes`);
-the submit/await halves are backend-agnostic and shared with the K8s backend.
+Define the Docker backend for the harness `SandboxClient`: the
+`createDockerSandboxOps` factory (`harness/src/sandbox/docker-client.ts`) for
+local development. sandbox-server runs in a Docker container on the dev host.
+The harness submits and polls over `127.0.0.1:{mappedPort}`, and the container
+has no egress, because its root entrypoint installs an egress-deny firewall.
+The factory is a thin `dockerode` wrapper. It makes only the backend-specific
+ops (`createSandbox`, `teardown`, `teardownById`, `isAlive`,
+`listManagedSandboxes`). The exec is backend-agnostic, and the K8s backend
+shares it.
 
 Container creation is **idempotent on the checkpointed sandbox id** so a DBOS
 workflow recovery re-run does not orphan or duplicate a machine: the container

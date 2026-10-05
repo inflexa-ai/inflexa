@@ -1,5 +1,5 @@
 ## Purpose
-Defines the sandbox-server (Go) HTTP API embedded in every sandbox container — entrypoint, command-execution protocol, the two result transports (poll and callback), and the static-file preview endpoint.
+Define the sandbox-server (Go) HTTP API that each sandbox container runs: the entrypoint, the exec protocol, and the static-file preview endpoint. The host submits a command, and then it polls for the events and the result of the command. sandbox-server sends no request to the host, and its endpoints carry no signature.
 ## Requirements
 ### Requirement: sandbox-server binary and container entrypoint
 

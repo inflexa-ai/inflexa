@@ -17,8 +17,8 @@ A step with a large computation runs in the `images/sandbox-base/` container. Th
 container runs the R code and the Python code that the agent writes, against the
 data of the user. The container bakes no analysis package. The host package store
 mounts read-only, and the container reads each R package and each Python package
-from that store. The host then retrieves the result of the command, and an HMAC
-signature covers the report.
+from that store. The host submits each command, and then it polls the container
+for the result.
 
 The agent reads the task knowledge from `skills/`. It makes the report of the
 results in a report session.
@@ -33,7 +33,7 @@ results in a report session.
   Refer to `cli/CONTEXT.md`.
 - **`harness/` — the harness.** Host-agnostic. The harness has the seams, and it
   gives local realizations. It never touches a concern of the host directly. It
-  also has the agent loop, the sandbox submit and receive protocol, the durable
+  also has the agent loop, the sandbox submit and poll protocol, the durable
   workflows, the providers, and the model of the workspace paths. Refer to `harness/CONTEXT.md`
   and `harness/openspec/specs/`.
 - **`prov-kernel/` — the provenance format kernel.** It publishes `@inflexa-ai/prov-kernel`:

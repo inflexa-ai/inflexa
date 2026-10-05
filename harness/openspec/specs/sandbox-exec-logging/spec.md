@@ -1,11 +1,8 @@
 ## Purpose
-Define the structured execution logging contract for the sandbox layer: the Go
-sandbox-server's per-command and per-callback log lines (the bulk of the
-observability surface — start/end/fail, optional per-line output, submit
-acceptance, and outbound callback delivery), and the Cortex-side liveness
-watchdog's structured shard summaries. Sandbox-server logs are command-scoped and
-emitted to stdout as JSON; the watchdog logs are per-sweep summaries from the
-harness process.
+Define the structured execution logging contract of the Go sandbox-server. The
+contract covers the log lines of each command: the start, the end, the fail,
+the optional output of each line, and the submit acceptance. sandbox-server
+writes each line to stdout as JSON, and each line is scoped to one command.
 ## Requirements
 ### Requirement: Execution start logging
 

@@ -1,6 +1,6 @@
 # @inflexa-ai/harness
 
-`@inflexa-ai/harness` is the host-agnostic agent harness — the `runAgent` loop, durable workflows, the sandbox submit/recv protocol, and the provider interfaces. It is a **library, not a server**: it ships everything that does not depend on a particular host, and an embedder supplies the composition root, transport, and any non-local seam realizations.
+`@inflexa-ai/harness` is the host-agnostic agent harness — the `runAgent` loop, durable workflows, the sandbox submit and poll protocol, and the provider interfaces. It is a **library, not a server**: it ships everything that does not depend on a particular host, and an embedder supplies the composition root, transport, and any non-local seam realizations.
 
 ## Run locally
 
@@ -98,7 +98,7 @@ function pinoAsHarnessLogger(p: pino.Logger, names: readonly string[] = []): Log
 
 Chat is a plain in-process turn. A turn is `runChatTurn`, and the harness stores the opening, each round, and the outcome of the turn. The harness ships no HTTP layer, thus the host owns the route. Compute-heavy work runs as **durable workflows** — `executeAnalysis` starts a child workflow per plan step once its dependencies have completed, and each step drives a sandbox agent inside a container. The same `runAgent` primitive runs in both modes; durability and the event sink are injected, so the loop body is identical.
 
-The sandbox protocol is submit-then-retrieve, which is what lets a long run survive a host restart: the host `POST /exec`s a command and retrieves the result over one of two transports — **poll** (the default: the host asks, the sandbox initiates nothing and needs no network egress) or **callback** (opt-in: the sandbox POSTs signed callbacks to an ingress the embedder runs). Both exec endpoints are HMAC signature-authenticated. See the [`harness-sandbox-exec`](./openspec/specs/harness-sandbox-exec/) spec.
+The sandbox protocol is submit-then-poll, which lets a long run survive a host restart. Each exec runs inside one durable step: the host submits the command with `POST /exec`, and then it polls `GET /exec/{execId}?since={cursor}` until the result. A recovered step submits the same exec id again, and the sandbox gives the existing record, thus the command does not run again. The sandbox initiates nothing and has no egress, and confinement keeps each other peer away from its exec port. Refer to the [`harness-sandbox-exec`](./openspec/specs/harness-sandbox-exec/) spec.
 
 ## Further reading
 
