@@ -1130,6 +1130,7 @@ export function buildProgram(): Command {
             .description(
                 "Print the CycloneDX SBOM of this installation: the CLI binary, the two sandbox images, and the package store on this host, merged into one document",
             ),
+        "machine",
         {
             kind: "blocked",
             reason: "`inflexa sbom` is a terminal export for the user, who redirects its output to a file. It is not available to you — ask the user to run it themselves.",
