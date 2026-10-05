@@ -259,7 +259,7 @@ The system SHALL register `inflexa prov verify-file <path>` under the existing `
 Every action command SHALL declare a command kind at its registration site, beside its agent policy. The kind states what the command needs from the local server:
 
 - `instance` — the command is a client of the local server. Before its action runs, it SHALL connect to the server, or start one in the background when none answers (the `local-server` capability owns that connection).
-- `machine` — the command prepares or controls the machine, its package store, or the server itself (`setup`, `up`, `down`, `upgrade`, `serve`, the `server` commands, the `store` commands other than `store link`, the `sandbox` commands, `refs download`, the `auth` login and logout). It SHALL run with no server check.
+- `machine` — the command prepares or controls the machine, its package store, or the server itself (`setup`, `up`, `down`, `upgrade`, `serve`, the `server` commands, the `store` commands other than `store link`, the `sandbox` commands, `sbom`, `refs download`, the `auth` login and logout). It SHALL run with no server check.
 - `standalone` — a helper that reads a local file or prints a value (`prov verify-file`, `auth whoami`, `refs list`, `refs verify`, `refs path`). It SHALL run with no server check.
 
 An `instance` command can name options that make it a `machine` command for one run. With any of those options set, the run SHALL skip the server check; without them, it SHALL connect as an `instance` command. The dev `run` command uses this form: `--plan` boots its own runtime, and each other use is a client.

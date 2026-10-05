@@ -207,6 +207,7 @@ const EXPECTED_KINDS: Record<string, string> = {
     "inflexa sandbox pull": "machine",
     "inflexa sandbox remove": "machine",
     "inflexa sandbox status": "machine",
+    "inflexa sbom": "machine",
     "inflexa serve": "machine",
     "inflexa server logs": "machine",
     "inflexa server status": "machine",
