@@ -12,24 +12,21 @@ sanitization — unicode normalization and redaction of structured, prefixed
 secret formats — applied to incoming user messages without false-positiving on
 biological sequences.
 
-**Tools own their durability through a declared execution mode.** Every tool
-declares or defaults to `executionMode: "step" | "workflow" | "inline"`. A
-`step` tool runs through a deterministic durable step wrapper, which preserves
-replay caching, idempotency, and `operation_outputs` recording for the ~35
-external bio/chem API tools and the workspace read tools at zero per-tool
-cost — on replay those rate-limited, keyed external calls return cached instead
-of re-firing. But that runs the body in DBOS *step* context, where `DBOS.recv`
-is illegal and throws. `execute_command` submits a command and then receives
-its result with `DBOS.recv`, thus it declares `executionMode: "workflow"`: it
-runs through a workflow-backed execution path where its `recv` is legal, and
-the tool owns its own durability (the submit is an idempotent step, the recv
-is a body call). `write_file` and `edit_file` declare the same mode for a
-different reason: each mutates durable workspace state inside a workflow, with
-no `DBOS.recv`. `inline` is
-reserved for pure deterministic logic with no external side effects. The mode
-is the tool's declaration of intent, not loop policy; `ToolContext` carries a
-`runStep` seam so any tool can wrap its own durable work under the tool's step
-name.
+**Each tool owns its durability through a declared execution mode.** Each tool
+declares or defaults to `executionMode: "step" | "inline"`. A `step` tool runs
+through a deterministic durable step wrapper, which caches the whole call. On a
+replay, an external lookup tool gives the cached result, and the rate-limited
+call does not occur again.
+`inline` is reserved for logic whose effects are not durable work. The mode is
+the declaration of the tool, not a policy of the loop.
+
+**A tool gives its effect on process state as a call record.**
+`execute_command`, `write_file`, and `edit_file` are `step` tools, and the
+sandbox exec of `execute_command` runs inside the step of its call. A replay
+gives the cached result, and it does not run the body. Thus a tool attaches each
+effect on process-local state to its ok value as a call record. The loop folds
+each record after the round, on the first run and on each replay. `ToolContext`
+carries no durability seam.
 ## Requirements
 ### Requirement: Tools are defined through a dependency-agnostic primitive
 

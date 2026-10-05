@@ -31,15 +31,14 @@ continues. Recovery is bounded by `maxIterations`. The output-token cap itself
 is owned per-model by the AI SDK provider runtime, which surfaces a single
 truncation signal the loop branches on.
 
-**Tool dispatch is partitioned by durability ownership.** Each tool declares an
-execution mode (see the harness-tools spec). `step` tools are wrapped as
-deterministic durable steps and may run concurrently where AI SDK allows
-parallel tool calls. `workflow` tools (the sandbox mutate tools) run through
-their workflow-backed execution path — never inside a DBOS step context, so
-their internal `DBOS.recv` is legal. `inline` tools run only when pure with no
-external side effects. Results are associated with the original tool-call ids,
-so the tool-call↔tool-result correspondence holds regardless of execution
-order.
+**Tool dispatch obeys the execution mode of each tool** (see the harness-tools
+spec). The loop wraps each `step` tool call as a deterministic durable step, and
+the step calls of one round can run at the same time. A sandbox tool is a
+`step` tool, and its exec runs inside its tool step. `inline` tools run after
+the step calls, one at a time, with no step. After the round, the loop folds the
+call record of each call in call order, thus a replay folds the same records.
+The loop associates each result with the original tool-call id, thus the
+tool-call to tool-result correspondence holds in each execution order.
 
 A thin wrapper, `runToTerminal`, drives agents whose result is delivered
 exclusively through a terminal tool (`submit_plan`,

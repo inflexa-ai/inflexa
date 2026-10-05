@@ -319,7 +319,7 @@ The loop MUST apply the mask and the budget at dispatch, in the order of the cal
 
 A call that the mask refuses, or a call past the budget of its tool, MUST get an error result that gives the reason. Its tool MUST NOT run. The loop MUST emit the `tool-started` and `tool-finished` pair of a refused call, with the outcome `error`.
 
-The loop MUST give the refusal inside the step wrapper that a dispatched call of the same tool id gets, under the same step name. A step-mode tool and an unknown tool id get a durable step. A workflow-mode tool and an inline-mode tool get no wrapper. Thus the step sequence of a round is the same with and without the mask. An earlier build dispatched a call of an undeclared tool as an unknown tool, in a step. When this build declares that tool as a step-mode tool and refuses the call, a replay finds the recorded step.
+The loop MUST give the refusal inside the step wrapper that a dispatched call of the same tool id gets, under the same step name. A step-mode tool and an unknown tool id get a durable step. An inline-mode tool gets no wrapper. Thus the step sequence of a round is the same with and without the mask. An earlier build dispatched a call of an undeclared tool as an unknown tool, in a step. When this build declares that tool as a step-mode tool and refuses the call, a replay finds the recorded step.
 
 Both dispatch paths MUST apply the same check: the normal round and the round that a truncation cut. The check is a pure function of the mask, the budget, and the calls of the run. Thus a replay refuses the same calls. Provider-native masking, for example OpenAI `allowed_tools`, is out of scope, and each request declares the full tool set.
 

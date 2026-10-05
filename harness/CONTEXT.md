@@ -67,58 +67,44 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   because the analysis steps already delivered. Interpretive aggregation that
   honestly has nothing to add is not a run failure.
 - **Sandbox** — An ephemeral container that runs the sandbox HTTP worker. The
-  harness submits a command with a signed `POST /exec`, then it gets the result
-  through one of two **transports** (refer to the next entry). It does not hold a
-  long-lived `/exec` stream. `GET /exec/{execId}` gives the terminal result, and
-  the sandbox signs it fresh at request time. This is the poll primitive in poll
-  mode, and the recovery pull in callback mode.
-- **Transport (`SandboxTransport`)** — How the progress events and the terminal
-  result of a command come to the host: **`poll`** (the default) or
-  **`callback`**. It is backend-independent. The embedder selects it at its
-  composition root, and it goes to the container as `SANDBOX_TRANSPORT`.
+  harness submits a command with `POST /exec`, and then it polls
+  `GET /exec/{execId}?since={cursor}` for `{ status, events[], cursor, result? }`.
+  It does not hold a long-lived `/exec` stream. The sandbox initiates nothing, and
+  the endpoints carry no credential.
+- **Exec step (`sandbox.exec`)** — One sandbox exec, in one DBOS step
+  (`sandbox/exec.ts`). The exec id is `${workflowId}:${stepId}`, from the step
+  that runs the exec, thus one step holds one exec. The step submits the command,
+  polls until the result or the deadline, and emits the sandbox events from
+  inside the step. It reads the cancel state of its workflow each 10 s.
 
-  In **poll** mode the host polls `GET /exec/{execId}?since={cursor}` for a signed
-  `{ status, events[], cursor, result? }`. The sandbox initiates nothing and needs
-  no egress. On Docker an in-container `iptables -P OUTPUT DROP` firewall confines
-  it: a root entrypoint with `CAP_NET_ADMIN` installs the rule, then `setpriv`
-  drops to uid 1000. The exec port is published to `127.0.0.1` only. The poll loop
-  is durable, and its per-attempt step names are unique
-  (`sandbox.poll-exec-result.${execId}.${n}`). A dead sandbox in poll mode fails
-  fast in the loop. Sustained
-  `unavailable` polls escalate to a durable `isAlive` probe
-  (`sandbox/liveness.ts`), and a machine that is dead gives the synthetic-failure
-  result without a wait for `step.timeout`. The synthetic-complete of the watchdog
-  is the callback-mode path.
-
-  In **callback** mode the sandbox POSTs signed callbacks to `CORTEX_BASE_URL`,
-  and the embedder runs the ingress. `awaitExec` uses `DBOS.recv`, with the pull
-  as its recovery backstop. There is no gateway sidecar and no `--internal` network,
-  because the two transports removed the contradiction that the gateway existed to
-  reconcile. The local CLI defaults to poll.
+  Sustained `unavailable` polls escalate to an `isAlive` probe
+  (`sandbox/liveness.ts`). A dead machine gives the synthetic-failure result with
+  no wait for `step.timeout`. A step that runs again on recovery submits the same
+  exec id, and sandbox-server gives the existing record.
+- **Sandbox confinement** — The sandbox has no egress, and only the host reaches
+  its exec port. On Docker, an in-container `iptables -P OUTPUT DROP` firewall
+  confines it: a root entrypoint with `CAP_NET_ADMIN` installs the rule, and then
+  `setpriv` drops to uid 1000. The exec port is published to `127.0.0.1` only. On
+  K8s, a NetworkPolicy of the deployment admits only Cortex to the sandbox port,
+  and it denies each egress. There is no gateway sidecar and no `--internal`
+  network.
 - **Active-sandbox registry** — The set of sandbox machines that are bound to a
   running step at this time. It is a projection over `cortex_step_executions`: the
   rows with a non-null `sandbox_ref` and `status='running'`. `state/active-sandboxes.ts`
   has it. `sandbox/create-sandbox.ts` writes a row when it mints a machine, and
-  the teardown clears it. The liveness watchdog (`sandbox/watchdog.ts`) enumerates
-  the registry, shards it, and fans out one `isAlive` check for each shard. An
-  entry that is dead but not complete unblocks the recv with a synthetic
-  failure-`complete`.
+  the teardown clears it. The row holds the machine, not the exec.
 - **Orphaned sandbox** — A sandbox machine that runs in a configured backend, but
   nothing in the harness refers to it: no registry row, and no DBOS step-cache
   entry. It comes from a process that dies after the backend creation but before
-  the `sandbox.create` step checkpoint. The registry-driven watchdog cannot see it.
-  Only a backend inventory sweep finds it.
+  the `sandbox.create` step checkpoint. Only a backend inventory sweep finds it.
 - **Stale registry row** — A `cortex_step_executions` row that is still
   `status='running'` with a `sandbox_ref`, but the workflow that owns it is
   terminal. This is usually a sibling that fail-fast canceled, because a
-  cancellation runs no teardown, thus the machine can still run too. The watchdog
-  sees it as dead and skips the synthetic send, because the workflow is not
-  PENDING or ENQUEUED. The **sandbox reaper** clears it, not the watchdog.
-- **Sandbox reaper** — A `@DBOS.scheduled` workflow (`sandbox/reaper.ts`,
-  registered beside the watchdog) that cleans up an orphaned sandbox and a stale
-  registry row. It is distinct from the liveness watchdog: it sweeps
-  **backend→registry**, the watchdog sweeps registry→backend. It is unsharded, and
-  it runs on a slower cadence. It lists the sandbox machines with
+  cancellation runs no teardown, thus the machine can still run too. The
+  **sandbox reaper** clears it.
+- **Sandbox reaper** — A `@DBOS.scheduled` workflow (`sandbox/reaper.ts`) that
+  cleans up an orphaned sandbox and a stale registry row. It sweeps
+  **backend→registry**. It is unsharded, and it runs each 5 minutes. It lists the sandbox machines with
   `SandboxClient.listManagedSandboxes()`, and it reads the workflow metadata of the
   owner. On a terminal or missing workflow status it tears the machine down and it
   reconciles the row. It keys off the workflow status, which is written at enqueue
@@ -368,9 +354,8 @@ its process bootstrap, and any adapter that is not local.
 - **A DBOS workflow** is reserved for a *durable operation*: `executeAnalysis`
   and the background `runDataProfile`. **Each run that
   a sandbox backs is a DBOS workflow.** A report session is the exception: it
-  renders in-process, and it is not a DBOS workflow. There is no in-process sandbox consumer,
-  and no in-memory exec transport. A sandbox exec callback routes only through
-  `DBOS.send` and `DBOS.recv`.
+  renders in-process, and it is not a DBOS workflow. There is no in-process sandbox consumer.
+  Each sandbox exec is a DBOS step of a workflow.
 - **Legacy ephemeral rows** — No workflow of this runtime makes an
   `ephemeral:*` workflow id. An older release did, thus a database can still
   hold a `PENDING` row under that prefix. `sweepEphemeralWorkflows`
@@ -467,17 +452,17 @@ to the host.
 ### Sandbox exec
 
 Refer to [harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md) for
-the protocol and for the callback auth.
+the protocol and for the confinement.
 
 Two distinct lifetimes. Do not conflate them:
 
-- **Exec command** — one submit, then one recv of the result. There are many for
-  each sandbox, and most are near-instant (`ls`, `find`) and make only a finished
-  message. `submitExec` POSTs the command with
-  `execId = "${workflowId}:${stepId}:${functionId}"`. sandbox-server runs it in
-  the background and dedups a duplicate submit by idempotency. The workflow body
-  does `DBOS.recv` for the result, bounded by `step.timeout`, because one command
-  can legitimately run for hours. **There are no per-exec heartbeats.**
+- **Exec command** — one submit, then a poll until the result, in one DBOS step
+  (`sandbox.exec`). There are many for each sandbox, and most are near-instant
+  (`ls`, `find`). The exec id is `${workflowId}:${stepId}`, from the step that
+  runs the exec. sandbox-server runs the command in the background, and it dedups
+  a repeated submit on the exec id. The step polls for the result, bounded by
+  `step.timeout`, because one command can legitimately run for hours. **There are
+  no per-exec heartbeats.**
 - **Sandbox machine** — one for each step, and long-lived. The sandbox-agent loop
   issues many commands into the *same* container. Its concerns are machine-level:
   did it **start**, and is it still **alive** (not crashed, not OOMKilled, not
@@ -487,51 +472,46 @@ Two distinct lifetimes. Do not conflate them:
 Other facts:
 
 - **Events are sandbox-lifetime, on-change, and coalesced.** The sandbox executor
-  diffs its working tree and emits an update only when the tree changes, not for
-  each exec. A meaningful progress event flows on this path:
-  - from the sandbox to `POST /sandbox/:execId/event`
-  - to `DBOS.send` on the per-exec topic
-  - to the forwarding loop of the workflow body.
-
-  That loop does recv, then it verifies the HMAC, then it does `writeStream`.
+  diffs its working tree, and it appends an event to the ring of the exec only
+  when the tree changes. The exec step reads the events with each poll, and it
+  gives each new event to `emit` from inside the step. A write to the stream from
+  a step is at-least-once, thus a step that runs again on recovery writes its
+  events again.
 - **A sandbox event is folded into a typed per-step part in the sandbox-step
   body.** A raw per-exec event never reaches the observer as it is. One translator
   in the `emit` chokepoint of `sandbox-step.ts` maps it to the typed part that the
   UI renders. The `tool-started` of the agent loop becomes `data-step-activity`
   with phase `executing`. The `describeCall` hook of the called tool phrases it,
   through `createDetailResolver(agent.tools)`. The tool name is the fallback.
-  The `file-tree` delta of the executor becomes `data-step-file-tree`: the body
+
+  The `file-tree` delta of the executor becomes `data-step-file-tree`. The body
   folds the per-exec `added`, `modified`, and `removed` deltas into a per-step path
-  set, and it emits the **full** tree, paths only. Both use a stable per-step
-  reconciling id, thus the run-stream fold and the observer collapse them
-  latest-wins. The terminal `walkArtifacts` tree reconciles onto the same file-tree
-  id at the end of the step. The fold is replay-stable because it is a 1:1 pure
-  function of the checkpointed `recv` sequence. There is no Cortex-side timer and
-  no debounce, because that would break
-  [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md) again.
-- **Completion** — the sandbox worker POSTs the final result to
-  `/sandbox/:execId/complete`. The host callback handler verifies it and forwards
-  it with `DBOS.send` on the same per-exec topic, with a `done` marker. The
-  forwarding loop recognizes the marker and returns. One topic, one recv loop, and
-  no stuck recv.
-- **Liveness is per-sandbox-machine, not per-exec.** The oracle is always the
-  backend inspect (`SandboxClient.isAlive(sandboxRef)`), but the transport decides
-  who invokes it. A `@DBOS.scheduled` workflow fans out over the *active
-  sandboxes* (the registry is the `cortex_step_executions` rows with a
-  `sandbox_ref` and status running). It is sharded, thus no single invocation
-  polls each sandbox. On dead with no completion recorded it sends a synthetic
-  failure-`complete` to unblock the recv, which is the callback mode. In poll mode
-  the await loop is its own fail-fast: sustained `unavailable` polls escalate to a
-  durable `isAlive` probe (`sandbox/liveness.ts`), and a dead machine gives the
-  synthetic failure in the loop. Same oracle, same result constructor, and no
-  topic. Recovery also checks the liveness again before a recovered child continues
-  a step. The await that `step.timeout` bounds is the durable backstop, and the
-  liveness verdict is the fail-fast.
+  set, and it emits the **full** tree, paths only. Both parts use a stable
+  per-step reconciling id, thus the run-stream fold and the observer collapse them
+  latest-wins. A repeated delta changes no tree. After a recovery, the live tree
+  holds only the deltas of the execs that ran in the new process. The terminal
+  `walkArtifacts` tree reconciles onto the same file-tree id at the end of the
+  step.
+- **Completion** — sandbox-server keeps the completion payload in the record of
+  the exec, and the next poll returns it as `result`. The record lives for the
+  life of the sandbox-server process, with no TTL. Thus a recovered step that
+  submits again gets the first result, and the command does not run again.
+- **Liveness is per-sandbox-machine, not per-exec.** The oracle is the backend
+  inspect (`SandboxClient.isAlive(sandboxRef)`). The exec step is its own
+  fail-fast: sustained `unavailable` polls escalate to an `isAlive` probe
+  (`sandbox/liveness.ts`), and a dead machine gives the synthetic failure in the
+  step. Recovery also checks the liveness again before a recovered child
+  continues a step. The deadline that `step.timeout` gives is the backstop, and
+  the liveness verdict is the fail-fast.
+- **A cancel reaches the exec step through a status read.** A DBOS step does not
+  see a cancel of its workflow. Thus the exec step reads the status of its
+  workflow each 10 s, and it throws on `CANCELLED`. The command in the sandbox
+  runs on until the reaper removes the machine.
 - **The creation is two durable steps, and the cleanup is a separate reaper.**
-  `sandbox.mint` checkpoints the machine identity (`sbx-{run8}-{uuid4}` plus the
-  HMAC secret) before `sandbox.create` spawns it. Thus a crash in the middle of the
-  creation runs the spawn again. The spawn **adopts** the existing machine, and it
-  does not leak a second one
+  `sandbox.mint` checkpoints the machine identity (`sbx-{run8}-{uuid4}`) before
+  `sandbox.create` spawns it. Thus a crash in the middle of the creation runs the
+  spawn again. The spawn **adopts** the existing machine, and it does not leak a
+  second one
   ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)). The
   **sandbox reaper** is the sole cleanup for the machines that this does not
   cover: a cancellation leak and a scale-down orphan. Refer to its glossary entry
@@ -576,8 +556,8 @@ Other facts:
   No module reaches for a dependency. `getPool()` is a pool factory and a test
   seam, not a hidden request context. The conversation-agent factory is a nested
   composition root: it receives its deps from the root and explodes them apart for
-  each tool. `ToolContext` is `{session, signal, emit, runStep}`, which is
-  request-scoped seams only, with no injected deps.
+  each tool. `ToolContext` is `{session, signal, emit, ask, invocationId, turnUsage}`,
+  which is request-scoped values only, with no injected deps.
 - **A process fact is exempt.** State that is one for each process, write-only,
   and never faked stays module-level: the `lifecycle.ts` draining flag, the
   `otel.ts` init guard, and the OTel instrument handles. Injection of it buys no
@@ -609,17 +589,18 @@ Other facts:
   `providers/types.ts` declares the two provider interfaces. It
   takes a `Session`.
 - **`defineTool({id, description, inputSchema: ZodSchema, execute(input, ctx) => result, executionMode?, describeCall?})`**
-  — `ctx` is `ToolContext = {session, signal, emit, runStep}`, which is
-  request-scoped seams with no deps. `tools/define-tool.ts` has it. The
+  — `ctx` is `ToolContext = {session, signal, emit, ask, invocationId, turnUsage}`,
+  which is request-scoped values with no deps. `tools/define-tool.ts` has it. The
   `z.toJSONSchema()` of Zod 4 emits the tool input schema that the AI SDK accepts:
-  a top-level object only, and it rejects a union at construction. `runStep` is the
-  durability seam that a tool
-  uses to wrap its own durable work: it is a passthrough in chat and
-  `DBOS.runStep` in a workflow, and the loop namespaces the name under the step
-  name of the tool. A tool that carries deps is a factory closure
-  (`createXTool(deps)`) that captures the deps and calls `defineTool`. Each tool
-  declares an **`executionMode`** or defaults to one: `step`, `workflow`, or
-  `inline`. Refer to *The loop*. The error contract: an expected outcome, which
+  a top-level object only, and it rejects a union at construction. A tool that
+  carries deps is a factory closure (`createXTool(deps)`) that captures the deps
+  and calls `defineTool`. Each tool declares an **`executionMode`** or defaults to
+  one: `step` or `inline`. Refer to *The loop*.
+
+  A tool gives each effect on process-local state as a **call record**: its ok
+  value carries the record (`withToolCallRecord`), and its `foldCallRecord`
+  applies it. The record rides under a symbol key, thus the model never reads it.
+  The error contract: an expected outcome, which
   includes "not found", is a data variant of the result type. An unexpected
   failure throws or gives `err(ToolError)`, and the loop maps it to a
   model-visible error tool result. A Zod input-validation failure gives an error
@@ -738,20 +719,19 @@ Other facts:
 - **Execution-mode partitioned dispatch**
   ([harness-tools](openspec/specs/harness-tools/spec.md)). The dispatch obeys the
   `executionMode` of each tool. A `step` tool is the default: the ~35 external bio
-  and chem API tools, and the workspace reads. Each is wrapped in a deterministic
-  `runStep` and runs concurrently (`Promise.all`), and each reserves one function
-  ID synchronously in array order. A `workflow` tool runs sequentially **after**,
-  unwrapped in the workflow body, thus its internal `DBOS.recv` and `writeStream`
-  (body-only) are legal. These are exactly `execute_command`, `write_file`, and
-  `edit_file`. `execute_command` has its own durability: the submit is a step,
-  and the recv is a body call. The two file tools hold no recv, but each mutates
-  durable workspace state inside the workflow body. They reserve multiple function IDs across awaits, thus
-  concurrent ones would race the counter. An `inline` tool is pure deterministic
-  logic and runs unwrapped. The results are assembled by the original index, thus
-  the tool-result order holds. The loop emits (`iteration`, `tool-started`,
-  `tool-finished`) are awaited, thus each body-path `writeStream` lands at a
-  deterministic function ID on replay
-  ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)).
+  and chem API tools, the workspace reads, `execute_command`, `write_file`, and
+  `edit_file`. Each is wrapped in a deterministic `runStep` and runs concurrently
+  (`Promise.all`), and each reserves one function ID synchronously in array order.
+  The sandbox exec of `execute_command` runs inside its tool step. An `inline`
+  tool runs unwrapped, one at a time, after the step tools.
+
+  The results are assembled by the original index, thus the tool-result order
+  holds. After the round, the loop folds the call record of each call in call
+  order, on the first run and on each replay. Thus process-local state, for
+  example the lineage collector of a step, gets the same records after a
+  recovery. The loop emits (`iteration`, `tool-started`, `tool-finished`) are
+  awaited, thus each body-path `writeStream` lands at a deterministic function ID
+  on replay ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)).
 
 ### Memory
 

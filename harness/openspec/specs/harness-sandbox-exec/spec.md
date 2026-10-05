@@ -2,96 +2,45 @@
 
 ## Purpose
 
-Define the harness sandbox exec seam — the `SandboxClient` interface and the
-submit/recv protocol every sandbox-backed module sits on. A single base-image
-container per analysis step runs R/Python; the harness drives it over HTTP and
-recovers cleanly when the workflow-owning host process dies mid-run.
+Define the sandbox exec layer of the harness: the `SandboxClient` interface and
+the exec protocol that each sandbox caller uses. Each analysis step gets one
+container of the base image, and the container runs R and Python. The harness
+controls the container over HTTP. If the host process that runs the workflow
+stops, a different process continues the work.
 
-**Submit + durable await, not a long-lived stream.** The old protocol held one
-HTTP `POST /exec` open for hours while sandbox-server streamed `ndjson`; under
-multi-replica DBOS recovery a reassigned workflow could not resume that stream
-and would re-issue the command. So `/exec` is split into a `submitExec` DBOS
-step (POST, return after 202) and a workflow-body await, and the command's
-progress events and terminal result reach the host by one of two **transports**
-(`SandboxTransport = "poll" | "callback"`, chosen by the embedder; the OSS/CLI
-default is `poll`). In **poll** mode the host asks: `awaitExec` loops durable,
-signed `GET /exec/{execId}?since={cursor}` pull steps and the sandbox initiates
-nothing. In **callback** mode the sandbox pushes: sandbox-server POSTs progress
-and the final result to the host, and whichever host process receives a callback
-forwards it via `DBOS.send` onto a **single per-exec DBOS topic**
-`exec-event:${execId}`, unblocking the recv on whatever process owns the
-workflow at that moment. There is no in-memory fast-path bus — callback delivery
-is `DBOS.send` only.
+**One exec runs inside one DBOS step.** `SandboxClient.exec` runs the command
+in the step `sandbox.exec`. The step submits `POST /exec`, and then it polls
+`GET /exec/{execId}?since={cursor}` until the result arrives. The exec id is
+`${workflowId}:${stepId}`, from the step that runs the exec. Thus a caller mints
+no exec id, and one step holds one exec.
 
-**Every result body is HMAC-signed, verified in the workflow body.** Because a
-result may be served to (or a callback may land on) a process that is not
-executing the workflow body, the authentication cannot live at the host edge. A
-per-sandbox `callbackSecret` is minted once, handed to sandbox-server once, and
-never transmitted again; sandbox-server signs every served poll snapshot and
-every pushed callback `HMAC-SHA256(callbackSecret,
-"${execId}:${timestamp}:${sha256Hex(body)}")`. The workflow body — which holds
-the secret from the cached create step output — verifies the HMAC and timestamp
-freshness on each body; a bad or stale signature hard-cancels the run. The
-callback-mode host handler is dumb: no secret, no verification, no DB read — it
-parses the workflowId out of the execId and forwards the
-`{payload, payloadRaw, signature, timestamp}` envelope.
+**A recovered step attaches to the exec that ran.** A completed step replays
+from the step cache, and it sends no request. A step that did not complete runs
+again on recovery. It submits the same exec id, and sandbox-server gives the
+existing record. Thus the command does not run a second time. sandbox-server
+keeps each record for the life of its process.
 
-Network confinement and the HMAC guard *different* attackers, and neither is
-"defense-in-depth" for the other. Confinement bounds who can exchange bytes
-with whom; against a compromised sandbox the HMAC is the *only* control, which
-is why the secret is withheld from the commands sandbox-server spawns. What
-confinement means differs per mode: in poll mode the Docker sandbox initiates
-nothing and an in-container egress firewall enforces it (see the
-`docker-sandbox-provider` spec); in callback mode the sandbox is *permitted*
-egress to push its callbacks, and the signature is what makes reaching an
-endpoint useless to anyone who cannot sign.
+**The host polls, and the sandbox initiates nothing.** The step gives the
+events of the exec to the run-event stream from inside the step. A recovered
+step gives the events again, thus each consumer must accept a repeated event.
+The step reads the cancel state of its workflow. After failed polls, it probes
+the liveness of the machine, and a dead machine ends the exec with a synthetic
+failure. No callback and no watchdog exist.
 
-**In callback mode a completion is push-first, never push-only.** A pushed
-callback goes to an address baked into the container when it was created. A
-host that dies mid-exec returns on a different ingress port, so the push can
-never land: the sandbox retries into a void while the recovered recv waits for
-a message that will never arrive, and the run hangs in `running` forever.
-Therefore the exec table retains the completion bytes and `GET /exec/{execId}`
-serves them, **signed fresh at request time**. Whenever the topic falls quiet
-the recv loop stops waiting and asks. The served bytes are the ones the
-callback would have carried, so the provenance frame survives the recovery path
-and a single verification path serves both. In poll mode this pull is not a
-backstop but the primary path, and a restarted host simply resumes polling from
-its current identity — the recovery wedge cannot occur.
+**Confinement is the control on the exec endpoints.** The requests and the
+responses carry no signature, and the sandbox holds no secret. A sandbox has no
+egress. On Docker, the exec port is published on `127.0.0.1` only, and the
+entrypoint installs an egress-deny firewall. On K8s, a NetworkPolicy admits
+only Cortex to the exec port, and it denies each egress of the sandbox.
 
-The freshness window makes the signature's age load-bearing. A retry loop that
-minted one timestamp and reused it would, after the window elapsed, be posting a
-message the host is required to reject as `stale-timestamp` — a hard cancel, not
-a retryable condition — no matter how long it kept trying. So sandbox-server
-SHALL re-sign each attempt, and the served endpoints SHALL sign at request time.
-
-**The signature is the lock on the exec endpoints.** `POST /exec` and
-`GET /exec/{execId}` reject any request that does not carry a fresh, correct
-`X-Sandbox-Signature`/`X-Sandbox-Timestamp` over the same construction the
-served/pushed bodies use, run inbound — in **both** transport modes. This is a
-request signature and deliberately not a static bearer: these bytes ride
-cleartext HTTP, so a bearer would hand any observing hop a reusable credential,
-while a signature lets a hop forward or drop a request but never mint another.
-Because the check tests possession of the per-sandbox secret, it also confines
-lateral movement: a network-adjacent sibling sandbox holds only its own secret
-and cannot sign for this one — the check that authenticates Cortex is the check
-that confines the sibling. `POST /exec` signs the request body and
-`GET /exec/{execId}` an empty one; a missing, forged, or stale signature is a
-`401`, refused before any command runs or any stdout is disclosed. `/health`
-stays unauthenticated (it exposes nothing), and the retired
-`POST /exec/{pid}/kill` route is gone.
-
-**Create is checkpoint-idempotent; a reaper is the sole orphan cleanup.** A
-single create step that minted the secret, spawned the machine, then
-checkpointed could leak a running machine nothing referenced if the process
-restarted in the spawn→checkpoint window. So creation is two steps: `sandbox.mint`
-checkpoints `{ sandboxId, callbackSecret }` before any machine exists, and
-`sandbox.create` spawns (or, on a recovery re-run, adopts) the machine under
-that durable identity. Because a cancelled workflow structurally cannot run its
-own teardown step, a separate scheduled `registerSandboxReaper` is the only
-orphan cleanup: it enumerates Cortex-managed machines (`listManagedSandboxes`),
-tears down any whose owning workflow is terminal/missing (`teardownById`), and
-reconciles the stuck step row.
+**The spawn is checkpoint-idempotent, and a reaper is the only orphan
+cleanup.** If the process stops between the spawn and the checkpoint of one
+step, the machine leaks. Thus the spawn has two steps: `sandbox.mint`
+checkpoints the `{ sandboxId }` before a machine exists, and `sandbox.create`
+spawns or adopts the machine under that name. A canceled workflow cannot run
+its own teardown step. Thus a separate scheduled `registerSandboxReaper`
+removes each managed machine whose owner workflow is terminal or missing, and
+it reconciles the step row.
 
 ## Requirements
 

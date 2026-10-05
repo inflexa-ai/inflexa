@@ -2,9 +2,9 @@
 
 ### Requirement: The host keeps each exec stream up to the maximum of the tool output store
 
-`submitExec` MUST attach `stdoutByteCap` and `stderrByteCap` to each body that carries no budget, with the value `EXEC_STREAM_BYTE_CAP`. The attach MUST occur before the signature, because the signature covers the bytes of the body.
+The submit of each exec MUST carry `stdoutByteCap` and `stderrByteCap`, with the value `EXEC_STREAM_BYTE_CAP`. `runExec` attaches them to each request, and a caller of `exec` gives no budget.
 
-The client MUST cut each stream of a result at the same value when the result crosses into the process, with `capExecStreams`. The cut on receipt stays, because a server that is older than the budget returns each stream whole.
+`exec` of the client MUST cut each stream of the result at the same value with `capExecStreams`, inside the `sandbox.exec` step, before the step returns. The cut on receipt stays, because a server that is older than the budget returns each stream whole.
 
 `EXEC_STREAM_BYTE_CAP` MUST be 1,048,576 bytes, the maximum of a kept text of the tool output store (refer to the harness-agent-loop capability). Thus the host gets each stream that the store can keep, and the loop decides what the model sees. An embedder can give a different value with `execStreamByteCap` of the client configuration.
 
@@ -12,14 +12,14 @@ Each caller of the client gets the same bound: the step agent, the data profile,
 
 #### Scenario: A submit carries the budget
 
-- **GIVEN** a submit body with no budget
-- **WHEN** `submitExec` posts it
-- **THEN** the signed body carries `stdoutByteCap` and `stderrByteCap` with the value 1,048,576
+- **GIVEN** an exec request that carries no budget
+- **WHEN** `exec` submits it
+- **THEN** the body of `POST /exec` carries `stdoutByteCap` and `stderrByteCap` with the value 1,048,576
 
 #### Scenario: A long stream from an older server is cut on receipt
 
 - **GIVEN** a server that ignores the budget and returns a stdout of 2,097,152 bytes
-- **WHEN** `awaitExec` of the client returns
+- **WHEN** the `sandbox.exec` step of the client returns
 - **THEN** the stdout holds 1,048,576 bytes, `stdoutTruncated` is true, and `stdoutTotalBytes` gives 2,097,152
 
 #### Scenario: A stream under the budget reaches the host whole

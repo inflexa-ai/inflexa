@@ -20,7 +20,7 @@ are:
 - `defineTool`
 - the dependency-injection composition pattern
 - the session value objects
-- the sandbox submit and recv protocol
+- the sandbox submit and poll protocol
 - the memory
 - the storage layout
 - the four capability **seams** and the two optional hooks that the harness
@@ -236,45 +236,52 @@ is a gate or a notice (`src/lib/hooks.ts`), and its type shows its kind.
 ```
 Harness host process
   |
-  +- SandboxBase (abstract)
-  |   +- Shared: HTTP submit + await, provenance, abort handling
+  +- createSandboxClient (sandbox/create-sandbox.ts)
+  |   +- Shared: exec step (sandbox/exec.ts), provenance, liveness probe
   |   |
-  |   +- DockerSandbox                          K8sSandbox
+  |   +- Docker backend                         K8s backend
   |       docker run sandbox-base                 K8s Job sandbox-base
   |       bind mounts (host dirs)                 PVC mounts
-  |       loopback-published :8765                 pod IP:8765
-  |       + in-container egress firewall (poll)    + NetworkPolicy
+  |       loopback-published :8765                pod IP:8765
+  |       + in-container egress firewall          + NetworkPolicy (Cortex in, no egress)
   |
-  +- POST /exec  (submit, idempotent on execId; signed request)
+  +- sandbox.exec  (one DBOS step; execId = ${workflowId}:${stepId})
   |   |
-  |   sandbox runs in background
+  |   +- POST /exec  (submit; sandbox-server dedups on execId)
   |   |
-  |   v
-  +- poll (default): host asks, sandbox initiates nothing
-  |     GET /exec/{execId}?since={cursor}
-  |       -> signed { status, events[], cursor, result? }
-  |     awaitExec loops durable poll steps; emits events; returns result
-  |
-  +- callback (opt-in): sandbox POSTs signed callbacks to CORTEX_BASE_URL
-  |     POST /sandbox/:execId/event     (progress; HMAC-verified at recv)
-  |     POST /sandbox/:execId/complete  (final result; HMAC-verified at recv)
-  |     ...body PULLS GET /exec/{execId} if the topic falls quiet (recovery)
+  |   +- GET /exec/{execId}?since={cursor}   (1.5 s for 40 polls, then 10 s)
+  |   |     -> { status, events[], cursor, result? }
+  |   |     events -> emit -> run-event stream, from inside the step
+  |   |
+  |   +- result -> the step cache
   |
   +- Container removed on completion
 ```
 
-The submit and result protocol
-([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)) is what lets
-a long sandbox run survive a host restart. The sandbox worker keeps running
-separately, and the host gets its result through one of two transports.
-`SandboxTransport` (`poll` or `callback`) selects the transport. The embedder
-chooses it at its composition root, and it goes to the container as
-`SANDBOX_TRANSPORT`. The default of the OSS build and the CLI is `poll`.
+The submit and poll protocol
+([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)) lets a long
+sandbox run survive a host restart. The sandbox worker runs apart from the host,
+and the host polls it for the result. The sandbox initiates nothing.
 
-The two transports, the in-container egress firewall of poll mode, and the two
-distinct lifetimes (an exec command against a sandbox machine) are in
-[`CONTEXT.md`](CONTEXT.md) — the `Transport (SandboxTransport)` glossary entry and
-`Sandbox exec`. **Do not conflate the two lifetimes.**
+Each exec runs inside one DBOS step. The exec id is `${workflowId}:${stepId}`,
+from the step that runs the exec. Thus one step holds one exec. A tool call of
+the agent loop is a step, and its exec runs inside it. A completed step replays
+from the step cache and sends no request.
+
+A step that did not complete runs again on recovery. It submits the same exec id
+again. sandbox-server dedups the submit and gives the existing record, thus the
+poll attaches to the exec that already ran. The step then emits the events of
+the exec again. A tree part is the whole tree, and a reader keeps the latest part
+for each id. Thus a repeated event does no harm.
+
+The step reads the cancel state of its workflow each 10 s. After consecutive
+failed polls, it probes the liveness of the machine with `isAlive`. A dead
+machine ends the exec with a synthetic failure. Otherwise the step ends on the
+result or on the deadline.
+
+The two distinct lifetimes (an exec command against a sandbox machine) are in
+[`CONTEXT.md`](CONTEXT.md), under `Sandbox exec`. **Do not conflate the two
+lifetimes.**
 
 **A single base image**: one `sandbox-base` image for each sandbox agent. It has
 the R, Python, and Node.js runtimes and the system libraries. No R package and no
@@ -284,21 +291,21 @@ read-only at `/mnt/libs`, with the farm of the analysis at `/mnt/libs/farm`.
 **sandbox-server**: a statically-linked Go binary at
 `images/sandbox-base/server/`. Its endpoints are:
 
-- `GET /health` — unauthenticated.
-- `POST /exec` — an idempotency-keyed submit.
-- `GET /exec/{execId}` — the terminal result, signed fresh at request time. With
-  `?since={cursor}` in poll mode it gives `{ status, events[], cursor, result? }`,
-  always signed.
+- `GET /health` — the readiness probe.
+- `POST /exec` — an idempotency-keyed submit. A repeated exec id gives the
+  status of the existing record and runs nothing.
+- `GET /exec/{execId}?since={cursor}` — `{ status, events[], cursor, result? }`.
+  `status` is `running`, `completed`, or `failed`. `result` is present when the
+  exec is terminal.
 
-The two exec endpoints are **signature-authenticated inbound** in the two
-transport modes. The caller signs each request with the per-sandbox secret, over
-the same HMAC construction as the served or pushed bodies. It is a request
-signature, not a bearer, thus a cleartext hop can drop a request but it can never
-mint one. An unsigned, forged, or stale request gives a `401`. This confines the
-siblings: a sandbox that holds only its own secret cannot operate the `/exec` of a
-different one. There is no `kill` route. `SANDBOX_TRANSPORT` selects poll (the
-default, with no outbound, which serves the ring and the result) or callback (which
-POSTs to `CORTEX_BASE_URL`).
+sandbox-server keeps each exec record in memory for the life of its process,
+with no TTL. There is no `kill` route. The endpoints carry no credential, thus
+confinement is the boundary:
+
+- On Docker, the exec port is published on `127.0.0.1` only. The root
+  entrypoint installs an egress-deny firewall, and then it drops to uid 1000.
+- On K8s, a NetworkPolicy admits only Cortex to the sandbox port, and it denies
+  each egress of the sandbox.
 
 **Workspace storage**: the data and the artifacts of each analysis are in the
 workspace tree of the analysis. The tree is rooted at the workspace root that the
@@ -321,9 +328,9 @@ is an embedder concern.
   `RunSession` that the `RunAuthorizer` seam minted. The credential, if there is
   one, rides opaque inside the `RunSession` in the DBOS workflow input. A workflow
   body never mints it again, and it never reads it back from the DB.
-- **Outbound to sandbox-server** — an idempotent submit. A sandbox callback is
-  HMAC-verified at recv
-  ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)).
+- **Outbound to sandbox-server** — an idempotent submit, then a poll. The
+  requests carry no credential. Confinement keeps each other peer away from the
+  exec port ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)).
 
 ### Key Components
 

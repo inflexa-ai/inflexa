@@ -15,10 +15,11 @@ honesty is structural. The blocker decision and its fail-fast semantics are owne
 by the harness-sandbox-agents spec; this spec owns only how the resulting status
 and its reason are persisted (the `blocked_reason` column).
 
-The row is a ledger: rich data (summaries, file descriptions) lives in files and
-the vector index, not in columns. The `sandbox_ref`/`exec_id` pair is the one
-piece of live operational state — the liveness watchdog reads it to find sandboxes
-that need a synthetic-failure unblock.
+The row is a ledger. The rich data (the summaries and the file descriptions) is
+in files and in the vector index, not in columns. `sandbox_ref` is the one item
+of live operational state. It holds the handle of the machine of a running step.
+The reaper finds the row of a machine that it removed by this handle, and it
+clears the handle. The row holds no exec id.
 ## Requirements
 ### Requirement: cortex_step_executions table schema
 
