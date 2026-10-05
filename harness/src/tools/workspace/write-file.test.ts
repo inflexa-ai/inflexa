@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { join } from "node:path";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
+import { readToolCallRecord } from "../define-tool.js";
+import { computeSha256 } from "../../lib/fs-helpers.js";
+import { ProvenanceCollector } from "../../provenance/collector.js";
 import { createReadFileTool } from "./read-file.js";
 import { createWriteFileTool } from "./write-file.js";
 import { createWorkspaceMutator } from "./mutator.js";
@@ -160,48 +163,22 @@ describe("write_file tool", () => {
         if (read.status === "ok") expect(read.content).toBe(content);
     });
 
-    it("the write runs inside a replay-cached step — a cached replay lands no second write", async () => {
+    it("records the write only when the loop folds the call record, from the bytes that landed", async () => {
         const workspaceRoot = join(sessionsBasePath, ANALYSIS);
-        const workingDir = workingDirOf();
-        const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
+        const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN, dependsOn: [] });
+        const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir: workingDirOf(), lineageCollector: collector });
+        const tool = createWriteFileTool({ mutator });
+        const { ctx } = makeToolContext();
 
-        // A caching RunStep: the first call runs the body, a later call with the
-        // same name returns the recorded value without re-running it.
-        const cache = new Map<string, unknown>();
-        let bodyRuns = 0;
-        const cachingStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
-            if (cache.has(name)) return cache.get(name) as T;
-            bodyRuns++;
-            const value = await fn();
-            cache.set(name, value);
-            return value;
-        };
+        const out = (await tool.execute({ path: "output/replay.txt", content: "v1" }, ctx))._unsafeUnwrap();
+        expect(out.status).toBe("ok");
+        expect(collector.getRecords()).toEqual([]);
 
-        const first = await mutator.writeFile({
-            path: "output/replay.txt",
-            content: "v1",
-            toolName: "write_file",
-            invocationId: "inv-1",
-            runStep: cachingStep,
-            session: makeToolContext().ctx.session,
-        });
-        expect(first.status).toBe("ok");
-        expect(bodyRuns).toBe(1);
-
-        // Overwrite the landed file out of band, then replay: the cached step
-        // returns ok without touching the disk again.
-        const hostPath = resolvePath(workingDir, "output", "replay.txt");
-        await writeFile(hostPath, "changed-on-disk");
-        const replayed = await mutator.writeFile({
-            path: "output/replay.txt",
-            content: "v1",
-            toolName: "write_file",
-            invocationId: "inv-1",
-            runStep: cachingStep,
-            session: makeToolContext().ctx.session,
-        });
-        expect(replayed.status).toBe("ok");
-        expect(bodyRuns).toBe(1);
-        expect(await readFile(hostPath, "utf8")).toBe("changed-on-disk");
+        // A replay returns the cached value and folds its record again, into fresh process state.
+        tool.foldCallRecord!(readToolCallRecord(out));
+        const records = collector.getRecords();
+        expect(records.map((record) => record.outputPath)).toEqual(["output/replay.txt"]);
+        expect(records[0]!.outputHash).toBe(computeSha256(Buffer.from("v1", "utf8")));
+        expect(records[0]!.outputSize).toBe(2);
     });
 });

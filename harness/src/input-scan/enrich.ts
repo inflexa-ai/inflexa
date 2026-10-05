@@ -70,7 +70,6 @@ export interface ReadHeadersArgs {
     readonly sandbox?: SandboxRef;
     /** Absolute in-sandbox path of the analysis root (`/{analysisId}`). */
     readonly mountRoot: string;
-    readonly execId: string;
     readonly deadlineMs: number;
     readonly emit: EmitFn;
 }
@@ -84,7 +83,6 @@ export interface EnrichShapesArgs {
     readonly sandbox?: SandboxRef;
     /** Absolute in-sandbox path of the analysis root (`/{analysisId}`). */
     readonly mountRoot: string;
-    readonly execId: string;
     readonly deadlineMs: number;
     readonly emit: EmitFn;
 }
@@ -182,7 +180,6 @@ async function decodeContainers(
     const result = await runSandboxExec({
         sandboxClient: machine.sandboxClient,
         sandbox: machine.sandbox,
-        execId: args.execId,
         command: ["python3", "-c", source, ...byAbsolute.keys()],
         timeoutSeconds: ENRICH_TIMEOUT_SECONDS,
         deadlineMs: args.deadlineMs,

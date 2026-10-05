@@ -457,9 +457,8 @@ export type { StructureSource, StructureFormat } from "./contracts/structure-sou
 
 // Embedder runtime surface — what a same-process host needs to run durable
 // workflows itself: the DBOS lifecycle, per-workflow registration + triggers,
-// the staged-input manifest contract, the sandbox/workspace factories over its
-// workspace tree, and the exec-callback envelope pieces (the HTTP→DBOS-topic
-// ingress is the embedder's to host; see the sandbox-server callback protocol).
+// the staged-input manifest contract, and the sandbox/workspace factories over
+// its workspace tree.
 
 // DBOS lifecycle. `sweepEphemeralWorkflows` is a pre-launch upgrade migration:
 // older releases could leave PENDING `ephemeral:*` rows that recovery would
@@ -477,7 +476,7 @@ export { isDraining } from "./runtime/lifecycle.js";
 // `dbos.workflow_status` rows must classify them against the SDK's status set,
 // but must never depend on `@dbos-inc/dbos-sdk` directly — the SDK is
 // module-singleton state, so a host's own copy is a different, un-launched
-// instance (same rationale as `deliverExecEvent` below). The barrel forwards the
+// instance. The barrel forwards the
 // status const + its union so the classification vocabulary comes from the one
 // launched SDK, not a drifting hand-kept string literal on the embedder side.
 export { StatusString } from "@dbos-inc/dbos-sdk";
@@ -678,14 +677,6 @@ export type { MachineBudget, ResourceLimits, ResourcePolicy, ResourceSpec } from
 export { createWorkspaceFilesystem } from "./workspace/filesystem.js";
 export type { WorkspaceFilesystem, WorkspaceFilesystemDeps } from "./workspace/filesystem.js";
 
-// Exec-callback ingress building blocks. Delivery goes through
-// `deliverExecEvent` — never a host-side `DBOS.send`: the SDK is
-// module-singleton state, and a host's own copy would be un-launched.
-export { workflowIdFromExec } from "./sandbox/exec-id.js";
-export { deliverExecEvent, execEventTopic } from "./sandbox/deliver-exec-event.js";
-export { ExecEventMessageSchema } from "./sandbox/types.js";
-export type { ExecEventMessage, DoneMarker } from "./sandbox/types.js";
-
 // Run engine — the analysis + sandbox-step durable workflows an embedder
 // registers itself (in child-before-parent assemble-order: the parent's deps
 // close over the registered child callable). `assembleCoreRuntime` also wires
@@ -777,8 +768,6 @@ export {
 export type { ReferenceArtifact, ReferenceDataCatalog, ReferenceDataset, ReferenceInstallPlan, ReferenceInstallPlanDataset } from "./reference-data/catalog.js";
 export { REFERENCE_INSTALL_RECEIPT_VERSION, ReferenceInstallReceiptSchema, parseReferenceInstallReceipt } from "./reference-data/receipt.js";
 export type { ReferenceInstallReceipt, ReferenceReceiptArtifact } from "./reference-data/receipt.js";
-// Backs `WatchdogDeps.queryActiveSandboxes` when the embedder wires the watchdog.
-export { queryActiveSandboxes } from "./state/active-sandboxes.js";
 
 // Workspace-tree path convention — the root-relative step directory each
 // sandbox step confines its artifact writes to (join onto the resolved root).
@@ -803,12 +792,9 @@ export { defaultErrorFields } from "./lib/logger.js";
 export { createConsoleLogger, createNoopLogger } from "./lib/console-logger.js";
 
 // Sandbox-hygiene scheduled workflows. Reaper reclaims a dead host's orphaned
-// containers; watchdog converts a dead sandbox into a prompt step failure
-// instead of a deadline-long `DBOS.recv` hang; the sweep prunes stale
-// notifications. Each is a `@DBOS.scheduled` no-op on an idle system.
+// containers; the sweep prunes stale notifications. Each is a
+// `@DBOS.scheduled` no-op on an idle system.
 export { registerSandboxReaper } from "./sandbox/reaper.js";
 export type { RegisterReaperDeps } from "./sandbox/reaper.js";
-export { registerWatchdog } from "./sandbox/watchdog.js";
-export type { WatchdogDeps } from "./sandbox/watchdog.js";
 export { registerNotificationSweep } from "./sandbox/notification-sweep.js";
 export type { RegisterNotificationSweepDeps } from "./sandbox/notification-sweep.js";

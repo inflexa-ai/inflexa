@@ -9,7 +9,7 @@ import type { Pool } from "pg";
 
 import type { ChatProvider } from "../../../providers/types.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
-import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../../sandbox/types.js";
+import type { ExecResult, SandboxRef } from "../../../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../../../workspace/filesystem.js";
 
 import type { SandboxAgentDeps } from "../shared.js";
@@ -27,10 +27,9 @@ export function makeFakeSandboxClient(): SandboxClient {
         createSandbox() {
             return okAsync(ref);
         },
-        async submitExec(_ref: SandboxRef, _body: SubmitExecBody) {},
-        async awaitExec(_ref: SandboxRef, execId: string, _emit: ExecEmit, _deadline: number): Promise<ExecResult> {
+        async exec(): Promise<ExecResult> {
             return {
-                execId,
+                execId: "wf-001:1",
                 exitCode: 0,
                 stdout: "",
                 stderr: "",
@@ -88,9 +87,6 @@ export function makeFakePool(): Pool {
 export interface MakeDepsOverrides {
     readonly model?: string;
     readonly analysisId?: string;
-    readonly runId?: string;
-    readonly stepId?: string;
-    readonly workflowId?: string;
     readonly allowedWritePrefix?: string;
 }
 
@@ -112,14 +108,7 @@ export function makeFakeSandboxAgentDeps(over: MakeDepsOverrides = {}): SandboxA
             },
             workspaceRoot: "/tmp/sessions/analysis-001",
             analysisId: over.analysisId ?? "analysis-001",
-            runId: over.runId ?? "run-001",
-            stepId: over.stepId ?? "step-001",
-            workflowId: over.workflowId ?? "wf-001",
             allowedWritePrefix: over.allowedWritePrefix ?? "/tmp/sessions/analysis-001/runs/run-001/step-001",
-            nextFunctionId: (() => {
-                let n = 0;
-                return () => `fn-${++n}`;
-            })(),
             deadlineMs: () => Date.now() + 60_000,
         },
     };

@@ -67,7 +67,7 @@ function fill(length: number): string {
 }
 
 /** A tool whose ok value is a string with a JSON text of exactly `length` characters. */
-function sizedTool(executionMode: "step" | "workflow" = "step"): Tool {
+function sizedTool(executionMode: "step" | "inline" = "step"): Tool {
     return defineTool({
         id: "big",
         description: "Give a text of a length.",
@@ -292,9 +292,9 @@ describe("runAgent — long tool results", () => {
         expect(second.puts[0]!.ref).toBe(first.puts[0]!.ref);
     });
 
-    it("puts the same record again when a workflow-mode tool runs again under one run frame", async () => {
+    it("puts the same record again when an inline-mode tool runs again under one run frame", async () => {
         const store = memoryStore();
-        const agent = agentDef([sizedTool("workflow"), readToolStub]);
+        const agent = agentDef([sizedTool("inline"), readToolStub]);
 
         const first = await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: store }));
         const replay = await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: store }));

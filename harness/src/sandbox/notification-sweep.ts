@@ -3,14 +3,11 @@
  * rows whose owning workflow has reached a terminal status (SUCCESS,
  * ERROR, CANCELLED).
  *
- * Background: a `DBOS.send` to an already-completed workflow accumulates
- * forever as `consumed=f`. The watchdog's
- * synthetic-failure send guarantees this happens at the protocol level —
- * a real `complete` may arrive microseconds before the watchdog and the
- * loser becomes a stuck notification.
+ * Background: a `DBOS.send` to a workflow that ends before it reads the
+ * message accumulates forever as `consumed=f` — for example the suspension
+ * notice of a child (`CHILD_SUSPENDED_TOPIC`) to a parent that already failed.
  *
- * Cadence is separate from the liveness watchdog (~5 minutes vs ~1
- * minute). Bounded delete batch keeps the lock window short.
+ * Cadence ~5 minutes. Bounded delete batch keeps the lock window short.
  *
  * Production reads the DBOS system DB via the app pool (DBOS by default
  * shares the database, only the pool is separate). The query function is

@@ -28,7 +28,7 @@ import { generateExecutionId } from "../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "../workflows/suspension.js";
-import type { ExecEmit, ExecResult, SubmitExecBody } from "../sandbox/types.js";
+import type { ExecEmit, ExecRequest, ExecResult } from "../sandbox/types.js";
 import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT, ExtractValuesResultSchema, type ExtractValuesResult } from "./extract-values-script.js";
 
 // The registration in the runtime assembly needs the result type, thus this module re-exports it.
@@ -51,7 +51,7 @@ const EXTRACTION_DEADLINE_MS = 300_000;
  */
 const EXTRACTION_RESOURCES: ResourceSpec = { cpu: 2, memoryGb: 8 };
 
-/** The awaitExec callback. The extraction pass reports no live activity, thus the callback drops each event. */
+/** The exec progress callback. The extraction pass reports no live activity, thus the callback drops each event. */
 const noopEmit: ExecEmit = () => {};
 
 /**
@@ -95,11 +95,10 @@ export interface ExtractValuesWorkflowInput {
  *
  * The function is pure, thus a test asserts the command shape without a sandbox.
  */
-export function buildExtractionExec(analysisId: string, requests: readonly ExtractionRequest[], execId: string): SubmitExecBody {
+export function buildExtractionExec(analysisId: string, requests: readonly ExtractionRequest[]): ExecRequest {
     const scriptRequests = requests.map((request) => ({ path: request.path, format: request.format, hash: request.hash }));
     return {
         command: ["python3", "-c", EXTRACTION_SCRIPT],
-        execId,
         cwd: `/${analysisId}`,
         env: { [EXTRACTION_INPUT_ENV]: JSON.stringify(scriptRequests) },
         timeoutSeconds: Math.floor(EXTRACTION_DEADLINE_MS / 1000),
@@ -168,11 +167,9 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
         const sandbox = spawned.value;
 
         try {
-            // A checkpointed clock, not `Date.now()`: the await gates on this absolute deadline, and a
-            // wall-clock deadline that grew on replay would shift which loop iteration crosses it.
+            // A checkpointed clock, not `Date.now()`: a wall-clock deadline would grow on each recovery.
             const deadlineAbs = (await DBOS.now()) + EXTRACTION_DEADLINE_MS;
-            await deps.sandboxClient.submitExec(sandbox, buildExtractionExec(analysisId, requests, executionId));
-            const result = await deps.sandboxClient.awaitExec(sandbox, executionId, noopEmit, deadlineAbs);
+            const result = await deps.sandboxClient.exec(sandbox, buildExtractionExec(analysisId, requests), noopEmit, deadlineAbs);
             const map = parseExtractionOutput(result);
             await revoke("extract-values-completed");
             return ok(map);

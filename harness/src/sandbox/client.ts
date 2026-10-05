@@ -9,38 +9,20 @@
  * - `client.ts` (here) — the interface and the per-method types.
  * - `create-sandbox.ts` — the factory + per-backend `createSandbox` /
  *   `teardown` / `isAlive` implementations.
- * - `submit-exec.ts` + `await-exec.ts` — `submitExec` and the workflow-
- *   body recv loop, which are backend-agnostic (HTTP + DBOS messages).
+ * - `exec.ts` — the submit and the poll loop of one exec, which are
+ *   backend-agnostic (HTTP only).
  *
  * Lifetime separation (CONTEXT.md "Sandbox exec"):
  * - The **sandbox machine** lifetime is `createSandbox → ... → teardown`.
  *   Many execs may fire against the same machine.
- * - The **exec** lifetime is one `submitExec → awaitExec`.
- *
- * **Every caller of `awaitExec` runs inside a DBOS workflow body.** `DBOS.recv`
- * and `DBOS.writeStream` are body-only, thus the callback transport cannot
- * settle anywhere else, and the poll transport reaches for `DBOS.runStep` and
- * `DBOS.sleepms` defaults. A caller that starts from a live chat turn registers
- * its own workflow and starts it: `tasks/extract-values.ts` and
- * `tasks/derive-table-exec.ts` are the two worked examples. No type carries this
- * rule yet, thus a new caller must read this paragraph.
+ * - The **exec** lifetime is one `exec` call: one durable step.
  */
 
 import type { ResultAsync } from "neverthrow";
 
 import type { SpawnSession } from "../auth/types.js";
 import type { SandboxError } from "./sandbox-error.js";
-import type {
-    ExecEmit,
-    ExecResult,
-    ManagedSandbox,
-    SandboxIdentity,
-    SandboxLiveness,
-    SandboxRef,
-    SandboxSpec,
-    SubmitExecBody,
-    ToolchainSource,
-} from "./types.js";
+import type { ExecEmit, ExecRequest, ExecResult, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxSpec, ToolchainSource } from "./types.js";
 
 export interface SandboxClient {
     /**
@@ -70,32 +52,30 @@ export interface SandboxClient {
     createSandbox(session: SpawnSession, spec: SandboxSpec, identity: SandboxIdentity): ResultAsync<SandboxRef, SandboxError>;
 
     /**
-     * DBOS step (`sandbox.submit-exec.${execId}`). POSTs the command to
-     * sandbox-server's `/exec` and returns after the HTTP 202 ack. Does NOT
-     * wait for command completion. Replay-safe: the cached step output is
-     * returned on subsequent invocations; any duplicate POST that reaches
-     * sandbox-server during the in-flight window is deduped server-side
-     * (PR #3 change 4) on `execId`.
+     * DBOS step (`sandbox.exec`). Submits the command to the sandbox in `ref`,
+     * polls the signed `GET /exec/{execId}?since={cursor}` until the exec is
+     * terminal, forwards each progress event through `emit`, and returns the
+     * result. `deadline` is an absolute unix-ms timestamp.
+     *
+     * The exec id is the id of the workflow and the function id of the step
+     * that the exec runs in. Called from a workflow body, the exec is its own
+     * step. Called inside a step (a tool call of the agent loop), it runs
+     * inline in that step, thus ONE exec for each step: a second exec in the
+     * same step gets the same id, and the sandbox gives it the result of the
+     * first. Outside a workflow it throws.
+     *
+     * A recovered step submits again under the same id. The sandbox dedups the
+     * submit on the id, thus the poll attaches to the exec that already ran or
+     * runs, and `emit` sees its events again from the start.
      */
-    submitExec(ref: SandboxRef, body: SubmitExecBody): Promise<void>;
-
-    /**
-     * Awaits a submitted exec's terminal result under the client's transport.
-     * Poll (default) loops durable, signed `GET /exec/{execId}?since={cursor}`
-     * steps against the sandbox in `ref`; callback loops
-     * `DBOS.recv("exec-event:${execId}", T)` with a signed pull as its
-     * recovery backstop. Both HMAC-verify every body against
-     * `ref.callbackSecret`, forward progress events via `emit`, and are
-     * bounded by `deadline` (absolute unix-ms timestamp).
-     */
-    awaitExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadline: number): Promise<ExecResult>;
+    exec(ref: SandboxRef, request: ExecRequest, emit: ExecEmit, deadline: number): Promise<ExecResult>;
 
     /**
      * Per-sandbox-machine liveness. `alive: false` only when observably dead
      * (terminal pod phase, missing container); `oomKilled` marks a death the
      * backend attributes to the machine's memory limit. Transient API errors
-     * throw, so callers can decide whether to retry — silently lying about
-     * dead sandboxes would race the synthetic-complete path.
+     * throw, so callers can decide whether to retry — a false `dead` verdict
+     * would fail an exec that still runs.
      */
     isAlive(ref: SandboxRef): Promise<SandboxLiveness>;
 

@@ -2,9 +2,9 @@
  * Sandbox reaper — the sole cleanup for orphaned sandboxes and stale registry
  * rows (see the harness-sandbox-exec spec, CONTEXT.md "Sandbox reaper").
  *
- * Distinct from the liveness watchdog (`sandbox/watchdog.ts`): the watchdog
- * sweeps registry→cluster and unblocks stuck recvs; the reaper sweeps
- * cluster→registry and garbage-collects. It lists every Cortex-managed sandbox
+ * The reaper sweeps cluster→registry and garbage-collects. A machine that dies
+ * under a running exec needs no sweep: the exec's own liveness probe ends it
+ * (`exec.ts`). The reaper lists every Cortex-managed sandbox
  * machine in the configured namespace, resolves each machine's recorded owner
  * workflow, and reaps the ones whose owner is terminal — tearing the machine
  * down and reconciling its step row. A machine whose owner does not resolve at

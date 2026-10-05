@@ -8,7 +8,7 @@
  * captures its deps and calls `defineTool`.
  *
  * `ToolContext` carries only request-scoped values every tool may need
- * (`invocationId`, `session`, `signal`, `emit`, `runStep`, `ask`, `turnUsage`) — no pool, no sandbox, no
+ * (`invocationId`, `session`, `signal`, `emit`, `ask`, `turnUsage`) — no pool, no sandbox, no
  * logger. The error contract: an expected
  * outcome ("not found", "no results") stays in the ok channel as a data
  * variant (`ok({ found: false })`); an unexpected failure is an `err(ToolError)`
@@ -21,7 +21,7 @@ import { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
 import type { AgentRunUsage } from "../loop/metrics.js";
-import type { EmitFn, RunStep } from "../loop/types.js";
+import type { EmitFn } from "../loop/types.js";
 import type { AskApproval, AskRequest } from "./approval/contract.js";
 
 export type { EmitFn };
@@ -40,7 +40,13 @@ export interface ToolError {
     readonly cause?: unknown;
 }
 
-export type ToolExecutionMode = "step" | "workflow" | "inline";
+/**
+ * How the loop runs a tool call. `step` (the default) wraps the whole call in
+ * one durable step, thus a replay returns the cached result and never runs the
+ * body again. `inline` runs the call with no step, for a tool whose effects are
+ * not durable work.
+ */
+export type ToolExecutionMode = "step" | "inline";
 
 /** Runtime guard — does a `Result`'s error value carry the `ToolError` shape? */
 export function isToolError(value: unknown): value is ToolError {
@@ -108,12 +114,42 @@ export function readToolResultImages(value: unknown): ToolResultImage[] {
 }
 
 /**
+ * The reserved key that carries the call record on a tool ok value.
+ *
+ * A call record is what a call leaves for process-local state, for example the
+ * lineage collector of a sandbox step. A replay returns the cached result of a
+ * step-mode call and never runs its body, thus a side effect of the body on
+ * such state is lost on recovery. The record goes into the cached dispatch
+ * instead, and the loop hands it to `foldCallRecord` after the call settles, on
+ * the first run and on each replay alike.
+ *
+ * It is a symbol, thus `JSON.stringify` omits it and the model never reads it.
+ * The record itself must be plain JSON, because the step cache serializes it.
+ */
+export const toolCallRecordKey: unique symbol = Symbol("toolCallRecord");
+
+/** A tool ok value that carries a call record under the reserved key. */
+export type WithToolCallRecord<T, R> = T & { readonly [toolCallRecordKey]: R };
+
+/** The type of the call record that a tool ok type carries. A variant with no record contributes nothing. */
+export type ToolCallRecordOf<Output> = Output extends { readonly [toolCallRecordKey]: infer R } ? R : never;
+
+/** Attach a call record to a tool ok value. The value keeps its own fields. */
+export function withToolCallRecord<T extends object, R>(value: T, record: R): WithToolCallRecord<T, R> {
+    return { ...value, [toolCallRecordKey]: record };
+}
+
+/** Read the call record that a tool ok value carries, or `undefined` when it carries none. */
+export function readToolCallRecord(value: unknown): unknown {
+    if (typeof value !== "object" || value === null) return undefined;
+    return (value as { [toolCallRecordKey]?: unknown })[toolCallRecordKey];
+}
+
+/**
  * The request-scoped values passed to every tool's `execute`. No injected
  * dependencies (see the harness-durable-runtime spec) — invocation identity,
- * `session`, `signal`, `emit`, the `runStep`
- * durability seam (`passthroughStep` in chat, `DBOS.runStep` in workflows) a
- * tool uses to wrap its own durable work, the `ask` user-approval seam, and the
- * turn's usage accumulator a sub-agent-running tool hands to its child loop.
+ * `session`, `signal`, `emit`, the `ask` user-approval seam, and the turn's
+ * usage accumulator a sub-agent-running tool hands to its child loop.
  */
 export interface ToolContext {
     /** Stable identity of this AI SDK tool call. Redelivery preserves it; a new
@@ -122,11 +158,6 @@ export interface ToolContext {
     readonly session: AgentSession;
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
-    /**
-     * Wrap durable work in a replay-cached step. The loop namespaces the name
-     * under the tool's own step name, so a tool just passes a short local label.
-     */
-    readonly runStep: RunStep;
     /**
      * Pause for an explicit user decision on a concrete action. Resolves with the
      * approval (`once`/`always`) or throws `AskRejectedError` on denial. Resolves
@@ -147,7 +178,7 @@ export interface ToolContext {
 
 /**
  * A packaged tool: identity, the Zod input contract, the emitted AI SDK input
- * schema, execution mode, the optional call-description hook, and the executor.
+ * schema, execution mode, the optional hooks, and the executor.
  */
 export interface Tool<Input = unknown, Output = unknown> {
     readonly id: string;
@@ -159,6 +190,11 @@ export interface Tool<Input = unknown, Output = unknown> {
     describeCall?(input: Input): string;
     /** See {@link ToolDefinition.describeResult}. Absent when the tool declares none. */
     describeResult?(input: Input, result: Output): string;
+    /**
+     * See {@link ToolDefinition.foldCallRecord}. The record arrives untyped: the
+     * loop passes back only what the `execute` of the same tool attached.
+     */
+    foldCallRecord?(record: unknown): void;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -230,6 +266,19 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
      * The hook never reaches the model.
      */
     readonly describeResult?: (input: z.infer<Schema>, result: Output) => string;
+    /**
+     * Fold the call record of one settled call into process-local state. The
+     * record is the one that `execute` attached with `withToolCallRecord`.
+     *
+     * The loop runs the hook after the round settles, in the order of the tool
+     * calls, on the first run and on each replay alike. Thus state that a
+     * replay rebuilds from scratch sees the same records in the same order. A
+     * call whose ok value carries no record, and a failed call, never reach it.
+     *
+     * The hook is synchronous. It must never fail a call: the call has settled,
+     * and its result may already be cached. The loop logs a throw and goes on.
+     */
+    readonly foldCallRecord?: (record: ToolCallRecordOf<Output>) => void;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -271,6 +320,9 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
         // declares no result hook carries no key, thus "has a hook" is one
         // property check on either side.
         ...(typeof def.describeResult === "function" ? { describeResult: def.describeResult } : {}),
+        // The loop passes back only a record that this tool's `execute`
+        // attached, thus the record has the declared type.
+        ...(typeof def.foldCallRecord === "function" ? { foldCallRecord: def.foldCallRecord as (record: unknown) => void } : {}),
         execute: def.execute,
     };
 }

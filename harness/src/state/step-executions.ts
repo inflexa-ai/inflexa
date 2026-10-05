@@ -196,7 +196,7 @@ export function queryStepsByRun(pool: Querier, runId: string): ResultAsync<StepE
             text: `SELECT run_id, step_id, analysis_id, wave, agent_id,
                  status, started_at, completed_at, duration_ms, error,
                  attempts, last_error_class, finish_reason, hit_max_steps,
-                 blocked_reason, sandbox_ref, exec_id, child_workflow_id
+                 blocked_reason, sandbox_ref, child_workflow_id
           FROM cortex_step_executions
           WHERE run_id = $1
           ORDER BY wave, started_at NULLS LAST, step_id`,
@@ -224,7 +224,6 @@ function mapStepExecutionRow(row: Record<string, unknown>): StepExecutionRow {
         hitMaxSteps: row.hit_max_steps === 1 || row.hit_max_steps === true,
         blockedReason: (row.blocked_reason as string) ?? null,
         sandboxRef: (row.sandbox_ref as PersistedSandboxRef | null) ?? null,
-        execId: (row.exec_id as string | null) ?? null,
         childWorkflowId: (row.child_workflow_id as string | null) ?? null,
     };
 }

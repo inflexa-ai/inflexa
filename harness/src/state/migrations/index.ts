@@ -10,10 +10,12 @@ import type { Migration } from "kysely/migration";
 import type { Logger } from "../../lib/logger.js";
 import { baseline } from "./20260927120000_baseline.js";
 import { threadTitleSetByUser } from "./20260927180000_thread_title_set_by_user.js";
+import { dropStepExecId } from "./20261005120000_drop_step_exec_id.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
         "20260927120000_baseline": baseline(logger),
         "20260927180000_thread_title_set_by_user": threadTitleSetByUser,
+        "20261005120000_drop_step_exec_id": dropStepExecId,
     };
 }

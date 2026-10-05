@@ -85,7 +85,7 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
 }
 
 describe("k8s createSandbox", () => {
-    test("callback mode creates a Job carrying CORTEX_BASE_URL and SANDBOX_CALLBACK_SECRET env", async () => {
+    test("creates a Job carrying the SANDBOX_CALLBACK_SECRET env and no egress target", async () => {
         const stub = stubApis([
             {
                 status: { phase: "Running", podIP: "10.0.0.1" },
@@ -96,8 +96,6 @@ describe("k8s createSandbox", () => {
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://cortex.example.com:443",
-            transport: "callback",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -136,8 +134,9 @@ describe("k8s createSandbox", () => {
         const container = podSpec.containers[0];
         const env = container.env ?? [];
         const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
-        expect(envMap.SANDBOX_TRANSPORT).toBe("callback");
-        expect(envMap.CORTEX_BASE_URL).toBe("https://cortex.example.com:443");
+        // The pod never dials out, thus it gets no address to dial.
+        expect(envMap.SANDBOX_TRANSPORT).toBeUndefined();
+        expect(envMap.CORTEX_BASE_URL).toBeUndefined();
         expect(envMap.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
         expect(envMap.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
@@ -180,7 +179,6 @@ describe("k8s createSandbox", () => {
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -215,7 +213,6 @@ describe("k8s createSandbox", () => {
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -260,7 +257,6 @@ describe("k8s createSandbox", () => {
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -282,48 +278,6 @@ describe("k8s createSandbox", () => {
         await expect(attempt()).rejects.toThrow(/does not live under sessionPvcRoot/);
     });
 
-    test("poll mode (default) omits CORTEX_BASE_URL — the pod spec documents that the sandbox never dials out", async () => {
-        const stub = stubApis([
-            {
-                status: { phase: "Running", podIP: "10.0.0.3" },
-                metadata: { name: "sbx-poll" },
-            },
-        ]);
-
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            cortexBaseUrl: "https://cortex.example.com:443",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-            registerSandbox: async () => {},
-        });
-
-        const ref = (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    childWorkflowId: "run-1-0",
-                    resources: { cpu: 1, memoryGb: 2 },
-                }),
-                mintSandboxIdentity("run-1"),
-                {},
-            )
-        )._unsafeUnwrap();
-
-        const container = stub.createdJobs[0]!.spec!.template.spec!.containers[0];
-        const envMap = Object.fromEntries((container.env ?? []).map((e) => [e.name, e.value]));
-        expect(envMap.SANDBOX_TRANSPORT).toBe("poll");
-        expect(envMap.CORTEX_BASE_URL).toBeUndefined();
-        expect(envMap.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
-    });
-
     test("readOnly omits the rw volumeMount and pins workingDir to the RO tree", async () => {
         const stub = stubApis([
             {
@@ -334,7 +288,6 @@ describe("k8s createSandbox", () => {
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -383,7 +336,6 @@ describe("k8s createSandbox", () => {
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -439,7 +391,6 @@ describe("k8s createSandbox", () => {
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -480,7 +431,6 @@ describe("k8s createSandbox", () => {
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -525,7 +475,6 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-x-abc" } }]);
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://cortex.example.com:443",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -572,7 +521,6 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
             const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-x-abc" } }]);
             const ops = createK8sSandboxOps({
                 image: "sandbox-base:latest",
-                cortexBaseUrl: "https://cortex.example.com:443",
                 namespace: "sandbox",
                 farmSource: FIXED_FARM,
                 sessionPvcRoot: SESSION_PVC_ROOT,
@@ -636,7 +584,6 @@ describe("k8s createSandbox failure cleanup", () => {
         const stub = stubApis([{ status: { phase: "Failed" }, metadata: { name: "p" } }]);
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -667,7 +614,6 @@ describe("k8s createSandbox failure cleanup", () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "p" } }]);
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -708,7 +654,6 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
         const registered: string[] = [];
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -754,7 +699,6 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
         );
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -793,7 +737,6 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
         });
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -828,7 +771,6 @@ describe("k8s job ownership labels", () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }]);
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -871,7 +813,6 @@ describe("k8s job ownership labels", () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }]);
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -914,7 +855,6 @@ describe("k8s job ownership labels", () => {
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -941,7 +881,6 @@ describe("k8s label set", () => {
     function opsWith(stub: ReturnType<typeof stubApis>) {
         return createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://cortex.internal:443",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -1027,7 +966,6 @@ describe("k8s teardown", () => {
         stub.setDeleteError({ code: 404 });
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -1051,7 +989,6 @@ describe("k8s teardown", () => {
         stub.setDeleteError({ code: 500 });
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -1097,7 +1034,6 @@ describe("k8s isAlive", () => {
             );
             const ops = createK8sSandboxOps({
                 image: "sandbox-base:latest",
-                cortexBaseUrl: "https://x",
                 namespace: "sandbox",
                 farmSource: FIXED_FARM,
                 sessionPvcRoot: SESSION_PVC_ROOT,
@@ -1132,7 +1068,6 @@ describe("k8s isAlive", () => {
         ]);
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
@@ -1160,7 +1095,6 @@ describe("k8s createSandbox — the farm mounts", () => {
     function opsWith(farmSource: FarmSource, stub: ReturnType<typeof stubApis>, toolchainSource?: "image" | "store") {
         return createK8sSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             namespace: "sandbox",
             farmSource,
             toolchainSource,

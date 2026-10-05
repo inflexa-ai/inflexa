@@ -268,9 +268,6 @@ describe("describeCall — sandbox mutate surface", () => {
         const tool = createExecuteCommandTool({
             sandboxClient: unused,
             sandbox: unused,
-            workflowId: "wf-1",
-            stepId: "s1",
-            nextFunctionId: () => "1",
             deadlineMs: () => 0,
             defaultCwd: "/a/runs/r1/s1",
         });

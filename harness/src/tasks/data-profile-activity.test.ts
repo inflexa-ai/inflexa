@@ -32,9 +32,6 @@ const resolveDetail = createDetailResolver([
     createExecuteCommandTool({
         sandboxClient: {} as never,
         sandbox: {} as never,
-        workflowId: "wf-1",
-        stepId: "profile",
-        nextFunctionId: () => "1",
         deadlineMs: () => 0,
         defaultCwd: "/analysis/runs/data-profile/profile",
     }),

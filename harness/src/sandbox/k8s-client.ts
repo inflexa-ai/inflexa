@@ -1,8 +1,10 @@
 /**
  * K8s-backed `createSandbox` / `teardown` / `isAlive`.
  *
- * Launches a sandbox Job with `CORTEX_BASE_URL` and `SANDBOX_CALLBACK_SECRET`
- * env vars; pod IP + port 8765 are the host/port Cortex POSTs `/exec` to.
+ * Launches a sandbox Job with the `SANDBOX_CALLBACK_SECRET` env var; pod IP +
+ * port 8765 are the host/port the host POSTs `/exec` to and polls. The pod
+ * initiates nothing: its confinement is a cluster-side NetworkPolicy, not an
+ * in-pod firewall.
  * Storage is wired via the shared session PVC: a flat read-only `volumeMount`
  * of the analysis tree at `/{resourceId}` plus a nested read-write mount of the
  * step's artifact dir, with the lib/ref stores mounted read-only at `/mnt/libs`
@@ -45,7 +47,6 @@ import type {
     SandboxLiveness,
     SandboxRef,
     SandboxSpec,
-    SandboxTransport,
     ToolchainSource,
 } from "./types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -89,13 +90,6 @@ export interface K8sClientConfig {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     image: string;
-    cortexBaseUrl: string;
-    /**
-     * Result transport, threaded to the pod as `SANDBOX_TRANSPORT`. Poll-mode
-     * confinement on K8s is a cluster-side NetworkPolicy, not an in-pod firewall.
-     * Defaults to `poll`.
-     */
-    transport?: SandboxTransport;
     namespace: string;
     /** PVC claim backing the shared session PVC the workspace roots live under. */
     sessionPvc?: string;
@@ -243,17 +237,11 @@ function buildJobSpec(
         cache: libsMounted && farm?.cachePath !== undefined,
     });
 
-    const transport = config.transport ?? "poll";
     const spec = sandboxSpec.resources;
     // Composed as one record, not as a list of `{name, value}`. A duplicate name
     // in the env of a container resolves at the kubelet, thus the later spread
     // must win here, not there.
     const env = Object.entries({
-        SANDBOX_TRANSPORT: transport,
-        // Poll mode never dials out, so the URL is omitted (matching the Docker
-        // backend) — the pod spec itself then documents that no callback egress
-        // is expected. sandbox-server neither reads nor requires it in poll mode.
-        ...(transport === "callback" ? { CORTEX_BASE_URL: config.cortexBaseUrl } : {}),
         SANDBOX_CALLBACK_SECRET: identity.callbackSecret,
         ...threadLimitEnv(spec),
         ...plan.env,
@@ -566,7 +554,7 @@ function waitForJobGone(batchApi: BatchV1Api, namespace: string, name: string): 
  * owner workflow id must match this step's `ownerWorkflowId`.
  * Only a recovery re-run carries the same checkpointed identity, so a mismatch
  * means an (astronomically rare) name collision with a *different* step —
- * adopting its pod would HMAC-fail every callback, and deleting its Job would
+ * adopting its pod would HMAC-fail every request, and deleting its Job would
  * kill a live sibling. Refuse loudly instead.
  */
 function createOrAdoptJob(

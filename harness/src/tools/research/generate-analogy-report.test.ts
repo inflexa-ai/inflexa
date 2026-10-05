@@ -49,7 +49,6 @@ const ctxFor = (sessionAgentId = "conversation-agent"): ToolContext => ({
     }),
     signal: new AbortController().signal,
     emit: () => {},
-    runStep: (_name, fn) => fn(),
 });
 
 const submitReport = (id: string, report: unknown) => makeMessage([toolUseBlock(id, "submit_analogy_report", report)], "tool_use");

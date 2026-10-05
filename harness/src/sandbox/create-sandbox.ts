@@ -8,13 +8,14 @@
  *
  * Registry write/clear callbacks are wired here so the per-backend
  * `createSandbox` / `teardown` implementations stay free of state-layer
- * coupling (they just call the closures we hand them). `submitExec` and
- * `awaitExec` are backend-agnostic — they only need the SandboxRef.
+ * coupling (they just call the closures we hand them). `exec` is
+ * backend-agnostic — it only needs the SandboxRef.
  */
 
 import { chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { V1Toleration } from "@kubernetes/client-node";
 import { ResultAsync, err, okAsync, type Result } from "neverthrow";
 import type { Pool } from "pg";
@@ -23,20 +24,20 @@ import type { SpawnSession } from "../auth/types.js";
 import { passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { recordSandboxExec } from "../lib/metrics.js";
+import { ATTR_INFLEXA_EXEC_ID, stableSpan } from "../lib/otel-spans.js";
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { tryMutation } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { clearSandboxRef, setSandboxRef } from "../state/index.js";
 import { capExecStreams, EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
-import { awaitExec, type AwaitExecOptions } from "./await-exec.js";
 import type { SandboxClient } from "./client.js";
 import { createDockerSandboxOps } from "./docker-client.js";
+import { runExec, stepExecId, type ExecDeps } from "./exec.js";
 import { noteExecOutcome, sandboxExecOutcomeOf, summarizeExec } from "./exec-outcome.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { mountCoordsOf, sandboxWriteTail, type MountPlanCoords } from "./mount-plan.js";
 import { SandboxFailure, type SandboxError } from "./sandbox-error.js";
-import { submitExec, type SubmitExecDeps } from "./submit-exec.js";
 import {
     toPersistedRef,
     type FarmSource,
@@ -44,7 +45,6 @@ import {
     type SandboxLabels,
     type SandboxRef,
     type SandboxSpec,
-    type SandboxTransport,
     type ToolchainSource,
 } from "./types.js";
 
@@ -63,14 +63,6 @@ export interface CreateSandboxClientConfig {
     pool: Pool;
     /** Backend default + namespace fallback source. */
     env: SandboxBackendConfig;
-    /** Cortex base URL injected into sandbox-server's env for callbacks. */
-    cortexBaseUrl: string;
-    /**
-     * Result transport for every sandbox this client creates. Threaded to the
-     * container as `SANDBOX_TRANSPORT` and to `awaitExec`'s loop selection.
-     * Defaults to `poll`.
-     */
-    transport?: SandboxTransport;
     /** Default sandbox-base image when the workflow doesn't override per-step. */
     image: string;
     /**
@@ -181,24 +173,11 @@ export interface CreateSandboxClientConfig {
      * unset.
      */
     logger?: Logger;
-    /** Dependency seams (fetch, durable step/sleep, clock, recv, warn sink) forwarded to submit/await. */
-    submitDeps?: SubmitExecDeps;
-    awaitOptions?: AwaitExecOptions;
-}
-
-/**
- * Assemble `awaitExec`'s options: the liveness probe self-wires from the
- * backend ops (the poll loop's escalation always has its arbiter under the
- * client), explicit seam injections in `base` win over the self-wired probe,
- * and the transport is client-owned — never overridable through the seam bag.
- * Exported for tests.
- */
-export function composeAwaitOptions(
-    base: AwaitExecOptions | undefined,
-    transport: SandboxTransport,
-    isAlive: NonNullable<AwaitExecOptions["isAlive"]>,
-): AwaitExecOptions {
-    return { isAlive, ...base, transport };
+    /**
+     * The effects of each exec (fetch, clock, sleep, cancel read, warn sink).
+     * An `isAlive` here wins over the backend inspect that the client wires.
+     */
+    execDeps?: ExecDeps;
 }
 
 /**
@@ -241,7 +220,6 @@ export async function precreateStepTree(
 
 export function createSandboxClient(config: CreateSandboxClientConfig): SandboxClient {
     const backend = config.backend ?? config.env.backend;
-    const transport = config.transport ?? "poll";
     // Normalized once, here, and handed to the backends and to the client
     // alike: the mount plan and the orient-core prompt then key on one value,
     // and an absent declaration means "store" on both sides.
@@ -281,15 +259,13 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     const failing = (e: SandboxError): SandboxFailure => new SandboxFailure(e);
 
     const registerSandbox = async (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => {
-        unwrapOrThrow(await setSandboxRef(config.pool, session.runFrame.runId, session.runFrame.stepId, toPersistedRef(ref), spec.execId ?? null));
+        unwrapOrThrow(await setSandboxRef(config.pool, session.runFrame.runId, session.runFrame.stepId, toPersistedRef(ref)));
     };
 
     const ops =
         backend === "k8s"
             ? createK8sSandboxOps({
                   image: config.image,
-                  cortexBaseUrl: config.cortexBaseUrl,
-                  transport,
                   namespace: config.namespace ?? config.env.namespace,
                   sessionPvc: config.sessionPvc,
                   sessionPvcRoot: config.sessionPvcRoot,
@@ -308,8 +284,6 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
               })
             : createDockerSandboxOps({
                   image: config.image,
-                  cortexBaseUrl: config.cortexBaseUrl,
-                  transport,
                   resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                   libStorePath: config.libStorePath,
                   farmSource: config.farmSource,
@@ -337,7 +311,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             await tryMutation("createSandbox.teardownClearSandboxRef", async () => {
                 await config.pool.query({
                     text: `UPDATE cortex_step_executions
-            SET sandbox_ref = NULL, exec_id = NULL
+            SET sandbox_ref = NULL
             WHERE sandbox_ref->>'sandboxId' = $1`,
                     values: [ref.sandboxId],
                 });
@@ -348,6 +322,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     // One arbiter for both surfaces: the client's `isAlive` method and the
     // poll loop's escalation probe are the same backend inspect.
     const isAlive = async (ref: SandboxRef) => unwrapOrThrow((await ops.isAlive(ref)).mapErr(failing));
+    const streamCap = config.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP;
+    const execDeps: ExecDeps = { isAlive, ...config.execDeps, execStreamByteCap: streamCap };
 
     const hostLabelsFor = (session: SpawnSession): ResultAsync<SandboxLabels, SandboxError> => {
         const hook = config.resolveSandboxLabels;
@@ -410,11 +386,6 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     return {
         toolchainSource,
         createSandbox: (session, spec, identity) => new ResultAsync(createSandbox(session, spec, identity)),
-        submitExec: async (ref, body) =>
-            submitExec(ref, body, {
-                ...config.submitDeps,
-                execStreamByteCap: config.submitDeps?.execStreamByteCap ?? config.execStreamByteCap,
-            }),
         // The one place an ExecResult crosses from the wire into the process, so
         // the cap lands here rather than at each consumer. Every downstream use —
         // tool results, workflow return values, durable step outputs — is bounded
@@ -426,24 +397,27 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         // and it sees the outcome the caller then folds into a tool result, so
         // one record here counts what a consumer would each have to count for
         // itself. `recordSandboxExec` is idempotent over the exec id, because a
-        // replayed body reaches this line again. `capExecStreams` cuts the
+        // recovered step reaches this line again. `capExecStreams` cuts the
         // streams and keeps every other field, thus the kernel accounting the
         // sandbox reported reaches the record intact.
-        awaitExec: async (ref, execId, emit, deadline) => {
-            const result = capExecStreams(
-                await awaitExec(ref, execId, emit, deadline, composeAwaitOptions(config.awaitOptions, transport, isAlive)),
-                config.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP,
-            );
-            recordSandboxExec({
-                execId,
-                outcome: sandboxExecOutcomeOf(result),
-                durationMs: result.durationMs,
-                peakMemoryBytes: result.usage?.peakMemoryBytes,
-                cpuMillis: result.usage?.cpuMillis,
-            });
-            noteExecOutcome(ref.sandboxId, summarizeExec(result));
-            return result;
-        },
+        exec: (ref, request, emit, deadline) =>
+            DBOS.runStep(
+                async () => {
+                    const execId = stepExecId();
+                    stableSpan("sandbox.exec", "sandbox.exec", { [ATTR_INFLEXA_EXEC_ID]: execId });
+                    const result = capExecStreams(await runExec(ref, execId, request, emit, deadline, execDeps), streamCap);
+                    recordSandboxExec({
+                        execId,
+                        outcome: sandboxExecOutcomeOf(result),
+                        durationMs: result.durationMs,
+                        peakMemoryBytes: result.usage?.peakMemoryBytes,
+                        cpuMillis: result.usage?.cpuMillis,
+                    });
+                    noteExecOutcome(ref.sandboxId, summarizeExec(result));
+                    return result;
+                },
+                { name: "sandbox.exec" },
+            ),
         isAlive,
         isAliveById: async (sandboxId) => unwrapOrThrow((await ops.isAliveById(sandboxId)).mapErr(failing)),
         teardown,

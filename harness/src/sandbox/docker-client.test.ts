@@ -1,7 +1,7 @@
 /**
  * Per-backend createSandbox/teardown/isAlive tests against a mocked Docker
- * client. Covers the contract the SandboxClient factory wraps: the two transport
- * modes' container config, the loopback-published exec port, and container-only
+ * client. Covers the contract the SandboxClient factory wraps: the confined
+ * container config, the loopback-published exec port, and container-only
  * liveness. There is no gateway sidecar and no `--internal` network.
  */
 
@@ -189,12 +189,11 @@ function stubDocker(): {
 const META = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } } as const;
 const okFetch = (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
 
-describe("docker createSandbox — transport modes", () => {
-    test("poll mode (default): root entrypoint with NET_ADMIN + firewall flag, no CORTEX_BASE_URL", async () => {
+describe("docker createSandbox — confinement", () => {
+    test("a root entrypoint with NET_ADMIN and the firewall flag, and no egress target", async () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://cortex.example.com:443",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -207,7 +206,7 @@ describe("docker createSandbox — transport modes", () => {
         const sandbox = sandboxOf(created)!;
         expect(sandbox.capDrop).toEqual(["ALL"]);
         expect(sandbox.securityOpt).toEqual(["no-new-privileges"]);
-        // Poll mode starts as root with exactly the capabilities the entrypoint's setup
+        // The container starts as root with exactly the capabilities the entrypoint's setup
         // consumes: NET_ADMIN installs the egress iptables rules, SETUID/SETGID perform the
         // setpriv uid/gid drop to the workload user, and SETPCAP applies its bounding-set
         // clear. All are dropped before the workload runs, leaving its capability sets empty.
@@ -215,44 +214,16 @@ describe("docker createSandbox — transport modes", () => {
         expect(sandbox.capAdd).toEqual(["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"]);
 
         const env = envMapOf(sandbox);
-        expect(env.SANDBOX_TRANSPORT).toBe("poll");
         expect(env.SANDBOX_EGRESS_FIREWALL).toBe("1");
-        // Poll mode never dials out — a CORTEX_BASE_URL would be meaningless.
+        // The sandbox never dials out, thus it gets no address to dial.
         expect(env.CORTEX_BASE_URL).toBeUndefined();
-    });
-
-    test("callback mode: uid 1000 throughout, egress permitted, CORTEX_BASE_URL set", async () => {
-        const { docker, created } = stubDocker();
-        const ops = createDockerSandboxOps({
-            image: "sandbox-base:latest",
-            cortexBaseUrl: "https://cortex.example.com:443",
-            transport: "callback",
-            resolveWorkspaceRoot: (id) => join("/sessions", id),
-            farmSource,
-            docker,
-            fetch: okFetch,
-            registerSandbox: async () => {},
-        });
-
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
-
-        const sandbox = sandboxOf(created)!;
-        expect(sandbox.user).toBe("1000:1000");
-        expect(sandbox.capDrop).toEqual(["ALL"]);
-        // No firewall in callback mode: egress is permitted so callbacks can leave.
-        expect(sandbox.capAdd).toBeUndefined();
-
-        const env = envMapOf(sandbox);
-        expect(env.SANDBOX_TRANSPORT).toBe("callback");
-        expect(env.SANDBOX_EGRESS_FIREWALL).toBeUndefined();
-        expect(env.CORTEX_BASE_URL).toBe("https://cortex.example.com:443");
+        expect(env.SANDBOX_TRANSPORT).toBeUndefined();
     });
 
     test("the exec port is published to loopback only, and no gateway or network is created", async () => {
         const { docker, created, createdNetworks } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -278,7 +249,6 @@ describe("docker createSandbox — transport modes", () => {
         const registered: Array<{ runId: string; stepId: string; sandboxId: string }> = [];
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             libStorePath: libRoot,
@@ -318,7 +288,6 @@ describe("docker createSandbox — transport modes", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
@@ -343,7 +312,6 @@ describe("docker createSandbox — transport modes", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
@@ -368,7 +336,6 @@ describe("docker createSandbox — transport modes", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
@@ -389,7 +356,6 @@ describe("docker createSandbox — transport modes", () => {
         const hostCpuinfo = [0, 1, 2, 3].map((n) => `processor\t: ${n}\nmodel name\t: Test CPU\n\n`).join("");
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join(wsRoot, id),
             readHostCpuinfo: async () => hostCpuinfo,
             docker,
@@ -423,7 +389,6 @@ describe("docker createSandbox — transport modes", () => {
         const logger = createCapturingLogger();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join(wsRoot, id),
             readHostCpuinfo: async () => undefined,
             docker,
@@ -445,7 +410,6 @@ describe("docker createSandbox — transport modes", () => {
         const logger = createCapturingLogger();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join(wsRoot, "absent", id),
             readHostCpuinfo: async () => "processor\t: 0\n\n",
             docker,
@@ -487,7 +451,6 @@ describe("docker createSandbox — transport modes", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -507,7 +470,6 @@ describe("docker createSandbox — the label set", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://cortex.example.com:443",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -557,7 +519,6 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -580,7 +541,6 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             platform: "linux/arm64",
@@ -599,7 +559,6 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -617,7 +576,6 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             libStorePath: libRoot,
@@ -650,7 +608,6 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -678,7 +635,6 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -701,7 +657,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             libStorePath: libRoot,
@@ -724,7 +679,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join(wsRoot, id),
             farmSource,
             libStorePath: libRoot,
@@ -749,7 +703,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             libStorePath: libRoot,
@@ -769,7 +722,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             libStorePath: libRoot,
@@ -790,7 +742,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             libStorePath: libRoot,
@@ -825,7 +776,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             libStorePath: libRoot,
@@ -851,7 +801,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             libStorePath: libRoot,
@@ -871,7 +820,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource: {
                 kind: "per-analysis",
@@ -896,7 +844,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource: { kind: "per-analysis", resolve: async () => ({ kind: "unavailable", reason: "the store download is in progress" }) },
             libStorePath: libRoot,
@@ -920,7 +867,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource: {
                 kind: "per-analysis",
@@ -947,7 +893,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource: {
                 kind: "per-analysis",
@@ -975,7 +920,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource: { kind: "fixed", location: { farmPath: farmDir, cachePath: cacheDir } },
             toolchainSource: "image",
@@ -1005,7 +949,6 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             toolchainSource: "image",
@@ -1039,7 +982,6 @@ describe("docker createSandbox — ref store re-check", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join(wsRoot, id),
             farmSource,
             refStorePath: missing,
@@ -1066,7 +1008,6 @@ describe("docker createSandbox — ref store re-check", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             refStorePath: installedLater,
@@ -1093,7 +1034,6 @@ describe("docker createSandbox — ref store re-check", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             refStorePath: link,
@@ -1113,7 +1053,6 @@ describe("docker teardown / isAlive", () => {
         const { docker, removed } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -1130,7 +1069,6 @@ describe("docker teardown / isAlive", () => {
         const { docker } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -1144,7 +1082,6 @@ describe("docker teardown / isAlive", () => {
         const { docker, running } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -1174,7 +1111,6 @@ describe("docker teardown / isAlive", () => {
         const { docker, running, oomKilled } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -1202,7 +1138,6 @@ describe("docker teardown / isAlive", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker: erroringDocker,
@@ -1283,7 +1218,6 @@ describe("docker createSandbox — recovery reconciliation", () => {
     const reconcileOps = (docker: Docker) =>
         createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -1393,7 +1327,6 @@ describe("docker createSandbox — recovery reconciliation", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             docker,
@@ -1429,7 +1362,6 @@ describe("docker createSandbox — engine connection", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             farmSource,
             engineSocketPath: "/nonexistent/should-not-be-dialed.sock",

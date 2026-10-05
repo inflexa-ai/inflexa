@@ -6,7 +6,7 @@
  *   seam and take `{ mutator }` — the confinement + hardened-landing gauntlet
  *   lives in one place, and the mutator writes through the host filesystem.
  * - `ToolContext` carries exactly the request-scoped seams (`session`,
- *   `signal`, `emit`, `runStep`); `SandboxClient` is not reachable through it.
+ *   `signal`, `emit`); `SandboxClient` is not reachable through it.
  *   The tests below pin the shape so future drift trips them.
  */
 
@@ -15,7 +15,7 @@ import { describe, expect, it } from "bun:test";
 import type { ToolContext } from "../define-tool.js";
 
 describe("mutate surface invariants", () => {
-    it("ToolContext is exactly { session, signal, emit, runStep }", () => {
+    it("ToolContext is exactly { session, signal, emit }", () => {
         // Build a value-level fake that satisfies the type; if the type adds a
         // new required field (e.g. `sandboxClient`), TS will refuse to compile
         // this object literal — the test fails at type-check time.
@@ -23,9 +23,8 @@ describe("mutate surface invariants", () => {
             session: undefined as unknown as ToolContext["session"],
             signal: new AbortController().signal,
             emit: () => {},
-            runStep: (_name, fn) => fn(),
         };
-        expect(Object.keys(ctx).sort()).toEqual(["emit", "runStep", "session", "signal"]);
+        expect(Object.keys(ctx).sort()).toEqual(["emit", "session", "signal"]);
     });
 
     it("the SandboxClient dependency is confined to execute_command", () => {

@@ -1,27 +1,27 @@
 /**
- * HMAC verification — the contract the workflow-body recv loop trusts to
- * accept / hard-cancel a callback.
+ * HMAC verification — the contract the exec trusts to accept or hard-cancel a
+ * poll response.
  */
 
 import { describe, expect, test } from "bun:test";
-import { signCallback, verifyCallback } from "./hmac.js";
+import { signExecMessage, verifyExecMessage } from "./hmac.js";
 
 const SECRET = "base64:" + Buffer.from("0123456789abcdef0123456789abcdef").toString("base64");
 const EXEC_ID = "wf-1:step-a:fn-0";
 const NOW = 1_700_000_000;
 const FRESHNESS = 300;
 
-describe("verifyCallback", () => {
+describe("verifyExecMessage", () => {
     test("matching signature within freshness window passes", () => {
         const body = JSON.stringify({ kind: "file-tree", added: ["/x.txt"] });
-        const sig = signCallback({
+        const sig = signExecMessage({
             execId: EXEC_ID,
             body,
             timestamp: NOW,
             secret: SECRET,
         });
 
-        const result = verifyCallback({
+        const result = verifyExecMessage({
             execId: EXEC_ID,
             body,
             signature: sig,
@@ -36,7 +36,7 @@ describe("verifyCallback", () => {
 
     test("mismatched signature fails as bad-signature", () => {
         const body = "{}";
-        const sig = signCallback({
+        const sig = signExecMessage({
             execId: EXEC_ID,
             body,
             timestamp: NOW,
@@ -45,7 +45,7 @@ describe("verifyCallback", () => {
         // Flip one nibble.
         const tampered = sig.slice(0, -1) + (sig.endsWith("a") ? "b" : "a");
 
-        const result = verifyCallback({
+        const result = verifyExecMessage({
             execId: EXEC_ID,
             body,
             signature: tampered,
@@ -60,14 +60,14 @@ describe("verifyCallback", () => {
 
     test("body tampering fails as bad-signature even with correct signature", () => {
         const body = JSON.stringify({ kind: "phase", phase: "running" });
-        const sig = signCallback({
+        const sig = signExecMessage({
             execId: EXEC_ID,
             body,
             timestamp: NOW,
             secret: SECRET,
         });
 
-        const result = verifyCallback({
+        const result = verifyExecMessage({
             execId: EXEC_ID,
             body: JSON.stringify({ kind: "phase", phase: "completed" }),
             signature: sig,
@@ -84,14 +84,14 @@ describe("verifyCallback", () => {
     test("timestamp outside freshness window fails as stale-timestamp", () => {
         const body = "{}";
         const stale = NOW - (FRESHNESS + 10);
-        const sig = signCallback({
+        const sig = signExecMessage({
             execId: EXEC_ID,
             body,
             timestamp: stale,
             secret: SECRET,
         });
 
-        const result = verifyCallback({
+        const result = verifyExecMessage({
             execId: EXEC_ID,
             body,
             signature: sig,
@@ -107,7 +107,7 @@ describe("verifyCallback", () => {
     test("missing signature or timestamp fails as missing", () => {
         const body = "{}";
         expect(
-            verifyCallback({
+            verifyExecMessage({
                 execId: EXEC_ID,
                 body,
                 signature: null,
@@ -118,7 +118,7 @@ describe("verifyCallback", () => {
             }),
         ).toEqual({ valid: false, reason: "missing" });
         expect(
-            verifyCallback({
+            verifyExecMessage({
                 execId: EXEC_ID,
                 body,
                 signature: "x".repeat(64),
@@ -132,14 +132,14 @@ describe("verifyCallback", () => {
 
     test("execId mixing fails verification (per-exec binding holds)", () => {
         const body = "{}";
-        const sig = signCallback({
+        const sig = signExecMessage({
             execId: "wf-1:step-a:fn-0",
             body,
             timestamp: NOW,
             secret: SECRET,
         });
 
-        const result = verifyCallback({
+        const result = verifyExecMessage({
             execId: "wf-1:step-b:fn-0",
             body,
             signature: sig,
@@ -154,14 +154,14 @@ describe("verifyCallback", () => {
     test("raw (non-base64) secret works the same way", () => {
         const raw = "plain-utf8-secret";
         const body = "{}";
-        const sig = signCallback({
+        const sig = signExecMessage({
             execId: EXEC_ID,
             body,
             timestamp: NOW,
             secret: raw,
         });
 
-        const result = verifyCallback({
+        const result = verifyExecMessage({
             execId: EXEC_ID,
             body,
             signature: sig,

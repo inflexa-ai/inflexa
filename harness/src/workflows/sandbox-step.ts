@@ -121,8 +121,7 @@ export interface SandboxStepInput {
     readonly resources: ResourceSpec;
     /**
      * Per-step execution budget in seconds. The body translates this into the
-     * absolute unix-ms deadline that `awaitExec` honours as its durable
-     * backstop. Comes from the plan's `step.timeout` (defaulted on the parent
+     * absolute unix-ms deadline that each exec of the step honours. Comes from the plan's `step.timeout` (defaulted on the parent
      * side); falls back to `DEFAULT_STEP_TIMEOUT_SECONDS` when unset so a
      * client that omits the field still gets a non-pathological ceiling.
      */
@@ -228,17 +227,13 @@ export interface PostStepArtifacts {
 /**
  * Per-step coordinates the workflow body computes once and threads to the
  * deps factory. The parent supplies the durable inputs; the factory
- * supplies the live sandbox ref, the per-call function-id minter, and the
- * deadline.
+ * supplies the live sandbox ref and the deadline.
  */
 export interface SandboxAgentBuildContext {
     readonly input: SandboxStepInput;
     readonly session: RunSession;
     readonly sandbox: SandboxRef;
-    /** Workflow-id used to scope sandbox callbacks + workspace mutate provenance. */
-    readonly workflowId: string;
     readonly stepWritePrefix: string;
-    readonly nextFunctionId: () => string;
     readonly deadlineMs: () => number;
     /**
      * Step-scoped lineage collector. The body owns one per step and threads
@@ -347,11 +342,6 @@ export interface PostStepContext {
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-function nextFunctionIdFactory(): () => string {
-    let n = 0;
-    return () => `fn-${(n++).toString(36)}`;
-}
-
 const NO_STEP_FILE_METADATA: StepFileMetadata = { entries: [], messages: [] };
 
 /** Normalizes a pre-`messages` checkpoint (a bare entries array) for replay. */
@@ -378,10 +368,11 @@ function userFacingStepFailure(errorClass: "agent_loop" | "lineage_attestation")
 
 /**
  * Build the step's lineage collector from its durable input. The agent loop
- * feeds each exec's provenance frame into it; post-step registration reads the
- * resulting input/script edges. Reconstructed deterministically on replay — the
- * frames it consumes are cached recv outputs and the command strings are cached
- * LLM tool-use (see the harness-thread-store and harness-durable-runtime specs).
+ * feeds each exec's provenance frame and each file-tool write into it;
+ * post-step registration reads the resulting input/script edges.
+ * Reconstructed deterministically on replay — the loop folds the call record
+ * of each cached tool call into it again, in call order (see the
+ * harness-durable-runtime spec).
  *
  * Split out of the body, and taking only the fields it reads, so the seeding is
  * exercisable without a live workflow: `dependsOn` is what makes a same-run edge
@@ -524,9 +515,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     // (3) runAgent — the harness loop with durableStep.
     // The step deadline is captured ONCE at step start from the checkpointed
-    // clock so it reproduces on replay — the `awaitExec` recv loop gates on this
-    // absolute deadline, so a raw `Date.now()` here would shift the recorded
-    // `DBOS.recv` sequence on recovery (see the harness-durable-runtime spec). `deadlineMs` is a getter so
+    // clock so it reproduces on replay — a raw `Date.now()` here would grow the
+    // deadline on each recovery (see the harness-durable-runtime spec). `deadlineMs` is a getter so
     // deps read the absolute ms without holding a captured value; returning a
     // fresh `now + timeout` per call would make a step with N tool calls runnable
     // for up to N × `timeoutSeconds`.
@@ -537,9 +527,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         input,
         session,
         sandbox,
-        workflowId: childWorkflowId,
         stepWritePrefix: writePrefix,
-        nextFunctionId: nextFunctionIdFactory(),
         deadlineMs: () => stepDeadlineMs,
         lineageCollector,
         blockerHolder,
@@ -562,15 +550,17 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // `tool-finished`) and model-output deltas are wrapped under the
     // `data-loop-event` envelope so the SSE consumer can route them.
     //
-    // Every emit is `await`ed in body order (the loop awaits its own emits, and
-    // `awaitExec` awaits its sandbox-event emits), so each body-path
-    // `DBOS.writeStream` lands at a deterministic function-ID on replay
-    // (see the harness-durable-runtime spec) — no fire-and-forget tail racing the next real op for the
-    // counter. `safeEmit` swallows a stream-write failure: a dropped UI frame
-    // is non-fatal and must not fail the step.
+    // Every emit is `await`ed in order (the loop awaits its own emits, and the
+    // exec awaits its sandbox-event emits). A body-path `DBOS.writeStream` lands
+    // at a deterministic function-ID on replay (see the harness-durable-runtime
+    // spec) — no fire-and-forget tail racing the next real op for the counter.
+    // A sandbox event arrives from inside the step of its tool call; a write from
+    // a step takes no function-ID, and a recovered step writes its events again.
+    // `safeEmit` swallows a stream-write failure: a dropped UI frame is
+    // non-fatal and must not fail the step.
     // Pattern A (fan-in at route): write to the CHILD's own `"events"` stream.
-    // `DBOS.writeStream` is body-only, so cross-workflow writes aren't supported;
-    // the SSE route reads the parent's stream plus every active child's, addressed
+    // `DBOS.writeStream` writes only to the stream of its own workflow, so the
+    // SSE route reads the parent's stream plus every active child's, addressed
     // by `cortex_step_executions.child_workflow_id`.
     const emitToParentStream = (part: unknown): Promise<void> => DBOS.writeStream("events", part);
     const safeEmit = async (part: unknown): Promise<void> => {
@@ -645,9 +635,10 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // of the step) and emits the FULL tree under a stable per-step reconciling
     // id — the terminal `walkArtifacts` tree reconciles onto the same id at step
     // end. Full-tree + reconciling means an observer reconnecting from offset 0
-    // still converges (raw deltas alone would not). REPLAY: the fold is a 1:1
-    // pure function of the checkpointed `awaitExec` recv sequence — do NOT add a
-    // timer/debounce here, that would re-break the harness-durable-runtime spec.
+    // still converges (raw deltas alone would not). The fold is live view only:
+    // a replayed tool call returns its cached result and folds no delta, thus
+    // after a recovery the live tree holds the deltas of the later execs until
+    // the terminal tree reconciles it.
     const treeFileId = stepPartId("step-file-tree", input.runId, input.stepId);
     const treeFiles = new Set<string>();
     const emitFileTree = (): Promise<void> =>

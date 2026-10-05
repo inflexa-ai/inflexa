@@ -70,17 +70,12 @@ describe("the extraction script", () => {
 
 describe("buildExtractionExec", () => {
     it("runs the script through python -c under the analysis mount", () => {
-        const body = buildExtractionExec(
-            "an-1",
-            [
-                { path: "data/x.tsv", hash: "h1", format: "tsv" },
-                { path: "/an-1/data/y.parquet", hash: "h2", format: "parquet" },
-                { path: "data/z.csv", hash: "h3", format: "csv" },
-            ],
-            "exec-9",
-        );
+        const body = buildExtractionExec("an-1", [
+            { path: "data/x.tsv", hash: "h1", format: "tsv" },
+            { path: "/an-1/data/y.parquet", hash: "h2", format: "parquet" },
+            { path: "data/z.csv", hash: "h3", format: "csv" },
+        ]);
         expect(body.command).toEqual(["python3", "-c", EXTRACTION_SCRIPT]);
-        expect(body.execId).toBe("exec-9");
         expect(body.cwd).toBe("/an-1");
 
         // The request list rides in one environment variable. Each request carries its pinned hash, thus
@@ -96,7 +91,7 @@ describe("buildExtractionExec", () => {
     it("carries the format of the request, and it reads no format from the extension", () => {
         // The host decides the format one time. A request whose format disagrees with the extension proves
         // that this arm repeats no mapping of its own.
-        const body = buildExtractionExec("an-1", [{ path: "data/x.csv", hash: "h1", format: "tsv" }], "exec-10");
+        const body = buildExtractionExec("an-1", [{ path: "data/x.csv", hash: "h1", format: "tsv" }]);
 
         const parsed = JSON.parse(body.env![EXTRACTION_INPUT_ENV]);
         expect(parsed).toEqual([{ path: "data/x.csv", format: "tsv", hash: "h1" }]);

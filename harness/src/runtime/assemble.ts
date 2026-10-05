@@ -334,8 +334,8 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         runAuthorizer: wf.dataProfile.runAuthorizer,
         ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
     });
-    // A session derivation runs its container here and not in the turn. The await of an exec is a
-    // workflow-body call under the callback transport, thus the tool starts this workflow and awaits it.
+    // A session derivation runs its container here and not in the turn. An exec is a durable step of a
+    // workflow, thus the tool starts this workflow and awaits it.
     const deriveTableExec = registerDeriveTableExecWorkflow({
         sandboxClient: wf.dataProfile.sandboxClient,
         ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),

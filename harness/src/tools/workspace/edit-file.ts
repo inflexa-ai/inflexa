@@ -11,16 +11,16 @@
  * (compiled with the `gm` flags — multiline anchors), `new_string` may use
  * capture-group references, and exactly one of `replace_all=true` or
  * `expected_matches` gates the write. Provenance hashes the post-edit
- * content — recorded by the mutator.
+ * content — the mutator records it through the fold of this tool.
  */
 
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
-import type { WorkspaceMutator, WriteFileResult } from "./mutator.js";
+import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
 
 /** Outcome of an `edit_file` call — expected outcomes are data variants, never throws. */
 export type EditFileResult =
@@ -37,14 +37,17 @@ export type EditFileResult =
           readonly lines: readonly number[];
       }
     | Exclude<WriteFileResult, { status: "ok" }>
-    | {
-          readonly status: "ok";
-          readonly path: string;
-          readonly replacements: number;
-          readonly bytesWritten: number;
-          /** Regex mode only: 1-based line numbers where the matches started. */
-          readonly lines?: readonly number[];
-      };
+    | WithToolCallRecord<
+          {
+              readonly status: "ok";
+              readonly path: string;
+              readonly replacements: number;
+              readonly bytesWritten: number;
+              /** Regex mode only: 1-based line numbers where the matches started. */
+              readonly lines?: readonly number[];
+          },
+          WriteRecord
+      >;
 
 const EditFileInputSchema = z.object({
     path: z
@@ -174,9 +177,6 @@ function replaceRegex(
 export function createEditFileTool(deps: EditFileDeps) {
     return defineTool({
         id: "edit_file",
-        // The mutator wraps the disk mutation in `ctx.runStep` itself, so the
-        // body runs unwrapped in the workflow body (see the harness-tools spec).
-        executionMode: "workflow",
         description:
             "Edit a file in your working directory by replacing specific text. " +
             "Read the file first to get the exact text. When replace_all is false " +
@@ -235,23 +235,28 @@ export function createEditFileTool(deps: EditFileDeps) {
                 });
             }
 
-            const result = await deps.mutator.writeFile({
+            const write = await deps.mutator.writeFile({
                 path,
                 content: replaced.content,
                 toolName: "edit_file",
                 invocationId: ctx.invocationId,
-                runStep: ctx.runStep,
                 session: ctx.session,
             });
-            if (result.status !== "ok") return ok(result);
+            if (write.status !== "ok") return ok(write);
             const lines: readonly number[] | undefined = replaced.lines;
-            return ok({
-                status: "ok" as const,
-                path: result.path,
-                replacements: replaced.replacements,
-                bytesWritten: result.bytesWritten,
-                ...(lines === undefined ? {} : { lines }),
-            });
+            return ok(
+                withToolCallRecord(
+                    {
+                        status: "ok" as const,
+                        path: write.path,
+                        replacements: replaced.replacements,
+                        bytesWritten: write.bytesWritten,
+                        ...(lines === undefined ? {} : { lines }),
+                    },
+                    write.record,
+                ),
+            );
         },
+        foldCallRecord: (record) => deps.mutator.recordWrite(record),
     });
 }

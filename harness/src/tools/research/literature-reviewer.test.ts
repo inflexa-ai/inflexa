@@ -31,7 +31,6 @@ describe("literatureReviewer sub-agent tool", () => {
             emit: (event) => {
                 emitted.push(event);
             },
-            runStep: (_name, fn) => fn(),
         };
 
         const result = (await tool.execute({ brief: "Investigate BRCA1." }, ctx))._unsafeUnwrap() as { report: string };

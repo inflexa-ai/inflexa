@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
 import type { SandboxClient } from "../sandbox/client.js";
-import type { ExecResult, SubmitExecBody } from "../sandbox/types.js";
+import type { ExecRequest, ExecResult } from "../sandbox/types.js";
 import type { ReadBytesResult, WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { enrichShapes } from "./enrich.js";
 import { observeShapes } from "./shapes.js";
@@ -40,16 +40,14 @@ function readSeam(contents: Record<string, Buffer>): { fs: WorkspaceFilesystem; 
     return { fs, reads };
 }
 
-function recordingSandbox(): { client: SandboxClient; submitted: SubmitExecBody[] } {
-    const submitted: SubmitExecBody[] = [];
+function recordingSandbox(): { client: SandboxClient; submitted: ExecRequest[] } {
+    const submitted: ExecRequest[] = [];
     const client = {
-        async submitExec(_ref: unknown, body: SubmitExecBody) {
-            submitted.push(body);
-        },
-        async awaitExec(_ref: unknown, execId: string): Promise<ExecResult> {
-            const paths = submitted.at(-1)!.command.slice(3);
+        async exec(_ref: unknown, request: ExecRequest): Promise<ExecResult> {
+            submitted.push(request);
+            const paths = request.command.slice(3);
             const stdout = paths.map((path) => JSON.stringify({ path, fields: { columnCount: 7 } })).join("\n");
-            return { execId, exitCode: 0, stdout, stderr: "", durationMs: 5, timedOut: false };
+            return { execId: "wf:7", exitCode: 0, stdout, stderr: "", durationMs: 5, timedOut: false };
         },
     } as unknown as SandboxClient;
     return { client, submitted };
@@ -58,9 +56,8 @@ function recordingSandbox(): { client: SandboxClient; submitted: SubmitExecBody[
 /** A sandbox whose decoder exec produced no usable stdout, with the outcome under test. */
 function failingSandbox(result: Partial<ExecResult>): SandboxClient {
     return {
-        async submitExec() {},
-        async awaitExec(_ref: unknown, execId: string): Promise<ExecResult> {
-            return { execId, exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false, ...result };
+        async exec(): Promise<ExecResult> {
+            return { execId: "wf:7", exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false, ...result };
         },
     } as unknown as SandboxClient;
 }
@@ -69,7 +66,6 @@ function enrichArgs(overrides: Record<string, unknown>) {
     return {
         session: SESSION,
         mountRoot: "/a1",
-        execId: "wf:profile:fn-0",
         deadlineMs: Date.now() + 60_000,
         emit: async () => {},
         ...overrides,

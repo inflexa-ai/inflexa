@@ -59,7 +59,7 @@ export interface SandboxTreeDelta {
 
 /** Extract the tree delta from a `data-sandbox-event` part, or null when the
  *  part is some other sandbox event. The wrapper shape is set by
- *  `run-exec.ts`: `{ type: "data-sandbox-event", data: { execId, event } }`
+ *  `run-exec.ts`: `{ type: "data-sandbox-event", data: { event } }`
  *  where `event` is the executor's `eventPayload`. */
 export function sandboxTreeDelta(part: { type: string; data?: unknown }): SandboxTreeDelta | null {
     if (part.type !== "data-sandbox-event") return null;

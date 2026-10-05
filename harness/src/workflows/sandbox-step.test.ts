@@ -535,8 +535,8 @@ describe("sandbox-step kept tool outputs", () => {
         const stderr = "Traceback (most recent call last):\nValueError: no batch column";
         const sandboxClient = {
             ...makeSandboxClient(),
-            awaitExec: async (_ref: SandboxRef, execId: string) => ({
-                execId,
+            exec: async () => ({
+                execId: "wf-1:3",
                 exitCode: 1,
                 stdout: "row\n".repeat(50_000),
                 stderr,
@@ -559,9 +559,6 @@ describe("sandbox-step kept tool outputs", () => {
                     createExecuteCommandTool({
                         sandboxClient,
                         sandbox: ctx.sandbox,
-                        workflowId: ctx.workflowId,
-                        stepId: ctx.input.stepId,
-                        nextFunctionId: ctx.nextFunctionId,
                         deadlineMs: ctx.deadlineMs,
                         defaultCwd: `/${ANALYSIS_ID}`,
                     }),

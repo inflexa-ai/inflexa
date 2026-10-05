@@ -104,12 +104,8 @@ export function createHarnessSampler(): Sampler {
 
 /** The plan step id a `compose-step-seed` step carries. */
 export const ATTR_INFLEXA_STEP_ID = "inflexa.step_id";
-/** The provider tool-use id of a tool step. */
-export const ATTR_INFLEXA_TOOL_USE_ID = "inflexa.tool_use_id";
-/** The exec id (`${workflowId}:${stepId}:${fnId}`) of a sandbox exec step. */
+/** The exec id (`${workflowId}:${functionId}`) of a sandbox exec step. */
 export const ATTR_INFLEXA_EXEC_ID = "inflexa.exec_id";
-/** The 1-based attempt counter of a sandbox poll, pull, or liveness-probe step. */
-export const ATTR_INFLEXA_ATTEMPT = "inflexa.attempt";
 
 /**
  * Rename the DBOS span of the step that is running to `name` and put its id
@@ -134,9 +130,8 @@ export function stableSpan(dbosName: string, name: string, attributes: Attribute
 /**
  * Send a request to sandbox-server with the active trace context in its
  * headers and with tracing suppressed, so the host's HTTP instrumentation
- * writes no client span. Sandbox-server records no spans and echoes the exec
- * request's `traceparent` on its callbacks to the host, so a client span would
- * show the host calling itself; the step span around the call already covers it.
+ * writes no client span. Sandbox-server records no spans, and the step span
+ * around the call already covers it.
  */
 export function untracedFetch(fetchImpl: typeof fetch, url: string, init: RequestInit & { headers: Record<string, string> }): Promise<Response> {
     const active = context.active();

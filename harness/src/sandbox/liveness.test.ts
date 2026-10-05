@@ -1,6 +1,6 @@
 /**
- * Unit tests for the transport-agnostic liveness escalation policy, the
- * never-throwing probe runner, and the shared synthetic-failure constructor
+ * Unit tests for the liveness escalation policy, the
+ * never-throwing probe runner, and the synthetic-failure constructor
  * (the harness-sandbox-exec spec, "sustained unavailability escalates to a
  * liveness probe"). Pure logic — no DBOS, no network.
  */
@@ -85,7 +85,7 @@ describe("syntheticFailureReason", () => {
 });
 
 describe("syntheticFailureResult", () => {
-    test("builds the watchdog-shaped ExecResult and parses under the schema", () => {
+    test("builds the synthetic-failure ExecResult and parses under the schema", () => {
         const result = syntheticFailureResult("wf-1:step-a:fn-0", "sandbox-oom-killed");
         expect(result).toEqual({
             execId: "wf-1:step-a:fn-0",

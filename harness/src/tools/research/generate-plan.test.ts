@@ -29,7 +29,6 @@ function toolContext(analysisId = "analysis-001"): ToolContext {
         }),
         signal: new AbortController().signal,
         emit: () => {},
-        runStep: (_name, fn) => fn(),
     };
 }
 
