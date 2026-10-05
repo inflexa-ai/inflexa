@@ -44,7 +44,7 @@ A `ThreadStore` SHALL be created via a dependency-injected factory bound to a Po
 - **WHEN** `listThreads` is called with a `page` and `perPage`
 - **THEN** it returns that page's threads plus the total count and a `hasMore` flag
 
-#### Scenario: Update changes only the title and records the person
+#### Scenario: Update changes only the title
 
 - **GIVEN** a live thread
 - **WHEN** `updateTitle` is called

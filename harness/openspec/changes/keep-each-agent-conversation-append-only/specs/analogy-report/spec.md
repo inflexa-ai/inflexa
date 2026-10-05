@@ -1,3 +1,7 @@
+## Purpose
+
+The `generate_analogy_report` tool finds structural analogies for an open scientific problem. Its `analogical-reasoner` sub-agent extracts the problem, finds cited solutions from other fields, and gives the report through a terminal tool.
+
 ## ADDED Requirements
 
 ### Requirement: The analogical reasoner submits its report through terminal tools

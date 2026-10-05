@@ -32,7 +32,7 @@ The transcript is the in-memory `runAgent` `messages` array of the workflow body
 - **WHEN** a sandbox agent finds a significant result during its primary analysis turns
 - **THEN** the standards direct it to search PubMed for related prior work at that point, not in the summary continuation
 
-#### Scenario: Summary continuation does not search literature
+#### Scenario: Summary turn does not search literature
 
 - **GIVEN** a step agent that declares `search_pubmed`, and a summary continuation whose model calls it
 - **WHEN** the loop dispatches the call

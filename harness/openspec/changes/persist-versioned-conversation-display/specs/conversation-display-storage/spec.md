@@ -1,3 +1,7 @@
+## Purpose
+
+The harness stores the display projection of each conversation append one time, when it produces it. This capability holds the parts vocabulary, the versioned envelope, the live recorder, and the atomic append. A transcript reload replays the stored projection and reconstructs nothing.
+
 ## ADDED Requirements
 
 ### Requirement: Conversation display is stored as a versioned AI SDK UI envelope

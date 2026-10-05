@@ -66,6 +66,6 @@ Consumers:
 - A host that runs its own turn sequence must call `runChatTurn`. Cortex adopts it when it bumps the pin.
 - A host can pass a cache policy to the turn. Without one, the root conversation loop uses 1 hour.
 
-Dependencies: this change builds on `update-the-provider-layer-for-current-models` and `keep-each-agent-conversation-append-only`. The deltas name the not-run result and the wrap-up request of the second change. The `harness-thread-history` delta renames a requirement that `persist-versioned-conversation-display` also modifies.
+Dependencies: this change builds on `update-the-provider-layer-for-current-models` and `keep-each-agent-conversation-append-only`. The deltas name the not-run result and the wrap-up request of the second change. The `harness-thread-history` delta replaces a requirement that `persist-versioned-conversation-display` also modifies.
 
 Release. The user starts the harness release after the merge. The change does not change the version in `package.json`.

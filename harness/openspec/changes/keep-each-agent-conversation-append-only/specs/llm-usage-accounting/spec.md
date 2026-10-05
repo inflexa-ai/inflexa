@@ -1,6 +1,6 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: Every LLM call produces an attributed usage record
+### Requirement: Each LLM call produces an attributed usage record
 
 For each LLM call that the harness completes, the harness MUST produce an `LlmUsageRecord`. The calls are each call of `runAgent`, each call of a continuation, and the call of the ad hoc router. The record carries these fields:
 
@@ -54,7 +54,7 @@ The harness MUST deliver each record when its call completes. It MUST NOT defer 
 - **WHEN** the call completes
 - **THEN** the record MUST carry the `agentId` `file-metadata-describer`, and the `runId` and the `stepId` of the step
 
-### Requirement: A direct provider call uses the accounting path of the loop
+### Requirement: The ad hoc router call uses the accounting path of the loop
 
 The ad hoc router calls `provider.chat` directly, outside `runAgent`. It MUST grow the token counters of its call in the body that makes the call, as the harness-agent-loop capability describes. The router uses the agent id `adhoc-router`. It MUST then account for its call through the function that the loop uses for each call. That function MUST do these steps:
 
@@ -82,3 +82,17 @@ A direct call that fails reports no usage, thus it produces no record and no cou
 - **GIVEN** a router call that fails with a provider error
 - **WHEN** the router falls back
 - **THEN** the `UsageRecorder` MUST receive no record for that call
+
+## REMOVED Requirements
+
+### Requirement: Every LLM call produces an attributed usage record
+
+**Reason**: The analogical reasoner submits its report through a terminal tool, thus the conversion call of `generate_analogy_report` is removed. A continuation produces its records under its accounting id.
+
+**Migration**: Refer to "Each LLM call produces an attributed usage record".
+
+### Requirement: A direct provider call uses the accounting path of the loop
+
+**Reason**: The conversion call of `generate_analogy_report` is removed. Thus the ad hoc router is the only direct provider call.
+
+**Migration**: Refer to "The ad hoc router call uses the accounting path of the loop".

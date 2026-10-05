@@ -10,7 +10,9 @@ Each row SHALL store its model content as an AI SDK model-message envelope and a
 
 The reported usage rollup SHALL be stored on the LAST assistant row the turn writes — the row a reader associates with the reply, and where the figure is already rendered live. A turn that writes no assistant row SHALL store no rollup, there being no message on which it would mean anything. The rollup SHALL be optional: a caller that supplies none, and a caller that supplies one reporting no quantity at all, SHALL both leave the row without one, so "no figure" has exactly one representation in storage. The write SHALL decide this with the same predicate the loop uses to decide whether a call reported anything, so the two cannot drift. Rows written before the rollup existed SHALL read back without one and SHALL NOT be backfilled: the figures were never recorded, so absent is the honest value.
 
-Because both the rollup and the display envelope are stored on message rows, anything that removes the row removes them — a retracted tail turn takes its cost and its display with it.
+`appendTurn` MUST also accept the duration of the turn, in milliseconds, and store it beside the rollup on that same row. The duration obeys the rules of the rollup: optional at every layer, absent when the caller supplies none, and never backfilled. The read MUST return it beside the rollup. Thus a reloaded transcript shows the duration that the live header showed.
+
+The rollup, the duration, and the display envelope are stored on message rows. Thus anything that removes the row removes them, and a retracted tail turn takes its cost, its duration, and its display with it.
 
 #### Scenario: A turn round-trips
 
@@ -59,6 +61,12 @@ Because both the rollup and the display envelope are stored on message rows, any
 - **WHEN** the thread is read back
 - **THEN** the rollup is on the turn's assistant row and on no other row of that turn
 
+#### Scenario: The turn's duration rides the same row
+
+- **GIVEN** a turn appended with a duration
+- **WHEN** the thread is read back
+- **THEN** the duration is on the turn's assistant row, beside its rollup where one exists
+
 #### Scenario: A turn that reported nothing stores no rollup
 
 - **GIVEN** a turn appended without a rollup
@@ -71,11 +79,17 @@ Because both the rollup and the display envelope are stored on message rows, any
 - **WHEN** the thread is read back
 - **THEN** its assistant row carries no rollup, indistinguishable from a turn appended without one
 
-#### Scenario: A retracted turn takes its rollup and its display with it
+#### Scenario: An old row reads back without a duration
 
-- **GIVEN** a tail turn whose assistant row carries a rollup and whose first row carries a display envelope
+- **GIVEN** a row written before the duration existed
+- **WHEN** the thread is read back
+- **THEN** the row carries no duration, and no backfill runs
+
+#### Scenario: A retracted turn takes its rollup with it
+
+- **GIVEN** a tail turn whose assistant row carries a rollup and a duration and whose first row carries a display envelope
 - **WHEN** the turn is retracted
-- **THEN** neither the rows, the rollup, nor the envelope remain
+- **THEN** neither the rows, the rollup, the duration, nor the envelope remain
 
 #### Scenario: A turn with no reply stores no rollup
 
@@ -93,7 +107,7 @@ Because both the rollup and the display envelope are stored on message rows, any
 
 `ThreadHistory` SHALL provide a thread-scoped, paginated read (`loadPage(threadId, page, perPage)`) of the `messages` table for serving the thread messages endpoint, returning whole turns with their AI SDK model-message envelopes, their stored display envelopes, and their stored rollups, oldest-first, together with `total`, `page`, `perPage`, and `hasMore`. Pagination SHALL be by whole turns — `page`, `perPage`, and `total` count turns, not rows — so a multi-row turn and the display projection on its first row always reload together. This read SHALL be distinct from `loadRecent` (which windows model messages by token budget for the LLM) and SHALL NOT apply token-budget eviction.
 
-#### Scenario: A page of turns is returned with totals
+#### Scenario: A page of messages is returned with totals
 
 - **GIVEN** a thread with more turns than one page holds
 - **WHEN** the paginated read is called with a page and perPage

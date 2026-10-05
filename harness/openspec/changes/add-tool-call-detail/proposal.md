@@ -31,7 +31,6 @@ Two adjacent faults make the existing status untrustworthy, and both live in the
 
 ### Modified Capabilities
 
-- `harness-tools`: `defineTool`'s packaged fields gain the optional `describeCall` hook.
 - `harness-agent-loop`: the `tool-finished` observation reports a three-way outcome, extending to the event the denial-versus-error distinction the loop already makes for control flow.
 
 ## Impact

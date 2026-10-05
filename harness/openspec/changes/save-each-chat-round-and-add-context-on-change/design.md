@@ -215,7 +215,7 @@ The CLI passes no cache policy, thus its root conversation loop uses 1 hour. The
 - [The Run Activity gives no age] → The model reads the absolute start time. `inspect_run` gives the live status of a run.
 - [Each round is a transaction] → A round costs one database round trip under the advisory lock. That cost is small against the model call of the round.
 - [An abort with no partial marks no model message] → The turn record gives `aborted`, and the replay sets the interruption from the record.
-- [The deltas build on changes that are not archived] → The `harness-agent-loop` delta names the not-run result and the wrap-up request of `keep-each-agent-conversation-append-only`. The `harness-thread-history` delta renames a requirement that `persist-versioned-conversation-display` modifies. Archive those changes before this change.
+- [The deltas build on changes that are not archived] → The `harness-agent-loop` delta names the not-run result and the wrap-up request of `keep-each-agent-conversation-append-only`. The `harness-thread-history` delta replaces a requirement that `persist-versioned-conversation-display` modifies. Archive those changes before this change.
 
 ## Migration Plan
 

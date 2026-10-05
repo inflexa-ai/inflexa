@@ -1,3 +1,7 @@
+## Purpose
+
+A conversation display card is a record of what the user saw. The stored card payload is the historical fact, and a reload never rebuilds a card from a tool name or from the current state.
+
 ## ADDED Requirements
 
 ### Requirement: Persisted conversation cards preserve emitted card data

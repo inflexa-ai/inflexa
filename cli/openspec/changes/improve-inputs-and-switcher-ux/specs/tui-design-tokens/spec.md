@@ -31,6 +31,16 @@ A test of these dimensions MUST read them from `dialogSize`, and MUST NOT restat
 A duplicated number turns each legitimate change of the calibration into a red test. It also
 proves nothing about the fixed-against-fraction behavior that the test claims.
 
+#### Scenario: Wide terminal does not balloon a prompt
+
+- **WHEN** an `md` dialog renders on a 250-column terminal
+- **THEN** its panel is 64 columns wide, and not a percentage of the terminal width
+
+#### Scenario: Narrow terminal clamps instead of overflowing
+
+- **WHEN** an `md` dialog renders on a 60-column terminal
+- **THEN** its panel width is the clamp of 90% of the terminal, and not the fixed 64 columns
+
 #### Scenario: A wide terminal gives the fixed width
 
 - **WHEN** an `lg` panel renders on a 200-column terminal
@@ -41,12 +51,17 @@ proves nothing about the fixed-against-fraction behavior that the test claims.
 - **WHEN** an `lg` panel renders on a 40-column terminal
 - **THEN** it measures 36 columns, which is the `maxWidth` clamp
 
-#### Scenario: A filter does not resize the panel
+#### Scenario: Filtering never resizes a picker
 
 - **WHEN** a filter reduces a picker from 30 rows to 2 rows
 - **THEN** the panel holds the `height` of the preset, with trailing empty rows
 
-#### Scenario: A short terminal clamps the height
+#### Scenario: Short prompt shrinks to its content
+
+- **WHEN** the static body of an `md` dialog is shorter than its `maxHeight`
+- **THEN** the panel is only as tall as its content, with no fixed-height empty region below it
+
+#### Scenario: Fixed height clamps on short terminals
 
 - **WHEN** an `lg` panel renders on a 15-row terminal
 - **THEN** it measures 12 rows or fewer, and its chrome stays complete

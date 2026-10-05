@@ -1,23 +1,5 @@
 ## ADDED Requirements
 
-### Requirement: A tool describes its own call through an optional hook
-
-A tool definition SHALL accept an optional `describeCall(input) => string` hook, colocated with the Zod `inputSchema` and typed against `z.infer<Schema>`. The hook SHALL be synchronous, and it SHALL be a pure function of its input — it performs no I/O and reads no ambient state.
-
-A tool that declares no hook SHALL be observable exactly as it is without one. Coverage grows tool by tool; absence is a normal state, never an error.
-
-#### Scenario: A hook is typechecked against the tool's own input type
-
-- **GIVEN** a tool whose `inputSchema` declares a field the hook does not name
-- **WHEN** the hook reads a field absent from that schema
-- **THEN** the package fails to typecheck
-
-#### Scenario: A tool without a hook is unaffected
-
-- **GIVEN** a tool that declares no `describeCall`
-- **WHEN** the loop dispatches it
-- **THEN** its tool-call events carry no detail, and every other field is unchanged
-
 ### Requirement: The detail is computed best-effort and never fails a call
 
 The loop SHALL compute the detail at dispatch, inside a guard. A hook that throws, that returns a value which is not a string, or that returns an empty string SHALL yield no detail. The loop SHALL then dispatch the tool unchanged and SHALL record the hook failure through the injected `Logger` at `debug`.
@@ -49,30 +31,6 @@ The guard SHALL enclose that validation as well as the hook. Schema validation r
 - **GIVEN** a `describeCall` that returns `undefined` or an empty string
 - **WHEN** the loop computes the detail
 - **THEN** the event carries no detail rather than an empty one
-
-### Requirement: The emit site normalizes every detail
-
-Normalization SHALL happen once, at the emit site, and SHALL NOT be delegated to tool authors. The loop SHALL collapse the detail to a single line, remove control characters, apply the harness secret redaction, and cap the result at 120 characters.
-
-A tool author is therefore free to return whatever reads best. A leak or a runaway string is one auditable line's responsibility, not thirty authors'.
-
-#### Scenario: A multi-line detail becomes one line
-
-- **GIVEN** a `describeCall` that returns a string containing newlines
-- **WHEN** the loop normalizes it
-- **THEN** the emitted detail is a single line
-
-#### Scenario: An over-long detail is capped
-
-- **GIVEN** a `describeCall` that returns 5000 characters
-- **WHEN** the loop normalizes it
-- **THEN** the emitted detail is at most 120 characters
-
-#### Scenario: A secret in a detail is redacted
-
-- **GIVEN** a `describeCall` whose returned string contains a value the harness secret redaction matches
-- **WHEN** the loop normalizes it
-- **THEN** the emitted detail carries the redacted form, and no tool code performed the redaction
 
 ### Requirement: Tool call events carry the detail
 

@@ -68,11 +68,48 @@ The mapping from a recorded outcome to a rendered status SHALL be total and exha
 
 ### Requirement: One generation token orders every write to the message store
 
-One generation token SHALL order every asynchronous write to the message store, so the newest operation STARTED wins regardless of which finishes first. A superseded transcript load MUST NOT reach the store.
+Each asynchronous producer that writes the conversation store MUST claim the same monotonic generation token at entry. It MUST check the token again after each `await`, before it writes the message store, the streaming signals, the error banner, or the chat status. These producers are a transcript load (`loadMessages`), a turn (`send`, through its emit adapter and `finishTurn`), and a retract (through its store splice and composer seed). The newest operation that started wins. Each older one MUST drop silently.
 
-The transcript read itself SHALL be a synchronous replay of stored projections. It resolves no workspace root, builds no card or detail resolver, issues no query, and has no failure mode of its own — so the only failure a load reports is a page read's. The generation check SHALL remain immediately before the store write even when no await separates it from the preceding check, because the invariant belongs to the write rather than to any particular await.
+A turn thus supersedes a transcript load in flight. The load is a replay of durable state that the turn appends to, and the turn carries the live input of the user. A retract also supersedes a load in flight, because the load would replay the turn that the retract removes. `resetHotState` MUST also claim the token. Thus a load for a session that the user left can never fill the cleared store again. A retract that a session swap supersedes MUST drop its remaining store writes and its composer seed. Its durable removal of the thread turn, committed at the keypress, still completes.
 
-A row carrying no stored projection SHALL contribute nothing, rather than being reconstructed from the model transcript.
+The poll of the open thread (`pollOpenThread`) MUST NOT claim the token at entry. A poll that finds nothing new must not supersede a load. It records the token before its reads. It drops its result when the token moved, or when a send of this client is in flight. It claims a new token only to mount a changed transcript. The check of a send before its turn mounts under the token of that turn.
+
+The replay of the transcript (the harness `storedMessagesToChat`, which the local server runs on the rows of the thread) MUST be synchronous. It resolves no workspace root, builds no card or detail resolver, issues no query, and has no failure mode of its own — so the only failure a load reports is a page read's. The generation check MUST remain immediately before the store write even when no await separates it from the preceding check, because the invariant belongs to the write rather than to any particular await.
+
+A row carrying no stored projection MUST contribute nothing, rather than being reconstructed from the model transcript.
+
+#### Scenario: A load resolving mid-turn does not wipe the turn
+
+- **WHEN** `loadMessages` is awaiting its page read and the user submits a turn, and the page read then resolves
+- **THEN** the load drops without a write
+- **AND** the user message and the in-flight assistant message stay mounted
+- **AND** the next streamed parts append to that assistant message
+
+#### Scenario: A turn submitted the instant boot completes survives
+
+- **WHEN** the runtime reaches `ready`, the transcript load starts, and the user submits a message typed during the boot animation
+- **THEN** the turn renders normally, and the transcript load drops
+
+#### Scenario: A load started for a swapped-away session never lands
+
+- **WHEN** `loadMessages` is in flight for session A and `resetHotState` runs for a swap to session B
+- **THEN** the session-A load drops without a write
+
+#### Scenario: A load resolving mid-retract does not resurrect the retracted turn
+
+- **WHEN** `loadMessages` is in flight and a retract claims the token, and the page read then resolves
+- **THEN** the load drops without a write, and the spliced store stays spliced
+
+#### Scenario: A swap mid-retract drops the UI writes, not the thread removal
+
+- **WHEN** `resetHotState` supersedes a retract after its abort settled
+- **THEN** no store write or composer seed lands, and the old thread's orphan turn is still removed
+
+#### Scenario: A poll during a send mounts nothing
+
+- **GIVEN** a send of this client whose turn runs
+- **WHEN** the poll reads the open thread and finds a new `updatedAt`
+- **THEN** the poll mounts nothing, and the turn keeps its messages
 
 #### Scenario: A superseded load never reaches the store
 

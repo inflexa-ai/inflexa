@@ -54,7 +54,7 @@ The system SHALL extend `inflexa prov export` to write an attestation file `prov
 ```
 `payloadDigestMethod: "verbatim"` declares the digest was computed over the exact stored bytes (not a canonicalized form). This aligns with DSSE's approach of treating the payload as an opaque blob to avoid canonicalization. The JSON wire fields are unchanged by the attestation naming. The kernel schema additionally allows an OPTIONAL `kid` signer id; the cli does not set it, and attestations without it validate unchanged.
 
-#### Scenario: Export with signature writes the attestation
+#### Scenario: Export with signature writes sidecar
 
 - **WHEN** `inflexa prov export my-analysis --format json` runs and the analysis has a stored signature and the public key is available
 - **THEN** it writes `provenance.json` and `provenance.json.sig.json` to the output directory
@@ -66,7 +66,7 @@ The system SHALL extend `inflexa prov export` to write an attestation file `prov
 - **THEN** the command prints `Signing failed (<type>) — provenance is never exported unsigned.` and exits non-zero via `fail()`
 - **AND** it does not silently succeed by writing only `provenance.json`: a JSON export always signs (the key is generated on first use), so an unsignable export is a hard failure, not a graceful "provenance only" path
 
-#### Scenario: Third-party verification with the attestation
+#### Scenario: Third-party verification with sidecar
 
 - **WHEN** a third party has `provenance.json` and `provenance.json.sig.json`
 - **THEN** they read `payloadDigestAlgorithm` and `signatureAlgorithm` from the attestation

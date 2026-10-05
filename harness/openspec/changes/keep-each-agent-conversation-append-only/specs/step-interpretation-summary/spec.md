@@ -1,9 +1,4 @@
-## RENAMED Requirements
-
-- FROM: `### Requirement: A dedicated step-summary-writer sub-agent generates the summary`
-- TO: `### Requirement: The step summary continues the conversation of the step agent`
-
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: The step summary continues the conversation of the step agent
 
@@ -26,6 +21,8 @@ The transcript is the in-memory `runAgent` `messages` array of the workflow body
 - **WHEN** the summary continuation sends its request
 - **THEN** the request holds each message of the transcript unchanged, and the summary request comes after them
 
+## MODIFIED Requirements
+
 ### Requirement: Sandbox standards teach literature grounding during execution
 
 `sandbox-standards` MUST tell sandbox agents to ground their findings in the research literature as they work. The standards direct an agent to search PubMed (`search_pubmed`) and to read abstracts (`get_article_details`). The agent assesses the novelty of each finding during the primary execution turns. The standards MUST NOT defer this work to a final step. The post-step summary continuation MUST NOT search the literature. Its mask lets only `read_file` and `grep` run, and it grounds claims in persisted files through `read_file`.
@@ -35,8 +32,16 @@ The transcript is the in-memory `runAgent` `messages` array of the workflow body
 - **WHEN** a sandbox agent finds a significant result during its primary analysis turns
 - **THEN** the standards direct it to search PubMed for related prior work at that point, not in the summary continuation
 
-#### Scenario: Summary continuation does not search literature
+#### Scenario: Summary turn does not search literature
 
 - **GIVEN** a step agent that declares `search_pubmed`, and a summary continuation whose model calls it
 - **WHEN** the loop dispatches the call
 - **THEN** the call gets the error result of the mask, and no search runs
+
+## REMOVED Requirements
+
+### Requirement: A dedicated step-summary-writer sub-agent generates the summary
+
+**Reason**: The step summary continues the conversation of the step agent, with the tools of that agent under a mask. The loop answers each unanswered call of the task at its exit, thus the summary removes no message from the transcript.
+
+**Migration**: Refer to "The step summary continues the conversation of the step agent".

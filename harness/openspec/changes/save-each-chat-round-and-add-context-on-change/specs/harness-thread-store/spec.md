@@ -18,7 +18,7 @@ The store MUST give the ids alone. It holds a Postgres pool and no filesystem se
 - **WHEN** `purgeThread` runs on the conversation thread
 - **THEN** no `cortex_analysis_threads` row and no `messages` row remains for any of the three
 
-#### Scenario: Purging reaches the messages of a grandchild
+#### Scenario: Purging reaches a grandchild's messages
 
 - **GIVEN** a thread with a child, and that child with a child of its own, each with messages
 - **WHEN** `purgeThread` runs on the top thread
@@ -42,7 +42,7 @@ The store MUST give the ids alone. It holds a Postgres pool and no filesystem se
 - **WHEN** the failure occurs
 - **THEN** each thread row, each message, and each turn record of the subtree remains
 
-#### Scenario: The purge names each thread that it erased
+#### Scenario: The purge names every thread that it erased
 
 - **GIVEN** a conversation thread with two child threads
 - **WHEN** `purgeThread` runs on the conversation thread
