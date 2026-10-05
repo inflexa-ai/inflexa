@@ -368,14 +368,12 @@ export interface DataProfileRecipeStep {
 }
 
 /**
- * The comparand identifying WHICH files a profile covered and whether the SAME BYTES
- * were profiled.
+ * The record of WHICH files a profile covered and of the bytes behind them.
  *
  * `digest` is a stable hash over the staged inputs' identities, sizes, and mtimes in a
  * canonical order, so it depends on the set and not on enumeration order. It excludes
- * content hashes deliberately: enumerating those would mean reading every input in full
- * on every parity check. An edit preserving both byte length and mtime is therefore not
- * detected — bounded, and documented.
+ * content hashes deliberately: a content hash means a full read of every input. Two
+ * inputs with the same byte length and mtime therefore give the same digest.
  */
 export interface DataProfileInputSignature {
     count: number;
@@ -438,7 +436,7 @@ export interface DataProfileResult {
     kinds?: DataProfileKind[];
     /** What varies across those sets, on a snapshot of the same era. */
     axes?: DataProfileAxis[];
-    /** The drift comparand. */
+    /** The record of the profiled kept input set. */
     inputSignature?: DataProfileInputSignature;
     /** How much of the scanned tree the kinds describe, on a snapshot of the kinds era. Superseded by `partition`. */
     coverage?: DataProfileCoverage;

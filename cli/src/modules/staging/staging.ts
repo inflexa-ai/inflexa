@@ -29,7 +29,7 @@ export type StagedInput = {
     readonly hash: string;
     /** File size in bytes. */
     readonly size: number;
-    /** Source file's last-modification time, epoch ms. With `size` + `fileId`, the drift signature. */
+    /** Source file's last-modification time, epoch ms. With `size` + `fileId`, it feeds the `inputSignature` audit record of a profile. */
     readonly mtimeMs: number;
     /** Path relative to the data dir: `inputs/{mountName}/{key}`. */
     readonly relativePath: string;
