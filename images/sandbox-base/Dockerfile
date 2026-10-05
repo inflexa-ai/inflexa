@@ -237,10 +237,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # key. The chromium section below converts an armored PPA key into a
     # keyring, thus it needs the full gpg tool.
     curl ca-certificates git wget unzip file tree bsdmainutils jq gpg \
-    # The egress firewall of the Docker poll mode. The root entrypoint
+    # The egress firewall of the Docker backend. The root entrypoint
     # installs `iptables -P OUTPUT DROP`, and `setpriv` (util-linux) then
     # drops to the workload uid. iptables stays inert unless
-    # SANDBOX_EGRESS_FIREWALL=1 is set. Callback mode and K8s never set it.
+    # SANDBOX_EGRESS_FIREWALL=1 is set. K8s never sets it.
     iptables \
     && rm -rf /var/lib/apt/lists/*
 
@@ -451,7 +451,7 @@ RUN useradd -l -m -u 1000 -s /bin/bash sandbox \
     && mkdir -p /workspace && chown -R sandbox:sandbox /workspace
 
 # Declared explicitly, not left to the passwd lookup of the runtime. That
-# lookup resolves against the create-time user. Poll mode creates the
+# lookup resolves against the create-time user. Docker creates the
 # container as root (for CAP_NET_ADMIN) and reaches uid 1000 only through
 # the `setpriv` of the entrypoint, which changes credentials and not the
 # environment. K8s creates it with a numeric runAsUser and no lookup at all.
@@ -467,7 +467,7 @@ ENV HOME=/home/sandbox
 COPY --from=server-builder /sandbox-server /usr/local/bin/sandbox-server
 
 # The entrypoint wrapper. With SANDBOX_EGRESS_FIREWALL=1, it installs the
-# poll-mode egress firewall as root and then drops to the workload uid. In
+# egress firewall as root and then drops to the workload uid. In
 # each other case, it execs the server directly.
 COPY images/sandbox-base/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
 RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
@@ -559,8 +559,8 @@ RUN --mount=type=bind,from=syft,source=/syft,target=/tmp/syft \
       && chmod a+r /opt/inflexa/sbom.cdx.json; \
     fi
 
-# The default is the unprivileged workload user. Callback mode and K8s run as
-# uid 1000 throughout. Docker poll mode overrides User to root at create
+# The default is the unprivileged workload user. K8s runs as uid 1000
+# throughout. Docker overrides User to root at create
 # time, thus the entrypoint can install the egress firewall. `setpriv` then
 # drops back to uid 1000 before the server starts.
 WORKDIR /workspace

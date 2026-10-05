@@ -11,20 +11,14 @@
  * record of each exec it ran, thus a second submit attaches to the running or
  * finished exec instead of a second run. The poll then starts at cursor 0, and
  * the caller gets the events of the exec again.
- *
- * Every response is HMAC-verified against the per-sandbox secret. A bad or
- * stale signature throws `HardCancelError`, and the exec fails.
  */
 
 import { DBOS, Error as DBOSErrors, StatusString } from "@dbos-inc/dbos-sdk";
 
 import { untracedFetch } from "../lib/otel-spans.js";
 import { EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
-import { signExecMessage, verifyExecMessage } from "./hmac.js";
 import { createEscalationPolicy, probeLiveness, syntheticFailureReason, syntheticFailureResult } from "./liveness.js";
 import { PollResponseSchema, type ExecEmit, type ExecRequest, type ExecResult, type SandboxLiveness, type SandboxRef, type SubmitExecBody } from "./types.js";
-
-const DEFAULT_FRESHNESS_SECONDS = 300;
 
 const SUBMIT_HTTP_TIMEOUT_MS = 30_000;
 const POLL_HTTP_TIMEOUT_MS = 10_000;
@@ -45,16 +39,6 @@ const SLOW_POLL_INTERVAL_MS = 10_000;
  */
 const CANCEL_CHECK_INTERVAL_MS = 10_000;
 
-export class HardCancelError extends Error {
-    readonly execId: string;
-    readonly reason: "bad-signature" | "stale-timestamp" | "missing";
-    constructor(execId: string, reason: "bad-signature" | "stale-timestamp" | "missing", detail?: string) {
-        super(`exec[${execId}]: hard cancel — ${reason}${detail ? ` (${detail})` : ""}`);
-        this.execId = execId;
-        this.reason = reason;
-    }
-}
-
 export class ExecTimeoutError extends Error {
     readonly execId: string;
     constructor(execId: string) {
@@ -67,7 +51,7 @@ export class ExecTimeoutError extends Error {
 export interface ExecDeps {
     /** Defaults to `globalThis.fetch`. */
     readonly fetch?: typeof fetch;
-    /** The clock of the deadline and of the HMAC freshness. Defaults to `Date.now`. */
+    /** The clock of the deadline and of the cancel reads. Defaults to `Date.now`. */
     readonly now?: () => number;
     /** The pause between two polls. Defaults to a timer. */
     readonly sleep?: (ms: number) => Promise<void>;
@@ -141,18 +125,10 @@ async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: Submit
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SUBMIT_HTTP_TIMEOUT_MS);
     try {
-        // Sign the exact bytes we send: sandbox-server authenticates every inbound request.
-        const raw = JSON.stringify(body);
-        const timestamp = Math.floor(Date.now() / 1000);
-        const signature = signExecMessage({ execId: body.execId, body: raw, timestamp, secret: ref.callbackSecret });
         const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec`, {
             method: "POST",
-            headers: {
-                "content-type": "application/json",
-                "x-sandbox-signature": signature,
-                "x-sandbox-timestamp": String(timestamp),
-            },
-            body: raw,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
             signal: controller.signal,
         });
         if (res.status !== 202) {
@@ -170,49 +146,23 @@ async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: Submit
  * One poll of `GET /exec/{execId}?since={cursor}`.
  *
  * Never throws: a failed poll is not a failed exec, thus every failure is
- * `unavailable` and the loop keeps waiting (bounded by the deadline). A poll
- * response is ALWAYS signed, even while the exec runs, thus a 200 with no
- * signature is `unavailable`, not trusted.
+ * `unavailable` and the loop keeps waiting (bounded by the deadline).
  */
-type PolledSnapshot =
-    | { readonly kind: "ok"; readonly raw: string; readonly signature: string; readonly timestamp: number | null }
-    | { readonly kind: "unavailable"; readonly detail: string };
+type PolledSnapshot = { readonly kind: "ok"; readonly raw: string } | { readonly kind: "unavailable"; readonly detail: string };
 
 async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string, cursor: number): Promise<PolledSnapshot> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), POLL_HTTP_TIMEOUT_MS);
     try {
-        // The response discloses the output of the command, thus the request is
-        // signed over an empty body.
-        const reqTimestamp = Math.floor(Date.now() / 1000);
-        const reqSignature = signExecMessage({ execId, body: "", timestamp: reqTimestamp, secret: ref.callbackSecret });
         const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}?since=${cursor}`, {
             method: "GET",
-            headers: {
-                "x-sandbox-signature": reqSignature,
-                "x-sandbox-timestamp": String(reqTimestamp),
-            },
             signal: controller.signal,
         });
         if (!res.ok) {
             await res.text().catch(() => "");
             return { kind: "unavailable", detail: `status ${res.status}` };
         }
-
-        const signature = res.headers.get("x-sandbox-signature");
-        const raw = await res.text();
-        if (signature === null) return { kind: "unavailable", detail: "poll response missing signature" };
-
-        const tsHeader = res.headers.get("x-sandbox-timestamp");
-        const parsedTs = tsHeader === null ? null : Number.parseInt(tsHeader, 10);
-        return {
-            kind: "ok",
-            raw,
-            signature,
-            // An unparseable timestamp forwards as null, thus `verifyExecMessage`
-            // reports `missing` rather than a guess at a wall clock.
-            timestamp: parsedTs === null || Number.isNaN(parsedTs) ? null : parsedTs,
-        };
+        return { kind: "ok", raw: await res.text() };
     } catch (cause) {
         return { kind: "unavailable", detail: cause instanceof Error ? cause.message : String(cause) };
     } finally {
@@ -221,7 +171,7 @@ async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string
 }
 
 /**
- * Poll until the exec is terminal. Each poll verifies the signed
+ * Poll until the exec is terminal. Each poll reads
  * `{ status, events, cursor, result? }`, forwards the events past the local
  * cursor through `emit`, and returns `result` once it is there.
  *
@@ -246,23 +196,8 @@ async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlin
         const polled = await pollOnce(fetchImpl, ref, execId, cursor);
 
         if (polled.kind === "ok") {
-            const verified = verifyExecMessage({
-                execId,
-                body: Buffer.from(polled.raw, "utf8"),
-                signature: polled.signature,
-                timestamp: polled.timestamp,
-                secret: ref.callbackSecret,
-                nowSec: Math.floor(now() / 1000),
-                freshnessSec: DEFAULT_FRESHNESS_SECONDS,
-            });
-            if (!verified.valid) {
-                throw new HardCancelError(execId, verified.reason, "poll response");
-            }
-
             const resp = PollResponseSchema.parse(JSON.parse(polled.raw));
-            // The filter is load-bearing: the signature covers the body but not the
-            // `since` of the request, thus a validly signed snapshot verifies against
-            // any poll, and a crossed response must not emit delivered events again.
+            // Each event is emitted at most once, whatever `since` the server applied.
             const newEvents = resp.events.filter((ev) => ev.seq > cursor);
             // Sequence numbers are contiguous per exec, thus a hole between the local
             // cursor and the next delivered (or high-water) seq proves that the ring
@@ -284,7 +219,7 @@ async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlin
 
         if (deps.isAlive && escalation.onPoll(polled.kind === "ok" ? "ok" : "unavailable")) {
             const verdict = await probeLiveness(deps.isAlive, ref);
-            // `alive` (a slow exec, an evicted execId) and `inconclusive` (a backend
+            // `alive` (a slow exec) and `inconclusive` (a backend
             // API error) both resume the poll, bounded by the deadline.
             if (verdict.kind === "dead") {
                 return syntheticFailureResult(execId, syntheticFailureReason({ oomKilled: verdict.oomKilled }));

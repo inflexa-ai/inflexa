@@ -173,7 +173,7 @@ function makeSandbox(args: {
     const creates: TestSpawn[] = [];
     const submits: ExecRequest[] = [];
     const teardowns: string[] = [];
-    const ref: SandboxRef = { sandboxId: "sbx-derive-1", host: "127.0.0.1", port: 8765, backend: "docker", callbackSecret: "base64:secret" };
+    const ref: SandboxRef = { sandboxId: "sbx-derive-1", host: "127.0.0.1", port: 8765, backend: "docker" };
     const client = {
         toolchainSource: "store" as const,
         createSandbox(session: SpawnSession, spec: SandboxSpec) {

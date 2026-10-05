@@ -133,9 +133,9 @@ export function stableSpan(dbosName: string, name: string, attributes: Attribute
  * writes no client span. Sandbox-server records no spans, and the step span
  * around the call already covers it.
  */
-export function untracedFetch(fetchImpl: typeof fetch, url: string, init: RequestInit & { headers: Record<string, string> }): Promise<Response> {
+export function untracedFetch(fetchImpl: typeof fetch, url: string, init: RequestInit & { headers?: Record<string, string> }): Promise<Response> {
     const active = context.active();
-    const headers = { ...init.headers };
+    const headers: Record<string, string> = { ...init.headers };
     propagation.inject(active, headers);
     return context.with(suppressTracing(active), () => fetchImpl(url, { ...init, headers }));
 }

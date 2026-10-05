@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 // ── Event ring ──────────────────────────────────────────────────────
@@ -80,47 +79,34 @@ func TestEventRing_OverflowDropsOldestAndMarksTruncated(t *testing.T) {
 
 // ── ?since poll handler ─────────────────────────────────────────────
 
-func getPoll(t *testing.T, h http.HandlerFunc, execID, since string, secret []byte) *httptest.ResponseRecorder {
+func getPoll(t *testing.T, h http.HandlerFunc, execID, since string) *httptest.ResponseRecorder {
 	t.Helper()
-	// The query string is not part of the signature — only (execId, empty body).
 	req := httptest.NewRequest(http.MethodGet, "/exec/"+execID+"?since="+since, nil)
-	signInbound(req, execID, nil, secret)
 	rec := httptest.NewRecorder()
 	h(rec, req)
 	return rec
 }
 
-func decodePoll(t *testing.T, rec *httptest.ResponseRecorder, secret []byte, execID string) pollResponseBody {
+func decodePoll(t *testing.T, rec *httptest.ResponseRecorder) pollResponseBody {
 	t.Helper()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.Bytes()
-	// A poll response is ALWAYS signed — even while running — because the host
-	// verifies every poll before trusting its events.
-	ts, err := strconv.ParseInt(rec.Header().Get(headerTimestamp), 10, 64)
-	if err != nil {
-		t.Fatalf("unparseable timestamp header: %v", err)
-	}
-	if want := signCallback(secret, execID, ts, body); rec.Header().Get(headerSignature) != want {
-		t.Fatalf("poll body signature does not verify over (execId, ts, body)")
-	}
 	var resp pollResponseBody
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("poll body not valid JSON: %v", err)
 	}
 	return resp
 }
 
-func TestPollResult_RunningIsSignedWithEventsAndNoResult(t *testing.T) {
-	secret := []byte("topsecret")
+func TestPollResult_RunningCarriesEventsAndNoResult(t *testing.T) {
 	table := newExecTable()
-	h := execResultHandler(table, newInboundAuth(secret))
+	h := execResultHandler(table)
 	table.reserve(testExecID)
 	table.appendEvent(testExecID, []byte(`{"kind":"file-tree","seq":1}`))
 	table.appendEvent(testExecID, []byte(`{"kind":"file-tree","seq":2}`))
 
-	resp := decodePoll(t, getPoll(t, h, testExecID, "0", secret), secret, testExecID)
+	resp := decodePoll(t, getPoll(t, h, testExecID, "0"))
 	if resp.Status != string(execStatusRunning) {
 		t.Fatalf("want running, got %q", resp.Status)
 	}
@@ -136,19 +122,18 @@ func TestPollResult_RunningIsSignedWithEventsAndNoResult(t *testing.T) {
 }
 
 func TestPollResult_CursorAdvancesAndDropsSeenEvents(t *testing.T) {
-	secret := []byte("s")
 	table := newExecTable()
-	h := execResultHandler(table, newInboundAuth(secret))
+	h := execResultHandler(table)
 	table.reserve(testExecID)
 	table.appendEvent(testExecID, []byte(`{"n":1}`))
 	table.appendEvent(testExecID, []byte(`{"n":2}`))
 
-	first := decodePoll(t, getPoll(t, h, testExecID, "0", secret), secret, testExecID)
+	first := decodePoll(t, getPoll(t, h, testExecID, "0"))
 	if len(first.Events) != 2 {
 		t.Fatalf("first poll should see both events, got %d", len(first.Events))
 	}
 	// Poll again from the advanced cursor: nothing new.
-	second := decodePoll(t, getPoll(t, h, testExecID, strconv.FormatInt(first.Cursor, 10), secret), secret, testExecID)
+	second := decodePoll(t, getPoll(t, h, testExecID, strconv.FormatInt(first.Cursor, 10)))
 	if len(second.Events) != 0 {
 		t.Fatalf("polling from the last cursor should yield no events, got %d", len(second.Events))
 	}
@@ -157,17 +142,16 @@ func TestPollResult_CursorAdvancesAndDropsSeenEvents(t *testing.T) {
 	}
 }
 
-func TestPollResult_TerminalCarriesSignedResultWithProvenance(t *testing.T) {
-	secret := []byte("topsecret")
+func TestPollResult_TerminalCarriesResultWithProvenance(t *testing.T) {
 	table := newExecTable()
-	h := execResultHandler(table, newInboundAuth(secret))
+	h := execResultHandler(table)
 	table.reserve(testExecID)
 
 	completion := []byte(`{"execId":"wf-1:step-a:3","exitCode":0,"provenance":{"reads":[{"path":"/in.csv"}]}}`)
 	table.complete(testExecID, execStatusCompleted, &execResult{ExitCode: 0})
 	table.setCompletionBody(testExecID, completion)
 
-	resp := decodePoll(t, getPoll(t, h, testExecID, "0", secret), secret, testExecID)
+	resp := decodePoll(t, getPoll(t, h, testExecID, "0"))
 	if resp.Status != string(execStatusCompleted) {
 		t.Fatalf("want completed, got %q", resp.Status)
 	}
@@ -184,59 +168,9 @@ func TestPollResult_TerminalCarriesSignedResultWithProvenance(t *testing.T) {
 }
 
 func TestPollResult_UnknownExecIdIs404(t *testing.T) {
-	secret := []byte("s")
 	table := newExecTable()
-	h := execResultHandler(table, newInboundAuth(secret))
-	if rec := getPoll(t, h, "never-submitted", "0", secret); rec.Code != http.StatusNotFound {
+	h := execResultHandler(table)
+	if rec := getPoll(t, h, "never-submitted", "0"); rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for unknown execId, got %d", rec.Code)
-	}
-}
-
-func TestPollResult_UnsignedRequestIsRejected(t *testing.T) {
-	secret := []byte("topsecret")
-	table := newExecTable()
-	h := execResultHandler(table, newInboundAuth(secret))
-	table.reserve(testExecID)
-	table.appendEvent(testExecID, []byte(`{"n":1}`))
-
-	req := httptest.NewRequest(http.MethodGet, "/exec/"+testExecID+"?since=0", nil)
-	rec := httptest.NewRecorder()
-	h(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("unsigned poll must be 401, got %d", rec.Code)
-	}
-}
-
-// ── Poll-mode executor ──────────────────────────────────────────────
-
-// In poll mode the executor is constructed with a nil callback client: it must
-// buffer the terminal result in the exec table (for the host to pull) and never
-// dereference the absent callback.
-func TestExecutor_PollModeBuffersCompletionWithoutCallback(t *testing.T) {
-	table := newExecTable()
-	exe := newExecutor(table, nil, newProcessTable(), newInboundAuth([]byte("s")), transportPoll)
-
-	rw := submit(t, exe, map[string]any{
-		"command": []string{"sh", "-c", "echo hi"},
-		"execId":  "poll-1",
-	})
-	if rw.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d", rw.Code)
-	}
-
-	waitFor(t, func() bool {
-		snap, ok := table.pollSnapshotFor("poll-1", 0)
-		return ok && snap.body != nil
-	}, 5*time.Second)
-
-	snap, _ := table.pollSnapshotFor("poll-1", 0)
-	if snap.status != execStatusCompleted {
-		t.Fatalf("want completed, got %q", snap.status)
-	}
-	if snap.body == nil {
-		t.Fatal("poll mode must record the completion body for the host to pull")
-	}
-	if !strings.Contains(string(snap.body), `"exitCode":0`) {
-		t.Fatalf("completion body missing exitCode: %s", snap.body)
 	}
 }

@@ -14,9 +14,7 @@ const (
 	execStatusFailed    execStatus = "failed"
 )
 
-const completedEntryTTL = time.Hour
-
-// eventRingCapacity bounds the per-exec progress-event ring in poll mode. A
+// eventRingCapacity bounds the per-exec progress-event ring. A
 // chatty exec between polls must not grow the table without limit; on overflow
 // the oldest event is dropped and a sticky `truncated` marker is set so a poll
 // response can signal that earlier events were shed. Sized generously: progress
@@ -48,28 +46,25 @@ type ringEvent struct {
 }
 
 type execState struct {
-	ExecID     string
-	Status     execStatus
-	PID        int
-	StartedAt  time.Time
-	TerminalAt time.Time
-	Result     *execResult
-	// CompletionBody is the exact JSON the completion callback carries, kept so
-	// `GET /exec/{execId}` can serve it verbatim. Serving the same bytes — not a
-	// re-marshalled `Result` — is what lets a pulled completion carry the
+	ExecID    string
+	Status    execStatus
+	PID       int
+	StartedAt time.Time
+	Result    *execResult
+	// CompletionBody is the exact completion JSON, kept so `GET /exec/{execId}`
+	// can serve it verbatim as `result`. Serving the same bytes — not a
+	// re-marshalled `Result` — is what lets the served result carry the
 	// provenance frame, which `execResult` does not model.
-	CompletionBody   []byte
-	CompletionPosted bool
-	// Poll-mode event ring: bounded, drop-oldest. `eventSeq` is the high-water
-	// sequence (also the poll cursor); `truncated` latches once the ring sheds
-	// an event.
+	CompletionBody []byte
+	// Event ring: bounded, drop-oldest. `eventSeq` is the high-water sequence
+	// (also the poll cursor); `truncated` latches once the ring sheds an event.
 	events    []ringEvent
 	eventSeq  int64
 	truncated bool
 }
 
-// pollSnapshot is the atomic view `GET /exec/{execId}?since={cursor}` serves in
-// poll mode: the exec status, the events newer than the caller's cursor, the new
+// pollSnapshot is the atomic view `GET /exec/{execId}?since={cursor}` serves:
+// the exec status, the events newer than the caller's cursor, the new
 // high-water cursor, whether events were ever shed, and the terminal completion
 // body (nil while running).
 type pollSnapshot struct {
@@ -80,6 +75,9 @@ type pollSnapshot struct {
 	body      []byte
 }
 
+// execTable keeps each entry for the life of the process: a recovered host step
+// submits the same execId again, and it must find the entry, not run the
+// command a second time.
 type execTable struct {
 	mu      sync.RWMutex
 	entries map[string]*execState
@@ -137,13 +135,11 @@ func (t *execTable) complete(execID string, status execStatus, result *execResul
 	}
 	st.Status = status
 	st.Result = result
-	st.TerminalAt = t.now()
 	return true
 }
 
-// setCompletionBody records the exact bytes a completion callback would carry.
-// Called before the POST is attempted, so a completion whose delivery never
-// succeeds is still retrievable through `GET /exec/{execId}`.
+// setCompletionBody records the exact completion bytes that a poll serves as
+// `result`.
 func (t *execTable) setCompletionBody(execID string, body []byte) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -152,57 +148,8 @@ func (t *execTable) setCompletionBody(execID string, body []byte) {
 	}
 }
 
-// claimCompletionPost takes the at-most-once right to POST the completion.
-// Returns true if the caller is the first to claim it; false if a claim is
-// already outstanding or the execId is unknown.
-//
-// The claim must be released (see releaseCompletionPost) when delivery fails.
-// Latching it permanently on a *failed* attempt would mark the completion
-// delivered when it never was, stranding the result: the exec table would hold
-// a terminal entry that nothing is allowed to send.
-func (t *execTable) claimCompletionPost(execID string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	st, ok := t.entries[execID]
-	if !ok {
-		return false
-	}
-	if st.CompletionPosted {
-		return false
-	}
-	st.CompletionPosted = true
-	return true
-}
-
-// releaseCompletionPost surrenders a claim taken by claimCompletionPost.
-func (t *execTable) releaseCompletionPost(execID string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if st, ok := t.entries[execID]; ok {
-		st.CompletionPosted = false
-	}
-}
-
-// completionSnapshot copies out the fields `GET /exec/{execId}` serves. Copying
-// under the lock keeps the handler off the live entry, which the exec's own
-// goroutine mutates.
-func (t *execTable) completionSnapshot(execID string) (status execStatus, body []byte, ok bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	st, found := t.entries[execID]
-	if !found {
-		return "", nil, false
-	}
-	if st.CompletionBody == nil {
-		return st.Status, nil, true
-	}
-	out := make([]byte, len(st.CompletionBody))
-	copy(out, st.CompletionBody)
-	return st.Status, out, true
-}
-
-// appendEvent buffers one progress-event payload in the exec's ring (poll
-// mode), assigning it the next sequence number. On overflow it drops the oldest
+// appendEvent buffers one progress-event payload in the exec's ring,
+// assigning it the next sequence number. On overflow it drops the oldest
 // event and latches `truncated`. A copy of the payload is retained so the
 // caller may reuse its buffer.
 func (t *execTable) appendEvent(execID string, payload []byte) {
@@ -250,49 +197,8 @@ func (t *execTable) pollSnapshotFor(execID string, since int64) (pollSnapshot, b
 	return snap, true
 }
 
-// evictExpired removes terminal entries older than ttl.
-func (t *execTable) evictExpired(ttl time.Duration) int {
-	cutoff := t.now().Add(-ttl)
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	removed := 0
-	for id, st := range t.entries {
-		if st.Status == execStatusRunning {
-			continue
-		}
-		if st.TerminalAt.Before(cutoff) {
-			delete(t.entries, id)
-			removed++
-		}
-	}
-	return removed
-}
-
 func (t *execTable) size() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return len(t.entries)
-}
-
-// startTTLSweeper runs a background goroutine that evicts terminal entries
-// every `interval`. Returns a stop function.
-func (t *execTable) startTTLSweeper(interval, ttl time.Duration) func() {
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				t.evictExpired(ttl)
-			}
-		}
-	})
-	return func() {
-		close(stop)
-		wg.Wait()
-	}
 }

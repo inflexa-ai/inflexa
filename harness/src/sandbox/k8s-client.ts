@@ -1,10 +1,9 @@
 /**
  * K8s-backed `createSandbox` / `teardown` / `isAlive`.
  *
- * Launches a sandbox Job with the `SANDBOX_CALLBACK_SECRET` env var; pod IP +
- * port 8765 are the host/port the host POSTs `/exec` to and polls. The pod
- * initiates nothing: its confinement is a cluster-side NetworkPolicy, not an
- * in-pod firewall.
+ * Launches a sandbox Job; pod IP + port 8765 are the host/port the host POSTs
+ * `/exec` to and polls. The pod initiates nothing: its confinement is a
+ * cluster-side NetworkPolicy, not an in-pod firewall.
  * Storage is wired via the shared session PVC: a flat read-only `volumeMount`
  * of the analysis tree at `/{resourceId}` plus a nested read-write mount of the
  * step's artifact dir, with the lib/ref stores mounted read-only at `/mnt/libs`
@@ -242,7 +241,6 @@ function buildJobSpec(
     // in the env of a container resolves at the kubelet, thus the later spread
     // must win here, not there.
     const env = Object.entries({
-        SANDBOX_CALLBACK_SECRET: identity.callbackSecret,
         ...threadLimitEnv(spec),
         ...plan.env,
         ...(sandboxSpec.extraEnv ?? {}),
@@ -554,8 +552,8 @@ function waitForJobGone(batchApi: BatchV1Api, namespace: string, name: string): 
  * owner workflow id must match this step's `ownerWorkflowId`.
  * Only a recovery re-run carries the same checkpointed identity, so a mismatch
  * means an (astronomically rare) name collision with a *different* step —
- * adopting its pod would HMAC-fail every request, and deleting its Job would
- * kill a live sibling. Refuse loudly instead.
+ * adopting its pod would send the execs of this step to a sibling, and deleting
+ * its Job would kill a live sibling. Refuse loudly instead.
  */
 function createOrAdoptJob(
     batchApi: BatchV1Api,
@@ -688,7 +686,6 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                             host: ready.value.podIP,
                             port: SANDBOX_SERVER_PORT,
                             backend: "k8s",
-                            callbackSecret: identity.callbackSecret,
                         };
                         const registered = await trySandbox(
                             () => config.registerSandbox(session, spec, ref),

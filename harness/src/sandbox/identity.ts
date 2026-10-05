@@ -1,13 +1,13 @@
 /**
  * Sandbox identity minting — the durable half of the two-step create (ADR
- * 0016). Backend-agnostic: the `sandboxId` and HMAC `callbackSecret` are minted
- * here, checkpointed by the `sandbox.mint` DBOS step, then handed to the
- * backend's spawn step. Because the identity is durable before any machine
- * exists, a crash between spawn and the spawn-step checkpoint is recoverable —
- * the re-run adopts the existing machine under the same name + secret.
+ * 0016). Backend-agnostic: the `sandboxId` is minted here, checkpointed by the
+ * `sandbox.mint` DBOS step, then handed to the backend's spawn step. Because the
+ * identity is durable before any machine exists, a crash between spawn and the
+ * spawn-step checkpoint is recoverable — the re-run adopts the existing machine
+ * under the same name.
  */
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import type { SandboxIdentity } from "./types.js";
 
@@ -19,8 +19,5 @@ import type { SandboxIdentity } from "./types.js";
 export function mintSandboxIdentity(runId: string): SandboxIdentity {
     const run8 = runId.replace(/-/g, "").slice(0, 8);
     const suffix = randomUUID().replace(/-/g, "").slice(0, 8);
-    return {
-        sandboxId: `sbx-${run8}-${suffix}`,
-        callbackSecret: "base64:" + randomBytes(32).toString("base64"),
-    };
+    return { sandboxId: `sbx-${run8}-${suffix}` };
 }

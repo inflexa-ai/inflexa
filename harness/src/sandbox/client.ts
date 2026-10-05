@@ -38,7 +38,7 @@ export interface SandboxClient {
     /**
      * DBOS step (`sandbox.create`) — the spawn half of the two-step create
      * (see the harness-sandbox-exec spec). Launches the sandbox-base container/Job under the
-     * pre-minted `identity` (name + HMAC secret checkpointed by `sandbox.mint`),
+     * pre-minted `identity` (the name checkpointed by `sandbox.mint`),
      * stamps the labels, waits for `/health`, records the live handle in
      * the active-sandbox registry, and returns the in-memory `SandboxRef`. A
      * recovery re-run whose machine already exists (the crash window between
@@ -53,7 +53,7 @@ export interface SandboxClient {
 
     /**
      * DBOS step (`sandbox.exec`). Submits the command to the sandbox in `ref`,
-     * polls the signed `GET /exec/{execId}?since={cursor}` until the exec is
+     * polls `GET /exec/{execId}?since={cursor}` until the exec is
      * terminal, forwards each progress event through `emit`, and returns the
      * result. `deadline` is an absolute unix-ms timestamp.
      *

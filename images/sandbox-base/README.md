@@ -6,8 +6,8 @@ The **one runtime image** of every sandbox. It bundles the language runtimes
 (R 4.6.0, Python 3.12, Node.js 24), the bioconda command-line tools at
 `/opt/conda`, the Node packages at `/opt/node`, and Chromium. It also carries
 a Go **sandbox-server**, the in-container counterpart to the harness
-`SandboxClient`: the client submits work, and the server runs commands and
-serves or POSTs HMAC-verified results. See
+`SandboxClient`: the client submits a command and polls for its result, and
+the server runs the command. See
 [`../../harness/CONTEXT.md`](../../harness/CONTEXT.md) and the
 [`sandbox-server`](../../harness/openspec/specs/sandbox-server/) /
 [`harness-sandbox-exec`](../../harness/openspec/specs/harness-sandbox-exec/)
@@ -37,55 +37,41 @@ local builds.
 |-|-|
 |`Dockerfile`|Multi-stage build: compiles the server + provenance shim, builds the conda prefix and the Node tree in builder stages, then assembles the runtime image on `BASE_IMAGE`.|
 |`scripts/`|The manifest readers and the node load check. The builder stages run them in place of inline programs.|
-|`server/`|The Go `sandbox-server` (static binary, `CGO_ENABLED=0`) — HTTP exec protocol + signed results.|
+|`server/`|The Go `sandbox-server` (static binary, `CGO_ENABLED=0`) — the HTTP exec protocol.|
 |`provenance/`|File-read tracking hooks: `provtrack.c` (LD_PRELOAD), `sitecustomize.py` (Python), `Rprofile.site` (R).|
-|`sandbox-entrypoint.sh`|Seeds the prepared caches, installs the poll-mode egress firewall, drops privileges, execs the server.|
+|`sandbox-entrypoint.sh`|Seeds the prepared caches, installs the egress firewall, drops privileges, execs the server.|
 |`inflexa-seed-caches.sh`|The `seed_caches` function, at `/usr/local/lib/` in the image. The entrypoint sources it, and the cache check of the build sources the same file.|
 
 ## Exec protocol
 
 The server listens on `:8765` (override `SANDBOX_SERVER_PORT`) and exposes:
 
-- `GET  /health` — readiness probe. Unauthenticated.
-- `POST /exec` — submit a command; returns `202` immediately and runs it in the background. Signed.
-- `GET  /exec/{execId}` — the terminal result for an exec, or `{"status":"running"}` while it is still executing. Signed. With `?since={cursor}` (poll mode) it returns `{ status, events[], cursor, truncated?, result? }`, always signed.
-- `GET  /preview/...` — static file preview, only when `PREVIEW_ROOT` is set (the shipped image never sets it). Unauthenticated.
+- `GET  /health` — the readiness probe.
+- `POST /exec` — submit a command. The server sends `202` immediately and runs the command in the background.
+- `GET  /exec/{execId}?since={cursor}` — the poll. It sends `{ status, events[], cursor, truncated?, result? }`. If `since` is not there, the server uses `0`.
+- `GET  /preview/...` — static file preview, only when `PREVIEW_ROOT` is set (the shipped image never sets it).
 
-The exec endpoints are **signature-authenticated** in both transport modes: the
-caller signs
-`HMAC-SHA256(SANDBOX_CALLBACK_SECRET, "${execId}:${timestamp}:${sha256Hex(body)}")`
-into `X-Sandbox-Signature`/`X-Sandbox-Timestamp` — the same construction the
-served/pushed bodies use, run inbound — and the server verifies it against a
-freshness window (`POST /exec` over the request body, `GET /exec/{execId}` over an
-empty body). It is a request signature rather than a bearer on purpose: any
-cleartext hop can drop a request but never mint one, whereas a static credential
-would be reusable. A missing, forged, or stale signature is a `401`. Because the
-check tests possession of the per-sandbox secret, a sibling sandbox — holding only
-its own secret — cannot drive this one's `/exec`. There is no `kill` route.
+The `status` is `running`, `completed`, or `failed`. The `events` are the
+progress events after the `cursor` of the request. A bounded ring for each exec
+holds them. The `result` is the terminal result, with the provenance frame. It
+is in the poll only after the exec ends. Thus the host reads the end of the
+exec from `result`.
 
-## Transport modes
+The `execId` is the key of the exec record. A submit with a known `execId` sends
+the stored status, and the command does not run again. The server keeps each
+record in memory for the life of the process. There is no `kill` route.
 
-`SANDBOX_TRANSPORT` selects how a command's progress events and terminal result
-reach the host. It changes nothing about execution, idempotency, provenance, or
-inbound auth. `SANDBOX_CALLBACK_SECRET` is required in both modes.
+## Confinement
 
-**`poll`** (default) — the server never dials out; `CORTEX_BASE_URL` is neither
-read nor required. Progress events accumulate in a bounded per-exec ring, and both
-events and the terminal result are served, signed, from
-`GET /exec/{execId}?since={cursor}`. The host polls; the sandbox initiates nothing.
+The endpoints carry no credential. The network is the boundary:
 
-**`callback`** — progress (`event`) and completion (`complete`) are POSTed to
-`{CORTEX_BASE_URL}/sandbox/{execId}/{kind}` as HMAC-SHA256-signed callbacks,
-retried with exponential backoff until a 2xx. **Each attempt is signed afresh**:
-the host verifies the timestamp against a freshness window and treats a stale one
-as fatal, so a signature minted once and reused would become permanently
-unacceptable the moment that window elapsed. Delivery is push-first but never
-push-only — the completion bytes are recorded before the POST, so
-`GET /exec/{execId}` remains the signed-at-request-time recovery backstop for a
-push that never lands.
+- Docker publishes the port on `127.0.0.1` only. The entrypoint of each sandbox
+  always installs the egress firewall. Thus a sibling sandbox on the same bridge
+  cannot open a connection to this server.
+- K8s confines the pod with a NetworkPolicy.
 
-Either way the served result bytes carry the provenance frame, so a pulled result
-is indistinguishable from a pushed one.
+The server never opens an outbound connection. The host polls, and the sandbox
+starts nothing.
 
 ## Entrypoint: the cache seed, then the firewall
 
@@ -98,11 +84,11 @@ copy is necessary because numba selects a cache directory by a write probe,
 and it skips a read-only one. A missing cache degrades in silence: a cold
 cache costs time, not correctness.
 
-## Egress firewall (Docker poll mode)
+## Egress firewall (Docker)
 
-In poll mode the sandbox needs no egress. The Docker backend sets
-`SANDBOX_EGRESS_FIREWALL=1` and grants `CAP_NET_ADMIN`; the image's root
-entrypoint then installs, before the workload runs:
+The sandbox needs no egress. The Docker backend always sets
+`SANDBOX_EGRESS_FIREWALL=1` and grants `CAP_NET_ADMIN`. Before the workload
+runs, the root entrypoint of the image installs these rules:
 
 ```
 iptables -A OUTPUT -o lo -j ACCEPT
@@ -110,12 +96,13 @@ iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -P OUTPUT DROP
 ```
 
-and `setpriv`-drops to uid 1000 with an empty capability set, so the workload can
-neither open a new outbound connection nor flush the rules. The host's inbound poll
-rides the established connection, so polling works with egress hard-blocked; `lo`
-survives for local tooling. When the flag is unset (callback mode, or K8s where
-confinement is a NetworkPolicy) the entrypoint execs the server directly. There is
-no gateway sidecar.
+Then `setpriv` drops to uid 1000 with an empty capability set. Thus the
+workload cannot open a new outbound connection, and it cannot flush the rules.
+The inbound poll of the host uses the established connection. Thus the poll
+works while egress is blocked. `lo` stays open for local tooling.
+
+If the flag is not set, the entrypoint execs the server directly. K8s uses this
+path, because a NetworkPolicy confines the pod. There is no gateway sidecar.
 
 ## Build
 

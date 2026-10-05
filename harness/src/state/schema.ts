@@ -78,10 +78,7 @@ export type CortexRunRow = z.infer<typeof CortexRunRowSchema>;
 
 /**
  * Persistable sandbox handle — what the active-sandbox registry stores on
- * `cortex_step_executions.sandbox_ref`. Excludes the per-sandbox
- * `callbackSecret`, which lives only in the DBOS step-output cache (ADR
- * 0007). The harness reconstructs the full in-memory `SandboxRef` by
- * reading the secret from the cached `createSandbox` step output.
+ * `cortex_step_executions.sandbox_ref`.
  */
 export const PersistedSandboxRefSchema = z.object({
     sandboxId: z.string(),

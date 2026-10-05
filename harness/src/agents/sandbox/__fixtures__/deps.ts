@@ -20,7 +20,6 @@ export function makeFakeSandboxClient(): SandboxClient {
         host: "127.0.0.1",
         port: 8765,
         backend: "docker",
-        callbackSecret: "secret",
     };
     return {
         toolchainSource: "store",
@@ -104,7 +103,6 @@ export function makeFakeSandboxAgentDeps(over: MakeDepsOverrides = {}): SandboxA
                 host: "127.0.0.1",
                 port: 8765,
                 backend: "docker",
-                callbackSecret: "secret",
             },
             workspaceRoot: "/tmp/sessions/analysis-001",
             analysisId: over.analysisId ?? "analysis-001",

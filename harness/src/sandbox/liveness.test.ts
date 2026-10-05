@@ -14,7 +14,6 @@ const REF: SandboxRef = {
     host: "127.0.0.1",
     port: 8765,
     backend: "docker",
-    callbackSecret: "unused",
 };
 
 describe("createEscalationPolicy", () => {

@@ -7,13 +7,11 @@ import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { describe, expect, test } from "bun:test";
 
 import { EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
-import { ExecTimeoutError, HardCancelError, runExec, type ExecDeps } from "./exec.js";
-import { signExecMessage, verifyExecMessage } from "./hmac.js";
+import { ExecTimeoutError, runExec, type ExecDeps } from "./exec.js";
 import { PROBE_AFTER_UNAVAILABLE_POLLS } from "./liveness.js";
 import type { ExecResult, SandboxLiveness, SandboxRef } from "./types.js";
 
 const EXEC_ID = "an-1:run-1-0:7";
-const SECRET = "base64:" + Buffer.from("01234567890123456789012345678901").toString("base64");
 const NOW_MS = 1_700_000_000_000;
 const DEADLINE = NOW_MS + 60_000;
 
@@ -22,7 +20,6 @@ const REF: SandboxRef = {
     host: "127.0.0.1",
     port: 8765,
     backend: "docker",
-    callbackSecret: SECRET,
 };
 
 const REQUEST = { command: ["echo", "hi"] } as const;
@@ -36,11 +33,9 @@ const okResult: ExecResult = {
     timedOut: false,
 };
 
-/** A signed poll response, mirroring the Go server's `pollResponseBody`. */
-function signedPoll(body: Record<string, unknown>, ts: number = Math.floor(NOW_MS / 1000)): Response {
-    const raw = JSON.stringify(body);
-    const sig = signExecMessage({ execId: EXEC_ID, body: raw, timestamp: ts, secret: SECRET });
-    return new Response(raw, { status: 200, headers: { "x-sandbox-signature": sig, "x-sandbox-timestamp": String(ts) } });
+/** A poll response, mirroring the Go server's `pollResponseBody`. */
+function pollResponse(body: Record<string, unknown>): Response {
+    return new Response(JSON.stringify(body), { status: 200 });
 }
 
 interface SeenRequest {
@@ -58,7 +53,7 @@ function sandbox(polls: (Record<string, unknown> | "unavailable")[], seen: SeenR
         seen.push({ url: String(input), ...(init ? { init } : {}) });
         if (init?.method === "POST") return new Response(JSON.stringify({ status: "started" }), { status: 202 });
         const item = i < polls.length ? polls[i++] : polls[polls.length - 1];
-        return item === "unavailable" ? new Response("unknown execId", { status: 404 }) : signedPoll(item!);
+        return item === "unavailable" ? new Response("unknown execId", { status: 404 }) : pollResponse(item!);
     }) as typeof fetch;
 }
 
@@ -113,24 +108,6 @@ describe("the submit", () => {
         expect(body.stderrByteCap).toBe(1234);
     });
 
-    test("signs the exact bytes it POSTs, thus the inbound check of sandbox-server passes", async () => {
-        const seen: SeenRequest[] = [];
-        await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
-
-        const headers = seen[0]!.init!.headers as Record<string, string>;
-        const timestamp = Number.parseInt(headers["x-sandbox-timestamp"]!, 10);
-        const verdict = verifyExecMessage({
-            execId: EXEC_ID,
-            body: seen[0]!.init!.body as string,
-            signature: headers["x-sandbox-signature"]!,
-            timestamp,
-            secret: SECRET,
-            nowSec: timestamp,
-            freshnessSec: 300,
-        });
-        expect(verdict.valid).toBe(true);
-    });
-
     test("a non-202 throws, and no poll follows", async () => {
         const seen: SeenRequest[] = [];
         const failing = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -141,24 +118,11 @@ describe("the submit", () => {
         expect(seen).toHaveLength(1);
     });
 
-    test("the poll URL escapes the colons of the exec id and carries a valid signature", async () => {
+    test("the poll URL escapes the colons of the exec id", async () => {
         const seen: SeenRequest[] = [];
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
 
-        const poll = seen[1]!;
-        expect(poll.url).toBe(`http://127.0.0.1:8765/exec/${encodeURIComponent(EXEC_ID)}?since=0`);
-        const headers = poll.init!.headers as Record<string, string>;
-        const timestamp = Number.parseInt(headers["x-sandbox-timestamp"]!, 10);
-        const verdict = verifyExecMessage({
-            execId: EXEC_ID,
-            body: "",
-            signature: headers["x-sandbox-signature"]!,
-            timestamp,
-            secret: SECRET,
-            nowSec: timestamp,
-            freshnessSec: 300,
-        });
-        expect(verdict.valid).toBe(true);
+        expect(seen[1]!.url).toBe(`http://127.0.0.1:8765/exec/${encodeURIComponent(EXEC_ID)}?since=0`);
     });
 });
 
@@ -207,8 +171,6 @@ describe("the poll loop", () => {
     });
 
     test("events at or below the local cursor are never emitted again", async () => {
-        // The signature covers the body, not the `since` of the request, thus a
-        // crossed response that serves delivered events again verifies.
         const emitted: unknown[] = [];
         await runExec(
             REF,
@@ -299,28 +261,6 @@ describe("the poll loop", () => {
             ]),
         });
         expect(warnings).toEqual([]);
-    });
-
-    test("a forged poll response hard-cancels", async () => {
-        const forged = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-            if (init?.method === "POST") return new Response("{}", { status: 202 });
-            return new Response(JSON.stringify({ status: "running", events: [], cursor: 0 }), {
-                status: 200,
-                headers: { "x-sandbox-signature": "deadbeef".repeat(8), "x-sandbox-timestamp": String(Math.floor(NOW_MS / 1000)) },
-            });
-        }) as typeof fetch;
-        await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: forged })).rejects.toBeInstanceOf(HardCancelError);
-    });
-
-    test("an unsigned 200 is unavailable, not trusted", async () => {
-        const { now, sleep } = tickingClock();
-        const unsigned = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-            if (init?.method === "POST") return new Response("{}", { status: 202 });
-            return new Response(JSON.stringify(completed), { status: 200 });
-        }) as typeof fetch;
-        await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, NOW_MS + 3000, { ...BASE, now, sleep, fetch: unsigned })).rejects.toBeInstanceOf(
-            ExecTimeoutError,
-        );
     });
 
     test("a deadline already crossed still polls once — a finished exec is returned, not timed out", async () => {

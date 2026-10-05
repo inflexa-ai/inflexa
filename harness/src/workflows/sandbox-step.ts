@@ -476,7 +476,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     const lineageCollector = createLineageCollector(input);
 
-    // (2a) sandbox.mint — checkpoint the machine's identity (name + HMAC secret)
+    // (2a) sandbox.mint — checkpoint the machine's identity (its name)
     // BEFORE it is spawned (see the harness-sandbox-exec spec). Durable-before-create is what makes (2b)
     // idempotent: a crash between spawn and the spawn checkpoint re-runs (2b)
     // with the same identity, which adopts the already-created machine instead
@@ -484,8 +484,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     const identity = await DBOS.runStep(() => Promise.resolve(mintSandboxIdentity(input.runId)), { name: "sandbox.mint" });
 
     // (2b) sandbox.create — spawn (or adopt) the machine under the minted
-    // identity. The handle (secret included) is cached so recovery picks the
-    // same machine back up without re-provisioning.
+    // identity. The handle is cached so recovery picks the same machine back up
+    // without re-provisioning.
     const sandboxSpec: SandboxSpec = {
         childWorkflowId,
         image: input.image,

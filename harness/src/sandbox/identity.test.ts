@@ -11,12 +11,6 @@ describe("mintSandboxIdentity", () => {
         expect(id.sandboxId.length).toBeLessThanOrEqual(63);
     });
 
-    test("secret is a 32-byte base64 value", () => {
-        const { callbackSecret } = mintSandboxIdentity("run-1");
-        expect(callbackSecret.startsWith("base64:")).toBe(true);
-        expect(callbackSecret.length).toBeGreaterThan(40);
-    });
-
     test("suffix is random across mints for the same run", () => {
         const ids = new Set(Array.from({ length: 50 }, () => mintSandboxIdentity("run-1").sandboxId));
         // 8 hex chars → collisions across 50 mints are astronomically unlikely.

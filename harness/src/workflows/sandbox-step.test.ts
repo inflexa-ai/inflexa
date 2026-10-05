@@ -192,7 +192,6 @@ const SANDBOX_REF: SandboxRef = {
     host: "127.0.0.1",
     port: 8765,
     backend: "docker",
-    callbackSecret: "base64:unused",
 };
 
 function makeSandboxClient(spawns: Array<{ session: SpawnSession; spec: SandboxSpec }> = []): SandboxClient {

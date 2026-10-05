@@ -244,7 +244,7 @@ describe("docker createSandbox — confinement", () => {
         expect(ref.port).toBe(32100);
     });
 
-    test("returns a SandboxRef with callbackSecret and registers it; env + binds are wired", async () => {
+    test("returns a SandboxRef and registers it; env + binds are wired", async () => {
         const { docker, created } = stubDocker();
         const registered: Array<{ runId: string; stepId: string; sandboxId: string }> = [];
         const ops = createDockerSandboxOps({
@@ -263,11 +263,9 @@ describe("docker createSandbox — confinement", () => {
         const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(ref.backend).toBe("docker");
-        expect(ref.callbackSecret.length).toBeGreaterThan(40);
 
         const sandbox = sandboxOf(created)!;
         const env = envMapOf(sandbox);
-        expect(env.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
         expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1");
         expect(env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
 
@@ -1074,7 +1072,7 @@ describe("docker teardown / isAlive", () => {
             docker,
             registerSandbox: async () => {},
         });
-        const result = await ops.teardown({ sandboxId: "sbx-missing", host: "127.0.0.1", port: 9999, backend: "docker", callbackSecret: "x" });
+        const result = await ops.teardown({ sandboxId: "sbx-missing", host: "127.0.0.1", port: 9999, backend: "docker" });
         expect(result.isOk()).toBe(true);
     });
 
@@ -1089,19 +1087,19 @@ describe("docker teardown / isAlive", () => {
         });
 
         // 404 (never created) → dead.
-        expect((await ops.isAlive({ sandboxId: "missing", host: "h", port: 1, backend: "docker", callbackSecret: "x" }))._unsafeUnwrap()).toEqual({
+        expect((await ops.isAlive({ sandboxId: "missing", host: "h", port: 1, backend: "docker" }))._unsafeUnwrap()).toEqual({
             alive: false,
             oomKilled: false,
         });
 
         running.set("alive", true);
-        expect((await ops.isAlive({ sandboxId: "alive", host: "h", port: 1, backend: "docker", callbackSecret: "x" }))._unsafeUnwrap()).toEqual({
+        expect((await ops.isAlive({ sandboxId: "alive", host: "h", port: 1, backend: "docker" }))._unsafeUnwrap()).toEqual({
             alive: true,
             oomKilled: false,
         });
 
         running.set("stopped", false);
-        expect((await ops.isAlive({ sandboxId: "stopped", host: "h", port: 1, backend: "docker", callbackSecret: "x" }))._unsafeUnwrap()).toEqual({
+        expect((await ops.isAlive({ sandboxId: "stopped", host: "h", port: 1, backend: "docker" }))._unsafeUnwrap()).toEqual({
             alive: false,
             oomKilled: false,
         });
@@ -1119,7 +1117,7 @@ describe("docker teardown / isAlive", () => {
 
         running.set("oomed", false);
         oomKilled.add("oomed");
-        expect((await ops.isAlive({ sandboxId: "oomed", host: "h", port: 1, backend: "docker", callbackSecret: "x" }))._unsafeUnwrap()).toEqual({
+        expect((await ops.isAlive({ sandboxId: "oomed", host: "h", port: 1, backend: "docker" }))._unsafeUnwrap()).toEqual({
             alive: false,
             oomKilled: true,
         });
@@ -1144,7 +1142,7 @@ describe("docker teardown / isAlive", () => {
             registerSandbox: async () => {},
         });
 
-        const result = await ops.isAlive({ sandboxId: "x", host: "h", port: 1, backend: "docker", callbackSecret: "x" });
+        const result = await ops.isAlive({ sandboxId: "x", host: "h", port: 1, backend: "docker" });
         expect(result.isErr()).toBe(true);
         if (result.isErr()) expect(result.error.type).toBe("liveness_failed");
     });

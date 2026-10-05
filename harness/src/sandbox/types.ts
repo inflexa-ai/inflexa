@@ -2,11 +2,9 @@
  * Sandbox-client types — the wire/persistence shapes that cross the
  * submit/poll protocol (see the harness-sandbox-exec spec) and the active-sandbox registry.
  *
- * `SandboxRef` is the in-memory handle the harness uses to talk to a live
- * sandbox; it carries the per-sandbox `callbackSecret` (see the harness-sandbox-exec spec). The
- * persistable subset is `PersistedSandboxRef` (from `harness/state/schema.ts`)
- * — that one OMITS the secret, which lives only in the cached
- * `createSandbox` DBOS step output.
+ * `SandboxRef` is the handle the harness uses to talk to a live sandbox. The
+ * active-sandbox registry persists the same shape (`PersistedSandboxRef`, from
+ * `harness/state/schema.ts`).
  */
 
 import type { ResultAsync } from "neverthrow";
@@ -16,7 +14,7 @@ import type { RunSession } from "../auth/types.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
 import type { GateFailure } from "../lib/hooks.js";
 import type { PackageQuery } from "./package-identity.js";
-import { PersistedSandboxRefSchema } from "../state/schema.js";
+import type { PersistedSandboxRef } from "../state/schema.js";
 
 export const SandboxBackend = z.enum(["docker", "k8s"]);
 export type SandboxBackend = z.infer<typeof SandboxBackend>;
@@ -127,31 +125,7 @@ export interface SandboxLiveness {
     readonly oomKilled: boolean;
 }
 
-export const SandboxRefSchema = PersistedSandboxRefSchema.extend({
-    /**
-     * 32-byte high-entropy bytes, base64-encoded. Minted once at
-     * `createSandbox` and handed to the sandbox container via
-     * `SANDBOX_CALLBACK_SECRET`. Never persisted outside the DBOS
-     * step-output cache.
-     */
-    callbackSecret: z.string(),
-});
-export type SandboxRef = z.infer<typeof SandboxRefSchema>;
-
-/** Strip the secret before persisting to the active-sandbox registry. */
-export function toPersistedRef(ref: SandboxRef): {
-    sandboxId: string;
-    host: string;
-    port: number;
-    backend: SandboxBackend;
-} {
-    return {
-        sandboxId: ref.sandboxId,
-        host: ref.host,
-        port: ref.port,
-        backend: ref.backend,
-    };
-}
+export type SandboxRef = PersistedSandboxRef;
 
 /**
  * One tracked file operation in the sandbox-server provenance frame.
@@ -262,10 +236,10 @@ export type PollEvent = z.infer<typeof PollEventSchema>;
  * `pollResponseBody`: the events newer than the caller's cursor, the new
  * high-water `cursor`, a `truncated` marker set once the ring shed an event,
  * and — once the exec is terminal — the completion `result` (with its
- * provenance frame). The whole body is HMAC-signed.
+ * provenance frame).
  */
 export const PollResponseSchema = z.object({
-    status: z.string(),
+    status: z.enum(["running", "completed", "failed"]),
     events: z.array(PollEventSchema).default([]),
     cursor: z.number().int(),
     /**
@@ -344,14 +318,12 @@ export type ResolveSandboxLabels = (session: RunSession) => ResultAsync<SandboxL
  * The identity minted for a sandbox machine *before* it is spawned — the
  * durable half of the two-step create (see the harness-sandbox-exec spec). Step 1 checkpoints this so a
  * recovery re-run of the spawn step adopts the already-created machine under
- * the same name and HMAC secret instead of leaking a second one.
+ * the same name instead of leaking a second one.
  */
 export interface SandboxIdentity {
     /** `sbx-{run8}-{uuid4}` — informative for `kubectl`, not load-bearing; the
      *  checkpoint, not the name, is what makes create idempotent. */
     sandboxId: string;
-    /** 32-byte base64 HMAC secret (see the harness-sandbox-exec spec); rides into the machine's env. */
-    callbackSecret: string;
 }
 
 /**
