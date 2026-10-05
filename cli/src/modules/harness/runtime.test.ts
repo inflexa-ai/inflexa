@@ -31,7 +31,6 @@ import {
 } from "./runtime.ts";
 import { agentProviderInner } from "./agent_switch.ts";
 import type { AgentEffort, AgentName, ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
-import type { ExecIngress } from "./ingress.ts";
 
 /** A direct connection to a stubbed OpenAI-compatible endpoint — used by the direct-mode boot tests. */
 function directConnection(overrides: Partial<Extract<ResolvedModelConnection, { mode: "direct" }>> = {}): ResolvedModelConnection {
@@ -77,16 +76,6 @@ function fakeEmbedding(): EmbeddingProvider {
     };
 }
 
-function fakeIngress(calls: string[]): ExecIngress {
-    return {
-        port: 65_000,
-        cortexBaseUrl: "http://host.docker.internal:65000",
-        stop: () => {
-            calls.push("ingress.stop");
-        },
-    };
-}
-
 // Seams that record their call order and succeed. The pool/providers built
 // between them are pure construction (pg pools connect lazily), so the boot
 // path runs fully offline.
@@ -104,10 +93,6 @@ function recordingSeams(calls: string[]): BootSeams {
         // Real construction (pure, connects lazily) so the offline boot runs unchanged;
         // the engine-wiring tests below swap this for a capturing variant.
         createSandbox: createSandboxClient,
-        startIngress: () => {
-            calls.push("ingress");
-            return ok(fakeIngress(calls));
-        },
         readKey: async () => {
             calls.push("readKey");
             return ok("proxy-key");
@@ -230,12 +215,6 @@ function recordingSeams(calls: string[]): BootSeams {
         registerReaper: () => {
             calls.push("registerReaper");
         },
-        registerWatchdog: (deps) => {
-            calls.push("registerWatchdog");
-            // The watchdog reads the active-sandbox registry through a thunk over
-            // the shared pool; a `ResultAsync` is returned, never awaited here.
-            expect(deps.queryActiveSandboxes).toBeInstanceOf(Function);
-        },
         registerNotificationSweep: () => {
             calls.push("registerNotificationSweep");
         },
@@ -274,9 +253,8 @@ describe("bootHarnessRuntime", () => {
         // connection budget, assemble, and launch (each proven by the harness's own
         // boot test, not re-asserted here). The embedder's `beforeLaunch` hook — which
         // `bootHarness` runs after registration and before launch — cancels stale
-        // legacy ephemeral rows, installs the agent switch, then registers the three
-        // sandbox-hygiene crons. The CLI is a poll-mode embedder, so it binds NO
-        // callback ingress — `startIngress` is never called.
+        // legacy ephemeral rows, installs the agent switch, then registers the
+        // sandbox-hygiene crons.
         expect(calls).toEqual([
             "resolveEmbedding",
             "readKey",
@@ -287,10 +265,8 @@ describe("bootHarnessRuntime", () => {
             "sweepEphemeral",
             "sweepAsks",
             "registerReaper",
-            "registerWatchdog",
             "registerNotificationSweep",
         ]);
-        expect(calls).not.toContain("ingress");
         // No `models.agents` and a single `harness.model` (claude-test-model): all roles resolve to it.
         // Each role carries its own swappable HANDLE (so a later live switch of one agent re-points only
         // that agent). Roles on the same model AND effort share ONE inner. The default efforts put
@@ -334,24 +310,23 @@ describe("bootHarnessRuntime", () => {
         expect(calls.filter((c) => c === "boot")).toHaveLength(1);
         // The embedder's `beforeLaunch` hook (which `bootHarness` runs after
         // registration and before launch) sweeps legacy stale rows FIRST, then
-        // registers the three sandbox-hygiene crons — all after `boot` is entered.
+        // registers the sandbox-hygiene crons — all after `boot` is entered.
         expect(boot).toBeLessThan(sweep);
-        for (const name of ["registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
+        for (const name of ["registerReaper", "registerNotificationSweep"]) {
             expect(sweep).toBeLessThan(calls.indexOf(name));
         }
     });
 
-    test("its beforeLaunch hook registers all three sandbox-hygiene scheduled workflows", async () => {
+    test("its beforeLaunch hook registers each sandbox-hygiene scheduled workflow", async () => {
         const calls: string[] = [];
         await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
         expect(calls).toContain("registerReaper");
-        expect(calls).toContain("registerWatchdog");
         expect(calls).toContain("registerNotificationSweep");
         // The crons register inside `beforeLaunch`, which `bootHarness` runs before
         // it launches DBOS — so each records after `boot` is entered.
         const boot = calls.indexOf("boot");
-        for (const name of ["registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
+        for (const name of ["registerReaper", "registerNotificationSweep"]) {
             expect(calls.indexOf(name)).toBeGreaterThan(boot);
         }
     });
@@ -370,7 +345,7 @@ describe("bootHarnessRuntime", () => {
         expect(result.isErr()).toBe(true);
         // A failed prereq short-circuits before the harness boot is even entered, so
         // neither `bootHarness` nor anything its `beforeLaunch` hook drives runs.
-        for (const name of ["boot", "sweepEphemeral", "registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
+        for (const name of ["boot", "sweepEphemeral", "registerReaper", "registerNotificationSweep"]) {
             expect(calls).not.toContain(name);
         }
     });
@@ -418,7 +393,7 @@ describe("bootHarnessRuntime", () => {
         expect(calls.filter((c) => c === "boot")).toHaveLength(1);
     });
 
-    test("unavailable Postgres short-circuits before ingress/register/launch", async () => {
+    test("unavailable Postgres short-circuits before register/launch", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
@@ -448,7 +423,7 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toEqual(["resolveEmbedding"]);
     });
 
-    test("a failing embedder probe blocks before postgres/ingress/launch", async () => {
+    test("a failing embedder probe blocks before postgres/launch", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
@@ -463,7 +438,7 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toEqual(["resolveEmbedding", "readKey", "probeEmbedding"]);
     });
 
-    test("a wrong-dimension embedding model blocks before postgres/ingress/launch", async () => {
+    test("a wrong-dimension embedding model blocks before postgres/launch", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
@@ -751,14 +726,13 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         // `bootHarness` propagates its boot-step failures as throws (validate skills,
-        // state init, launch), which this root bridges to a Result. Poll mode bound no
-        // ingress, so the failure path has nothing to tear down but the
-        // (in-process-reclaimable) runtime lock.
+        // state init, launch), which this root bridges to a Result. The failure path
+        // has nothing to tear down but the (in-process-reclaimable) runtime lock.
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "runtime_boot_failed" });
         expect(calls).toContain("boot");
     });
 
-    test("a runtime lock held by a live foreign process blocks the boot before launch, having bound no ingress", async () => {
+    test("a runtime lock held by a live foreign process blocks the boot before launch", async () => {
         const calls: string[] = [];
         const lockPath = instanceLockPath("harness-runtime");
         // lockPath is under env.locksDir — the developer's REAL ~/.local/share/inflexa/locks at the
@@ -772,9 +746,7 @@ describe("bootHarnessRuntime", () => {
         try {
             const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
             expect(result._unsafeUnwrapErr()).toMatchObject({ type: "runtime_already_active", holderPid: holder.pid });
-            // Poll mode never bound an ingress, so there is nothing to leak, and the
-            // boot must stop before launching DBOS.
-            expect(calls).not.toContain("ingress");
+            // The boot must stop before launching DBOS.
             expect(calls).not.toContain("boot");
         } finally {
             rmSync(lockPath, { force: true });
@@ -857,7 +829,6 @@ describe("bootHarnessRuntime", () => {
         // and boot follow the gate, and the lock/pool sit inside the boot's try block).
         expect(calls).not.toContain("postgres");
         expect(calls).not.toContain("boot");
-        expect(calls).not.toContain("ingress");
     });
 });
 

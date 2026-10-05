@@ -49,7 +49,6 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         sandboxClient: createSandboxClient({
             pool,
             env: { backend: "docker", namespace: "" },
-            cortexBaseUrl: "http://host.docker.internal:1",
             image: "img",
             farmSource: { kind: "fixed", location: { farmPath: "/tmp/farm" } },
             resourceLimits: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 },
@@ -87,9 +86,7 @@ function installSeamFor(comp: RunEngineComposition): void {
 function fakeBuildContext(agentId: string, stepWritePrefix: string): SandboxAgentBuildContext {
     return {
         input: { analysisId: "an-1", runId: "run-1", stepId: "step-1", agentId },
-        workflowId: "run-1",
         stepWritePrefix,
-        nextFunctionId: () => "fn-0",
         deadlineMs: () => Date.now() + 60_000,
         lineageCollector: {},
         blockerHolder: {},

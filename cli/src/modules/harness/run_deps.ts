@@ -162,11 +162,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
             sandbox: ctx.sandbox,
             workspaceRoot: comp.resolveWorkspaceRoot(ctx.input.analysisId),
             analysisId: ctx.input.analysisId,
-            runId: ctx.input.runId,
-            stepId: ctx.input.stepId,
-            workflowId: ctx.workflowId,
             allowedWritePrefix: ctx.stepWritePrefix,
-            nextFunctionId: ctx.nextFunctionId,
             deadlineMs: ctx.deadlineMs,
         },
     };
