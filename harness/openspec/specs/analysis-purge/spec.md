@@ -44,12 +44,17 @@ The harness SHALL expose `purgeAnalysis(analysisId)` as a host-agnostic operatio
 
 `purgeAnalysis` MUST remove this footprint:
 
-- the analysis rows of `cortex_analysis_state`, `cortex_artifacts`, `cortex_runs`, `cortex_step_executions`, `cortex_plans`, `cortex_report_versions`, `cortex_analysis_threads`, `cortex_working_memory`, `cortex_asks`, and `cortex_ask_grants`
+- the analysis rows of `cortex_analysis_state`, `cortex_artifacts`, `cortex_runs`, `cortex_step_executions`, `cortex_plans`, `cortex_report_versions`, `cortex_analysis_threads`, `cortex_working_memory`, `cortex_asks`, `cortex_ask_grants`, and `cortex_tool_outputs`
 - the `messages` rows of each thread of the analysis
+- the `cortex_thread_turns` rows of each thread of the analysis
 - the dynamic pgvector table with the shared `searchIndexName(analysisId)` name
 - the DBOS workflow footprint of the analysis
 
-Coverage of the workflow footprint is normative, and it is not optional. The DBOS rows carry the sandbox agent transcripts and the run-event stream, and they are the dominant share of the stored bytes. Thus a purge that omits them reclaims a small fraction, but it still presents itself as final.
+The purge reaches the turn records through the thread rows, the same as the messages. Thus it MUST delete them before it deletes the thread rows, for the reason that the delete order of the messages gives.
+
+The purge reaches the kept tool outputs by their own `analysis_id`, with no join through the thread rows. Thus it removes the kept texts of each thread and of each run of the analysis.
+
+Coverage of the workflow footprint is normative, and it is not optional. The DBOS rows carry the sandbox agent transcripts and the run-event stream, and they are the largest share of the stored bytes. Thus a purge that omits them reclaims a small fraction, but it still shows itself as final.
 
 #### Scenario: The dynamic vector table is dropped
 
@@ -59,9 +64,9 @@ Coverage of the workflow footprint is normative, and it is not optional. The DBO
 
 #### Scenario: An absent vector table is not an error
 
-- **GIVEN** an analysis that never had a workspace index table created
+- **GIVEN** an analysis that never had a workspace index table
 - **WHEN** `purgeAnalysis` runs
-- **THEN** it succeeds and reports no vector index dropped
+- **THEN** it succeeds, and it reports no vector index dropped
 
 #### Scenario: Messages are reached through the analysis's threads
 
@@ -69,11 +74,24 @@ Coverage of the workflow footprint is normative, and it is not optional. The DBO
 - **WHEN** `purgeAnalysis` completes successfully
 - **THEN** no `messages` row remains for any of those threads
 
+#### Scenario: Turn records are reached through the threads of the analysis
+
+- **GIVEN** an analysis with a conversation thread and a child thread, each with a closed chat turn
+- **WHEN** `purgeAnalysis` completes successfully
+- **THEN** no `cortex_thread_turns` row remains for either thread
+
+#### Scenario: The kept tool outputs are removed
+
+- **GIVEN** an analysis with a kept text of a chat turn and a kept text of a run
+- **AND** a second analysis with a kept text
+- **WHEN** `purgeAnalysis` completes successfully for the first analysis
+- **THEN** no `cortex_tool_outputs` row remains for the first analysis, and the row of the second analysis stays
+
 #### Scenario: The workflow footprint is removed
 
-- **GIVEN** an analysis with a completed run whose parent and child step workflows are recorded in the DBOS ledger
+- **GIVEN** an analysis with a completed run whose parent and child step workflows are in the DBOS ledger
 - **WHEN** `purgeAnalysis` completes successfully
-- **THEN** those workflows' status rows are gone and the step-output, stream, input, event, and queue rows that depend on them are gone with them
+- **THEN** the status rows of those workflows are gone, and the step-output, stream, input, event, and queue rows that depend on them are gone too
 
 #### Scenario: The report versions are removed
 
@@ -198,7 +216,17 @@ The validated shape SHALL serve two purposes, and the requirement SHALL state bo
 
 ### Requirement: Purge names what it does not reach
 
-`purgeAnalysis` SHALL NOT remove state that is not attributable to an analysis, and its contract SHALL state those exclusions so absent coverage is never mistaken for delivered coverage. Specifically it SHALL NOT touch: scheduled operational workflows (liveness watchdog, reaper, notification sweep), which belong to no analysis and accumulate independently of any purge; `messages` rows whose thread row is already gone, which carry no analysis attribution and are unreachable by construction; the shared regulatory corpus; and workspace files on disk, whose disposal the embedder owns.
+`purgeAnalysis` MUST NOT remove state that it cannot attribute to an analysis.
+Its contract MUST state those exclusions, thus nobody mistakes an absent
+coverage for a delivered coverage. It MUST NOT touch these items:
+
+- the scheduled operational workflows (the sandbox reaper and the notification
+  sweep). They belong to no analysis, and they accumulate independently of each
+  purge.
+- the `messages` rows whose thread row is gone already. They carry no analysis
+  attribution, and by construction nothing can reach them.
+- the shared regulatory corpus.
+- the workspace files on disk. The embedder owns their disposal.
 
 #### Scenario: Scheduled workflows survive a purge
 

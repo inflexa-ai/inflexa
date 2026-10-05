@@ -50,7 +50,9 @@ Citations:
 
 - Jumper and others, *Nature* 2021 (AlphaFold2)
 - Varadi and others, *Nucleic Acids Research* 2024 (AlphaFold DB)
+
 ## Requirements
+
 ### Requirement: AlphaFold DB structure prediction tool
 
 The system MUST give an `alphafoldPredictionTool` (on-wire id
@@ -64,11 +66,16 @@ and for an identifier that does not parse, it MUST return
 `ok({ found: false, uniprotAccession })`. The tool MUST trim the accession
 before it makes the request, and the miss MUST echo the trimmed value.
 
+Only HTTP 400 and HTTP 404 mean absence. Each other failure MUST throw out of
+`execute`, a different 4xx included. A refusal is not an absence, and
+`found: false` tells the agent not to retry.
+
 The tool description MUST name the display path. To show the predicted
 structure to the user, the agent calls `show_user(kind: "structure", url)`
 with `pdbUrl` or `cifUrl`, without a change, and the chat renders it. The
-description MUST keep the rule that the tool never returns file contents, and
-that the agent never reads a file into the conversation to show a structure.
+description MUST keep the rule that the tool never returns file contents. It
+MUST also keep the rule that the agent never reads a file into the
+conversation to show a structure.
 The sandbox stays the path to inspect the coordinates or the per-residue
 confidence document.
 
@@ -112,10 +119,15 @@ confidence document.
 - **WHEN** AlphaFold returns 429 on every attempt
 - **THEN** `execute` throws, and the agent loop records the call as `tool_result { is_error: true }`, not `ok({ found: false })`
 
+#### Scenario: A refused request surfaces as an error tool result
+
+- **WHEN** AlphaFold answers HTTP 403 for a well-formed accession
+- **THEN** `execute` throws with a message that names `HTTP 403`, and the agent loop records the call as `tool_result { is_error: true }`, not `ok({ found: false })`
+
 #### Scenario: The description names the structure card
 
 - **WHEN** the tool definition is read
-- **THEN** its description names `show_user(kind: "structure", url)` with `pdbUrl` or `cifUrl` as the way to show the structure, and it does not direct a sandbox download for display
+- **THEN** its description names `show_user(kind: "structure", url)` with `pdbUrl` or `cifUrl` to show the structure, and it directs no sandbox download for display
 
 ### Requirement: describeCall names the queried accession
 
@@ -181,4 +193,3 @@ yet.
 
 - **WHEN** a sandbox-agent meta names the tool in `meta.tools`
 - **THEN** the name is not a `SandboxToolName`, thus the typecheck rejects it
-

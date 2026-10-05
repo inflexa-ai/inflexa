@@ -20,10 +20,12 @@ in files and in the vector index, not in columns. `sandbox_ref` is the one item
 of live operational state. It holds the handle of the machine of a running step.
 The reaper finds the row of a machine that it removed by this handle, and it
 clears the handle. The row holds no exec id.
+
 ## Requirements
+
 ### Requirement: cortex_step_executions table schema
 
-The system SHALL maintain a `cortex_step_executions` table with: `run_id` (TEXT,
+The system MUST maintain a `cortex_step_executions` table with: `run_id` (TEXT,
 NOT NULL), `step_id` (TEXT, NOT NULL), `analysis_id` (TEXT, NOT NULL), `wave`
 (INTEGER, NOT NULL — topological level for UI layout, not a scheduling barrier),
 `agent_id` (TEXT, NOT NULL), `status` (TEXT, NOT NULL), `started_at` (TEXT,
@@ -31,13 +33,13 @@ nullable), `completed_at` (TEXT, nullable), `duration_ms` (BIGINT, nullable),
 `error` (TEXT, nullable), `attempts` (INTEGER NOT NULL DEFAULT 1),
 `last_error_class` (TEXT, nullable), `finish_reason` (TEXT, nullable),
 `hit_max_steps` (INTEGER NOT NULL DEFAULT 0), `blocked_reason` (TEXT, nullable),
-`sandbox_ref` (JSONB, nullable), `exec_id` (TEXT, nullable), and
-`child_workflow_id` (TEXT, nullable). Primary key SHALL be `(run_id, step_id)`.
+`sandbox_ref` (JSONB, nullable), and `child_workflow_id` (TEXT, nullable).
+Primary key MUST be `(run_id, step_id)`. The table MUST have no `exec_id`
+column.
 
-Indexes SHALL exist on `(analysis_id)`; a partial index
-`idx_cortex_step_exec_active_sandbox` on `(status) WHERE sandbox_ref IS NOT NULL`;
-and `(child_workflow_id)`. There SHALL be no composite `(status, sandbox_ref)`
-index.
+Indexes MUST exist on `(analysis_id)` and `(child_workflow_id)`. There MUST be
+no index on `(status) WHERE sandbox_ref IS NOT NULL`, and no composite
+`(status, sandbox_ref)` index.
 
 #### Scenario: Step execution starts
 
@@ -53,18 +55,24 @@ index.
 #### Scenario: Vestigial columns removed on startup
 
 - **WHEN** the state module initialises
-- **THEN** the `thread_id`, `execution_id`, `resources`, and `summary` columns SHALL be dropped from `cortex_step_executions` if present
+- **THEN** the `thread_id`, `execution_id`, `resources`, and `summary` columns are dropped from `cortex_step_executions` if present
+
+#### Scenario: The exec id column and the active-sandbox index are dropped
+
+- **GIVEN** a database whose `cortex_step_executions` has the `exec_id` column and the `idx_cortex_step_exec_active_sandbox` index
+- **WHEN** the migration `20261005120000_drop_the_active_exec_tracking` runs
+- **THEN** the table has no `exec_id` column and no `idx_cortex_step_exec_active_sandbox` index, and each other column keeps its data
 
 ### Requirement: StepExecutionRow schema
 
-The `StepExecutionRow` Zod schema SHALL define: `runId`, `stepId`, `analysisId`,
+The `StepExecutionRow` Zod schema MUST define: `runId`, `stepId`, `analysisId`,
 `wave` (number), `agentId`, `status` (enum: `"pending"`, `"running"`,
 `"completed"`, `"failed"`, `"skipped"`, `"canceled"`, `"blocked"`), `startedAt`
 (nullable), `completedAt` (nullable), `durationMs` (nullable), `error`
 (nullable), `attempts` (number, default 1), `lastErrorClass` (nullable),
 `finishReason` (nullable), `hitMaxSteps` (boolean, default false),
 `blockedReason` (nullable, default null), `sandboxRef` (`PersistedSandboxRef`,
-nullable), `execId` (nullable), and `childWorkflowId` (nullable).
+nullable), and `childWorkflowId` (nullable). It MUST define no `execId`.
 
 #### Scenario: StepExecutionRow includes blocked status and reason
 
@@ -131,56 +139,24 @@ clause entirely.
 - **WHEN** `updateStepExecution` is called without `hitMaxSteps`
 - **THEN** the SET clause omits `hit_max_steps` and the existing DB value is preserved
 
-### Requirement: sandbox_ref and exec_id track the live-sandbox registry
-
-`cortex_step_executions` SHALL maintain `sandbox_ref` (JSONB) and `exec_id`
-(TEXT) for the liveness watchdog. `sandbox_ref` carries the serialised handle
-`{ sandboxId, host, port, backend }` — `callbackSecret` is NEVER persisted (it
-lives only in the DBOS step-output cache). `exec_id` carries the in-flight
-`"${workflowId}:${stepId}:${functionId}"`. Both SHALL be NULL when no sandbox is
-live. The partial index `idx_cortex_step_exec_active_sandbox` SHALL support the
-watchdog enumerating active sandboxes via `status='running' AND sandbox_ref IS NOT
-NULL`.
-
-The sandbox client MUST write `sandbox_ref` and `exec_id` in `createSandbox(session, spec, identity)`. The client MUST
-select the row from the session. The run id is `session.runFrame.runId`, and the step id is
-`session.runFrame.stepId`. The spec holds no run id and no step id.
-
-#### Scenario: createSandbox populates the registry row
-
-- **WHEN** the sandbox-step child runs `createSandbox(session, spec, identity)` in its durable step, with its step session
-- **THEN** the client writes `sandbox_ref` and `exec_id` on the row of `session.runFrame.runId` and `session.runFrame.stepId`
-- **AND** the `status` of that row is `"running"`
-
-#### Scenario: teardown clears the registry row
-
-- **WHEN** the child's `teardown` durableStep runs (on success, fail, or cancel)
-- **THEN** `sandbox_ref` and `exec_id` are set to NULL
-
-#### Scenario: callbackSecret never persists
-
-- **WHEN** `sandbox_ref` is serialised to the database
-- **THEN** the JSONB does not contain a `callbackSecret` field
-
-#### Scenario: Watchdog query is index-supported
-
-- **WHEN** the watchdog enumerates active sandboxes via `WHERE status='running' AND sandbox_ref IS NOT NULL`
-- **THEN** the query uses the `idx_cortex_step_exec_active_sandbox` partial index
-
 ### Requirement: Migration is forward-only and idempotent on startup
 
-The state module SHALL add `attempts`, `last_error_class`, `finish_reason`,
-`hit_max_steps`, `blocked_reason`, `sandbox_ref`, `exec_id`, and
-`child_workflow_id` to `cortex_step_executions` on startup via `ALTER TABLE …
-ADD COLUMN IF NOT EXISTS`, promote `duration_ms` to `BIGINT`, and create the
-supporting indexes via `CREATE INDEX IF NOT EXISTS`. Existing rows SHALL be
-backfilled with NULL/defaults; the migration SHALL be safe to run repeatedly.
+The baseline migration MUST add `attempts`, `last_error_class`, `finish_reason`,
+`hit_max_steps`, `blocked_reason`, `sandbox_ref`, and `child_workflow_id` to
+`cortex_step_executions` through `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. It
+MUST promote `duration_ms` to `BIGINT`, and it MUST make the supporting indexes
+through `CREATE INDEX IF NOT EXISTS`. Existing rows MUST get NULL or the
+defaults, and the migration MUST be safe to run again. The migration
+`20261005120000_drop_the_active_exec_tracking` MUST drop the `exec_id` column with
+`DROP COLUMN IF EXISTS`, and the `idx_cortex_step_exec_active_sandbox` index with
+`DROP INDEX IF EXISTS`.
 
 #### Scenario: First startup adds columns and indexes
 
 - **GIVEN** a fresh Postgres without the new columns
 - **WHEN** the state module initialises
-- **THEN** the columns above exist and the `idx_cortex_step_exec_active_sandbox` and `idx_cortex_step_exec_child_workflow` indexes exist
+- **THEN** the columns above exist and the `idx_cortex_step_exec_child_workflow` index exists
+- **AND** no `exec_id` column and no `idx_cortex_step_exec_active_sandbox` index exist
 
 #### Scenario: Re-running startup is a no-op
 
@@ -324,3 +300,30 @@ pre-existing wedge class `inflexa run` already detects.
 - **WHEN** the run finalizes
 - **THEN** the `synthesis` row is `skipped` (via the terminal sweep), never
   `running`
+
+### Requirement: sandbox_ref tracks the live-sandbox registry
+
+`cortex_step_executions` MUST keep `sandbox_ref` (JSONB) as the live-sandbox
+registry of the step. `sandbox_ref` carries the serialized handle
+`{ sandboxId, host, port, backend }`. It MUST be NULL when no sandbox is live.
+
+The sandbox client MUST write `sandbox_ref` in `createSandbox(session, spec, identity)`. The client MUST
+select the row from the session. The run id is `session.runFrame.runId`, and the step id is
+`session.runFrame.stepId`. The spec holds no run id and no step id. The `teardown` MUST clear
+`sandbox_ref`, and the reaper MUST clear it when it reconciles the row of a machine that it removed.
+
+#### Scenario: createSandbox populates the registry row
+
+- **WHEN** the sandbox-step child runs `createSandbox(session, spec, identity)` in its durable step, with its step session
+- **THEN** the client writes `sandbox_ref` on the row of `session.runFrame.runId` and `session.runFrame.stepId`
+- **AND** the `status` of that row is `"running"`
+
+#### Scenario: teardown clears the registry row
+
+- **WHEN** the `teardown` step of the child runs (on success, fail, or cancel)
+- **THEN** `sandbox_ref` is set to NULL
+
+#### Scenario: The handle holds no secret
+
+- **WHEN** `sandbox_ref` is serialized to the database
+- **THEN** the JSONB holds only `sandboxId`, `host`, `port`, and `backend`

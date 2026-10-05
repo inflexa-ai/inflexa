@@ -47,24 +47,23 @@ it reconciles the step row.
 ### Requirement: SandboxClient exposes seven backend-selected operations
 
 The harness MUST expose a `SandboxClient` interface with exactly seven
-operations: `createSandbox(session, spec, identity) → ResultAsync<SandboxRef, SandboxError>`, `submitExec(ref, body)
-→ void`, `awaitExec(ref, execId, emit, deadline) → ExecResult`,
-`isAlive(ref) → boolean`, `teardown(ref) → void`, `teardownById(sandboxId) →
-void`, and `listManagedSandboxes() → ManagedSandbox[]`. `awaitExec` takes the
-whole `ref` — not merely the `callbackSecret` it verifies with — because a quiet
-topic makes it pull the result from the sandbox directly. A `createSandboxClient()`
-factory SHALL select the Docker (dev) or K8s (prod) implementation based on the
-`SANDBOX_BACKEND` value. The client SHALL be injected at the composition root as
-a construction-time dependency; callers SHALL NOT import a backend
-implementation directly, and the interface SHALL NOT leak backend-specific types.
+operations: `createSandbox(session, spec, identity) → ResultAsync<SandboxRef, SandboxError>`,
+`exec(ref, request, emit, deadline) → ExecResult`, `isAlive(ref) → SandboxLiveness`,
+`isAliveById(sandboxId) → SandboxLiveness`, `teardown(ref) → void`,
+`teardownById(sandboxId) → void`, and `listManagedSandboxes() → ManagedSandbox[]`.
+A `createSandboxClient()` factory MUST select the Docker (dev) or K8s (prod)
+implementation from the `SANDBOX_BACKEND` value. The client MUST be injected at
+the composition root as a construction-time dependency. A caller MUST NOT import
+a backend implementation directly, and the interface MUST NOT leak a
+backend-specific type.
 
 `createSandbox` MUST take the `SpawnSession` of the work, a `RunSession` whose
 `runFrame.stepId` is present. Thus a spawn without a session does not compile. The client MUST
 read the analysis id from `session.scope.analysisId`, the run id from `session.runFrame.runId`,
 and the step id from `session.runFrame.stepId`. `SandboxSpec` holds the other fields of the
-spawn: `childWorkflowId`, `image`, `extraEnv`, `resources`, `readOnly`, `writableTail`, and
-`execId`. `SandboxSpec` carries no label, because the client gets the host labels from its
-label hook (see the sandbox-labels spec).
+spawn: `childWorkflowId`, `image`, `extraEnv`, `resources`, `readOnly`, and `writableTail`.
+`SandboxSpec` carries no label, because the client gets the host labels from its
+label hook (see the sandbox-labels spec). `SandboxSpec` carries no exec id.
 
 `createSandbox` MUST give each `SandboxError` as an `err` value, and it MUST NOT throw it. Thus
 the caller reads a refusal that asks for a suspension with no `catch`. A caller that must fail
@@ -81,21 +80,21 @@ its DBOS step throws the error through `unwrapOrThrow`.
 
 - **GIVEN** `SANDBOX_BACKEND=docker`
 - **WHEN** `createSandboxClient()` is called
-- **THEN** the returned client SHALL be the Docker implementation
-- **AND** `createSandbox` SHALL launch a `sandbox-base` container with its exec port published to `127.0.0.1` only
+- **THEN** the returned client is the Docker implementation
+- **AND** `createSandbox` launches a `sandbox-base` container with its exec port published to `127.0.0.1` only
 
 #### Scenario: K8s backend selected in prod
 
 - **GIVEN** `SANDBOX_BACKEND=k8s`
 - **WHEN** `createSandboxClient()` is called
-- **THEN** the returned client SHALL be the K8s implementation
-- **AND** `createSandbox` SHALL create a K8s Job whose pod runs `sandbox-base`
+- **THEN** the returned client is the K8s implementation
+- **AND** `createSandbox` makes a K8s Job whose pod runs `sandbox-base`
 
 #### Scenario: Interface surface is the seven operations
 
 - **WHEN** a consumer imports `SandboxClient`
-- **THEN** the type SHALL expose exactly `createSandbox`, `submitExec`, `awaitExec`, `isAlive`, `teardown`, `teardownById`, and `listManagedSandboxes`
-- **AND** SHALL NOT leak backend-specific types (Docker `Container`, K8s `Pod`)
+- **THEN** the type exposes exactly `createSandbox`, `exec`, `isAlive`, `isAliveById`, `teardown`, `teardownById`, and `listManagedSandboxes`
+- **AND** it does not leak a backend-specific type (Docker `Container`, K8s `Pod`)
 
 #### Scenario: A spawn takes its ids from the session
 
@@ -109,40 +108,6 @@ its DBOS step throws the error through `unwrapOrThrow`.
 - **GIVEN** a `RunSession` whose `runFrame` has no `stepId`
 - **WHEN** a caller gives that session to `createSandbox`
 - **THEN** the typecheck fails
-
-### Requirement: Sandbox creation is a checkpoint-idempotent two-step sequence
-
-Creation SHALL run as two DBOS steps. Step 1 (`sandbox.mint`) SHALL checkpoint a
-`SandboxIdentity` `{ sandboxId, callbackSecret }` — a `sbx-{run8}-{rand8}` name
-and a 32-byte base64 HMAC secret — so both are durable before any machine
-exists. Step 2 (`sandbox.create`) SHALL spawn the `sandbox-base` machine under
-that identity, pass the secret via `SANDBOX_CALLBACK_SECRET`, wait for `/health`,
-record the live handle (minus the secret) in the active-sandbox registry, and
-return the in-memory `SandboxRef` (which carries the secret). Idempotency SHALL
-come from the step-1 checkpoint, not the name: a recovery re-run of step 2 whose
-machine already exists SHALL adopt it under the same name and secret rather than
-leak a second machine. The returned `callbackSecret` SHALL be part of the cached
-step output so the workflow body holds it verbatim on replay.
-
-#### Scenario: Identity is durable before the machine exists
-
-- **WHEN** the `sandbox.mint` step runs
-- **THEN** `{ sandboxId, callbackSecret }` SHALL be checkpointed as that step's output
-- **AND** no sandbox machine SHALL have been created yet
-
-#### Scenario: callbackSecret persists across replay
-
-- **GIVEN** a workflow that ran the mint+create steps on process A
-- **WHEN** the workflow recovers on process B
-- **THEN** the cached step output SHALL be returned without re-minting the secret
-- **AND** the `callbackSecret` SHALL equal the value originally minted
-
-#### Scenario: Recovery adopts an already-spawned machine
-
-- **GIVEN** a process restart between the backend spawn and the step-2 checkpoint
-- **WHEN** `sandbox.create` re-runs on recovery and the backend reports the machine already exists
-- **THEN** it SHALL adopt that machine under the step-1 identity
-- **AND** SHALL NOT create a second machine
 
 ### Requirement: The step quota is published inside the sandbox
 
@@ -164,434 +129,6 @@ spec ("The cpu quota is visible inside the container").
 - **WHEN** the client makes the sandbox
 - **THEN** a read-only file over `/sys/devices/system/cpu/online` describes 2 cores
 - **AND** the env has `OMP_NUM_THREADS=1` and `BIOCPARALLEL_WORKER_NUMBER=2`
-
-### Requirement: submitExec is a DBOS step keyed on execId
-
-`submitExec(ref, body)` SHALL run as a DBOS step named
-`sandbox.submit-exec.${execId}` that POSTs `${ref.host}:${ref.port}/exec` with
-`{ command, execId, cwd?, env?, timeoutSeconds? }` and returns after the HTTP 202
-ack — it SHALL NOT wait for command completion. The `execId` SHALL be
-`"${workflowId}:${stepId}:${functionId}"` so it is stable across replay and
-doubles as the step's replay cache key. On replay the cached step output SHALL be
-returned without re-POSTing; any duplicate POST that reaches sandbox-server
-during the narrow in-flight window relies on sandbox-server's `execId` dedup. A
-non-202 response SHALL throw.
-
-#### Scenario: submitExec returns after 202
-
-- **GIVEN** a created sandbox
-- **WHEN** `submitExec(ref, { command: ["sleep","10"], execId })` is called
-- **THEN** the step SHALL return after the 202 ack, before the command exits
-
-#### Scenario: Replay does not re-POST
-
-- **GIVEN** a workflow that completed `submitExec` on process A
-- **WHEN** the workflow recovers on process B
-- **THEN** the cached step output SHALL be returned without a new POST to sandbox-server
-
-#### Scenario: In-flight duplicate is deduped by sandbox-server
-
-- **GIVEN** a process failure between the `submitExec` POST and the 202 receipt
-- **WHEN** the recovering process re-POSTs the same `execId`
-- **THEN** sandbox-server SHALL return the existing state without spawning a second command
-
-### Requirement: Transport mode selects how exec results reach the host
-
-The harness SHALL expose `SandboxTransport = "poll" | "callback"`, selected by
-the embedder at its composition root, defaulting to `poll`. The value SHALL be
-carried to the sandbox container as `SANDBOX_TRANSPORT` and SHALL select the
-`awaitExec` implementation — the durable poll loop or the `DBOS.recv` loop.
-Backends SHALL be transport-agnostic: the same Docker/K8s backend runs in either
-mode, and only result delivery (and the confinement posture that follows from
-it) differs. Inbound request signing on the exec endpoints SHALL apply in both
-modes.
-
-#### Scenario: Embedder selects poll (default)
-
-- **GIVEN** a composition root that does not set a transport
-- **WHEN** the sandbox client is created and a sandbox is launched
-- **THEN** the container env SHALL carry `SANDBOX_TRANSPORT=poll` and `awaitExec` SHALL run the poll loop
-
-#### Scenario: Embedder selects callback
-
-- **GIVEN** a composition root that sets `transport: "callback"`
-- **WHEN** the sandbox client is created and a sandbox is launched
-- **THEN** the container env SHALL carry `SANDBOX_TRANSPORT=callback` and `awaitExec` SHALL run the recv loop with the pull backstop
-
-### Requirement: In poll mode awaitExec polls a signed cursor endpoint
-
-In poll mode `awaitExec` SHALL NOT use `DBOS.recv` or a per-exec topic. It SHALL
-loop durable pull steps named `sandbox.poll-exec-result.${execId}.${n}` on a
-two-phase cadence — a fast interval for the first attempts (short execs return
-within one snappy interval) backing off to a slower interval thereafter (an
-hours-long exec polls sustainably) — derived from the attempt counter alone so
-the schedule replays identically. Each poll fetches
-`GET /exec/{execId}?since={cursor}` and receives a signed
-`{ status, events[], cursor, result? }`. The loop SHALL verify the body with the
-per-sandbox HMAC exactly as a pulled result is verified, forward events newer than
-`cursor` via `emit`, advance `cursor`, and return `result` when terminal. The
-newer-than-cursor filter SHALL be applied by the loop itself: the signature covers
-the response body but not the request's `since`, so any validly-signed snapshot
-verifies against any poll, and a replayed or crossed response MUST NOT re-emit
-already-delivered events. A gap between the local cursor and the next served
-sequence — events shed by the sandbox's bounded ring before delivery — SHALL be
-surfaced as an advisory warning; the terminal result, not the event stream,
-remains the authoritative outcome. A forged or stale signature SHALL throw
-`HardCancelError`. The loop SHALL be bounded by `step.timeout`, and SHALL poll
-once more upon crossing the deadline before declaring a timeout, so a result
-sitting completed in the sandbox is returned rather than discarded. A recovered
-workflow SHALL resume polling from its current host identity without a lost
-result — the recovery wedge (#41) does not apply to poll.
-
-#### Scenario: Poll returns the terminal result
-
-- **GIVEN** a poll-mode exec that has completed
-- **WHEN** `awaitExec` polls `GET /exec/{execId}?since={cursor}`
-- **THEN** the signed response carries `result`, and `awaitExec` verifies and returns it
-
-#### Scenario: Incremental events are forwarded once
-
-- **GIVEN** a poll-mode exec emitting events between polls
-- **WHEN** `awaitExec` polls with the last `cursor`
-- **THEN** only events newer than `cursor` SHALL be emitted, and `cursor` advanced
-
-#### Scenario: A forged poll response hard-cancels
-
-- **GIVEN** a poll response whose signature does not verify against the per-sandbox secret
-- **WHEN** `awaitExec` receives it
-- **THEN** `awaitExec` SHALL throw `HardCancelError` and the workflow SHALL be cancelled without retry
-
-#### Scenario: A recovered workflow resumes polling
-
-- **GIVEN** a poll-mode exec whose host restarts mid-run
-- **WHEN** the workflow recovers under the same `executorID`
-- **THEN** the poll loop SHALL continue against the sandbox from the recovered host, and the terminal result SHALL still be retrieved
-
-#### Scenario: A replayed snapshot does not duplicate events
-
-- **GIVEN** a validly-signed poll response re-serving events at or below the loop's local cursor
-- **WHEN** `awaitExec` processes it
-- **THEN** only events newer than the local cursor SHALL be emitted
-
-#### Scenario: Events shed by the ring are surfaced
-
-- **GIVEN** a poll response whose first served sequence leaves a gap above the local cursor (or whose cursor advanced with no events served)
-- **WHEN** `awaitExec` processes it
-- **THEN** the loop SHALL emit an advisory warning naming the lost range and continue
-
-#### Scenario: The deadline check polls once more before timing out
-
-- **GIVEN** a poll-mode exec whose deadline has been crossed
-- **WHEN** the loop observes the crossing
-- **THEN** it SHALL issue one more poll and return the terminal result if that poll carries one, throwing `ExecTimeoutError` only otherwise
-
-#### Scenario: The cadence backs off for long execs
-
-- **GIVEN** a poll-mode exec still running after the fast-phase attempts are spent
-- **WHEN** the loop schedules its next poll
-- **THEN** it SHALL sleep the slow-phase interval, and the schedule SHALL be a pure function of the attempt counter
-
-### Requirement: In poll mode sustained unavailability escalates to a liveness probe
-
-The client-composed poll loop SHALL track consecutive `unavailable` poll
-outcomes: an `ok` poll resets the count. When the count reaches the escalation
-threshold (a module constant, like the poll cadence), the loop SHALL run one
-liveness probe — the backend inspect (`SandboxClient.isAlive(ref)`) — as a
-durable step named `sandbox.probe-liveness.${execId}.${k}` in the loop's
-existing attempt sequence. The probe schedule SHALL be a pure function of the
-checkpointed poll outcomes, so a replay issues the same polls and probes in the
-same order. The loop SHALL NOT use `DBOS.recv`, a per-exec topic, or any
-cross-workflow message for the verdict.
-
-The probe verdict SHALL be three-valued and the probe step SHALL never throw:
-
-- **dead** — the machine is observably dead and no completion has been
-  received: the loop SHALL return the synthetic-failure `ExecResult` instead of
-  waiting out the deadline, with reason `"sandbox-oom-killed"` when the backend
-  attributes the death to the machine's memory limit and `"sandbox-dead"`
-  otherwise. The synthetic result SHALL be built by the same constructor the
-  watchdog uses, so reasons and shape are identical across transports and
-  adjudicators.
-- **alive** — the machine is up (live-but-slow exec, evicted execId, non-200s):
-  the loop SHALL reset the consecutive count and resume polling, still bounded
-  by the deadline.
-- **inconclusive** — the underlying inspect threw (transient backend API
-  error): the loop SHALL reset the consecutive count and resume polling; a
-  failed probe is not a failed exec and SHALL NOT fail the workflow.
-
-Poll outcomes alone SHALL never fail an exec: `unavailable` conflates
-"unreachable" with "unknown execId / non-200", so the backend inspect is the
-sole arbiter of dead versus live-but-slow. When no `isAlive` seam is wired
-(bare loop invocation outside the client), the loop SHALL skip escalation and
-retain pure deadline-bounded behaviour.
-
-#### Scenario: Dead machine fast-fails the exec
-
-- **GIVEN** a poll-mode exec whose sandbox machine dies mid-exec
-- **WHEN** the threshold count of consecutive polls return `unavailable` and the probe step reports the machine observably dead
-- **THEN** `awaitExec` SHALL return a synthetic-failure `ExecResult` with reason `"sandbox-dead"` without waiting for the deadline
-
-#### Scenario: OOM-killed machine carries the OOM reason
-
-- **GIVEN** a poll-mode exec whose machine the backend reports as OOM-killed
-- **WHEN** the escalation probe runs
-- **THEN** the returned synthetic-failure result SHALL carry reason `"sandbox-oom-killed"`
-
-#### Scenario: Live-but-slow machine never escalates to failure
-
-- **GIVEN** a poll-mode exec whose polls return `unavailable` past the threshold but whose machine the probe reports alive
-- **WHEN** the probe verdict arrives
-- **THEN** the loop SHALL reset the consecutive count and resume polling, and the exec SHALL remain bounded by the deadline only
-
-#### Scenario: An ok poll resets the streak
-
-- **GIVEN** a run of `unavailable` polls one short of the threshold
-- **WHEN** the next poll returns a verified snapshot
-- **THEN** no probe SHALL run and the count SHALL restart from zero
-
-#### Scenario: A transient probe error is inconclusive
-
-- **GIVEN** an armed escalation whose backend inspect throws a transient API error
-- **WHEN** the probe step runs
-- **THEN** the step SHALL NOT throw, the exec SHALL NOT fail, and the loop SHALL resume polling with the count reset
-
-#### Scenario: Probes replay deterministically
-
-- **GIVEN** a recovered workflow replaying a poll sequence that had escalated
-- **WHEN** the loop replays over the checkpointed poll and probe steps
-- **THEN** the same probes SHALL be issued at the same positions with the same step names, keeping the DBOS function-ID sequence stable
-
-#### Scenario: No seam, no escalation
-
-- **GIVEN** a poll loop invoked without an `isAlive` seam
-- **WHEN** polls return `unavailable` past the threshold
-- **THEN** the loop SHALL keep polling bounded by the deadline alone
-
-### Requirement: In callback mode awaitExec is a workflow-body recv loop with HMAC verification
-
-In callback mode `awaitExec` SHALL run in the workflow body (not as a DBOS step)
-because `DBOS.recv` and `DBOS.writeStream` are body-only. It SHALL loop
-`DBOS.recv("exec-event:${execId}", T)` over a **single per-exec topic** carrying
-both progress events and the completion marker. Each received envelope is
-`{ payload, payloadRaw?, signature, timestamp }`. A message with `signature: null`
-SHALL be accepted only when its payload is a `synthetic-failure` done-marker
-(the in-process watchdog is a trusted sender); any other null-signature message
-SHALL hard-cancel. Otherwise the body SHALL recompute `HMAC-SHA256(callbackSecret,
-"${execId}:${timestamp}:${sha256Hex(payloadRaw)})")` and compare in constant
-time, and SHALL reject a timestamp outside the freshness window; a mismatch or
-stale timestamp SHALL throw `HardCancelError`, which DBOS treats as a fatal,
-non-retried workflow error. A verified done-marker SHALL return its `result`;
-other verified events SHALL be forwarded via `emit`. The loop SHALL be bounded by
-an absolute unix-ms `deadline`; `T` is liveness-agnostic recv pacing only
-(`min(5s, remaining)`).
-
-The returned `ExecResult` SHALL carry an optional `provenance` frame mirroring
-the sandbox-server completion payload (`{ disabled, reads, writes, deletes }`,
-each entry `{ path, layers }`), with all arms defaulted so a completion that
-omits the frame (a synthetic watchdog failure, or a pre-field cached message)
-still parses. Because the frame rides the recv payload, it SHALL reconstruct
-verbatim from the durable recv output on replay.
-
-#### Scenario: Valid event is forwarded to the stream
-
-- **GIVEN** an `awaitExec` recv loop running with `callbackSecret` S
-- **WHEN** a message arrives whose signature equals `HMAC-SHA256(S, execId:timestamp:sha256Hex(payloadRaw))` within the freshness window
-- **THEN** the body SHALL call `emit(payload)` and continue the recv loop
-
-#### Scenario: Done marker returns the result
-
-- **GIVEN** an `awaitExec` recv loop
-- **WHEN** a verified message with `{ done: true, result }` is received
-- **THEN** `awaitExec` SHALL return `result` and the loop SHALL terminate
-
-#### Scenario: Completion frame surfaces on the result
-
-- **GIVEN** an `awaitExec` recv loop
-- **WHEN** a verified done marker arrives whose `result.provenance.reads` is `[{ path: "/r/data/x.csv", layers: ["python"] }]`
-- **THEN** the returned result's `provenance.reads` SHALL equal that entry
-
-#### Scenario: Missing provenance frame parses with defaults
-
-- **GIVEN** an `awaitExec` recv loop
-- **WHEN** a verified done marker omits `provenance` (e.g., a synthetic watchdog failure)
-- **THEN** `awaitExec` SHALL return the result without throwing, with absent or empty-armed `provenance`
-
-#### Scenario: Bad signature hard-cancels the run
-
-- **GIVEN** an `awaitExec` recv loop
-- **WHEN** a non-synthetic message arrives whose signature does not match the recomputed HMAC
-- **THEN** `awaitExec` SHALL throw a `HardCancelError` and the workflow SHALL be cancelled by DBOS without retry
-
-#### Scenario: Deadline bound by step.timeout
-
-- **GIVEN** an `awaitExec` invocation whose `deadline` is the step's absolute timeout
-- **WHEN** elapsed time exceeds `deadline` and the sandbox has no terminal result to serve
-- **THEN** `awaitExec` SHALL throw a timeout error rather than block indefinitely
-
-### Requirement: A terminal result is retrievable after a lost callback
-
-`GET /exec/{execId}` SHALL return the exec's terminal result signed fresh at
-request time so a host that was not listening when the exec finished — or that
-restarted onto a new identity — can still retrieve it; a still-running exec SHALL
-answer without a `result`. In **poll mode** the endpoint SHALL additionally accept
-`?since={cursor}` and return `{ status, events[], cursor, result? }`, where
-`events` are the buffered progress events newer than `cursor`, `cursor` is the new
-high-water mark, and events are served from a **bounded ring** that sets a
-`truncated` marker when it drops the oldest. In **callback mode** this endpoint
-remains the recovery backstop for a lost push. In both cases the served bytes are
-the ones a callback would have carried, so the provenance frame survives the
-retrieval path and one verification path serves poll and callback.
-
-Sandbox-server SHALL retain the exact completion bytes for every terminal exec
-(for `completedEntryTTL`, one hour) and SHALL record them *before* attempting
-any callback POST. An unknown `execId` SHALL return 404. In callback mode it
-SHALL claim its at-most-once right to POST only for the duration of a delivery
-attempt: a failed attempt SHALL release the claim, never latch it, so a
-completion that was never delivered is never marked delivered.
-
-In callback mode `awaitExec` SHALL, after a bounded run of silent recv slices
-and once more before declaring a deadline timeout, fetch `GET /exec/{execId}`
-as a DBOS step (not a bare `fetch`, whose result could vary between replays and
-desynchronise the recorded function-ID sequence). A terminal response SHALL be
-verified and parsed exactly as a pushed done-marker is: same secret, same
-freshness window, same `HardCancelError` on a bad or stale signature. Any other
-outcome — `running`, 404, an unreachable sandbox, a non-200 — SHALL be treated
-as "keep waiting" and SHALL NOT fail the exec, because a failed pull is not a
-failed command.
-
-#### Scenario: A completed exec is retrievable regardless of transport
-
-- **GIVEN** a completed exec
-- **WHEN** the host fetches `GET /exec/{execId}` (poll: with `?since`)
-- **THEN** the response SHALL be signed fresh and carry the terminal `result` with its provenance frame
-
-#### Scenario: A running exec is unsigned/without result and does not terminate the loop
-
-- **GIVEN** an exec still running
-- **WHEN** the host fetches the endpoint
-- **THEN** the response SHALL carry no `result`, and the loop SHALL keep waiting
-
-#### Scenario: A completed exec survives a host that was never listening
-
-- **GIVEN** an exec that ran to completion while the Cortex ingress was down, so its callback never landed
-- **WHEN** a recovered `awaitExec` finds the topic quiet and pulls `GET /exec/{execId}`
-- **THEN** sandbox-server SHALL return the completion bytes with a signature minted at that moment
-- **AND** `awaitExec` SHALL verify them against the freshness window and return the `ExecResult`
-
-#### Scenario: The pulled result carries the provenance frame
-
-- **GIVEN** a terminal exec whose completion payload contains a populated `provenance` frame
-- **WHEN** the result is pulled rather than pushed
-- **THEN** the served bytes SHALL be byte-identical to the callback's, so `provenance` SHALL round-trip intact
-
-#### Scenario: An unreachable sandbox does not fail the exec
-
-- **GIVEN** a pull that times out, is refused, or returns 404
-- **WHEN** `awaitExec` receives it
-- **THEN** the loop SHALL continue until the deadline, and the enclosing DBOS step SHALL NOT fail
-
-#### Scenario: A forged pulled result hard-cancels
-
-- **GIVEN** a pull whose signature does not verify against the `callbackSecret`
-- **WHEN** `awaitExec` receives it
-- **THEN** it SHALL throw `HardCancelError`, exactly as for a forged push
-
-### Requirement: Every callback attempt is signed afresh
-
-Sandbox-server SHALL mint the timestamp and signature inside its retry loop, once
-per attempt. The host verifies a symmetric freshness window and treats a stale
-timestamp as a hard cancel rather than a retryable condition, so a timestamp
-minted once and reused across retries would become permanently unacceptable the
-moment the window elapsed — the loop would then retry forever against a verdict
-that can never change.
-
-#### Scenario: A delivery delayed past the freshness window is still accepted
-
-- **GIVEN** a completion whose first ten delivery attempts fail over more than the freshness window
-- **WHEN** the eleventh attempt reaches the ingress
-- **THEN** it SHALL carry a timestamp minted for that attempt and SHALL verify
-
-#### Scenario: A failed delivery does not strand the result
-
-- **GIVEN** a completion POST that gives up on a 4xx
-- **WHEN** the exec's completion is later pulled
-- **THEN** the bytes SHALL still be served, because they were recorded before the POST was attempted
-
-### Requirement: The exec endpoints authenticate inbound requests by signature
-
-The exec endpoints — `POST /exec` and `GET /exec/{execId}` — SHALL require a valid
-`X-Sandbox-Signature` / `X-Sandbox-Timestamp` pair computed as
-`HMAC-SHA256(callbackSecret, "${execId}:${timestamp}:${sha256Hex(body)}")`, the
-same construction as the results the sandbox returns, and SHALL verify it against
-the freshness window. This SHALL hold in **both** transport modes: it authenticates
-the host→sandbox direction independent of how results flow back. `POST /exec` SHALL
-sign the request body; `GET /exec/{execId}` SHALL sign an empty body. A missing,
-malformed, forged, or stale signature SHALL be rejected with `401` before any
-command is spawned or any result disclosed. Authentication SHALL be a request
-signature, not a static bearer, so any cleartext hop can forward or drop a request
-but never mint another. Because the check tests possession of the per-sandbox
-secret, a network-adjacent sibling sandbox — holding only its own secret — SHALL
-NOT be able to authenticate to this sandbox's exec endpoints. The server SHALL
-expose no `POST /exec/{pid}/kill` route. `GET /health` SHALL remain
-unauthenticated.
-
-#### Scenario: An unsigned submit is rejected
-
-- **GIVEN** a running sandbox-server
-- **WHEN** `POST /exec` arrives with no signature headers
-- **THEN** the server SHALL respond `401` and SHALL NOT spawn the command
-
-#### Scenario: A forged submit is rejected
-
-- **WHEN** `POST /exec` arrives with a signature that does not match the recomputed HMAC over the request body
-- **THEN** the server SHALL respond `401` and SHALL NOT spawn the command
-
-#### Scenario: A correctly-signed submit is accepted
-
-- **WHEN** `POST /exec` arrives signed as `HMAC-SHA256(S, execId:timestamp:sha256Hex(body))` within the freshness window
-- **THEN** the server SHALL accept it and return `202`
-
-#### Scenario: An unsigned result fetch is rejected
-
-- **GIVEN** a terminal exec whose result is retained
-- **WHEN** `GET /exec/{execId}` arrives with no signature headers
-- **THEN** the server SHALL respond `401` and SHALL NOT disclose the command's stdout or stderr
-
-#### Scenario: A sibling cannot authenticate with its own secret
-
-- **GIVEN** two network-adjacent sandboxes, each with a distinct `callbackSecret`
-- **WHEN** one signs a request to the other's `/exec` with its own secret
-- **THEN** the signature SHALL NOT verify and the request SHALL be rejected with `401`
-
-#### Scenario: The kill route no longer exists
-
-- **WHEN** a request is made under `/exec/{pid}/kill`
-- **THEN** the server SHALL NOT kill a process, treating a slash-bearing `/exec/` path as unroutable
-
-### Requirement: Callback delivery is dumb, pod-agnostic, and forward-only
-
-In callback transport mode, sandbox-server callbacks SHALL reach the workflow exclusively by `DBOS.send` onto
-the per-exec topic `exec-event:${execId}` — there is no in-memory exec bus and no
-dual delivery path. The host callback handler (an embedder concern; the harness
-ships no HTTP route layer) SHALL parse the `workflowId` from the `execId` by
-stripping the last two colon-delimited segments (`workflowIdFromExec`), then
-`DBOS.send` the `{ payload, payloadRaw, signature, timestamp }` envelope. The
-handler SHALL NOT verify the HMAC, SHALL NOT read the `callbackSecret`, and SHALL
-NOT touch the database — verification happens in the recv loop. `payloadRaw` SHALL
-carry the exact bytes sandbox-server signed, because re-serializing the parsed
-payload would diverge from Go's HTML-escaping JSON encoder.
-
-#### Scenario: workflowId recovered from a colon-bearing execId
-
-- **GIVEN** `execId = "analysis-1:run-1-0:step-a:fn-0"` whose workflowId portion itself contains a colon
-- **WHEN** `workflowIdFromExec(execId)` runs
-- **THEN** it SHALL return `"analysis-1:run-1-0"` (the last two segments stripped)
-
-#### Scenario: Handler forwards via DBOS.send without verification
-
-- **WHEN** a callback for `execId` is forwarded
-- **THEN** delivery SHALL be `DBOS.send(workflowId, { payload, payloadRaw, signature, timestamp }, "exec-event:${execId}")`
-- **AND** the handler SHALL NOT execute any HMAC check, secret read, or SQL query
 
 ### Requirement: isAlive reports per-sandbox-machine liveness per backend
 
@@ -638,110 +175,35 @@ liveness, not readiness: a starting sandbox is alive.
 
 ### Requirement: teardown and teardownById are idempotent
 
-`teardown(ref)` SHALL run as a DBOS step that deletes the K8s Job (or stops and
-removes the Docker container) and clears the active-sandbox registry row. It SHALL
-be idempotent: "already gone" is a successful teardown and SHALL NOT throw.
-`teardownById(sandboxId)` SHALL delete a machine by id alone — the reaper path,
-which holds a `sandboxId` but no full `SandboxRef` — and SHALL NOT touch the
-registry (the reaper reconciles the row itself). It too SHALL be idempotent.
-`isAliveById(sandboxId)` SHALL answer liveness on the same id-only terms, with
-the semantics and throwing contract of `isAlive`, which SHALL delegate to it.
+`teardown(ref)` MUST run as a DBOS step that deletes the K8s Job (or stops and
+removes the Docker container) and clears the active-sandbox registry row. It MUST
+be idempotent: "already gone" is a successful teardown and MUST NOT throw.
+
+`teardownById(sandboxId)` MUST delete a machine by id alone. This is the path of
+the reaper, which holds a `sandboxId` but no full `SandboxRef`. It MUST NOT touch
+the registry, because the reaper reconciles the row itself. It too MUST be
+idempotent. `isAliveById(sandboxId)` MUST answer liveness on the same id-only
+terms, with the semantics and throwing contract of `isAlive`, which MUST
+delegate to it.
 
 #### Scenario: Teardown removes the machine and clears the row
 
 - **GIVEN** a K8s sandbox recorded in the active-sandbox registry
 - **WHEN** `teardown(ref)` is called
-- **THEN** the Job SHALL be deleted and the step row's `sandbox_ref`/`exec_id` SHALL be cleared
+- **THEN** the Job is deleted and the `sandbox_ref` of the step row is cleared
 
 #### Scenario: Teardown of a missing sandbox is a no-op success
 
 - **GIVEN** a sandbox whose backing machine has already been deleted
 - **WHEN** `teardown(ref)` is called
-- **THEN** the call SHALL return success without throwing
+- **THEN** the call returns success without throwing
 
 #### Scenario: teardownById deletes by id without registry touch
 
 - **GIVEN** the reaper holding only a `sandboxId`
 - **WHEN** `teardownById(sandboxId)` is called
-- **THEN** the backend machine SHALL be deleted
-- **AND** the call SHALL NOT clear any registry row itself
-
-### Requirement: Active-sandbox registry is queryable by running status
-
-The active-sandbox registry SHALL be the `cortex_step_executions` rows with a
-non-null `sandbox_ref` and `status='running'`. `queryActiveSandboxes` SHALL
-enumerate exactly those rows (`WHERE status = 'running' AND sandbox_ref IS NOT
-NULL`) for the liveness watchdog to shard. `sandbox_ref`/`exec_id` SHALL be
-written inside the `sandbox.create` step and cleared inside `teardown`; the
-`exec_id` SHALL be re-tagged before each `awaitExec` so the watchdog can target
-the in-flight exec.
-
-#### Scenario: Watchdog enumerates only running sandboxes
-
-- **GIVEN** registry rows with statuses `running`, `completed`, and `failed`
-- **WHEN** `queryActiveSandboxes` runs
-- **THEN** only rows with `status='running'` AND `sandbox_ref IS NOT NULL` SHALL be returned
-
-### Requirement: Liveness watchdog is a sharded scheduled fan-out
-
-The harness SHALL register a `@DBOS.scheduled` parent workflow that fires
-approximately once a minute. The parent SHALL checkpoint the active-sandbox read
-in a DBOS step, shard the rows by `hash(sandboxId) % SHARD_COUNT` (8), and
-`DBOS.startWorkflow` one child check workflow per non-empty shard. No single
-invocation SHALL poll all sandboxes — the parent SHALL NOT call `isAlive`
-directly. Each child SHALL iterate its shard and call `isAlive` on each row.
-
-#### Scenario: Parent fans out instead of polling
-
-- **GIVEN** active sandboxes spread across S non-empty shards
-- **WHEN** the scheduled parent fires
-- **THEN** it SHALL call `startWorkflow` once per non-empty shard
-- **AND** SHALL NOT call `isAlive` directly
-
-#### Scenario: Child checks only its shard
-
-- **GIVEN** a child check workflow for shard k
-- **WHEN** it runs
-- **THEN** it SHALL only call `isAlive` for rows whose shard hash equals k
-
-### Requirement: Synthetic-complete on a dead sandbox unblocks recv, guarded against races
-
-When a child watchdog observes a dead machine, it SHALL gate on the owning
-workflow's DBOS status before acting. Only if `getWorkflowStatus` returns a
-status in `{PENDING, ENQUEUED}` SHALL it `DBOS.send` a `synthetic-failure`
-done-marker (`signature: null`, `kind: "synthetic-failure"`) onto
-`exec-event:${execId}`. The synthetic failure's reason SHALL be
-`"sandbox-oom-killed"` when the liveness check reported an OOM-kill cause, and
-`"sandbox-dead"` otherwise, so a memory-limit kill is distinguishable at the
-step-failure surface. Delivery SHALL be `DBOS.send` only — there is no
-in-memory bus fallback. A dead sandbox whose `getWorkflowStatus` returns `null`
-(no workflow) or any non-in-flight status SHALL be **skipped**, not sent to. The
-in-flight guard prevents a race with a real `complete` that arrived microseconds
-earlier.
-
-#### Scenario: Dead sandbox with in-flight workflow gets a synthetic complete via DBOS.send
-
-- **GIVEN** an active-sandbox row whose machine is dead and whose workflow status is `PENDING`
-- **WHEN** the child watchdog processes the row
-- **THEN** `DBOS.send` SHALL deliver a `synthetic-failure` done-marker on `exec-event:${execId}` with reason `"sandbox-dead"`
-
-#### Scenario: OOM-killed sandbox carries the OOM reason
-
-- **GIVEN** an active-sandbox row whose machine is dead with an OOM-kill cause and whose workflow status is `PENDING`
-- **WHEN** the child watchdog processes the row
-- **THEN** the delivered `synthetic-failure` SHALL carry reason `"sandbox-oom-killed"`
-
-#### Scenario: Dead sandbox with null status is skipped
-
-- **GIVEN** an active-sandbox row whose machine is dead and whose `getWorkflowStatus` returns `null`
-- **WHEN** the child watchdog processes the row
-- **THEN** no send SHALL be issued
-
-#### Scenario: Dead sandbox with terminal workflow is skipped
-
-- **GIVEN** an active-sandbox row whose workflow status is `SUCCESS`
-- **WHEN** the child watchdog processes the row
-- **THEN** no send SHALL be issued
+- **THEN** the backend machine is deleted
+- **AND** the call does not clear any registry row itself
 
 ### Requirement: Recovery re-checks liveness before continuing a step
 
@@ -817,29 +279,367 @@ work. A probe that throws SHALL leave the machine for the next sweep.
 - **THEN** the machine SHALL NOT be torn down
 - **AND** the sweep summary SHALL count it as live-unattributed
 
-### Requirement: Notification-cleanup sweep clears unconsumed DBOS sends
+### Requirement: The host keeps each exec stream up to the maximum of the tool output store
 
-The harness SHALL register a `@DBOS.scheduled` sweep (~5-minute cadence, distinct
-from the liveness watchdog) that deletes `dbos.notifications` rows whose target
-workflow is terminal (`SUCCESS`/`ERROR`/`CANCELLED`) and `consumed = false`. This
-compensates for `DBOS.send` to an already-completed workflow accumulating forever
-— guaranteed at the protocol level because a real `complete` may beat the
-watchdog's synthetic-failure send, leaving the loser stuck. The delete SHALL be
-bounded per run and the row count SHALL be logged.
+The submit of each exec MUST carry `stdoutByteCap` and `stderrByteCap`, with the value `EXEC_STREAM_BYTE_CAP`. `runExec` attaches them to each request, and a caller of `exec` gives no budget.
+
+`exec` of the client MUST cut each stream of the result at the same value with `capExecStreams`, inside the `sandbox.exec` step, before the step returns. The cut on receipt stays, because a server that is older than the budget returns each stream whole.
+
+`EXEC_STREAM_BYTE_CAP` MUST be 1,048,576 bytes, the maximum of a kept text of the tool output store (refer to the harness-agent-loop capability). Thus the host gets each stream that the store can keep, and the loop decides what the model sees. An embedder can give a different value with `execStreamByteCap` of the client configuration.
+
+Each caller of the client gets the same bound: the step agent, the data profile, a session derivation, and a value extraction.
+
+#### Scenario: A submit carries the budget
+
+- **GIVEN** an exec request that carries no budget
+- **WHEN** `exec` submits it
+- **THEN** the body of `POST /exec` carries `stdoutByteCap` and `stderrByteCap` with the value 1,048,576
+
+#### Scenario: A long stream from an older server is cut on receipt
+
+- **GIVEN** a server that ignores the budget and returns a stdout of 2,097,152 bytes
+- **WHEN** the `sandbox.exec` step of the client returns
+- **THEN** the stdout holds 1,048,576 bytes, `stdoutTruncated` is true, and `stdoutTotalBytes` gives 2,097,152
+
+#### Scenario: A stream under the budget reaches the host whole
+
+- **GIVEN** a command that writes 300 KiB to stdout
+- **WHEN** the result reaches the host
+- **THEN** the stdout holds the 300 KiB, and `stdoutTruncated` is false
+
+### Requirement: Each sandbox exec runs as one durable step
+
+`SandboxClient.exec(ref, request, emit, deadline)` MUST run one command to its
+terminal result inside one DBOS step named `sandbox.exec`. The `request` MUST
+carry `command`, and it can carry `cwd`, `env`, and `timeoutSeconds`. It MUST
+carry no exec id. `deadline` is an absolute unix-ms timestamp.
+
+The exec id MUST be `${workflowId}:${stepId}`: the id of the workflow and the
+DBOS function id of the step that runs the exec. A caller MUST NOT mint an exec
+id. When a workflow body calls `exec`, the exec is its own step. A step can also
+call `exec`, for example the step of a tool call of the agent loop. Then the
+exec runs inside that step and takes the id of that step.
+
+Thus one step MUST hold at most one exec. A second exec in the same step gets
+the same id, and the sandbox gives it the record of the first exec. Outside a
+workflow, `exec` MUST throw before it sends a request.
+
+A step that completed MUST replay from the DBOS step cache. The replay gives the
+cached `ExecResult`, and it sends no request to the sandbox. A step that did not
+complete runs again on recovery. It MUST submit again with the same exec id. The
+sandbox MUST give the existing record of that id, and it MUST start no second
+command (see the sandbox-server spec).
+
+The client MUST cut the stdout and the stderr of the result to the retention
+budget before the step returns. Thus the step cache holds a bounded value.
+
+#### Scenario: The exec id comes from the step
+
+- **GIVEN** a workflow `wf-1` whose body calls `exec` as its step with the function id `4`
+- **WHEN** the step submits the command
+- **THEN** the submit carries `execId: "wf-1:4"`
+
+#### Scenario: The exec of a tool call takes the id of the tool step
+
+- **GIVEN** an `execute_command` call that the loop runs as the step `7` of the workflow `wf-1`
+- **WHEN** the tool calls `exec`
+- **THEN** the exec runs inside that step, and its exec id is `"wf-1:7"`
+
+#### Scenario: A completed step replays with no request
+
+- **GIVEN** a `sandbox.exec` step that completed on process A
+- **WHEN** the workflow recovers on process B
+- **THEN** the step gives the cached result, and process B sends no request to the sandbox
+
+#### Scenario: A recovered step attaches to the existing exec
+
+- **GIVEN** a host that stops while its `sandbox.exec` step polls a command that runs
+- **WHEN** the step runs again on recovery
+- **THEN** it submits the same exec id, and the sandbox starts no second command
+- **AND** the poll gives the result of the first command
+
+#### Scenario: An exec outside a workflow throws
+
+- **WHEN** a caller calls `exec` with no active DBOS workflow
+- **THEN** the call throws, and no request reaches the sandbox
+
+### Requirement: The exec submits, then polls the cursor endpoint
+
+The exec MUST `POST /exec` with
+`{ command, execId, cwd?, env?, timeoutSeconds?, stdoutByteCap, stderrByteCap }`.
+A `202` is the ack. Any other status MUST throw, and the step fails.
+
+Then the exec MUST poll `GET /exec/{execId}?since={cursor}` from cursor 0. A
+response is `{ status, events, cursor, truncated?, result? }`, and `status` is one
+of `running`, `completed`, and `failed`. The exec MUST wait 1.5 s after each of
+the first 40 polls, and 10 s after each later poll.
+
+The exec MUST give each event whose sequence number is above its local cursor to
+`emit`, in sequence order. It MUST wait for each `emit` before the next poll. The
+exec MUST apply this filter itself, because a response can hold events at or
+below the cursor. The exec MUST return `result` when a response holds it.
+
+A gap between the local cursor and the next sequence number shows that the ring
+of the sandbox dropped events. The exec MUST log the gap as a warning and
+continue. The terminal result, not the event stream, is the outcome of the exec.
+
+A failed poll MUST NOT fail the exec. A network error, a timeout, a non-200
+status, and a `404` are each a failed poll. The exec MUST continue to poll until
+the deadline. The exec MUST compare the time with the deadline after a poll.
+Thus the exec always polls one time more before it throws `ExecTimeoutError`.
+
+The returned `ExecResult` MUST carry an optional `provenance` frame that mirrors
+the completion payload of sandbox-server: `{ disabled, reads, writes, deletes }`,
+and each entry is `{ path, layers }`. Each arm MUST have a default. Thus a result
+with no frame parses, for example a synthetic failure.
+
+#### Scenario: A poll gives the terminal result
+
+- **GIVEN** an exec whose command completed
+- **WHEN** the exec polls `GET /exec/{execId}?since={cursor}`
+- **THEN** the response holds `result`, and the exec returns it
+
+#### Scenario: Each new event reaches emit one time
+
+- **GIVEN** an exec whose command makes events between two polls
+- **WHEN** the exec polls with its last cursor
+- **THEN** only the events above the cursor reach `emit`, and the cursor moves to the new high-water mark
+
+#### Scenario: A repeated snapshot gives no event again
+
+- **GIVEN** a response that holds events at or below the local cursor
+- **WHEN** the exec reads it
+- **THEN** only the events above the local cursor reach `emit`
+
+#### Scenario: Events that the ring dropped give a warning
+
+- **GIVEN** a response whose first sequence number leaves a gap above the local cursor
+- **WHEN** the exec reads it
+- **THEN** the exec logs a warning that names the lost range, and it continues
+
+#### Scenario: A failed poll is not a failed exec
+
+- **GIVEN** a poll that times out, that the sandbox refuses, or that gets a `404`
+- **WHEN** the exec reads the outcome
+- **THEN** the exec continues to poll until the deadline, and the step does not fail
+
+#### Scenario: The deadline check polls one time more
+
+- **GIVEN** an exec whose deadline is past
+- **WHEN** the exec sees the deadline
+- **THEN** it polled one time after the deadline, and it returns the result of that poll when the poll holds one
+- **AND** it throws `ExecTimeoutError` only when that poll holds no result
+
+#### Scenario: The cadence slows for a long exec
+
+- **GIVEN** an exec that still runs after 40 polls
+- **WHEN** the exec waits for the next poll
+- **THEN** it waits 10 s
+
+#### Scenario: A refused submit fails the step
+
+- **WHEN** `POST /exec` gets a status that is not `202`
+- **THEN** the exec throws, and the `sandbox.exec` step fails
+
+#### Scenario: A result with no provenance frame parses
+
+- **WHEN** a terminal result holds no `provenance`
+- **THEN** the exec returns the result with no throw, and the `provenance` is absent or has empty arms
+
+### Requirement: The exec stops when its workflow is canceled
+
+A DBOS step does not see a cancel of its workflow. Thus the exec MUST read the
+status of its workflow during the poll loop, at most one time in each 10 s. When
+the status is `CANCELLED`, the exec MUST throw `DBOSWorkflowCancelledError`. The
+command in the sandbox continues until the reaper removes the machine, because
+sandbox-server has no kill route.
+
+#### Scenario: A cancel stops the poll loop
+
+- **GIVEN** an exec that polls a command that runs
+- **WHEN** its workflow is canceled
+- **THEN** the next status read finds `CANCELLED`, and the exec throws `DBOSWorkflowCancelledError`
+- **AND** the exec sends no more polls
+
+### Requirement: Sustained unavailability escalates to a liveness probe
+
+The exec MUST count the consecutive `unavailable` polls. An `ok` poll resets the
+count. When the count gets to the escalation threshold, the exec MUST run one
+liveness probe inside its step: the backend inspect `SandboxClient.isAlive(ref)`.
+The threshold is a module constant. The probe MUST give one of three verdicts,
+and it MUST NOT throw:
+
+- **dead**: the machine is observably dead. The exec MUST return a
+  synthetic-failure `ExecResult` with no wait for the deadline. The reason MUST
+  be `"sandbox-oom-killed"` when the backend gives the memory limit as the cause
+  of the death, and `"sandbox-dead"` for each other cause.
+- **alive**: the machine runs, for example with a slow exec or a non-200 answer.
+  The exec MUST reset the count and continue to poll, bounded by the deadline.
+- **inconclusive**: the inspect threw, for example on a transient error of the
+  backend API. The exec MUST reset the count and continue to poll. A failed
+  probe is not a failed exec.
+
+A poll outcome alone MUST NOT fail an exec. An `unavailable` poll cannot tell an
+unreachable sandbox from an unknown exec id. Thus the backend inspect is the only
+judge of a dead machine. When the exec has no `isAlive`, it MUST NOT escalate,
+and only the deadline bounds it.
+
+#### Scenario: A dead machine ends the exec fast
+
+- **GIVEN** an exec whose machine stops during the command
+- **WHEN** the threshold count of consecutive polls are `unavailable`, and the probe finds the machine dead
+- **THEN** the exec returns a synthetic-failure `ExecResult` with the reason `"sandbox-dead"`, with no wait for the deadline
+
+#### Scenario: A machine that ran out of memory gives the OOM reason
+
+- **GIVEN** an exec whose machine the backend reports as OOM-killed
+- **WHEN** the probe runs
+- **THEN** the synthetic-failure result carries the reason `"sandbox-oom-killed"`
+
+#### Scenario: A slow machine that is alive never fails the exec
+
+- **GIVEN** an exec whose polls are `unavailable` past the threshold, and whose machine the probe finds alive
+- **WHEN** the verdict arrives
+- **THEN** the exec resets the count and continues to poll, and only the deadline bounds it
+
+#### Scenario: An ok poll resets the count
+
+- **GIVEN** a series of `unavailable` polls one short of the threshold
+- **WHEN** the next poll is `ok`
+- **THEN** no probe runs, and the count starts again from zero
+
+#### Scenario: A transient probe error is inconclusive
+
+- **GIVEN** a probe whose backend inspect throws a transient API error
+- **WHEN** the probe runs
+- **THEN** the probe does not throw, the exec does not fail, and the exec continues to poll with the count at zero
+
+#### Scenario: No inspect, no escalation
+
+- **GIVEN** an exec with no `isAlive`
+- **WHEN** the polls are `unavailable` past the threshold
+- **THEN** the exec continues to poll, and only the deadline bounds it
+
+### Requirement: The exec gives its events at least once
+
+The exec MUST call `emit` from inside its step. A step that runs again on
+recovery polls from cursor 0. Thus it MUST give the events of its exec to `emit`
+again, and a consumer of `emit` MUST tolerate a repeated event.
+
+A write to a DBOS stream from inside a step is permitted, and it is
+at-least-once. The write takes no function id of the workflow. Thus an event
+write inside a step does not change the replay sequence of the body.
+
+The sandbox-step body obeys this rule. It folds each file-tree delta into one
+path set, and it writes the whole tree under one reconciling part id. Thus a
+repeated delta adds no path two times.
+
+After a recovery, the live tree holds only the deltas of the execs that ran in
+the new process. The terminal tree of the step replaces the live tree at the end
+of the step.
+
+#### Scenario: A recovered step writes its events again
+
+- **GIVEN** a `sandbox.exec` step that gave two file-tree events to `emit`, and then its host stopped
+- **WHEN** the step runs again on recovery
+- **THEN** the exec gives the two events to `emit` again
+- **AND** each file-tree part that the body writes is a whole tree under the same reconciling id
+
+### Requirement: A sandbox has no egress
+
+A sandbox MUST NOT start a network connection. The host connects to the
+sandbox, and the sandbox answers on that connection. The exec endpoints carry no
+signature. Thus confinement is the only control that keeps a different peer away
+from the exec endpoints of a sandbox.
+
+- On the Docker backend, the client MUST publish the exec port on `127.0.0.1`
+  only. The entrypoint of the image MUST install the egress-deny firewall before
+  the workload starts (see the docker-sandbox-provider spec and the
+  sandbox-server spec).
+- On the K8s backend, the deployment MUST apply a NetworkPolicy to the sandbox
+  pods. The policy MUST admit ingress to the exec port from the Cortex pods
+  only, and it MUST deny each egress of a sandbox pod. The harness sets no
+  firewall flag on a K8s pod.
+
+#### Scenario: A Docker sandbox cannot open a connection
+
+- **GIVEN** a sandbox on the Docker backend
+- **WHEN** the workload opens a new outbound connection
+- **THEN** the firewall drops the connection
+- **AND** the poll of the host still gets its answer
+
+#### Scenario: Only Cortex reaches a K8s sandbox
+
+- **GIVEN** a sandbox pod under the NetworkPolicy of the deployment
+- **WHEN** a pod that is not a Cortex pod connects to the exec port
+- **THEN** the policy refuses the connection
+
+### Requirement: The active-sandbox registry records the machine, not the exec
+
+The active-sandbox registry MUST be the `cortex_step_executions` rows with a
+non-null `sandbox_ref` and `status='running'`. The `sandbox.create` step MUST
+write `sandbox_ref`, and `teardown` MUST clear it. The reaper MUST clear it when
+it reconciles the row of a machine that it removed. The row MUST hold no exec
+id. The exec id is the id of a DBOS step, and nothing outside that step reads
+it.
+
+#### Scenario: A step row holds no exec id
+
+- **GIVEN** a step whose agent runs some execs
+- **WHEN** a reader reads the row while the step runs
+- **THEN** the row holds the `sandbox_ref` of the machine, and it holds no exec id
+
+### Requirement: The sandbox spawn is a checkpoint-idempotent two-step sequence
+
+The spawn MUST run as two DBOS steps. Step 1 (`sandbox.mint`) MUST checkpoint a
+`SandboxIdentity` `{ sandboxId }`, a `sbx-{run8}-{rand8}` name. Thus the name is
+durable before a machine exists. Step 2 (`sandbox.create`) MUST spawn the
+`sandbox-base` machine under that identity and wait for `/health`. Then it MUST
+record the machine in the active-sandbox registry and return the `SandboxRef`
+`{ sandboxId, host, port, backend }`. The machine gets no secret.
+
+The idempotency MUST come from the step-1 checkpoint, not from the name. A
+recovery run of step 2 whose machine exists already MUST adopt that machine
+under the same name, and it MUST NOT leak a second machine.
+
+#### Scenario: Identity is durable before the machine exists
+
+- **WHEN** the `sandbox.mint` step runs
+- **THEN** `{ sandboxId }` is checkpointed as the output of that step
+- **AND** no sandbox machine exists yet
+
+#### Scenario: The identity persists across replay
+
+- **GIVEN** a workflow that ran the mint step and the spawn step on process A
+- **WHEN** the workflow recovers on process B
+- **THEN** the cached step outputs are returned, and no new name is minted
+
+#### Scenario: Recovery adopts an already-spawned machine
+
+- **GIVEN** a process restart between the backend spawn and the step-2 checkpoint
+- **WHEN** `sandbox.create` runs again on recovery and the backend reports that the machine exists
+- **THEN** it adopts that machine under the step-1 identity
+- **AND** it does not make a second machine
+
+### Requirement: A scheduled sweep clears the unconsumed DBOS sends
+
+The harness MUST register a `@DBOS.scheduled` sweep that runs about each 5
+minutes. The sweep deletes the `dbos.notifications` rows whose target workflow
+is terminal (`SUCCESS`, `ERROR`, or `CANCELLED`) and whose `consumed` is
+`false`. A
+`DBOS.send` to a workflow that ends before it reads the message stays forever
+otherwise. The suspension notice of a child to a parent that failed already is
+one example. The delete MUST be bounded for each run, and the sweep MUST log the
+row count.
 
 #### Scenario: Stale notifications cleared for terminal workflows
 
 - **GIVEN** a `dbos.notifications` row with `consumed=false` whose workflow status is `SUCCESS`
 - **WHEN** the sweep runs
-- **THEN** the row SHALL be deleted
+- **THEN** the row is deleted
 
 #### Scenario: Live-workflow notifications preserved
 
 - **GIVEN** a `dbos.notifications` row with `consumed=false` whose workflow status is `PENDING`
 - **WHEN** the sweep runs
-- **THEN** the row SHALL NOT be deleted
-
-#### Scenario: Sweep cadence is separate from the liveness watchdog
-
-- **WHEN** the two scheduled workflows are registered
-- **THEN** they SHALL have distinct cron expressions, the sweep firing roughly every 5 minutes and the watchdog roughly every minute
+- **THEN** the row is not deleted

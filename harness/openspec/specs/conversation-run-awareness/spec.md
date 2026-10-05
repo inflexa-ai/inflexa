@@ -6,30 +6,6 @@ Keep conversation agents accurately informed about asynchronous analysis work wi
 
 ## Requirements
 
-### Requirement: Conversation turns receive fresh analysis-wide run activity
-
-The harness SHALL inject a `[Run Activity]` user message into every analysis-scoped conversation turn after analysis context and before rendered working memory. The message SHALL be derived afresh from `cortex_runs` for the whole analysis, SHALL distinguish `running` from `suspended_insufficient_funds`, and SHALL carry each rendered run's full `runId`, nullable `planId`, absolute `startedAt`, and age at preparation time. The message SHALL NOT be persisted to thread history or working memory.
-
-#### Scenario: Running and suspended runs are injected
-
-- **GIVEN** an analysis has one running run and one suspended run, including a run launched from another conversation thread
-- **WHEN** a chat turn is prepared
-- **THEN** the Run Activity tail message lists both full run ids in separate Running and Suspended sections
-- **AND** each entry carries its plan id when present, absolute start time, and current age
-
-#### Scenario: Run activity remains outside persisted history
-
-- **WHEN** a prepared turn is passed through the agent loop and appended to thread history
-- **THEN** the persisted turn contains the genuine user message and loop output
-- **AND** it contains no Run Activity tail message
-
-#### Scenario: Run activity preserves the cacheable prefix
-
-- **GIVEN** a thread has persisted conversation history
-- **WHEN** a new turn is assembled
-- **THEN** the history remains an unchanged prefix
-- **AND** Run Activity appears only in the ephemeral tail
-
 ### Requirement: Empty, unavailable, and truncated activity are explicit
 
 The Run Activity renderer SHALL explicitly state when the analysis has no non-terminal runs. If the activity read fails while the rest of turn preparation can continue, it SHALL render that run activity is temporarily unavailable and SHALL NOT imply that no run exists. The renderer SHALL include at most 20 detailed non-terminal rows and SHALL state the true total and omitted count when more rows exist.
@@ -85,3 +61,41 @@ Completing a workflow SHALL update the harness run ledger and run-event stream b
 - **WHEN** an analysis workflow reaches a terminal state
 - **THEN** its ledger and stream expose the terminal state
 - **AND** no conversation-agent invocation or thread-history write is created by completion
+
+### Requirement: Conversation turns store fresh analysis-wide run activity after the user message
+
+The harness MUST derive the Run Activity afresh from `cortex_runs` for the whole analysis on each chat turn. The render MUST separate `running` from `suspended_insufficient_funds`. It MUST give the full `runId`, the nullable `planId`, and the absolute `startedAt` of each run that it lists.
+
+The render MUST NOT give the age of a run. An age changes each minute, and the record of the turn would then change on each turn.
+
+The render is a context record of the kind `run-activity` (see the chat-turn capability), after the user message of the turn. The turn stores the record as a row of the turn only in two conditions:
+
+- The history window holds no run-activity record.
+- The text differs from the latest run-activity record in the window.
+
+The harness MUST NOT write the render to the working memory.
+
+#### Scenario: Running and suspended runs are listed
+
+- **GIVEN** an analysis with one running run and one suspended run, and one of the two runs started from a different conversation thread
+- **WHEN** a chat turn is prepared
+- **THEN** the run-activity record lists both full run ids in separate Running and Suspended sections
+- **AND** each entry carries its plan id when present and its absolute start time, and no entry carries an age
+
+#### Scenario: An unchanged activity adds no record
+
+- **GIVEN** a thread whose window holds a run-activity record, and no run of the analysis that changed after it
+- **WHEN** the next turn is prepared
+- **THEN** the turn adds no run-activity record, and the stored history stays an unchanged prefix
+
+#### Scenario: A changed activity follows the user message
+
+- **GIVEN** a thread whose window holds a run-activity record, and a run that started after it
+- **WHEN** the next turn is prepared
+- **THEN** the new run-activity record comes after the user message, and each earlier stored row does not change
+
+#### Scenario: The render does not change with time
+
+- **GIVEN** one set of non-terminal runs
+- **WHEN** the harness renders it two times, one hour apart
+- **THEN** the two renders are byte-identical

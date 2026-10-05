@@ -25,7 +25,9 @@ composed per dispatch by `composeStepBriefing` (`harness/src/prompts/briefing.ts
 whose `renderWorkspace` section names the in-sandbox working directory and the
 read-only analysis root. The prompt layers teach the path *model*; the seed
 supplies the *paths*.
+
 ## Requirements
+
 ### Requirement: Python-first language policy
 
 All sandbox agents SHALL use Python as the default programming language. R SHALL
@@ -142,28 +144,32 @@ artifact subdirectories — `scripts/`, `output/`, `figures/`, `logs/`,
 
 ### Requirement: The step seed carries the concrete paths, not the system prompt
 
-The step's seed — its sole initial user message — SHALL be composed by
-`composeStepBriefing` (`harness/src/prompts/briefing.ts`) from the plan step's
-instruction-bearing fields (`name`, `question`, `description`, `context`,
-`constraints`, `acceptance_criteria`, `caveats`, skipping empty ones) plus a
-Workspace section rendered by `renderWorkspace({ analysisRoot, workingDir })` that
-names both in-sandbox paths verbatim. Every per-step value the agent needs — the
-paths, the dataset orientation, and what each completed dependency produced —
-SHALL ride here and NOWHERE in the system prompt, so the composed `systemPrompt`
-stays a pure function of the agent type and the provider's prompt cache can reuse
-its prefix across every step of every run.
+The seed of a step is its sole initial user message. `composeStepBriefing` (`harness/src/prompts/briefing.ts`) MUST compose it from these parts:
+
+- the instruction fields of the plan step: `name`, `question`, `description`, `context`, `constraints`, `acceptance_criteria`, and `caveats`. The seed skips each empty field.
+- a Workspace section from `renderWorkspace`, which names the two in-sandbox paths as they are.
+- a read-only copy of the goal and the constraints of the working memory of the analysis, under its own heading (see the harness-working-memory capability).
+
+Each value for one step MUST be in the seed and MUST NOT be in the system prompt. These values are the paths, the data orientation, the copy of the analysis memory, and the result of each completed dependency. Thus the composed `systemPrompt` stays a pure function of the agent type. The prompt cache of the provider can then use its prefix again for each step of each run.
 
 #### Scenario: The seed names both paths
 
-- **WHEN** `composeStepBriefing` is invoked for a dispatched step
-- **THEN** its Workspace section names the writable working directory (the agent's cwd) and the read-only analysis root
-- **AND** the task sections carry only the step's populated instruction fields
+- **WHEN** `composeStepBriefing` composes the seed of a dispatched step
+- **THEN** its Workspace section names the writable working directory (the cwd of the agent) and the read-only analysis root
+- **AND** the task sections hold only the instruction fields of the step that have a value
+
+#### Scenario: The seed carries the analysis memory
+
+- **GIVEN** an analysis whose working memory holds a goal or a constraint
+- **WHEN** `composeStepBriefing` composes the seed of a dispatched step
+- **THEN** the seed holds the section `## Analysis memory (read only)`
+- **AND** the system prompt holds no text of that memory
 
 #### Scenario: The system prompt is byte-identical across steps
 
-- **GIVEN** two different steps of the same run built with the same sandbox agent type
-- **WHEN** their `AgentDefinition.systemPrompt` strings are compared
-- **THEN** they SHALL be byte-identical, carrying no path, id, or unsubstituted placeholder
+- **GIVEN** two different steps of the same run with the same sandbox agent type
+- **WHEN** the harness compares their `AgentDefinition.systemPrompt` strings
+- **THEN** the strings MUST be byte-identical, with no path, no id, and no placeholder that has no value
 
 ### Requirement: Command-execution discipline keeps execute_command primary
 
@@ -321,4 +327,3 @@ orientation reading — no exhaustive column hunts.
 
 - **WHEN** the data-profiler prompt is read
 - **THEN** it SHALL NOT instruct the agent to find a dimension for every vocabulary category
-

@@ -1,11 +1,11 @@
 # input-staging Specification
 
 ## Purpose
-Materialize an analysis's selected inputs into its workspace tree (`{workspaceRoot}/data/inputs/local/…`) as the `StagedInput[]` manifest the embedded harness consumes verbatim — hardlink-first placement, noise-dir-aware directory walks, deterministic file identity, staging-time mirroring so the tree always reflects the current inputs, and a read-only drift-signature enumeration sharing the same walk (for profile-drift checks). Lives in `src/modules/staging/`; the workspace-root rule is owned by `path-resolution`, and its harness-seam realization by `harness-runtime`.
+Materialize an analysis's selected inputs into its workspace tree (`{workspaceRoot}/data/inputs/local/…`) as the `StagedInput[]` manifest the embedded harness consumes verbatim — hardlink-first placement, noise-dir-aware directory walks, deterministic file identity, staging-time mirroring so the tree always reflects the current inputs, and a read-only path enumeration sharing the same walk (it tells the profile ladder whether the analysis has inputs on disk). Lives in `src/modules/staging/`; the workspace-root rule is owned by `path-resolution`, and its harness-seam realization by `harness-runtime`.
+
 ## Requirements
 
 ### Requirement: Stage an analysis's inputs into the workspace tree
-
 
 The system SHALL provide `stageInputs(analysisId, targetDir)` in
 `src/modules/staging/staging.ts` returning `Result`-typed `StagedInput[]`, where
@@ -24,18 +24,22 @@ key; anchorless inputs (absolute host paths) SHALL use `{fileId}/{basename}` ins
 — the host filesystem layout must never leak into the sandbox tree or the manifest,
 and keys MUST equal the staged file's path relative to `inputs/local` exactly.
 
-`size` and `mtimeMs` SHALL be read from the same `stat` of the source file, so the manifest's drift
-signature is consistent with the one `enumerateInputSignatures` produces for the same file.
+`size` and `mtimeMs` SHALL be read from the same `stat` of the source file. They serve two
+readers: the profile snapshot's recorded `inputSignature`, an audit record of what a profile
+covered, and `isInputSetMaterialized`, which compares them against the staged copy to decide
+whether the tree is current. They are no longer a drift comparand — a re-profile is invoked on
+the input-mutation edge rather than derived from comparing them.
 
-#### Scenario: The manifest carries the drift signature
+#### Scenario: The manifest carries the size and mtime
 
 - **WHEN** `stageInputs` materializes an input file
 - **THEN** its manifest element SHALL carry the source file's `size` in bytes and `mtimeMs` in epoch milliseconds
+- **AND** both SHALL come from the same `stat` call, taken before placement
 
 #### Scenario: Anchorless input keys carry no host path
 
-- **WHEN** an input stored as an absolute path (no anchor) is staged
-- **THEN** its key is `{fileId}/{basename}`, the file exists at `inputs/local/{key}`, and no host directory segment appears in the manifest
+- **WHEN** an anchorless input at an absolute host path is staged
+- **THEN** its `key` SHALL be `{fileId}/{basename}` and SHALL contain no directory component of the host path
 
 #### Scenario: Single-file input staged at the contract path
 
@@ -62,7 +66,6 @@ signature is consistent with the one `enumerateInputSignatures` produces for the
 
 ### Requirement: Hardlink-first materialization
 
-
 Staging SHALL attempt a hardlink first and fall back to a byte copy when linking fails
 (e.g. cross-filesystem). With the workspace under the anchor, the hardlink path is the
 common case — inputs usually share the anchor's filesystem. Staging SHALL NOT create
@@ -75,7 +78,6 @@ symlinks dangle.
 - **THEN** the file is staged as a full copy and the manifest entry is identical to the hardlink case
 
 ### Requirement: Symlinked files inside directory inputs are staged
-
 
 When walking a directory input, entries that are symlinks SHALL be resolved via stat:
 a symlink to a file is staged (as the target's content), and a symlink to a directory
@@ -93,7 +95,6 @@ the walk.
 - **THEN** the walk completes without error and no manifest entry is produced for it
 
 ### Requirement: Noise directories are never staged
-
 
 Directory-input walks SHALL skip directories whose name identifies tool or
 source-control noise rather than data: the harness's ignored set (`node_modules`,
@@ -117,7 +118,6 @@ to the whole subtree, including directories reached through symlinks.
 
 ### Requirement: The staged tree mirrors the current inputs
 
-
 `stageInputs` SHALL reconcile the `inputs/local` tree against the manifest it just
 produced: staged files no current input produced SHALL be deleted, and directories
 emptied by those deletions SHALL be pruned. Reconciliation happens at staging time —
@@ -137,7 +137,6 @@ could race a run holding the tree in a read-only mount.
 
 ### Requirement: Deterministic file identity
 
-
 `fileId` SHALL be derived deterministically from the input's identity (anchor id plus
 input path, plus the relative subpath for files inside directory inputs), so re-staging
 the same input yields the same `fileId` across runs. The derivation for directory
@@ -148,53 +147,6 @@ derivation.
 
 - **WHEN** the same analysis is staged twice with unchanged inputs
 - **THEN** every file receives the same `fileId` in both manifests
-
-### Requirement: Identity-only input enumeration
-
-
-The system SHALL provide `enumerateInputSignatures(analysisId)` in `src/modules/staging/` returning the
-`Result`-typed set of **drift signatures** — `(fileId, size, mtimeMs)` — that `stageInputs` would
-produce for the analysis's current inputs, using the same identity derivation and the same walk rules
-(noise-directory skips, symlink handling, unresolvable inputs skipped, same-destination collision
-resolved last-write-wins) — while writing nothing to the workspace tree, hashing no file content, and not
-requiring the workspace tree to exist.
-
-Its cost SHALL be bounded by directory enumeration plus one `stat` per file (never by input content
-size), so parity drift checks can run on every chat open and every input mutation. The identity walk
-SHALL be single-sourced with staging's walk: the two MUST NOT be able to drift on which files an input
-yields.
-
-The signature exists because `fileId` is derived from the input's anchor and path: two enumerations of
-the same paths holding different bytes have identical `fileId` sets. Adding `size` and `mtimeMs` makes
-an in-place content edit observable at stat cost. It SHALL NOT include a content hash — reading every
-input in full on every chat open is the cost this enumeration exists to avoid. An edit that preserves
-both byte length and mtime is consequently not detected; this is a bounded, accepted limitation.
-
-#### Scenario: Enumeration matches staging's identity set
-
-- **WHEN** `enumerateInputSignatures` and `stageInputs` run against the same inputs
-- **THEN** every enumerated signature's `fileId` component equals exactly one staged manifest entry's `fileId`, and the two sets have the same size
-
-#### Scenario: Enumeration performs no writes
-
-- **WHEN** `enumerateInputSignatures` runs for an analysis whose workspace tree does not exist
-- **THEN** it returns the signature set and creates no directory or file
-
-#### Scenario: Enumeration hashes nothing
-
-- **WHEN** `enumerateInputSignatures` runs over a large input file
-- **THEN** the file's content SHALL NOT be read
-
-#### Scenario: Unresolvable inputs are skipped consistently
-
-- **WHEN** one input's anchor cannot be resolved
-- **THEN** the enumeration omits it, exactly as staging's walk would
-
-#### Scenario: An in-place edit changes the signature
-
-- **WHEN** an input file's bytes are rewritten at the same path, changing its size or mtime
-- **THEN** its enumerated signature SHALL differ from the one enumerated before the edit
-- **AND** its `fileId` SHALL be unchanged
 
 ### Requirement: Materialization is independent of the data-profile lifecycle
 
@@ -305,3 +257,50 @@ the per-analysis instance lock's responsibility, unchanged.
 - **GIVEN** a materialized input set
 - **WHEN** a staged file is deleted from the tree by hand
 - **THEN** the predicate SHALL report not-materialized, and a subsequent staging pass SHALL restore it
+
+### Requirement: Identity-only input path enumeration
+
+The system SHALL provide `enumerateInputPaths(analysisId)` in `src/modules/staging/` returning the
+`Result`-typed set of **analysis-relative paths** that `stageInputs` would produce for the analysis's
+current inputs, using the same identity derivation and the same walk rules (noise-directory skips,
+symlink handling, unresolvable inputs skipped, same-destination collision resolved last-write-wins) —
+while writing nothing to the workspace tree, hashing no file content, and not requiring the workspace
+tree to exist.
+
+Its cost SHALL be bounded by directory enumeration plus one `stat` per file (never by input content
+size). The identity walk SHALL be single-sourced with staging's walk: the two MUST NOT be able to drift
+on which files an input yields.
+
+It SHALL carry no `size` or `mtimeMs`. Those existed to make an in-place content edit observable at stat
+cost, for a drift comparison that no longer runs: a re-profile is invoked on the input-mutation edge, so
+per-file drift signatures would be gathered on every chat open for no reader. The question this
+enumeration answers is whether the analysis has inputs on disk right now — which is what the profile
+ladder branches on, and what the emptied-set clear depends on.
+
+A file that vanished between the walk and its `stat` SHALL be omitted rather than raising, because the
+database and the filesystem routinely disagree and a gone file is honestly reported as absent.
+
+#### Scenario: Enumeration matches staging's path set
+
+- **WHEN** `enumerateInputPaths` and `stageInputs` run against the same inputs
+- **THEN** the enumerated set SHALL equal the staged manifest's `relativePath` set exactly
+
+#### Scenario: Enumeration performs no writes
+
+- **WHEN** `enumerateInputPaths` runs for an analysis whose workspace tree does not exist
+- **THEN** it returns the path set and creates no directory or file
+
+#### Scenario: Enumeration hashes nothing
+
+- **WHEN** `enumerateInputPaths` runs over a large input file
+- **THEN** the file's content SHALL NOT be read
+
+#### Scenario: Unresolvable inputs are skipped consistently
+
+- **WHEN** one input's anchor cannot be resolved
+- **THEN** the enumeration omits it, exactly as staging's walk would
+
+#### Scenario: A vanished source is a removal, not a failure
+
+- **WHEN** an input's row survives but its file was deleted from disk
+- **THEN** the enumeration omits that path and stays in the ok channel

@@ -23,7 +23,9 @@ genuine errors but runs no output-count "wrongness" heuristic. Because the
 deliverables contract plus the blocker make inline-narrate-and-stop the wrong
 move, the post-step summarizers keep drawing on the agent's transcript and also
 gain a scoped `read_file` to ground every claim in the actual persisted outputs.
+
 ## Requirements
+
 ### Requirement: Code-defined sandbox agents in a directory structure
 
 The harness SHALL define every sandbox agent under `harness/src/agents/sandbox/`.
@@ -57,55 +59,61 @@ five fields `runAgent` consumes: `id`, `systemPrompt`, `model`, `tools`, and
 
 ### Requirement: Composition root resolves each agent's tools from a central registry
 
-`createSandboxAgent` SHALL hand each agent exactly its `meta.tools` allowlist —
-resolved against the central registry in `resolveSandboxTools` — plus the
-always-on substrate, which is NOT declared in any meta: the mutate surface
-(`execute_command`, `write_file`, `edit_file`), the read surface (`read_file`,
-`list_files`, `file_stat`, `grep`, and `workspace_search` when an embedding
-provider is wired), `inspect_data_profile`, the skill tools declared by
-`meta.skills`, and `report_blocker` when a blocker cell is supplied.
+`createSandboxAgent` MUST give each agent exactly its `meta.tools` allowlist, resolved against the central registry in `resolveSandboxTools`, plus the always-on substrate. No meta declares the substrate. The substrate is these tools:
 
-`inspect_data_profile` is always-on because the persisted profile is the only
-record of what the analysis's input dataset IS — no file on disk carries it (the
-profiler's scratch tree is deleted on completion) — so an agent that cannot pull
-it has no fallback but to re-derive organism, dimensions, and format from the raw
-bytes. Under `readOnly` the `write_file`/`edit_file` pair SHALL be omitted while
-`execute_command`, the read tools, and `inspect_data_profile` SHALL remain —
-reading the profile is not a mutation.
+- the mutate surface: `execute_command`, `write_file`, and `edit_file`
+- the read surface: `read_file`, `list_files`, `file_stat`, `grep`, and `workspace_search` when an embedding provider is wired
+- `read_tool_output` when a tool output store is supplied, after the workspace tools
+- `inspect_data_profile`
+- the skill tools that `meta.skills` declares
+- `report_blocker` when a blocker cell is supplied
+- `submit_file_metadata` when a file-metadata cell is supplied
 
-An unknown `SandboxToolName` SHALL throw at composition time, not at the first LLM
-call. Tools that need dependencies (`SandboxClient`, `WorkspaceFilesystem`,
-`ChatProvider`, `Pool`) SHALL receive them through their factory closures at the
-root — never via `ToolContext` or ambient state. `BASE_SANDBOX_TOOLS`
-(`listAvailablePackages`, `listAvailableRefs`, `resolveLibraryId`, `queryDocs`,
-`inspectRun`) SHALL be spread into each agent's `meta.tools` so planner metadata
-and the resolved tool record stay in sync.
+`inspect_data_profile` is always on, because the persisted profile is the only record of what the input dataset of the analysis is. No file on disk carries it, because the profiler deletes its scratch tree on completion. Thus an agent that cannot read the profile must derive the organism, the dimensions, and the format again from the raw bytes. Under `readOnly`, the agent MUST NOT get `write_file` and `edit_file`. It MUST keep `execute_command`, the read tools, and `inspect_data_profile`, because a read of the profile is not a mutation.
+
+`read_tool_output` reads the kept text of a tool result that the loop cut (refer to the harness-tools capability). `SandboxAgentDeps.toolOutputStore` supplies the store, and the step body gives the same store to the loop of the agent. Under `readOnly`, the agent MUST keep `read_tool_output`, because a read of a kept text is not a mutation.
+
+An unknown `SandboxToolName` MUST throw at composition time, not at the first LLM call. A tool with a dependency (`SandboxClient`, `WorkspaceFilesystem`, `ChatProvider`, `Pool`, the tool output store) MUST get it through its factory closure at the root, never through `ToolContext` or ambient state. Each agent MUST spread `BASE_SANDBOX_TOOLS` (`listAvailablePackages`, `listAvailableRefs`, `resolveLibraryId`, `queryDocs`, `inspectRun`) into its `meta.tools`. Thus the planner metadata and the resolved tool record stay in sync.
 
 #### Scenario: Compute-pipeline agent receives only its allowlisted tools
 
 - **GIVEN** an agent whose meta declares `tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "getArticleDetails", "searchGeoDatasets"]`
 - **WHEN** the resolved tool list is inspected
-- **THEN** it SHALL contain exactly those tools plus the always-on substrate
-- **AND** it SHALL NOT contain `searchCompounds`, `searchFaers`, `searchToxcast`, or any tool outside the allowlist
+- **THEN** it MUST contain exactly those tools plus the always-on substrate
+- **AND** it MUST NOT contain `searchCompounds`, `searchFaers`, `searchToxcast`, or any tool outside the allowlist
 
 #### Scenario: inspect_data_profile is wired without any meta declaring it
 
 - **GIVEN** a sandbox agent whose `meta.tools` never names a data-profile tool
 - **WHEN** its resolved tool list is inspected
-- **THEN** it SHALL contain `inspect_data_profile`
-- **AND** it SHALL still contain it when the agent is built `readOnly`
+- **THEN** it MUST contain `inspect_data_profile`
+- **AND** it MUST still contain it when the agent is built `readOnly`
 
 #### Scenario: Unknown tool name fails at composition time
 
 - **GIVEN** an `AgentMeta` whose `tools` names a `SandboxToolName` with no registry entry
 - **WHEN** `createSandboxAgent` builds the agent
-- **THEN** it SHALL throw at composition time rather than at the first LLM call
+- **THEN** it MUST throw at composition time, not at the first LLM call
 
 #### Scenario: No SandboxClient on ToolContext
 
 - **GIVEN** the harness `ToolContext` type
-- **WHEN** a sandbox-agent tool's `execute` is typed against it
-- **THEN** the `SandboxClient` SHALL NOT be reachable via `ToolContext` — it is captured by the tool's factory closure
+- **WHEN** the `execute` of a sandbox-agent tool is typed against it
+- **THEN** the `SandboxClient` MUST NOT be reachable through `ToolContext`, because the factory closure of the tool captures it
+
+#### Scenario: A file-metadata cell adds the output tool
+
+- **GIVEN** a sandbox agent built with a file-metadata cell
+- **WHEN** its resolved tool list is inspected
+- **THEN** it contains `submit_file_metadata`
+- **AND** an agent built with no cell, for example the data profiler, does not contain it
+
+#### Scenario: A tool output store adds the read tool
+
+- **GIVEN** a sandbox agent built with a tool output store
+- **WHEN** its resolved tool list is inspected
+- **THEN** it contains `read_tool_output` directly after the workspace tools, also when the agent is built `readOnly`
+- **AND** the same deps with no store give the same tool list without `read_tool_output`
 
 ### Requirement: AgentMeta declares per-agent planner metadata and tool allowlist
 
@@ -309,62 +317,128 @@ markdown via `formatAgentCatalog()`. Non-plannable agents (`data-profiler`,
 
 ### Requirement: Step agents declare inability via report_blocker, not output inference
 
-A step agent SHALL get a terminal `report_blocker({ reason })` tool whenever a
-blocker cell is supplied; there SHALL be no `submit`/`done` tool, because a
-step's deliverable is its persisted files. Calling `report_blocker` SHALL record
-`{ kind: "blocker", reason }` into the per-run holder the workflow body reads
-after `runAgent`. `blocked` SHALL be a distinct terminal step status — separate
-from `failed` and `completed` — carrying the reason to the
-`cortex_step_executions.blocked_reason` column, a `data-step-blocked` run-event
-part, and the step return. The parent scheduler SHALL treat a blocker exactly
-like a step failure: only the blocked step's transitive dependents become
-unreachable, while in-flight siblings and independent ready steps continue
-(see the harness-durable-runtime capability). The harness SHALL NOT infer
-failure from output/artifact counts: a legitimately-empty step (no files, no
-blocker, clean finish) SHALL stay `completed`.
+A step agent MUST get a terminal `report_blocker({ reason })` tool when a blocker cell is supplied. The step agent MUST NOT get a `submit` or `done` tool for its task, because the deliverable of a step is its persisted files. A clean end of the turn after the agent writes the files is the implicit success. The `submit_file_metadata` output tool does not end a task: the task masks it, and only the file-metadata continuation lets it run.
+
+A call of `report_blocker` MUST record `{ kind: "blocker", reason }` into the cell of the run. After `runAgent`, the workflow body MUST read the blocker from the transcript: the reason of the first `report_blocker` call whose result is ok. The cell is the fallback. A durable replay returns the cached result of the tool step and runs no `execute`, thus the cell of a replayed body stays empty. The transcript holds the call and its result on each replay.
+
+`blocked` MUST be a distinct terminal step status, separate from `failed` and `completed`. It carries the reason to the `cortex_step_executions.blocked_reason` column, to a `data-step-blocked` run-event part, and to the step return.
+
+The parent scheduler MUST treat a blocker exactly like a step failure: only the transitive dependents of the blocked step become unreachable. In-flight siblings and independent ready steps continue (refer to the harness-durable-runtime capability). The harness MUST NOT infer a failure from output or artifact counts for a step that finished on its own initiative. A step that is empty for a valid reason (no files, no blocker, a clean finish before the iteration cap) MUST stay `completed`.
+
+The exception is narrow. If the loop hits its iteration cap, the artifact
+manifest is empty, and no blocker exists, the step MUST terminate `blocked`.
+The reason MUST be deterministic, and it MUST name the cap and the empty
+manifest. A capped-out step with artifacts stays `completed`, because partial
+output is real output.
 
 #### Scenario: Blocker yields a distinct blocked status
 
 - **GIVEN** a step agent that calls `report_blocker({ reason })` and stops
-- **WHEN** the workflow body reads the blocker holder after the loop
-- **THEN** the step SHALL terminate with status `blocked`, persisting the reason to `blocked_reason` and emitting a `data-step-blocked` part
-- **AND** in-flight siblings SHALL NOT be cancelled; only the blocked step's transitive dependents are never dispatched
+- **WHEN** the workflow body reads the blocker after the loop
+- **THEN** the step MUST end with the status `blocked`, persist the reason to `blocked_reason`, and emit a `data-step-blocked` part
+- **AND** the in-flight siblings MUST continue, and only the transitive dependents of the blocked step are never dispatched
+
+#### Scenario: A replayed blocker keeps the blocked status
+
+- **GIVEN** a durable step whose agent called `report_blocker`, and a recovery that replays the step
+- **WHEN** the replay returns the cached result of the tool step, and the cell stays empty
+- **THEN** the body reads the blocker from the transcript, and the step ends `blocked` with the same reason
 
 #### Scenario: Empty step is not auto-failed
 
-- **GIVEN** a step that writes no artifacts, calls no blocker, and ends cleanly
+- **GIVEN** a step that writes no artifacts, calls no blocker, and ends cleanly before its iteration cap
+- **WHEN** the step ends
+- **THEN** its status MUST be `completed` (with `artifactCount: 0`), not failed or blocked
+
+#### Scenario: Capped-out step with no deliverables is blocked
+
+- **GIVEN** a step whose loop hits the iteration cap, with an empty artifact manifest and no blocker
+- **WHEN** the workflow body reads the manifest after the loop
+- **THEN** the step MUST terminate `blocked`, with a deterministic reason in `blocked_reason` and a `data-step-blocked` part
+- **AND** the transitive dependents of the step are never dispatched
+
+#### Scenario: Capped-out step with artifacts stays completed
+
+- **GIVEN** a step whose loop hits the iteration cap, with a non-empty artifact manifest
 - **WHEN** the step terminates
-- **THEN** its status SHALL be `completed` (with `artifactCount: 0`), not failed or blocked
+- **THEN** its status MUST be `completed`, with `hitMaxSteps` persisted
 
-### Requirement: Post-step interpretation runs as focused runAgent loops grounded by read_file
+#### Scenario: The task cannot use the output tool
 
-The post-step `generateFileMetadata` and `generateStepSummary` producers SHALL each run as a focused `runAgent` tool-loop on the harness `ChatProvider` over `passthroughStep`, taking the `Session` explicitly (billing is a compile-time obligation). They live at `harness/src/execution/artifact-metadata.ts` and `harness/src/execution/step-summary.ts`. Each loop SHALL be given a scoped `read_file` tool over the step's writable output tree so it grounds quantitative claims in persisted files rather than `execute_command` stdout, and SHALL be seeded with the step's in-memory transcript (per the message-store decision, workflow loops keep no `messages` table; reconstruction from `operation_outputs` is read-side only).
+- **GIVEN** a step agent that calls `submit_file_metadata` during its task
+- **WHEN** the loop dispatches the call
+- **THEN** the call gets the error result of the mask, and the file-metadata cell records no description
 
-`generateFileMetadata` SHALL communicate exclusively through a `submit_file_metadata`
-terminal tool that validates each entry's `path` against the known artifact set
-(matched by path, never by array index); it SHALL be lossless — every input
-artifact appears exactly once, a never-described file getting a deterministic
-fallback description — and bounded by a small iteration budget (default 8).
-`generateStepSummary` SHALL run a dedicated `step-summary-writer` sub-agent
-(default iteration budget 12), return `{ stepId, agentId, markdown }` validated
-by `StepSummarySchema` on non-empty final text, and return `undefined` (non-fatal)
-on empty output or a loop throw — a summary failure SHALL NOT fail the step.
+### Requirement: Post-step interpretation continues the conversation of the step agent
+
+The post-step producers `generateFileMetadata` and `generateStepSummary` MUST each run as a continuation of the conversation of the step agent (refer to the harness-agent-loop capability). Each continuation MUST use the agent definition, the transcript, the provider, and the session of the task. Thus each request extends the prefix that the task cached, and each thinking block of the task stays valid. The producers live at `harness/src/execution/artifact-metadata.ts` and `harness/src/execution/step-summary.ts`.
+
+Workflow loops keep no `messages` table. The workflow body holds the transcript in memory, and a reconstruction from `operation_outputs` is read-side only.
+
+Both masks MUST let the read-only tools `read_file`, `grep`, and `read_tool_output` run. Thus the summary can back each number with a persisted file, and the describer can read a file when its path is not enough. A `read_file` result that is longer than the cap of the loop comes back as an excerpt, and `read_tool_output` reads the rest. A mask does not change the prefix of a request.
+
+Each continuation MUST run with the tool output store of the task. Thus the loop of a continuation keeps the text of a long result, and a reference of the task stays readable.
+
+The file-metadata continuation MUST use the accounting agent id `file-metadata-describer` and a cap of 8 requests. Its mask MUST let `submit_file_metadata`, `read_file`, `grep`, and `read_tool_output` run. Its request is the text of the describer instructions and the list of the files.
+
+`submit_file_metadata` MUST validate the `path` of each entry against the known artifact set. It MUST match a description to a file by path, never by array index. The result MUST be lossless: each input artifact appears exactly once, and a file with no description gets a deterministic fallback description.
+
+The step-summary continuation MUST run after the file-metadata exchange, over the transcript and the messages of that exchange. Thus it reads the cache that the exchange wrote. It MUST use the accounting agent id `step-summary-writer` and a cap of 12 requests. Its mask MUST let only `read_file`, `grep`, and `read_tool_output` run. When the file-metadata stage gives no exchange, the summary MUST continue the transcript directly.
+
+The summary continuation MUST return `{ stepId, agentId, markdown }`, validated by `StepSummarySchema`, on a final text that is not empty. On an empty text or a throw, it MUST return `undefined`, and a summary failure MUST NOT fail the step.
+
+Each producer MUST stay inside its `DBOS.runStep` wrapper. The file-metadata step MUST return the messages of its exchange with its entries. Thus a replay gives the summary the same prefix. A step agent can lack `submit_file_metadata`. Then the body MUST log one warn and give the fallback description to each file, with no model call.
+
+#### Scenario: The metadata continuation extends the prefix of the task
+
+- **GIVEN** a step whose task ended on a text reply
+- **WHEN** the file-metadata continuation sends its first request
+- **THEN** the request carries the system prompt and the tools of the step agent, and its messages start with the transcript of the task, byte-identical
 
 #### Scenario: Metadata describer is lossless
 
-- **GIVEN** a step whose output artifacts the describer never fully covers within its budget
+- **GIVEN** a step whose output artifacts the continuation never fully covers within its cap
 - **WHEN** `generateFileMetadata` returns
-- **THEN** every input artifact SHALL appear exactly once, uncovered files receiving a deterministic fallback description
+- **THEN** each input artifact MUST appear exactly once, and each file with no description gets a deterministic fallback description
+
+#### Scenario: The summary continues after the metadata exchange
+
+- **GIVEN** a step whose file-metadata continuation recorded descriptions
+- **WHEN** the summary continuation sends its request
+- **THEN** its messages start with the transcript of the task and the messages of the metadata exchange, byte-identical
+
+#### Scenario: The describer reads a file before it submits
+
+- **GIVEN** a file-metadata continuation whose model reads a file with `read_file`, then calls `submit_file_metadata`
+- **WHEN** the continuation returns
+- **THEN** the read ran, and the description of that file is in the result
+
+#### Scenario: The summary continuation runs only the read tools
+
+- **GIVEN** a summary continuation whose model calls `read_file` and `write_file` in one reply
+- **WHEN** the loop dispatches the calls
+- **THEN** `read_file` runs, and `write_file` gets the error result of the mask
 
 #### Scenario: Summary loop grounds claims via read_file
 
-- **GIVEN** a `generateStepSummary` loop seeded with the step transcript and a scoped `read_file`
-- **WHEN** it writes the summary
-- **THEN** it SHALL be able to read persisted output files to ground claims rather than relying on command stdout
+- **GIVEN** a summary continuation over the transcript of the step, whose mask lets `read_file` run
+- **WHEN** the continuation writes the summary
+- **THEN** it can read the persisted output files to ground its claims, and it does not depend on the stdout of a command
+
+#### Scenario: A continuation reads the rest of a long read
+
+- **GIVEN** a summary continuation whose `read_file` result has 90,000 characters
+- **WHEN** the model calls `read_tool_output` with the reference of the excerpt
+- **THEN** the call runs, and it gives a page of the kept text
 
 #### Scenario: Empty or failed summary is non-fatal
 
-- **WHEN** the summary loop returns empty final text or throws
-- **THEN** `generateStepSummary` SHALL return `undefined`
-- **AND** the workflow body SHALL proceed without marking the step failed
+- **WHEN** the summary continuation returns an empty final text or throws
+- **THEN** `generateStepSummary` MUST return `undefined`
+- **AND** the workflow body MUST continue, and the step does not fail
 
+#### Scenario: An agent with no output tool falls back
+
+- **GIVEN** an embedder whose `buildAgent` does not give the file-metadata cell to the agent
+- **WHEN** the post-step pipeline runs
+- **THEN** the body logs one warn, and each file gets the deterministic fallback description with no model call

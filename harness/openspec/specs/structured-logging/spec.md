@@ -28,6 +28,7 @@ prefix — those never existed here. Distributed tracing and metrics are a separ
 handled by OpenTelemetry (`src/lib/otel.ts`), not by the log line format.
 
 ## Requirements
+
 ### Requirement: Structured logs carry run-context identifiers, not a context prefix
 
 Log statements SHALL carry run context as concrete identifiers — drawn from the
@@ -116,24 +117,25 @@ honest signal, whereas a discarded write is indistinguishable from a working one
 
 ### Requirement: A record's namespace is bound at the seam, not typed into the message
 
-A `Logger` SHALL expose `named(name)`, returning a logger that prefixes every
-subsequent message with the namespace in brackets — `named("boot")` renders
-`info("harness booted")` as `[boot] harness booted`. Nested `named` calls SHALL
+A `Logger` MUST expose `named(name)`. It returns a logger that puts the
+namespace in brackets before each later message. `named("boot")` renders
+`info("harness booted")` as `[boot] harness booted`. Nested `named` calls MUST
 compose with a dot separator (`[post-step.reconcile]`).
 
-Modules SHALL bind their namespace through `named(...)` rather than hand-typing
-a `[module]` tag into each message string, so the tag cannot drift in spelling
-or be omitted, and a sink can recover the namespace without parsing prose.
+A module MUST bind its namespace through `named(...)`. It MUST NOT type a
+`[module]` tag into each message string by hand. Thus the tag cannot change in
+spelling or go missing, and a sink can recover the namespace without a parse of
+the prose.
 
 #### Scenario: A module binds its namespace once
 
-- **GIVEN** a component that binds `logger.named("sandbox-watchdog")`
-- **WHEN** it logs `info("shard check completed", summary)`
-- **THEN** the emitted message reads `[sandbox-watchdog] shard check completed` and the summary rides as fields
+- **GIVEN** a component that binds `logger.named("sandbox-reaper")`
+- **WHEN** it logs `info("sweep completed", summary)`
+- **THEN** the emitted message reads `[sandbox-reaper] sweep completed` and the summary rides as fields
 
 #### Scenario: Nested namespaces compose with a dot
 
-- **GIVEN** a logger derived via `named("post-step").named("reconcile")`
+- **GIVEN** a logger derived through `named("post-step").named("reconcile")`
 - **WHEN** it logs `warn("dropping phantom")`
 - **THEN** the emitted message reads `[post-step.reconcile] dropping phantom`
 
@@ -214,4 +216,3 @@ suppressions or review discipline.
 
 - **WHEN** lint runs over the `createConsoleLogger` source
 - **THEN** it passes, because the rule's configuration exempts that file
-

@@ -29,7 +29,9 @@ provenance ledger). The seam result is a flat per-path outcome and carries no
 managed signing vocabulary. The structured
 signing-method payload and any synthesized empty-input collector are a managed
 adapter's concern and are not part of OSS core.
+
 ## Requirements
+
 ### Requirement: Each exec frame is threaded into the step-scoped collector
 
 The sandbox-step body SHALL construct one `ProvenanceCollector` per step, seeded with the step's `stepId`,
@@ -47,8 +49,11 @@ input, and SHALL throw when the step is absent from it rather than defaulting to
 list is indistinguishable from a step that genuinely declared nothing, so a silent default would delete
 every same-run edge the step was entitled to while leaving no record that it did.
 
-After each `execute_command` resolves its `ExecResult`, the workspace `execute_command` tool SHALL feed that
-result's `provenance` frame into the collector via `feedExecFrame` (`src/provenance/exec-frame.ts`).
+Each `execute_command` call SHALL carry the argv, the exit code, the duration, and the `provenance` frame
+of its exec as its call record (see the harness-tools spec). The `foldCallRecord` of the tool SHALL feed
+the frame into the collector through `feedExecFrame` (`src/provenance/exec-frame.ts`). The loop runs the
+fold after the round, in call order, on the first run and on each replay. Thus a recovered step rebuilds
+its collector from the cached records. A failure of the fold SHALL NOT fail the exec.
 `feedExecFrame` SHALL strip the `/{resourceId}/` mount prefix from each frame path — collapsing separators
 doubled at the boundary so an in-mount name lands on its canonical relative form — classify every read via
 `classifyReadPath(relativePath, stepId, runId, dependsOn)`, call `trackInputAccess` for each read that
@@ -115,6 +120,13 @@ indistinguishable from a command that touched no files.
 - **WHEN** the tool feeds it via `feedExecFrame`
 - **THEN** a warning naming the command SHALL be logged, so a total capture failure is
   distinguishable from a command that genuinely touched no files
+
+#### Scenario: A recovered step rebuilds its lineage from the call records
+
+- **GIVEN** a step whose `execute_command` calls completed, and a workflow that recovers in a new process
+- **WHEN** the loop replays the calls from the step cache
+- **THEN** the sandbox runs no command again
+- **AND** the fold feeds each cached frame to the new collector, in call order, and the collector holds the same command records as before
 
 ### Requirement: Post-step registration consumes runtime-derived lineage
 
@@ -218,4 +230,3 @@ applies to both feeds.
 
 - **WHEN** the mutate seam writes the bytes with the host filesystem
 - **THEN** no exec frame exists for the write, no `feedExecFrame` call occurs, and the in-process file-tool record is the sole attestation
-

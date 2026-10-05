@@ -30,7 +30,7 @@ Conversation thread metadata SHALL be persisted in the harness-owned `cortex_ana
 
 ### Requirement: The thread store exposes thread operations via a DI factory
 
-A `ThreadStore` SHALL be created via a dependency-injected factory bound to a Postgres pool (`createThreadStore(pool)`), exposing `createThread`, `getThread`, `updateTitle`, `setAutoTitle`, `archiveThread`, `unarchiveThread`, `purgeThread`, and `listThreads`. `createThread` SHALL accept an optional `type`, an optional `parentThreadId`, and an optional `parentSeq` alongside the existing inputs. `getThread` SHALL return the row by `thread_id` and treat an archived row (`deleted_at` not null) as absent. `updateTitle` is the rename by a person: it SHALL change only the `title`, set `title_set_by_user` to `true` in the same statement, and bump `updated_at`. `archiveThread` SHALL be a soft delete — it SHALL set `deleted_at` rather than removing the row, and SHALL leave the thread's `messages` rows intact; applied to an already-archived thread it SHALL be a no-op that preserves the original `deleted_at`. `unarchiveThread` SHALL clear `deleted_at` so the thread returns to `getThread` and `listThreads`, and SHALL be a no-op on a live or absent thread. `purgeThread` SHALL be a hard delete — it SHALL remove the thread's `messages` rows and its `cortex_analysis_threads` row in a single transaction, and SHALL succeed as a no-op when no such thread exists. How each of these three verbs acts on a thread's descendants is specified separately. `listThreads` SHALL return only live threads whose `analysis_id` matches the supplied scope, ordered by `updated_at` descending, with pagination (`page`, `perPage`) plus a total count and a `hasMore` flag. `listThreads` SHALL accept an optional `type` filter and an optional `parentThreadId` filter, each an exact match that narrows the result; an omitted filter SHALL NOT narrow anything, so a caller that supplies neither receives every type. `updated_at` SHALL reflect thread activity: it is bumped by title updates and by turn appends (the thread-history `appendTurn` touches it in the turn's transaction — see `harness-thread-history`), so the listing order is most-recently-active first. The bump SHALL only move `updated_at` forward — never to a value earlier than the row already holds, so a slower writer cannot rewind a fresher one's timestamp — and SHALL NOT touch an archived row.
+A `ThreadStore` SHALL be created via a dependency-injected factory bound to a Postgres pool (`createThreadStore(pool)`), exposing `createThread`, `getThread`, `updateTitle`, `setAutoTitle`, `archiveThread`, `unarchiveThread`, `purgeThread`, and `listThreads`. Every returned `Thread` SHALL carry `deletedAt` — the archive tombstone, `null` on a live thread — so a caller can tell the two apart without inferring it from which query returned the row. `createThread` SHALL accept an optional `type`, an optional `parentThreadId`, and an optional `parentSeq` alongside the existing inputs. `getThread` SHALL return the row by `thread_id` and treat an archived row (`deleted_at` not null) as absent. `updateTitle` is the rename by a person: it SHALL change only the `title`, set `title_set_by_user` to `true` in the same statement, and bump `updated_at`. `archiveThread` SHALL be a soft delete — it SHALL set `deleted_at` rather than removing the row, and SHALL leave the thread's `messages` rows intact; applied to an already-archived thread it SHALL be a no-op that preserves the original `deleted_at`. `unarchiveThread` SHALL clear `deleted_at` so the thread returns to `getThread` and `listThreads`, and SHALL be a no-op on a live or absent thread. `purgeThread` SHALL be a hard delete — it SHALL remove the thread's `messages` rows and its `cortex_analysis_threads` row in a single transaction, and SHALL succeed as a no-op when no such thread exists. How each of these three verbs acts on a thread's descendants is specified separately. `listThreads` SHALL return threads whose `analysis_id` matches the supplied scope, ordered by `updated_at` descending, with pagination (`page`, `perPage`) plus a total count and a `hasMore` flag; it SHALL return only live threads unless the caller asks for archived ones. `listThreads` SHALL accept an optional `type` filter and an optional `parentThreadId` filter, each an exact match that narrows the result; an omitted filter SHALL NOT narrow anything, so a caller that supplies neither receives every type. `updated_at` SHALL reflect thread activity: it is bumped by title updates and by turn appends (the thread-history `appendTurn` touches it in the turn's transaction — see `harness-thread-history`), so the listing order is most-recently-active first. The bump SHALL only move `updated_at` forward — never to a value earlier than the row already holds, so a slower writer cannot rewind a fresher one's timestamp — and SHALL NOT touch an archived row.
 
 #### Scenario: Listing is scoped to one analysis
 
@@ -54,7 +54,7 @@ A `ThreadStore` SHALL be created via a dependency-injected factory bound to a Po
 
 - **GIVEN** a live thread with persisted messages
 - **WHEN** `archiveThread` is called
-- **THEN** the thread no longer appears in `listThreads` or `getThread`, and its row and every one of its `messages` rows remain in storage
+- **THEN** the thread no longer appears in the default `listThreads` or in `getThread`, and its row and every one of its `messages` rows remain in storage
 
 #### Scenario: Archiving twice preserves the original tombstone
 
@@ -67,6 +67,12 @@ A `ThreadStore` SHALL be created via a dependency-injected factory bound to a Po
 - **GIVEN** an archived thread with persisted messages
 - **WHEN** `unarchiveThread` is called
 - **THEN** the thread is returned by `getThread`, appears in `listThreads` for its analysis, and its messages are readable as before
+
+#### Scenario: A live thread reports no tombstone
+
+- **GIVEN** a live thread
+- **WHEN** it is returned by `getThread` or `listThreads`
+- **THEN** its `deletedAt` is null
 
 #### Scenario: Delete removes the thread and its messages
 

@@ -34,7 +34,9 @@ is validated against `ProfilerOutputSchema`, so there is no message-text JSON
 parsing. Sandbox resources are estimated per-run from the staged manifest rather
 than fixed, and the dataset's `domain`/`subtype` are free-form strings, not a
 fixed enum.
+
 ## Requirements
+
 ### Requirement: Core profiles an already-staged input tree
 
 The workflow body SHALL assume the `data/inputs/` tree is already populated and
@@ -54,13 +56,13 @@ a sandbox.
 - **WHEN** the body runs with an empty `stagedInputs` manifest
 - **THEN** it marks the profile completed, revokes the run authorization, and starts no sandbox
 
-### Requirement: The staged-input manifest carries a per-file drift signature
+### Requirement: The staged-input manifest carries the size and mtime of each file
 
 Every `StagedInput` the embedder hands the data-profile trigger SHALL carry `mtimeMs: number` — the
 source file's last-modification time in epoch milliseconds — alongside the existing `size`. Together
-`(fileId, size, mtimeMs)` form the file's **drift signature**: what feeds the kept-files
-`inputSignature` a completed profile persists, the comparand that decides whether the same bytes
-were profiled.
+`(fileId, size, mtimeMs)` feed the kept-files `inputSignature` that a completed profile persists:
+the audit record of which bytes the profile covered. Nothing compares it against a later manifest
+(see the data-profile-rerun spec).
 
 `mtimeMs` SHALL be a value the embedder already holds when it produces the manifest: the CLI reads it
 from the `stat` it performs to record `size`; a managed service supplies the object store's
@@ -317,7 +319,18 @@ Every lifecycle state SHALL remain a data variant in the ok channel — `ready`,
 `pending`, `failed`, `absent` — with the failed-state semantics unchanged: a failure is a
 past attempt, `failedAt` carries the recorded time or null, no underivable staleness
 verdict is exposed, and a surviving prior profile is served as `stale` rather than
-`failed` through the single shared staleness predicate.
+`failed`.
+
+Every `staleReason` SHALL be a fact the ledger row states outright — an attempt is in
+flight over a preserved prior result, or the most recent attempt failed over one.
+`tryRerun` / `tryRetry` preserve `data_profile_result` precisely so a prior profile
+stays servable, and reporting that is reporting the row.
+
+A changed input set SHALL NOT be among the reasons. The tool reads one row and holds
+no current input set, and re-profiling is invoked by the embedder that owns the input
+mutation (see the data-profile-rerun spec) — so a row still reading `completed` is a row
+nothing has superseded. Deriving a verdict here would re-decide, from strictly less
+information, a question already answered by the party that watched the change happen.
 
 #### Scenario: The groups scope returns the resolved structure
 
@@ -341,6 +354,24 @@ verdict is exposed, and a surviving prior profile is served as `stale` rather th
 - **GIVEN** a profile annotating 8 members out of thousands of files
 - **WHEN** an agent calls `inspect_data_profile`
 - **THEN** the result SHALL report both figures distinctly
+
+#### Scenario: A changed input set is not reported as stale
+
+- **GIVEN** a `completed` row whose seeded input set names files the stored profile never covered
+- **WHEN** an agent calls `inspect_data_profile`
+- **THEN** it receives `state: "ready"` and no `staleReason`
+
+#### Scenario: A re-profile in flight is reported as stale
+
+- **GIVEN** a row whose status moved to `running` while an earlier result is still stored on it
+- **WHEN** an agent calls `inspect_data_profile`
+- **THEN** it receives `state: "stale"` carrying the previous profile AND a `staleReason` naming the re-profile in flight
+
+#### Scenario: A surviving prior profile is served as stale, not failed
+
+- **GIVEN** a profile row whose latest attempt failed but which still carries an earlier result
+- **WHEN** an agent calls `inspect_data_profile`
+- **THEN** it receives `state: "stale"` with a `staleReason` naming the failed re-profile
 
 ### Requirement: Grouping the dataset is the agent's judgement, not the scan's
 
@@ -780,4 +811,3 @@ settles its own row. Thus a refusal or a failed start after a claim shows on the
 - **WHEN** the caller calls `triggerDataProfile`
 - **THEN** it gives `ok("started")`
 - **AND** the profile row then reaches `failed` with the reason of the host
-

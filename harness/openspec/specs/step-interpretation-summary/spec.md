@@ -40,31 +40,6 @@ string fields.
 - **WHEN** the summary is produced
 - **THEN** no schema is applied to the internal structure of the markdown — any well-formed string passes
 
-### Requirement: A dedicated step-summary-writer sub-agent generates the summary
-
-`generateStepSummary` SHALL run a `runAgent` loop for a sub-agent whose id is
-`"step-summary-writer"`, derived from the step session via `forSubAgent(session,
-"step-summary-writer")`. The loop SHALL be offered exactly one tool —
-`createReadFileTool(workspaceFs, workingDir)` scoped to the step's writable output
-tree — and SHALL run with `maxIterations` defaulting to `DEFAULT_MAX_ITERATIONS =
-12`. The transcript SHALL be the step's in-memory `runAgent` `messages` array
-passed in by the workflow body (per the no-workflow-message-store rule; see the
-harness-working-memory spec), sanitized to drop any trailing open `tool_use`, and
-the loop SHALL run with `passthroughStep` durability and a no-op `emit`. The
-summary text SHALL be the final assistant text of that loop.
-
-#### Scenario: Summary loop runs with read_file enabled
-
-- **WHEN** `generateStepSummary` runs
-- **THEN** the writer agent has `id: "step-summary-writer"`, its only tool is the scoped `read_file`, and `maxIterations` is `12` unless overridden
-- **AND** the loop is driven with `passthroughStep` over the supplied in-memory transcript, not a memory thread
-
-#### Scenario: Trailing open tool_use is sanitized from the transcript
-
-- **GIVEN** the supplied transcript ends with an assistant message carrying an unanswered `tool_use`
-- **WHEN** the summarizer prepares the transcript
-- **THEN** that trailing partial round is dropped before the summary user-prompt is appended
-
 ### Requirement: Claims are grounded in persisted output files
 
 The summarizer prompt SHALL instruct the agent to open output files with
@@ -130,19 +105,38 @@ step.
 
 ### Requirement: Sandbox standards teach literature grounding during execution
 
-`sandbox-standards` SHALL instruct sandbox agents to ground findings in the
-research literature **as they work** — searching PubMed (`search_pubmed`),
-pulling abstracts (`get_article_details`), and assessing novelty per finding
-during the main execution turns — rather than deferring it to a final step. The
-post-step summary turn SHALL NOT be the place literature search happens; it
-grounds claims in persisted files via `read_file`.
+`sandbox-standards` MUST tell sandbox agents to ground their findings in the research literature as they work. The standards direct an agent to search PubMed (`search_pubmed`) and to read abstracts (`get_article_details`). The agent assesses the novelty of each finding during the primary execution turns. The standards MUST NOT defer this work to a final step. The post-step summary continuation MUST NOT search the literature. Its mask lets only `read_file`, `grep`, and `read_tool_output` run, and it grounds claims in persisted files through `read_file`.
 
 #### Scenario: Agent searches literature while working
 
-- **WHEN** a sandbox agent identifies a significant finding during its main analysis turns
-- **THEN** the standards direct it to search PubMed for related prior work at that point, not in the summary turn
+- **WHEN** a sandbox agent finds a significant result during its primary analysis turns
+- **THEN** the standards direct it to search PubMed for related prior work at that point, not in the summary continuation
 
 #### Scenario: Summary turn does not search literature
 
-- **WHEN** the post-step summary turn runs
-- **THEN** its only tool is `read_file`; it does not call `search_pubmed` or `get_article_details`
+- **GIVEN** a step agent that declares `search_pubmed`, and a summary continuation whose model calls it
+- **WHEN** the loop dispatches the call
+- **THEN** the call gets the error result of the mask, and no search runs
+
+### Requirement: The step summary continues the conversation of the step agent
+
+`generateStepSummary` MUST run a continuation of the conversation of the step agent (refer to the harness-agent-loop capability), under the accounting agent id `"step-summary-writer"`. The continuation derives its session through `forSubAgent(session, "step-summary-writer")`. It MUST use the agent definition, the provider, and the transcript of the task. When a file-metadata exchange exists, the conversation MUST also hold the messages of that exchange.
+
+The continuation MUST use a cap of 12 requests. Its mask MUST let only `read_file`, `grep`, and `read_tool_output` run. The three are declared tools of the step agent, and the two file tools resolve a path against the step directory. `read_tool_output` reads the rest of a `read_file` result that the loop cut. The continuation MUST run with the tool output store of the task.
+
+Its request MUST be the summary instructions and the list of the output files. It runs with `passthroughStep` durability and a no-op `emit`, inside the `DBOS.runStep` wrapper of the stage. The summary text MUST be the final assistant text of the continuation.
+
+The transcript is the in-memory `runAgent` `messages` array of the workflow body, as the no-workflow-message-store rule states (refer to the harness-working-memory spec). The loop answers each unanswered call of the task at its exit. Thus the continuation gets a valid transcript, and it removes no message from it.
+
+#### Scenario: The summary continuation lets only the read tools run
+
+- **WHEN** `generateStepSummary` runs
+- **THEN** the continuation sends the system prompt and the tools of the step agent, and its cap is 12
+- **AND** its mask lets only `read_file`, `grep`, and `read_tool_output` run
+- **AND** each usage record of the continuation carries the `agentId` `step-summary-writer`
+
+#### Scenario: The transcript reaches the request unchanged
+
+- **GIVEN** a transcript whose last assistant message carried a tool call that the loop answered with the not-run result
+- **WHEN** the summary continuation sends its request
+- **THEN** the request holds each message of the transcript unchanged, and the summary request comes after them
