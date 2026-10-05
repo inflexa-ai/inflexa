@@ -139,6 +139,10 @@ describe("initCortexState and an open transaction on cortex_analysis_threads", (
 
         await initCortexState(pool);
         const { rows } = await pool.query<{ name: string }>("SELECT name FROM cortex_migration");
-        expect(rows.map((row) => row.name)).toEqual(["20260927120000_baseline", "20260927180000_thread_title_set_by_user", "20261005120000_drop_step_exec_id"]);
+        expect(rows.map((row) => row.name)).toEqual([
+            "20260927120000_baseline",
+            "20260927180000_thread_title_set_by_user",
+            "20261005120000_drop_the_active_exec_tracking",
+        ]);
     }, 20_000);
 });

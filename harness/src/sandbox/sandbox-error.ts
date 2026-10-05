@@ -18,7 +18,7 @@
  *    owner-guard REFUSES, a submit the server rejects, a teardown the driver
  *    errors on, a liveness probe that errors.
  *  - Control-flow exceptions are NOT failures and are never captured as a
- *    `SandboxError`. The exec's `HardCancelError` / `ExecTimeoutError`
+ *    `SandboxError`. The exec's `ExecTimeoutError`
  *    (`exec.ts`) and DBOS's `DBOSWorkflowCancelledError` / `AbortError`
  *    are control-flow signalling — they live OUTSIDE this error channel and
  *    propagate untouched. `exec.ts` is NOT converted; `trySandbox` only
@@ -274,7 +274,7 @@ export function keepSuspendingRefusal(result: Result<SandboxRef, SandboxError>):
  * `fn` runs the single SDK/HTTP call and returns the already-mapped value
  * (`T`). Keep `fn` to that one call plus trivial mapping; do NOT embed
  * control-flow that could throw a non-backend error (the exec's
- * `HardCancelError`/`ExecTimeoutError` and DBOS cancellation must stay outside
+ * `ExecTimeoutError` and DBOS cancellation must stay outside
  * any `trySandbox` so they propagate as control-flow, never become an `err`).
  */
 export function trySandbox<T>(fn: () => Promise<T>, toError: (status: number | undefined, cause: unknown) => SandboxError): ResultAsync<T, SandboxError> {

@@ -17,7 +17,6 @@ function makeSandboxRef(over: Partial<SandboxRef> = {}): SandboxRef {
         host: "127.0.0.1",
         port: 8765,
         backend: "docker",
-        callbackSecret: "secret-abc",
         ...over,
     };
 }
@@ -145,10 +144,10 @@ describe("execute_command tool", () => {
     });
 
     it("propagates an exec error so the loop wraps it as is_error", async () => {
-        const client = makeFakeClient({ execError: new Error("hmac mismatch") });
+        const client = makeFakeClient({ execError: new Error("sandbox unreachable") });
         const { ctx } = makeToolContext();
 
-        await expect(makeTool(client).execute({ command: ["bad"] }, ctx)).rejects.toThrow(/hmac mismatch/);
+        await expect(makeTool(client).execute({ command: ["bad"] }, ctx)).rejects.toThrow(/sandbox unreachable/);
     });
 
     it("truncates oversize stdout while leaving exit/duration/timedOut intact", async () => {

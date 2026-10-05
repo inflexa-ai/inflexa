@@ -1,42 +1,36 @@
 // sandbox-server is an HTTP server embedded in Inflexa sandbox containers.
-// It exposes a submit-and-return command-execution protocol: POST /exec
+// It exposes a submit-and-poll command-execution protocol: POST /exec
 // accepts {command, execId, ...}, spawns the command in the background, and
-// returns HTTP 202 immediately. Progress events (on-change tree-diffs) and the
-// terminal result reach the host by one of two transports, selected by
-// SANDBOX_TRANSPORT:
+// returns HTTP 202 immediately. A repeated execId returns the existing entry
+// and runs nothing. Progress events (on-change tree-diffs) accumulate in a
+// bounded per-exec ring, and the host polls both the events and the terminal
+// result from GET /exec/{execId}?since={cursor}. The server never dials out.
 //
-//   - poll (default): the server never dials out. Events accumulate in a
-//     bounded per-exec ring and both events and the terminal result are served,
-//     signed, from GET /exec/{execId}?since={cursor}. The host asks; the sandbox
-//     initiates nothing and needs no egress.
-//   - callback: the server POSTs signed event and completion callbacks to
-//     CORTEX_BASE_URL (the push path). The completion bytes are still recorded
-//     in the exec table first, so GET /exec/{execId} remains the recovery
-//     backstop for a push that never lands.
+// The endpoints carry no credential. The network is the boundary: Docker
+// publishes the port on 127.0.0.1 only and the entrypoint denies egress
+// (SANDBOX_EGRESS_FIREWALL=1); K8s admits the host through a NetworkPolicy.
 //
-// The exec endpoints are signature-authenticated in BOTH modes: the caller signs
-// `HMAC-SHA256(SANDBOX_CALLBACK_SECRET, "${execId}:${timestamp}:${sha256Hex(body)}")`
-// into `X-Sandbox-Signature` / `X-Sandbox-Timestamp` — the same construction the
-// served/pushed bodies use — and the server verifies it against a freshness
-// window. It is a request signature, not a bearer, so any cleartext hop can drop
-// a request but never mint another — see inbound_auth.go.
+// Exec entries live in memory for the life of the process.
 //
 // Endpoints:
 //
-//	GET  /health          → readiness probe (unauthenticated)
-//	POST /exec            → submit a command (returns 202); signed.
-//	GET  /exec/{execId}   → terminal result, fresh-signed (or `{"status":"running"}`
-//	                        while executing); signed. With `?since={cursor}` (poll
-//	                        mode) returns `{status, events, cursor, truncated?, result?}`,
-//	                        always signed.
-//	GET  /preview/...     → static file preview (unauthenticated, and inert unless
-//	                        PREVIEW_ROOT is set — the shipped image never sets it).
+//	GET  /health          → readiness probe
+//	POST /exec            → submit a command (returns 202)
+//	GET  /exec/{execId}   → `{status, events, cursor, truncated?, result?}` with
+//	                        the events past `?since={cursor}` (absent reads as 0)
+//	GET  /preview/...     → static file preview (inert unless PREVIEW_ROOT is
+//	                        set — the shipped image never sets it)
 //
 // Env:
 //
-//	SANDBOX_TRANSPORT        `poll` (default) | `callback`
-//	SANDBOX_CALLBACK_SECRET  per-sandbox HMAC secret (raw or base64:); required in both modes
-//	CORTEX_BASE_URL          base URL Cortex listens on for callbacks; required in callback mode only
+//	SANDBOX_SERVER_PORT            listen port (default 8765)
+//	SANDBOX_EGRESS_FIREWALL        `1` when the entrypoint installed the egress
+//	                               firewall; the server then refuses to run as root
+//	SANDBOX_TREE_DIFF_ROOT         snapshot root for an exec that gives no cwd
+//	SANDBOX_TREE_DIFF_INTERVAL_MS  tree-diff tick interval
+//	SANDBOX_LOG_LEVEL              `info` (default) | `debug`
+//	PROVENANCE_WATCH_DIRS          comma-separated directories that provenance watches
+//	PREVIEW_ROOT                   root of the static preview
 package main
 
 import (
@@ -49,7 +43,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,52 +99,6 @@ func extractTraceID(r *http.Request) string {
 		return ""
 	}
 	return parts[1]
-}
-
-const (
-	headerTraceparent = "traceparent"
-	headerTracestate  = "tracestate"
-)
-
-// traceparentPattern is the shape of a W3C Trace Context traceparent: version,
-// trace id, parent id and flags, in lowercase hex.
-var traceparentPattern = regexp.MustCompile(`^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
-
-// traceContext is the W3C Trace Context that an exec arrived with. The zero
-// value carries no trace.
-//
-// sandbox-server records no spans, so it does not take part in the trace. It
-// sends the pair unchanged on each callback for the exec, and Cortex opens the
-// callback span as a child of the span that submitted the exec.
-type traceContext struct {
-	traceparent string
-	tracestate  string
-}
-
-// inboundTraceContext reads the trace context of a submit. It keeps a
-// traceparent only when the request carries exactly one, it matches
-// traceparentPattern, its version is not the reserved ff, and neither its trace
-// id nor its parent id is all zeros. Without that traceparent a tracestate
-// means nothing, so the result is then the zero value.
-func inboundTraceContext(r *http.Request) traceContext {
-	values := r.Header.Values(headerTraceparent)
-	if len(values) != 1 {
-		return traceContext{}
-	}
-	tp := values[0]
-	if !traceparentPattern.MatchString(tp) || tp[:2] == "ff" || allZeros(tp[3:35]) || allZeros(tp[36:52]) {
-		return traceContext{}
-	}
-	// A tracestate can arrive split over several header lines; a comma joins
-	// them back into one list, as HTTP defines for a repeated field.
-	return traceContext{
-		traceparent: tp,
-		tracestate:  strings.Join(r.Header.Values(headerTracestate), ","),
-	}
-}
-
-func allZeros(s string) bool {
-	return strings.Trim(s, "0") == ""
 }
 
 // truncateCommand joins a command slice and truncates to maxLen chars.
@@ -360,11 +307,10 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	writeBody(w, []byte(`{"status":"ok"}`))
 }
 
-// pollResponseBody is the poll-mode body for `GET /exec/{execId}?since={cursor}`:
-// the events newer than the caller's cursor, the new high-water cursor, whether
+// pollResponseBody is the body of `GET /exec/{execId}?since={cursor}`: the
+// events newer than the caller's cursor, the new high-water cursor, whether
 // events were ever shed, and the terminal completion `result` (present only once
-// the exec is terminal). The whole body is signed, so the host verifies it
-// exactly as it verifies a pushed completion.
+// the exec is terminal; the host reads terminality from it).
 type pollResponseBody struct {
 	Status    string          `json:"status"`
 	Events    []ringEvent     `json:"events"`
@@ -373,24 +319,8 @@ type pollResponseBody struct {
 	Result    json.RawMessage `json:"result,omitempty"`
 }
 
-// execResultHandler serves an exec's result at `GET /exec/{execId}`, signed
-// fresh at request time so it is accepted by the host's freshness window however
-// long after the exec finished it is fetched. It has two shapes:
-//
-//   - `?since={cursor}` present (poll mode): the {status, events, cursor,
-//     result?} body above, ALWAYS signed — the host verifies every poll and
-//     reads terminality from `result`.
-//   - `?since` absent (callback-mode recovery pull, and the legacy shape): the
-//     raw completion body when terminal, signed; `{"status":"running"}`
-//     (unsigned) while executing.
-//
-// Either way the served result bytes are the exact ones a completion callback
-// carries, so a pulled result is indistinguishable from a pushed one —
-// provenance frame included.
-//
-// The request itself is signature-authenticated: the disclosed result includes
-// the command's stdout/stderr, so an unauthenticated caller must not read it.
-func execResultHandler(table *execTable, auth inboundAuth) http.HandlerFunc {
+// execResultHandler serves the poll of an exec at `GET /exec/{execId}`.
+func execResultHandler(table *execTable) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSONResponse(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -403,42 +333,14 @@ func execResultHandler(table *execTable, auth inboundAuth) http.HandlerFunc {
 			writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
 			return
 		}
-		if !auth.authentic(r, execID, nil) {
-			writeUnauthorized(w)
-			return
-		}
-
-		if r.URL.Query().Has("since") {
-			servePollResult(w, r, table, auth, execID)
-			return
-		}
-
-		status, body, ok := table.completionSnapshot(execID)
-		if !ok {
-			writeJSONResponse(w, http.StatusNotFound, map[string]string{"error": "unknown execId"})
-			return
-		}
-		// A terminal status with no recorded body means the exec finished between
-		// `complete` and `setCompletionBody`. Report it as still running: the
-		// caller retries, and the body lands microseconds later.
-		if status == execStatusRunning || body == nil {
-			writeJSONResponse(w, http.StatusOK, map[string]string{"execId": execID, "status": string(execStatusRunning)})
-			return
-		}
-
-		ts := time.Now().Unix()
-		w.Header().Set(headerSignature, signCallback(auth.secret, execID, ts, body))
-		w.Header().Set(headerTimestamp, strconv.FormatInt(ts, 10))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		writeBody(w, body)
+		servePollResult(w, r, table, execID)
 	}
 }
 
 // servePollResult answers the `?since={cursor}` poll: an atomic snapshot of the
-// events past the cursor plus the terminal result if the exec has finished,
-// signed fresh over the whole body.
-func servePollResult(w http.ResponseWriter, r *http.Request, table *execTable, auth inboundAuth, execID string) {
+// events past the cursor plus the terminal result if the exec has finished.
+// The result bytes are the exact completion bytes, provenance frame included.
+func servePollResult(w http.ResponseWriter, r *http.Request, table *execTable, execID string) {
 	// SAFETY: an absent, empty, or unparseable `since` reads as 0 — serve from the start
 	// of the ring rather than erroring on a cursor the host controls.
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
@@ -468,9 +370,6 @@ func servePollResult(w http.ResponseWriter, r *http.Request, table *execTable, a
 		return
 	}
 
-	ts := time.Now().Unix()
-	w.Header().Set(headerSignature, signCallback(auth.secret, execID, ts, body))
-	w.Header().Set(headerTimestamp, strconv.FormatInt(ts, 10))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	writeBody(w, body)
@@ -534,15 +433,9 @@ func writeBody(w http.ResponseWriter, body []byte) {
 func main() {
 	initLogLevel()
 
-	cfg, err := loadServerConfig()
-	if err != nil {
-		log.Fatalf("startup config error: %v", err)
-	}
 	if err := verifyPrivilegeDrop(os.Getenv(envEgressFirewall), os.Geteuid()); err != nil {
 		log.Fatalf("startup confinement error: %v", err)
 	}
-
-	log.Printf("sandbox-server config: transport=%s cortex=%s callback_secret_bytes=%d", cfg.transport, cfg.cortexBaseURL, len(cfg.callbackSecret))
 
 	port := os.Getenv("SANDBOX_SERVER_PORT")
 	if port == "" {
@@ -551,24 +444,12 @@ func main() {
 
 	pt := newProcessTable()
 	table := newExecTable()
-	stopSweeper := table.startTTLSweeper(5*time.Minute, completedEntryTTL)
-	defer stopSweeper()
-
-	// Poll mode never initiates a connection, so it constructs no callback client;
-	// the executor buffers results in the exec table for the host to pull instead.
-	var callback *callbackClient
-	if cfg.transport == transportCallback {
-		callback = newCallbackClient(cfg.cortexBaseURL, cfg.callbackSecret)
-	}
-	auth := newInboundAuth(cfg.callbackSecret)
-	exe := newExecutor(table, callback, pt, auth, cfg.transport)
+	exe := newExecutor(table, pt)
 
 	mux := http.NewServeMux()
-	// `/health` is intentionally unauthenticated: it is a readiness probe that
-	// exposes no data and performs no action. Every other endpoint is signed.
 	mux.HandleFunc("/health", healthHandler)
 	mux.Handle("/exec", http.HandlerFunc(exe.handle))
-	mux.Handle("/exec/", execResultHandler(table, auth))
+	mux.Handle("/exec/", execResultHandler(table))
 
 	previewRoot := os.Getenv("PREVIEW_ROOT")
 	if previewRoot != "" {

@@ -1,16 +1,17 @@
 #!/bin/sh
 # sandbox-server entrypoint.
 #
-# Default path (callback mode, K8s, or any container that starts as the
-# unprivileged workload user): exec sandbox-server directly. Confinement, where
-# required, is provided outside the container (K8s NetworkPolicy).
-#
-# Docker poll mode sets SANDBOX_EGRESS_FIREWALL=1 and starts the container as
+# The Docker backend sets SANDBOX_EGRESS_FIREWALL=1 and starts the container as
 # root with CAP_NET_ADMIN. Here we install an egress-deny firewall BEFORE any
 # workload runs, then drop to the workload uid with no capabilities — so the
 # sandboxed process can neither open a new outbound connection nor alter the
 # rules. The reply path to the host's inbound poll is ESTABLISHED, so polling
-# still works; loopback survives for local tooling.
+# still works; loopback survives for local tooling. The server's endpoints
+# carry no credential: because each sandbox denies its own egress, a sibling
+# sandbox on the same bridge cannot reach this server's port either.
+#
+# Default path (K8s, or any container that starts as the unprivileged workload
+# user): exec sandbox-server directly. A K8s NetworkPolicy confines the pod.
 set -e
 
 # The seed of the prepared caches runs before the firewall path and before the

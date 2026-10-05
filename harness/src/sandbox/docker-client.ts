@@ -325,7 +325,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
         createSandbox(session, spec, identity, hostLabels) {
             return new ResultAsync(
                 (async () => {
-                    const { sandboxId, callbackSecret } = identity;
+                    const { sandboxId } = identity;
                     const analysisId = session.scope.analysisId;
                     const coords = mountCoordsOf(session, spec);
 
@@ -449,7 +449,6 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     // the Env array resolves at the libc that scans `environ`, thus the
                     // later spread must win here, not there.
                     const env = Object.entries({
-                        SANDBOX_CALLBACK_SECRET: callbackSecret,
                         SANDBOX_EGRESS_FIREWALL: "1",
                         ...threadLimitEnv(limits),
                         ...plan.env,
@@ -519,7 +518,6 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         host,
                         port,
                         backend: "docker",
-                        callbackSecret,
                     };
 
                     const registered = await trySandbox(() => config.registerSandbox(session, spec, ref), createFailed);

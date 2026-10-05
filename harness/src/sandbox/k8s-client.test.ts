@@ -85,7 +85,7 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
 }
 
 describe("k8s createSandbox", () => {
-    test("creates a Job carrying the SANDBOX_CALLBACK_SECRET env and no egress target", async () => {
+    test("creates a Job with no egress target", async () => {
         const stub = stubApis([
             {
                 status: { phase: "Running", podIP: "10.0.0.1" },
@@ -127,7 +127,6 @@ describe("k8s createSandbox", () => {
         expect(ref.backend).toBe("k8s");
         expect(ref.host).toBe("10.0.0.1");
         expect(ref.port).toBe(8765);
-        expect(ref.callbackSecret.length).toBeGreaterThan(40);
 
         expect(stub.createdJobs).toHaveLength(1);
         const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
@@ -137,7 +136,6 @@ describe("k8s createSandbox", () => {
         // The pod never dials out, thus it gets no address to dial.
         expect(envMap.SANDBOX_TRANSPORT).toBeUndefined();
         expect(envMap.CORTEX_BASE_URL).toBeUndefined();
-        expect(envMap.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
         expect(envMap.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
         // The thread pools default to one thread, and the worker counts follow
@@ -979,7 +977,6 @@ describe("k8s teardown", () => {
             host: "h",
             port: 1,
             backend: "k8s",
-            callbackSecret: "x",
         });
         expect(result.isOk()).toBe(true);
     });
@@ -1002,7 +999,6 @@ describe("k8s teardown", () => {
             host: "h",
             port: 1,
             backend: "k8s",
-            callbackSecret: "x",
         });
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -1048,7 +1044,6 @@ describe("k8s isAlive", () => {
                     host: "h",
                     port: 1,
                     backend: "k8s",
-                    callbackSecret: "x",
                 })
             )._unsafeUnwrap();
             expect(liveness.alive).toBe(expected);
@@ -1082,7 +1077,6 @@ describe("k8s isAlive", () => {
                 host: "h",
                 port: 1,
                 backend: "k8s",
-                callbackSecret: "x",
             })
         )._unsafeUnwrap();
         expect(liveness).toEqual({ alive: false, oomKilled: true });

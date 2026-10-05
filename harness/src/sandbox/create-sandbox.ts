@@ -38,15 +38,7 @@ import { noteExecOutcome, sandboxExecOutcomeOf, summarizeExec } from "./exec-out
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { mountCoordsOf, sandboxWriteTail, type MountPlanCoords } from "./mount-plan.js";
 import { SandboxFailure, type SandboxError } from "./sandbox-error.js";
-import {
-    toPersistedRef,
-    type FarmSource,
-    type ResolveSandboxLabels,
-    type SandboxLabels,
-    type SandboxRef,
-    type SandboxSpec,
-    type ToolchainSource,
-} from "./types.js";
+import type { FarmSource, ResolveSandboxLabels, SandboxLabels, SandboxRef, SandboxSpec, ToolchainSource } from "./types.js";
 
 /**
  * Narrow config slice the sandbox factory reads off `Env` — the backend
@@ -259,7 +251,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     const failing = (e: SandboxError): SandboxFailure => new SandboxFailure(e);
 
     const registerSandbox = async (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => {
-        unwrapOrThrow(await setSandboxRef(config.pool, session.runFrame.runId, session.runFrame.stepId, toPersistedRef(ref)));
+        unwrapOrThrow(await setSandboxRef(config.pool, session.runFrame.runId, session.runFrame.stepId, ref));
     };
 
     const ops =

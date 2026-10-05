@@ -2,148 +2,29 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
 
-// callbackReceiver records every callback POST hitting the test server.
-type callbackReceiver struct {
-	mu       sync.Mutex
-	events   []receivedCallback
-	complete []receivedCallback
-	failures int
-	maxFails int
-}
-
-type receivedCallback struct {
-	ExecID      string
-	Signature   string
-	Timestamp   string
-	Traceparent string
-	Tracestate  string
-	Body        []byte
-}
-
-func (rec *callbackReceiver) handler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		// expected: /sandbox/{execId}/{kind}
-		if len(parts) != 3 || parts[0] != "sandbox" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		execID, kind := parts[1], parts[2]
-		cb := receivedCallback{
-			ExecID:      execID,
-			Signature:   r.Header.Get(headerSignature),
-			Timestamp:   r.Header.Get(headerTimestamp),
-			Traceparent: r.Header.Get(headerTraceparent),
-			Tracestate:  r.Header.Get(headerTracestate),
-			Body:        body,
-		}
-		rec.mu.Lock()
-		if rec.failures < rec.maxFails {
-			rec.failures++
-			rec.mu.Unlock()
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if kind == "event" {
-			rec.events = append(rec.events, cb)
-		} else {
-			rec.complete = append(rec.complete, cb)
-		}
-		rec.mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}
-}
-
-func (rec *callbackReceiver) eventsCount() int {
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	return len(rec.events)
-}
-
-func (rec *callbackReceiver) completeCount() int {
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	return len(rec.complete)
-}
-
-func (rec *callbackReceiver) lastComplete() *receivedCallback {
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if len(rec.complete) == 0 {
-		return nil
-	}
-	cb := rec.complete[len(rec.complete)-1]
-	return &cb
-}
-
-func newTestExecutor(t *testing.T, secret []byte) (*executor, *callbackReceiver, func()) {
+func newTestExecutor(t *testing.T) *executor {
 	t.Helper()
-	rec := &callbackReceiver{}
-	srv := httptest.NewServer(rec.handler())
-	cb := newCallbackClient(srv.URL, secret)
-	cb.sleep = func(context.Context, time.Duration) {}
-	exe := newExecutor(newExecTable(), cb, newProcessTable(), newInboundAuth(secret), transportCallback)
-	return exe, rec, srv.Close
-}
-
-// signInbound stamps a request with a valid signature over (execID, body),
-// mirroring what the harness attaches.
-func signInbound(r *http.Request, execID string, body, secret []byte) {
-	ts := time.Now().Unix()
-	r.Header.Set(headerSignature, signCallback(secret, execID, ts, body))
-	r.Header.Set(headerTimestamp, strconv.FormatInt(ts, 10))
-}
-
-func execIDFromBody(t *testing.T, b []byte) string {
-	t.Helper()
-	var m struct {
-		ExecID string `json:"execId"`
-	}
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("submit body did not parse: %v", err)
-	}
-	return m.ExecID
+	return newExecutor(newExecTable(), newProcessTable())
 }
 
 func submit(t *testing.T, exe *executor, body any) *httptest.ResponseRecorder {
-	t.Helper()
-	return submitWithHeader(t, exe, body, nil)
-}
-
-// submitWithHeader is submit with extra request headers. The signature covers
-// the body only, so the headers have no part in it.
-func submitWithHeader(t *testing.T, exe *executor, body any, header http.Header) *httptest.ResponseRecorder {
 	t.Helper()
 	b, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("marshal the submit body: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(b))
-	signInbound(req, execIDFromBody(t, b), b, exe.auth.secret)
-	for name, values := range header {
-		for _, v := range values {
-			req.Header.Add(name, v)
-		}
-	}
 	rw := httptest.NewRecorder()
 	exe.handle(rw, req)
 	return rw
@@ -161,9 +42,30 @@ func waitFor(t *testing.T, cond func() bool, timeout time.Duration) {
 	t.Fatalf("condition not met within %v", timeout)
 }
 
+// waitForCompletion waits until the exec table holds the completion of execID,
+// and returns the poll snapshot that carries it.
+func waitForCompletion(t *testing.T, exe *executor, execID string, timeout time.Duration) pollSnapshot {
+	t.Helper()
+	var snap pollSnapshot
+	waitFor(t, func() bool {
+		s, ok := exe.table.pollSnapshotFor(execID, 0)
+		snap = s
+		return ok && s.body != nil
+	}, timeout)
+	return snap
+}
+
+func completionOf(t *testing.T, snap pollSnapshot) completionPayload {
+	t.Helper()
+	var p completionPayload
+	if err := json.Unmarshal(snap.body, &p); err != nil {
+		t.Fatalf("completion did not parse: %v", err)
+	}
+	return p
+}
+
 func TestExecHandler_RejectsMissingExecID(t *testing.T) {
-	exe, _, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	rw := submit(t, exe, map[string]any{"command": []string{"echo", "hi"}})
 	if rw.Code != http.StatusBadRequest {
@@ -172,8 +74,7 @@ func TestExecHandler_RejectsMissingExecID(t *testing.T) {
 }
 
 func TestExecHandler_RejectsMissingCommand(t *testing.T) {
-	exe, _, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	rw := submit(t, exe, map[string]any{"execId": "x1"})
 	if rw.Code != http.StatusBadRequest {
@@ -182,8 +83,7 @@ func TestExecHandler_RejectsMissingCommand(t *testing.T) {
 }
 
 func TestExecHandler_RejectsMalformedJSON(t *testing.T) {
-	exe, _, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader([]byte("{not json")))
 	rw := httptest.NewRecorder()
@@ -193,53 +93,8 @@ func TestExecHandler_RejectsMalformedJSON(t *testing.T) {
 	}
 }
 
-// A well-formed submit with a valid execId+command but no (or a wrong)
-// signature must not spawn anything — anyone able to reach the port could
-// otherwise drive the sandbox.
-func TestExecHandler_RejectsUnsignedAndForgedSubmits(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("topsecret"))
-	defer cleanup()
-
-	post := func(sign func(r *http.Request, body []byte)) int {
-		body, err := json.Marshal(map[string]any{"command": []string{"sh", "-c", "echo pwned"}, "execId": "intruder"})
-		if err != nil {
-			t.Fatalf("marshal the submit body: %v", err)
-		}
-		req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(body))
-		sign(req, body)
-		rw := httptest.NewRecorder()
-		exe.handle(rw, req)
-		return rw.Code
-	}
-
-	if code := post(func(*http.Request, []byte) {}); code != http.StatusUnauthorized {
-		t.Fatalf("unsigned submit: expected 401, got %d", code)
-	}
-	if code := post(func(r *http.Request, body []byte) { signInbound(r, "intruder", body, []byte("wrong")) }); code != http.StatusUnauthorized {
-		t.Fatalf("wrong-secret submit: expected 401, got %d", code)
-	}
-	// A signature over a DIFFERENT body must not authorise this one — the guard
-	// against a captured-then-tampered submit.
-	if code := post(func(r *http.Request, _ []byte) {
-		other, err := json.Marshal(map[string]any{"command": []string{"true"}, "execId": "intruder"})
-		if err != nil {
-			t.Fatalf("marshal the other body: %v", err)
-		}
-		signInbound(r, "intruder", other, []byte("topsecret"))
-	}); code != http.StatusUnauthorized {
-		t.Fatalf("body-tampered submit: expected 401, got %d", code)
-	}
-
-	// Nothing should have been spawned or completed.
-	time.Sleep(100 * time.Millisecond)
-	if got := rec.completeCount(); got != 0 {
-		t.Fatalf("a rejected submit still ran: %d completions", got)
-	}
-}
-
 func TestExecHandler_SubmitReturns202BeforeExit(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	start := time.Now()
 	rw := submit(t, exe, map[string]any{
@@ -253,42 +108,40 @@ func TestExecHandler_SubmitReturns202BeforeExit(t *testing.T) {
 	if elapsed > 250*time.Millisecond {
 		t.Fatalf("handler took too long (%v); not background-spawning", elapsed)
 	}
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
+	waitForCompletion(t, exe, "x1", 3*time.Second)
 }
 
 func TestExecHandler_DedupReturns202WithExistingStateNoDoubleSpawn(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
-	rw1 := submit(t, exe, map[string]any{"command": []string{"sh", "-c", "sleep 0.3"}, "execId": "dup"})
-	rw2 := submit(t, exe, map[string]any{"command": []string{"sh", "-c", "sleep 0.3"}, "execId": "dup"})
+	marker := filepath.Join(t.TempDir(), "runs")
+	command := []string{"sh", "-c", "echo run >> '" + marker + "'; sleep 0.3"}
+	rw1 := submit(t, exe, map[string]any{"command": command, "execId": "dup"})
+	rw2 := submit(t, exe, map[string]any{"command": command, "execId": "dup"})
 
 	if rw1.Code != http.StatusAccepted || rw2.Code != http.StatusAccepted {
 		t.Fatalf("expected both 202, got %d / %d", rw1.Code, rw2.Code)
 	}
-	waitFor(t, func() bool { return rec.completeCount() >= 1 }, 3*time.Second)
-	time.Sleep(100 * time.Millisecond) // allow any second completion to arrive
+	waitForCompletion(t, exe, "dup", 3*time.Second)
+	time.Sleep(100 * time.Millisecond) // allow any second run to write its marker
 
-	if got := rec.completeCount(); got != 1 {
-		t.Fatalf("expected exactly 1 completion (dedup), got %d", got)
+	runs, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read the run marker: %v", err)
+	}
+	if got := strings.Count(string(runs), "run\n"); got != 1 {
+		t.Fatalf("expected exactly 1 run (dedup), got %d", got)
 	}
 }
 
 func TestExecHandler_CompletionCarriesExitCodeAndOutput(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	submit(t, exe, map[string]any{
 		"command": []string{"sh", "-c", "echo out; echo err 1>&2; exit 0"},
 		"execId":  "ok",
 	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
-
-	cb := rec.lastComplete()
-	var p completionPayload
-	if err := json.Unmarshal(cb.Body, &p); err != nil {
-		t.Fatalf("unmarshal completion: %v", err)
-	}
+	p := completionOf(t, waitForCompletion(t, exe, "ok", 3*time.Second))
 	if p.ExitCode != 0 {
 		t.Fatalf("expected exitCode=0, got %d", p.ExitCode)
 	}
@@ -301,125 +154,33 @@ func TestExecHandler_CompletionCarriesExitCodeAndOutput(t *testing.T) {
 }
 
 func TestExecHandler_NonZeroExitCarriesCode(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	submit(t, exe, map[string]any{
 		"command": []string{"sh", "-c", "exit 7"},
 		"execId":  "fail",
 	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
-
-	var p completionPayload
-	if err := json.Unmarshal(rec.lastComplete().Body, &p); err != nil {
-		t.Fatalf("completion did not parse: %v", err)
-	}
+	p := completionOf(t, waitForCompletion(t, exe, "fail", 3*time.Second))
 	if p.ExitCode != 7 {
 		t.Fatalf("expected exitCode=7, got %d", p.ExitCode)
 	}
 }
 
 func TestExecHandler_SpawnFailureProducesCompletion127(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	submit(t, exe, map[string]any{
 		"command": []string{"this-binary-does-not-exist-xyz"},
 		"execId":  "missing",
 	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
-
-	var p completionPayload
-	if err := json.Unmarshal(rec.lastComplete().Body, &p); err != nil {
-		t.Fatalf("completion did not parse: %v", err)
-	}
+	p := completionOf(t, waitForCompletion(t, exe, "missing", 3*time.Second))
 	if p.ExitCode != 127 {
 		t.Fatalf("expected exitCode=127, got %d", p.ExitCode)
 	}
 }
 
-func TestExecHandler_CompletionSignatureMatches(t *testing.T) {
-	secret := []byte("topsecret")
-	exe, rec, cleanup := newTestExecutor(t, secret)
-	defer cleanup()
-
-	submit(t, exe, map[string]any{
-		"command": []string{"sh", "-c", "echo hi"},
-		"execId":  "sig",
-	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
-
-	cb := rec.lastComplete()
-	ts, err := strconv.ParseInt(cb.Timestamp, 10, 64)
-	if err != nil {
-		t.Fatalf("invalid timestamp header %q: %v", cb.Timestamp, err)
-	}
-	expected := signCallback(secret, cb.ExecID, ts, cb.Body)
-	if expected != cb.Signature {
-		t.Fatalf("signature mismatch: got %s, want %s", cb.Signature, expected)
-	}
-	if _, err := hex.DecodeString(cb.Signature); err != nil {
-		t.Fatalf("signature not hex: %s", cb.Signature)
-	}
-}
-
-func TestExecHandler_RetryPreservesSignatureAcrossAttempts(t *testing.T) {
-	rec := &callbackReceiver{maxFails: 2}
-	var capturedSigs []string
-	var capturedTs []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Errorf("read body: %v", err)
-		}
-		rec.mu.Lock()
-		capturedSigs = append(capturedSigs, r.Header.Get(headerSignature))
-		capturedTs = append(capturedTs, r.Header.Get(headerTimestamp))
-		if rec.failures < rec.maxFails {
-			rec.failures++
-			rec.mu.Unlock()
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		if len(parts) == 3 && parts[2] == "complete" {
-			rec.complete = append(rec.complete, receivedCallback{
-				ExecID: parts[1], Body: body,
-				Signature: r.Header.Get(headerSignature),
-				Timestamp: r.Header.Get(headerTimestamp),
-			})
-		}
-		rec.mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	cb := newCallbackClient(srv.URL, []byte("s"))
-	cb.sleep = func(context.Context, time.Duration) {}
-	exe := newExecutor(newExecTable(), cb, newProcessTable(), newInboundAuth([]byte("s")), transportCallback)
-
-	submit(t, exe, map[string]any{
-		"command": []string{"sh", "-c", "echo hi"},
-		"execId":  "retry",
-	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
-
-	if len(capturedSigs) < 3 {
-		t.Fatalf("expected at least 3 attempts, got %d", len(capturedSigs))
-	}
-	for i := 1; i < len(capturedSigs); i++ {
-		if capturedSigs[i] != capturedSigs[0] {
-			t.Fatalf("signature changed on retry %d", i)
-		}
-		if capturedTs[i] != capturedTs[0] {
-			t.Fatalf("timestamp changed on retry %d", i)
-		}
-	}
-}
-
 func TestExecHandler_TreeDiffEmitsEventOnFileCreate(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	t.Setenv(envTreeDiffInterval, "50")
 	cwd := t.TempDir()
@@ -429,25 +190,22 @@ func TestExecHandler_TreeDiffEmitsEventOnFileCreate(t *testing.T) {
 		"execId":  "tree",
 		"cwd":     cwd,
 	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 5*time.Second)
+	snap := waitForCompletion(t, exe, "tree", 5*time.Second)
 
-	if rec.eventsCount() == 0 {
+	if len(snap.events) == 0 {
 		t.Fatalf("expected at least one tree-diff event, got 0")
 	}
-	rec.mu.Lock()
-	first := rec.events[0]
-	rec.mu.Unlock()
-	if !bytes.Contains(first.Body, []byte("newfile.txt")) {
-		t.Fatalf("expected event body to mention newfile.txt; got %s", first.Body)
+	first := snap.events[0].Payload
+	if !bytes.Contains(first, []byte("newfile.txt")) {
+		t.Fatalf("expected event body to mention newfile.txt; got %s", first)
 	}
-	if !bytes.Contains(first.Body, []byte(`"kind":"file-tree"`)) {
-		t.Fatalf("expected event kind=file-tree; got %s", first.Body)
+	if !bytes.Contains(first, []byte(`"kind":"file-tree"`)) {
+		t.Fatalf("expected event kind=file-tree; got %s", first)
 	}
 }
 
 func TestExecHandler_NoEventsOnIdleTree(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	t.Setenv(envTreeDiffInterval, "50")
 	cwd := t.TempDir()
@@ -457,157 +215,29 @@ func TestExecHandler_NoEventsOnIdleTree(t *testing.T) {
 		"execId":  "idle",
 		"cwd":     cwd,
 	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
+	snap := waitForCompletion(t, exe, "idle", 3*time.Second)
 
-	if got := rec.eventsCount(); got != 0 {
+	if got := len(snap.events); got != 0 {
 		t.Fatalf("expected 0 events on idle tree, got %d", got)
 	}
 }
 
-const (
-	testTraceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-	testTracestate  = "vendor=opaque"
-)
-
-// Cortex opens the span of a callback as a child of the traceparent that the
-// callback carries. Each callback of an exec, event and completion alike, must
-// carry the trace context that the exec arrived with, unchanged, or it starts a
-// trace of its own.
-func TestExecHandler_CallbacksCarryTheTraceContextOfTheExec(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
-
-	t.Setenv(envTreeDiffInterval, "50")
-	submitWithHeader(t, exe, map[string]any{
-		"command": []string{"sh", "-c", "sleep 0.4; touch newfile.txt; sleep 0.4"},
-		"execId":  "traced",
-		"cwd":     t.TempDir(),
-	}, http.Header{
-		"Traceparent": {testTraceparent},
-		"Tracestate":  {testTracestate},
-	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 5*time.Second)
-
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if len(rec.events) == 0 {
-		t.Fatalf("expected at least one tree-diff event, got 0")
-	}
-	for _, cb := range append(append([]receivedCallback{}, rec.events...), rec.complete...) {
-		if cb.Traceparent != testTraceparent || cb.Tracestate != testTracestate {
-			t.Errorf("callback carries traceparent=%q tracestate=%q, want the trace context of the exec", cb.Traceparent, cb.Tracestate)
-		}
-	}
-}
-
-// Cortex must not receive a traceparent that it cannot parse. The callbacks of
-// an exec that arrives with no traceparent, or with a malformed one, thus carry
-// no trace header at all.
-func TestExecHandler_CallbacksCarryNoTraceContextWithoutAValidTraceparent(t *testing.T) {
-	cases := map[string]http.Header{
-		"absent":           {},
-		"tracestate only":  {"Tracestate": {testTracestate}},
-		"uppercase hex":    {"Traceparent": {strings.ToUpper(testTraceparent)}},
-		"extra field":      {"Traceparent": {testTraceparent + "-00"}},
-		"version ff":       {"Traceparent": {"ff" + testTraceparent[2:]}},
-		"zero trace id":    {"Traceparent": {"00-" + strings.Repeat("0", 32) + testTraceparent[35:]}},
-		"zero parent id":   {"Traceparent": {testTraceparent[:36] + strings.Repeat("0", 16) + testTraceparent[52:]}},
-		"two traceparents": {"Traceparent": {testTraceparent, testTraceparent}},
-	}
-	for name, header := range cases {
-		t.Run(name, func(t *testing.T) {
-			exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-			defer cleanup()
-
-			submitWithHeader(t, exe, map[string]any{
-				"command": []string{"true"},
-				"execId":  "untraced",
-			}, header)
-			waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
-
-			if cb := rec.lastComplete(); cb.Traceparent != "" || cb.Tracestate != "" {
-				t.Fatalf("callback carries traceparent=%q tracestate=%q, want none", cb.Traceparent, cb.Tracestate)
-			}
-		})
-	}
-}
-
 func TestExecHandler_SubmittedLogDedupHitFlag(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	rw1 := submit(t, exe, map[string]any{"command": []string{"sh", "-c", "sleep 0.2"}, "execId": "log-dup"})
 	rw2 := submit(t, exe, map[string]any{"command": []string{"sh", "-c", "sleep 0.2"}, "execId": "log-dup"})
 	if rw1.Code != http.StatusAccepted || rw2.Code != http.StatusAccepted {
 		t.Fatalf("expected 202 on both, got %d / %d", rw1.Code, rw2.Code)
 	}
-	// The completion callback retries until it lands, so closing the receiver
-	// first would leave it retrying against a dead server for the rest of the run.
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
+	waitForCompletion(t, exe, "log-dup", 3*time.Second)
 }
 
-// A spawned command must never inherit the callback credentials: whoever holds
-// the secret can forge a signed completion — including its provenance frame —
-// for any exec.
-func TestBuildCommand_StripsCallbackCredentialsFromChildEnv(t *testing.T) {
-	t.Setenv(envCallbackSecret, "base64:c3VwZXItc2VjcmV0LXZhbHVl")
-	t.Setenv(envCortexBaseURL, "http://host.docker.internal:9999")
-	t.Setenv("SANDBOX_UNRELATED_VAR", "kept")
-
-	cmd := buildCommand(context.Background(), execSubmitRequest{
-		Command: []string{"true"},
-		Env:     map[string]string{"STEP_SCOPED": "also-kept"},
-	})
-
-	var sawUnrelated, sawStepScoped bool
-	for _, kv := range cmd.Env {
-		name, _, _ := strings.Cut(kv, "=")
-		if _, sensitive := sensitiveEnvKeys[name]; sensitive {
-			t.Fatalf("child env leaks %s", name)
-		}
-		switch kv {
-		case "SANDBOX_UNRELATED_VAR=kept":
-			sawUnrelated = true
-		case "STEP_SCOPED=also-kept":
-			sawStepScoped = true
-		}
-	}
-	if !sawUnrelated {
-		t.Error("unrelated host env var was dropped; only the callback credentials should be stripped")
-	}
-	if !sawStepScoped {
-		t.Error("request-supplied env var was dropped")
-	}
-}
-
-func TestSanitizedEnviron_DropsOnlyTheNamedKeys(t *testing.T) {
-	t.Setenv(envCallbackSecret, "base64:c2VjcmV0")
-	t.Setenv(envCortexBaseURL, "http://example.invalid")
-
-	for _, kv := range sanitizedEnviron() {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == envCallbackSecret || name == envCortexBaseURL {
-			t.Fatalf("sanitizedEnviron returned %s", name)
-		}
-	}
-	// PATH is set in every sane environment and must survive.
-	var sawPath bool
-	for _, kv := range sanitizedEnviron() {
-		if name, _, _ := strings.Cut(kv, "="); name == "PATH" {
-			sawPath = true
-		}
-	}
-	if !sawPath {
-		t.Error("PATH was stripped from the child environment")
-	}
-}
-
-// The body is buffered before its signature can be verified (the signature
-// covers the bytes), so the read cap is what bounds an unauthenticated peer's
-// memory cost. An oversized submit must be refused without spawning anything.
+// The body is buffered in full before it is parsed, so the read cap is what
+// bounds a peer's memory cost. An oversized submit must be refused without
+// spawning anything.
 func TestExecHandler_OversizedBodyRejected(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	pad := strings.Repeat("a", maxExecBodyBytes)
 	body, err := json.Marshal(map[string]any{
@@ -622,16 +252,14 @@ func TestExecHandler_OversizedBodyRejected(t *testing.T) {
 		t.Fatalf("test body does not exceed the cap: %d <= %d", len(body), maxExecBodyBytes)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(body))
-	signInbound(req, "oversized", body, []byte("s"))
 	rw := httptest.NewRecorder()
 	exe.handle(rw, req)
 
 	if rw.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413 for an oversized submit, got %d", rw.Code)
 	}
-	time.Sleep(50 * time.Millisecond)
-	if got := rec.completeCount(); got != 0 {
-		t.Fatalf("an oversized submit still ran: %d completions", got)
+	if _, ok := exe.table.pollSnapshotFor("oversized", 0); ok {
+		t.Fatalf("an oversized submit still reached the exec table")
 	}
 }
 
@@ -642,8 +270,7 @@ func TestExecCompletion_CarriesResourceUsage(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the server reports a resource-usage frame only on Linux")
 	}
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	// A shell arithmetic loop burns CPU the accounting can see, and the shell
 	// itself holds a resident set, so both members must come back positive.
@@ -651,12 +278,7 @@ func TestExecCompletion_CarriesResourceUsage(t *testing.T) {
 		"command": []string{"i=0; while [ $i -lt 50000 ]; do i=$((i+1)); done"},
 		"execId":  "usage-1",
 	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 30*time.Second)
-
-	var payload completionPayload
-	if err := json.Unmarshal(rec.lastComplete().Body, &payload); err != nil {
-		t.Fatalf("completion did not parse: %v", err)
-	}
+	payload := completionOf(t, waitForCompletion(t, exe, "usage-1", 30*time.Second))
 	if payload.Usage == nil {
 		t.Fatalf("completion carries no usage frame")
 	}
@@ -672,8 +294,7 @@ func TestExecCompletion_CarriesResourceUsage(t *testing.T) {
 // rather than a zeroed frame, which the host would record as a real
 // measurement of a sandbox that ran nothing.
 func TestExecCompletion_OmitsResourceUsageWhenNothingSpawned(t *testing.T) {
-	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
-	defer cleanup()
+	exe := newTestExecutor(t)
 
 	submit(t, exe, map[string]any{
 		// Multi-element, thus `execve` runs directly and `Start` fails; a
@@ -682,9 +303,7 @@ func TestExecCompletion_OmitsResourceUsageWhenNothingSpawned(t *testing.T) {
 		"command": []string{"/nonexistent/binary", "--x"},
 		"execId":  "usage-2",
 	})
-	waitFor(t, func() bool { return rec.completeCount() == 1 }, 30*time.Second)
-
-	body := rec.lastComplete().Body
+	body := waitForCompletion(t, exe, "usage-2", 30*time.Second).body
 	if strings.Contains(string(body), `"usage"`) {
 		t.Fatalf("a failed spawn reported a usage frame: %s", body)
 	}

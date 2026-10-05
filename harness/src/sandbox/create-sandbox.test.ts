@@ -336,7 +336,7 @@ describe("createSandboxClient — the label hook", () => {
     }
 
     const SPAWN = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } };
-    const REF = { sandboxId: "sbx-1", host: "127.0.0.1", port: 8765, backend: "docker" as const, callbackSecret: "s" };
+    const REF = { sandboxId: "sbx-1", host: "127.0.0.1", port: 8765, backend: "docker" as const };
 
     let root: string;
     let calls: BackendCall[];

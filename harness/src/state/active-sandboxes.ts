@@ -15,8 +15,7 @@ import type { PersistedSandboxRef } from "./schema.js";
 /**
  * Record the live sandbox handle on a step row. Called inside the
  * `createSandbox` DBOS step after the backend has confirmed the sandbox
- * is up. The `callbackSecret` is deliberately not part of the persisted
- * shape (see the harness-sandbox-exec spec) — it lives only in the cached step output.
+ * is up.
  */
 export function setSandboxRef(pool: Querier, runId: string, stepId: string, sandboxRef: PersistedSandboxRef): ResultAsync<void, DbError> {
     return tryMutation("activeSandboxes.setSandboxRef", async () => {

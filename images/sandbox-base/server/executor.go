@@ -18,10 +18,8 @@ import (
 	"unicode/utf8"
 )
 
-// maxExecBodyBytes caps how much of a POST /exec body the server will buffer.
-// The body is read in full BEFORE its signature can be verified (the signature
-// covers the bytes), so this cap — not the auth check — is what bounds the
-// memory cost an unauthenticated peer able to reach the port can impose. Sized
+// maxExecBodyBytes caps how much of a POST /exec body the server will buffer,
+// and thus the memory cost that a peer able to reach the port can impose. Sized
 // generously because `write_file` ships whole files base64-inflated inside the
 // command array; 16 MiB is far above any LLM-written payload while still
 // bounding a garbage flood.
@@ -47,8 +45,8 @@ type execSubmitResponse struct {
 	Status string `json:"status"`
 }
 
-// eventPayload is the body POSTed to /sandbox/:execId/event for tree-diff and
-// related on-change events. The Kind discriminator carries the event family.
+// eventPayload is one buffered progress event for tree-diff and related
+// on-change events. The Kind discriminator carries the event family.
 type eventPayload struct {
 	ExecID    string    `json:"execId"`
 	Kind      string    `json:"kind"` // "file-tree" | "tool-activity" | "phase"
@@ -56,7 +54,7 @@ type eventPayload struct {
 	Tree      *treeDiff `json:"tree,omitempty"`
 }
 
-// completionPayload is the body POSTed to /sandbox/:execId/complete.
+// completionPayload is the terminal result that a poll serves as `result`.
 type completionPayload struct {
 	ExecID           string             `json:"execId"`
 	ExitCode         int                `json:"exitCode"`
@@ -73,8 +71,8 @@ type completionPayload struct {
 }
 
 // resourceUsage is what one exec cost the sandbox, as the kernel accounted it
-// at reap time (`resource_usage_linux.go`). It rides the completion payload and
-// the served terminal result so the host can size its sandboxes from the peak
+// at reap time (`resource_usage_linux.go`). It rides the served terminal
+// result so the host can size its sandboxes from the peak
 // each command actually reached, rather than from per-pod kubelet metrics.
 //
 // The frame is a pointer, thus a command that never spawned carries no frame at
@@ -95,20 +93,15 @@ type provenancePayload struct {
 	Deletes  []ProvenanceEntry `json:"deletes,omitempty"`
 }
 
-// executor wires the dedup table to the result-delivery path. One executor per
-// server. In callback mode `callback` POSTs events/completions; in poll mode
-// `callback` is nil and results are buffered in the exec table for the host to
-// pull.
+// executor runs each submitted command and records its events and terminal
+// result in the exec table for the host to poll. One executor per server.
 type executor struct {
-	table     *execTable
-	callback  *callbackClient
-	procs     *processTable
-	auth      inboundAuth
-	transport transportMode
+	table *execTable
+	procs *processTable
 }
 
-func newExecutor(table *execTable, callback *callbackClient, procs *processTable, auth inboundAuth, transport transportMode) *executor {
-	return &executor{table: table, callback: callback, procs: procs, auth: auth, transport: transport}
+func newExecutor(table *execTable, procs *processTable) *executor {
+	return &executor{table: table, procs: procs}
 }
 
 // handle is the POST /exec submit handler. Validates the request, dedups by
@@ -119,9 +112,6 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the raw bytes: the signature covers them, and re-encoding the parsed
-	// struct to verify would diverge from what the harness signed. The read is
-	// capped (see maxExecBodyBytes) since it happens before the auth check.
 	r.Body = http.MaxBytesReader(w, r.Body, maxExecBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -142,19 +132,12 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "execId required"})
 		return
 	}
-	// Authenticate before any work: the execId comes from the untrusted body, but
-	// a forged body cannot carry a signature that verifies against the secret.
-	if !e.auth.authentic(r, req.ExecID, body) {
-		writeUnauthorized(w)
-		return
-	}
 	if len(req.Command) == 0 {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "command is required"})
 		return
 	}
 
 	traceID := extractTraceID(r)
-	trace := inboundTraceContext(r)
 	status, isNew := e.table.reserve(req.ExecID)
 	emitLog(execSubmittedLog{
 		Level: "info", Time: nowRFC3339(), Event: "exec.submitted",
@@ -166,15 +149,14 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//nolint:boundedfanout // the submit returns before the exec ends, and a join at shutdown would wait for each callback retry
-	go e.run(context.WithoutCancel(r.Context()), req, traceID, trace)
+	//nolint:boundedfanout // the submit returns before the exec ends, and killAll at shutdown stops the command that run waits on
+	go e.run(context.WithoutCancel(r.Context()), req, traceID)
 	writeJSONResponse(w, http.StatusAccepted, execSubmitResponse{ExecID: req.ExecID, Status: string(execStatusRunning)})
 }
 
 // run executes the command in the background. It owns the full lifecycle:
-// spawn, structured logs, tree-diff emission, completion callback. Each
-// callback carries trace, the trace context that the exec arrived with.
-func (e *executor) run(rootCtx context.Context, req execSubmitRequest, traceID string, trace traceContext) {
+// spawn, structured logs, tree-diff events, and the terminal result.
+func (e *executor) run(rootCtx context.Context, req execSubmitRequest, traceID string) {
 	cmdStr := truncateCommand(req.Command, commandMaxLen)
 	startedAt := time.Now()
 
@@ -202,17 +184,17 @@ func (e *executor) run(rootCtx context.Context, req execSubmitRequest, traceID s
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		e.failBeforeSpawn(ctx, req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stdout pipe: %s", err), provTracker, provenanceDisabled, trace)
+		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stdout pipe: %s", err), provTracker, provenanceDisabled)
 		return
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		e.failBeforeSpawn(ctx, req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stderr pipe: %s", err), provTracker, provenanceDisabled, trace)
+		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stderr pipe: %s", err), provTracker, provenanceDisabled)
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		e.failBeforeSpawn(ctx, req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("sandbox-server: spawn failed: %s", err), provTracker, provenanceDisabled, trace)
+		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("sandbox-server: spawn failed: %s", err), provTracker, provenanceDisabled)
 		return
 	}
 
@@ -238,7 +220,7 @@ func (e *executor) run(rootCtx context.Context, req execSubmitRequest, traceID s
 	go capturePipe(stdoutPipe, "stdout", traceID, req.ExecID, pid, stdoutBuilder, nil, nil, &wg)
 	go capturePipe(stderrPipe, "stderr", traceID, req.ExecID, pid, stderrBuilder, stderrBuf, &stderrBufMu, &wg)
 
-	diffStop := e.startTreeDiffer(ctx, req, trace)
+	diffStop := e.startTreeDiffer(ctx, req)
 
 	wg.Wait()
 	waitErr := cmd.Wait()
@@ -313,7 +295,7 @@ func (e *executor) run(rootCtx context.Context, req execSubmitRequest, traceID s
 		})
 	}
 
-	e.postCompletion(ctx, req.ExecID, trace, completionPayload{
+	e.recordCompletion(req.ExecID, completionPayload{
 		ExecID:           req.ExecID,
 		ExitCode:         exitCode,
 		Stdout:           stdout,
@@ -329,7 +311,7 @@ func (e *executor) run(rootCtx context.Context, req execSubmitRequest, traceID s
 	})
 }
 
-func (e *executor) failBeforeSpawn(ctx context.Context, execID, traceID, cmdStr, cwd string, startedAt time.Time, errMsg string, tracker *ProvenanceTracker, provenanceDisabled bool, trace traceContext) {
+func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedAt time.Time, errMsg string, tracker *ProvenanceTracker, provenanceDisabled bool) {
 	durationMs := time.Since(startedAt).Milliseconds()
 	now := nowRFC3339()
 	emitLog(execStartLog{
@@ -348,41 +330,25 @@ func (e *executor) failBeforeSpawn(ctx context.Context, execID, traceID, cmdStr,
 	})
 
 	prov := &provenancePayload{Disabled: provenanceDisabled}
-	e.postCompletion(ctx, execID, trace, completionPayload{
+	e.recordCompletion(execID, completionPayload{
 		ExecID: execID, ExitCode: 127, Stderr: errMsg, DurationMs: durationMs, Provenance: prov,
 	})
 }
 
-// postCompletion records the terminal result and, in callback mode, delivers it
-// to Cortex. Recording the completion bytes in the exec table BEFORE any POST is
-// what makes the result retrievable in both modes: poll mode serves them from
-// `GET /exec/{execId}` and never dials out; callback mode additionally pushes,
-// but a host that was down for the whole retry window can still pull the same
-// bytes (provenance frame included) once it comes back.
-func (e *executor) postCompletion(ctx context.Context, execID string, trace traceContext, payload completionPayload) {
+// recordCompletion stores the terminal result bytes in the exec table, where
+// `GET /exec/{execId}` serves them as `result`.
+func (e *executor) recordCompletion(execID string, payload completionPayload) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[completion] marshal failed for %s: %v", execID, err)
 		return
 	}
 	e.table.setCompletionBody(execID, body)
-
-	// Poll mode never initiates a connection — the host pulls the recorded body.
-	if e.transport != transportCallback {
-		return
-	}
-	if !e.table.claimCompletionPost(execID) {
-		return
-	}
-	if perr := e.callback.post(context.WithoutCancel(ctx), callbackKindComplete, execID, trace, body); perr != nil {
-		log.Printf("[completion] post failed for %s: %v", execID, perr)
-		e.table.releaseCompletionPost(execID)
-	}
 }
 
 // startTreeDiffer launches the periodic tree-diff loop for an exec. Returns a
 // stop function (nil when no diff root is configured for this exec).
-func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest, trace traceContext) func() {
+func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest) func() {
 	root := treeDiffRootForExec(req.Cwd)
 	if root == "" {
 		return nil
@@ -404,7 +370,7 @@ func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest, t
 				if !changed {
 					continue
 				}
-				e.emitTreeEvent(ctx, req.ExecID, trace, delta)
+				e.emitTreeEvent(req.ExecID, delta)
 			}
 		}
 	})
@@ -412,12 +378,12 @@ func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest, t
 		close(stop)
 		wg.Wait()
 		if delta, changed := d.tick(); changed {
-			e.emitTreeEvent(ctx, req.ExecID, trace, delta)
+			e.emitTreeEvent(req.ExecID, delta)
 		}
 	}
 }
 
-func (e *executor) emitTreeEvent(ctx context.Context, execID string, trace traceContext, delta treeDiff) {
+func (e *executor) emitTreeEvent(execID string, delta treeDiff) {
 	body, err := json.Marshal(eventPayload{
 		ExecID:    execID,
 		Kind:      "file-tree",
@@ -428,30 +394,22 @@ func (e *executor) emitTreeEvent(ctx context.Context, execID string, trace trace
 		log.Printf("[event] marshal failed for %s: %v", execID, err)
 		return
 	}
-	// Poll mode buffers the event for the host to pull; callback mode POSTs it.
-	if e.transport != transportCallback {
-		e.table.appendEvent(execID, body)
-		return
-	}
-	if perr := e.callback.post(context.WithoutCancel(ctx), callbackKindEvent, execID, trace, body); perr != nil {
-		log.Printf("[event] post failed for %s: %v", execID, perr)
-	}
+	e.table.appendEvent(execID, body)
 }
 
 // treeDiffRootForExec returns the directory to snapshot for an exec. The cwd
 // from the submit takes precedence; otherwise the configured server-wide root.
 //
-// The submit body is HMAC-authenticated (see handle -> inboundAuth.authentic)
-// before it reaches here, so cwd is trusted control-plane input from the same
-// harness that already dictates the command to run. cleanSnapshotRoot then
+// cwd is trusted control-plane input from the harness, which already dictates
+// the command to run (see buildCommand). cleanSnapshotRoot then
 // normalises it and rejects `..` traversal as defense-in-depth.
 //
 // The residual CodeQL go/path-injection finding is accepted by design:
 // filepath.Clean is not a containment sanitizer and there is no configured base
 // to contain against (SANDBOX_TREE_DIFF_ROOT is optional and unset in practice),
-// so an authenticated caller can still name any absolute directory. That caller
-// can already read any file via the command it runs, so snapshotting arbitrary
-// directory metadata is no escalation over the existing trust boundary.
+// so the harness can still name any absolute directory. The harness can already
+// read any file via the command it runs, so snapshotting arbitrary directory
+// metadata is no escalation over the existing trust boundary.
 func treeDiffRootForExec(cwd string) string {
 	if root := cleanSnapshotRoot(cwd); root != "" {
 		return root
@@ -471,69 +429,36 @@ func cleanSnapshotRoot(path string) string {
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
 		return ""
 	}
-	//nolint:gosec // G703: the signed caller names the directory, as treeDiffRootForExec explains.
+	//nolint:gosec // G703: the harness names the directory, as treeDiffRootForExec explains.
 	if info, err := os.Stat(cleaned); err == nil && info.IsDir() { // codeql[go/path-injection]
 		return cleaned
 	}
 	return ""
 }
 
-// sensitiveEnvKeys are the host-privileged variables that reach sandbox-server
-// through its own environment and MUST NOT reach the commands it spawns.
-//
-// Possession of the callback secret is sufficient to forge a signed `/complete`
-// callback for any exec — fabricating its exit code, stdout, and provenance
-// frame. Leaving it in a spawned command's environment would place the integrity
-// of the provenance record inside the trust domain of the very code that record
-// is meant to observe.
-//
-// Stripping them here is safe because loadServerConfig reads both once, at
-// startup, before any exec is accepted.
-var sensitiveEnvKeys = map[string]struct{}{
-	envCallbackSecret: {},
-	envCortexBaseURL:  {},
-}
-
-// sanitizedEnviron is the server's environment with sensitiveEnvKeys removed.
-func sanitizedEnviron() []string {
-	src := os.Environ()
-	out := make([]string, 0, len(src))
-	for _, kv := range src {
-		name, _, found := strings.Cut(kv, "=")
-		if found {
-			if _, sensitive := sensitiveEnvKeys[name]; sensitive {
-				continue
-			}
-		}
-		out = append(out, kv)
-	}
-	return out
-}
-
 // buildCommand wraps a single-string command in `sh -c` (matching the prior
 // behavior); multi-element commands invoke execve directly.
 func buildCommand(ctx context.Context, req execSubmitRequest) *exec.Cmd {
 	var cmd *exec.Cmd
-	// req.Command is trusted control-plane input: the submit body is
-	// HMAC-authenticated (see handle -> inboundAuth.authentic) before run/
-	// buildCommand ever sees it, so only a peer holding this sandbox's secret —
-	// the harness itself — can supply it. Executing that command is this
+	// req.Command is trusted control-plane input: the network admits only the
+	// harness to this port (Docker publishes it on 127.0.0.1 and each sandbox
+	// denies egress; K8s applies a NetworkPolicy). Executing that command is this
 	// server's sole purpose and the sandbox container is the isolation boundary,
 	// so there is no lower-trust principal whose data is interpolated here. The
 	// single-element form is a deliberate shell one-liner passed as one discrete
 	// `sh -c` argument (no interpolation into a larger string); the multi-element
 	// form is already the safe explicit-argv exec, with no shell involved.
 	if len(req.Command) == 1 {
-		//nolint:gosec // G204: the server runs the command of the signed caller, as the comment above explains.
+		//nolint:gosec // G204: the server runs the command of the harness, as the comment above explains.
 		cmd = exec.CommandContext(ctx, "sh", "-c", req.Command[0]) // codeql[go/command-injection]
 	} else {
-		//nolint:gosec // G204: the server runs the command of the signed caller, as the comment above explains.
+		//nolint:gosec // G204: the server runs the command of the harness, as the comment above explains.
 		cmd = exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) // codeql[go/command-injection]
 	}
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
 	}
-	cmd.Env = sanitizedEnviron()
+	cmd.Env = os.Environ()
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}

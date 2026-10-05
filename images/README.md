@@ -23,7 +23,7 @@ compiled extensions a different ABI than the sandbox loads them with, thus
 the assert fails the build.
 
 `sandbox-base`'s own [README](./sandbox-base/README.md) documents the exec
-protocol, the transport modes, and the egress firewall — the
+protocol, the confinement, and the egress firewall — the
 security-relevant machinery. Read it before you change anything under
 `sandbox-base/`.
 
@@ -131,7 +131,7 @@ and drive the provisioner with
 - **Keep the runtime image lean.** Build tooling belongs to the provisioner
   and the builder stages only.
 - **Changes under `sandbox-base/`** touch the containment boundary — the
-  exec protocol, the signed endpoints, the egress firewall. Read
+  exec protocol, the confinement of the exec port, the egress firewall. Read
   [`sandbox-base/README.md`](./sandbox-base/README.md) and
   [`SECURITY.md`](../SECURITY.md) first, run `go test ./...` inside
   `sandbox-base/server/`, and name anything that loosens isolation
