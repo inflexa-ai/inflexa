@@ -47,9 +47,9 @@ activity), and new documents never carry the attribute.
 The provenance kernel (`@inflexa-ai/prov-kernel`) SHALL append the six execution
 statement sets — run started, run completed, step completed, command executed, file
 written, input used — to an analysis's live document, dispatched through
-`applyProvEvent` (the cli calls no builder directly). Runs, steps, and command
-executions SHALL be recorded as PROV **activities**; files and used inputs as PROV
-**entities**:
+`applyProvEvent` (the cli calls no builder directly). Runs, steps, command
+executions, and file-tool calls SHALL be recorded as PROV **activities**; files and
+used inputs as PROV **entities**:
 
 - run started / run completed / input used: unchanged from the
   prior revision (payload-sourced formal times; step-level used edges).
@@ -57,23 +57,27 @@ executions SHALL be recorded as PROV **activities**; files and used inputs as PR
   terminal status, `wasInformedBy` the run, `wasAssociatedWith` the actor's agent),
   PLUS the model-agent records for the event's `model` (see below) and a
   `wasAssociatedWith(stepQn, modelAgentQn)` edge.
-- command executed: a command activity (`prov:type: inflexa:Command` for the
-  `command` kind, `inflexa:FileToolWrite` for `file_tool`) carrying the execution
-  facts as attributes (`inflexa:command`, `inflexa:args` when the argument vector is
-  non-empty, `inflexa:exitCode`,
-  `inflexa:durationMs` / `inflexa:tool`) and NO formal times; `wasInformedBy` the
-  step activity; `wasAssociatedWith` the actor's agent AND the model agent for the
-  event's `model`; a `used` edge per
+- command executed: a command activity (`prov:type: inflexa:Command`) carrying the
+  execution facts as attributes (`inflexa:command`, `inflexa:args` when the argument
+  vector is non-empty, `inflexa:exitCode`, `inflexa:durationMs`) and NO formal times;
+  `wasInformedBy` the step activity; `wasAssociatedWith` the actor's agent AND the
+  model agent for the event's `model`; a `used` edge per
   command-scoped input (including the script entity when `scriptPath` is present);
   and `wasGeneratedBy(fileQn, cmdQn)` for each output — the generation authority for
   produced files.
 - file written: records the file entity, `wasAttributedTo`, and
-  `wasDerivedFrom(file, analysis)` as before, but SHALL write its step-level
-  `wasGeneratedBy(fileQn, stepQn)` ONLY when the event carries `generation:
-  "step"` — leaf files with no producing command activity (e.g. inotify-only
-  observations). A produced file's generation
-  comes exclusively from the command-executed statements; exactly one generation edge
-  SHALL exist per file entity.
+  `wasDerivedFrom(file, analysis)` as before. The generation edge follows the
+  event's arm. `generation: "step"` writes `wasGeneratedBy(fileQn, stepQn)` — a
+  leaf file with no producing activity. `generation: "call"` first appends a
+  deterministic `inflexa:FileToolWrite` call activity, keyed on the invocation
+  id and the scope (the step key, or else the thread). The call activity
+  carries `inflexa:tool`, `inflexa:invocationId`, the optional
+  `inflexa:threadId`, and NO formal time. It takes the actor association and
+  the model-agent association. With a step ref, it is `wasInformedBy` the
+  step. The call generates the file. A produced file's
+  (`generation: "command"`) generation
+  comes exclusively from the command-executed statements; exactly one generation
+  edge SHALL exist per file entity.
 
 The model-agent records: one PROV agent per distinct `{provider}/{model}` name
 under the deterministic QName `inflexa:agent-model-{digest(name)}`, typed BOTH
@@ -91,7 +95,11 @@ The command activity QName SHALL be deterministic from the group's OUTPUT SET �
 `inflexa:cmd-{runId}-{stepId}-{digest(sorted output (path, hash) pairs)}` — never
 from producer object identity or observation timestamps (both vary across workflow
 re-execution, while the surviving output set is replay-stable because the upstream
-collector is last-write-wins per path). Every relation record SHALL carry a
+collector is last-write-wins per path). The call activity QName SHALL be
+deterministic from the invocation id and its scope:
+`inflexa:call-{digest("{runId}|{stepId}|{invocationId}")}` with a step ref, else
+`inflexa:call-{digest("{threadId}|{invocationId}")}`. An invocation id is
+replay-stable, but it is unique per agent loop only. Every relation record SHALL carry a
 deterministic identifier derived from its endpoint tuple, and relation records SHALL
 carry NO formal time.
 
@@ -102,13 +110,19 @@ carry NO formal time.
 
 #### Scenario: Exactly one generation edge per file
 
-- **WHEN** a step registers two produced files (in command groups) and one leaf file (no producer record)
-- **THEN** each produced file's sole `wasGeneratedBy` references its command activity, the leaf file's sole `wasGeneratedBy` references the step activity, and no file entity carries two generation records
+- **WHEN** a step registers a command-produced file, a call-written file, and one leaf file (no producer record)
+- **THEN** the produced file's sole `wasGeneratedBy` references its command activity, the call-written file's references its call activity, and the leaf file's references the step activity
+- **AND** no file entity carries two generation records
 
 #### Scenario: Duplicate command emission dedups by the output-set QName
 
 - **WHEN** the same `prov.command_executed` event is recorded twice (workflow re-execution) and the document is unified
 - **THEN** the document contains one command activity under the output-set QName and one of each of its relation records — not two
+
+#### Scenario: Duplicate call emission dedups by the invocation-scoped QName
+
+- **WHEN** the same call-generation `prov.file_written` event is recorded twice (workflow re-execution) and the document is unified
+- **THEN** the document contains one call activity under the invocation-scoped QName and one of each of its relation records — not two
 
 #### Scenario: A step activity is associated with both the CLI and the model
 

@@ -1,6 +1,6 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: Conversation turns receive fresh analysis-wide run activity
+### Requirement: Conversation turns store fresh analysis-wide run activity after the user message
 
 The harness MUST derive the Run Activity afresh from `cortex_runs` for the whole analysis on each chat turn. The render MUST separate `running` from `suspended_insufficient_funds`. It MUST give the full `runId`, the nullable `planId`, and the absolute `startedAt` of each run that it lists.
 
@@ -37,3 +37,11 @@ The harness MUST NOT write the render to the working memory.
 - **GIVEN** one set of non-terminal runs
 - **WHEN** the harness renders it two times, one hour apart
 - **THEN** the two renders are byte-identical
+
+## REMOVED Requirements
+
+### Requirement: Conversation turns receive fresh analysis-wide run activity
+
+**Reason**: The Run Activity is now a stored context record after the user message, and it gives no age. Thus the scenarios that keep the Run Activity out of the stored history, and that give the age of a run, are false.
+
+**Migration**: Refer to "Conversation turns store fresh analysis-wide run activity after the user message".

@@ -30,19 +30,22 @@ files it cannot see.
 - **WHEN** an embedder adds or removes an analysis input
 - **THEN** the embedder SHALL invoke the re-profile on that edge, rather than relying on a later read to notice
 
-## MODIFIED Requirements
+### Requirement: The result snapshot records the profiled input set
 
-### Requirement: Result snapshot carries the profiled input set
+The `data_profile_result` JSONB stored by `completeDataProfile` SHALL carry, in addition
+to the resolved profile (see the data-profile-init spec):
 
-The `data_profile_result` JSONB stored by `completeDataProfile` SHALL carry, in addition to the
-profiler's full output (the dataset classification, the kinds and axes, and the notable-file
-records — see the data-profile-init spec):
-
-- `inputSignature: { count: number; digest: string }` — the record of *which* files a profile
-  covered and *whether the same bytes* were profiled. `count` is the number of staged inputs;
-  `digest` is a stable hash over the staged inputs' identities and their per-file size and mtime,
-  computed in a canonical order so the value depends on the set and not on enumeration order.
+- `inputSignature: { count: number; digest: string }` — the record of *which* files a
+  profile covered and *whether the same bytes* were profiled. `count` is the number of
+  **kept** staged inputs; `digest` is a stable hash over the kept inputs' identities and
+  their per-file size and mtime, computed in a canonical order so the value depends on
+  the set and not on enumeration order.
 - `profiledAt: string` — ISO 8601 timestamp of profile completion
+
+The signature SHALL digest **kept files only**. Quarantined junk and partial-download
+artifacts SHALL NOT change it: a temp file is not part of what was profiled. A change to
+the quarantine rules themselves changes the signature the next profile records, which is
+the correct consequence — the definition of "kept" changed.
 
 The signature is an **audit record**, not a decision input. Nothing in the harness compares it
 against a current input set, because no harness read path holds one; re-profiling is invoked at
@@ -50,8 +53,10 @@ the mutation instead. It is written because it is the only durable answer to "wh
 profile cover?", it costs one hash over a manifest already in hand, and its absence would be
 unrecoverable after the fact — whereas a reader can be added back at any time.
 
-`inputFileIds: string[]` and `inputFiles: { fileId, size, mtimeMs }[]` SHALL remain readable on
-rows written before the signature existed. They SHALL NOT be written by a current profile body.
+The retired per-file comparands (`inputFileIds`, `inputFiles`) SHALL NOT be declared by
+the record type, and a current profile body SHALL NOT write them. A snapshot written
+before the signature existed is still served: unknown keys on such a row are ignored on
+read, and the absence of `inputSignature` is neither an error nor a reason to re-profile.
 
 The signature deliberately excludes the content hash: it is computed from the staged manifest,
 which carries size and mtime, and reading every input in full to record a stronger value would
@@ -59,14 +64,20 @@ cost the whole dataset at every profile completion for a field nothing compares.
 
 #### Scenario: Initial profile stores the input signature
 
-- **WHEN** the data-profile body completes for an analysis with 3 staged input files
+- **WHEN** the data-profile body completes for an analysis with 3 kept staged input files
 - **THEN** `data_profile_result.inputSignature.count` SHALL be 3
 - **AND** `data_profile_result.inputSignature.digest` SHALL be a stable hash over those inputs' identities, sizes, and mtimes
 - **AND** `data_profile_result.profiledAt` SHALL be an ISO 8601 timestamp near the completion time
 
+#### Scenario: Junk churn does not change the signature
+
+- **GIVEN** two staged input sets that differ only by a partial-download temp file
+- **WHEN** the signature is computed over each
+- **THEN** the two digests and the two counts SHALL be equal
+
 #### Scenario: The signature is order-independent
 
-- **GIVEN** two enumerations of the same input set differing only in order
+- **GIVEN** two enumerations of the same kept input set differing only in order
 - **WHEN** the signature is computed over each
 - **THEN** the two digests SHALL be equal
 
@@ -76,8 +87,20 @@ cost the whole dataset at every profile completion for a field nothing compares.
 - **THEN** `data_profile_result.inputSignature` SHALL describe the set the new run covered
 - **AND** `data_profile_result.profiledAt` SHALL be updated to the new completion time
 
-#### Scenario: A legacy snapshot's comparand is still readable
+#### Scenario: A pre-signature snapshot is still served
 
 - **GIVEN** a snapshot written before `inputSignature` existed, carrying `inputFileIds`
 - **WHEN** a consumer reads the row
-- **THEN** the field SHALL still deserialize, and its absence on a current row SHALL NOT be an error
+- **THEN** the row SHALL deserialize with the unknown key ignored
+- **AND** the absence of `inputSignature` SHALL NOT be an error, and SHALL NOT trigger a re-profile
+
+## REMOVED Requirements
+
+### Requirement: Result snapshot carries the profiled input set
+
+**Reason**: Re-profiling is push-only. No harness read path compares the signature
+against a current input set, so the drift and staleness scenarios of this requirement
+are false. "The result snapshot records the profiled input set" replaces it, and keeps
+the signature as an audit record.
+**Migration**: The embedder that changes the input set invokes the re-profile on that
+edge (see "Re-profiling is invoked by the embedder, never derived on read").

@@ -29,13 +29,13 @@ Its tool surface MUST be exactly `validate_synthesis`, `submit_synthesis`, `repo
 
 The host-agnostic `synthesizeRun` service (`harness/src/app/synthesize-run.ts`) MUST load the step summaries of the run. It MUST build the prompt from the step summaries and the analytical narrative of the plan. It MUST drive the loop under a `forSubAgent(session, "run-synthesizer")` session. On success it MUST index the synthesis vector, persist `synthesis.json`, and emit a `data-run-synthesis` chat part.
 
-#### Scenario: Synthesizer reaches the user only through a terminal tool
+#### Scenario: Synthesizer reaches the user only via a terminal tool
 
 - **WHEN** the run-synthesizer loop runs
 - **THEN** the only way a synthesis or a blocker reaches the caller is a `submit_synthesis` or `report_blocker` call
 - **AND** the agent does its research through briefs to the `literature_reviewer` tool
 
-#### Scenario: Deliverables of a successful synthesis
+#### Scenario: Happy-path deliverables
 
 - **WHEN** the synthesizer calls `submit_synthesis` with a payload that passes validation
 - **THEN** `synthesizeRun` persists `synthesis.json` to the run directory and emits a `data-run-synthesis` chat part

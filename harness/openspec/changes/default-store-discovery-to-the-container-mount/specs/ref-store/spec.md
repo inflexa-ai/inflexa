@@ -15,12 +15,12 @@ The tool SHALL distinguish an unavailable store, a present but empty store, and 
 - **WHEN** `/mnt/refs/user/cohort/reference.h5ad` exists and no `registry.json` or receipt names it
 - **THEN** `list_available_refs` reports that path through the root summary or a bounded drill-down result
 
-#### Scenario: Store is present but empty
+#### Scenario: Store is mounted but empty
 
 - **WHEN** the read root exists and contains no reference data
 - **THEN** the tool returns an available-but-empty result rather than a missing-store result
 
-#### Scenario: Store is not present
+#### Scenario: Store is not mounted
 
 - **WHEN** the read root does not exist or is not a directory
 - **THEN** the tool returns an unavailable data variant with an actionable note, without throwing

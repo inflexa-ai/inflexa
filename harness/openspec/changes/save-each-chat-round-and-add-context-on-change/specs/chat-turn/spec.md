@@ -1,3 +1,7 @@
+## Purpose
+
+The harness runs the whole chat turn for each host. A turn stores its opening and its context records after the user message, stores each round when it completes, and closes with one outcome.
+
 ## ADDED Requirements
 
 ### Requirement: The harness runs the whole chat turn

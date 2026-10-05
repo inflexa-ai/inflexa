@@ -2,61 +2,66 @@
 
 ### Requirement: The profile is readable only through inspect_data_profile
 
-The conversation agent SHALL read the data profile through the in-process
-`inspect_data_profile` tool, which reads the analysis's `data_profile_result` row. The
-profile is not a workspace file, so the tool is the only path to it: no sandbox-side
-profile file exists, so it neither hunts for one nor re-derives the facts from the
-raw inputs.
+There SHALL be no data-profile file anywhere in the workspace — the profiler's scratch
+tree is deleted on completion, so the `cortex_analysis_state` row is the profile's sole
+durable home. The harness SHALL therefore expose an `inspect_data_profile` tool that
+reads that row, wired to the conversation agent and to **every** sandbox agent as
+always-on substrate (see the harness-sandbox-agents spec), and its description SHALL tell
+the agent that no profile file exists.
 
-The tool SHALL be bounded by construction: `scope: "overview"` (the default)
-returns the dataset-level facts plus the profiled-file count, and `scope: "files"`
-pages the per-file records (`page`, `pageSize`, default 20, max 100) and SHALL
-always report the true `total` and `hasMore`, so an elided tail is a fact the
-model can see and act on rather than a silent truncation.
+The tool SHALL be bounded by construction: `scope: "overview"` (the default) returns the
+dataset-level facts and the partition accounting, `scope: "groups"` returns the groups
+with their slots and the dimensions with their observations, and `scope: "files"` pages
+the individually annotated member records (`page`, `pageSize`, default 20, max 100),
+always reporting the true `total` and `hasMore`.
 
-Every lifecycle state SHALL be a data variant in the ok channel, never an error:
-`ready`; `stale` (a profile is still returned, with a `staleReason` naming why it
-may not describe the current inputs); `pending`; `failed`; and `absent` (never
-profiled, or the analysis has no input files).
+The tool SHALL distinguish the number of members annotated individually from the number
+of files in the dataset, and SHALL report both, directing the agent to `scope: "groups"`
+for structure and to the workspace listing tools for paths.
 
-Every `staleReason` SHALL be a fact the ledger row states outright — an attempt is
-running over a preserved prior result, or the most recent attempt failed over one.
+For a legacy snapshot the `groups` scope SHALL serve the stored `kinds` and `axes`,
+labelled as authored under the previous model, rather than reporting the scope
+unavailable — the structure exists and an agent SHALL NOT be told the dataset has none.
+
+Every lifecycle state SHALL remain a data variant in the ok channel — `ready`, `stale`,
+`pending`, `failed`, `absent` — with the failed-state semantics unchanged: a failure is a
+past attempt, `failedAt` carries the recorded time or null, no underivable staleness
+verdict is exposed, and a surviving prior profile is served as `stale` rather than
+`failed`.
+
+Every `staleReason` SHALL be a fact the ledger row states outright — an attempt is in
+flight over a preserved prior result, or the most recent attempt failed over one.
 `tryRerun` / `tryRetry` preserve `data_profile_result` precisely so a prior profile
 stays servable, and reporting that is reporting the row.
 
 A changed input set SHALL NOT be among the reasons. The tool reads one row and holds
 no current input set, and re-profiling is invoked by the embedder that owns the input
-mutation — so a row still reading `completed` is a row nothing has superseded. Deriving
-a verdict here would re-decide, from strictly less information, a question already
-answered by the party that watched the change happen.
+mutation (see the data-profile-rerun spec) — so a row still reading `completed` is a row
+nothing has superseded. Deriving a verdict here would re-decide, from strictly less
+information, a question already answered by the party that watched the change happen.
 
-The `failed` state SHALL NOT imply a verdict on the analysis's current input files.
-It reports a past attempt, and the harness cannot determine on its own whether that
-attempt covered the files the analysis holds now: the tool reads one ledger row, and
-the current input set is the embedder's knowledge, not the harness's. Reporting a
-failure without that qualification is what invites the wrong inference.
+#### Scenario: The groups scope returns the resolved structure
 
-The variant SHALL therefore carry `failedAt` — the time the failure was recorded, or
-null when the row records none — and its message SHALL state that the failure is a
-record of an earlier attempt whose relationship to the current inputs this row cannot
-establish. A timestamp is reported because it is a fact the row actually holds and an
-agent can act on: an agent that knows when the input set last changed can compare the
-two itself.
+- **GIVEN** a completed profile over a tree resolved into groups with dimensions
+- **WHEN** an agent calls `inspect_data_profile` with `scope: "groups"`
+- **THEN** it receives the groups with derived counts, display patterns, and slots, and the dimensions with their observations
 
-The tool SHALL NOT report a staleness verdict it cannot derive. In particular it SHALL
-NOT expose a field whose value is constant on this path, because a field that cannot
-discriminate carries no information while implying that it does — and the tool
-description, being the whole of what an agent knows about the tool, SHALL NOT advertise
-distinctions the implementation cannot produce.
+#### Scenario: A legacy snapshot's structure is served, labelled
 
-Where a prior profile DID survive the failure, the row is served as `stale` rather than
-`failed`. This requirement adds no second definition of staleness and no sixth lifecycle
-state.
+- **GIVEN** a snapshot written under the previous model
+- **WHEN** an agent calls `inspect_data_profile` with `scope: "groups"`
+- **THEN** it receives the stored kinds and axes, labelled as authored under the previous model
 
-#### Scenario: A completed profile is served in full
+#### Scenario: The overview carries the accounting
 
-- **WHEN** an agent calls `inspect_data_profile` on an analysis with a completed profile
-- **THEN** it receives `state: "ready"` with the dataset-level classification and the profiled-file count
+- **WHEN** an agent calls `inspect_data_profile` on a completed profile
+- **THEN** the overview SHALL report the kept, unclassified, and quarantined counts alongside the classification
+
+#### Scenario: An annotated-member count does not masquerade as the dataset size
+
+- **GIVEN** a profile annotating 8 members out of thousands of files
+- **WHEN** an agent calls `inspect_data_profile`
+- **THEN** the result SHALL report both figures distinctly
 
 #### Scenario: A changed input set is not reported as stale
 
@@ -70,33 +75,8 @@ state.
 - **WHEN** an agent calls `inspect_data_profile`
 - **THEN** it receives `state: "stale"` carrying the previous profile AND a `staleReason` naming the re-profile in flight
 
-#### Scenario: A failure is reported as a past attempt, not a verdict
-
-- **GIVEN** a `failed` profile row with no earlier result
-- **WHEN** an agent calls `inspect_data_profile`
-- **THEN** it receives `state: "failed"` with `failedAt` naming when the failure was recorded
-- **AND** the message states the failure is an earlier attempt whose relation to the current inputs this row cannot establish
-
-#### Scenario: A row recording no failure time still answers
-
-- **GIVEN** a `failed` profile row whose recorded completion time is absent
-- **WHEN** an agent calls `inspect_data_profile`
-- **THEN** it receives `failedAt: null` rather than a fabricated or omitted value
-
-#### Scenario: No underivable staleness verdict is exposed
-
-- **WHEN** an agent calls `inspect_data_profile` on a `failed` row
-- **THEN** the result SHALL NOT carry a field purporting to say whether the input set changed since the failure
-- **AND** the tool description SHALL NOT advertise such a distinction
-
 #### Scenario: A surviving prior profile is served as stale, not failed
 
 - **GIVEN** a profile row whose latest attempt failed but which still carries an earlier result
 - **WHEN** an agent calls `inspect_data_profile`
 - **THEN** it receives `state: "stale"` with a `staleReason` naming the failed re-profile
-
-#### Scenario: A paged file scope never truncates silently
-
-- **GIVEN** a profile covering 50 files
-- **WHEN** an agent calls `inspect_data_profile` with `scope: "files"` and the default page size
-- **THEN** it receives 20 records with `total: 50` and `hasMore: true`

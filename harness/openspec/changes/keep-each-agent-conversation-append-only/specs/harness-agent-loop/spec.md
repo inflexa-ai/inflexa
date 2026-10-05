@@ -49,7 +49,7 @@ The wrap-up MUST name its request `k` (zero-based) `formatStepName.llm(maxIterat
 
 A salvage continuation that starts MUST be reported at `warn` through the `Logger` of the loop, because the agent ended without its terminal outcome. Only `runToTerminal` can report this. The loop sees the salvage as a continuation with a small cap and a mask. It cannot know that the salvage is a second attempt.
 
-#### Scenario: An agent that never submits gets one salvage continuation
+#### Scenario: An agent that never submits gets one terminal-only salvage turn
 
 - **GIVEN** an agent that uses its full budget and does not call its terminal tool
 - **WHEN** `runToTerminal` runs it

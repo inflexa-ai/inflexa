@@ -1,9 +1,66 @@
-## RENAMED Requirements
-
-- FROM: `### Requirement: A turn is appended atomically with monotonic sequence`
-- TO: `### Requirement: Each round is appended atomically with monotonic sequence`
-
 ## MODIFIED Requirements
+
+### Requirement: The tail turn can be retracted
+
+`retractLastTurn(threadId)` MUST remove the most recent turn of the thread in one transaction. It removes each row from the last genuine-user-start `seq` onward, and each turn record whose `start_seq` is at or past that `seq`.
+
+The retract obeys the append-only rule of the stored conversation. When the last turn goes, each earlier prefix stays byte-identical. Thus each earlier thinking block and each cache entry stays valid. The rule is: a later request never sees a changed earlier record. Only the last turn can go.
+
+A thread whose rows hold no genuine user start MUST NOT change. The operation deletes nothing, and it reports the distinct outcome `no-user-turn`. A write of the harness cannot make such rows, and a refusal is better than a thread that the store empties in silence.
+
+The operation MUST take the per-thread lock of `appendTurn` and `writeTurn`. Thus it removes a whole group, and never a part of a group that a write still makes. A host MUST NOT retract a turn whose status is `open`, because a later round of that turn would land after the cut.
+
+The success value MUST give the count of the rows that the operation removed. A retract of an empty thread is the normal outcome `empty-thread`, not an error. The error channel MUST carry database faults only. The store MUST NOT remove a turn other than the tail, and it MUST NOT remove one message.
+
+#### Scenario: Retract restores the pre-append thread
+
+- **GIVEN** a thread with stored turns, and then one more `appendTurn` of one user message
+- **WHEN** `retractLastTurn` is called
+- **THEN** the appended rows are gone, and `loadRecent` gives what it gave before that append
+
+#### Scenario: A multi-row tail turn is removed whole
+
+- **GIVEN** a thread whose most recent turn has more than one row: the user input, the context records, the assistant steps, and the tool results
+- **WHEN** `retractLastTurn` is called
+- **THEN** each row of that turn is gone, and the turn before it becomes the tail
+
+#### Scenario: A loop-synthesized message is not a cut point
+
+- **GIVEN** a tail turn with a message that the loop synthesized in the middle of the turn, to continue a truncated reply
+- **WHEN** `retractLastTurn` is called
+- **THEN** the store removes the whole turn from its real head, and never from the synthesized message onward
+
+#### Scenario: A retract removes the turn record
+
+- **GIVEN** a closed chat turn at the tail of a thread
+- **WHEN** `retractLastTurn` is called
+- **THEN** no row and no turn record of that turn remains
+
+#### Scenario: The earlier turns stay byte-identical
+
+- **GIVEN** a thread with two closed chat turns
+- **WHEN** `retractLastTurn` removes the second turn
+- **THEN** each row of the first turn is byte-identical to its state before the retract, and its turn record does not change
+
+#### Scenario: Retracting an empty thread is a normal outcome
+
+- **GIVEN** a thread with no rows
+- **WHEN** `retractLastTurn` is called
+- **THEN** it succeeds with the outcome `empty-thread`, and it gives no `DbError`
+
+#### Scenario: A thread without a user-start row is refused
+
+- **GIVEN** a thread whose rows hold no user-role message
+- **WHEN** `retractLastTurn` is called
+- **THEN** no row goes, and the outcome is `no-user-turn`
+
+#### Scenario: Retract never removes part of a concurrently appending turn
+
+- **GIVEN** a write of a group with more than one row, in a race with `retractLastTurn` on the same thread
+- **WHEN** both complete
+- **THEN** the thread holds the whole group or none of it, and never a part of it
+
+## ADDED Requirements
 
 ### Requirement: Each round is appended atomically with monotonic sequence
 
@@ -74,67 +131,11 @@ The touch never costs the write. When no metadata row exists, or the row is soft
 - **WHEN** the thread is read back
 - **THEN** the row carries the same rollup and the same duration
 
-### Requirement: The tail turn can be retracted
+#### Scenario: An old row reads back without a duration
 
-`retractLastTurn(threadId)` MUST remove the most recent turn of the thread in one transaction. It removes each row from the last genuine-user-start `seq` onward, and each turn record whose `start_seq` is at or past that `seq`.
-
-The retract obeys the append-only rule of the stored conversation. When the last turn goes, each earlier prefix stays byte-identical. Thus each earlier thinking block and each cache entry stays valid. The rule is: a later request never sees a changed earlier record. Only the last turn can go.
-
-A thread whose rows hold no genuine user start MUST NOT change. The operation deletes nothing, and it reports the distinct outcome `no-user-turn`. A write of the harness cannot make such rows, and a refusal is better than a thread that the store empties in silence.
-
-The operation MUST take the per-thread lock of `appendTurn` and `writeTurn`. Thus it removes a whole group, and never a part of a group that a write still makes. A host MUST NOT retract a turn whose status is `open`, because a later round of that turn would land after the cut.
-
-The success value MUST give the count of the rows that the operation removed. A retract of an empty thread is the normal outcome `empty-thread`, not an error. The error channel MUST carry database faults only. The store MUST NOT remove a turn other than the tail, and it MUST NOT remove one message.
-
-#### Scenario: Retract restores the pre-append thread
-
-- **GIVEN** a thread with stored turns, and then one more `appendTurn` of one user message
-- **WHEN** `retractLastTurn` is called
-- **THEN** the appended rows are gone, and `loadRecent` gives what it gave before that append
-
-#### Scenario: A multi-row tail turn is removed whole
-
-- **GIVEN** a thread whose most recent turn has more than one row: the user input, the context records, the assistant steps, and the tool results
-- **WHEN** `retractLastTurn` is called
-- **THEN** each row of that turn is gone, and the turn before it becomes the tail
-
-#### Scenario: A loop-synthesized message is not a cut point
-
-- **GIVEN** a tail turn with a message that the loop synthesized in the middle of the turn, to continue a truncated reply
-- **WHEN** `retractLastTurn` is called
-- **THEN** the store removes the whole turn from its real head, and never from the synthesized message onward
-
-#### Scenario: A retract removes the turn record
-
-- **GIVEN** a closed chat turn at the tail of a thread
-- **WHEN** `retractLastTurn` is called
-- **THEN** no row and no turn record of that turn remains
-
-#### Scenario: The earlier turns stay byte-identical
-
-- **GIVEN** a thread with two closed chat turns
-- **WHEN** `retractLastTurn` removes the second turn
-- **THEN** each row of the first turn is byte-identical to its state before the retract, and its turn record does not change
-
-#### Scenario: Retracting an empty thread is a normal outcome
-
-- **GIVEN** a thread with no rows
-- **WHEN** `retractLastTurn` is called
-- **THEN** it succeeds with the outcome `empty-thread`, and it gives no `DbError`
-
-#### Scenario: A thread without a user-start row is refused
-
-- **GIVEN** a thread whose rows hold no user-role message
-- **WHEN** `retractLastTurn` is called
-- **THEN** no row goes, and the outcome is `no-user-turn`
-
-#### Scenario: Retract never removes part of a concurrent write
-
-- **GIVEN** a write of a group with more than one row, in a race with `retractLastTurn` on the same thread
-- **WHEN** both complete
-- **THEN** the thread holds the whole group or none of it, and never a part of it
-
-## ADDED Requirements
+- **GIVEN** a row written before the duration existed
+- **WHEN** the thread is read back
+- **THEN** the row carries no duration, and no backfill runs
 
 ### Requirement: A chat turn has a turn record
 
@@ -216,3 +217,11 @@ A turn with no turn record keeps the fold of the rollup and the duration from it
 - **GIVEN** a failed turn with one round and a failure note
 - **WHEN** the transcript replay runs
 - **THEN** it gives the user message, the assistant message, and then a `system` message with the text of the note
+
+## REMOVED Requirements
+
+### Requirement: A turn is appended atomically with monotonic sequence
+
+**Reason**: A chat turn now writes more than one group, and each group is one transaction. `appendTurn` stores no rollup and no duration, and the turn record holds the two figures. Thus the scenarios that store the two figures on the assistant row of the turn are false.
+
+**Migration**: Refer to "Each round is appended atomically with monotonic sequence" and "A chat turn has a turn record".

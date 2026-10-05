@@ -100,7 +100,7 @@ completion are the enforcement.
 - **THEN** it MUST return `"failed"`
 - **AND** the ledger row MUST be untouched (no transition to `'running'` is attempted)
 
-#### Scenario: An analysis seeded with an empty set is refused a manifest that names files
+#### Scenario: An analysis seeded with an empty set is refused
 
 - **WHEN** `triggerDataProfile` runs with a `stagedInputs` that names a file, for an analysis whose `seed_input_file_ids` is `[]`
 - **THEN** it MUST return `"failed"` and the ledger row MUST be untouched

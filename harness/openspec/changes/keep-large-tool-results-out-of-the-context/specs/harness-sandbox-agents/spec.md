@@ -108,6 +108,12 @@ Each producer MUST stay inside its `DBOS.runStep` wrapper. The file-metadata ste
 - **WHEN** the loop dispatches the calls
 - **THEN** `read_file` runs, and `write_file` gets the error result of the mask
 
+#### Scenario: Summary loop grounds claims via read_file
+
+- **GIVEN** a summary continuation over the transcript of the step, whose mask lets `read_file` run
+- **WHEN** the continuation writes the summary
+- **THEN** it can read the persisted output files to ground its claims, and it does not depend on the stdout of a command
+
 #### Scenario: A continuation reads the rest of a long read
 
 - **GIVEN** a summary continuation whose `read_file` result has 90,000 characters

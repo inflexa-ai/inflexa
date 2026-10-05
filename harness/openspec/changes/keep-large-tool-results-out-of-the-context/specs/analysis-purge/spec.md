@@ -28,7 +28,7 @@ Coverage of the workflow footprint is normative, and it is not optional. The DBO
 - **WHEN** `purgeAnalysis` runs
 - **THEN** it succeeds, and it reports no vector index dropped
 
-#### Scenario: Messages are reached through the threads of the analysis
+#### Scenario: Messages are reached through the analysis's threads
 
 - **GIVEN** an analysis with some threads, each with messages
 - **WHEN** `purgeAnalysis` completes successfully

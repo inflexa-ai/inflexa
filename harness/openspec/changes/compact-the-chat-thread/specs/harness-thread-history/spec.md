@@ -1,9 +1,54 @@
-## RENAMED Requirements
+## REMOVED Requirements
 
-- FROM: `### Requirement: loadRecent windows by token budget`
-- TO: `### Requirement: loadRecent gives the view of the latest compaction marker`
+### Requirement: loadRecent windows by token budget
+
+**Reason**: `loadRecent` does not window by a token budget. The stored compaction markers decide the view, and the loop compacts at its budget.
+
+**Migration**: Refer to "loadRecent gives the view of the latest compaction marker".
+
+### Requirement: loadRecent returns a valid AI SDK model-message sequence
+
+**Reason**: The view has no token cut. Thus `loadRecent` does not snap a cut past an orphan tool result, and it does not keep an oversized turn past a budget. A compaction starts only between two rounds, and a drop keeps whole turns.
+
+**Migration**: Refer to "The view of loadRecent is a valid AI SDK model-message sequence".
 
 ## MODIFIED Requirements
+
+### Requirement: loadRecent emits a thread-overflow metric
+
+Each `loadRecent` call MUST record an OTel metric with two values: the total token count of the thread, and the count of the turns that the view leaves out. A turn is left out when the view holds none of its messages. The attribute `eviction` MUST be true when the view leaves out at least one turn.
+
+#### Scenario: Eviction is recorded
+
+- **GIVEN** a thread of 8 turns whose summary marker sits in the sixth turn
+- **WHEN** `loadRecent` runs
+- **THEN** the metric reports `eviction: true` and 5 left-out turns
+
+#### Scenario: A thread with no marker records no eviction
+
+- **GIVEN** a thread with no marker
+- **WHEN** `loadRecent` runs
+- **THEN** the metric reports `eviction: false` and 0 left-out turns
+
+### Requirement: The reported rollup and the windowing token count are not interchangeable
+
+The stored rollup and the `tokens` count of a row MUST stay two different measurements. The trigger of a compaction MUST read the token estimate of the view, and it MUST NOT read a rollup. `loadRecent` MUST NOT read a rollup. A rollup MUST NOT be presented as the token count of a row, and the `tokens` count MUST NOT be presented as reported usage.
+
+The two share a unit, and neither replaces the other. The `tokens` count is an offline estimate of `js-tiktoken`, and the write computes it for each row, also for a row that no provider saw. Thus a budget never waits for a provider figure. The rollup is what a provider reported for a whole turn, and it is absent when no call reported. A budget on the rollup stops on each turn that has none. A report of `tokens` as usage gives an estimate as a billing fact.
+
+#### Scenario: Windowing ignores the rollup
+
+- **GIVEN** a thread whose assistant rows carry rollups far larger than their `tokens` counts
+- **WHEN** the loop estimates the view
+- **THEN** the estimate is the same as the estimate of the same thread with no rollup
+
+#### Scenario: A row with no rollup still windows
+
+- **GIVEN** a thread whose rows carry no rollup, and whose view exceeds the budget
+- **WHEN** the loop estimates the view before a request
+- **THEN** the loop compacts before it sends the request
+
+## ADDED Requirements
 
 ### Requirement: loadRecent gives the view of the latest compaction marker
 
@@ -78,7 +123,7 @@ A thread with no marker gives each stored message that is not a message of an ex
 - **WHEN** the view rule runs over that view
 - **THEN** it gives the same messages, byte-identical
 
-### Requirement: loadRecent returns a valid AI SDK model-message sequence
+### Requirement: The view of loadRecent is a valid AI SDK model-message sequence
 
 The view that `loadRecent` gives MUST be a valid AI SDK model-message sequence. It MUST NOT hold an orphan tool result, and it MUST NOT split a tool call from its result. A compaction starts only between two rounds, thus the messages after a marker start with no tool result. A drop keeps whole turns.
 
@@ -105,42 +150,6 @@ The read MUST order the messages by the numeric `seq` column, never by a text fo
 - **GIVEN** a thread with more than ten messages, whose tool call and tool result sit at `seq` 9 and `seq` 10
 - **WHEN** `loadRecent` gives the view
 - **THEN** the messages are in ascending numeric `seq` order, and the tool result comes directly after its tool call
-
-### Requirement: loadRecent emits a thread-overflow metric
-
-Each `loadRecent` call MUST record an OTel metric with two values: the total token count of the thread, and the count of the turns that the view leaves out. A turn is left out when the view holds none of its messages. The attribute `eviction` MUST be true when the view leaves out at least one turn.
-
-#### Scenario: A compacted thread records the turns before the marker
-
-- **GIVEN** a thread of 8 turns whose summary marker sits in the sixth turn
-- **WHEN** `loadRecent` runs
-- **THEN** the metric reports `eviction: true` and 5 left-out turns
-
-#### Scenario: A thread with no marker records no eviction
-
-- **GIVEN** a thread with no marker
-- **WHEN** `loadRecent` runs
-- **THEN** the metric reports `eviction: false` and 0 left-out turns
-
-### Requirement: The reported rollup and the windowing token count are not interchangeable
-
-The stored rollup and the `tokens` count of a row MUST stay two different measurements. The trigger of a compaction MUST read the token estimate of the view, and it MUST NOT read a rollup. `loadRecent` MUST NOT read a rollup. A rollup MUST NOT be presented as the token count of a row, and the `tokens` count MUST NOT be presented as reported usage.
-
-The two share a unit, and neither replaces the other. The `tokens` count is an offline estimate of `js-tiktoken`, and the write computes it for each row, also for a row that no provider saw. Thus a budget never waits for a provider figure. The rollup is what a provider reported for a whole turn, and it is absent when no call reported. A budget on the rollup stops on each turn that has none. A report of `tokens` as usage gives an estimate as a billing fact.
-
-#### Scenario: The trigger ignores the rollup
-
-- **GIVEN** a thread whose assistant rows carry rollups far larger than their `tokens` counts
-- **WHEN** the loop estimates the view
-- **THEN** the estimate is the same as the estimate of the same thread with no rollup
-
-#### Scenario: A thread with no rollup still compacts
-
-- **GIVEN** a thread whose rows carry no rollup, and whose view exceeds the budget
-- **WHEN** the loop estimates the view before a request
-- **THEN** the loop compacts before it sends the request
-
-## ADDED Requirements
 
 ### Requirement: The transcript read shows each compaction marker as a divider
 

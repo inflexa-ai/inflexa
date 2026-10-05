@@ -1,6 +1,14 @@
-## MODIFIED Requirements
+## REMOVED Requirements
 
 ### Requirement: The window of a report turn keeps the seed
+
+**Reason**: `loadRecent` does not window by a token budget, thus no window evicts the oldest turn of a thread. The stored compaction markers decide the view of each thread type.
+
+**Migration**: Refer to "The view of a report turn keeps the seed".
+
+## ADDED Requirements
+
+### Requirement: The view of a report turn keeps the seed
 
 The view of a report turn MUST keep the first turn of the thread in front. The seed is that first turn, and it is the one record of the brief and of the working memory. No later record replaces it.
 

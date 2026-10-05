@@ -21,7 +21,7 @@ A `conversation` turn MUST carry the render as a context record of the kind `wor
 - **WHEN** `render` is called for an analysis with no recorded working memory
 - **THEN** it gives the empty string
 
-#### Scenario: Findings are one flat list with run references
+#### Scenario: Findings are one flat run-referenced list
 
 - **GIVEN** findings of two different runs
 - **WHEN** `render` is called
