@@ -5,61 +5,6 @@ The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-si
 
 ## Requirements
 
-### Requirement: Composition of the embedded harness runtime
-
-The system SHALL provide a composition module that boots the embedded harness
-runtime and reuses it for the remainder of the process. Two processes SHALL boot
-it: the local server, at its start, after it binds its port; and the dev
-`inflexa run --plan`, before its launch. No other process SHALL boot the runtime:
-the TUI and each instance command reach the runtime of the local server through
-its HTTP API.
-
-The boot SHALL carry no analysis. One runtime serves each analysis of the
-machine, thus each seam whose value depends on the analysis SHALL resolve it from
-the session of each call, never from a value fixed at boot.
-
-Boot SHALL sequence: ensure Postgres readiness; in callback mode only, start the
-callback listener; take the machine-wide runtime lock; register the durable
-workflows with fully realized deps — sandbox-step before execute-analysis, plus
-data-profile and sandbox-hygiene scheduled workflows; run pre-launch
-migration/hooks; then launch DBOS. No ephemeral execution workflow SHALL be
-registered. Poll transport remains the default. A boot that finds the runtime
-lock held by a different live process SHALL fail with an error that names the
-holder pid, and SHALL launch nothing. A second boot request in the same process
-SHALL return the singleton without re-registration or re-launch.
-
-#### Scenario: First trigger boots the runtime in poll mode
-
-- **WHEN** the start of the local server first requests the runtime
-- **THEN** Postgres is ready, the non-ephemeral workflow cohort is registered, legacy pre-launch migration/hooks run, and DBOS launches in that order
-- **AND** no callback listener is bound
-
-#### Scenario: Callback mode additionally binds the listener
-
-- **WHEN** runtime boots in callback transport mode
-- **THEN** the exec-callback listener starts after Postgres readiness and before registration
-
-#### Scenario: Subsequent triggers reuse the runtime
-
-- **WHEN** a second boot is requested in the same process
-- **THEN** no re-registration or re-launch occurs
-
-#### Scenario: Unavailable Postgres blocks boot with actionable guidance
-
-- **WHEN** runtime boot cannot reach ready Postgres
-- **THEN** boot fails actionably and DBOS is not launched
-
-#### Scenario: One registration cohort
-
-- **WHEN** recovery resumes any supported in-flight workflow
-- **THEN** its registered name exists in the one pre-launch cohort
-
-#### Scenario: A second runtime on the machine is refused
-
-- **GIVEN** the local server holds the runtime
-- **WHEN** `inflexa run --plan` boots a runtime
-- **THEN** the boot fails with an error that names the pid of the local server, and DBOS is not launched
-
 ### Requirement: Local realizations for every data-profile dependency
 
 The composition SHALL realize `DataProfileDeps` from deliberate local wiring: the
@@ -95,51 +40,12 @@ the point of use.
 #### Scenario: Broken embedder blocks boot before side effects
 
 - **WHEN** the resolved embedder cannot be built from config, fails or times out on the probe embedding, or emits vectors of a width other than it advertises
-- **THEN** boot fails naming the remedy, before Postgres provisioning, listener start, registration, or launch
-
-### Requirement: Exec-callback ingress bridges sandbox HTTP callbacks to DBOS topics
-
-In **callback** transport mode the runtime SHALL host a loopback-only HTTP listener
-accepting `POST /sandbox/{execId}/{kind}` for `kind` ∈ {`event`, `complete`}. Each
-accepted request SHALL be enveloped as `{payload, payloadRaw, signature, timestamp}`
-from the body and the `X-Sandbox-Signature`/`X-Sandbox-Timestamp` headers (absent
-headers as null), with `complete` payloads wrapped in the done-marker shape, and
-delivered to the workflow derived from the execId via the harness's exec-event
-delivery helper (never a cli-side `DBOS.send` — the SDK is module-singleton state and
-a second copy is un-launched). The listener SHALL NOT verify HMAC signatures
-(verification is the workflow body's job) and SHALL NOT hold callback secrets. An
-execId from which no workflow id can be derived SHALL yield a 4xx (the sandbox-server
-gives up); a failed send SHALL yield a 5xx (the sandbox-server retries). The sandbox
-client's `cortexBaseUrl` SHALL be a URL under which sandbox containers reach this
-listener. In **poll** transport mode (the CLI default) the runtime SHALL bind NO such
-listener and SHALL advertise an empty `cortexBaseUrl` — the sandbox initiates nothing
-and is polled for results instead.
-
-#### Scenario: Poll mode binds no listener
-
-- **WHEN** the runtime boots in poll transport mode
-- **THEN** no `/sandbox/{execId}/{kind}` listener is bound and the sandbox client's `cortexBaseUrl` is empty
-
-#### Scenario: Event callback reaches the awaiting workflow (callback mode)
-
-- **WHEN** the sandbox-server POSTs an exec event to `/sandbox/{execId}/event`
-- **THEN** the enveloped message is sent to topic `exec-event:{execId}` of the workflow derived from the execId and the listener replies 2xx
-
-#### Scenario: Completion callback is wrapped as a done-marker (callback mode)
-
-- **WHEN** the sandbox-server POSTs to `/sandbox/{execId}/complete`
-- **THEN** the delivered envelope's payload is the done-marker form carrying the exec result
-
-#### Scenario: Malformed execId is a permanent rejection (callback mode)
-
-- **WHEN** a POST arrives whose execId yields no derivable workflow id
-- **THEN** the listener replies 4xx and delivers nothing
+- **THEN** boot fails naming the remedy, before Postgres provisioning, registration, or launch
 
 ### Requirement: Graceful runtime shutdown
 
 On cli process exit after the runtime has booted, the system SHALL shut DBOS down
-(marking in-flight workflows recoverable) and close the callback listener (a no-op in
-poll mode, which binds none). Shutdown failures SHALL NOT prevent the remainder of
+(marking in-flight workflows recoverable). Shutdown failures SHALL NOT prevent the remainder of
 the exit sequence.
 
 #### Scenario: Exit with an in-flight profile
@@ -208,8 +114,7 @@ barrel SHALL be extended (additive exports only) with the embedder runtime surfa
 cli consumes: DBOS lifecycle (`launchDbos`, `shutdownDbos`, `DbosConfig`),
 data-profile registration and trigger (with their dep/param/result types),
 `StagedInput`, the sandbox client factory and its config types, the workspace
-filesystem factory, the exec-callback envelope helpers (`workflowIdFromExec`,
-envelope/done-marker types), the run-engine surface: sandbox-step and
+filesystem factory, the run-engine surface: sandbox-step and
 execute-analysis registration (with dep/input/result and agent-build context types),
 the sandbox agent catalog factory, plan schema and validation (`AnalysisPlanSchema`,
 `validatePlan`), plan persistence (`upsertPlan`, `loadPlan`), run
@@ -291,24 +196,6 @@ metadata/summary. Specific to the run engine:
 
 - **WHEN** a step's post-step pipeline registers its artifacts through the bus adapter
 - **THEN** the file and used-input provenance events are emitted, the result reports the registered paths with their PROV QNames as external ids and zero failures, the local `cortex_artifacts` ledger write (owned by the harness around the seam) proceeds normally, and the step completes — its step activity arriving separately from the scheduler settlement
-
-### Requirement: Sandbox-hygiene scheduled workflows registered at boot
-
-The runtime boot SHALL register the harness's sandbox reaper, sandbox watchdog, and
-notification sweep scheduled workflows before DBOS launch, wired to the same pool and
-sandbox client as the workflow deps. These convert host-kill fallout into bounded
-outcomes: orphaned containers are reaped, and a dead sandbox surfaces as a prompt
-step failure instead of a hang until the step deadline.
-
-#### Scenario: Killed host's containers are reaped
-
-- **WHEN** the cli process is killed mid-run and a later boot brings the runtime up
-- **THEN** sandbox containers the dead process left behind are torn down by the reaper rather than accumulating
-
-#### Scenario: Dead sandbox unblocks its awaiting step
-
-- **WHEN** a step's sandbox dies without posting a completion callback
-- **THEN** the watchdog records a synthetic failure completion and the step's recv unblocks before the step deadline
 
 ### Requirement: Local realizations for every conversation dependency
 
@@ -541,3 +428,82 @@ each analysis the package inventory of one farm.
 - **GIVEN** a link request for a package that the pool does not hold
 - **WHEN** the refusal reaches the user surface
 - **THEN** the text names `inflexa store add <name>` as the retry
+
+### Requirement: The composition boots the embedded harness runtime once
+
+The system MUST give a composition module that boots the embedded harness
+runtime and uses it again for the remainder of the process. Two processes MUST
+boot it:
+
+- the local server, at its start, after it binds its port
+- the dev `inflexa run --plan`, before its launch.
+
+Another process MUST NOT boot the runtime. The TUI and each instance command reach
+the runtime of the local server through its HTTP API.
+
+The boot MUST carry no analysis. One runtime serves each analysis of the
+machine. Thus each seam whose value depends on the analysis MUST resolve it from
+the session of each call, never from a value fixed at boot.
+
+The boot MUST do these steps in this order:
+
+1. Make sure that Postgres is ready.
+2. Take the machine-wide runtime lock.
+3. Register the durable workflows with fully realized deps: sandbox-step before
+   execute-analysis, and the data-profile and sandbox-hygiene scheduled
+   workflows.
+4. Run the pre-launch migration and hooks.
+5. Launch DBOS.
+
+The boot MUST register no ephemeral execution workflow. The boot MUST bind no
+listener for sandbox callbacks, because the harness polls each sandbox and the
+sandbox initiates nothing. A boot that finds the runtime lock held by a
+different live process MUST fail with an error that names the holder pid, and
+it MUST launch nothing. A second boot request in the same process MUST return
+the singleton with no second registration and no second launch.
+
+#### Scenario: First trigger boots the runtime
+
+- **WHEN** the start of the local server first requests the runtime
+- **THEN** Postgres is ready, the non-ephemeral workflow cohort is registered, the legacy pre-launch migration and hooks run, and DBOS launches, in that order
+- **AND** no listener for sandbox callbacks is bound
+
+#### Scenario: Subsequent triggers reuse the runtime
+
+- **WHEN** a second boot is requested in the same process
+- **THEN** no second registration and no second launch occur
+
+#### Scenario: Unavailable Postgres blocks boot with actionable guidance
+
+- **WHEN** the runtime boot cannot reach a ready Postgres
+- **THEN** the boot fails with an actionable message, and DBOS is not launched
+
+#### Scenario: One registration cohort
+
+- **WHEN** recovery resumes a supported in-flight workflow
+- **THEN** its registered name exists in the one pre-launch cohort
+
+#### Scenario: A second runtime on the machine is refused
+
+- **GIVEN** the local server holds the runtime
+- **WHEN** `inflexa run --plan` boots a runtime
+- **THEN** the boot fails with an error that names the pid of the local server, and DBOS is not launched
+
+### Requirement: The sandbox reaper and the notification sweep register at boot
+
+The runtime boot MUST register the sandbox reaper and the notification sweep of
+the harness before the DBOS launch. The two scheduled workflows MUST use the same
+pool and sandbox client as the workflow deps. The reaper removes the containers
+that a killed host left behind. The boot MUST register no liveness watchdog. Each
+exec of the harness probes the liveness of its own sandbox, thus a dead sandbox
+fails its step before the step deadline.
+
+#### Scenario: Killed host's containers are reaped
+
+- **WHEN** the cli process is killed mid-run and a later boot brings the runtime up
+- **THEN** the reaper removes the sandbox containers that the dead process left behind, and they do not accumulate
+
+#### Scenario: No watchdog registers
+
+- **WHEN** the runtime boots
+- **THEN** it registers the reaper and the notification sweep, and it registers no watchdog

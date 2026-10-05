@@ -54,37 +54,6 @@ The runtime boot MUST belong to the local server, which boots at its own start. 
 - **WHEN** a client adds an input to an analysis
 - **THEN** the server runs the input-change drive at the first fire of its timer after the runtime is ready
 
-### Requirement: The headless parity and force checks judge drift on content signatures
-
-`ensureProfileAtParity` SHALL compare the analysis's freshly enumerated **drift signatures** —
-`(fileId, size, mtimeMs)` per input file, from `enumerateInputSignatures` — against the signatures a
-completed ledger row recorded (`result.inputFiles`). A completed row whose recorded signature set
-equals the current one SHALL yield `already_profiled`; any difference, in either direction, SHALL
-(re-)trigger.
-
-A completed row that records **no** signatures — a `null` result, or a result written before the
-signature field existed — SHALL be treated as drifted and re-profiled, rather than trusted. This is the
-same self-heal the check already applies to a null result: re-profiling repairs the contract gap and
-costs one run.
-
-`forceReprofile` SHALL continue to skip the drift comparison entirely; it reads the signature set only
-to decide whether the input set is empty.
-
-#### Scenario: An in-place content edit is drift
-
-- **WHEN** an input file's bytes change at the same path and `ensureProfileAtParity` runs against a completed row
-- **THEN** the current signature set SHALL differ from the recorded one and the check SHALL trigger a re-profile
-
-#### Scenario: An unchanged input set is at parity
-
-- **WHEN** no input file has been added, removed, or modified since the completed profile
-- **THEN** the check SHALL yield `already_profiled` and no workflow SHALL be dispatched
-
-#### Scenario: A signature-less completed row re-profiles
-
-- **WHEN** the completed row's `result` carries `inputFileIds` but no `inputFiles`
-- **THEN** the check SHALL treat it as drifted and trigger
-
 ### Requirement: Staging precedes the trigger and the manifest rides verbatim
 
 Every path that dispatches a data-profile workflow SHALL stage the analysis's inputs into the session
@@ -215,3 +184,67 @@ server.
 - **WHEN** a read of the profile state fails while the command is waiting
 - **THEN** the command exits with the reason of the failed read
 - **AND** the profile continues in the local server, and `inflexa profile --status` shows its state later
+
+### Requirement: The headless checks re-profile on a recorded input mutation, not on a comparison
+
+A re-profile SHALL be driven by an input mutation this process performed and recorded, never by
+comparing a freshly enumerated input set against the one a completed row covered.
+
+`reprofileForInputChange` SHALL be the entry point the in-process `prov.input_added` /
+`prov.input_removed` edge drives. It SHALL (re-)trigger a `completed` row, and SHALL retry a `failed`
+row rather than skipping it, because the set that failed is demonstrably not the set on disk now.
+
+`ensureProfileAtParity` SHALL be the entry point a chat open, an analysis swap, and a settling profile
+run drive. Against a `completed` row it SHALL bring the workspace tree up to date — consulting the
+already-materialized predicate and staging when the tree is behind — and SHALL yield `already_profiled`
+without dispatching a workflow. It SHALL NOT compare input sets, and SHALL NOT re-profile on any
+difference it might have observed.
+
+Both SHALL share the rest of the ladder: the orphaned-`running` reconcile, the emptied-set clear (an
+emptied input set is an input mutation too), and the live-run defer, which suppresses materialization
+because staging reconcile-deletes a tree that run's sandbox is reading.
+
+The comparison is removed rather than narrowed because it was an inference standing in for a fact. A
+`(fileId, size, mtimeMs)` difference is produced by `git checkout`, `cp -r`, `rsync` without `-a`,
+unzip, and cloud sync without a byte changing, and each false positive costs a sandbox spin-up plus an
+agent run whose output re-rolls the kind names, axis labels, and summary a user is already working from.
+
+`forceReprofile` SHALL continue past a live-run check to always materialize, seed, and trigger. It is
+also the only repair for an in-place edit of an already-attached file, which changes no path and so
+raises no input event.
+
+#### Scenario: A chat open does not re-profile a completed row
+
+- **GIVEN** a `completed` profile row and an input set that no longer matches what it covered
+- **WHEN** `ensureProfileAtParity` runs
+- **THEN** it SHALL yield `already_profiled` and dispatch no workflow
+
+#### Scenario: A chat open still brings the tree up to date
+
+- **GIVEN** a `completed` profile row whose staged tree is behind the current input set
+- **WHEN** `ensureProfileAtParity` runs
+- **THEN** it SHALL stage the current input set
+- **AND** SHALL still yield `already_profiled` without dispatching a workflow
+
+#### Scenario: An input mutation re-profiles
+
+- **WHEN** `reprofileForInputChange` runs against a `completed` row
+- **THEN** it SHALL materialize, seed, and trigger, yielding `triggered`
+
+#### Scenario: An input mutation retries a failed row
+
+- **GIVEN** a `failed` row whose input set is already materialized
+- **WHEN** `reprofileForInputChange` runs
+- **THEN** it SHALL claim the `failed → running` transition and run, rather than yielding `skipped_failed`
+
+#### Scenario: An emptied input set clears on either drive
+
+- **GIVEN** an analysis whose inputs have all been removed
+- **WHEN** either entry point runs against a settled profile row
+- **THEN** the profile SHALL be cleared and the outcome SHALL be `cleared`
+
+#### Scenario: A live run defers both drives
+
+- **GIVEN** a `running` profile row
+- **WHEN** either entry point runs
+- **THEN** it SHALL yield `already_running` and SHALL NOT stage

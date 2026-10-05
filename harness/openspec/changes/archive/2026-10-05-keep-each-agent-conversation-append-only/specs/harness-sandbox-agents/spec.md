@@ -61,7 +61,13 @@ A call of `report_blocker` MUST record `{ kind: "blocker", reason }` into the ce
 
 `blocked` MUST be a distinct terminal step status, separate from `failed` and `completed`. It carries the reason to the `cortex_step_executions.blocked_reason` column, to a `data-step-blocked` run-event part, and to the step return.
 
-The parent scheduler MUST treat a blocker exactly like a step failure: only the transitive dependents of the blocked step become unreachable. In-flight siblings and independent ready steps continue (refer to the harness-durable-runtime capability). The harness MUST NOT infer a failure from output or artifact counts. A step that is empty for a valid reason (no files, no blocker, a clean finish) MUST stay `completed`.
+The parent scheduler MUST treat a blocker exactly like a step failure: only the transitive dependents of the blocked step become unreachable. In-flight siblings and independent ready steps continue (refer to the harness-durable-runtime capability). The harness MUST NOT infer a failure from output or artifact counts for a step that finished on its own initiative. A step that is empty for a valid reason (no files, no blocker, a clean finish before the iteration cap) MUST stay `completed`.
+
+The exception is narrow. If the loop hits its iteration cap, the artifact
+manifest is empty, and no blocker exists, the step MUST terminate `blocked`.
+The reason MUST be deterministic, and it MUST name the cap and the empty
+manifest. A capped-out step with artifacts stays `completed`, because partial
+output is real output.
 
 #### Scenario: Blocker yields a distinct blocked status
 
@@ -78,9 +84,22 @@ The parent scheduler MUST treat a blocker exactly like a step failure: only the 
 
 #### Scenario: Empty step is not auto-failed
 
-- **GIVEN** a step that writes no artifacts, calls no blocker, and ends cleanly
+- **GIVEN** a step that writes no artifacts, calls no blocker, and ends cleanly before its iteration cap
 - **WHEN** the step ends
 - **THEN** its status MUST be `completed` (with `artifactCount: 0`), not failed or blocked
+
+#### Scenario: Capped-out step with no deliverables is blocked
+
+- **GIVEN** a step whose loop hits the iteration cap, with an empty artifact manifest and no blocker
+- **WHEN** the workflow body reads the manifest after the loop
+- **THEN** the step MUST terminate `blocked`, with a deterministic reason in `blocked_reason` and a `data-step-blocked` part
+- **AND** the transitive dependents of the step are never dispatched
+
+#### Scenario: Capped-out step with artifacts stays completed
+
+- **GIVEN** a step whose loop hits the iteration cap, with a non-empty artifact manifest
+- **WHEN** the step terminates
+- **THEN** its status MUST be `completed`, with `hitMaxSteps` persisted
 
 #### Scenario: The task cannot use the output tool
 

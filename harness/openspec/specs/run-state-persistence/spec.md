@@ -18,7 +18,9 @@ The row is a ledger, not the source of truth for rich data — summaries, findin
 and streamed parts live in files, the vector index, and the DBOS-backed stream.
 The vestigial `parts` JSONB column is retained read-tolerantly but is no longer
 written by the workflow.
+
 ## Requirements
+
 ### Requirement: cortex_runs table schema
 
 The system SHALL maintain a `cortex_runs` table with: `run_id` (TEXT, PRIMARY
@@ -112,8 +114,7 @@ with the resume-counter scaffolding.
 ### Requirement: There is no boot-time orphan sweep
 
 `initCortexState()` SHALL NOT bulk-transition `running` runs or steps to
-`failed` on startup. It SHALL run DDL (idempotent `CREATE TABLE`/`ALTER TABLE …
-IF [NOT] EXISTS`) under the `cortex_state_init` advisory lock and nothing more
+`failed` on startup. It SHALL apply the pending schema migrations and SHALL do nothing more
 to run state. Recovery of in-flight runs is owned by DBOS workflow recovery under
 each host's stable `executorId`; the workflow body owns the terminal transition.
 A boot-time bulk fail would race that recovery and wrongly mark sibling-replica
@@ -129,7 +130,7 @@ runs as failed.
 #### Scenario: Init touches only schema
 
 - **WHEN** `initCortexState()` runs
-- **THEN** it executes DDL and additive migrations under the advisory lock and issues no `UPDATE … WHERE status='running'` against `cortex_runs` or `cortex_step_executions`
+- **THEN** it applies only the pending schema migrations and issues no `UPDATE … WHERE status='running'` against `cortex_runs` or `cortex_step_executions`
 
 ### Requirement: Partial-unique index enforces one active run per (analysis_id, plan_id)
 
@@ -220,3 +221,16 @@ SHALL NOT create a second row or authorize a second run.
 - **WHEN** reservation reloads it under the current analysis id
 - **THEN** it returns no foreign row and surfaces the identity collision as an error
 
+### Requirement: Conditional cancel transition guards concurrent completion
+
+`markRunCanceledIfActive(pool, runId, reason)` SHALL transition the run row to `canceled` — stamping `completed_at` and recording `reason` in `error` — only when its status is in the active set (`running`, `suspended_insufficient_funds`), and SHALL report whether a row transitioned. A terminal row SHALL be left untouched.
+
+#### Scenario: Active run transitions
+
+- **WHEN** `markRunCanceledIfActive` runs against a `running` (or `suspended_insufficient_funds`) run
+- **THEN** the row becomes `canceled` with `completed_at` and `error = reason` stamped, and the call reports a transition
+
+#### Scenario: Terminal run refused
+
+- **WHEN** `markRunCanceledIfActive` runs against a `completed` run
+- **THEN** the row keeps its status, `completed_at`, and `error`, and the call reports no transition

@@ -38,7 +38,7 @@ The harness MUST emit one typed session event for each of these actions, when
 the member is bound:
 
 - make a session, of the kind `conversation` or of the kind `report`
-- add a block
+- add a block, for each block that the add lands
 - change a block
 - remove a block
 - move a block
@@ -56,6 +56,11 @@ A block event names the block id and the kind of the block. On a change, the
 event records the kind after the act, because a kind change is permitted. On
 a remove, the event records the kind of the removed block. The set-title
 event targets the document, and it carries no block id.
+
+One add can land a section with its child blocks. Thus an add MUST emit one
+`add-block` event for each block that it lands, in document order: the added
+block first, and then each block under it. A reader of the record then
+places each block by its own event. A refused add emits nothing.
 
 The `create-session` event MUST come from the site that writes the thread
 row, one time for each session. The site emits it after the row lands, and
@@ -98,6 +103,18 @@ call activity on it. A refused write and a failed write emit nothing.
 - **WHEN** the agent adds a chart block and the member is bound
 - **THEN** the member receives one event with the action, the block id, the
   kind `chart`, the analysis id, and the thread id
+
+#### Scenario: A nested add names each block
+
+- **WHEN** the agent adds a section that carries a text block and a chart
+  block, and the member is bound
+- **THEN** the member receives three `add-block` events, in this order: the
+  section, the text block, and the chart block, each with its own kind
+
+#### Scenario: A refused nested add emits nothing
+
+- **WHEN** the agent adds a section whose child block the validation refuses
+- **THEN** the member receives no `add-block` event
 
 #### Scenario: The set-title action emits
 

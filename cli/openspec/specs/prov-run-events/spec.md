@@ -2,7 +2,9 @@
 
 ## Purpose
 The execution events and the report events of the provenance bus, and how the recorder writes them into the signed provenance document. Each event becomes a deterministic PROV record, and a replay of the same event adds nothing. The report events go through the provenance kernel, on the same path as the core events.
+
 ## Requirements
+
 ### Requirement: Execution-level provenance events exist in the bus contract
 
 The `BusEvent` union SHALL carry six execution-level provenance events, each scoped
@@ -81,29 +83,28 @@ the tool of a call + the model id.
 
 ### Requirement: Document builders append deterministic, PROV-valid execution records
 
-The prov module SHALL provide six builders — `appendRunStarted`,
-`appendRunCompleted`, `appendStepCompleted`, `appendCommandExecuted`,
-`appendFileWritten`, `appendInputUsed` — that append W3C PROV records to an
-analysis's live document. Runs, steps, command executions, and file-tool calls
-SHALL be recorded as
-PROV **activities**; files and used inputs as PROV **entities**:
+The provenance kernel (`@inflexa-ai/prov-kernel`) SHALL append the six execution
+statement sets — run started, run completed, step completed, command executed, file
+written, input used — to an analysis's live document, dispatched through
+`applyProvEvent` (the cli calls no builder directly). Runs, steps, command
+executions, and file-tool calls SHALL be recorded as PROV **activities**; files and
+used inputs as PROV **entities**:
 
-- `appendRunStarted` / `appendRunCompleted` / `appendInputUsed`: unchanged from the
+- run started / run completed / input used: unchanged from the
   prior revision (payload-sourced formal times; step-level used edges).
-- `appendStepCompleted`: the step activity as before (payload-sourced end time,
+- step completed: the step activity as before (payload-sourced end time,
   terminal status, `wasInformedBy` the run, `wasAssociatedWith` the actor's agent),
   PLUS the model-agent records for the event's `model` (see below) and a
   `wasAssociatedWith(stepQn, modelAgentQn)` edge.
-- `appendCommandExecuted`: a command activity (`prov:type: inflexa:Command`)
-  carrying the execution
-  facts as attributes (`inflexa:command`, `inflexa:args`, `inflexa:exitCode`,
-  `inflexa:durationMs`) and NO formal times; `wasInformedBy` the
-  step activity; `wasAssociatedWith` the actor's agent AND the model agent for the
-  event's `model`; a `used` edge per
+- command executed: a command activity (`prov:type: inflexa:Command`) carrying the
+  execution facts as attributes (`inflexa:command`, `inflexa:args` when the argument
+  vector is non-empty, `inflexa:exitCode`, `inflexa:durationMs`) and NO formal times;
+  `wasInformedBy` the step activity; `wasAssociatedWith` the actor's agent AND the
+  model agent for the event's `model`; a `used` edge per
   command-scoped input (including the script entity when `scriptPath` is present);
   and `wasGeneratedBy(fileQn, cmdQn)` for each output — the generation authority for
   produced files.
-- `appendFileWritten`: records the file entity, `wasAttributedTo`, and
+- file written: records the file entity, `wasAttributedTo`, and
   `wasDerivedFrom(file, analysis)` as before. The generation edge follows the
   event's arm. `generation: "step"` writes `wasGeneratedBy(fileQn, stepQn)` — a
   leaf file with no producing activity. `generation: "call"` first appends a
@@ -114,8 +115,8 @@ PROV **activities**; files and used inputs as PROV **entities**:
   the model-agent association. With a step ref, it is `wasInformedBy` the
   step. The call generates the file. A produced file's
   (`generation: "command"`) generation
-  comes exclusively from `appendCommandExecuted`; exactly one generation edge SHALL
-  exist per file entity.
+  comes exclusively from the command-executed statements; exactly one generation
+  edge SHALL exist per file entity.
 
 The model-agent records: one PROV agent per distinct `{provider}/{model}` name
 under the deterministic QName `inflexa:agent-model-{digest(name)}`, typed BOTH
@@ -207,10 +208,12 @@ value conflict degrades to keep-first-plus-log instead of an unfushable analysis
 
 The provenance recorder SHALL handle the four execution events exactly as the
 analysis-lifecycle events: load-or-create the live document for `event.analysisId`,
-append via the matching builder, mark dirty, and debounce-flush through the
-unchanged chain-hash + Ed25519 signing path. Events whose `analysisId` has no
-analysis row SHALL be dropped (the existing recorder guard). Signing failure SHALL
-crash the flush — provenance is never degraded to unsigned.
+strip the bus envelope and append via the kernel's `applyProvEvent`, mark dirty, and
+debounce-flush through the unchanged chain-hash + Ed25519 signing path. Events whose
+`analysisId` has no analysis row SHALL be dropped (the existing recorder guard).
+Signing failure SHALL crash the flush — provenance is never degraded to unsigned. A
+`prov.*` bus member whose stripped shape has no kernel event counterpart SHALL be a
+compile-time error, not a silently dropped record.
 
 #### Scenario: Bus emission lands in the signed column
 
@@ -221,7 +224,6 @@ crash the flush — provenance is never degraded to unsigned.
 
 - **WHEN** an execution event references an `analysisId` with no analysis row
 - **THEN** the recorder ignores the event and no document is created or modified
-
 
 ### Requirement: An unattributable script path is recorded on the activity
 
@@ -247,6 +249,7 @@ re-emission writes the identical value and dedups under `unified()`.
 
 - **WHEN** the same `prov.command_executed` event is appended twice (workflow re-execution)
 - **THEN** the flushed document carries the attribute once, on one activity record
+
 ### Requirement: Report provenance events exist in the bus contract
 
 The `BusEvent` union MUST carry the report provenance family, each member scoped by `analysisId` and stamped with a `ProvActor`. Each member also carries `model: ProvModelId`, the model that drives the session at emit time:
@@ -293,3 +296,43 @@ The recorder MUST send every report member through `toKernelEvent` and `applyPro
 
 - **WHEN** a new `prov.*` member lands without a kernel counterpart
 - **THEN** the build fails in the kernel dispatch, for a report member and a core member alike
+
+### Requirement: The provenance kernel is the format authority
+
+The cli SHALL produce every core provenance statement exclusively through
+`applyProvEvent` of `@inflexa-ai/prov-kernel`, over a single document model constructed
+with `createProvDocumentModel({ digest, mintActionId })` where `digest` is the cli's
+historical derivation `Bun.hash(s).toString(36)` and `mintActionId` is `randomUUIDv7`.
+The cli SHALL NOT carry its own copy of the QName derivations, the statement builders,
+or the unify options. Two continuity invariants bind the kernel adoption to existing
+local documents, which are immutable and signed:
+
+- **Digest.** The injected digest SHALL remain the historical `Bun.hash(s).toString(36)`
+  expression, so every QName the kernel derives is byte-identical to the QNames existing
+  documents embed. The expression SHALL be pinned by a test against literals captured
+  from the pre-kernel implementation.
+- **User-agent identity.** The kernel derives the user-agent QName from `ProvActor.id`;
+  the cli SHALL pass `id` = the same email value it historically keyed user agents by
+  (and MAY also pass `email` as the attribute), so derived QNames stay byte-identical.
+  The system actor SHALL pass `label: "inflexa cli"`, the string the pre-kernel builder
+  hard-coded.
+
+One forward delta is accepted: the kernel omits `inflexa:args` when a command's argument
+vector is empty, where the pre-kernel code wrote `inflexa:args: ""`. Re-emission into an
+existing document SHALL converge (the old value survives `unified()`; no duplicate
+activity), and new documents never carry the attribute.
+
+#### Scenario: The pre-kernel compatibility fixture verifies and rehydrates
+
+- **WHEN** the kernel's `verifyProvenance` and the model's `loadDocument` run against the checked-in fixture generated by the pre-kernel implementation (its PROV-JSON, first-flush chain hash, and signature)
+- **THEN** verification returns `valid` and the document rehydrates without error
+
+#### Scenario: Replaying the fixture's execution events dedupes into it
+
+- **WHEN** the fixture's execution events are re-applied through `applyProvEvent` onto the rehydrated document and it is unified
+- **THEN** the document is structurally unchanged (modulo serializer-assigned blank-node numbering): no duplicate entities, agents, or activities, no new anonymous relations, and every QName stable
+
+#### Scenario: Empty args converge instead of corrupting
+
+- **WHEN** a `prov.command_executed` whose `args` is `[]` is re-applied onto a document whose pre-kernel record carries `inflexa:args: ""` and the document is unified
+- **THEN** one command activity remains, still carrying the old `""` value — while a fresh kernel-built document from the same event carries no `inflexa:args` attribute

@@ -105,20 +105,18 @@ per-attempt timeout and no internal retry counter.
 
 ### Requirement: The planner loop is iteration-capped with one salvage continuation
 
-The planner loop SHALL be capped at `PLANNER_MAX_ITERATIONS = 13`. If the planner
-ends without a terminal outcome, `runToTerminal` SHALL grant exactly one salvage
-continuation whose only tools are the terminal tools, opened by a corrective
-nudge.
+The planner loop MUST have an iteration cap, `PLANNER_MAX_ITERATIONS` in `src/tools/research/generate-plan.ts`. The constant owns the number. When the planner ends without a terminal outcome, `runToTerminal` MUST run exactly one salvage continuation, opened by a corrective nudge. The salvage continuation MUST keep the declared tools of the planner, and its mask MUST let only the terminal tools run (refer to the harness-agent-loop capability).
 
 #### Scenario: Salvage continuation on a missing terminal outcome
 
-- **WHEN** the planner reaches its iteration cap without recording a terminal outcome
-- **THEN** `runToTerminal` runs one salvage continuation offering only `submit_plan`, `request_clarification`, and `report_blocker`
+- **WHEN** the planner reaches its iteration cap without a terminal outcome
+- **THEN** `runToTerminal` runs one salvage continuation whose mask lets only `submit_plan`, `request_clarification`, and `report_blocker` run
+- **AND** each request of the salvage declares the search tools and the terminal tools of the planner
 
 #### Scenario: Still no outcome after salvage
 
 - **WHEN** the salvage continuation also ends without a terminal outcome
-- **THEN** the tool returns an `error` event stating the planner produced no terminal outcome
+- **THEN** the tool returns an `error` event that states that the planner produced no terminal outcome
 
 ### Requirement: The tool returns a typed outcome and never throws
 
@@ -445,3 +443,19 @@ recording them exposes nothing the conversation transcript does not hold.
 - **GIVEN** a planner whose first `submit_plan` call validates and persists
 - **WHEN** the tool returns `{accepted: true, planId}`
 - **THEN** no rejection record is written
+
+### Requirement: The planner prompt states the cross-step feature-selection rule
+
+The Translational Considerations of the planner prompt MUST state the
+two-clause leakage rule beside the biomarker-evaluation guidance. Clause one:
+a feature list from a supervised contrast on the same samples is already a
+selection. Clause two: the modeling step MUST select again inside
+cross-validation, from the full feature matrix. If it cannot, the plan MUST
+demand that the step reports the estimate as optimistic.
+
+#### Scenario: A biomarker plan does not chain a full-cohort contrast into a panel
+
+- **WHEN** the planner writes a plan with a differential-expression step and a
+  later biomarker-panel step over the same samples
+- **THEN** the plan instructs the modeling step to select features again
+  inside cross-validation, or to report the estimate as optimistic

@@ -329,7 +329,7 @@ data-profile-init spec).
 Before template mining, the scan SHALL quarantine files matching a curated junk list
 (operating-system and sync-tool droppings), atomic-write temp idioms, and partial-download
 temp patterns. Quarantined files SHALL NOT join sets, SHALL NOT count toward membership,
-and SHALL NOT enter the drift signature (see the data-profile-rerun spec).
+and SHALL NOT enter the input signature (see the data-profile-rerun spec).
 
 Quarantine SHALL be visible, never silent: the manifest SHALL carry a quarantine summary
 with counts per reason and a bounded path sample, so a wrongly quarantined file is

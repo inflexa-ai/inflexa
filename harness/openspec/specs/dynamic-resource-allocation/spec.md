@@ -3,50 +3,23 @@
 ## Purpose
 
 Governs how a sandbox step's CPU/memory/GPU request and execution timeout are
-bounded before a sandbox machine is created. Cluster ceilings are configured once
-from the environment (`harness/src/config/resource-limits.ts`); each step's
-planner-estimated request is then **clamped** to those ceilings rather than
-rejected.
+bounded before a sandbox machine is created. The embedder supplies the cluster
+ceilings as configuration (`SandboxClientConfig.resourceLimits`, or a
+`resourcePolicy` that `parseResourcePolicy` validates); the harness reads no
+environment variable for them. Each step's planner-estimated request is then
+**clamped** to those ceilings rather than rejected.
 
 Clamp-don't-throw is deliberate: a planner over-estimate is not an error that
 should fail a step — capping the request keeps the pod quota-admissible while
 still running the work. So `clampResources` returns a capped spec and never
 throws; there is no `validateResources` gate and no `ResourceLimitExceededError`.
-The only hard failure is misconfiguration: `loadResourceLimits` throws
-`ResourceLimitsConfigError` at startup if a ceiling env var is missing or
-invalid. Step timeout is taken from the plan's `step.timeout` when set, otherwise
+The only hard failure is misconfiguration: `parseResourcePolicy` throws
+`ResourceLimitsConfigError` when an embedder policy is invalid or when a
+per-step ceiling exceeds the machine budget. Step timeout is taken from the plan's `step.timeout` when set, otherwise
 the constant `DEFAULT_STEP_TIMEOUT_SECONDS` (3600). Image selection is not part
 of this capability — the image comes from configuration, not from agent metadata.
 
 ## Requirements
-
-### Requirement: Resource ceilings loaded from the environment
-
-`loadResourceLimits` SHALL read the cluster ceilings from `SANDBOX_MAX_CPU`,
-`SANDBOX_MAX_MEMORY_GB`, and `SANDBOX_MAX_GPU_COUNT` and return
-`ResourceLimits { maxCpu, maxMemoryGb, maxGpuCount }`. `SANDBOX_MAX_CPU` and
-`SANDBOX_MAX_MEMORY_GB` MUST be positive numbers; `SANDBOX_MAX_GPU_COUNT` MUST be
-a non-negative integer. A missing or invalid value SHALL throw
-`ResourceLimitsConfigError` at startup. There is no `ALLOWED_GPU_TYPES` variable —
-GPU is bounded by count only, never by type.
-
-#### Scenario: Valid ceilings loaded
-
-- **GIVEN** `SANDBOX_MAX_CPU=16`, `SANDBOX_MAX_MEMORY_GB=64`, `SANDBOX_MAX_GPU_COUNT=2`
-- **WHEN** `loadResourceLimits()` runs
-- **THEN** it returns `{ maxCpu: 16, maxMemoryGb: 64, maxGpuCount: 2 }`
-
-#### Scenario: Missing ceiling fails startup
-
-- **GIVEN** `SANDBOX_MAX_CPU` is unset
-- **WHEN** `loadResourceLimits()` runs
-- **THEN** it throws `ResourceLimitsConfigError`
-
-#### Scenario: Non-integer GPU ceiling fails startup
-
-- **GIVEN** `SANDBOX_MAX_GPU_COUNT=1.5`
-- **WHEN** `loadResourceLimits()` runs
-- **THEN** it throws `ResourceLimitsConfigError` indicating the value must be a non-negative integer
 
 ### Requirement: Resource requests are clamped, never rejected
 
@@ -124,3 +97,27 @@ There is no `allowedGpuTypes` field on `ResourceLimits` and no `type` field on
 - **GIVEN** the `ResourceLimitsSchema`
 - **WHEN** validating `{ maxCpu: 16, maxMemoryGb: 64, maxGpuCount: 1 }`
 - **THEN** validation passes
+
+### Requirement: Resource ceilings are supplied by the embedder
+
+The harness SHALL receive cluster ceilings as configuration and SHALL NOT read them from the environment. `SandboxClientConfig.resourceLimits` carries `ResourceLimits { maxCpu, maxMemoryGb, maxGpuCount }`, and `parseResourcePolicy` validates an embedder-supplied `ResourcePolicy` against `ResourcePolicySchema`, throwing `ResourceLimitsConfigError` when the shape is invalid or when a per-step ceiling exceeds the machine budget. `maxCpu` and `maxMemoryGb` MUST be positive numbers; `maxGpuCount` MUST be a non-negative integer. GPU is bounded by count only, never by type.
+
+Where those values come from is the host's business — an environment variable, a file, a control plane. Reading them is the host's, done once against the host's own validated configuration, so the harness and its embedder cannot hold two views of one ceiling.
+
+#### Scenario: Valid ceilings are accepted as configuration
+
+- **GIVEN** an embedder supplying `{ maxCpu: 16, maxMemoryGb: 64, maxGpuCount: 2 }`
+- **WHEN** the sandbox client is constructed
+- **THEN** those ceilings are the ones `clampResources` caps each step's request against
+
+#### Scenario: A malformed ceiling is rejected
+
+- **GIVEN** an embedder supplying a resource policy whose `maxGpuCount` is `1.5`
+- **WHEN** `parseResourcePolicy` runs
+- **THEN** it throws `ResourceLimitsConfigError` identifying the value must be a non-negative integer
+
+#### Scenario: The harness reads no ceiling from the environment
+
+- **GIVEN** `SANDBOX_MAX_CPU`, `SANDBOX_MAX_MEMORY_GB`, and `SANDBOX_MAX_GPU_COUNT` set in the process environment
+- **WHEN** the harness bounds a step's resources
+- **THEN** it uses only the embedder-supplied ceilings, and no harness code path consults those variables

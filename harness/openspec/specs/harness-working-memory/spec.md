@@ -94,25 +94,43 @@ The persisted schema SHALL remain unbounded and validate shape only: a row writt
 
 ### Requirement: Working memory renders only what exists
 
-`render(analysisId)` SHALL serialize working memory to Markdown, omitting every empty section entirely — no heading, no placeholder — and SHALL return the **empty string** for an entirely empty memory, so it costs nothing. Findings SHALL render as ONE flat list, each line citing the run it came from (`- [id] (runId) text`), never as a per-run heading block: memory holds the reference, `inspect_run` holds the run. Each entry SHALL carry the short `[id]` the agent copies to revise or retire it. The render SHALL be bounded to `WORKING_MEMORY_LIMITS` regardless of what the row holds, keeping the newest entries and stating how many older ones were omitted. The rendered document SHALL be injected as a `user` message in the window tail each turn and SHALL NOT be persisted to thread history.
+`render(analysisId)` MUST serialize the working memory to Markdown. It MUST omit each empty section completely, with no heading and no placeholder. It MUST give the empty string for a memory in which each section is empty.
+
+The findings MUST render as one flat list, and each line names the run that it came from (`- [id] (runId) text`). The render MUST NOT give a heading block for each run. The memory holds the reference, and `inspect_run` holds the run.
+
+Each entry MUST carry the short `[id]` that the agent copies to revise or retire it. The render MUST stay within `WORKING_MEMORY_LIMITS`, whatever the row holds. It keeps the newest entries, and it states the count of the older entries that it omitted.
+
+A `conversation` turn MUST carry the render as a context record of the kind `working-memory`, after the user message (see the chat-turn capability). The turn stores the record only when the history window holds no copy, or when the text differs from the latest copy. An empty render gives a record that states that the memory is empty. Thus the model does not keep an older copy as the current state.
 
 #### Scenario: Empty sections are omitted
 
 - **GIVEN** a working memory with a goal and one finding, and no constraints or hypotheses
 - **WHEN** `render` is called
-- **THEN** the output carries a Goal heading and a Findings heading, and NO Constraints or Hypotheses heading
+- **THEN** the output carries a Goal heading and a Findings heading, and no Constraints heading and no Hypotheses heading
 
 #### Scenario: An empty memory renders to nothing
 
 - **WHEN** `render` is called for an analysis with no recorded working memory
-- **THEN** it returns the empty string, and the outbound sanitizer drops the message before the wire call
+- **THEN** it gives the empty string
 
 #### Scenario: Findings are one flat run-referenced list
 
-- **GIVEN** findings recorded under two different runs
+- **GIVEN** findings of two different runs
 - **WHEN** `render` is called
-- **THEN** they appear as one `## Findings` list, each line naming its own run id
-- **AND** the output contains no per-run heading block
+- **THEN** they appear as one `## Findings` list, and each line names its own run id
+- **AND** the output holds no heading block for each run
+
+#### Scenario: A changed memory is stored after the user message
+
+- **GIVEN** a conversation thread whose window holds a working-memory record, and a new constraint that the agent added after it
+- **WHEN** the next turn is prepared
+- **THEN** a new working-memory record with the constraint comes after the user message, and each earlier stored row does not change
+
+#### Scenario: An emptied memory says so
+
+- **GIVEN** a conversation thread whose window holds a working-memory record with entries, and a memory whose entries the agent retired
+- **WHEN** the next turn is prepared
+- **THEN** the turn adds a working-memory record that states that the memory is empty
 
 ### Requirement: Hypotheses live in working memory, not a separate workflow
 
@@ -133,3 +151,79 @@ Hypotheses SHALL be persisted only as entries in the `hypotheses` section of the
 - **GIVEN** a hypothesis recorded during one chat turn
 - **WHEN** a later run completes and the agent rehydrates working memory
 - **THEN** the hypothesis is rendered into the working-memory user message
+
+### Requirement: Working memory holds the lasting facts across a compaction
+
+A compaction of a `conversation` thread MUST let the agent move each lasting fact into working memory before the summary. The mask of the exchange lets only `update_working_memory` run. The request asks for the memory edits first, in fewer replies than the cap of the exchange. Then it asks for a summary that leaves out each fact that a memory edit accepted, and that carries each fact that the memory refused. The request tells the agent to keep each constraint that the user gave as it is.
+
+After the marker, the turn adds a working-memory record, because the new view holds no copy (see the chat-turn capability). The record renders the memory after the edits of the exchange. Thus the view after the marker holds the lasting facts in the record, and the summary holds the rest.
+
+A memory edit of an exchange stays when the exchange gives no summary, because the store commits each edit when the tool runs. The records after a drop marker then hold the new render.
+
+#### Scenario: A fact moves into memory before the summary
+
+- **GIVEN** a `conversation` thread whose exchange adds a constraint and then replies with a summary
+- **WHEN** the loop sends the next request
+- **THEN** the working-memory record after the marker holds the constraint
+
+#### Scenario: The exchange runs no other tool
+
+- **GIVEN** an exchange whose model calls `update_working_memory` and `write_file` in one reply
+- **WHEN** the loop dispatches the round
+- **THEN** the memory edit runs, and `write_file` gets the error result of the mask
+
+#### Scenario: An exchange with no summary keeps its memory edits
+
+- **GIVEN** an exchange that adds a finding and then gives no text within its cap
+- **WHEN** the loop appends the drop marker
+- **THEN** working memory holds the finding, and the working-memory record after the drop marker holds it too
+
+### Requirement: A step seed carries a frozen read-only copy of the goal and the constraints
+
+The seed of each sandbox step MUST carry a copy of the goal and the constraints of the working memory of its analysis. Each constraint MUST show its origin, `user` or `agent`. The copy MUST NOT hold a hypothesis, a finding, or an entry id.
+
+The harness MUST read working memory at the dispatch of each step, inside the checkpointed step that composes the seed. It MUST NOT read it one time for each run. Thus a memory edit during a run reaches each step that the scheduler dispatches after the edit. Two steps of one run can thus carry different memory states. A replay of the seed step MUST give the recorded seed, and it MUST NOT read working memory again.
+
+The copy is read only. The step agent gets no tool that reads or writes working memory.
+
+The copy MUST show under the heading `## Analysis memory (read only)`. This heading is different from the heading of the constraints of the plan step. The section MUST tell the agent that the entries come from the working memory of the analysis. It MUST tell the agent to obey a constraint from the user, and to use a constraint from the agent as context.
+
+The section MUST obey `WORKING_MEMORY_LIMITS`. It clamps the goal and each constraint text, and it shows only the newest constraints up to the cap. A memory with no goal and no constraints MUST give no section.
+
+If the memory read fails, the seed step MUST compose the seed without the section, and it MUST log a warning that names the analysis and the step. A failed memory read MUST NOT stop the dispatch of the step.
+
+#### Scenario: A step seed shows the goal and the constraints with their origin
+
+- **GIVEN** an analysis whose working memory holds a goal, a constraint from the user, a constraint from the agent, a hypothesis, and a finding
+- **WHEN** the parent workflow dispatches a step of that analysis
+- **THEN** the seed holds the section `## Analysis memory (read only)` with the goal and the two constraints
+- **AND** each constraint shows its origin
+- **AND** the seed holds no hypothesis and no finding
+
+#### Scenario: An empty memory gives no section
+
+- **GIVEN** an analysis with no working-memory row
+- **WHEN** the parent workflow dispatches a step of that analysis
+- **THEN** the seed holds no analysis-memory section
+
+#### Scenario: A later step sees an edit made during the run
+
+- **GIVEN** a run whose first step started with the constraint `A`
+- **AND** the conversation agent then replaces `A` with the constraint `B`
+- **WHEN** the parent workflow dispatches a second step of the same run
+- **THEN** the seed of the second step holds `B` and not `A`
+- **AND** the seed of the first step stays as DBOS recorded it
+
+#### Scenario: A replay gives the recorded seed
+
+- **GIVEN** a seed step that DBOS recorded
+- **WHEN** DBOS replays the parent workflow
+- **THEN** the step gets the recorded seed, byte for byte
+- **AND** the harness does not read working memory for that step
+
+#### Scenario: A failed memory read leaves the section out
+
+- **GIVEN** a working-memory read that gives a database error
+- **WHEN** the parent workflow composes the seed of a step
+- **THEN** the seed has no memory section, and the step is dispatched
+- **AND** the log records a warning that names the analysis and the step

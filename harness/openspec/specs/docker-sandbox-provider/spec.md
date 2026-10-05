@@ -27,22 +27,24 @@ Cleanup is sweep-based, not lifecycle-coupled: every managed container carries
 `listManagedSandboxes` and tears down those whose owning workflow is terminal or
 gone. There is no GPU passthrough on the Docker backend — GPU scheduling is a
 K8s-only concern.
+
 ## Requirements
+
 ### Requirement: createDockerSandboxOps implements the backend ops
 
-`createDockerSandboxOps` SHALL produce the backend-specific ops (`createSandbox`,
-`teardown`, `teardownById`, `isAlive`, `listManagedSandboxes`) consumed by
-`createSandboxClient` (`harness/src/sandbox/create-sandbox.ts`). The submit/await
-halves (`submitExec`, `awaitExec`) are backend-agnostic — Docker and K8s share
-the same submit + recv contract. Every op SHALL return a `ResultAsync` carrying
-a `SandboxError` variant on failure, never throw.
+`createDockerSandboxOps` MUST produce the backend-specific ops (`createSandbox`,
+`teardown`, `teardownById`, `isAlive`, `listManagedSandboxes`) that
+`createSandboxClient` (`harness/src/sandbox/create-sandbox.ts`) consumes. The
+exec is backend-agnostic: Docker and K8s share the same submit and poll
+contract. Each op MUST return a `ResultAsync` that carries a `SandboxError`
+variant on failure, and it MUST NOT throw.
 
 #### Scenario: Backend selection routes to Docker in dev
 
 - **GIVEN** `SANDBOX_BACKEND=docker`
 - **WHEN** `createSandboxClient(...)` is constructed
-- **THEN** the returned client wires `createDockerSandboxOps` for sandbox create/teardown
-- **AND** `submitExec` / `awaitExec` are used unchanged across backends
+- **THEN** the returned client wires `createDockerSandboxOps` for the sandbox spawn and the teardown
+- **AND** `exec` is used with no change across backends
 
 ### Requirement: The engine connection is configurable
 
@@ -109,45 +111,6 @@ spec). The spec carries no label.
 
 - **WHEN** sandbox-server does not respond 200 to `/health` within the timeout
 - **THEN** `createSandbox` returns a `container_create_failed` error including the last failure detail
-
-### Requirement: Transport-mode container wiring
-
-`createSandbox` SHALL render the harness `SandboxTransport` into the container's
-runtime configuration:
-
-- It SHALL pass `SANDBOX_TRANSPORT` (`poll` | `callback`) into the container env in
-  both modes, and pass `SANDBOX_CALLBACK_SECRET` in both modes.
-- In **poll mode** it SHALL create the container on the default bridge with
-  `CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"]` and set the Docker-poll
-  firewall env flag, so the image's root entrypoint installs the egress-deny
-  firewall and then de-privileges to the workload uid. It SHALL NOT set
-  `CORTEX_BASE_URL`.
-- In **callback mode** it SHALL set `CORTEX_BASE_URL` to the host callback ingress,
-  SHALL NOT add any capability, and SHALL NOT set the firewall flag (egress is
-  permitted); no `--internal` network and no gateway sidecar are created.
-
-The workload posture SHALL be otherwise unchanged (uid 1000, `no-new-privileges`);
-the added capabilities exist solely for the root entrypoint's privileged setup —
-`NET_ADMIN` to install the firewall rules, `SETUID`/`SETGID` for the `setpriv`
-drop to the workload uid/gid, and `SETPCAP` to clear the bounding set — and every
-one of them SHALL be dropped before the workload runs, leaving the workload's
-capability sets empty.
-
-#### Scenario: Poll mode adds the egress firewall
-
-- **GIVEN** the transport is `poll`
-- **WHEN** `createSandbox` creates the container
-- **THEN** the container env SHALL carry `SANDBOX_TRANSPORT=poll` and the firewall flag
-- **AND** the `HostConfig` SHALL add exactly `NET_ADMIN`, `SETUID`, `SETGID`, and `SETPCAP`
-- **AND** no `CORTEX_BASE_URL` SHALL be set
-
-#### Scenario: Callback mode permits egress with no gateway
-
-- **GIVEN** the transport is `callback`
-- **WHEN** `createSandbox` creates the container
-- **THEN** the container env SHALL carry `SANDBOX_TRANSPORT=callback` and `CORTEX_BASE_URL`
-- **AND** the `HostConfig` SHALL NOT add any capability and SHALL NOT set the firewall flag
-- **AND** no `--internal` network and no gateway container SHALL be created
 
 ### Requirement: Image source is config default overridden per step
 
@@ -520,3 +483,34 @@ A resolved root that does not live under `sessionPvcRoot` cannot be addressed as
 - **WHEN** a sandbox is created
 - **THEN** creation throws, because the `subPath` of a workspace root cannot be derived
 
+### Requirement: The container confines its own egress
+
+`createSandbox` MUST start each container as root on the default bridge, with
+`CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"]` and the firewall env
+flag. Thus the root entrypoint of the image installs the egress-deny firewall,
+and then it drops to the workload uid. The container env MUST NOT carry
+`SANDBOX_TRANSPORT`, `CORTEX_BASE_URL`, or a secret. The backend MUST make no
+`--internal` network and no gateway container.
+
+Each added capability exists only for the privileged setup of the root
+entrypoint:
+
+- `NET_ADMIN` installs the firewall rules.
+- `SETUID` and `SETGID` let `setpriv` drop to the workload uid and gid.
+- `SETPCAP` clears the bounding set.
+
+The entrypoint MUST drop each of them before the workload runs. Thus the
+capability sets of the workload are empty. The workload runs as uid 1000 with
+`no-new-privileges`.
+
+#### Scenario: Each container gets the egress firewall
+
+- **WHEN** `createSandbox` makes the container
+- **THEN** the container env carries the firewall flag
+- **AND** the `HostConfig` adds exactly `NET_ADMIN`, `SETUID`, `SETGID`, and `SETPCAP`
+
+#### Scenario: The container gets no transport, no callback URL, and no secret
+
+- **WHEN** `createSandbox` makes the container
+- **THEN** the container env carries no `SANDBOX_TRANSPORT`, no `CORTEX_BASE_URL`, and no `SANDBOX_CALLBACK_SECRET`
+- **AND** the backend makes no `--internal` network and no gateway container

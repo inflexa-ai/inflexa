@@ -2,7 +2,9 @@
 
 ## Purpose
 The named layout tokens of the TUI in `src/lib/design_system.ts`: the spacing, the sizes, the strokes, and the dialog size presets. Each layout prop in `src/tui/` reads a token, not a raw number or string. Thus one edit of a token changes each place that uses it.
+
 ## Requirements
+
 ### Requirement: Named layout, spacing, and stroke tokens
 
 The system SHALL provide three `as const` objects with derived literal-union types — `space`, `size`, `stroke` — in the dependency-light, solid-js-free design-system module `src/lib/design_system.ts`, the single source of truth for non-color layout primitives:
@@ -44,30 +46,66 @@ Layout components in `src/tui/` SHALL source spacing (`gap`, `padding*`, `margin
 
 ### Requirement: Dialog size presets use clamped fixed dimensions; only static-content dialogs are content-height
 
-`src/lib/design_system.ts` SHALL define the dialog size presets (`dialogSize`, keys `md`/`lg`/`xl`) as fixed column widths clamped by a percentage, not paired percentages: each preset SHALL carry a fixed `width` in columns (`md: 64`, `lg: 88`, `xl: 116` — calibration values, tunable) and a `maxWidth` percentage clamp (`90%`) so panels shrink on narrow terminals but never balloon on wide ones. Heights follow the same fixed+clamp shape for tiers whose content changes while the dialog is open: `lg` (pickers, whose lists filter) SHALL fix its height in rows (`20`, clamped by `maxHeight: 80%`) and `xl` SHALL fix its height (`85%`) — a panel that resizes as its content changes mid-interaction is worse UX than trailing empty rows. Only `md` SHALL be content-height (`height: undefined`, `maxHeight: 80%`), because its content (a prompt line, a confirm message) is static for the dialog's lifetime. No preset SHALL pair a percentage width with a percentage height, because terminal cells are ~2× taller than wide and paired percentages render square-or-portrait panels whose proportions track the terminal's instead of the content's.
+`src/lib/design_system.ts` MUST define the dialog size presets (`dialogSize`, keys `md`, `lg`,
+and `xl`) as fixed column widths with a percentage clamp, and never as a pair of percentages.
+
+Each preset MUST carry a fixed `width` in columns, which is a calibration value that you can
+tune: `md: 64`, `lg: 108`, and `xl: 116`. Each preset MUST carry a `maxWidth` clamp of `90%`.
+Thus a panel becomes smaller on a narrow terminal, and it never grows on a wide one.
+
+`lg` MUST hold a row that carries facts beside its name. A file entry spends about 35 columns
+on its permissions, its size, and its date. A picker that then truncates the names defeats its
+own purpose.
+
+A height obeys the same fixed-and-clamp shape, for each tier whose content changes while the
+dialog is open. `lg` (a picker, whose list filters) MUST fix its height at `28` rows, with a
+`maxHeight` clamp of `80%`. That leaves about 20 rows for the list after the chrome of the
+panel, which is a working set and not a keyhole. `xl` MUST fix its height at `85%`.
+
+A panel that resizes as its content changes is worse than trailing empty rows.
+
+Only `md` MUST be content-height (`height: undefined`, `maxHeight: 80%`). Its content is a
+prompt line or a confirm message, and that content is static for the life of the dialog.
+
+No preset MUST pair a percentage width with a percentage height. A terminal cell is about 2
+times taller than it is wide. Thus a pair of percentages gives a square panel or a portrait
+panel, whose proportions track the terminal instead of the content.
+
+A test of these dimensions MUST read them from `dialogSize`, and MUST NOT restate the numbers.
+A duplicated number turns each legitimate change of the calibration into a red test. It also
+proves nothing about the fixed-against-fraction behavior that the test claims.
 
 #### Scenario: Wide terminal does not balloon a prompt
 
 - **WHEN** an `md` dialog renders on a 250-column terminal
-- **THEN** its panel is 64 columns wide, not a percentage of the terminal width
+- **THEN** its panel is 64 columns wide, and not a percentage of the terminal width
 
 #### Scenario: Narrow terminal clamps instead of overflowing
 
 - **WHEN** an `md` dialog renders on a 60-column terminal
-- **THEN** its panel width is clamped to 90% of the terminal, not the fixed 64 columns
+- **THEN** its panel width is the clamp of 90% of the terminal, and not the fixed 64 columns
+
+#### Scenario: A wide terminal gives the fixed width
+
+- **WHEN** an `lg` panel renders on a 200-column terminal
+- **THEN** it measures the `width` of the preset, and not a fraction of 200
+
+#### Scenario: A narrow terminal gives the clamp
+
+- **WHEN** an `lg` panel renders on a 40-column terminal
+- **THEN** it measures 36 columns, which is the `maxWidth` clamp
 
 #### Scenario: Filtering never resizes a picker
 
-- **WHEN** an `lg` picker's list is filtered from many rows down to a few
-- **THEN** the panel height does not change — overflow scrolls, shortfall leaves empty rows
+- **WHEN** a filter reduces a picker from 30 rows to 2 rows
+- **THEN** the panel holds the `height` of the preset, with trailing empty rows
 
 #### Scenario: Short prompt shrinks to its content
 
-- **WHEN** an `md` dialog's static body is shorter than its `maxHeight` allows
-- **THEN** the panel is only as tall as its content — no fixed-height empty region below it
+- **WHEN** the static body of an `md` dialog is shorter than its `maxHeight`
+- **THEN** the panel is only as tall as its content, with no fixed-height empty region below it
 
 #### Scenario: Fixed height clamps on short terminals
 
-- **WHEN** an `lg` dialog renders on a terminal shorter than its fixed row height allows
-- **THEN** the panel height is clamped to the `maxHeight` percentage and the body scrolls
-
+- **WHEN** an `lg` panel renders on a 15-row terminal
+- **THEN** it measures 12 rows or fewer, and its chrome stays complete

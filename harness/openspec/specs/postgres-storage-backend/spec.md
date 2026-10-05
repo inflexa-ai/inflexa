@@ -128,24 +128,6 @@ startup SHALL fail with a clear error.
 - **WHEN** `CREATE EXTENSION IF NOT EXISTS vector` fails and the extension is absent
 - **THEN** `initCortexState` raises a clear error naming the pgvector requirement
 
-### Requirement: Idempotent startup DDL for cortex tables
-
-`initCortexState(pool)` SHALL execute idempotent DDL on startup to create and
-migrate the thin-ledger tables it owns (`cortex_*`, `messages`,
-`cortex_working_memory`) via `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT
-EXISTS`.
-
-#### Scenario: Fresh database is initialized
-
-- **WHEN** `initCortexState(pool)` is called against an empty database
-- **THEN** the required tables exist with the documented indexes and types
-
-#### Scenario: Re-running init is a no-op
-
-- **WHEN** `initCortexState(pool)` runs twice against the same database
-- **THEN** the second call does not error
-- **AND** no data is lost
-
 ### Requirement: Test isolation via Postgres schemas
 
 Tests that touch the database MUST use `withSchema(testName)` from
@@ -208,3 +190,75 @@ start of ryuk on its own. Both are necessary on a host where ryuk cannot start.
 
 - **WHEN** a test file starts no container
 - **THEN** the guard does not run, because `startContainer` is not called
+
+### Requirement: The tool output table keeps the text of a cut tool result
+
+`initCortexState` MUST make the table `cortex_tool_outputs` with `CREATE TABLE IF NOT EXISTS`. The table MUST hold these columns:
+
+- `analysis_id`: the analysis of the session of the loop
+- `ref`: the reference that the excerpt gives
+- `tool_name` and `tool_call_id`: the call that gave the result
+- `thread_id`: the thread of a chat loop, nullable, and null for a loop of a run
+- `content`: the kept text
+- `total_length`: the length of the whole text of the result
+- `created_at`: the time of the first write
+
+The primary key MUST be `(analysis_id, ref)`. The init MUST also make a partial index on `thread_id` for the rows where it is not null, for the delete of a thread purge.
+
+`createToolOutputStore(pool)` in `src/state/tool-outputs.ts` MUST realize the tool output store of the loop over the application pool (refer to the harness-agent-loop capability). `put` MUST be an upsert on the primary key. A second `put` of one key MUST replace the text, and it MUST keep `created_at`. `get` MUST read one row by the analysis id and the reference, and it MUST give `null` when no row exists. A failure MUST be an `err` of `DbError`, and neither method throws.
+
+The table holds conversation data, the same as `messages`: the text of a tool result that a model can read again. A product of an analysis stays a file of the workspace tree.
+
+#### Scenario: A kept text round-trips
+
+- **GIVEN** a `put` of a text of 300,000 characters that holds a character outside ASCII
+- **WHEN** `get` runs with the same analysis id and reference
+- **THEN** it gives the same text, byte-identical, with the same length, the same tool call id, and the same thread id
+
+#### Scenario: A second put replaces the text
+
+- **GIVEN** a row for one analysis id and one reference
+- **WHEN** a second `put` of the same key gives a different text
+- **THEN** `get` gives the second text, and `created_at` does not change
+
+#### Scenario: A reference belongs to its analysis
+
+- **GIVEN** a row of analysis A with the reference `to_3f9a2c41b8d605e7a1c0`
+- **WHEN** `get` runs with analysis B and the same reference
+- **THEN** it gives `null`
+
+### Requirement: Versioned migrations for the cortex tables
+
+`initCortexState(pool)` MUST apply the pending migrations of `src/state/migrations/` with the Kysely migrator, in the order of their names. The migrator MUST record each applied migration in the table `cortex_migration`, and it MUST use the table `cortex_migration_lock`. It MUST keep the two tables in the current schema of the pool. A migration MUST NOT change after a release. A schema change MUST be a new migration, with a name that sorts after each existing name.
+
+Each migration MUST set `lock_timeout` to 5 s for its transaction. Thus a statement that waits for a lock fails after 5 s, and it holds up the queries of the other sessions for 5 s at most.
+
+The first migration, `20260927120000_baseline`, MUST hold only idempotent statements. Thus it applies to an empty database and to a database that an earlier harness made with its DDL at each start.
+
+#### Scenario: Fresh database is initialized
+
+- **WHEN** `initCortexState(pool)` runs against an empty database
+- **THEN** the required tables exist with the documented indexes and types
+- **AND** `cortex_migration` records the baseline
+
+#### Scenario: A database from the DDL at each start gets the baseline
+
+- **GIVEN** a database that an earlier harness made, with no `cortex_migration` table
+- **WHEN** `initCortexState(pool)` runs
+- **THEN** the baseline brings the tables to the current schema, and no row is lost
+- **AND** `cortex_migration` records the baseline
+
+#### Scenario: A start with no pending migration does not wait for a reader
+
+- **GIVEN** a database where `cortex_migration` records each migration
+- **AND** a different session holds an open transaction that read a cortex table
+- **WHEN** `initCortexState(pool)` runs
+- **THEN** it completes, because it runs no DDL
+
+#### Scenario: A lock wait ends at the lock timeout
+
+- **GIVEN** a pending migration that alters a table
+- **AND** a different session holds an open transaction that read that table
+- **WHEN** `initCortexState(pool)` runs
+- **THEN** it fails with a lock timeout after 5 s
+- **AND** `cortex_migration` records nothing, thus the next run applies the migration

@@ -96,7 +96,7 @@ The in-progress document and the pinned snapshot of a thread MUST live in one du
 - **THEN** the outline of the next turn holds the added block
 
 ### Requirement: The session derivation
-The derivation tool MUST run an agent-authored script on the sandbox substrate: the container rails, the resource policy, no network, and the signed exec protocol. The analysis tree mounts read-only, and one write mount covers the session `derived/` directory alone. The script writes its output into that mount directly. Each declared input MUST sit in the served membership, and its hash comes from there. The record lands in the durable session state: the output path, the output hash, the source paths with their hashes, the script hash, and the script text. The served snapshot MUST merge the derivation records, thus a derived table binds the same way as a pinned one. The stored pin never changes. The tool MUST refuse an output name that a record already holds.
+The derivation tool MUST run an agent-authored script on the sandbox substrate: the container rails, the resource policy, no network, and the exec protocol of the harness-sandbox-exec spec. The analysis tree mounts read-only, and one write mount covers the session `derived/` directory alone. The script writes its output into that mount directly. Each declared input MUST sit in the served membership, and its hash comes from there. The record lands in the durable session state: the output path, the output hash, the source paths with their hashes, the script hash, and the script text. The served snapshot MUST merge the derivation records, thus a derived table binds the same way as a pinned one. The stored pin never changes. The tool MUST refuse an output name that a record already holds.
 
 #### Scenario: A derived table becomes bindable
 - **WHEN** a derivation lands and the agent adds a table block over the derived path
@@ -140,7 +140,11 @@ The report tools MUST give a call detail that names their subject. `add_block` n
 ### Requirement: The read-only roster
 The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_files`, `file_stat`, and `grep`), the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, the pinned-artifact listing tool, the derivation tool, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis. A session derivation is a sandbox exec inside the session: it mints no run id, it registers no artifact, and it writes under the session directory alone.
 
-The listing tool MUST give the pinned artifacts in a deterministic order: the path, the hash, and the file type. It MUST also give the pinned citation ids. The listing is bounded, and a truncated listing MUST carry the total count and a truncation marker. For a `.csv` or a `.tsv` artifact it also gives the columns, from a bounded read of the header. A header that the bounded read cannot parse whole gives no columns. An unreadable header gives no columns and no error, because absence is a normal condition.
+With no input, the listing tool MUST give the pinned artifacts in a deterministic order: the path and the file type of each artifact. For a `.csv` or a `.tsv` artifact, the entry also gives the count of the header columns, from a bounded read of the header. The listing MUST also give the pinned citation ids. The listing is bounded, and a truncated listing MUST carry the total count and a truncation marker.
+
+The listing MUST NOT give a hash, because a reference names the path alone and the session stamps the hash. The listing MUST NOT give the names of the columns. A wide table can have hundreds of columns, and the listing stays in the context of each later request.
+
+With a `path`, the listing tool MUST give that one artifact with the outcome `artifact`: the path, the file type, the count of the header columns, and their names. A path that the pin does not hold MUST give the outcome `not-pinned`, with the path. A header that the bounded read cannot parse whole gives no columns and no count. An unreadable header gives no columns and no error, because absence is a normal condition.
 
 The listing MUST give each pinned citation as its key with the short citation beside it, when the pinned record carries one. Thus the agent reads which id is which paper, and it composes a citation block with no guess. A key with no record lists bare, because absence is a normal condition.
 
@@ -153,12 +157,20 @@ The listing MUST give each pinned citation as its key with the short citation be
 - **THEN** the workspace read tools, the search, the run inspection, and the data-profile inspection are present
 
 #### Scenario: The listing gives the pinned set with columns
-- **WHEN** the agent calls the listing tool in a session whose snapshot pins a CSV artifact
-- **THEN** the result carries the path, the hash, the file type, and the header columns of that artifact
+- **WHEN** the agent calls the listing tool with no input, in a session whose snapshot pins a CSV artifact
+- **THEN** the entry carries the path, the file type, and the count of the header columns, and no hash and no column name
+
+#### Scenario: A path gives the header columns
+- **WHEN** the agent calls the listing tool with the path of a pinned CSV artifact
+- **THEN** the outcome is `artifact`, with the path, the file type, the count of the header columns, and their names
+
+#### Scenario: A path outside the pin gives not-pinned
+- **WHEN** the agent calls the listing tool with a path that the snapshot does not pin
+- **THEN** the outcome is `not-pinned`, with that path
 
 #### Scenario: An unreadable artifact still lists
 - **WHEN** the snapshot pins a path whose bytes are absent from the disk
-- **THEN** the result carries the path and the hash, with no columns and no error
+- **THEN** the result carries the path, with no columns, no count, and no error
 
 #### Scenario: A large pinned set truncates with a marker
 - **WHEN** the snapshot pins more artifacts than the listing bound
@@ -270,6 +282,8 @@ The look step MUST carry the fault checklist. The agent examines the picture for
 
 A found fault is a repair, and never a note.
 
+The prompt MUST teach the sliced look. A tall page arrives as consecutive top-to-bottom slices of the same page, in document order, and the agent reads the slices as one page. The prompt MUST state plainly that a truncated coverage — fewer captured pixels than total pixels — means the tail of the page was not seen: absent from the look, and not from the page. The prompt MUST state that only a whole look — one full shot, or slices that captured every pixel — makes an unseen section a real fault; under a partial look the agent judges what the pictures show and leaves the rest of the draft as it stands.
+
 The prompt MUST name the listing tool as the orientation source for the pinned evidence. It MUST state that a reference names the path alone, and that the session stamps the hash. The "Do NOT" list MUST name the hash probe: the agent never guesses a hash, it never types one, and it never adds a block to read a hash from a refusal.
 
 The prompt MUST state that the literature references compose as citation blocks, against the citation ids of the pinned evidence. It MUST name the listing tool as the route to the pinned citation ids. It MUST state that a citation outside the pinned evidence does not resolve, and that the agent reports it instead of an inline workaround. The agent builds no References section: a citation block sits beside the content it supports, and the References appendix is the list.
@@ -343,39 +357,26 @@ The "Do NOT" list MUST name the zero-p transcription, the raw-token prose, and t
 - **WHEN** a reviewer reads the prompt module
 - **THEN** the cohort-and-yield lead, the caveated-value ban, the three-card rule, and the rounding agreement are present
 
+#### Scenario: The prompt teaches the sliced look
+- **WHEN** a reviewer reads the prompt module
+- **THEN** the sliced look reads as one page in document order, and a truncated coverage names the unseen tail as absent from the look and not from the page
+
 ### Requirement: The report turn reads the copied narrative, never the live memory
 
-The turn assembly of a `report` thread MUST NOT inject the live working-memory render. The seed message in the child transcript carries the copy at the anchor, and that copy is the narrative record of the session. A live render sees state past the anchor, and that breaks the knowledge cap.
+The turn assembly of a `report` thread MUST NOT add a working-memory record. The seed message in the child transcript carries the copy at the anchor, and that copy is the narrative record of the session. A live render sees state past the anchor, and that breaks the knowledge cap.
 
-The assembly MUST read the thread type from the row that the turn preparation already loads. A `conversation` thread keeps the live render.
+The assembly MUST read the thread type from the row that the turn preparation already loads. A `conversation` thread keeps the working-memory record (see the chat-turn capability).
 
 #### Scenario: A report turn carries no live render
 
 - **WHEN** a turn runs on a `report` thread
-- **THEN** the assembled tail holds no working-memory render, and the seed message stays the one narrative source
+- **THEN** the turn adds no working-memory record, and the seed message stays the one narrative source
 
 #### Scenario: A conversation turn keeps the live render
 
-- **WHEN** a turn runs on a `conversation` thread
-- **THEN** the assembled tail holds the working-memory render, as before
-
-### Requirement: The window of a report turn keeps the seed
-
-The history window of a report turn MUST keep the first turn of the thread. The seed is that first turn, and it is the one record of the brief and of the working memory. No tail message replaces it.
-
-The window evicts the oldest turn first. Thus a long session would drop the seed, and the agent would keep its tools and lose its objective. The retained seed can carry the window past its token budget. The cost is bounded, because the brief carries a length bound and the render is one row.
-
-A `conversation` thread MUST keep the eviction that it has. The live tail of that thread carries the memory on each turn, thus its first turn holds no record that a later turn needs.
-
-#### Scenario: A long report session keeps its seed
-
-- **WHEN** a report thread holds more turns than the token budget admits
-- **THEN** the window holds the seed, and it holds the most recent turns
-
-#### Scenario: A conversation window evicts its oldest turn
-
-- **WHEN** a conversation thread holds more turns than the token budget admits
-- **THEN** the window drops the oldest turns, as before
+- **GIVEN** a `conversation` thread whose window holds no working-memory record
+- **WHEN** a turn runs on that thread
+- **THEN** the turn adds a working-memory record after the user message
 
 ### Requirement: The figure is the last choice
 The prompt MUST state that a figure block is the last choice, for a picture that no table can carry. It MUST name the permitted uses: a microscopy image, a schematic, and a genome browser track. It MUST state that each other plot of a run is a chart block over the table that made it. It MUST refer to the block schema of `add_block` for the chart types and the presets. It MUST NOT keep a list of plots of its own.
@@ -407,3 +408,102 @@ The paragraph MUST name no dataset and no preset list, because the block schema 
 #### Scenario: The paragraph names no data
 - **WHEN** a reviewer reads the preset paragraph
 - **THEN** the paragraph holds no dataset name and no numeral
+
+### Requirement: The preview announces a rendered page as one durable chat part
+
+When the page lands and the stamp passes, `preview_report` SHALL emit one `data-report-rendered` part through the emit sink of its tool context. The part SHALL carry an `id` unique to the emission, the `renderedAt` ISO timestamp of the render, and the `title` of the rendered document. The tool SHALL NOT emit the part on any degraded arm, because a degraded arm shows no fresh page.
+
+The part SHALL be a durable conversation part in the part registry, thus the display projection of the turn persists it in the position of its emission. A reload then shows the entry where the render ran.
+
+The part is a placement record and a freshness signal only. The part SHALL carry no page path, no format field, no version internals, and no minted URL. The version store and the session-page mint SHALL stay the authority for what is viewable.
+
+#### Scenario: A rendered page emits one part
+
+- **WHEN** the agent calls `preview_report` and the page lands
+- **THEN** the tool emits exactly one `data-report-rendered` part, with a per-emission id, the ISO timestamp of the render, and the title of the document
+
+#### Scenario: A degraded arm emits nothing
+
+- **WHEN** the tool returns any arm other than `rendered`
+- **THEN** the tool emits no part
+
+#### Scenario: The part persists into the display projection
+
+- **GIVEN** a turn whose loop records the conversation display
+- **WHEN** the tool emits the part between two text runs
+- **THEN** the persisted display of the turn holds the part between the two text runs
+
+### Requirement: The view of a report turn keeps the seed
+
+The view of a report turn MUST keep the first turn of the thread in front. The seed is that first turn, and it is the one record of the brief and of the working memory. No later record replaces it.
+
+After a summary marker, the view MUST hold the seed, then the summary, then each later message. After a drop marker, the view MUST hold the seed, the last good summary when one exists, and the kept turns. Thus a long session keeps its objective, and the agent never loses its brief. The seed carries a length bound, thus its cost in each view stays bounded.
+
+A `conversation` thread MUST keep no head. Its view starts at the latest summary, and its working-memory record comes after the summary (see the chat-turn capability). Thus the first turn of a conversation holds no record that a later turn needs.
+
+#### Scenario: A compacted report session keeps its seed first
+
+- **GIVEN** a report thread whose turns passed the budget, and a summary marker in a later turn
+- **WHEN** the next turn is prepared
+- **THEN** the messages start with the seed, and then the summary marker
+
+#### Scenario: A drop in a report session keeps the seed and the summary
+
+- **GIVEN** a report thread with a summary marker and a later drop marker
+- **WHEN** the next turn is prepared
+- **THEN** the messages start with the seed, then the summary marker, and then the kept turns
+
+#### Scenario: A conversation view starts at the summary
+
+- **GIVEN** a `conversation` thread with a summary marker
+- **WHEN** the next turn is prepared
+- **THEN** the messages start with the summary marker, and no message of an earlier turn comes before it
+
+### Requirement: The preview names the thread after the rendered document
+
+After the stamp passes, the preview tool MUST give the trimmed title of the rendered document to `setAutoTitle` of the thread store, before it emits the `data-report-rendered` part. It MUST NOT write an empty title. A failed write MUST log a warning, and the tool MUST keep its result.
+
+#### Scenario: A render names the thread
+
+- **GIVEN** a report thread with the title "RNA-seq QC — Report 1"
+- **WHEN** the preview renders a document with the title "Tumor microenvironment findings"
+- **THEN** the tool gives "Tumor microenvironment findings" to `setAutoTitle`
+
+#### Scenario: An empty document title changes nothing
+
+- **WHEN** the preview renders a document whose title holds only whitespace
+- **THEN** the tool does not call `setAutoTitle`
+
+#### Scenario: A failed write keeps the render
+
+- **WHEN** `setAutoTitle` fails
+- **THEN** the tool logs a warning, and the result is the `rendered` arm
+
+### Requirement: The prompt limits the looks and the finish calls
+
+Each look and each tool result stays in the context of each later request of the turn. Thus the prompt MUST teach a build loop with few looks and few finish calls. The prompt MUST state these rules:
+
+- When the agent knows the content of a section, it adds the section with its atoms in one `add_block` call. It adds an empty section only when its content waits for a derivation.
+- After the first preview that passes, the agent looks at the whole page one time. It makes each repair that this look shows before it looks again.
+- After a repair, the agent previews. Then it looks only at each block that it repaired, and it gives the block id to the look tool.
+- The record accepts a look at one block of the current page.
+- A `block` coverage holds the named block alone, and the rest of the page is absent from that look.
+- The agent does not call `finish_draft` directly before a preview. The preview runs the same finish, and it gives the same gaps and warnings.
+- An amend is the whole set of changes of one user request. The agent makes the whole amend, and then it runs the loop again.
+- Before the agent names a column, it gives the path of the artifact to the listing tool. It takes the column name from the columns that the tool gives.
+
+#### Scenario: The prompt teaches the short loop
+
+- **WHEN** a reviewer reads the prompt module
+- **THEN** the add of a whole section, the one look at the whole page, and the block look after a repair are present
+- **AND** the rule against a finish before a preview, and the whole amend, are present
+
+#### Scenario: The prompt names the block coverage
+
+- **WHEN** a reviewer reads the prompt module
+- **THEN** a `block` coverage names the rest of the page as absent from the look
+
+#### Scenario: The prompt routes a column name through the path
+
+- **WHEN** a reviewer reads the prompt module
+- **THEN** the agent takes a column name from the listing tool, called with the path of the artifact

@@ -167,7 +167,7 @@ This is recorded so the boundary is explicit: no amount of read-side work surfac
 
 ### Requirement: A canceled run ends with a terminal part
 
-A canceled workflow runs no more steps, thus it never writes its own terminal part. The canceler cannot write a stream, because the durability engine lets only a workflow body write one. The subscription SHALL thus make the terminal part of a canceled run on the read side.
+A canceled workflow runs no more steps, thus it never writes its own terminal part. The canceler cannot write the stream of a run. Only the body or a step of a workflow can write to the stream of that workflow. The subscription SHALL thus make the terminal part of a canceled run on the read side.
 
 When every stream of the run ends and no `data-run-completed` or `data-run-failed` part came, the subscription SHALL read the status of the run row. If the row reads `canceled`, it SHALL deliver `{ type: "data-run-failed", runId, error: "Run canceled", reason: "canceled" }` as the last part. The canceler writes the row after the engine cancel, thus the subscription SHALL read an active row (`running` or `suspended_insufficient_funds`) again, up to 4 reads at 500 ms. It SHALL deliver no part in these cases:
 

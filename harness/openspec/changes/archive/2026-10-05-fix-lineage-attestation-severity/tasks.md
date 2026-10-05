@@ -20,4 +20,4 @@
 
 - [x] 4.1 Delta on `artifact-manifest`: rejection severity follows what is at risk; uncounted rejections are surfaced; sync is attempted independently of the registration outcome.
 - [x] 4.2 Hand-rewrite the **Purpose** section the delta does not carry — it claimed every registry rejection is terminal.
-- [ ] 4.3 Archive (`openspec archive`) once the code lands; validate `--strict`.
+- [x] 4.3 Archive (`openspec archive`) once the code lands; validate `--strict`.

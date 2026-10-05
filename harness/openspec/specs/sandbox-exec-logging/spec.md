@@ -3,26 +3,39 @@ Define the structured execution logging contract of the Go sandbox-server. The
 contract covers the log lines of each command: the start, the end, the fail,
 the optional output of each line, and the submit acceptance. sandbox-server
 writes each line to stdout as JSON, and each line is scoped to one command.
+
 ## Requirements
+
 ### Requirement: Execution start logging
 
-The sandbox-server SHALL emit a structured JSON log line to stdout when a command is spawned in the background after `POST /exec` is accepted. The log line SHALL include: `level` ("info"), `time` (RFC3339 UTC), `event` ("exec.start"), `trace_id` (from `traceparent` header on the originating `POST /exec`, empty string if absent), `exec_id`, `command` (joined command array, truncated to 200 characters with "..." suffix if longer), `cwd` (working directory if set), and `pid` (process ID).
+The sandbox-server MUST emit a structured JSON log line to stdout when it
+spawns a command in the background after it accepts `POST /exec`. The log line
+MUST include these fields:
+
+- `level` ("info")
+- `time` (RFC3339 UTC)
+- `event` ("exec.start")
+- `trace_id` (from the `traceparent` header of the `POST /exec`, or an empty string when the header is absent)
+- `exec_id`
+- `command` (the joined command array, cut to 200 characters with a "..." suffix when it is longer)
+- `cwd` (the working directory, when it is set)
+- `pid` (the process ID).
 
 #### Scenario: Command start is logged with trace ID and exec_id
 - **GIVEN** a `POST /exec` request with header `traceparent: 00-abcdef1234567890abcdef1234567890-1234567890abcdef-01`
-- **AND** body `{"command":["Rscript","analysis.R"],"execId":"wf1:step1:fn1","cwd":"/artifacts"}`
-- **WHEN** the background process is spawned successfully
-- **THEN** stdout SHALL contain a JSON line with `event: "exec.start"`, `trace_id: "abcdef1234567890abcdef1234567890"`, `exec_id: "wf1:step1:fn1"`, `command: "Rscript analysis.R"`, `cwd: "/artifacts"`, and a numeric `pid`
+- **AND** body `{"command":["Rscript","analysis.R"],"execId":"wf1:4","cwd":"/artifacts"}`
+- **WHEN** the background process spawns
+- **THEN** stdout holds a JSON line with `event: "exec.start"`, `trace_id: "abcdef1234567890abcdef1234567890"`, `exec_id: "wf1:4"`, `command: "Rscript analysis.R"`, `cwd: "/artifacts"`, and a numeric `pid`
 
 #### Scenario: Command start logged without trace context
 - **GIVEN** a `POST /exec` request without a `traceparent` header
-- **WHEN** the process is spawned
-- **THEN** stdout SHALL contain a JSON line with `event: "exec.start"`, the matching `exec_id`, and `trace_id: ""`
+- **WHEN** the process spawns
+- **THEN** stdout holds a JSON line with `event: "exec.start"`, the matching `exec_id`, and `trace_id: ""`
 
 #### Scenario: Long command is truncated
-- **GIVEN** a command whose joined representation exceeds 200 characters
-- **WHEN** the process is spawned
-- **THEN** the `command` field in the log line SHALL be truncated to 200 characters with "..." appended
+- **GIVEN** a command whose joined form is longer than 200 characters
+- **WHEN** the process spawns
+- **THEN** the `command` field of the log line holds 200 characters with "..." after them
 
 ### Requirement: Execution end logging on success
 
@@ -112,74 +125,36 @@ The sandbox-server SHALL extract the trace ID from the W3C `traceparent` HTTP he
 
 ### Requirement: Spawn failure logging
 
-When a background command fails to spawn (e.g., binary not found), the sandbox-server SHALL emit an `exec.start` event followed by an `exec.fail` event with `exit_code: 127` and the spawn error in `stderr_tail`. Both log lines SHALL carry the `exec_id` of the failed submit.
+A background command can fail to spawn, for example when the binary is not
+found. Then the sandbox-server MUST emit an `exec.start` event, and after it an
+`exec.fail` event with `exit_code: 127` and the spawn error in `stderr_tail`. The two log lines
+MUST carry the `exec_id` of the failed submit.
 
 #### Scenario: Binary not found
+
 - **GIVEN** a `POST /exec` with `{"command":["nonexistent-binary"],"execId":"x9"}`
 - **WHEN** the spawn fails
-- **THEN** stdout SHALL contain an `exec.start` event (with `exec_id: "x9"`, pid 0 or omitted) followed by an `exec.fail` event with `exec_id: "x9"`, `exit_code: 127`, and `stderr_tail` containing the spawn error message
-- **AND** the sandbox-server SHALL POST a completion callback for `exec_id: "x9"` carrying `exitCode: 127`
+- **THEN** stdout holds an `exec.start` event (with `exec_id: "x9"`, pid 0 or omitted) and then an `exec.fail` event with `exec_id: "x9"`, `exit_code: 127`, and a `stderr_tail` that holds the spawn error message
+- **AND** the record of `x9` is `failed`, and its result carries `exitCode: 127`
 
 ### Requirement: Submit-accepted logging
 
-When `POST /exec` is accepted (HTTP 202 returned), the sandbox-server SHALL emit a structured JSON log line to stdout with: `level` ("info"), `time` (RFC3339 UTC), `event` ("exec.submitted"), `trace_id` (from `traceparent` header, empty string if absent), `exec_id`, and `dedup_hit` (boolean, `true` if the submit matched an existing in-memory dedup entry rather than spawning a new command).
+When the sandbox-server accepts `POST /exec` and returns HTTP 202, it MUST emit a
+structured JSON log line to stdout with these fields:
+
+- `level` ("info")
+- `time` (RFC3339 UTC)
+- `event` ("exec.submitted")
+- `trace_id` (from the `traceparent` header, or an empty string when the header is absent)
+- `exec_id`
+- `dedup_hit` (a boolean: `true` when the submit matched an existing exec record and spawned no new command).
 
 #### Scenario: Fresh submit is logged with dedup_hit=false
-- **GIVEN** a `POST /exec` request with body `{"command":["Rscript","analysis.R"],"execId":"wf1:step1:fn1"}`
-- **WHEN** the submit is accepted and a new background process is spawned
-- **THEN** stdout SHALL contain a JSON line with `event: "exec.submitted"`, `exec_id: "wf1:step1:fn1"`, and `dedup_hit: false`
+- **GIVEN** a `POST /exec` request with the body `{"command":["Rscript","analysis.R"],"execId":"wf1:4"}`
+- **WHEN** the server accepts the submit and spawns a new background process
+- **THEN** stdout holds a JSON line with `event: "exec.submitted"`, `exec_id: "wf1:4"`, and `dedup_hit: false`
 
 #### Scenario: Duplicate submit logged with dedup_hit=true
-- **GIVEN** a `POST /exec` request for an `execId` already present in the dedup map
-- **WHEN** the submit is accepted (no new process spawned)
-- **THEN** stdout SHALL contain a JSON line with `event: "exec.submitted"`, the matching `exec_id`, and `dedup_hit: true`
-
-### Requirement: Callback delivery logging
-
-For every outbound POST to `${CORTEX_BASE_URL}/sandbox/${execId}/event` or `/complete`, the sandbox-server SHALL emit a structured JSON log line on each attempt: `level` ("info" on 2xx, "warn" on retryable failure, "error" on giveup-eligible 4xx), `time` (RFC3339 UTC), `event` (one of `"callback.event.attempt"`, `"callback.event.delivered"`, `"callback.complete.attempt"`, `"callback.complete.delivered"`), `exec_id`, `attempt` (1-indexed), `status_code` (HTTP status if a response was received, omitted on network error), `error` (error message if any), and `duration_ms`.
-
-#### Scenario: Successful event POST is logged
-- **GIVEN** an event POST for `execId: "x1"` returns HTTP 200 on attempt 1
-- **WHEN** the response is received
-- **THEN** stdout SHALL contain a JSON line with `event: "callback.event.delivered"`, `exec_id: "x1"`, `attempt: 1`, and `status_code: 200`
-
-#### Scenario: Retried event POST logs each attempt
-- **GIVEN** an event POST returns HTTP 500 on attempt 1, then HTTP 200 on attempt 2
-- **WHEN** both responses are received
-- **THEN** stdout SHALL contain a `callback.event.attempt` line for attempt 1 with `status_code: 500`
-- **AND** stdout SHALL contain a `callback.event.delivered` line for attempt 2 with `status_code: 200`
-
-#### Scenario: Completion POST is logged
-- **GIVEN** a completion POST for `execId: "x2"` returns HTTP 200
-- **WHEN** the response is received
-- **THEN** stdout SHALL contain a JSON line with `event: "callback.complete.delivered"`, `exec_id: "x2"`, `attempt` ≥ 1, and `status_code: 200`
-
-#### Scenario: 4xx response is logged at error level
-- **GIVEN** a callback POST returns HTTP 401
-- **WHEN** the response is received
-- **THEN** stdout SHALL contain a log line with `level: "error"` and `status_code: 401`
-- **AND** no further retry attempts SHALL be logged for that callback
-
-### Requirement: Liveness watchdog logs structured shard summaries
-
-The Cortex-side liveness watchdog (`harness/src/sandbox/watchdog.ts`) SHALL emit a
-structured summary per shard check via its injected logger. The summary SHALL
-carry `activeCount`, `deadCount`, `syntheticSends`, and `liveWorkflowsSkipped`.
-When `isAlive` throws for a row, the watchdog SHALL log a warning and skip that
-row for the round. There SHALL be no `sandbox.agent.finish`,
-`sandbox.tool_failure_escalated`, or `sandbox.liveness_abort` events and no
-`cortex.*` metrics — the real recovery action a dead sandbox triggers is a
-`synthetic-failure` done-marker delivered to the recv loop (counted by
-`syntheticSends`), not an ndjson-reader abort.
-
-#### Scenario: Shard check logs its summary counts
-- **GIVEN** a watchdog shard containing one dead sandbox whose workflow is in-flight
-- **WHEN** the shard check completes
-- **THEN** an info log SHALL be emitted with `activeCount`, `deadCount`, `syntheticSends`, and `liveWorkflowsSkipped`
-- **AND** `syntheticSends` SHALL reflect the synthetic-failure marker sent for the dead sandbox
-
-#### Scenario: isAlive throw is logged and skipped
-- **GIVEN** a watchdog shard row whose `isAlive` call throws
-- **WHEN** the shard check processes that row
-- **THEN** a warning SHALL be logged for the row
-- **AND** the row SHALL be skipped for that round rather than treated as dead
+- **GIVEN** a `POST /exec` request for an `execId` that the server holds a record of
+- **WHEN** the server accepts the submit and spawns no new process
+- **THEN** stdout holds a JSON line with `event: "exec.submitted"`, the matching `exec_id`, and `dedup_hit: true`

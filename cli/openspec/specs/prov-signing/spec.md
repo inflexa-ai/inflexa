@@ -2,7 +2,9 @@
 
 ## Purpose
 Ed25519 keypair lifecycle (generate-on-first-use, JWK persistence at `env.provKeyPath`) and the sign/verify primitives over SHA-256 chain hashes — the cryptographic foundation for provenance integrity. Lives in `src/modules/prov/signing.ts`.
+
 ## Requirements
+
 ### Requirement: Ed25519 keypair generation on first use
 
 The system SHALL generate an Ed25519 keypair via `crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])` on the first provenance flush that would produce a signature, if no keypair file exists at `env.provKeyPath`. The keypair SHALL be exported as JWK and written to `<configDir>/inflexa/prov_key.json` as `{ publicKey: JsonWebKey, privateKey: JsonWebKey }`.
@@ -33,7 +35,12 @@ The system SHALL generate an Ed25519 keypair via `crypto.subtle.generateKey("Ed2
 
 ### Requirement: Signing operation over chain hash
 
-The system SHALL sign a chain hash (a 32-byte SHA-256 digest, hex-encoded) using `crypto.subtle.sign("Ed25519", privateKey, chainHashBytes)` and produce a hex-encoded 64-byte Ed25519 signature.
+The system SHALL sign a chain hash (a 32-byte SHA-256 digest, hex-encoded) with an
+Ed25519 private key, producing a hex-encoded 64-byte signature. The primitive is the
+kernel's `signHexDigest` (`@inflexa-ai/prov-kernel`); the cli SHALL NOT carry its own
+copy. The cli owns only the keypair FILE lifecycle (generate-on-first-use, JWK
+persistence at `env.provKeyPath`, race-safe adoption) and imports a stored pair through
+the kernel's `importPrivateKeyJwk`/`importPublicKeyJwk`.
 
 #### Scenario: Sign produces a deterministic signature
 
@@ -42,7 +49,8 @@ The system SHALL sign a chain hash (a 32-byte SHA-256 digest, hex-encoded) using
 
 ### Requirement: Verification operation over chain hash and signature
 
-The system SHALL verify a signature against a chain hash using `crypto.subtle.verify("Ed25519", publicKey, signatureBytes, chainHashBytes)`, returning a boolean.
+The system SHALL verify a signature against a chain hash, returning a boolean. The
+primitive is the kernel's `verifyHexDigest`; the cli SHALL NOT carry its own copy.
 
 #### Scenario: Valid signature verifies
 

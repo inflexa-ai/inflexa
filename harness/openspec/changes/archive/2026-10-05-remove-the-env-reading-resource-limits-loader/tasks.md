@@ -9,7 +9,7 @@
 
 - [x] 2.1 Remove the "Resource ceilings loaded from the environment" requirement, recording why it went and what replaces it.
 - [x] 2.2 Add "Resource ceilings are supplied by the embedder", covering the config surface, the validation `parseResourcePolicy` still performs, and that no harness path consults `SANDBOX_MAX_*`.
-- [ ] 2.3 On archive, update the capability's Purpose paragraph, which still says ceilings are "configured once from the environment".
+- [x] 2.3 On archive, update the capability's Purpose paragraph, which still says ceilings are "configured once from the environment".
 
 ## 3. Verification
 

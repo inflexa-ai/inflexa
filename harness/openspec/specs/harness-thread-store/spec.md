@@ -12,7 +12,7 @@ Authorization is not this store's job. The store's detail, title-update, and del
 
 ### Requirement: Thread metadata is stored in a harness-native table
 
-Conversation thread metadata SHALL be persisted in the harness-owned `cortex_analysis_threads` table. Each row SHALL carry `thread_id` (primary key, the UI-generated thread UUID), `analysis_id`, `title`, `created_at`, `updated_at`, a nullable `deleted_at` (soft-delete tombstone; `NULL` means live), `thread_type` (not null, defaulting to `conversation`), a nullable `parent_thread_id` referencing `cortex_analysis_threads(thread_id)` with `ON DELETE CASCADE`, and a nullable `parent_seq` holding the parent thread's `messages.seq` at the moment the child was spawned. The table SHALL be indexed by `analysis_id` (live rows only) to support listing, and by `parent_thread_id` over every row, live and archived alike, to support child listing and the subtree walk. The `parent_thread_id` index SHALL carry no `deleted_at` predicate: the subtree walk must reach archived descendants and the referential trigger behind `ON DELETE CASCADE` is the database's own query, so neither can supply one, and Postgres uses a partial index only where it can prove the predicate holds. The three columns beyond the tombstone SHALL be introduced additively, so an existing row acquires `thread_type = 'conversation'` with a null parent and a null anchor and no backfill runs. It SHALL NOT carry a free-form `metadata` column — working memory lives in `cortex_working_memory`, and nothing else reads thread metadata.
+Conversation thread metadata SHALL be persisted in the harness-owned `cortex_analysis_threads` table. Each row SHALL carry `thread_id` (primary key, the UI-generated thread UUID), `analysis_id`, `title`, `created_at`, `updated_at`, a nullable `deleted_at` (soft-delete tombstone; `NULL` means live), `thread_type` (not null, defaulting to `conversation`), a nullable `parent_thread_id` referencing `cortex_analysis_threads(thread_id)` with `ON DELETE CASCADE`, and a nullable `parent_seq` holding the parent thread's `messages.seq` at the moment the child was spawned. Each row SHALL also carry `title_set_by_user` (not null, defaulting to `false`), which records whether a person set the title. The table SHALL be indexed by `analysis_id` (live rows only) to support listing, and by `parent_thread_id` over every row, live and archived alike, to support child listing and the subtree walk. The `parent_thread_id` index SHALL carry no `deleted_at` predicate: the subtree walk must reach archived descendants and the referential trigger behind `ON DELETE CASCADE` is the database's own query, so neither can supply one, and Postgres uses a partial index only where it can prove the predicate holds. The three columns beyond the tombstone SHALL be introduced additively, so an existing row acquires `thread_type = 'conversation'` with a null parent and a null anchor and no backfill runs. The `title_set_by_user` column SHALL arrive through a versioned migration. The table SHALL NOT carry a free-form `metadata` column — working memory lives in `cortex_working_memory`, and nothing else reads thread metadata.
 
 #### Scenario: A thread row round-trips
 
@@ -40,7 +40,7 @@ Conversation thread metadata SHALL be persisted in the harness-owned `cortex_ana
 
 ### Requirement: The thread store exposes thread operations via a DI factory
 
-A `ThreadStore` SHALL be created via a dependency-injected factory bound to a Postgres pool (`createThreadStore(pool)`), exposing `createThread`, `getThread`, `updateTitle`, `archiveThread`, `unarchiveThread`, `purgeThread`, and `listThreads`. `createThread` SHALL accept an optional `type`, an optional `parentThreadId`, and an optional `parentSeq` alongside the existing inputs. `getThread` SHALL return the row by `thread_id` and treat an archived row (`deleted_at` not null) as absent. `updateTitle` SHALL change only the `title` (and bump `updated_at`). `archiveThread` SHALL be a soft delete — it SHALL set `deleted_at` rather than removing the row, and SHALL leave the thread's `messages` rows intact; applied to an already-archived thread it SHALL be a no-op that preserves the original `deleted_at`. `unarchiveThread` SHALL clear `deleted_at` so the thread returns to `getThread` and `listThreads`, and SHALL be a no-op on a live or absent thread. `purgeThread` SHALL be a hard delete — it SHALL remove the thread's `messages` rows and its `cortex_analysis_threads` row in a single transaction, and SHALL succeed as a no-op when no such thread exists. How each of these three verbs acts on a thread's descendants is specified separately. `listThreads` SHALL return only live threads whose `analysis_id` matches the supplied scope, ordered by `updated_at` descending, with pagination (`page`, `perPage`) plus a total count and a `hasMore` flag. `listThreads` SHALL accept an optional `type` filter and an optional `parentThreadId` filter, each an exact match that narrows the result; an omitted filter SHALL NOT narrow anything, so a caller that supplies neither receives every type. `updated_at` SHALL reflect thread activity: it is bumped by title updates and by turn appends (the thread-history `appendTurn` touches it in the turn's transaction — see `harness-thread-history`), so the listing order is most-recently-active first. The bump SHALL only move `updated_at` forward — never to a value earlier than the row already holds, so a slower writer cannot rewind a fresher one's timestamp — and SHALL NOT touch an archived row.
+A `ThreadStore` SHALL be created via a dependency-injected factory bound to a Postgres pool (`createThreadStore(pool)`), exposing `createThread`, `getThread`, `updateTitle`, `setAutoTitle`, `archiveThread`, `unarchiveThread`, `purgeThread`, and `listThreads`. Every returned `Thread` SHALL carry `deletedAt` — the archive tombstone, `null` on a live thread — so a caller can tell the two apart without inferring it from which query returned the row. `createThread` SHALL accept an optional `type`, an optional `parentThreadId`, and an optional `parentSeq` alongside the existing inputs. `getThread` SHALL return the row by `thread_id` and treat an archived row (`deleted_at` not null) as absent. `updateTitle` is the rename by a person: it SHALL change only the `title`, set `title_set_by_user` to `true` in the same statement, and bump `updated_at`. `archiveThread` SHALL be a soft delete — it SHALL set `deleted_at` rather than removing the row, and SHALL leave the thread's `messages` rows intact; applied to an already-archived thread it SHALL be a no-op that preserves the original `deleted_at`. `unarchiveThread` SHALL clear `deleted_at` so the thread returns to `getThread` and `listThreads`, and SHALL be a no-op on a live or absent thread. `purgeThread` SHALL be a hard delete — it SHALL remove the thread's `messages` rows and its `cortex_analysis_threads` row in a single transaction, and SHALL succeed as a no-op when no such thread exists. How each of these three verbs acts on a thread's descendants is specified separately. `listThreads` SHALL return threads whose `analysis_id` matches the supplied scope, ordered by `updated_at` descending, with pagination (`page`, `perPage`) plus a total count and a `hasMore` flag; it SHALL return only live threads unless the caller asks for archived ones. `listThreads` SHALL accept an optional `type` filter and an optional `parentThreadId` filter, each an exact match that narrows the result; an omitted filter SHALL NOT narrow anything, so a caller that supplies neither receives every type. `updated_at` SHALL reflect thread activity: it is bumped by title updates and by turn appends (the thread-history `appendTurn` touches it in the turn's transaction — see `harness-thread-history`), so the listing order is most-recently-active first. The bump SHALL only move `updated_at` forward — never to a value earlier than the row already holds, so a slower writer cannot rewind a fresher one's timestamp — and SHALL NOT touch an archived row.
 
 #### Scenario: Listing is scoped to one analysis
 
@@ -58,13 +58,13 @@ A `ThreadStore` SHALL be created via a dependency-injected factory bound to a Po
 
 - **GIVEN** a live thread
 - **WHEN** `updateTitle` is called
-- **THEN** only the `title` (and `updated_at`) change and no other field is persisted
+- **THEN** only the `title`, `title_set_by_user`, and `updated_at` change, `title_set_by_user` is `true`, and no other field is persisted
 
 #### Scenario: Archive hides the thread and keeps everything
 
 - **GIVEN** a live thread with persisted messages
 - **WHEN** `archiveThread` is called
-- **THEN** the thread no longer appears in `listThreads` or `getThread`, and its row and every one of its `messages` rows remain in storage
+- **THEN** the thread no longer appears in the default `listThreads` or in `getThread`, and its row and every one of its `messages` rows remain in storage
 
 #### Scenario: Archiving twice preserves the original tombstone
 
@@ -77,6 +77,12 @@ A `ThreadStore` SHALL be created via a dependency-injected factory bound to a Po
 - **GIVEN** an archived thread with persisted messages
 - **WHEN** `unarchiveThread` is called
 - **THEN** the thread is returned by `getThread`, appears in `listThreads` for its analysis, and its messages are readable as before
+
+#### Scenario: A live thread reports no tombstone
+
+- **GIVEN** a live thread
+- **WHEN** it is returned by `getThread` or `listThreads`
+- **THEN** its `deletedAt` is null
 
 #### Scenario: Delete removes the thread and its messages
 
@@ -265,35 +271,54 @@ The asymmetry is deliberate. A symmetric cascade would restore a child that a us
 
 ### Requirement: Hard delete reclaims the whole subtree
 
-`purgeThread` SHALL remove the named thread, every descendant reachable through `parent_thread_id` at any depth, and the `messages` rows of every thread in that set, in the single transaction it already opens. The message delete SHALL cover the same depth the database cascade covers, because the cascade removes descendant rows recursively and would otherwise leave a deeper thread's messages behind with nothing naming them. A failure partway SHALL leave the whole subtree intact — no thread stripped of its transcript, and no transcript with nothing naming it.
+`purgeThread` MUST remove the named thread and each descendant that `parent_thread_id` reaches, at any depth. It MUST also remove the `messages` rows, the turn records, and the kept tool outputs of each thread in that set. It does this in the one transaction that it opens.
 
-`purgeThread` MUST give back the thread ids that it erased, as a readonly array in no promised order. The transaction walks that set already, thus the value restates nothing that the store must compute again. The array MUST carry the named thread and every descendant. A purge that removes nothing MUST give back an empty array, thus an absent thread stays a success with no member.
+The deletes of the messages, of the turn records, and of the kept tool outputs MUST cover the depth that the database cascade covers. The cascade removes the descendant thread rows recursively. The messages, the turn records, and the kept tool outputs have no foreign key to a thread row. Thus a shallower delete leaves the rows of a deeper thread with nothing that names them.
 
-The store MUST give the ids alone. It holds a Postgres pool and no filesystem seam, thus it names no file and it removes none. A host that reclaims the bytes of a purged thread composes each path from these ids, with the layout helper of the workspace.
+The purge reaches a kept tool output by its `thread_id` (refer to the postgres-storage-backend capability). The delete MUST use the subtree walk of the other deletes, before the delete of the thread rows. A kept text of a run names no thread, thus a thread purge does not reach it.
+
+A failure partway MUST leave the whole subtree intact. No thread loses its transcript, and no transcript loses the thread that names it.
+
+`purgeThread` MUST give back the ids of the threads that it erased, as a readonly array in no promised order. The transaction walks that set already, thus the value restates nothing that the store must compute again. The array MUST carry the named thread and each descendant. A purge that removes nothing MUST give back an empty array, thus an absent thread stays a success with no member.
+
+The store MUST give the ids alone. It holds a Postgres pool and no filesystem seam, thus it names no file and it removes none. A host that reclaims the bytes of a purged thread makes each path from these ids, with the layout helper of the workspace.
 
 #### Scenario: Purging a parent removes its children
 
-- **GIVEN** a conversation thread with two child threads, each carrying messages
+- **GIVEN** a conversation thread with two child threads, each with messages
 - **WHEN** `purgeThread` runs on the conversation thread
 - **THEN** no `cortex_analysis_threads` row and no `messages` row remains for any of the three
 
 #### Scenario: Purging reaches a grandchild's messages
 
-- **GIVEN** a thread with a child, and that child with a child of its own, each carrying messages
+- **GIVEN** a thread with a child, and that child with a child of its own, each with messages
 - **WHEN** `purgeThread` runs on the top thread
 - **THEN** no `messages` row remains for any of the three threads
+
+#### Scenario: Purging removes the turn records
+
+- **GIVEN** a conversation thread with a child thread, and each thread with a closed chat turn
+- **WHEN** `purgeThread` runs on the conversation thread
+- **THEN** no `cortex_thread_turns` row remains for either thread
+
+#### Scenario: Purging removes the kept tool outputs of the subtree
+
+- **GIVEN** a conversation thread with a child thread, and each thread with a kept text of a chat turn
+- **AND** a kept text of a run of the same analysis
+- **WHEN** `purgeThread` runs on the conversation thread
+- **THEN** no `cortex_tool_outputs` row remains for either thread, and the kept text of the run stays
 
 #### Scenario: Purging a child leaves its parent standing
 
 - **GIVEN** a conversation thread with two child threads
 - **WHEN** `purgeThread` runs on one child
-- **THEN** that child and its messages are gone, and the conversation thread and the other child are unchanged
+- **THEN** that child and its messages are gone, and the conversation thread and the other child do not change
 
 #### Scenario: A failed subtree delete leaves everything
 
 - **GIVEN** a subtree whose delete fails partway
-- **WHEN** the failure is observed
-- **THEN** every thread row and every message in the subtree remains
+- **WHEN** the failure occurs
+- **THEN** each thread row, each message, each turn record, and each kept tool output of the subtree remains
 
 #### Scenario: The purge names every thread that it erased
 
@@ -352,3 +377,55 @@ Completed analysis outputs SHALL remain represented by Cortex-native ledgers, ty
 - **GIVEN** a completed step with `output/summary.md`
 - **WHEN** the AI SDK message migration has run
 - **THEN** the step summary remains available as a Cortex-native file/artifact result
+
+### Requirement: An archived thread is discoverable so it can be restored
+
+`listThreads` SHALL accept an `includeArchived` flag that widens the listing to archived threads alongside live ones, so a host can offer a restore surface without holding thread ids it obtained elsewhere. The flag SHALL default to omitted-or-`false`, which returns live threads only — the behaviour every existing caller already depends on. When it is set, archived and live threads SHALL be returned together in the same `updated_at` descending order, and the total count and `hasMore` flag SHALL describe the same widened set the page was drawn from, so a caller can page through everything the listing reports. An archived thread in the result SHALL carry its `deletedAt` timestamp, which is the only thing distinguishing it from a live one. The store SHALL NOT offer a way to list archived threads to the exclusion of live ones; a caller wanting that filters on `deletedAt`, which the returned shape makes possible.
+
+#### Scenario: The default listing still excludes archived threads
+
+- **GIVEN** an analysis with one live and one archived thread
+- **WHEN** `listThreads` is called without `includeArchived`
+- **THEN** only the live thread is returned, and the total counts one
+
+#### Scenario: Asking for archived threads returns both
+
+- **GIVEN** an analysis with one live and one archived thread
+- **WHEN** `listThreads` is called with `includeArchived` set
+- **THEN** both threads are returned, and the archived one carries a non-null `deletedAt`
+
+#### Scenario: The widened listing counts what it can page to
+
+- **GIVEN** an analysis with more live-plus-archived threads than one page holds
+- **WHEN** `listThreads` is called with `includeArchived` and a `perPage` smaller than that set
+- **THEN** the total counts every live and archived thread, and `hasMore` is true
+
+#### Scenario: A restored thread rejoins the default listing
+
+- **GIVEN** an archived thread found through the widened listing
+- **WHEN** `unarchiveThread` is called with the id it reported
+- **THEN** the thread appears in a subsequent default `listThreads` with a null `deletedAt`
+
+### Requirement: The automatic title write
+
+`setAutoTitle(threadId, title)` SHALL set the title only while the live row has `title_set_by_user = false`, and it SHALL NOT change the flag. It SHALL bump `updated_at` forward the same way as `updateTitle`, and give the updated row, or `null` when it wrote nothing.
+
+Each automatic naming path of the harness SHALL use `setAutoTitle`, and each host rename route SHALL use `updateTitle`. The chat turn writes the first-prompt title of a conversation through `setAutoTitle`.
+
+#### Scenario: An automatic title replaces an earlier automatic title
+
+- **GIVEN** a live thread whose title no person set
+- **WHEN** `setAutoTitle` is called two times with two titles
+- **THEN** the thread holds the second title, and `title_set_by_user` stays `false`
+
+#### Scenario: A rename by a person stops each automatic title
+
+- **GIVEN** a live thread that a person renamed through `updateTitle`
+- **WHEN** `setAutoTitle` is called
+- **THEN** the call gives `null`, and the title does not change
+
+#### Scenario: The seed of a conversation obeys the flag
+
+- **GIVEN** an existing conversation whose title a person cleared
+- **WHEN** the next chat turn prepares
+- **THEN** the title stays empty
