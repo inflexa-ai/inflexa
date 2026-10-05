@@ -681,7 +681,7 @@ function fmtSteps(ids: string[]): string {
 /**
  * Map the terminal `RunStatus` (minus `running`) to a distinct outcome, naming the
  * failed/canceled steps where relevant. `completed` drains cleanly and exits 0 —
- * the runtime's live handles (ingress, pools, DBOS admin) otherwise keep the event
+ * the runtime's live handles (pools, DBOS admin) otherwise keep the event
  * loop busy and the process would never exit on its own. Every other terminal
  * status exits non-zero.
  */

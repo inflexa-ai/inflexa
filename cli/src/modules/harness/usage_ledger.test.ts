@@ -175,7 +175,7 @@ describe("a chat turn's calls land in the local ledger", () => {
                     provider: subChat,
                     signal: ctx.signal,
                     emit: ctx.emit,
-                    runStep: ctx.runStep,
+                    runStep: passthroughStep,
                     usageRecorder: recorder,
                     ...(ctx.turnUsage === undefined ? {} : { turnUsage: ctx.turnUsage }),
                 });
@@ -246,7 +246,13 @@ describe("a chat turn's calls land in the local ledger", () => {
         expect(ledger).toHaveLength(1);
         // Under the CONVERSATION agent's own id — the attribution that was missing from every row the
         // real ledger held, where only sub-agents and workflow agents ever appeared.
-        expect(ledger[0]).toMatchObject({ agent_id: "conversation-agent", call_path: "conversation-agent", thread_id: "thr-chat-turn", input_tokens: 320, output_tokens: 44 });
+        expect(ledger[0]).toMatchObject({
+            agent_id: "conversation-agent",
+            call_path: "conversation-agent",
+            thread_id: "thr-chat-turn",
+            input_tokens: 320,
+            output_tokens: 44,
+        });
         expect(getAnalysisUsageTotals("ana-chat-turn")._unsafeUnwrap()).toMatchObject({ calls: 1, inputTokens: 320, outputTokens: 44 });
     });
 

@@ -12,10 +12,8 @@ import {
     createWorkspaceFilesystem,
     makeLocalAuth,
     PAGE_ASSETS,
-    queryActiveSandboxes,
     registerNotificationSweep,
     registerSandboxReaper,
-    registerWatchdog,
     sweepEphemeralWorkflows,
     IMAGE_PACKAGES_FILE,
     type AgentSession,
@@ -39,7 +37,6 @@ import {
     type RunLauncher,
     type ThreadAgentResolver,
     type UsageRecorder,
-    type WatchdogDeps,
 } from "@inflexa-ai/harness";
 
 import { ensureRuntime, readConfig } from "../../lib/config.ts";
@@ -74,7 +71,6 @@ import {
 // below, thus a dev run keeps the pack out of its module graph.
 import type { ContentError } from "./content_extract.ts";
 import { createEphemeralEyes } from "./eyes.ts";
-import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
@@ -92,8 +88,8 @@ import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installA
 // The ordered, effectful tail of boot — validate skills → init state → assert
 // the connection budget → assemble the workflow cohort → run the embedder's
 // pre-launch hook → launch DBOS — is the harness's own `bootHarness`. This root
-// resolves the host-specific inputs (Postgres, providers, models, ingress, the
-// instance lock) and hands them to `bootHarness`, which owns the sequencing
+// resolves the host-specific inputs (Postgres, providers, models, the instance
+// lock) and hands them to `bootHarness`, which owns the sequencing
 // invariant: registration happens BEFORE `launchDbos`, because `DBOS.launch()`
 // runs recovery synchronously and resolves in-flight workflows by their
 // registered name, so a workflow not registered at launch cannot be reclaimed.
@@ -185,7 +181,6 @@ export type HarnessRuntime = {
      * time at the ready edge.
      */
     readonly connection: ModelConnectionIdentity;
-    readonly ingress: ExecIngress;
 };
 
 /** Why the runtime could not boot — each variant maps to one actionable user message. */
@@ -204,7 +199,6 @@ export type HarnessBootError =
     | { type: "model_required"; agents: readonly AgentName[] }
     | { type: "sandbox_engine_unresolved"; message: string }
     | { type: "postgres_unavailable"; cause: PostgresError }
-    | { type: "ingress_failed"; cause: IngressError }
     | { type: "runtime_already_active"; holderPid: number }
     | { type: "runtime_boot_failed"; cause: unknown };
 
@@ -279,8 +273,6 @@ export function describeBootError(e: HarnessBootError): string {
             return e.message;
         case "postgres_unavailable":
             return e.cause.message;
-        case "ingress_failed":
-            return "Could not bind the local callback listener (loopback, ephemeral port) — check for exhausted ports or a restrictive firewall.";
         case "runtime_already_active":
             // One DBOS engine with the executor "local" for each machine. The local server holds it, thus the
             // holder is usually the server, and a dev `run --plan` meets this while a server runs. The message
@@ -389,7 +381,6 @@ export type BootSeams = {
     readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
     /** Construct the sandbox client — a seam so boot tests can inspect the engine config it is wired with. */
     readonly createSandbox: typeof createSandboxClient;
-    readonly startIngress: () => Result<ExecIngress, IngressError>;
     readonly readKey: () => Promise<Result<string, ChatSetupError>>;
     /**
      * The `direct`-connection secret from the environment, resolved for the connection's configured
@@ -425,8 +416,6 @@ export type BootSeams = {
     readonly sweepAsks: (gateway: AskGateway) => Promise<number>;
     /** Register the orphaned-container reaper scheduled workflow. */
     readonly registerReaper: (deps: RegisterReaperDeps) => void;
-    /** Register the dead-sandbox liveness watchdog scheduled workflow. */
-    readonly registerWatchdog: (deps: WatchdogDeps) => void;
     /** Register the stale-notification sweep scheduled workflow. */
     readonly registerNotificationSweep: (deps: RegisterNotificationSweepDeps) => void;
     readonly probeEmbedding: typeof probeEmbeddingProvider;
@@ -436,7 +425,6 @@ const realSeams: BootSeams = {
     resolveSandboxEngine: resolveSandboxEngineOnce,
     ensurePostgres: ensurePostgresReady,
     createSandbox: createSandboxClient,
-    startIngress: () => startExecIngress(),
     readKey: readApiKey,
     readModelApiKey: resolveModelApiKey,
     resolveModel: resolveModelId,
@@ -445,18 +433,9 @@ const realSeams: BootSeams = {
     sweepEphemeral: sweepEphemeralWorkflows,
     sweepAsks: (gateway) => gateway.sweepExpired(),
     registerReaper: registerSandboxReaper,
-    registerWatchdog,
     registerNotificationSweep,
     probeEmbedding: probeEmbeddingProvider,
 };
-
-/**
- * Result transport for local sandboxes. The CLI is a poll-mode embedder: the
- * host polls the sandbox for results, so the sandbox needs no egress and no
- * callback ingress (dissolving #27/#41 locally). Callback mode is a managed-
- * embedder concern; flip this only to exercise that path locally.
- */
-const SANDBOX_TRANSPORT: "poll" | "callback" = "poll";
 
 let active: HarnessRuntime | null = null;
 
@@ -618,7 +597,7 @@ export function withPoolMissRemedy(outcome: PackageRequestOutcome, query: Packag
 /**
  * One boot attempt, run under the {@link bootHarnessRuntime} in-flight guard.
  * This root resolves the host-specific inputs — prerequisites → Postgres
- * readiness → callback ingress → providers/models → instance lock → pool — then
+ * readiness → providers/models → instance lock → pool — then
  * hands them to the harness's `bootHarness` (via the `boot` seam), which owns the
  * ordered tail: validate skills → init state → connection budget → assemble the
  * cohort → the embedder's `beforeLaunch` hook (ephemeral sweep, agent-switch
@@ -789,19 +768,6 @@ async function bootHarnessRuntimeOnce(
     // record merges nothing and leaves the report on the farm tracks alone.
     const imagePackagesFile = join(env.packageStoreDir, IMAGE_PACKAGES_FILE);
 
-    // The local CLI is a POLL-mode embedder: the host polls the sandbox for
-    // results, the sandbox initiates nothing, and there is no callback listener to
-    // bind (which is what closes #27/#41 locally). Callback mode — an ingress plus
-    // an advertised CORTEX_BASE_URL — exists for a managed embedder, not here.
-    let ingress: ExecIngress;
-    if (SANDBOX_TRANSPORT === "callback") {
-        const ingressResult = seams.startIngress();
-        if (ingressResult.isErr()) return err({ type: "ingress_failed", cause: ingressResult.error });
-        ingress = ingressResult.value;
-    } else {
-        ingress = noopExecIngress();
-    }
-
     // Serialize the DBOS-owning section: every process launches DBOS as executor
     // "local", so a second concurrent boot's launch-time recovery would adopt and
     // re-run this one's in-flight workflows. A stable executor id is required for
@@ -810,13 +776,11 @@ async function bootHarnessRuntimeOnce(
     // hard-killed prior holder's lock is reclaimed by pid, so it never wedges boot.
     const lock = acquireInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
     if (!lock.acquired) {
-        ingress.stop();
         return err({ type: "runtime_already_active", holderPid: lock.holderPid });
     }
 
     // Registration + launch throw on failure (DBOS SDK contract) — bridge to
-    // Result and release the ingress + runtime lock so a failed boot leaves
-    // nothing bound.
+    // Result and release the runtime lock so a failed boot leaves nothing held.
     let pool: Pool | null = null;
     try {
         pool = createPool({
@@ -954,10 +918,6 @@ async function bootHarnessRuntimeOnce(
             // dials (supplied below), not the backend kind. (`k8s` is a managed-embedder
             // concern, never selected here.)
             env: { backend: "docker", namespace: "" },
-            transport: SANDBOX_TRANSPORT,
-            // Empty in poll mode (the no-op ingress advertises no URL); the sandbox
-            // never dials out, so the harness ignores it.
-            cortexBaseUrl: ingress.cortexBaseUrl,
             // The runtime image bakes no R library and no Python library (the multi-arch
             // image resolves the host arch at pull time, so no container platform is
             // forced). The packages come from the store binds below.
@@ -1216,9 +1176,8 @@ async function bootHarnessRuntimeOnce(
         //      reclaimed runs, or the gauge would miss them and let a switch land
         //      mid-recovery.
         //   4. Register the sandbox-hygiene crons (reaper tears down orphaned
-        //      containers, watchdog converts a dead sandbox into a step failure,
-        //      sweep clears stale notification rows) — the embedder's duty, acting
-        //      only on rows/containers the harness created.
+        //      containers, sweep clears stale notification rows) — the embedder's
+        //      duty, acting only on rows/containers the harness created.
         // Every pool read uses `composition.pool` (typed `Pool`), not the
         // `Pool | null` local whose narrowing this deferred closure does not preserve.
         const beforeLaunch = async (): Promise<void> => {
@@ -1232,7 +1191,6 @@ async function bootHarnessRuntimeOnce(
                 initialSelections: { conversation: conversationSelection, sandbox: sandboxSelection, utility: utilitySelection },
             });
             seams.registerReaper({ pool: composition.pool, sandboxClient, logger });
-            seams.registerWatchdog({ queryActiveSandboxes: () => queryActiveSandboxes(composition.pool), sandboxClient, logger });
             seams.registerNotificationSweep({ pool: composition.pool, logger });
         };
 
@@ -1290,9 +1248,6 @@ async function bootHarnessRuntimeOnce(
             // corrupt the TUI. Telemetry init/flush stay CLI-side, so they are
             // no-ops here (the boot handle's default).
             initTelemetry: () => {},
-            // The harness's HTTP-drain slot. In poll mode the ingress is a no-op,
-            // but wiring it keeps the drain ordered ahead of DBOS shutdown.
-            closeHttpServer: async () => ingress.stop(),
             // The CLI owns process exit (`lib/shutdown.ts` flushes logs/otel then
             // exits), so the harness shutdown must not call `process.exit`.
             exit: () => {},
@@ -1313,14 +1268,12 @@ async function bootHarnessRuntimeOnce(
             // live role-model swaps (the connection is shared by all roles, so a swap changes only a
             // model), so `provider`/`mode` are read straight off the connection.
             connection: { provider: connection.provider, mode: connection.mode },
-            ingress,
         };
         active = runtime;
 
         onShutdown(async () => {
             // The harness's graceful-shutdown handle drives the durability-ordered
-            // teardown: mark draining, drain the ingress (via `closeHttpServer`),
-            // shut DBOS down, then close the pool. `exit` is a no-op — the CLI owns
+            // teardown: mark draining, shut DBOS down, then close the pool. `exit` is a no-op — the CLI owns
             // process exit.
             await booted.shutdown("cli-shutdown");
             // CLI-owned teardown the harness has no slot for: detach the live-switch
@@ -1333,7 +1286,6 @@ async function bootHarnessRuntimeOnce(
 
         return ok(runtime);
     } catch (cause) {
-        ingress.stop();
         if (pool) {
             await pool.end().catch(() => {
                 // Already failing boot; pool-drain noise would mask the real cause.
