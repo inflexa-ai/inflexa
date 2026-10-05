@@ -11,6 +11,7 @@ import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../loop/__fixtures__/scripted-provider.js";
 import type { CompactionRules } from "../loop/compaction.js";
 import { runAgent } from "../loop/run-agent.js";
+import { passthroughStep } from "../loop/run-step.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, contextRecordOf, withRequestInputTokens } from "../memory/ai-sdk-message-storage.js";
 import { storedMessagesToChat } from "../memory/conversation-display-replay.js";
@@ -691,7 +692,7 @@ describe("runChatTurn", () => {
                     provider,
                     signal: ctx.signal,
                     emit: ctx.emit,
-                    runStep: ctx.runStep,
+                    runStep: passthroughStep,
                     ...(ctx.turnUsage === undefined ? {} : { turnUsage: ctx.turnUsage }),
                 });
                 return ok({ answer: sub.finish.reason });
@@ -1134,7 +1135,7 @@ describe("runChatTurn — compaction", () => {
                         { role: "user", content: "go on" },
                     ],
                     forSubAgent(ctx.session, "sub-agent"),
-                    { provider, signal: ctx.signal, emit: ctx.emit, runStep: ctx.runStep },
+                    { provider, signal: ctx.signal, emit: ctx.emit, runStep: passthroughStep },
                 );
                 return ok({ answer: sub.finish.reason });
             },

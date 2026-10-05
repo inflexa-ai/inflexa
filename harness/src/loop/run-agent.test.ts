@@ -22,7 +22,7 @@ import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ProviderError } from "../providers/errors.js";
 import type { AgentChat, ChatRequest, ChatResponse, ChatUsage } from "../providers/types.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
-import { defineTool, withToolResultImage, withToolResultImages, type Tool } from "../tools/define-tool.js";
+import { defineTool, withToolCallRecord, withToolResultImage, withToolResultImages, type Tool } from "../tools/define-tool.js";
 import {
     isWrapUpRequest,
     makeMessage,
@@ -224,33 +224,82 @@ describe("runAgent — provider capability gate", () => {
 
 // ── executionMode partition (see the harness-tools spec) ─────────────
 
-describe("runAgent — workflow tools run unwrapped, in order", () => {
-    function workflowTool(): Tool {
+describe("runAgent — call records", () => {
+    /** A tool whose ok value carries its label as the call record; `ms` delays the settle. */
+    function recorderTool(folded: string[], executed: string[], fold?: (label: string) => void): Tool {
         return defineTool({
-            id: "workflow",
-            description: "A workflow-backed tool.",
-            executionMode: "workflow",
-            inputSchema: z.object({ label: z.string() }),
+            id: "recorder",
+            description: "Record the label.",
+            inputSchema: z.object({ label: z.string(), ms: z.number().default(0) }),
             describeCall: "none",
-            execute: async ({ label }) => ok({ label }),
+            execute: async ({ label, ms }) => {
+                if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+                executed.push(label);
+                return ok(withToolCallRecord({ label }, { label }));
+            },
+            foldCallRecord: (record) => {
+                folded.push(record.label);
+                fold?.(record.label);
+            },
         });
     }
 
-    it("dispatches a workflow tool without a runStep wrap; step tools still wrapped", async () => {
-        const provider = scriptedProvider([
-            makeMessage([toolUseBlock("tu-w", "echo", { label: "w" }), toolUseBlock("tu-b", "workflow", { label: "b" })], "tool_use"),
-            makeMessage([textBlock("done")], "end_turn"),
-        ]);
+    /**
+     * A `RunStep` that caches each step by name, as the durable store does. A tool
+     * step comes back as a JSON copy, thus a value that only lived in memory — a
+     * symbol key — does not survive it.
+     */
+    function cachingStep(cache: Map<string, unknown>): RunStep {
+        return async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+            if (cache.has(name)) return cache.get(name) as T;
+            const value = await fn();
+            cache.set(name, name.startsWith("tool-") ? JSON.parse(JSON.stringify(value)) : value);
+            return value;
+        };
+    }
 
-        const rec = recordingStep();
-        const { messages } = await runAgent(agentDef([echoTool(), workflowTool()]), GO, makeSession(), opts(provider, { runStep: rec.runStep }));
+    const script = () => [
+        makeMessage([toolUseBlock("tu-a", "recorder", { label: "a", ms: 20 }), toolUseBlock("tu-b", "recorder", { label: "b" })], "tool_use"),
+        makeMessage([textBlock("done")], "end_turn"),
+    ];
 
-        expect(rec.names).toEqual(["llm-0", "tool-echo-tu-w", "llm-1"]);
+    it("folds each record after the round, in call order, and the model never reads it", async () => {
+        const folded: string[] = [];
+        const executed: string[] = [];
 
-        // Results are assembled by original index regardless of execution order.
-        const blocks = toolResultParts(messages[2]);
-        expect(blocks.map((b) => b.toolCallId)).toEqual(["tu-w", "tu-b"]);
-        expect(outputValue(blocks[1]!)).toEqual({ label: "b" });
+        const { messages } = await runAgent(agentDef([recorderTool(folded, executed)]), GO, makeSession(), opts(scriptedProvider(script())));
+
+        // The later call settles first, and the fold still runs in call order.
+        expect(executed).toEqual(["b", "a"]);
+        expect(folded).toEqual(["a", "b"]);
+        expect(toolResultParts(messages[2]).map(outputValue)).toEqual([{ label: "a" }, { label: "b" }]);
+    });
+
+    it("folds the cached records again on a replay, without a second run of the tool", async () => {
+        const cache = new Map<string, unknown>();
+        const executed: string[] = [];
+        const first: string[] = [];
+        await runAgent(agentDef([recorderTool(first, executed)]), GO, makeSession(), opts(scriptedProvider(script()), { runStep: cachingStep(cache) }));
+
+        const replayed: string[] = [];
+        await runAgent(agentDef([recorderTool(replayed, executed)]), GO, makeSession(), opts(scriptedProvider(script()), { runStep: cachingStep(cache) }));
+
+        expect(executed).toEqual(["b", "a"]);
+        expect(replayed).toEqual(first);
+    });
+
+    it("logs a fold that throws, and folds the next record and finishes the run", async () => {
+        const logger = createCapturingLogger();
+        const folded: string[] = [];
+        const tool = recorderTool(folded, [], (label) => {
+            if (label === "a") throw new Error("the collector is broken");
+        });
+
+        const { finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(scriptedProvider(script()), { logger }));
+
+        expect(finish.reason).toBe("stop");
+        expect(folded).toEqual(["a", "b"]);
+        expect(logger.records.some((record) => record.level === "error" && record.msg.includes("a tool call record did not fold"))).toBe(true);
     });
 });
 
@@ -506,23 +555,23 @@ describe("runAgent — tool-error boundary", () => {
         expect(String(outputValue(result))).toContain("input validation failed");
     });
 
-    it("re-raises fatal workflow-backed errors instead of returning an error tool result", async () => {
+    it("re-raises a fatal error of an inline tool instead of returning an error tool result", async () => {
         const fatal = new Error("workflow cancelled");
-        const workflow = defineTool({
-            id: "workflow_fatal",
+        const inline = defineTool({
+            id: "inline_fatal",
             description: "Throws a fatal workflow error.",
-            executionMode: "workflow",
+            executionMode: "inline",
             inputSchema: z.object({}),
             describeCall: "none",
             execute: async () => {
                 throw fatal;
             },
         });
-        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "workflow_fatal", {})], "tool_use")]);
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "inline_fatal", {})], "tool_use")]);
 
         await expect(
             runAgent(
-                agentDef([workflow]),
+                agentDef([inline]),
                 GO,
                 makeSession(),
                 opts(provider, {
@@ -1060,22 +1109,22 @@ describe("runAgent — tool mask and budget", () => {
         expect(counts.get("writer")).toBe(1);
     });
 
-    it("runs a refused workflow-mode call with no step, the same as its dispatch", async () => {
+    it("runs a refused inline-mode call with no step, the same as its dispatch", async () => {
         const provider = scriptedProvider([
-            makeMessage([toolUseBlock("tu-wf", "workflow_echo", { label: "x" })], "tool_use"),
+            makeMessage([toolUseBlock("tu-inline", "inline_echo", { label: "x" })], "tool_use"),
             makeMessage([textBlock("done")], "end_turn"),
         ]);
         const rec = recordingStep();
-        const workflowEcho = defineTool({
-            id: "workflow_echo",
-            description: "A workflow-mode echo.",
-            executionMode: "workflow",
+        const inlineEcho = defineTool({
+            id: "inline_echo",
+            description: "An inline-mode echo.",
+            executionMode: "inline",
             inputSchema: z.object({ label: z.string() }),
             describeCall: "none",
             execute: async ({ label }) => ok({ label }),
         });
 
-        const { messages } = await runAgent(agentDef([workflowEcho]), GO, makeSession(), opts(provider, { runStep: rec.runStep, toolMask: "none" }));
+        const { messages } = await runAgent(agentDef([inlineEcho]), GO, makeSession(), opts(provider, { runStep: rec.runStep, toolMask: "none" }));
 
         expect(rec.names).toEqual(["llm-0", "llm-1"]);
         expect(isErrorResult(toolResultParts(messages[2])[0]!)).toBe(true);
@@ -1891,12 +1940,12 @@ function finishedDurationMs(events: readonly Extract<EmitEvent, { type: "tool-st
 /** The delay of the slow call in each duration case, in milliseconds. */
 const SLOW_MS = 60;
 
-/** A workflow-mode echo. The loop dispatches these one after another, not concurrently. */
-function workflowEchoTool(): Tool {
+/** An inline echo. The loop dispatches these one after another, not concurrently. */
+function inlineEchoTool(): Tool {
     return defineTool({
-        id: "workflow_echo",
-        description: "Echo the label back from a workflow-backed tool.",
-        executionMode: "workflow",
+        id: "inline_echo",
+        description: "Echo the label back from an inline tool.",
+        executionMode: "inline",
         inputSchema: z.object({ label: z.string(), ms: z.number().default(0) }),
         describeCall: "none",
         execute: async ({ label, ms }) => {
@@ -1921,16 +1970,16 @@ describe("runAgent — per-call duration", () => {
         expect(finishedDurationMs(events, "tu-fast")).toBeLessThan(SLOW_MS - 20);
     });
 
-    it("does not charge a sequential workflow-mode call for its predecessor", async () => {
+    it("does not charge a sequential inline call for its predecessor", async () => {
         const provider = scriptedProvider([
             makeMessage(
-                [toolUseBlock("tu-first", "workflow_echo", { label: "first", ms: SLOW_MS }), toolUseBlock("tu-second", "workflow_echo", { label: "second" })],
+                [toolUseBlock("tu-first", "inline_echo", { label: "first", ms: SLOW_MS }), toolUseBlock("tu-second", "inline_echo", { label: "second" })],
                 "tool_use",
             ),
             makeMessage([textBlock("done")], "end_turn"),
         ]);
 
-        const events = await runCapturingToolEvents([workflowEchoTool()], provider);
+        const events = await runCapturingToolEvents([inlineEchoTool()], provider);
 
         // The second call dispatches only after the first call completes. A figure
         // that started at the start of the round would include the first delay.
@@ -2044,21 +2093,21 @@ describe("runAgent — round sink", () => {
 
     it("gives the assistant message and a not-run result before a fatal tool throw", async () => {
         const fatal = new Error("workflow cancelled");
-        const workflow = defineTool({
-            id: "workflow_fatal",
+        const inline = defineTool({
+            id: "inline_fatal",
             description: "Throws a fatal workflow error.",
-            executionMode: "workflow",
+            executionMode: "inline",
             inputSchema: z.object({}),
             describeCall: "none",
             execute: async () => {
                 throw fatal;
             },
         });
-        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "workflow_fatal", {})], "tool_use")]);
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "inline_fatal", {})], "tool_use")]);
         const sink = recordingSink();
 
         await expect(
-            runAgent(agentDef([workflow]), GO, makeSession(), opts(provider, { onRound: sink.onRound, isFatalLoopError: (e) => e === fatal })),
+            runAgent(agentDef([inline]), GO, makeSession(), opts(provider, { onRound: sink.onRound, isFatalLoopError: (e) => e === fatal })),
         ).rejects.toBe(fatal);
 
         const last = sink.rounds.at(-1)!;

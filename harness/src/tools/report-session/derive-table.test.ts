@@ -25,11 +25,10 @@ import type { DbError } from "../../lib/db-result.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { ExecResult, SandboxRef, SandboxSpec, SubmitExecBody } from "../../sandbox/types.js";
+import type { ExecRequest, ExecResult, SandboxRef, SandboxSpec } from "../../sandbox/types.js";
 import type { SpawnSession } from "../../auth/types.js";
 import type { TestSpawn } from "../../sandbox/__fixtures__/spawn.js";
 import { runDeriveTableExecBody } from "../../tasks/derive-table-exec.js";
-import { workflowIdFromExec } from "../../sandbox/exec-id.js";
 import type { AppendDerivationOutcome, DerivationRecord } from "../../state/report-session-state.js";
 import { reportSessionDir } from "../../workspace/paths.js";
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
@@ -145,7 +144,7 @@ function makeLedger(outcome?: AppendDerivationOutcome, fault?: DbError): FakeLed
 interface FakeSandbox {
     readonly client: SandboxClient;
     readonly creates: TestSpawn[];
-    readonly submits: SubmitExecBody[];
+    readonly submits: ExecRequest[];
     readonly teardowns: string[];
 }
 
@@ -172,7 +171,7 @@ function makeSandbox(args: {
     readonly refuse?: { readonly reason: string; readonly suspend: boolean };
 }): FakeSandbox {
     const creates: TestSpawn[] = [];
-    const submits: SubmitExecBody[] = [];
+    const submits: ExecRequest[] = [];
     const teardowns: string[] = [];
     const ref: SandboxRef = { sandboxId: "sbx-derive-1", host: "127.0.0.1", port: 8765, backend: "docker", callbackSecret: "base64:secret" };
     const client = {
@@ -182,17 +181,13 @@ function makeSandbox(args: {
             creates.push({ analysisId: session.scope.analysisId, runId: session.runFrame.runId, stepId: session.runFrame.stepId, ...spec });
             return okAsync(ref);
         },
-        submitExec(_ref: SandboxRef, body: SubmitExecBody): Promise<void> {
-            submits.push(body);
-            return Promise.resolve();
-        },
-        async awaitExec(): Promise<ExecResult> {
+        async exec(_ref: SandboxRef, request: ExecRequest): Promise<ExecResult> {
+            submits.push(request);
             if (args.throws === true) {
                 throw new Error("the poll loop broke");
             }
-            const body = submits[submits.length - 1];
-            if (args.write !== undefined && body !== undefined) {
-                await args.write(hostSideOf(args.root, body.env![DERIVE_OUTPUT_ENV]));
+            if (args.write !== undefined) {
+                await args.write(hostSideOf(args.root, request.env![DERIVE_OUTPUT_ENV]!));
             }
             return args.reply ?? execResult({});
         },
@@ -646,23 +641,7 @@ describe("a composition with no sandbox", () => {
         expect(result.outcome).toBe("unavailable");
     });
 
-    it("submits an exec id that names the workflow that awaits it", async () => {
-        // A callback host reads the owner workflow out of the exec id alone. A flat id makes the completion
-        // callback unroutable, and the exec then settles on the pull backstop alone.
-        const root = await makeRoot();
-        const { tool, sandbox } = makeTool({ root });
-
-        await derive(tool, {});
-
-        const submitted = sandbox.submits[0];
-        expect(submitted).toBeDefined();
-        expect(workflowIdFromExec(submitted!.execId)).not.toBeNull();
-        expect(sandbox.creates[0]!.childWorkflowId).toBe(workflowIdFromExec(submitted!.execId));
-    });
-
-    it("derives whatever transport the client awaits under, because the container runs in a workflow", async () => {
-        // The runner is a registered workflow, thus the await is a body call under each transport. The tool
-        // reads no transport at all, and no composition refuses for one.
+    it("derives in a container that the derivation workflow owns", async () => {
         const root = await makeRoot();
         const { tool, sandbox, ledger } = makeTool({ root });
 
@@ -769,14 +748,12 @@ describe("buildDerivationExec", () => {
     it("runs the script through python -c inside the write mount", () => {
         const body = buildDerivationExec({
             script: "print(1)",
-            execId: "exec-9",
             workingDir: "/an-1/report-sessions/t1/derived",
             inputs: [{ path: "/an-1/data/x.csv", hash: "sha256:h1" }],
             output: "/an-1/report-sessions/t1/derived/y.csv",
         });
 
         expect(body.command).toEqual(["python3", "-c", "print(1)"]);
-        expect(body.execId).toBe("exec-9");
         expect(body.cwd).toBe("/an-1/report-sessions/t1/derived");
         expect(body.timeoutSeconds).toBe(300);
         expect(JSON.parse(body.env![DERIVE_INPUT_ENV])).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);

@@ -1,18 +1,13 @@
 /**
- * Transport-agnostic liveness escalation (the harness-sandbox-exec spec,
+ * Liveness escalation of the exec poll loop (the harness-sandbox-exec spec,
  * "sustained unavailability escalates to a liveness probe").
  *
- * The await loops observe the raw unreachability signal (consecutive
- * `unavailable` poll outcomes) but never adjudicate it themselves — poll
+ * The poll loop observes the raw unreachability signal (consecutive
+ * `unavailable` poll outcomes) but never adjudicates it itself — poll
  * failures conflate "unreachable" with "unknown execId / non-200". The
  * backend inspect (`SandboxClient.isAlive`) is the sole arbiter of dead
  * versus live-but-slow, invoked through {@link probeLiveness} once
  * {@link createEscalationPolicy} arms.
- *
- * Shared with the watchdog: {@link syntheticFailureReason} and
- * {@link syntheticFailureResult} are the one constructor for synthetic
- * failures, so reasons and result shape are identical no matter which
- * adjudicator (in-loop escalation or watchdog) produced them.
  */
 
 import type { ExecResult, SandboxLiveness, SandboxRef } from "./types.js";
@@ -33,9 +28,7 @@ export type ProbeVerdict =
 
 /**
  * The consecutive-unavailable counter: `unavailable` increments, `ok` resets,
- * and crossing `threshold` arms one probe and re-arms from zero. Pure state
- * over checkpointed poll outcomes, so a replaying loop walks the identical
- * poll/probe sequence.
+ * and crossing `threshold` arms one probe and re-arms from zero.
  */
 export function createEscalationPolicy(threshold: number = PROBE_AFTER_UNAVAILABLE_POLLS): {
     /** Record a poll outcome; true means "run the probe now". */
@@ -59,7 +52,7 @@ export function createEscalationPolicy(threshold: number = PROBE_AFTER_UNAVAILAB
 /**
  * Run the backend inspect and collapse it to a three-valued verdict. Never
  * throws: `isAlive` throws on transient backend API errors by contract, but
- * inside an await loop a failed probe is not a failed exec — the same
+ * inside the poll loop a failed probe is not a failed exec — the same
  * discipline as a failed poll — so a throw maps to `inconclusive` and the
  * caller resumes polling.
  */

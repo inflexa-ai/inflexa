@@ -1,7 +1,7 @@
 /**
- * `WorkspaceMutator` provenance-recording contract — the seam records a
- * file-tool provenance record on a successful confined write and stays silent
- * on every non-ok outcome and when no collector is wired.
+ * `WorkspaceMutator` provenance-recording contract — a successful confined
+ * write gives back its record, `recordWrite` records it as a file-tool
+ * provenance record, and every non-ok outcome gives back no record.
  *
  * These assertions are about the in-process collector; the write itself lands
  * on the host filesystem under a per-test temp tree.
@@ -15,7 +15,8 @@ import { join } from "node:path";
 
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
-import { createSessionWorkspaceMutator, createWorkspaceMutator } from "./mutator.js";
+import { readToolCallRecord } from "../define-tool.js";
+import { createSessionWorkspaceMutator, createWorkspaceMutator, type WorkspaceMutator } from "./mutator.js";
 import { createEditFileTool } from "./edit-file.js";
 import { createWriteFileTool } from "./write-file.js";
 import { ProvenanceCollector } from "../../provenance/collector.js";
@@ -23,13 +24,18 @@ import type { SessionProvenanceEvent } from "../../provenance/seam.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { stepWritePrefix } from "../../workspace/paths.js";
-import type { RunStep } from "../../loop/types.js";
 
 const ANALYSIS = "analysis-001";
 const RUN = "run-abc";
 const STEP = "step-1";
 
-const passthrough: RunStep = (_name, fn) => fn();
+/** Write, then record the write the way the fold of a tool does. */
+async function writeAndRecord(mutator: WorkspaceMutator, args: Parameters<WorkspaceMutator["writeFile"]>[0]) {
+    const result = await mutator.writeFile(args);
+    if (result.status === "ok") mutator.recordWrite(result.record);
+    return result;
+}
+
 const session = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS } });
 
 describe("WorkspaceMutator provenance recording", () => {
@@ -59,7 +65,7 @@ describe("WorkspaceMutator provenance recording", () => {
 
         const content = "id,value\n1,42\n";
         const contentBytes = Buffer.from(content, "utf8");
-        const result = await mutator.writeFile({ path: "output/x.csv", content, toolName: "write_file", invocationId: "inv-1", runStep: passthrough, session });
+        const result = await writeAndRecord(mutator, { path: "output/x.csv", content, toolName: "write_file", invocationId: "inv-1", session });
         expect(result.status).toBe("ok");
 
         const records = collector.getRecords();
@@ -80,12 +86,11 @@ describe("WorkspaceMutator provenance recording", () => {
     test("out_of_scope and out_of_prefix writes record nothing", async () => {
         // Escapes the analysis tree entirely.
         const scopeCollector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
-        const scoped = await buildMutator({ collector: scopeCollector }).writeFile({
+        const scoped = await writeAndRecord(buildMutator({ collector: scopeCollector }), {
             path: "../../../../other/x.csv",
             content: "x",
             toolName: "write_file",
             invocationId: "inv-1",
-            runStep: passthrough,
             session,
         });
         expect(scoped.status).toBe("out_of_scope");
@@ -93,12 +98,11 @@ describe("WorkspaceMutator provenance recording", () => {
 
         // In-tree but outside the step's writable working directory.
         const prefixCollector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
-        const prefixed = await buildMutator({ collector: prefixCollector }).writeFile({
+        const prefixed = await writeAndRecord(buildMutator({ collector: prefixCollector }), {
             path: `/${ANALYSIS}/data/inputs/x.csv`,
             content: "x",
             toolName: "write_file",
             invocationId: "inv-1",
-            runStep: passthrough,
             session,
         });
         expect(prefixed.status).toBe("out_of_prefix");
@@ -108,7 +112,7 @@ describe("WorkspaceMutator provenance recording", () => {
     test("a collector-less mutator writes successfully and records nothing (result unchanged)", async () => {
         const mutator = buildMutator();
         const content = "id,value\n1,42\n";
-        const result = await mutator.writeFile({ path: "output/x.csv", content, toolName: "write_file", invocationId: "inv-1", runStep: passthrough, session });
+        const result = await mutator.writeFile({ path: "output/x.csv", content, toolName: "write_file", invocationId: "inv-1", session });
         expect(result.status).toBe("ok");
         if (result.status === "ok") {
             expect(result.bytesWritten).toBe(Buffer.byteLength(content, "utf8"));
@@ -124,6 +128,7 @@ describe("WorkspaceMutator provenance recording", () => {
 
         const out = (await tool.execute({ path: "output/notes.md", content: "# notes\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
+        tool.foldCallRecord!(readToolCallRecord(out));
 
         // The key a manifest entry would use — `output/notes.md`, not a record-less leaf.
         const records = collector.getRecords();
@@ -142,12 +147,11 @@ describe("WorkspaceMutator provenance recording", () => {
         const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
         const mutator = buildMutator({ collector });
 
-        await mutator.writeFile({
+        await writeAndRecord(mutator, {
             path: "output/notes.md",
             content: "# notes\n",
             toolName: "write_file",
             invocationId: "inv-1",
-            runStep: passthrough,
             session,
         });
 
@@ -187,12 +191,11 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         const content = "# notes\n";
         const contentBytes = Buffer.from(content, "utf8");
 
-        const result = await mutator.writeFile({
+        const result = await writeAndRecord(mutator, {
             path: "notes/summary.md",
             content,
             toolName: "write_file",
             invocationId: "inv-1",
-            runStep: passthrough,
             session: chatSession,
         });
         expect(result.status).toBe("ok");
@@ -219,12 +222,11 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         const { mutator, events } = buildSessionMutator();
         const bare = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS } });
 
-        const result = await mutator.writeFile({
+        const result = await writeAndRecord(mutator, {
             path: "notes/a.md",
             content: "a",
             toolName: "edit_file",
             invocationId: "inv-1",
-            runStep: passthrough,
             session: bare,
         });
         expect(result.status).toBe("ok");
@@ -236,22 +238,20 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
     test("a traversal escape and a foreign analysis are out_of_scope, land nothing, and emit nothing", async () => {
         const { mutator, events } = buildSessionMutator();
 
-        const escaped = await mutator.writeFile({
+        const escaped = await writeAndRecord(mutator, {
             path: "../outside/x.csv",
             content: "x",
             toolName: "write_file",
             invocationId: "inv-1",
-            runStep: passthrough,
             session: chatSession,
         });
         expect(escaped.status).toBe("out_of_scope");
 
-        const foreign = await mutator.writeFile({
+        const foreign = await writeAndRecord(mutator, {
             path: "/other-analysis/x.csv",
             content: "x",
             toolName: "write_file",
             invocationId: "inv-1",
-            runStep: passthrough,
             session: chatSession,
         });
         expect(foreign.status).toBe("out_of_scope");
@@ -268,12 +268,11 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         await mkdir(join(basePath, ANALYSIS), { recursive: true });
         await symlink(outside, join(basePath, ANALYSIS, "leak"));
 
-        const result = await mutator.writeFile({
+        const result = await writeAndRecord(mutator, {
             path: "leak/x.csv",
             content: "x",
             toolName: "write_file",
             invocationId: "inv-1",
-            runStep: passthrough,
             session: chatSession,
         });
         expect(result.status).toBe("out_of_prefix");
@@ -301,7 +300,6 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
                 content: "x",
                 toolName: "write_file",
                 invocationId: `inv-${attempt}`,
-                runStep: passthrough,
                 session: chatSession,
             });
             const plant = (async () => {
@@ -327,12 +325,11 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
 
     test("an unbound provenance seam records nothing and the write proceeds unchanged", async () => {
         const mutator = createSessionWorkspaceMutator({ resolveWorkspaceRoot: (id) => join(basePath, id) });
-        const result = await mutator.writeFile({
+        const result = await writeAndRecord(mutator, {
             path: "notes/b.md",
             content: "b",
             toolName: "write_file",
             invocationId: "inv-1",
-            runStep: passthrough,
             session: chatSession,
         });
         expect(result.status).toBe("ok");
@@ -350,11 +347,13 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
 
         const written = (await writeTool.execute({ path: "notes/draft.md", content: "alpha beta\n" }, ctx))._unsafeUnwrap();
         expect(written.status).toBe("ok");
+        writeTool.foldCallRecord!(readToolCallRecord(written));
 
         const edited = (
             await editTool.execute({ path: "notes/draft.md", old_string: "beta", new_string: "gamma", replace_all: false, regex: false }, ctx)
         )._unsafeUnwrap();
         expect(edited.status).toBe("ok");
+        editTool.foldCallRecord!(readToolCallRecord(edited));
         expect(readFileSync(join(basePath, "analysis-001", "notes", "draft.md"), "utf8")).toBe("alpha gamma\n");
 
         expect(events.map((event) => (event.type === "write-file" ? event.tool : event.type))).toEqual(["write_file", "edit_file"]);

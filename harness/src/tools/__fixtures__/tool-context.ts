@@ -25,7 +25,6 @@ export function makeToolContext(signal?: AbortSignal): TestToolContext {
         emit: (event) => {
             emitted.push(event);
         },
-        runStep: (_name, fn) => fn(),
         ask: (request) => deny.ask(request),
     };
     return { ctx, emitted };

@@ -21,7 +21,7 @@ import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
-import { ATTR_INFLEXA_TOOL_USE_ID, passThroughSpan, stableSpan } from "../lib/otel-spans.js";
+import { passThroughSpan } from "../lib/otel-spans.js";
 import { ResultError, unwrapOrThrow } from "../lib/result.js";
 import { describeZodIssueShapes } from "../lib/zod-issue-shape.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
@@ -43,7 +43,15 @@ import { continueAgent, type ContinuationResult } from "./continue-agent.js";
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
-import { isToolError, readToolResultImages, type Tool, type ToolContext, type ToolError, type ToolResultImage } from "../tools/define-tool.js";
+import {
+    isToolError,
+    readToolCallRecord,
+    readToolResultImages,
+    type Tool,
+    type ToolContext,
+    type ToolError,
+    type ToolResultImage,
+} from "../tools/define-tool.js";
 import { labelToolFailure, labelToolValidationFailure, recordToolException, traceAgentRun, traceToolCall } from "./genai-spans.js";
 import { addChatUsage, countChatTokens, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
@@ -393,18 +401,11 @@ export function openLoop(
     const turnUsage: AgentRunUsage = opts.turnUsage ?? {};
     const turnRoot = isTurnRoot(opts);
 
-    const toolCtx = (tu: ToolCallPart, names: StepNameFormatter): ToolContext => ({
+    const toolCtx = (tu: ToolCallPart): ToolContext => ({
         invocationId: tu.toolCallId,
         session,
         signal,
         emit,
-        runStep: (name, fn) => {
-            const stepName = `${names.tool(tu.toolName, tu.toolCallId)}:${name}`;
-            return runStep(stepName, () => {
-                stableSpan(stepName, `tool:${tu.toolName}:${name}`, { [ATTR_INFLEXA_TOOL_USE_ID]: tu.toolCallId });
-                return fn();
-            });
-        },
         ask,
         turnUsage,
     });
@@ -589,7 +590,7 @@ export function openLoop(
         names: StepNameFormatter,
     ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> => {
         const refusals = refusalsFor(calls, mask, opts.toolBudget, used);
-        return dispatchTools(calls, refusals, toolsById, (tu) => toolCtx(tu, names), isFatalLoopError, callStep, names.tool, encoding, cut);
+        return dispatchTools(calls, refusals, toolsById, toolCtx, isFatalLoopError, callStep, names.tool, encoding, cut);
     };
 
     const stopOnResolved = async (index: number): Promise<RunAgentResult> => {
@@ -1101,7 +1102,8 @@ function appendDeferredImages(messages: LoopMessage[], results: readonly ToolRes
 }
 
 /**
- * Dispatch one round of tool calls, and measure the time of each call.
+ * Dispatch one round of tool calls, measure the time of each call, and fold the
+ * call record of each call in call order.
  *
  * `refusals`, `results`, `durations` and `resultDetails` are positionally aligned
  * with `toolUses`; `refusals[i]` is the refusal text, or `undefined` if the call runs.
@@ -1144,14 +1146,13 @@ async function dispatchTools(
     // denial, and a tool with no result hook each leave the index unassigned,
     // and `settleRound` then reads the call detail.
     const resultDetails = new Array<ToolCallDetail | undefined>(toolUses.length);
+    const records = new Array<unknown>(toolUses.length);
     const stepTools: { tu: ToolCallPart; idx: number }[] = [];
-    const workflowTools: { tu: ToolCallPart; idx: number }[] = [];
     const inlineTools: { tu: ToolCallPart; idx: number }[] = [];
 
     for (const [idx, tu] of toolUses.entries()) {
         const mode = toolsById.get(tu.toolName)?.executionMode ?? "step";
-        if (mode === "workflow") workflowTools.push({ tu, idx });
-        else if (mode === "inline") inlineTools.push({ tu, idx });
+        if (mode === "inline") inlineTools.push({ tu, idx });
         else stepTools.push({ tu, idx });
     }
 
@@ -1164,21 +1165,39 @@ async function dispatchTools(
                 const dispatched = readDispatchedStep(settled);
                 results[idx] = dispatched.result;
                 if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
+                records[idx] = dispatched.record;
             });
         }),
     );
 
-    // A workflow-mode and an inline-mode call run unwrapped, one after another.
-    for (const { tu, idx } of [...workflowTools, ...inlineTools]) {
+    for (const { tu, idx } of inlineTools) {
         const refusal = refusals[idx];
         const startedAt = performance.now();
         const dispatched = await dispatch(tu, refusal);
         results[idx] = dispatched.result;
         if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
+        records[idx] = dispatched.record;
         if (refusal === undefined) durations[idx] = elapsedMs(startedAt);
     }
 
+    // After the whole round, in call order: the parallel step calls settle in any
+    // order, and a replay must fold the same records in the same sequence.
+    for (const [idx, tu] of toolUses.entries()) {
+        const record = records[idx];
+        if (record !== undefined) foldCallRecord(toolsById.get(tu.toolName), tu, record, encoding.log);
+    }
+
     return { results, durations, resultDetails };
+}
+
+/** Hand one call record to the tool that made it. A throw is logged, because the call has settled already. */
+function foldCallRecord(tool: Tool | undefined, tu: ToolCallPart, record: unknown, log: Logger): void {
+    if (tool?.foldCallRecord === undefined) return;
+    try {
+        tool.foldCallRecord(record);
+    } catch (err) {
+        log.error("a tool call record did not fold", { tool: tool.id, toolCallId: tu.toolCallId, ...log.errorFields(err) });
+    }
 }
 
 /** Whole milliseconds since `startedAt`, on the monotonic clock that took that mark. */
@@ -1187,17 +1206,19 @@ function elapsedMs(startedAt: number): number {
 }
 
 /**
- * One settled tool call: the result the model reads, and the line that the tool's
- * own `describeResult` hook made of its ok value.
+ * One settled tool call: the result the model reads, the line that the tool's
+ * own `describeResult` hook made of its ok value, and the call record that the
+ * ok value carried.
  *
- * The detail rides beside the result, because the ok value it reads exists only
- * here. Past this point the value is JSON on a `tool_result` part, which drops a
- * symbol key and flattens every class, thus a hook that ran later would read a
- * shape its tool never produced.
+ * The detail and the record ride beside the result, because the ok value they
+ * come from exists only here. Past this point the value is JSON on a
+ * `tool_result` part, which drops a symbol key and flattens every class, thus a
+ * hook that ran later would read a shape its tool never produced.
  */
 interface DispatchedCall {
     readonly result: ToolResultPart;
     readonly detail?: ToolCallDetail;
+    readonly record?: unknown;
 }
 
 /**
@@ -1309,8 +1330,9 @@ async function execute(
         // The one place a result description runs: the ok value in hand, the
         // input already validated, and the guard inside the compute.
         const detail = computeResultDetail(tool, input, output.value, encoding.log);
+        const record = readToolCallRecord(output.value);
         const result = successResult(tu, output.value, encoding);
-        return detail === undefined ? { result } : { result, detail };
+        return { result, ...(detail === undefined ? {} : { detail }), ...(record === undefined ? {} : { record }) };
     } catch (err) {
         if (isFatalLoopError(err)) throw err;
         if (isAskRejected(err)) return { result: deniedResult(tu, err.feedback) };

@@ -9,6 +9,12 @@
  * invariant is concentrated in one place instead of being a per-tool
  * convention.
  *
+ * The write and its provenance record are two calls. `writeFile` lands the
+ * bytes and gives back the record of the write; the tool carries the record as
+ * its call record, and its fold hands it to `recordWrite`. The loop caches the
+ * tool call as one step, thus a replay never lands the bytes again, and the
+ * fold still records the write into fresh process state.
+ *
  * Two realizations serve the two agent contexts. `createWorkspaceMutator`
  * closes over fixed per-step coordinates and records into the step-scoped
  * lineage collector (the sandbox agents). `createSessionWorkspaceMutator`
@@ -34,7 +40,6 @@ import { computeSha256 } from "../../lib/fs-helpers.js";
 import { tryFs, tryFsWrite } from "../../lib/fs-result.js";
 import type { Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import type { RunStep } from "../../loop/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { bindSessionEmit, type ProvenanceSeam } from "../../provenance/seam.js";
 import { resolveForWrite, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
@@ -45,6 +50,27 @@ export type WriteFileResult =
     | { readonly status: "out_of_scope"; readonly path: string }
     | { readonly status: "out_of_prefix"; readonly path: string }
     | { readonly status: "symlink_denied"; readonly path: string };
+
+/**
+ * What one landed write leaves for provenance: the hash and the size of the
+ * exact bytes on disk, computed at the landing. Plain JSON, because the step
+ * cache of the tool call holds it.
+ */
+export interface WriteRecord {
+    readonly analysisId: string;
+    /** The thread of a session write; absent under a run. */
+    readonly threadId?: string;
+    /** Analysis-root-relative, forward-slashed. */
+    readonly path: string;
+    readonly hash: string;
+    readonly size: number;
+    readonly toolName: MutateToolName;
+    readonly invocationId: string;
+}
+
+/** `writeFile` gives back the result, and on success the record of the write for `recordWrite`. */
+export type WriteOutcome =
+    { readonly status: "ok"; readonly path: string; readonly bytesWritten: number; readonly record: WriteRecord } | Exclude<WriteFileResult, { status: "ok" }>;
 
 /**
  * Agent-visible name of the tool driving a confined write. Rides the write args
@@ -77,20 +103,25 @@ export interface WorkspaceMutator {
      * the invoking tool so a successful write is attributed to it in
      * provenance. `invocationId` is the tool call's loop id — pass the tool
      * context's `invocationId`: it rides the provenance record so the write's
-     * call activity gets a deterministic identity. `runStep` wraps the disk
-     * mutation in a replay-cached step — pass the tool context's `runStep`.
-     * `session` is the calling agent's session — pass the tool context's
-     * `session`: the step-scoped realization ignores it, the session-scoped
-     * one resolves its coordinates and its provenance attribution from it.
+     * call activity gets a deterministic identity. `session` is the calling
+     * agent's session — pass the tool context's `session`: the step-scoped
+     * realization ignores it, the session-scoped one resolves its coordinates
+     * and its provenance attribution from it.
+     *
+     * Records nothing: a successful write gives back its record for `recordWrite`.
      */
     writeFile(args: {
         readonly path: string;
         readonly content: string;
         readonly toolName: MutateToolName;
         readonly invocationId: string;
-        readonly runStep: RunStep;
         readonly session: AgentSession;
-    }): Promise<WriteFileResult>;
+    }): Promise<WriteOutcome>;
+    /**
+     * Record one landed write in provenance. A tool calls it from its call-record
+     * fold, thus the record reaches process-local state on each replay too.
+     */
+    recordWrite(record: WriteRecord): void;
 }
 
 /** Outcome of the hardened landing — the disk-touching half of a confined write. */
@@ -184,9 +215,9 @@ type ConfinedWriteOk = {
 
 /**
  * The shared write gauntlet both realizations run: resolve + confine
- * (`resolveForWrite`), then the hardened landing wrapped in `runStep`. A
- * refusal comes back as data; an ok carries what the caller's provenance
- * record needs — the analysis-relative path and the exact bytes that landed.
+ * (`resolveForWrite`), then the hardened landing. A refusal comes back as data;
+ * an ok carries what the caller's provenance record needs — the
+ * analysis-relative path and the exact bytes that landed.
  */
 async function confinedWrite(args: {
     readonly workspaceRoot: string;
@@ -194,7 +225,6 @@ async function confinedWrite(args: {
     readonly workingDir: string;
     readonly path: string;
     readonly content: string;
-    readonly runStep: RunStep;
 }): Promise<{ readonly status: Exclude<LandingStatus, "ok"> | "out_of_scope" } | ConfinedWriteOk> {
     const scoped = resolveForWrite({
         workspaceRoot: args.workspaceRoot,
@@ -213,52 +243,46 @@ async function confinedWrite(args: {
     const bytes = Buffer.from(args.content, "utf8");
     const prefix = resolvePath(args.workingDir);
 
-    // The loop dispatches a workflow-mode tool body unwrapped (see
-    // `dispatchTools` in loop/run-agent.ts), so a DBOS replay re-runs
-    // this body. The step wrapper caches the landing: a replay returns
-    // the recorded outcome instead of touching the disk again. On the
-    // chat route the injected `runStep` is the passthrough — the same
-    // call, no durability, no fork of this path.
-    const landed = await args.runStep("write", () => landBytes(prefix, scoped.absolute, bytes));
+    const landed = await landBytes(prefix, scoped.absolute, bytes);
     if (landed !== "ok") return { status: landed };
     return { status: "ok", relative, agentPath, bytes };
 }
 
 export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMutator {
     return {
-        async writeFile({ path, content, toolName, invocationId, runStep }) {
+        async writeFile({ path, content, toolName, invocationId }) {
             const landed = await confinedWrite({
                 workspaceRoot: deps.workspaceRoot,
                 analysisId: deps.analysisId,
                 workingDir: deps.workingDir,
                 path,
                 content,
-                runStep,
             });
             if (landed.status !== "ok") return { status: landed.status, path };
 
-            // Attest the write in-process from the exact bytes just written — the
-            // seam owns write provenance the same way it owns confinement. The
-            // record lands outside the write step on purpose: the collector is
-            // process-local state, so a recovered replay must re-record into the
-            // fresh collector even while the cached step skips the disk write.
-            //
             // `invocationId` is replay-stable: the model turn that minted the tool
             // call is a durably cached step, so a re-execution replays the same id.
             // That is what lets the bridge key a DETERMINISTIC call-activity
             // identifier on it — a wall-clock stamp here would be re-minted per
             // replay and must never reach an identifier or a formal PROV position.
-            if (deps.lineageCollector) {
-                deps.lineageCollector.recordFileToolWrite({
-                    path: landed.relative,
-                    hash: computeSha256(landed.bytes),
-                    size: landed.bytes.length,
-                    toolName,
-                    invocationId,
-                });
-            }
-
-            return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length };
+            const record: WriteRecord = {
+                analysisId: deps.analysisId,
+                path: landed.relative,
+                hash: computeSha256(landed.bytes),
+                size: landed.bytes.length,
+                toolName,
+                invocationId,
+            };
+            return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length, record };
+        },
+        recordWrite(record) {
+            deps.lineageCollector?.recordFileToolWrite({
+                path: record.path,
+                hash: record.hash,
+                size: record.size,
+                toolName: record.toolName,
+                invocationId: record.invocationId,
+            });
         },
     };
 }
@@ -295,7 +319,7 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
     const logger = (deps.logger ?? createNoopLogger()).named("workspace-mutator");
     const observe = bindSessionEmit(deps.provenance, logger);
     return {
-        async writeFile({ path, content, toolName, invocationId, runStep, session }) {
+        async writeFile({ path, content, toolName, invocationId, session }) {
             // Only an analysis scope has a workspace tree; under any other
             // scope there is nothing in scope to write.
             const scope = session.scope;
@@ -310,22 +334,31 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
                 workingDir: workspaceRoot,
                 path,
                 content,
-                runStep,
             });
             if (landed.status !== "ok") return { status: landed.status, path };
 
-            observe({
-                type: "write-file",
+            const record: WriteRecord = {
                 analysisId: scope.analysisId,
                 ...(scope.threadId !== undefined ? { threadId: scope.threadId } : {}),
                 path: landed.relative,
                 hash: computeSha256(landed.bytes),
                 size: landed.bytes.length,
-                tool: toolName,
+                toolName,
                 invocationId,
+            };
+            return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length, record };
+        },
+        recordWrite(record) {
+            observe({
+                type: "write-file",
+                analysisId: record.analysisId,
+                ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
+                path: record.path,
+                hash: record.hash,
+                size: record.size,
+                tool: record.toolName,
+                invocationId: record.invocationId,
             });
-
-            return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length };
         },
     };
 }

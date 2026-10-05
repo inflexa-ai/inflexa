@@ -58,7 +58,6 @@ function makeToolCtx(): ToolContext {
         session: makeRunSession(),
         signal: new AbortController().signal,
         emit: () => {},
-        runStep: (_name, fn) => fn(),
     };
 }
 

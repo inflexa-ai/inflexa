@@ -2,35 +2,35 @@
  * `execute_command` — the single chokepoint through which sandbox commands
  * run.
  *
- * Dependency-bearing factory (see the harness-durable-runtime spec): captures a `SandboxClient`, the
- * live `SandboxRef` for the step, and the per-call execId minter. No other
- * tool, agent, or workflow step is permitted to POST to sandbox-server's
- * `/exec` directly — `SandboxClient` is intentionally injected only here so
- * the durability / idempotency / liveness story `harness-sandbox-exec`
- * owns holds uniformly across all sandbox command execution.
+ * Dependency-bearing factory (see the harness-durable-runtime spec): captures a
+ * `SandboxClient` and the live `SandboxRef` for the step. No other tool, agent,
+ * or workflow step is permitted to POST to sandbox-server's `/exec` directly —
+ * `SandboxClient` is intentionally injected only here so the durability /
+ * idempotency / liveness story `harness-sandbox-exec` owns holds uniformly
+ * across all sandbox command execution.
  *
- * `execId` is derived as `${workflowId}:${stepId}:${functionId}` so replays
- * land on the cached DBOS step output rather than re-submitting; the same
- * `execId` is the step name `submitExec` uses (`sandbox.submit-exec.${execId}`).
+ * The loop runs each call as one durable step, and the exec runs inside it,
+ * thus the exec id is the id of that step and a replay returns the cached
+ * result with no submit.
  *
  * Provenance for files written *inside* the sandbox by the executed command
  * is NOT recorded here — sandbox-server emits provenance frames (see
  * `sandbox-provenance-tracking`), and artifact registration reconciles them.
- * The harness-side mutate tools (`write_file`, `edit_file`) hash and record
- * the writes *they* perform, but `execute_command`'s opaque commands do not.
+ * The frame of each exec rides the call record, and the fold feeds it to the
+ * lineage collector of the step.
  */
 
 import { posix as posixPath } from "node:path";
 
-import { ok } from "neverthrow";
+import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { SandboxRef } from "../../sandbox/types.js";
+import type { ProvenanceFrame, SandboxRef } from "../../sandbox/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { feedExecFrame } from "../../provenance/exec-frame.js";
-import { EXEC_STREAM_BYTE_CAP, boundExecResult } from "./result-bounds.js";
+import { EXEC_STREAM_BYTE_CAP, boundExecResult, type BoundedExecResult } from "./result-bounds.js";
 import { runSandboxExec } from "./run-exec.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
@@ -64,24 +64,23 @@ function scriptToken(command: readonly string[]): string | undefined {
     return command.find((arg) => SCRIPT_EXTENSIONS.test(arg));
 }
 
+/** What one exec leaves for the lineage collector of the step. */
+interface ExecCallRecord {
+    readonly command: readonly string[];
+    readonly exitCode: number | null;
+    readonly durationMs: number | null;
+    readonly provenance?: ProvenanceFrame;
+}
+
+type ExecuteCommandResult = { readonly status: "ok" } & BoundedExecResult;
+
 export interface ExecuteCommandDeps {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly sandboxClient: SandboxClient;
     /** Live sandbox handle for the step. Created once per step at composition root. */
     readonly sandbox: SandboxRef;
-    /** Stable across replay. The workflow's DBOS workflow id. */
-    readonly workflowId: string;
-    /** Stable across replay. The sandbox step's identifier within the workflow. */
-    readonly stepId: string;
-    /**
-     * Mints a stable per-call function id. The composition root closes over a
-     * monotonic counter; the agent loop's tool-call order is replay-deterministic
-     * (the LLM call wrapping it is a cached DBOS step), so the counter reaches
-     * the same value at each call site on replay.
-     */
-    readonly nextFunctionId: () => string;
-    /** Absolute unix-ms deadline for `awaitExec`. Typically derived from `step.timeout`. */
+    /** Absolute unix-ms deadline of the exec. Typically derived from `step.timeout`. */
     readonly deadlineMs: () => number;
     /**
      * In-sandbox absolute path of the agent's working directory (e.g.
@@ -90,8 +89,6 @@ export interface ExecuteCommandDeps {
      * and as the base a supplied relative `cwd` resolves against (see the harness-workspace-tools spec).
      */
     readonly defaultCwd: string;
-    /** Tag the active-sandbox row with the in-flight execId for the liveness watchdog. */
-    readonly markExecActive?: (execId: string) => Promise<void>;
     /**
      * Step-scoped lineage collector. Each exec's `ExecResult.provenance`
      * frame is fed here (reads → inputs, writes → outputs) so post-step
@@ -103,13 +100,10 @@ export interface ExecuteCommandDeps {
 }
 
 export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
-    const { sandboxClient, sandbox, workflowId, stepId, nextFunctionId, deadlineMs, defaultCwd, markExecActive, lineageCollector, mountRoot } = deps;
+    const { sandboxClient, sandbox, deadlineMs, defaultCwd, lineageCollector, mountRoot } = deps;
 
     return defineTool({
         id: "execute_command",
-        // `awaitExec`-recv is body-only (`DBOS.recv`), so this runs unwrapped in
-        // the workflow body; durability is self-owned (submit step + body recv). See the harness-tools spec.
-        executionMode: "workflow",
         description:
             "Run a command in the sandbox and return its stdout/stderr/exit code. " +
             "Use for scripts, CLI tools, shell pipes, and anything the workspace " +
@@ -142,44 +136,50 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
         // but display-only does not mean transient. A secret typed into an argv
         // outlives the turn that ran it.
         describeCall: ({ command }) => scriptToken(command) ?? command.join(" "),
-        execute: async ({ command, cwd, env, timeoutSeconds }, ctx) => {
-            const execId = `${workflowId}:${stepId}:${nextFunctionId()}`;
-
+        execute: async (
+            { command, cwd, env, timeoutSeconds },
+            ctx,
+        ): Promise<Result<ExecuteCommandResult | WithToolCallRecord<ExecuteCommandResult, ExecCallRecord>, ToolError>> => {
             const effectiveCwd = cwd === undefined ? defaultCwd : cwd.startsWith("/") ? cwd : posixPath.join(defaultCwd, cwd);
 
             const result = await runSandboxExec({
                 sandboxClient,
                 sandbox,
-                execId,
                 command,
                 cwd: effectiveCwd,
                 ...(env === undefined ? {} : { env }),
                 ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
                 deadlineMs: deadlineMs(),
                 emit: ctx.emit,
-                ...(markExecActive ? { markExecActive } : {}),
             });
 
-            // Thread the runtime file-I/O frame into the step's lineage collector.
-            // Best-effort: a collector failure must never fail the exec.
-            if (lineageCollector && mountRoot) {
-                try {
-                    feedExecFrame({
-                        collector: lineageCollector,
-                        mountRoot,
-                        command,
-                        exitCode: result.exitCode,
-                        durationMs: result.durationMs,
-                        ...(deps.logger ? { logger: deps.logger } : {}),
-                        ...(result.provenance ? { provenance: result.provenance } : {}),
-                    });
-                } catch (err) {
-                    const logger = (deps.logger ?? createNoopLogger()).named("execute_command");
-                    logger.warn("provenance frame handling failed (non-fatal)", { execId, ...logger.errorFields(err) });
-                }
+            const bounded = { status: "ok" as const, ...boundExecResult(result) };
+            if (!lineageCollector || !mountRoot) return ok(bounded);
+            const record: ExecCallRecord = {
+                command,
+                exitCode: result.exitCode,
+                durationMs: result.durationMs,
+                ...(result.provenance ? { provenance: result.provenance } : {}),
+            };
+            return ok(withToolCallRecord(bounded, record));
+        },
+        // Best-effort: a collector failure must never fail the exec.
+        foldCallRecord: (record) => {
+            if (!lineageCollector || !mountRoot) return;
+            try {
+                feedExecFrame({
+                    collector: lineageCollector,
+                    mountRoot,
+                    command: record.command,
+                    exitCode: record.exitCode,
+                    durationMs: record.durationMs,
+                    ...(deps.logger ? { logger: deps.logger } : {}),
+                    ...(record.provenance ? { provenance: record.provenance } : {}),
+                });
+            } catch (err) {
+                const logger = (deps.logger ?? createNoopLogger()).named("execute_command");
+                logger.warn("provenance frame handling failed (non-fatal)", logger.errorFields(err));
             }
-
-            return ok({ status: "ok" as const, ...boundExecResult(result) });
         },
     });
 }

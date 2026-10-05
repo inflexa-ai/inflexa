@@ -28,9 +28,6 @@ export interface ScanInputsDeps {
     /** Omit to skip the container readouts; the prefix readouts run regardless. */
     readonly sandboxClient?: SandboxClient;
     readonly sandbox?: SandboxRef;
-    readonly workflowId: string;
-    readonly stepId: string;
-    readonly nextFunctionId: () => string;
     readonly deadlineMs: () => number;
 }
 
@@ -74,7 +71,6 @@ export function createScanInputsTool(deps: ScanInputsDeps) {
                 fs: deps.workspaceFs,
                 ...(deps.sandboxClient && deps.sandbox ? { sandboxClient: deps.sandboxClient, sandbox: deps.sandbox } : {}),
                 mountRoot: `/${deps.analysisId}`,
-                execId: `${deps.workflowId}:${deps.stepId}:${deps.nextFunctionId()}`,
                 deadlineMs: deps.deadlineMs(),
                 emit: ctx.emit,
             });

@@ -40,15 +40,7 @@ describe("defineTool", () => {
         expect(tool.executionMode).toBe("step");
     });
 
-    it("preserves explicit workflow and inline execution modes", () => {
-        const workflow = defineTool({
-            id: "workflow-tool",
-            description: "Uses workflow context.",
-            executionMode: "workflow",
-            inputSchema: z.object({}),
-            describeCall: "none",
-            execute: async () => ok({ done: true }),
-        });
+    it("preserves the explicit inline execution mode", () => {
         const inline = defineTool({
             id: "inline-tool",
             description: "Pure deterministic helper.",
@@ -58,7 +50,6 @@ describe("defineTool", () => {
             execute: async () => ok({ done: true }),
         });
 
-        expect(workflow.executionMode).toBe("workflow");
         expect(inline.executionMode).toBe("inline");
     });
 

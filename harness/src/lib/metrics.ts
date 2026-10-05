@@ -226,13 +226,12 @@ export function elapsedSinceIso(startedAt: string | null | undefined, nowMs: num
  * Exec ids already counted, so a replay counts one exec one time.
  *
  * The run and step counters sit inside the DBOS step that persists the same
- * outcome, and DBOS never runs a cached step body a second time. An exec has
- * no such step: `awaitExec` returns into the workflow body, and a new step
- * around the record would shift the function-id sequence of every workflow
- * that is already in flight. An exec id is `{workflowId}:{stepId}:{functionId}`
- * and it is stable across a replay, thus it is the key that makes the record
- * idempotent. The set is process-local: a recovery in a fresh process holds no
- * memory of the first count and can count that exec again.
+ * outcome, and DBOS never runs a cached step body a second time. The exec
+ * record sits inside the step of its exec too, but a step that did not finish
+ * runs its body again on recovery. An exec id is `{workflowId}:{functionId}`
+ * and it is stable across that second run, thus it is the key that makes the
+ * record idempotent. The set is process-local: a recovery in a fresh process
+ * holds no memory of the first count and can count that exec again.
  */
 const countedExecs = new Set<string>();
 

@@ -17,26 +17,20 @@
  * that the sandbox sees. `teardown` removes the directory when this process
  * wrote it. A directory from an earlier process stays.
  *
- * ## Transport and confinement
+ * ## Confinement
  *
  * The container joins the default bridge and publishes sandbox-server's port to
- * `127.0.0.1` only, so the host can reach `/exec` but the LAN cannot. What the
- * sandbox may do *outbound* depends on the transport:
+ * `127.0.0.1` only, so the host can reach `/exec` but the LAN cannot. The
+ * sandbox initiates nothing, so it gets no egress. The container is created as
+ * root with `CAP_NET_ADMIN` and the `SANDBOX_EGRESS_FIREWALL` flag; the image's
+ * root entrypoint installs `iptables -P OUTPUT DROP` (allowing loopback and
+ * established return traffic) and then `setpriv`-drops to the uid-1000
+ * workload, which can neither reach the network nor flush the rules. The host
+ * polls `GET /exec/{execId}?since={cursor}` over the published port; the reply
+ * rides the established connection, so polling works with egress hard-blocked.
  *
- *   - **poll** (default): the sandbox initiates nothing, so it needs no egress.
- *     The container is created as root with `CAP_NET_ADMIN` and the
- *     `SANDBOX_EGRESS_FIREWALL` flag; the image's root entrypoint installs
- *     `iptables -P OUTPUT DROP` (allowing loopback and established return
- *     traffic) and then `setpriv`-drops to the uid-1000 workload, which can
- *     neither reach the network nor flush the rules. The host polls
- *     `GET /exec/{execId}?since={cursor}` over the published port; the reply
- *     rides the established connection, so polling works with egress hard-blocked.
- *   - **callback**: the sandbox is *allowed* egress and POSTs signed callbacks to
- *     `CORTEX_BASE_URL`. It runs as uid 1000 throughout with no `NET_ADMIN` and
- *     no firewall.
- *
- * Either way the workload ends as uid 1000 with `no-new-privileges` and no
- * effective capabilities.
+ * The workload ends as uid 1000 with `no-new-privileges` and no effective
+ * capabilities.
  */
 
 import { lstatSync } from "node:fs";
@@ -60,17 +54,7 @@ import { threadLimitEnv } from "./thread-env.js";
 function statusOf(e: SandboxError): number | undefined {
     return "status" in e ? e.status : undefined;
 }
-import type {
-    FarmSource,
-    ManagedSandbox,
-    SandboxIdentity,
-    SandboxLabels,
-    SandboxLiveness,
-    SandboxRef,
-    SandboxSpec,
-    SandboxTransport,
-    ToolchainSource,
-} from "./types.js";
+import type { FarmSource, ManagedSandbox, SandboxIdentity, SandboxLabels, SandboxLiveness, SandboxRef, SandboxSpec, ToolchainSource } from "./types.js";
 
 const SANDBOX_SERVER_PORT = 8765;
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -78,14 +62,12 @@ const HEALTH_TIMEOUT_MS = 30_000;
 /** Only this process dials the published port; binding it on every host interface would expose `/exec` to the LAN. */
 const SANDBOX_PORT_HOST_IP = "127.0.0.1";
 
-/** Matches `USER sandbox` (uid/gid 1000) in the sandbox images — the callback-mode workload user. */
-const SANDBOX_USER = "1000:1000";
 /**
- * Poll mode starts the container as root so the entrypoint can install the
- * egress firewall; the entrypoint then `setpriv`-drops to uid 1000, so the
- * workload still runs unprivileged. sandbox-server refuses to start as root
- * when the firewall flag is set, so an image whose entrypoint skips the drop
- * fails at create time rather than running privileged and unconfined.
+ * The container starts as root so the entrypoint can install the egress
+ * firewall; the entrypoint then `setpriv`-drops to uid 1000, so the workload
+ * still runs unprivileged. sandbox-server refuses to start as root when the
+ * firewall flag is set, so an image whose entrypoint skips the drop fails at
+ * create time rather than running privileged and unconfined.
  */
 const SANDBOX_ROOT_USER = "0:0";
 const HEALTH_POLL_MS = 250;
@@ -97,10 +79,6 @@ const CPU_FILES_DIR = ".cpu";
 
 export interface DockerClientConfig {
     image: string;
-    /** Cortex base URL injected into the sandbox env in callback mode so callbacks land here. Unused in poll mode. */
-    cortexBaseUrl: string;
-    /** Result transport. `poll` (default) confines the sandbox with the egress firewall; `callback` permits egress. */
-    transport?: SandboxTransport;
     /** Workspace-root resolution seam; each analysis's resolved root is the bind source for its tree mounts. */
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Host lib store; bind-mounted read-only at `/mnt/libs` when set. */
@@ -339,8 +317,6 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
     const docker = config.docker ?? (connection ? new Docker(connection) : new Docker());
     const logger = (config.logger ?? createNoopLogger()).named("docker-client");
     const fetchImpl = config.fetch ?? fetch;
-    const transport: SandboxTransport = config.transport ?? "poll";
-    const pollMode = transport === "poll";
     const readHostCpuinfo = config.readHostCpuinfo ?? readHostCpuinfoOnce;
     /** The cpu directory of each sandbox that this process wrote, for `teardown`. */
     const cpuDirs = new Map<string, string>();
@@ -466,17 +442,15 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
 
                     const limits = spec.resources;
 
-                    // Poll mode never dials out and carries no CORTEX_BASE_URL; it sets the
-                    // firewall flag so the root entrypoint installs the egress block before
-                    // dropping to uid 1000. Callback mode is the inverse.
+                    // The firewall flag makes the root entrypoint install the egress block
+                    // before it drops to uid 1000.
                     //
                     // Composed as one record, not as a list of `K=V`. A duplicate key in
                     // the Env array resolves at the libc that scans `environ`, thus the
                     // later spread must win here, not there.
                     const env = Object.entries({
-                        SANDBOX_TRANSPORT: transport,
                         SANDBOX_CALLBACK_SECRET: callbackSecret,
-                        ...(pollMode ? { SANDBOX_EGRESS_FIREWALL: "1" } : { CORTEX_BASE_URL: config.cortexBaseUrl }),
+                        SANDBOX_EGRESS_FIREWALL: "1",
                         ...threadLimitEnv(limits),
                         ...plan.env,
                         ...(spec.extraEnv ?? {}),
@@ -487,7 +461,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         ...(config.platform !== undefined && { platform: config.platform }),
                         Image: image,
                         Env: env,
-                        User: pollMode ? SANDBOX_ROOT_USER : SANDBOX_USER,
+                        User: SANDBOX_ROOT_USER,
                         WorkingDir: plan.workingDir,
                         Labels: mergeLabels(hostLabels, { ...harnessLabels(session, sandboxId), [OWNER_WORKFLOW_LABEL]: spec.childWorkflowId }),
                         ExposedPorts: { [`${SANDBOX_SERVER_PORT}/tcp`]: {} },
@@ -498,14 +472,14 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                                 [`${SANDBOX_SERVER_PORT}/tcp`]: [{ HostIp: SANDBOX_PORT_HOST_IP, HostPort: "0" }],
                             },
                             CapDrop: ["ALL"],
-                            // Poll mode grants the ROOT entrypoint exactly what its privileged
-                            // setup needs: NET_ADMIN to install the egress iptables rules,
-                            // SETUID/SETGID for the setpriv uid/gid drop to the workload user
-                            // (setresuid/setresgid fail EPERM without them), and SETPCAP to apply
-                            // setpriv's `--bounding-set=-all`. The entrypoint drops all of them
-                            // before the workload runs — the workload's capability sets end empty
-                            // — and `no-new-privileges` prevents regaining any.
-                            ...(pollMode ? { CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"] } : {}),
+                            // The ROOT entrypoint gets exactly what its privileged setup needs:
+                            // NET_ADMIN to install the egress iptables rules, SETUID/SETGID for
+                            // the setpriv uid/gid drop to the workload user (setresuid/setresgid
+                            // fail EPERM without them), and SETPCAP to apply setpriv's
+                            // `--bounding-set=-all`. The entrypoint drops all of them before the
+                            // workload runs — the workload's capability sets end empty — and
+                            // `no-new-privileges` prevents regaining any.
+                            CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"],
                             SecurityOpt: ["no-new-privileges"],
                             NanoCpus: Math.round(limits.cpu * 1e9),
                             Memory: limits.memoryGb * 1024 ** 3,

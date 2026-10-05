@@ -1,6 +1,6 @@
 /**
  * Sandbox-client types — the wire/persistence shapes that cross the
- * submit/recv protocol (see the harness-sandbox-exec spec) and the active-sandbox registry.
+ * submit/poll protocol (see the harness-sandbox-exec spec) and the active-sandbox registry.
  *
  * `SandboxRef` is the in-memory handle the harness uses to talk to a live
  * sandbox; it carries the per-sandbox `callbackSecret` (see the harness-sandbox-exec spec). The
@@ -20,19 +20,6 @@ import { PersistedSandboxRefSchema } from "../state/schema.js";
 
 export const SandboxBackend = z.enum(["docker", "k8s"]);
 export type SandboxBackend = z.infer<typeof SandboxBackend>;
-
-/**
- * How a command's progress events and terminal result reach the host. Chosen by
- * the embedder at its composition root and carried into the container as
- * `SANDBOX_TRANSPORT`; backend-independent. The OSS default is `poll`.
- *
- * - `poll`: the host polls `GET /exec/{execId}?since={cursor}`; the sandbox
- *   never dials out and needs no egress.
- * - `callback`: the sandbox POSTs signed event/completion callbacks; the
- *   embedder runs an ingress. `GET /exec/{execId}` stays the recovery backstop.
- */
-export const SandboxTransportSchema = z.enum(["poll", "callback"]);
-export type SandboxTransport = z.infer<typeof SandboxTransportSchema>;
 
 /**
  * The declared owner of the sandbox toolchain. `"image"` states that the
@@ -132,7 +119,7 @@ export type ExtendAnalysisFarm = (analysisId: string, queries: readonly PackageQ
  * Per-sandbox-machine liveness verdict. `oomKilled` is meaningful only when
  * `alive` is false: true when the backend reports the machine was killed for
  * exceeding its memory limit (Docker `State.OOMKilled`; K8s container
- * terminated reason `OOMKilled`) — the watchdog surfaces it as the
+ * terminated reason `OOMKilled`) — the exec surfaces it as the
  * `sandbox-oom-killed` failure reason instead of the generic `sandbox-dead`.
  */
 export interface SandboxLiveness {
@@ -178,8 +165,8 @@ export const ProvenanceFrameEntrySchema = z.object({
 export type ProvenanceFrameEntry = z.infer<typeof ProvenanceFrameEntrySchema>;
 
 /**
- * Runtime file-I/O frame sandbox-server attaches to the `/complete`
- * callback. Mirrors Go's `provenancePayload` — every field is
+ * Runtime file-I/O frame sandbox-server attaches to the terminal result.
+ * Mirrors Go's `provenancePayload` — every field is
  * `omitempty` on the wire, so each arm defaults so a completion that
  * omits the frame (or any arm) still parses.
  */
@@ -218,9 +205,9 @@ export const ExecUsageSchema = z
 export type ExecUsage = z.infer<typeof ExecUsageSchema>;
 
 /**
- * Final outcome of a single exec, returned by `awaitExec`. Mirrors the
- * sandbox-server completion payload plus a discriminant for synthetic
- * (watchdog-emitted) failures.
+ * Final outcome of a single exec, returned by `SandboxClient.exec`. Mirrors
+ * the sandbox-server completion payload plus a discriminant for a synthetic
+ * failure: the machine died under the exec.
  */
 export const ExecResultSchema = z.object({
     execId: z.string(),
@@ -236,27 +223,23 @@ export const ExecResultSchema = z.object({
      * a capped stream and an empty one are indistinguishable downstream.
      *
      * Optional because a sandbox image that pre-dates the cap omits both, and
-     * because the watchdog's synthetic failures carry neither.
+     * because a synthetic failure carries neither.
      */
     stdoutTruncated: z.boolean().optional(),
     stderrTruncated: z.boolean().optional(),
     stdoutTotalBytes: z.number().int().nonnegative().optional(),
     stderrTotalBytes: z.number().int().nonnegative().optional(),
-    /** Set when the watchdog synthesises a completion for a dead sandbox. */
+    /** Set when the liveness probe found the machine dead under the exec. */
     syntheticFailure: z
         .object({
             reason: z.string(),
         })
         .optional(),
-    /**
-     * Runtime file-I/O frame from sandbox-server. Optional so synthetic
-     * watchdog failures and pre-change cached recv messages parse; rides
-     * the recv payload into the durable DBOS step output.
-     */
+    /** Runtime file-I/O frame from sandbox-server. Absent from a synthetic failure. */
     provenance: ProvenanceFrameSchema.optional(),
     /**
      * Kernel accounting of the exec, for the sandbox-sizing histograms. Absent
-     * from a synthetic watchdog failure, from a sandbox image that predates the
+     * from a synthetic failure, from a sandbox image that predates the
      * frame, and from any exec whose command never spawned.
      */
     usage: ExecUsageSchema,
@@ -264,35 +247,9 @@ export const ExecResultSchema = z.object({
 export type ExecResult = z.infer<typeof ExecResultSchema>;
 
 /**
- * Per-message envelope on the per-exec DBOS topic. Real callbacks carry
- * a non-null `signature` and `timestamp`; the in-process watchdog uses a
- * `null` signature + a `synthetic-failure` payload (see `await-exec.ts`).
- *
- * `payloadDigest` is the hex SHA-256 of the exact bytes sandbox-server POSTed.
- * The HMAC signs that digest rather than the body itself, so the digest is all
- * verification needs — and carrying it instead of the bytes keeps the message
- * from holding a second copy of a payload that can be arbitrarily large.
- * Re-serializing the parsed payload would not do: Go's `encoding/json`
- * HTML-escapes `<`, `>`, `&` by default, so a JS re-serialization diverges for
- * any output containing those characters (common in bioinformatics: FASTA
- * headers, shell stderr, command pipelines).
- *
- * `payloadRaw` is the superseded form, kept optional so messages already in
- * flight or persisted still verify.
- */
-export const ExecEventMessageSchema = z.object({
-    payload: z.unknown(),
-    payloadDigest: z.string().optional(),
-    payloadRaw: z.string().optional(),
-    signature: z.string().nullable(),
-    timestamp: z.number().int().nullable(),
-});
-export type ExecEventMessage = z.infer<typeof ExecEventMessageSchema>;
-
-/**
  * One buffered progress event in a poll response: the sandbox's monotonic
  * per-exec sequence number (the poll cursor) plus the event payload the host
- * forwards via `emit` — the same payload a callback-mode event POST carries.
+ * forwards via `emit`.
  */
 export const PollEventSchema = z.object({
     seq: z.number().int(),
@@ -301,12 +258,11 @@ export const PollEventSchema = z.object({
 export type PollEvent = z.infer<typeof PollEventSchema>;
 
 /**
- * Body of `GET /exec/{execId}?since={cursor}` in poll mode. Mirrors Go's
+ * Body of `GET /exec/{execId}?since={cursor}`. Mirrors Go's
  * `pollResponseBody`: the events newer than the caller's cursor, the new
  * high-water `cursor`, a `truncated` marker set once the ring shed an event,
  * and — once the exec is terminal — the completion `result` (with its
- * provenance frame). The whole body is HMAC-signed, verified exactly as a
- * pushed completion is.
+ * provenance frame). The whole body is HMAC-signed.
  */
 export const PollResponseSchema = z.object({
     status: z.string(),
@@ -323,33 +279,17 @@ export const PollResponseSchema = z.object({
 export type PollResponse = z.infer<typeof PollResponseSchema>;
 
 /**
- * Done-marker shape the recv loop unwraps. Both real completion POSTs
- * (wrapped by the `/complete` handler) and watchdog synthetic-failure
- * sends use this discriminant.
+ * One command for `SandboxClient.exec`. It carries no exec id: the exec
+ * derives its id from the durable step it runs in.
  */
-export interface DoneMarker {
-    done: true;
-    result: ExecResult;
+export interface ExecRequest {
+    readonly command: readonly string[];
+    readonly cwd?: string;
+    readonly env?: Readonly<Record<string, string>>;
+    readonly timeoutSeconds?: number;
 }
 
-export interface SyntheticFailureMarker {
-    done: true;
-    result: ExecResult;
-    kind: "synthetic-failure";
-    reason: string;
-}
-
-export function isDoneMarker(value: unknown): value is DoneMarker {
-    return (
-        typeof value === "object" && value !== null && (value as { done?: unknown }).done === true && typeof (value as { result?: unknown }).result === "object"
-    );
-}
-
-export function isSyntheticFailure(value: unknown): value is SyntheticFailureMarker {
-    return isDoneMarker(value) && (value as { kind?: unknown }).kind === "synthetic-failure";
-}
-
-/** Wire shape `submitExec` POSTs to sandbox-server's `/exec` (change 4). */
+/** Wire shape the exec POSTs to sandbox-server's `/exec`. */
 export interface SubmitExecBody {
     command: string[];
     execId: string;
@@ -368,9 +308,6 @@ export interface SubmitExecBody {
 
 /** What a spawn needs beside its session. */
 export interface SandboxSpec {
-    /** The first `execId` that will fire against this sandbox; nullable for
-     *  early-create flows where the workflow mints the first execId later. */
-    execId?: string | null;
     /** Owning DBOS child workflow id (`"${parentRunId}-${N}"`). Recorded verbatim
      *  on the sandbox machine under `cortex/owner-workflow-id` so the reaper can
      *  map a cluster-side machine back to its workflow and check liveness. */
@@ -432,8 +369,7 @@ export interface ManagedSandbox {
 }
 
 /**
- * Per-step `emit` callback handed to `awaitExec`. May be async — `awaitExec`
- * runs in the workflow body (see the harness-tools spec) and `await`s each emit so the body-path
- * `DBOS.writeStream` it drives lands at a deterministic function-ID (see the harness-durable-runtime spec).
+ * Progress callback of `SandboxClient.exec`, called with each sandbox event in
+ * sequence order. The exec awaits each call before it polls again.
  */
 export type ExecEmit = (event: unknown) => void | Promise<void>;

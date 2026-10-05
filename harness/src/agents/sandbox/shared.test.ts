@@ -15,7 +15,7 @@ import {
 } from "../../prompts/sandbox-standards.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { SubmitExecBody } from "../../sandbox/types.js";
+import type { ExecRequest } from "../../sandbox/types.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 import { createBlockerHolder } from "../../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
@@ -68,8 +68,6 @@ describe("createSandboxAgent", () => {
         const stepOne = createSandboxAgent(
             makeFakeSandboxAgentDeps({
                 analysisId: "analysis-001",
-                runId: "run-001",
-                stepId: "step-001",
                 allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-001/step-001",
             }),
             meta,
@@ -78,9 +76,6 @@ describe("createSandboxAgent", () => {
         const stepTwo = createSandboxAgent(
             makeFakeSandboxAgentDeps({
                 analysisId: "analysis-999",
-                runId: "run-777",
-                stepId: "qc-and-normalize",
-                workflowId: "wf-777",
                 allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-777/qc-and-normalize",
             }),
             meta,
@@ -94,8 +89,6 @@ describe("createSandboxAgent", () => {
         const def = createSandboxAgent(
             makeFakeSandboxAgentDeps({
                 analysisId: "analysis-001",
-                runId: "run-001",
-                stepId: "step-001",
             }),
             meta,
             body,
@@ -140,12 +133,13 @@ describe("createSandboxAgent", () => {
     // sandbox and no exec — the same reason it can be attached to the planner, which has
     // no sandbox at all.
     it("wires list_available_refs over the host reference store, issuing no sandbox exec", async () => {
-        const submits: SubmitExecBody[] = [];
+        const submits: ExecRequest[] = [];
         const fake = makeFakeSandboxClient();
         const sandboxClient: SandboxClient = {
             ...fake,
-            async submitExec(_sandbox, body) {
-                submits.push(body);
+            async exec(sandbox, request, emit, deadline) {
+                submits.push(request);
+                return fake.exec(sandbox, request, emit, deadline);
             },
         };
         const root = await mkdtemp(join(tmpdir(), "shared-refs-"));
@@ -309,8 +303,16 @@ describe("createSandboxAgent — the farm-extension seam", () => {
     });
 
     it("the layer follows the seam, and each composition stays byte-stable across its own steps", () => {
-        const boundOne = createSandboxAgent({ ...makeFakeSandboxAgentDeps({ stepId: "s1" }), extendAnalysisFarm }, meta, body);
-        const boundTwo = createSandboxAgent({ ...makeFakeSandboxAgentDeps({ stepId: "s2" }), extendAnalysisFarm }, meta, body);
+        const boundOne = createSandboxAgent(
+            { ...makeFakeSandboxAgentDeps({ allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-001/s1" }), extendAnalysisFarm },
+            meta,
+            body,
+        );
+        const boundTwo = createSandboxAgent(
+            { ...makeFakeSandboxAgentDeps({ allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-001/s2" }), extendAnalysisFarm },
+            meta,
+            body,
+        );
         const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
 
         expect(boundTwo.systemPrompt).toBe(boundOne.systemPrompt);

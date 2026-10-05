@@ -29,9 +29,9 @@
  * condition one time, up front, the same discipline as the eyes. A per-attempt failure would instead read as
  * a transient fault, and it would invite a repeat of a call that can never pass.
  *
- * The container runs behind a seam, and never in the turn. An await of an exec is a workflow-body call
- * under the callback transport, and a report turn is not a body. Thus the tool takes an injected runner,
- * and a registered workflow owns the container. The tool holds no sandbox client, and it imports no DBOS.
+ * The container runs behind a seam, and never in the turn. An exec is a durable step of a workflow, and a
+ * report turn is not a workflow. Thus the tool takes an injected runner, and a registered workflow owns the
+ * container. The tool holds no sandbox client, and it imports no DBOS.
  */
 
 import { ok, type Result } from "neverthrow";
@@ -49,7 +49,7 @@ import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import type { ResourceSpec } from "../../config/resource-limits.js";
 import { snapshotEntry } from "../../report-model/reference-resolver.js";
 import { generateExecutionId } from "../../sandbox/execution-id.js";
-import type { ExecResult, SubmitExecBody } from "../../sandbox/types.js";
+import type { ExecRequest, ExecResult } from "../../sandbox/types.js";
 import type { DerivationRecord, DerivationSource, ReportSessionStateStore } from "../../state/report-session-state.js";
 import { isSafeId, reportSessionDerivedDir, toSandboxPath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
@@ -159,14 +159,12 @@ export interface DerivationInputMount {
  */
 export function buildDerivationExec(args: {
     readonly script: string;
-    readonly execId: string;
     readonly workingDir: string;
     readonly inputs: readonly DerivationInputMount[];
     readonly output: string;
-}): SubmitExecBody {
+}): ExecRequest {
     return {
         command: ["python3", "-c", args.script],
-        execId: args.execId,
         cwd: args.workingDir,
         env: {
             [DERIVE_INPUT_ENV]: JSON.stringify(args.inputs.map((input) => ({ path: input.path, hash: input.hash }))),
@@ -220,9 +218,9 @@ export interface DeriveTableExecInput {
 /**
  * Run one derivation exec and give the terminal result back.
  *
- * The composition realizes it over a registered workflow, thus the container lives inside a workflow body
- * and the await is legal under each transport. A fault of the sandbox rejects the promise, and the tool
- * turns that rejection into one short detail.
+ * The composition realizes it over a registered workflow, thus the container and its exec live inside a
+ * workflow. A fault of the sandbox rejects the promise, and the tool turns that rejection into one short
+ * detail.
  */
 export type DeriveTableRunner = (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>;
 

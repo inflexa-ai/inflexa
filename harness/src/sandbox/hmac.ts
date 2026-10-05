@@ -1,36 +1,24 @@
 /**
- * HMAC verification for sandbox callbacks (see the harness-sandbox-exec spec).
+ * HMAC signing of the sandbox exec protocol (see the harness-sandbox-exec spec).
  *
- * sandbox-server signs every outbound event/completion POST with
- * `X-Sandbox-Signature = hex(HMAC-SHA256(callbackSecret,
- *   "${execId}:${timestamp}:${sha256Hex(body)}"))` plus a
- * `X-Sandbox-Timestamp` header. The Cortex-side callback endpoint is
- * **dumb** — it forwards the headers verbatim onto the per-exec DBOS
- * topic. Verification happens here, in the workflow-body recv loop,
- * because that body holds the `callbackSecret` from the cached
- * `createSandbox` step output.
+ * Both directions use one construction: `X-Sandbox-Signature =
+ * hex(HMAC-SHA256(secret, "${execId}:${timestamp}:${sha256Hex(body)}"))` plus
+ * a `X-Sandbox-Timestamp` header. The host signs each request it sends to
+ * sandbox-server, and sandbox-server signs each poll response at request time.
+ * The secret is per sandbox, and it lives only in the cached `createSandbox`
+ * step output.
  *
- * A bad or stale signature triggers a hard cancel of the run — under
- * NetworkPolicy isolation a forged event implies a bug or a breach,
- * neither of which should keep a 3-hour sandbox burning.
+ * A bad or stale signature on a response is a hard cancel of the exec — under
+ * NetworkPolicy isolation a forged response implies a bug or a breach, neither
+ * of which should keep a 3-hour sandbox burning.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
-import { digestBody } from "./digest.js";
-
-export interface VerifyCallbackInput {
+export interface VerifyExecMessageInput {
     execId: string;
-    /**
-     * The bytes the sandbox-server POSTed. Supply this or `bodyDigest`.
-     *
-     * The signature covers the hex SHA-256 of the body, never the body itself,
-     * so a caller that has already hashed the bytes can verify from the digest
-     * alone — which is what keeps a large payload from being carried twice.
-     */
-    body?: Buffer | string;
-    /** Hex SHA-256 of the POSTed bytes. Takes precedence over `body`. */
-    bodyDigest?: string;
+    /** The exact bytes that sandbox-server signed. */
+    body: Buffer | string;
     /** `X-Sandbox-Signature` value (lowercase hex). */
     signature: string | null;
     /** `X-Sandbox-Timestamp` value (unix seconds). */
@@ -46,10 +34,9 @@ export interface VerifyCallbackInput {
 export type VerifyResult = { valid: true } | { valid: false; reason: "bad-signature" | "stale-timestamp" | "missing" };
 
 /**
- * Decode the per-sandbox secret. sandbox-server accepts both raw UTF-8
- * and `base64:` prefixed values (change 4 spec); we mirror the same
- * convention here so the Cortex and Go sides interpret the secret
- * identically.
+ * Decode the per-sandbox secret. sandbox-server accepts both raw UTF-8 and
+ * `base64:` prefixed values; this mirrors the same convention, thus the host
+ * and the Go side interpret the secret identically.
  */
 function decodeSecret(secret: string): Buffer {
     if (secret.startsWith("base64:")) {
@@ -59,7 +46,7 @@ function decodeSecret(secret: string): Buffer {
 }
 
 function sha256Hex(input: Buffer | string): string {
-    return digestBody(input);
+    return createHash("sha256").update(input).digest("hex");
 }
 
 /**
@@ -71,18 +58,13 @@ function sha256Hex(input: Buffer | string): string {
  * Freshness is checked AFTER signature, so a stale-but-valid signature
  * is distinguishable from a forgery.
  */
-export function verifyCallback(input: VerifyCallbackInput): VerifyResult {
+export function verifyExecMessage(input: VerifyExecMessageInput): VerifyResult {
     if (input.signature === null || input.timestamp === null) {
         return { valid: false, reason: "missing" };
     }
 
-    const digest = input.bodyDigest ?? (input.body !== undefined ? sha256Hex(input.body) : undefined);
-    if (digest === undefined) {
-        return { valid: false, reason: "missing" };
-    }
-
     const secretBytes = decodeSecret(input.secret);
-    const message = `${input.execId}:${input.timestamp}:${digest}`;
+    const message = `${input.execId}:${input.timestamp}:${sha256Hex(input.body)}`;
     const expected = createHmac("sha256", secretBytes).update(message).digest("hex");
 
     const provided = input.signature;
@@ -100,8 +82,8 @@ export function verifyCallback(input: VerifyCallbackInput): VerifyResult {
     return { valid: true };
 }
 
-/** Convenience for the Cortex side to compute a signature for tests. */
-export function signCallback({ execId, body, timestamp, secret }: { execId: string; body: Buffer | string; timestamp: number; secret: string }): string {
+/** Sign `body` for `execId` under the per-sandbox secret. */
+export function signExecMessage({ execId, body, timestamp, secret }: { execId: string; body: Buffer | string; timestamp: number; secret: string }): string {
     const secretBytes = decodeSecret(secret);
     const message = `${execId}:${timestamp}:${sha256Hex(body)}`;
     return createHmac("sha256", secretBytes).update(message).digest("hex");

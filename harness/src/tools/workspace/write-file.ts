@@ -4,14 +4,18 @@
  *
  * A thin adapter over the `WorkspaceMutator` seam (see the harness-durable-runtime / harness-workspace-tools specs): the
  * mutator owns resolve + confine + hardened host write + provenance. This tool
- * only declares the input schema and forwards. `edit_file` rides the same seam.
+ * declares the input schema, forwards the write, and carries the record of the
+ * write to the fold. `edit_file` rides the same seam.
  */
 
-import { ok } from "neverthrow";
+import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool } from "../define-tool.js";
-import type { WorkspaceMutator } from "./mutator.js";
+import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
+
+/** The result of a `write_file` call: a success carries the record of the write for the fold. */
+type WriteFileToolResult = Exclude<WriteFileResult, { status: "ok" }> | WithToolCallRecord<Extract<WriteFileResult, { status: "ok" }>, WriteRecord>;
 
 const WriteFileInputSchema = z.object({
     path: z
@@ -32,9 +36,6 @@ export interface WriteFileDeps {
 export function createWriteFileTool(deps: WriteFileDeps) {
     return defineTool({
         id: "write_file",
-        // The mutator wraps the disk mutation in `ctx.runStep` itself, so the
-        // body runs unwrapped in the workflow body (see the harness-tools spec).
-        executionMode: "workflow",
         description:
             "Write a UTF-8 text file in your working directory. Relative paths " +
             "resolve against it. The write replaces an existing file whole, and it makes " +
@@ -46,16 +47,18 @@ export function createWriteFileTool(deps: WriteFileDeps) {
         // The path only. `content` is a whole file and must never ride a display
         // channel, which the emit-site length cap enforces regardless.
         describeCall: ({ path }) => path,
-        execute: async ({ path, content }, ctx) =>
-            ok(
-                await deps.mutator.writeFile({
-                    path,
-                    content,
-                    toolName: "write_file",
-                    invocationId: ctx.invocationId,
-                    runStep: ctx.runStep,
-                    session: ctx.session,
-                }),
-            ),
+        execute: async ({ path, content }, ctx): Promise<Result<WriteFileToolResult, ToolError>> => {
+            const write = await deps.mutator.writeFile({
+                path,
+                content,
+                toolName: "write_file",
+                invocationId: ctx.invocationId,
+                session: ctx.session,
+            });
+            if (write.status !== "ok") return ok(write);
+            const { record, ...result } = write;
+            return ok(withToolCallRecord(result, record));
+        },
+        foldCallRecord: (record) => deps.mutator.recordWrite(record),
     });
 }

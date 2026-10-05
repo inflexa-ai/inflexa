@@ -114,8 +114,6 @@ export const StepExecutionRowSchema = z.object({
     blockedReason: z.string().nullable().default(null),
     /** Active-sandbox registry handle; null when no sandbox is live for this step. */
     sandboxRef: PersistedSandboxRefSchema.nullable().default(null),
-    /** In-flight `${workflowId}:${stepId}:${functionId}`; null when no exec is in flight. */
-    execId: z.string().nullable().default(null),
     /** DBOS child workflow id (`"${parentWorkflowId}-${N}"`); null on pre-DBOS rows. */
     childWorkflowId: z.string().nullable().default(null),
 });

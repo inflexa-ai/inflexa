@@ -14,8 +14,9 @@
  * engine (see `dbos-workflow-purger.ts` for why the static `DBOS` facade is
  * the wrong tool here). `cancelWorkflows` is an optional test seam over it.
  *
- * No stream writes: `DBOS.writeStream` is body-only, so the run-event reader
- * (`run-event-stream.ts`) synthesizes the terminal part from the run row.
+ * No stream writes: `DBOS.writeStream` writes only from inside the workflow
+ * that owns the stream, so the run-event reader (`run-event-stream.ts`)
+ * synthesizes the terminal part from the run row.
  */
 
 import type { Pool } from "pg";

@@ -1,7 +1,6 @@
 /**
- * Unit tests for the client's awaitExec option assembly: the liveness probe
- * self-wires from the backend ops, explicit seam injections win, and the
- * transport is client-owned. Pure composition — no DBOS, no backend.
+ * Unit tests for the sandbox client factory: the step-tree pre-creation, the
+ * spawn refusals, and the toolchain declaration. Pure composition — no DBOS.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -13,50 +12,17 @@ import type { Pool } from "pg";
 
 import { err, errAsync, okAsync } from "neverthrow";
 
-import type { AwaitExecOptions } from "./await-exec.js";
-import { composeAwaitOptions, createSandboxClient, precreateStepTree } from "./create-sandbox.js";
+import { createSandboxClient, precreateStepTree } from "./create-sandbox.js";
 import * as dockerClient from "./docker-client.js";
-import { signCallback } from "./hmac.js";
 import { mintSandboxIdentity } from "./identity.js";
 import * as k8sClient from "./k8s-client.js";
 import { SandboxFailure as BarrelSandboxFailure } from "@inflexa-ai/harness";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { STEP_SUBDIRS, type MountPlanCoords } from "./mount-plan.js";
 import { describeSandboxError, keepSuspendingRefusal, SandboxFailure, type SandboxError } from "./sandbox-error.js";
-import type { FarmSource, SandboxLabels, SandboxLiveness, SandboxSpec } from "./types.js";
+import type { FarmSource, SandboxLabels, SandboxSpec } from "./types.js";
 import type { SpawnSession } from "../auth/types.js";
 import { splitSpawn } from "./__fixtures__/spawn.js";
-
-const opsProbe = async (): Promise<SandboxLiveness> => ({ alive: false, oomKilled: false });
-const injectedProbe = async (): Promise<SandboxLiveness> => ({ alive: true, oomKilled: false });
-
-describe("composeAwaitOptions", () => {
-    test("self-wires the backend probe when the caller injects none", () => {
-        const options = composeAwaitOptions(undefined, "poll", opsProbe);
-        expect(options.isAlive).toBe(opsProbe);
-        expect(options.transport).toBe("poll");
-    });
-
-    test("an explicitly injected probe seam wins over the self-wired one", () => {
-        const base: AwaitExecOptions = { isAlive: injectedProbe };
-        const options = composeAwaitOptions(base, "poll", opsProbe);
-        expect(options.isAlive).toBe(injectedProbe);
-    });
-
-    test("the transport is client-owned — a base transport cannot override it", () => {
-        const base: AwaitExecOptions = { transport: "callback" };
-        const options = composeAwaitOptions(base, "poll", opsProbe);
-        expect(options.transport).toBe("poll");
-    });
-
-    test("other injected seams pass through untouched", () => {
-        const sleep = async () => {};
-        const options = composeAwaitOptions({ sleep }, "callback", opsProbe);
-        expect(options.sleep).toBe(sleep);
-        expect(options.transport).toBe("callback");
-        expect(options.isAlive).toBe(opsProbe);
-    });
-});
 
 describe("precreateStepTree — step-tree access mode", () => {
     let root: string;
@@ -171,7 +137,6 @@ describe("createSandboxClient — the k8s libs root threading", () => {
             createSandboxClient({
                 pool: {} as unknown as Pool,
                 env: { backend: "k8s", namespace: "sandbox" },
-                cortexBaseUrl: "https://x",
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
                 resolveWorkspaceRoot: (id) => join("/sessions", id),
@@ -199,7 +164,6 @@ describe("createSandboxClient — the required-store fact", () => {
     const FIXED: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
     const base = {
         pool: {} as unknown as Pool,
-        cortexBaseUrl: "https://x",
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
@@ -324,7 +288,6 @@ describe("createSandboxClient — a spawn failure is a value", () => {
             const client = createSandboxClient({
                 pool: {} as unknown as Pool,
                 env: { backend: "docker", namespace: "default" },
-                cortexBaseUrl: "https://x",
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
                 resolveWorkspaceRoot: () => root,
@@ -400,7 +363,6 @@ describe("createSandboxClient — the label hook", () => {
         createSandboxClient({
             pool: {} as unknown as Pool,
             env: { backend: "docker", namespace: "default" },
-            cortexBaseUrl: "https://x",
             image: "sandbox-base:latest",
             resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
             resolveWorkspaceRoot: () => root,
@@ -458,7 +420,6 @@ describe("createSandboxClient — engine connection threading", () => {
             const client = createSandboxClient({
                 pool: {} as unknown as Pool,
                 env: { backend: "docker", namespace: "default" },
-                cortexBaseUrl: "https://x",
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
                 resolveWorkspaceRoot: (id) => join("/sessions", id),
@@ -479,7 +440,6 @@ describe("createSandboxClient — the toolchain on the client", () => {
     const base = {
         pool: {} as unknown as Pool,
         env: { backend: "docker" as const, namespace: "" },
-        cortexBaseUrl: "http://127.0.0.1:0",
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
@@ -492,47 +452,5 @@ describe("createSandboxClient — the toolchain on the client", () => {
 
     test("the declared image toolchain reaches the client", () => {
         expect(createSandboxClient({ ...base, toolchainSource: "image" }).toolchainSource).toBe("image");
-    });
-});
-
-describe("createSandboxClient — the stream budget on receipt", () => {
-    test("cuts a stdout of 2,097,152 bytes from a server that ignores the budget to 1,048,576 bytes, with the flag and the total", async () => {
-        const secret = "base64:" + Buffer.from("01234567890123456789012345678901").toString("base64");
-        const execId = "wf-1:step-a:fn-0";
-        const nowMs = 1_700_000_000_000;
-        const timestamp = Math.floor(nowMs / 1000);
-        const result = { execId, exitCode: 0, stdout: "s".repeat(2_097_152), stderr: "", durationMs: 5, timedOut: false };
-        const body = JSON.stringify({ status: "completed", events: [], cursor: 0, result });
-        const signature = signCallback({ execId, body: Buffer.from(body, "utf8"), timestamp, secret });
-        const client = createSandboxClient({
-            pool: {} as unknown as Pool,
-            env: { backend: "docker", namespace: "" },
-            cortexBaseUrl: "http://127.0.0.1:0",
-            image: "sandbox-base:latest",
-            resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-            resolveWorkspaceRoot: (id: string) => join("/sessions", id),
-            farmSource: { kind: "fixed", location: { farmPath: "/store/farms/catalog" } },
-            awaitOptions: {
-                now: () => nowMs,
-                runStep: (fn) => fn(),
-                sleep: async () => {},
-                fetch: (async () =>
-                    new Response(body, {
-                        status: 200,
-                        headers: { "x-sandbox-signature": signature, "x-sandbox-timestamp": String(timestamp) },
-                    })) as unknown as typeof fetch,
-            },
-        });
-
-        const received = await client.awaitExec(
-            { sandboxId: "sb-1", host: "127.0.0.1", port: 8765, backend: "docker", callbackSecret: secret },
-            execId,
-            () => {},
-            nowMs + 60_000,
-        );
-
-        expect(Buffer.byteLength(received.stdout, "utf8")).toBe(1_048_576);
-        expect(received.stdoutTruncated).toBe(true);
-        expect(received.stdoutTotalBytes).toBe(2_097_152);
     });
 });

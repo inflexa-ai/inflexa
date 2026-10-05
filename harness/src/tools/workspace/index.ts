@@ -4,12 +4,11 @@
  * Read surface (sandbox-independent): semantic file search, raw read + grep
  * over the workspace filesystem seam, plus file/plan display.
  *
- * Mutate surface (sandbox-gated): `execute_command` (single chokepoint for
- * sandbox commands), `write_file` and `edit_file` scoped to the step's
- * writable artifact directory. Each mutate factory captures a `SandboxClient`
- * and the step coordinates; only `execute_command` is permitted to drive
- * sandbox-server's `/exec` — `write_file` / `edit_file` ride the same
- * submit/await path through `runSandboxExec`.
+ * Mutate surface: `execute_command` (single chokepoint for sandbox commands,
+ * sandbox-gated), `write_file` and `edit_file` scoped to the writable
+ * directory of the agent. `execute_command` drives sandbox-server's `/exec`
+ * through `runSandboxExec`; `write_file` / `edit_file` write host-side through
+ * the workspace mutator.
  */
 
 // Read surface

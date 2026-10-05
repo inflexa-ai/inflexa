@@ -44,7 +44,7 @@ export interface FeedExecFrameArgs {
     readonly collector: ProvenanceCollector;
     /** Analysis resource mount root, e.g. `/{resourceId}`. */
     readonly mountRoot: string;
-    /** The argv the harness submitted in `SubmitExecBody`. */
+    /** The argv the harness submitted for the exec. */
     readonly command: readonly string[];
     readonly exitCode: number | null;
     readonly durationMs: number | null;

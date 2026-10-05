@@ -1,7 +1,7 @@
 /**
  * Cross-surface end-to-end coverage for the mutate surface — write → read
- * round-trip with the shared resolver, prefix-gated rejection, execute_command
- * stream bounding, and stable execId derivation across multiple calls.
+ * round-trip with the shared resolver, prefix-gated rejection, and
+ * execute_command stream bounding.
  *
  * `write_file` lands on the host filesystem; a fake `SandboxClient` backs
  * `execute_command` only.
@@ -21,7 +21,7 @@ import { createWorkspaceMutator } from "./mutator.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { stepWritePrefix } from "../../workspace/paths.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
+import type { ExecResult, SandboxRef } from "../../sandbox/types.js";
 import { EXEC_STREAM_BYTE_CAP } from "./result-bounds.js";
 
 const ANALYSIS = "analysis-001";
@@ -38,24 +38,15 @@ function makeSandboxRef(): SandboxRef {
     };
 }
 
-interface FakeClient extends SandboxClient {
-    readonly submits: SubmitExecBody[];
-}
-
-function makeFakeClient(opts: { lsResult?: { stdout: string; stderr: string } } = {}): FakeClient {
-    const submits: SubmitExecBody[] = [];
+function makeFakeClient(opts: { lsResult?: { stdout: string; stderr: string } } = {}): SandboxClient {
     return {
-        submits,
         toolchainSource: "store",
         createSandbox() {
             return okAsync(makeSandboxRef());
         },
-        async submitExec(_ref, body) {
-            submits.push(body);
-        },
-        async awaitExec(_ref: SandboxRef, execId: string, _emit: ExecEmit, _deadlineMs: number): Promise<ExecResult> {
+        async exec(): Promise<ExecResult> {
             return {
-                execId,
+                execId: "wf1:7",
                 exitCode: 0,
                 stdout: opts.lsResult?.stdout ?? "",
                 stderr: opts.lsResult?.stderr ?? "",
@@ -64,6 +55,9 @@ function makeFakeClient(opts: { lsResult?: { stdout: string; stderr: string } } 
             };
         },
         async isAlive() {
+            return { alive: true, oomKilled: false };
+        },
+        async isAliveById() {
             return { alive: true, oomKilled: false };
         },
         async teardown() {},
@@ -127,9 +121,6 @@ describe("mutate surface — end-to-end", () => {
         const tool = createExecuteCommandTool({
             sandboxClient: client,
             sandbox,
-            workflowId: "wf1",
-            stepId: STEP,
-            nextFunctionId: () => "fn1",
             deadlineMs: () => 9_999_999,
             defaultCwd: `/${ANALYSIS}/runs/${RUN}/${STEP}`,
         });
@@ -161,26 +152,5 @@ describe("mutate surface — end-to-end", () => {
 
         const read = (await readTool.execute({ path: `/${ANALYSIS}/data/inputs/leak.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("not_found");
-    });
-
-    it("two execute_command calls in the same step produce distinct execIds", async () => {
-        const { sandbox } = setup();
-        const client = makeFakeClient();
-        let counter = 0;
-        const tool = createExecuteCommandTool({
-            sandboxClient: client,
-            sandbox,
-            workflowId: "wf1",
-            stepId: STEP,
-            nextFunctionId: () => `${++counter}`,
-            deadlineMs: () => 9_999_999,
-            defaultCwd: `/${ANALYSIS}/runs/${RUN}/${STEP}`,
-        });
-        const { ctx } = makeToolContext();
-        await tool.execute({ command: ["a"] }, ctx);
-        await tool.execute({ command: ["b"] }, ctx);
-        expect(client.submits[0]!.execId).toBe(`wf1:${STEP}:1`);
-        expect(client.submits[1]!.execId).toBe(`wf1:${STEP}:2`);
-        expect(client.submits[0]!.execId).not.toBe(client.submits[1]!.execId);
     });
 });

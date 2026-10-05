@@ -107,7 +107,6 @@ function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): Too
         emit: async (part) => {
             emitted.push(part);
         },
-        runStep: (_name, fn) => fn(),
         ask: async () => {
             throw new Error("ask should not be reached");
         },

@@ -74,7 +74,6 @@ import { createReportBlockerTool, type BlockerHolder } from "../../tools/sandbox
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 
 import { toSandboxPath } from "../../workspace/paths.js";
-import { setActiveExecId } from "../../state/index.js";
 
 import type { AgentMeta, SandboxToolName } from "./types.js";
 import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "./types.js";
@@ -97,14 +96,9 @@ export interface SandboxStepCoords {
     /** Absolute host root of this analysis's workspace tree (resolved at the workflow body). */
     readonly workspaceRoot: string;
     readonly analysisId: string;
-    readonly runId: string;
-    readonly stepId: string;
-    readonly workflowId: string;
     /** Absolute writable artifact directory for this step (e.g. stepWritePrefix(...)). */
     readonly allowedWritePrefix: string;
-    /** Stable per-call function id minter (monotonic; replay-deterministic). */
-    readonly nextFunctionId: () => string;
-    /** Absolute unix-ms deadline for `awaitExec`. */
+    /** Absolute unix-ms deadline of each exec. */
     readonly deadlineMs: () => number;
 }
 
@@ -195,9 +189,6 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
             analysisId: deps.step.analysisId,
             sandboxClient: deps.sandboxClient,
             sandbox: deps.step.sandbox,
-            workflowId: deps.step.workflowId,
-            stepId: deps.step.stepId,
-            nextFunctionId: deps.step.nextFunctionId,
             deadlineMs: deps.step.deadlineMs,
         }),
         resolveLibraryId: resolveLibraryIdTool,
@@ -236,23 +227,11 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
     return resolved;
 }
 
-function createMarkExecActive(deps: SandboxAgentDeps): (execId: string) => Promise<void> {
-    return (execId: string): Promise<void> =>
-        setActiveExecId(deps.pool, deps.step.runId, deps.step.stepId, execId).match(
-            () => {},
-            () => {},
-        );
-}
-
 /** Build the workspace mutate + read tools every sandbox agent receives. In
  *  `readOnly` mode the write_file/edit_file pair is omitted; execute_command
  *  and the read tools stay. */
 function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] {
     const { step, sandboxClient, workspaceFs, pool, embedding, lineageCollector } = deps;
-    // Registry tagging is a best-effort watchdog backstop (`run-exec.ts` already
-    // swallows a throw here); fold a `DbError` into a no-op so a registry write
-    // failure neither fails the exec nor surfaces as an unhandled rejection.
-    const markExecActive = createMarkExecActive(deps);
 
     // The agent's writable working directory: relative paths resolve here, and
     // writes are confined here. `allowedWritePrefix` is its host path; the
@@ -278,12 +257,8 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
         createExecuteCommandTool({
             sandboxClient,
             sandbox: step.sandbox,
-            workflowId: step.workflowId,
-            stepId: step.stepId,
-            nextFunctionId: step.nextFunctionId,
             deadlineMs: step.deadlineMs,
             defaultCwd: sandboxWorkingDir,
-            markExecActive,
             ...(lineageCollector ? { lineageCollector, mountRoot: `/${step.analysisId}` } : {}),
         }),
         ...mutateTools,

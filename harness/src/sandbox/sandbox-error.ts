@@ -5,10 +5,9 @@
  * the K8s client ops (`k8s-client.ts`) — model failure as values: each external
  * op returns `ResultAsync<T, SandboxError>`. The ONLY `try/catch` against the
  * SDK/driver call lives in those files (via the `trySandbox` helper here);
- * everything up to the composition seam flows `ResultAsync`. (`submitExec`
- * (`submit-exec.ts`) is NOT on this channel — it wraps its own `/exec` POST in a
- * `DBOS.runStep` and throws on a non-202 so the step boundary records the
- * failure.)
+ * everything up to the composition seam flows `ResultAsync`. (The exec
+ * (`exec.ts`) is NOT on this channel — it runs as its own DBOS step and throws
+ * on a non-202 submit, so the step boundary records the failure.)
  *
  * House rules realized here (see `lib/result.ts`):
  *  - Absence / "already gone" is NOT an error. A 404 on inspect/isAlive is the
@@ -19,10 +18,10 @@
  *    owner-guard REFUSES, a submit the server rejects, a teardown the driver
  *    errors on, a liveness probe that errors.
  *  - Control-flow exceptions are NOT failures and are never captured as a
- *    `SandboxError`. The recv loop's `HardCancelError` / `ExecTimeoutError`
- *    (`await-exec.ts`) and DBOS's `DBOSWorkflowCancelledError` / `AbortError`
+ *    `SandboxError`. The exec's `HardCancelError` / `ExecTimeoutError`
+ *    (`exec.ts`) and DBOS's `DBOSWorkflowCancelledError` / `AbortError`
  *    are control-flow signalling — they live OUTSIDE this error channel and
- *    propagate untouched. `await-exec.ts` is NOT converted; `trySandbox` only
+ *    propagate untouched. `exec.ts` is NOT converted; `trySandbox` only
  *    ever wraps the single SDK/HTTP call handed to it.
  *
  * `createSandbox` of the public `SandboxClient` gives each `SandboxError` as
@@ -34,8 +33,8 @@
  * composition seam: it builds the backend ops, maps each `err` of such an op to
  * a `SandboxFailure`, and `unwrapOrThrow`s it, so the seam throws the described
  * failure with the variant on `.cause` and on `.error`. A `catch` never sees
- * the raw variant. (`submitExec` is the exception — it is already its own DBOS
- * step and throws directly, so the seam forwards its `Promise<void>` as-is.)
+ * the raw variant. (`exec` is the exception — it is already its own DBOS
+ * step and throws directly, so the seam forwards its promise as-is.)
  */
 
 import { ResultAsync, err, ok, type Result } from "neverthrow";
@@ -274,7 +273,7 @@ export function keepSuspendingRefusal(result: Result<SandboxRef, SandboxError>):
  *
  * `fn` runs the single SDK/HTTP call and returns the already-mapped value
  * (`T`). Keep `fn` to that one call plus trivial mapping; do NOT embed
- * control-flow that could throw a non-backend error (the recv loop's
+ * control-flow that could throw a non-backend error (the exec's
  * `HardCancelError`/`ExecTimeoutError` and DBOS cancellation must stay outside
  * any `trySandbox` so they propagate as control-flow, never become an `err`).
  */

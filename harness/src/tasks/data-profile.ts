@@ -245,11 +245,10 @@ async function readSetHeaders(args: {
     readonly analysisId: string;
     readonly detected: DetectedSets;
     readonly sandbox: SandboxRef;
-    readonly execId: string;
     readonly deadlineMs: number;
     readonly logger: Logger;
 }): Promise<ReadonlyMap<string, HeaderReadout>> {
-    const { session, deps, analysisId, detected, sandbox, execId, deadlineMs, logger } = args;
+    const { session, deps, analysisId, detected, sandbox, deadlineMs, logger } = args;
     try {
         return await readHeaders({
             targets: readoutTargets(detected),
@@ -258,7 +257,6 @@ async function readSetHeaders(args: {
             sandboxClient: deps.sandboxClient,
             sandbox,
             mountRoot: `/${analysisId}`,
-            execId,
             deadlineMs,
             emit: async () => {},
         });
@@ -466,8 +464,8 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         await cancelSelf("self-cancel-suspended");
     };
 
-    // The profile's activity channel. `DBOS.writeStream` is body-only, so the write is bound here
-    // while every phase and phrase lives in the emitter — the phrases are the observable contract of
+    // The profile's activity channel. The write to the stream is bound here, while every phase and
+    // phrase lives in the emitter — the phrases are the observable contract of
     // this capability, and a body that composed its own strings is a body they can drift from.
     // The frame is the workflow's synthetic one: both values are constants shared by every analysis,
     // so they identify nothing and consumers are required not to key on them.
@@ -622,13 +620,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         const sandbox = spawned.value;
 
         try {
-            // Checkpointed clock, not `Date.now()`: `awaitExec` gates on this absolute
-            // deadline and its recovery-pull is a durable step, so a wall-clock deadline
-            // that grew on replay would shift which loop iteration crosses the deadline
-            // and desynchronise the recorded function-ID sequence (see sandbox-step.ts,
-            // which captures its step deadline the same way).
+            // Checkpointed clock, not `Date.now()`: one deadline bounds every exec of the
+            // profile, and a wall-clock deadline would grow on each recovery (see
+            // sandbox-step.ts, which captures its step deadline the same way).
             const deadlineAbs = (await DBOS.now()) + DEFAULT_DEADLINE_MS;
-            const nextFunctionId = makeNextFunctionId();
 
             const headers = await readSetHeaders({
                 session: childSession,
@@ -636,7 +631,6 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 analysisId,
                 detected,
                 sandbox,
-                execId: `${workflowId}:${DATA_PROFILE_STEP_LITERAL}:${nextFunctionId()}`,
                 deadlineMs: deadlineAbs,
                 logger,
             });
@@ -673,14 +667,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 sandbox,
                 workspaceRoot,
                 analysisId,
-                runId: DATA_PROFILE_RUN_LITERAL,
-                stepId: DATA_PROFILE_STEP_LITERAL,
-                workflowId,
                 // The profiler writes Python scripts and intermediate artifacts under
                 // the synthetic step path; the post-agent `rm -rf runs/data-profile/`
                 // cleanup wipes them.
                 allowedWritePrefix: profileWritePrefix,
-                nextFunctionId,
                 deadlineMs: () => deadlineAbs,
             });
 
@@ -1149,10 +1139,4 @@ function profileFailureReason(err: unknown): string {
     const raw = err instanceof Error ? err.message : String(err);
     const firstLine = raw.split("\n", 1)[0]!.replace(/\s+/g, " ").trim();
     return firstLine.length > PROFILE_ERROR_MAX_LEN ? firstLine.slice(0, PROFILE_ERROR_MAX_LEN - 1) + "…" : firstLine || "Data profiling failed";
-}
-
-/** Per-call function-id minter — replay-deterministic. */
-function makeNextFunctionId(): () => string {
-    let n = 0;
-    return () => `fn-${(n++).toString(36)}`;
 }

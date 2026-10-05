@@ -11,16 +11,14 @@ import { context, propagation, ROOT_CONTEXT, trace, TraceFlags, type Span as Api
 import { isTracingSuppressed } from "@opentelemetry/core";
 import { InMemorySpanExporter, SimpleSpanProcessor, type ReadableSpan } from "@opentelemetry/sdk-trace-base";
 
-import { submitExec } from "../sandbox/submit-exec.js";
-import type { SandboxRef } from "../sandbox/types.js";
 import {
     ATTR_INFLEXA_EXEC_ID,
     ATTR_INFLEXA_STEP_ID,
-    ATTR_INFLEXA_TOOL_USE_ID,
     createHarnessSampler,
     DbosSpanProcessor,
     HarnessTracerProvider,
     stableSpan,
+    untracedFetch,
     untracedWorkflow,
 } from "./otel-spans.js";
 
@@ -156,7 +154,7 @@ describe("stableSpan", () => {
     });
 
     it("is a no-op with no active span", () => {
-        expect(() => stableSpan("tool:read_file:toolu_01AbC", "tool:read_file", { [ATTR_INFLEXA_TOOL_USE_ID]: "toolu_01AbC" })).not.toThrow();
+        expect(() => stableSpan("sandbox.exec", "sandbox.exec", { [ATTR_INFLEXA_EXEC_ID]: "wf-1:7" })).not.toThrow();
         expect(exportedNames()).toEqual([]);
     });
 
@@ -173,56 +171,28 @@ describe("stableSpan", () => {
 
     it("leaves an active span alone when its name is not the DBOS name", () => {
         const request = tracer().startSpan("POST /chat");
-        under(request, () => stableSpan("tool:read_file:toolu_01AbC", "tool:read_file", { [ATTR_INFLEXA_TOOL_USE_ID]: "toolu_01AbC" }));
+        under(request, () => stableSpan("sandbox.exec", "sandbox.exec", { [ATTR_INFLEXA_EXEC_ID]: "wf-1:7" }));
         request.end();
         expect(exportedNames()).toEqual(["POST /chat"]);
-        expect(exportedByName("POST /chat").attributes).not.toHaveProperty(ATTR_INFLEXA_TOOL_USE_ID);
-    });
-});
-
-const REF: SandboxRef = {
-    sandboxId: "sbx-1",
-    host: "127.0.0.1",
-    port: 8765,
-    backend: "docker",
-    callbackSecret: "base64:dGVzdHNlY3JldA==",
-};
-
-/** A `runStep` that opens a span with the DBOS step name and runs the body under it, as DBOS does. */
-function spanStep<T>(work: () => Promise<T>, config: { name: string }): Promise<T> {
-    const span = tracer().startSpan(config.name);
-    return under(span, work).finally(() => span.end());
-}
-
-describe("a step body that calls stableSpan", () => {
-    it("submitExec exports sandbox.submit-exec with the exec id as an attribute", async () => {
-        const execId = "wf-1:s-a:fn-0";
-        const accepted: typeof fetch = (async () =>
-            new Response(JSON.stringify({ execId, status: "started" }), {
-                status: 202,
-                headers: { "content-type": "application/json" },
-            })) as unknown as typeof fetch;
-
-        await submitExec(REF, { command: ["echo", "hi"], execId }, { fetch: accepted, runStep: spanStep });
-
-        expect(exportedNames()).toEqual(["sandbox.submit-exec"]);
-        expect(exportedByName("sandbox.submit-exec").attributes).toMatchObject({ [ATTR_INFLEXA_EXEC_ID]: execId });
+        expect(exportedByName("POST /chat").attributes).not.toHaveProperty(ATTR_INFLEXA_EXEC_ID);
     });
 });
 
 describe("untracedFetch", () => {
-    it("sends the step span's traceparent to sandbox-server and runs the fetch with tracing suppressed", async () => {
-        const execId = "wf-1:s-a:fn-0";
+    it("sends the active span's traceparent to sandbox-server and runs the fetch with tracing suppressed", async () => {
         let sent: { headers: Record<string, string>; suppressed: boolean } | undefined;
         const accepted = (async (_url: string, init: RequestInit & { headers: Record<string, string> }) => {
             sent = { headers: init.headers, suppressed: isTracingSuppressed(context.active()) };
-            return new Response(JSON.stringify({ execId, status: "started" }), { status: 202 });
+            return new Response("{}", { status: 202 });
         }) as unknown as typeof fetch;
 
-        await submitExec(REF, { command: ["echo", "hi"], execId }, { fetch: accepted, runStep: spanStep });
+        const step = tracer().startSpan("sandbox.exec");
+        await under(step, () => untracedFetch(accepted, "http://127.0.0.1:8765/exec", { method: "POST", headers: {} }));
+        step.end();
 
-        const step = exportedByName("sandbox.submit-exec");
-        expect(sent?.headers.traceparent).toBe(`00-${step.spanContext().traceId}-${step.spanContext().spanId}-01`);
+        const exported = exportedByName("sandbox.exec");
+        expect(sent?.headers.traceparent).toBe(`00-${exported.spanContext().traceId}-${exported.spanContext().spanId}-01`);
         expect(sent?.suppressed).toBe(true);
+        expect(exportedNames()).toEqual(["sandbox.exec"]);
     });
 });
