@@ -115,8 +115,11 @@ function resolveGitCommit(): string {
     if (process.env.INFLEXA_BUILD_CHANNEL === "production")
         throw new Error("INFLEXA_GIT_COMMIT is not set in a production build. This means the binary was not built correctly.");
 
-    // Dev-only path: resolve from the working tree's HEAD.
-    const sha = Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim();
+    // Dev-only path: resolve the HEAD of the checkout that holds this source, never of the process cwd. A
+    // detached server runs in the home directory, and a user's cwd is a different repository or none.
+    const sha = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: import.meta.dir })
+        .stdout.toString()
+        .trim();
     if (!sha) throw new Error("Could not resolve git HEAD — are you running outside a git checkout?");
     return sha;
 }
