@@ -6,8 +6,9 @@
  *
  * NO foreground image pull exists anywhere. `sandbox pull` starts the two
  * detached image transfers — the runtime image and the provisioner image — and
- * returns at once with the status pointer. A moving `:latest` refreshes through
- * the same transfers, thus the command doubles as the upgrade path. The
+ * returns at once with the status pointer. A CLI update that moves the pinned
+ * tag downloads the new pair through the same transfers, thus the command is
+ * also the upgrade path. The
  * transfer children live in `modules/libs/transfers.ts`.
  *
  * The pre-flight of a dev-channel command REFUSES an absent image with the

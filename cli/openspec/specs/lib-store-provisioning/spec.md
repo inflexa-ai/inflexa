@@ -15,10 +15,10 @@ exists anywhere.
 
 `inflexa sandbox pull` MUST start the two image transfers as detached
 transfer children and return at once, with a pointer at
-`inflexa sandbox status`. No foreground image pull exists anywhere. A
-moving tag refreshes through the same transfers, thus the command is the
-upgrade path. A transfer failure MUST leave the configured image and the
-present image unchanged.
+`inflexa sandbox status`. No foreground image pull exists anywhere. A CLI
+update that moves the pinned tag downloads the new pair through the same
+transfers, thus the command is also the upgrade path. A transfer failure
+MUST leave the configured image and the present image unchanged.
 
 #### Scenario: The pull returns at once
 
@@ -58,9 +58,14 @@ the user.
 
 ### Requirement: The pulled image is configured as the sandbox image
 
-The `harness.sandboxImage` knob MUST default to the GHCR tag of the runtime
-image, and the harness-runtime composition creates containers from it. The
-image bakes no package. The CLI MUST pass the package-store root as
+The `harness.sandboxImage` knob MUST default to a pinned build tag of the
+runtime image. Its sandbox-server speaks the exec protocol of the harness
+that the CLI pins. A moving tag MUST NOT be the default. No path pulls a
+moving tag again, and an old sandbox-server refuses the requests of a newer
+harness. The harness-runtime composition makes the containers from the
+knob.
+
+The image bakes no package. The CLI MUST pass the package-store root as
 `libStorePath`, thus every sandbox receives the store and its farm as the
 two read-only binds. Discovery reads the `inflexa.lock` of the mounted
 farm. The provisioner reference DERIVES from `harness.sandboxImage`: the
@@ -72,6 +77,12 @@ thus the image pair cannot skew.
 - **GIVEN** a complete store and a farm
 - **WHEN** a sandbox launches
 - **THEN** the container comes from `harness.sandboxImage`, with the store at `/mnt/libs` and the farm at `/mnt/libs/farm`
+
+#### Scenario: A CLI update asks for the image of its harness
+
+- **GIVEN** a machine that holds the image of the earlier pin, and no `harness.sandboxImage` override
+- **WHEN** the updated CLI starts a data profile
+- **THEN** the sandbox gate refuses, and its message names `inflexa sandbox pull`
 
 ### Requirement: A retired image override migrates away
 

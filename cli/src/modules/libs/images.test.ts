@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { isPublishedSandboxImage, isRetiredSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
 
 describe("SANDBOX_IMAGE", () => {
-    test("is the one published runtime image at its moving tag", () => {
-        expect(SANDBOX_IMAGE).toBe("ghcr.io/inflexa-ai/sandbox-base:latest");
+    test("is the one published runtime image at a pinned build tag, never a moving tag", () => {
+        expect(SANDBOX_IMAGE).toMatch(/^ghcr\.io\/inflexa-ai\/sandbox-base:\d{8}-[0-9a-f]{7}$/);
     });
 });
 
