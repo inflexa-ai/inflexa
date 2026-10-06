@@ -26,8 +26,8 @@ authors:
       orcid: "https://orcid.org/0009-0005-8000-0055"
     - name: "Inflexa, Inc."
 
-version: 0.23.4
-date-released: "2026-10-01"
+version: 0.24.0
+date-released: "2026-10-06"
 url: "https://inflexa.ai"
 repository-code: "https://github.com/inflexa-ai/inflexa"
 
