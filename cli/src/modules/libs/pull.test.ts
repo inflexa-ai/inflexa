@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { SANDBOX_IMAGE } from "./images.ts";
 import { configuredSandboxImage, inspectSandbox, migrateRetiredSandboxImageOverride } from "./pull.ts";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
@@ -68,7 +69,7 @@ describe("migrateRetiredSandboxImageOverride", () => {
         const harness = readConfig().harness as Record<string, unknown>;
         expect(harness.sandboxImage).toBeUndefined();
         expect(harness.adminPort).toBe(4141);
-        expect(configuredSandboxImage()).toBe("ghcr.io/inflexa-ai/sandbox-base:latest");
+        expect(configuredSandboxImage()).toBe(SANDBOX_IMAGE);
         // A second run finds nothing: the migration is one-shot by content.
         expect(migrateRetiredSandboxImageOverride()).toBeNull();
     });
