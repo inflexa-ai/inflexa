@@ -27,12 +27,7 @@ const SANDBOX_BASENAME = "sandbox-base";
 /** The repository basename of the provisioner image. */
 const PROVISIONER_BASENAME = "sandbox-provisioner";
 
-/**
- * The one published runtime image a sandbox launches on, pinned to the tag whose sandbox-server speaks the
- * exec protocol of the harness that this CLI pins. Move the pin with each harness bump that changes that
- * protocol. A CLI update that moves it leaves the new image absent, thus the sandbox gate refuses with the
- * `inflexa sandbox pull` hint until the pair is pulled.
- */
+/** The one published runtime image a sandbox launches on, pinned to a build tag. */
 export const SANDBOX_IMAGE = `${SANDBOX_REPOSITORY}:20261006-cdbff09`;
 
 /** The retired variant basenames of the baked-image model that the package store replaced. */

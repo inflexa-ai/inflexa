@@ -59,11 +59,8 @@ the user.
 ### Requirement: The pulled image is configured as the sandbox image
 
 The `harness.sandboxImage` knob MUST default to a pinned build tag of the
-runtime image. Its sandbox-server speaks the exec protocol of the harness
-that the CLI pins. A moving tag MUST NOT be the default. No path pulls a
-moving tag again, and an old sandbox-server refuses the requests of a newer
-harness. The harness-runtime composition makes the containers from the
-knob.
+runtime image, never a moving tag. The harness-runtime composition makes
+the containers from the knob.
 
 The image bakes no package. The CLI MUST pass the package-store root as
 `libStorePath`, thus every sandbox receives the store and its farm as the
