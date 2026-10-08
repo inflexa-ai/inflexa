@@ -416,7 +416,7 @@ wire types of the two sides. Refer to [The local server](#the-local-server).
   module, for example `import("../modules/auth/login.ts")`. A TUI screen comes
   from `tui/`, for example `import("../tui/app.launch.tsx")`.
 - `src/server/` — the local server (server side). `serve.ts` is the composition
-  root of `inflexa serve`. `app.ts` is the HTTP app with its bearer check, and
+  root of `inflexa serve`. `app.ts` is the HTTP app with its credential check, and
   `routes/` holds the routes of each domain. The other files hold the boot, the
   stop, the turn registry, the busy gate, the profile queue, and the analysis
   guard. A route calls the logic of `src/modules/` and the
@@ -702,9 +702,10 @@ spec is the contract.
   header is `127.0.0.1:<port>` or `localhost:<port>`. An `Origin` header must name
   the same address. Each other request gets 403 `forbidden`. A route test that
   calls `request()` on the app sends no socket, thus it passes the check.
-- **The dev web page.** A dev server serves a web page of the API at `/gui/`.
-  `bun scripts/poc_gui.ts` prints its URL with the token, and `--open` opens it in
-  the browser.
+- **The web page and the browser sign-in.** Each server serves a placeholder page at
+  `/gui/`, in each build channel. `inflexa gui` signs a browser in: it gets a
+  one-time nonce, prints the sign-in link, and opens it. The link sets a session
+  cookie, and an `/api/*` route accepts the bearer token or that cookie.
 - **The command kinds.** `registerAction(command, kind, policy, handler)` takes a
   `CommandKind`. An `instance` command connects to the server, or starts one,
   before its action runs. A `machine` command and a `standalone` command run with

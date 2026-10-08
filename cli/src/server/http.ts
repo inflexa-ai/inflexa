@@ -12,8 +12,20 @@ import type { ServerBoot } from "./boot.ts";
 export type ServerEnv = {
     Variables: {
         runtime: HarnessRuntime;
+        /** Set by the credential check of `/api/*`: what the request proved. Unset on the sign-in route, which a nonce guards. */
+        credential: "bearer" | "cookie";
     };
 };
+
+/**
+ * The port that the listener bound, or `undefined` for a request that no socket carried, an in-process
+ * `app.request()` of a test. `listen` in serve.ts gives `app.fetch` to `Bun.serve`, which passes its server as the
+ * second argument of `fetch`. Hono gives that argument as `c.env`.
+ */
+export function listenerPort(c: Context): number | undefined {
+    // `c.env` is the Bun server or `undefined`. The cast names the one field that is read, and the read tolerates its absence.
+    return (c.env as { port?: number } | undefined)?.port;
+}
 
 /** An error response: the {@link ApiError} body, with the HTTP status of its code. */
 export function apiError(c: Context, code: ApiErrorCode, message: string, details?: unknown): Response {
