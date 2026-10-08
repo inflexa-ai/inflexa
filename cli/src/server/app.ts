@@ -1,16 +1,18 @@
 import { timingSafeEqual } from "node:crypto";
 
 import { Hono, type MiddlewareHandler } from "hono";
+import { getCookie } from "hono/cookie";
 
-import { devCommandsEnabled } from "../lib/env.ts";
 import { getLogger } from "../lib/log.ts";
 import type { ServerBoot } from "./boot.ts";
-import { apiError, type ServerEnv } from "./http.ts";
+import { createBrowserSessionStore, SIGN_IN_AGAIN_MESSAGE, SIGN_IN_PATH, sessionCookieName, type BrowserSessionStore } from "./browser_session.ts";
+import { apiError, listenerPort, type ServerEnv } from "./http.ts";
 import type { ServerLifecycle } from "./lifecycle.ts";
 import { analysisGuard } from "./analysis_guard.ts";
 import { analysisCollectionRoutes, analysisRoutes } from "./routes/analyses.ts";
 import { anchorRoutes } from "./routes/anchors.ts";
 import { artifactRoutes } from "./routes/artifacts.ts";
+import { browserSessionRoutes } from "./routes/browser_session.ts";
 import { conversationRoutes } from "./routes/conversation.ts";
 import { guiRoutes } from "./routes/gui.ts";
 import { machineRoutes } from "./routes/machine.ts";
@@ -29,24 +31,25 @@ export type AppDeps = {
     readonly lifecycle: ServerLifecycle;
 };
 
-/** The build channel decision of {@link buildApp}. Tests replace it. */
+/** The clock of the browser sign-in store in {@link buildApp}. A test replaces it to move the time. */
 export type AppOpts = {
-    /** True when the app serves the proof-of-concept web GUI at `/gui/`. */
-    readonly guiEnabled: () => boolean;
+    readonly now: () => number;
 };
 
-/** The production {@link AppOpts}: the web GUI is a surface of the dev channel only. */
-export const DEFAULT_APP_OPTS: AppOpts = { guiEnabled: devCommandsEnabled };
+/** The production {@link AppOpts}. */
+export const DEFAULT_APP_OPTS: AppOpts = { now: Date.now };
 
 /**
- * The HTTP app of the local server: the Host and Origin check on each path, the bearer check on each `/api/`
+ * The HTTP app of the local server: the Host and Origin check on each path, the credential check on each `/api/`
  * path, the routes of each domain, and the error bodies for an unknown path and for a handler that throws. It
  * binds no port, thus a test drives it with `app.request()`.
  */
 export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<ServerEnv> {
     const app = new Hono<ServerEnv>();
     app.use("*", hostOriginGuard());
-    app.use("/api/*", bearerAuth(deps.token));
+    const sessions = createBrowserSessionStore(opts.now);
+    app.use("/api/*", credentialAuth(deps.token, sessions));
+    app.route(SIGN_IN_PATH, browserSessionRoutes(sessions));
     app.route("/api/v1/server", serverRoutes(deps.boot, deps.lifecycle));
     app.route("/api/v1/projects", projectRoutes());
     app.route("/api/v1", machineRoutes());
@@ -63,11 +66,8 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes());
     app.route("/api/v1/analyses/:analysisId", runRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId", farmLinkRoutes());
-    if (opts.guiEnabled()) {
-        // A browser keeps the `#token=` fragment of the page URL across the redirect.
-        app.get("/gui", (c) => c.redirect("/gui/", 301));
-        app.route("/gui/", guiRoutes());
-    }
+    app.get("/gui", (c) => c.redirect("/gui/", 301));
+    app.route("/gui/", guiRoutes());
     app.notFound((c) => apiError(c, "not_found", `No route for ${c.req.method} ${c.req.path}.`));
     // A handler gives its failures as error bodies. This is the net for a throw past that, for example from
     // a harness call, and it keeps the internal cause out of the response.
@@ -89,9 +89,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
  */
 function hostOriginGuard(): MiddlewareHandler<ServerEnv> {
     return async (c, next) => {
-        // `listen` in serve.ts gives `app.fetch` to `Bun.serve`, which passes its server as the second argument of
-        // `fetch`. Hono gives that argument as `c.env`.
-        const port = (c.env as { port?: number } | undefined)?.port;
+        const port = listenerPort(c);
         if (port !== undefined) {
             const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
             const host = c.req.header("Host")?.toLowerCase();
@@ -111,17 +109,51 @@ function hostOriginGuard(): MiddlewareHandler<ServerEnv> {
     };
 }
 
-/** 401 `unauthorized` unless the request sends `Authorization: Bearer <token>`. */
-function bearerAuth(token: string): MiddlewareHandler<ServerEnv> {
+/**
+ * 401 `unauthorized` unless the request proves a credential, and it sets `credential` for the handler:
+ *
+ *   1. `GET /api/v1/session` passes, because its handler checks the nonce. The match is exact on the method and on
+ *      the path, which holds no query.
+ *   2. A valid `Authorization: Bearer <token>` passes as `bearer`.
+ *   3. A session cookie of this server passes as `cookie`. The cookie counts only when `Sec-Fetch-Site` is absent,
+ *      `same-origin`, or `none`: `SameSite=Strict` treats `127.0.0.1:<other port>` as the same site, and a page of
+ *      another local server can send the cookie in an `<img>` request that carries no `Origin` header.
+ *
+ * A cookie that names no session gets the message that tells the person to sign in again.
+ */
+function credentialAuth(token: string, sessions: BrowserSessionStore): MiddlewareHandler<ServerEnv> {
     const expected = Buffer.from(token);
     return async (c, next) => {
+        if (c.req.method === "GET" && c.req.path === SIGN_IN_PATH) {
+            await next();
+            return;
+        }
         const header = c.req.header("Authorization") ?? "";
         const presented = Buffer.from(header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "");
         // `timingSafeEqual` throws when the lengths differ, thus the length test comes first. The length of
         // the token is public: each token is 64 hex characters.
-        if (presented.length !== expected.length || !timingSafeEqual(presented, expected)) {
-            return apiError(c, "unauthorized", "Send the token of the server discovery file as `Authorization: Bearer <token>`.");
+        if (presented.length === expected.length && timingSafeEqual(presented, expected)) {
+            c.set("credential", "bearer");
+            await next();
+            return;
         }
-        await next();
+        const site = c.req.header("Sec-Fetch-Site");
+        let unknownSession = false;
+        if (site === undefined || site === "same-origin" || site === "none") {
+            const secret = getCookie(c, sessionCookieName(listenerPort(c)));
+            if (secret !== undefined) {
+                if (sessions.hasSession(secret)) {
+                    c.set("credential", "cookie");
+                    await next();
+                    return;
+                }
+                unknownSession = true;
+            }
+        }
+        return apiError(
+            c,
+            "unauthorized",
+            unknownSession ? SIGN_IN_AGAIN_MESSAGE : "Send the token of the server discovery file as `Authorization: Bearer <token>`.",
+        );
     };
 }

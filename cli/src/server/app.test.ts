@@ -5,9 +5,9 @@ import type { ServerActivity, ServerState, ShutdownMode } from "../api/server.ts
 import type { ClientOpts } from "../client/api.ts";
 import { fetchServerState } from "../client/server.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
-import { devCommandsEnabled } from "../lib/env.ts";
+import { signIn } from "../test_support/browser_session.ts";
 import { idleLifecycle, startTestServer } from "../test_support/server.ts";
-import { buildApp, DEFAULT_APP_OPTS } from "./app.ts";
+import { buildApp } from "./app.ts";
 import type { ServerBoot } from "./boot.ts";
 import type { ServerLifecycle } from "./lifecycle.ts";
 import { serverRoutes, type ServerRouteOpts } from "./routes/server.ts";
@@ -31,7 +31,7 @@ function fakeBoot(state: ServerState): { boot: ServerBoot; starts: () => number 
     };
 }
 
-describe("the bearer check", () => {
+describe("the credential check", () => {
     const { boot } = fakeBoot({ ...identity, phase: "starting" });
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
 
@@ -60,9 +60,95 @@ describe("the bearer check", () => {
     });
 });
 
+describe("the session cookie", () => {
+    const { boot } = fakeBoot({ ...identity, phase: "starting" });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+    const SIGN_IN_AGAIN = "Run `inflexa gui` again.";
+
+    async function expectUnauthorized(response: Response, message: string): Promise<void> {
+        expect(response.status).toBe(401);
+        // An error body of the app is an `ApiError`.
+        const body = (await response.json()) as { error: string; message: string };
+        expect(body.error).toBe("unauthorized");
+        expect(body.message).toContain(message);
+    }
+
+    test("a signed-in browser reaches an API route with the cookie and no Authorization header", async () => {
+        const cookie = await signIn(app, TOKEN);
+        const response = await app.request("/api/v1/server", { headers: { Cookie: cookie } });
+        expect(response.status).toBe(200);
+    });
+
+    test("the bearer token still passes beside a cookie", async () => {
+        const cookie = await signIn(app, TOKEN);
+        expect((await app.request("/api/v1/server", { headers: { ...AUTH, Cookie: cookie } })).status).toBe(200);
+    });
+
+    test("a cookie of an unknown session gives 401 with the message that names `inflexa gui`", async () => {
+        const name = (await signIn(app, TOKEN)).split("=")[0];
+        const response = await app.request("/api/v1/server", { headers: { Cookie: `${name}=${"f".repeat(64)}` } });
+        await expectUnauthorized(response, SIGN_IN_AGAIN);
+    });
+
+    test("a cookie of a restarted server gives 401 with the message that names `inflexa gui`", async () => {
+        const cookie = await signIn(app, TOKEN);
+        const restarted = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+        await expectUnauthorized(await restarted.request("/api/v1/server", { headers: { Cookie: cookie } }), SIGN_IN_AGAIN);
+    });
+
+    test("a cookie with a wrong name is no credential, and the message is the default one", async () => {
+        const cookie = await signIn(app, TOKEN);
+        const response = await app.request("/api/v1/server", { headers: { Cookie: cookie.replace("inflexa_session", "other_session") } });
+        await expectUnauthorized(response, "Send the token");
+    });
+
+    test("the name of the cookie carries the port of the listener", async () => {
+        const listener = { port: 8436 };
+        const cookie = await signIn(app, TOKEN, listener);
+        expect(cookie).toStartWith("inflexa_session_8436=");
+        const headers = { Cookie: cookie, Host: "127.0.0.1:8436" };
+        expect((await app.request("/api/v1/server", { headers }, listener)).status).toBe(200);
+        // The production server on 8431 reads a cookie named for 8436 as no cookie.
+        const other = { port: 8431 };
+        await expectUnauthorized(await app.request("/api/v1/server", { headers: { Cookie: cookie, Host: "127.0.0.1:8431" } }, other), "Send the token");
+    });
+
+    test("Sec-Fetch-Site same-origin and none accept the cookie", async () => {
+        const cookie = await signIn(app, TOKEN);
+        for (const site of ["same-origin", "none"]) {
+            expect((await app.request("/api/v1/server", { headers: { Cookie: cookie, "Sec-Fetch-Site": site } })).status).toBe(200);
+        }
+    });
+
+    test("Sec-Fetch-Site same-site and cross-site ignore the cookie, with the message for a missing token", async () => {
+        const cookie = await signIn(app, TOKEN);
+        for (const site of ["same-site", "cross-site"]) {
+            await expectUnauthorized(await app.request("/api/v1/server", { headers: { Cookie: cookie, "Sec-Fetch-Site": site } }), "Send the token");
+        }
+    });
+
+    test("the bearer token passes whatever Sec-Fetch-Site says", async () => {
+        expect((await app.request("/api/v1/server", { headers: { ...AUTH, "Sec-Fetch-Site": "same-site" } })).status).toBe(200);
+    });
+
+    test("only GET on exactly /api/v1/session needs no credential", async () => {
+        // The sign-in route answers a GET with no nonce by itself: 401 with the sign-in message, not the default one.
+        await expectUnauthorized(await app.request("/api/v1/session"), SIGN_IN_AGAIN);
+        await expectUnauthorized(await app.request("/api/v1/session?nonce=abc"), SIGN_IN_AGAIN);
+        // These requests are refused by the credential check, before any route.
+        for (const [method, path] of [
+            ["POST", "/api/v1/session"],
+            ["GET", "/api/v1/session/"],
+            ["GET", "/api/v1/session/nonce"],
+        ] as const) {
+            await expectUnauthorized(await app.request(path, { method }), "Send the token");
+        }
+    });
+});
+
 describe("the Host and Origin check", () => {
     const { boot } = fakeBoot({ ...identity, phase: "starting" });
-    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot }, { guiEnabled: () => true });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
     // The Bun server that `Bun.serve` passes as `c.env`. The check reads the bound port from it.
     const listener = { port: 8436 };
     const send = async (headers: Record<string, string>, path = "/api/v1/server"): Promise<Response> => await app.request(path, { headers }, listener);
@@ -123,27 +209,20 @@ describe("the Host and Origin check", () => {
 describe("the web GUI", () => {
     const deps = { token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot({ ...identity, phase: "starting" }).boot };
 
-    test("serves the page at /gui/ with no bearer token", async () => {
-        const response = await buildApp(deps, { guiEnabled: () => true }).request("/gui/");
+    test("the default app serves the placeholder page at /gui/ with no credential", async () => {
+        const response = await buildApp(deps).request("/gui/");
         expect(response.status).toBe(200);
         expect(response.headers.get("Content-Type")).toStartWith("text/html");
-        expect(await response.text()).toContain("<title>Inflexa (proof of concept)</title>");
+        const page = await response.text();
+        expect(page).toContain("<title>Inflexa</title>");
+        expect(page).toContain("Not implemented");
+        expect(page).not.toContain("<script");
     });
 
     test("/gui with no trailing slash moves to /gui/, where the page is", async () => {
-        const response = await buildApp(deps, { guiEnabled: () => true }).request("/gui");
+        const response = await buildApp(deps).request("/gui");
         expect(response.status).toBe(301);
         expect(response.headers.get("Location")).toBe("/gui/");
-    });
-
-    test("outside the dev channel, /gui/ has no route", async () => {
-        const response = await buildApp(deps, { guiEnabled: () => false }).request("/gui/");
-        expect(response.status).toBe(404);
-        expect(await response.json()).toMatchObject({ error: "not_found" });
-    });
-
-    test("the production app serves the GUI exactly when the dev commands are on", () => {
-        expect(DEFAULT_APP_OPTS.guiEnabled).toBe(devCommandsEnabled);
     });
 });
 

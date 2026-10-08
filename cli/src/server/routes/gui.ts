@@ -1,21 +1,16 @@
 import { Hono } from "hono";
 
-// The `file` import attribute gives the path of the page, and `bun build --compile` embeds the file (refer to
-// tui/grammars/register.ts).
-import pocPage from "../gui/poc.html" with { type: "file" };
 import type { ServerEnv } from "../http.ts";
 
-// bun-types types each `.html` import as the `HTMLBundle` of the HTML loader. The `file` attribute replaces that
-// loader, thus the value is the path string.
-const POC_PAGE_PATH = pocPage as unknown as string;
+const PLACEHOLDER_PAGE =
+    '<!doctype html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Inflexa</title></head>\n<body><p>Not implemented</p></body>\n</html>\n';
 
 /**
- * The proof-of-concept web GUI: one static page that uses the API of the server, as the TUI does. The page holds no
- * secret, thus it needs no bearer token. It reads the token from the fragment of its URL (`/gui/#token=<token>`), and
- * it sends the token on each API call.
+ * The page at `/gui/`: a placeholder with no script and no token, thus it needs no credential. It is the
+ * target of the browser sign-in of `inflexa gui`.
  */
 export function guiRoutes(): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
-    routes.get("/", () => new Response(Bun.file(POC_PAGE_PATH), { headers: { "Content-Type": "text/html; charset=utf-8" } }));
+    routes.get("/", (c) => c.html(PLACEHOLDER_PAGE));
     return routes;
 }

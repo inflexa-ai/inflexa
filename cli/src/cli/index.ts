@@ -181,6 +181,21 @@ export function buildProgram(): Command {
         },
     );
 
+    registerAction(
+        cli.command("gui").description("Open the web page of the local server in the browser, signed in with a one-time link"),
+        "instance",
+        {
+            kind: "blocked",
+            reason:
+                "`inflexa gui` signs a browser in to the local server: it makes a one-time credential and opens the browser of the user. " +
+                "Only a person can run it. It is not available to you — ask the user to run it themselves.",
+        },
+        async () => {
+            const { gui } = await import("../client/commands/gui.ts");
+            await gui();
+        },
+    );
+
     // Stays `approval` (not `auto`): the resolve route resolves anchors with the default `touch: true`,
     // which writes a `last_seen` heartbeat and can self-heal a cached path (anchor.ts `resolveAnchor`) —
     // an agent auto-running `status` would make that heartbeat measure agent I/O, not folder liveness.

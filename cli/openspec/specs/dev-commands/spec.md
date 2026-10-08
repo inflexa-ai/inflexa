@@ -10,8 +10,8 @@ The command-channel contract: which CLI commands are dev-only (`chat`, `profile`
 The CLI SHALL register its dev/E2E commands — `chat`, `profile`, and `run` — only when the
 development channel is active, so a production build's command surface is the product alone: bare
 `inflexa`, `config`, `new`, `ls`, `resume`, `open`, `status`, `usage`, `inputs`, `serve`, `server`,
-`analysis`, `project`, `prov`, `repair`, `relocate`, `prune`, `upgrade`, `geo`, `auth`, `up`, `down`,
-`setup`, `refs`, `sandbox`, and `store`. Gating SHALL happen at registration — an absent command: not
+`gui`, `analysis`, `project`, `prov`, `repair`, `relocate`, `prune`, `upgrade`, `geo`, `auth`, `up`,
+`down`, `setup`, `refs`, `sandbox`, `store`, and `sbom`. Gating SHALL happen at registration — an absent command: not
 present in help, and invoking the name fails non-zero as an unrecognized argument (commander's root
 default action accepts no positionals, so an unregistered name is rejected with an excess-argument
 error) — never as a runtime refusal inside a registered command.
@@ -37,6 +37,11 @@ it while a server holds the runtime.
 
 - **WHEN** a binary built with the `production` channel runs `--help`
 - **THEN** `serve` and `server` are present
+
+#### Scenario: Production binary carries the browser sign-in command
+
+- **WHEN** a binary built with the `production` channel runs `--help`
+- **THEN** `gui` is present
 
 #### Scenario: A dev command is a client of the server
 
