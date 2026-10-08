@@ -96,7 +96,9 @@ const devImportPattern = {
 
 export default defineConfig([
     {
-        ignores: ["eslint.config.js"],
+        // Flat config does not read .gitignore, and a run of inflexa inside cli/ mints `.inflexa/` with
+        // generated `.js` report assets that crash the typed rules.
+        ignores: ["eslint.config.js", "**/.inflexa/"],
     },
     {
         files: ["**/*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
