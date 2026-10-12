@@ -1,6 +1,5 @@
-import { readdirSync, type Dirent } from "node:fs";
-import { dirname, isAbsolute, resolve, sep } from "node:path";
-import { ok, err, type Result } from "neverthrow";
+import { dirname, isAbsolute, sep } from "node:path";
+import type { Result } from "neverthrow";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { InputRenderable } from "@opentui/core";
@@ -8,7 +7,8 @@ import type { InputRenderable } from "@opentui/core";
 import { GLYPHS, space } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel, type Chord } from "../../keymap.ts";
-import { statResult, isReadableBy, processIdentity, type ProcessIdentity } from "../../../lib/fs.ts";
+import { entryDetails, readFolder, type EntryDetails } from "../../../lib/folder_listing.ts";
+import { processIdentity, type ProcessIdentity } from "../../../lib/fs.ts";
 import { canonicalPath } from "../../../lib/paths.ts";
 import { openExternal } from "../../../lib/open_external.ts";
 import { notify } from "../../hooks/notice.ts";
@@ -19,7 +19,7 @@ import { DynamicList } from "../dynamic_list.tsx";
 import { Bold } from "../emphasis.tsx";
 import type { SelectItem } from "../list_core.tsx";
 
-// A navigable, multi-select file browser on DynamicList: a `readdirSync` listing re-minted per
+// A navigable, multi-select file browser on DynamicList: a shared folder listing re-minted per
 // navigation (the textbook DynamicList source), a fuzzy filter within the current folder, and
 // space-to-toggle selection that survives navigation because values are canonical ABSOLUTE paths,
 // not row objects. Two callers seed it differently (new-analysis seeds empty; add-inputs seeds
@@ -85,7 +85,7 @@ type Row = { name: string; isDir: boolean; abs: string; meta?: RowMeta };
  * row on each keystroke of the filter, and formatting there would pay the whole listing's cost per
  * character. Formatting once per listing keeps that loop to concatenation.
  */
-type RowMeta = { mode: number; readable: boolean | null; sizeLabel: string; dateLabel: string };
+type RowMeta = { mode: number | null; readable: boolean | null; sizeLabel: string; dateLabel: string };
 
 /** A directory listing, and whether it resolved metadata at all — see {@link METADATA_ENTRY_CEILING}. */
 type Listing = { rows: Row[]; withMetadata: boolean };
@@ -138,70 +138,51 @@ export type FilePickerProps = {
 };
 
 /**
- * The current dir, dirs-first then files, each group alphabetical (case-insensitive). The err
- * channel is the human-readable message (permission, broken mount): the caller renders it as the
- * list's error line and the user ascends — a single unreadable folder must not abort the picker.
+ * The current dir from the shared folder listing: folders first, then each other entry, each group
+ * alphabetical (case-insensitive). The sort uses the dirent kind, so a symlink to a folder sorts with the
+ * files, keeps its trailing `/`, and opens as a folder. The err channel is the human-readable message
+ * (permission, broken mount): the caller renders it as the list's error line and the user ascends — a single
+ * unreadable folder must not abort the picker.
  */
 function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | null): Result<Listing, string> {
-    let entries: Dirent[];
-    try {
-        entries = readdirSync(dir, { withFileTypes: true });
-    } catch (cause) {
-        return err(cause instanceof Error ? cause.message : String(cause));
-    }
-    // Decided from the RAW entry count, not the filtered row count: hiding dot-entries must not be
-    // what brings a 50k-entry folder under the ceiling, or `a` would silently start a huge stat pass.
-    const withMetadata = entries.length <= METADATA_ENTRY_CEILING;
-    const rows: Row[] = [];
-    for (const e of entries) {
-        if (hideHidden && e.name.startsWith(".")) continue;
-        // `withFileTypes` carries the classification straight off the dirent — one readdir, not
-        // N stats. A symlink-to-dir browses as a folder (node_modules/* is often a symlink).
-        // Symlink rows carry their CANONICAL target as the value: the selection space is
-        // canonical (classifyInputPath stores realpaths, the seed re-canonicalizes), so an
-        // uncanonical row would render a recorded input unchecked. canonicalPath degrades to
-        // the textual path for broken links, which then classify as file rows.
-        const raw = resolve(dir, e.name);
-        const abs = e.isSymbolicLink() ? canonicalPath(raw) : raw;
-        const isDir = e.isDirectory() || (e.isSymbolicLink() && safeSymlinkIsDir(abs));
-        rows.push({ name: e.name, isDir, abs, meta: withMetadata ? entryMeta(abs, identity) : undefined });
-    }
-    rows.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) : a.isDir ? -1 : 1));
-    // The flag travels with the rows rather than being inferred from them downstream: "every row
-    // lost its stat" is ALSO what a folder holding one broken symlink looks like, and reporting that
-    // as a large folder states a cause that is not the one at hand.
-    return ok({ rows, withMetadata });
+    return readFolder(dir, !hideHidden)
+        .mapErr((e) => (e.cause instanceof Error ? e.cause.message : String(e.cause)))
+        .map(({ entries, rawCount }): Listing => {
+            // Decided from the RAW entry count, not the filtered row count: hiding dot-entries must not be
+            // what brings a 50k-entry folder under the ceiling, or `a` would silently start a huge stat pass.
+            const withMetadata = rawCount <= METADATA_ENTRY_CEILING;
+            const rows = entries.map((entry): Row => {
+                // A link to a folder browses as a folder (node_modules/* is often a symlink), so a link needs its
+                // `stat` even above the ceiling. Any other entry takes its `stat` only below it.
+                const details = withMetadata || entry.kind === "symlink" ? entryDetails(entry, identity) : undefined;
+                // Symlink rows carry their CANONICAL target as the value: the selection space is
+                // canonical (classifyInputPath stores realpaths, the seed re-canonicalizes), so an
+                // uncanonical row would render a recorded input unchecked. canonicalPath degrades to
+                // the textual path for broken links, which then classify as file rows.
+                const abs = entry.kind === "symlink" ? canonicalPath(entry.path) : entry.path;
+                const isDir = entry.kind === "folder" || details?.link?.targetKind === "folder";
+                return { name: entry.name, isDir, abs, meta: withMetadata ? rowMeta(details) : undefined };
+            });
+            // The flag travels with the rows rather than being inferred from them downstream: "every row
+            // lost its stat" is ALSO what a folder holding one broken symlink looks like, and reporting that
+            // as a large folder states a cause that is not the one at hand.
+            return { rows, withMetadata };
+        });
 }
 
 /**
- * One `stat` for one row's facts — size, mtime, mode bits, and whether this process can read it.
- *
- * Readability rides on the SAME stat rather than an `accessSync(R_OK)` pass: measured over a
- * 468-entry directory, `access` cost 2.5–4.7ms against `stat`'s 0.69ms, for an answer the mode
- * bits plus the owning ids already give (see `isReadableBy`, which documents what that misses).
- *
- * A failed stat yields `undefined`, never a row-dropping error: an entry that vanished between the
- * readdir and this call is still a real listing the user is browsing, just one fact poorer.
+ * One row's facts from the shared entry facts, with the size and the date rendered. A failed `stat` gives
+ * `undefined`, never a row-dropping error: an entry that vanished between the read and the `stat` is still a
+ * real listing the user is browsing, just one fact poorer.
  */
-function entryMeta(abs: string, identity: ProcessIdentity | null): RowMeta | undefined {
-    return statResult(abs, "filePicker:entryMeta").match(
-        (s): RowMeta => ({
-            mode: s.mode,
-            readable: identity ? isReadableBy(s, identity) : null,
-            sizeLabel: s.size.formatBytes(),
-            dateLabel: COLUMN_TIME.format(s.mtimeMs),
-        }),
-        () => undefined,
-    );
-}
-
-// Best-effort: a broken symlink (target gone) must not crash the listing — it degrades to a file
-// row, the safe non-browsable choice. `abs` is already canonical (listDir resolved it).
-function safeSymlinkIsDir(abs: string): boolean {
-    return statResult(abs, "filePicker:symlinkStat").match(
-        (s) => s.isDirectory(),
-        () => false,
-    );
+function rowMeta(details: EntryDetails | undefined): RowMeta | undefined {
+    if (details === undefined || details.modifiedMs === null) return undefined;
+    return {
+        mode: details.mode,
+        readable: details.readable,
+        sizeLabel: details.size === null ? "" : details.size.formatBytes(),
+        dateLabel: COLUMN_TIME.format(details.modifiedMs),
+    };
 }
 
 /**
@@ -227,6 +208,7 @@ function modeTriple(row: Row, identity: ProcessIdentity | null, withMetadata: bo
     if (!row.meta) return MODE_COLUMN_BLANK;
     const rwx = (bits: number): string => `${bits & 4 ? "r" : "-"}${bits & 2 ? "w" : "-"}${bits & 1 ? "x" : "-"}`;
     const mode = row.meta.mode;
+    if (mode === null) return MODE_COLUMN_BLANK;
     return `${rwx((mode >> 6) & 7)}${rwx((mode >> 3) & 7)}${rwx(mode & 7)}`;
 }
 
@@ -262,7 +244,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     /* eslint-disable solid/reactivity -- seed-once: the picker mounts once with fixed props */
     const [cwd, setCwd] = createSignal(canonicalPath(props.rootPath));
     // Seed paths are canonicalized here so membership checks match the rows `listDir` constructs
-    // (`resolve` of a canonical cwd) — an uncanonicalized `/var/...` seed on macOS would silently
+    // (the shared listing joins the canonical folder path with the name) — an uncanonicalized `/var/...` seed on macOS would silently
     // miss its `/private/var/...` row. The picker owns this because only it knows its row keys.
     const seedSelected: ReadonlySet<string> = new Set([...props.selectedPaths].map(canonicalPath));
     /* eslint-enable solid/reactivity */

@@ -14,6 +14,7 @@ import { anchorRoutes } from "./routes/anchors.ts";
 import { artifactRoutes } from "./routes/artifacts.ts";
 import { browserSessionRoutes } from "./routes/browser_session.ts";
 import { conversationRoutes } from "./routes/conversation.ts";
+import { fsRoutes } from "./routes/fs.ts";
 import { guiRoutes } from "./routes/gui.ts";
 import { machineRoutes } from "./routes/machine.ts";
 import { projectRoutes } from "./routes/projects.ts";
@@ -51,6 +52,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.use("/api/*", credentialAuth(deps.token, sessions));
     app.route(SIGN_IN_PATH, browserSessionRoutes(sessions));
     app.route("/api/v1/server", serverRoutes(deps.boot, deps.lifecycle));
+    app.route("/api/v1/fs", fsRoutes());
     app.route("/api/v1/projects", projectRoutes());
     app.route("/api/v1", machineRoutes());
     app.route("/api/v1", storeRoutes());

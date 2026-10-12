@@ -299,6 +299,29 @@ describe("FilePicker", () => {
         }
     });
 
+    test("a symlink to a folder sorts with the files, keeps its trailing slash, and opens as a folder", async () => {
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-picker-ext-")));
+        writeFileSync(join(outside, "payload.txt"), "x");
+        symlinkSync(outside, join(root, "ext"));
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        try {
+            await settle(setup);
+            let frame = await openPicker(setup);
+            const order = ["beta/", "alpha.txt", "ext/", "zeta.txt"].map((name) => frame.indexOf(name));
+            expect(order.every((index) => index >= 0)).toBe(true);
+            expect(order).toEqual([...order].sort((a, b) => a - b));
+
+            for (let i = 0; i < 3; i += 1) setup.mockInput.pressArrow("down"); // .. → beta/ → alpha.txt → ext/
+            setup.mockInput.pressEnter();
+            frame = await settle(setup);
+            expect(frame).toContain("payload.txt");
+            expect(frame).not.toContain("alpha.txt");
+        } finally {
+            setup.renderer.destroy();
+            rmSync(outside, { recursive: true, force: true });
+        }
+    });
+
     test(".. renders no selection gutter even when the parent dir is selected", async () => {
         mkdirSync(join(root, "beta", "ml"));
         const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
@@ -470,7 +493,7 @@ describe("FilePicker entry metadata", () => {
 
     test("a broken symlink lists with no metadata rather than dropping out", async () => {
         // The deterministic stand-in for a stat that loses its race with a deletion: statSync
-        // follows the link and throws, which is exactly the path `entryMeta` degrades on.
+        // follows the link and throws, which is exactly the path `entryDetails` degrades on.
         const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
         symlinkSync(join(root, "gone.txt"), join(root, "dangling.txt"));
         try {
@@ -525,6 +548,58 @@ describe("FilePicker entry metadata", () => {
             expect(frame).toContain("details off (large folder)");
             const line = rowLine(frame, "f0.txt");
             expect(line.slice(0, line.indexOf("f0.txt"))).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a link to a folder inside a folder over the ceiling still renders with a slash and opens", async () => {
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-picker-ext-")));
+        writeFileSync(join(outside, "payload.txt"), "x");
+        const big = join(root, "big");
+        mkdirSync(big);
+        for (let i = 0; i < 2001; i++) writeFileSync(join(big, `f${i}.txt`), "x");
+        symlinkSync(outside, join(big, "aa-link"));
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        try {
+            await settle(setup);
+            await openPicker(setup);
+            // dirs sort first, alphabetically: .. → beta/ → big/
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressEnter();
+            let frame = await settle(setup);
+            expect(frame).toContain("details off (large folder)");
+            // A link sorts with the files, thus `aa-link` is the first row after `..`.
+            expect(frame).toContain("aa-link/");
+
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressEnter();
+            frame = await settle(setup);
+            expect(frame).toContain("payload.txt");
+            expect(frame).not.toContain("f0.txt");
+        } finally {
+            setup.renderer.destroy();
+            rmSync(outside, { recursive: true, force: true });
+        }
+    });
+
+    test("the ceiling counts the raw entries, so hiding the dot-files does not lift it", async () => {
+        const big = join(root, "big");
+        mkdirSync(big);
+        for (let i = 0; i < 1001; i++) writeFileSync(join(big, `f${i}.txt`), "x");
+        for (let i = 0; i < 1000; i++) writeFileSync(join(big, `.h${i}`), "x");
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        try {
+            await settle(setup);
+            await openPicker(setup);
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressEnter();
+            const frame = await settle(setup);
+            // The hidden entries are hidden by default, so 1001 rows show and 2001 entries were read.
+            expect(frame).not.toContain(".h0");
+            expect(frame).toContain("details off (large folder)");
         } finally {
             setup.renderer.destroy();
         }

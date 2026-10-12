@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
+import { mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
 import { rm } from "node:fs/promises";
 import { type Result, ResultAsync, ok, err } from "neverthrow";
 
@@ -75,6 +75,15 @@ export function statResult(path: string, op: string): Result<Stats, FsError> {
     }
 }
 
+/** Read the stored target of a symbolic link, wrapping `readlinkSync` throws into `Result`. */
+export function readlinkResult(path: string, op: string): Result<string, FsError> {
+    try {
+        return ok(readlinkSync(path));
+    } catch (cause) {
+        return err({ type: "io_failed", op, cause });
+    }
+}
+
 /**
  * The identity a readability decision is made against: this process's effective user, its effective
  * group, and every supplementary group it belongs to. Read ONCE per listing (the ids cannot change
@@ -124,4 +133,23 @@ export function isReadableBy(stats: Stats, identity: ProcessIdentity): boolean {
     // readable by a user who merely belongs to `staff`, which `getgid()` alone would miss.
     if (stats.gid === identity.gid || identity.groups.includes(stats.gid)) return (stats.mode & 0o040) !== 0;
     return (stats.mode & 0o004) !== 0;
+}
+
+/**
+ * Whether `identity` can write the file `stats` describes, decided from the mode bits and the owning
+ * ids alone — NO syscall. It mirrors {@link isReadableBy} with the write bits, and it has the same
+ * ACCEPTED IMPRECISION: an ACL, a read-only mount, or a file flag can deny a write that this reports
+ * as permitted. The result is advisory.
+ */
+export function isWritableBy(stats: Stats, identity: ProcessIdentity): boolean {
+    // Root bypasses the permission bits for writes, as it does for reads.
+    if (identity.uid === 0) return true;
+    if (stats.uid === identity.uid) return (stats.mode & 0o200) !== 0;
+    if (stats.gid === identity.gid || identity.groups.includes(stats.gid)) return (stats.mode & 0o020) !== 0;
+    return (stats.mode & 0o002) !== 0;
+}
+
+/** The `code` string of a thrown `node:fs` error, for example `ENOENT`, or `undefined` for a value that carries none. */
+export function errnoCode(cause: unknown): string | undefined {
+    return typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
 }

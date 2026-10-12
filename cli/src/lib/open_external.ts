@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { err, ok, type Result } from "neverthrow";
 
+import { errnoCode } from "./fs.ts";
+
 // The single shared "open this in the default OS application" helper: every caller (auth login, analysis
 // open, artifact open) routes through it, so per-platform opener selection — including the WSL case — lives
 // in one place. A failed open never throws and never blocks a turn: it returns `Result` with the failure on
@@ -81,11 +83,6 @@ function wslpathWindows(path: string): string | null {
 
 const realSeams: OpenSeams = { spawn: spawnDetached, toWindowsPath: wslpathWindows, platform: process.platform, wsl: isWsl };
 
-/** The OS error code a spawn failure carries, if any — `ENOENT` marks a missing opener binary. */
-function errorCode(cause: unknown): string | null {
-    return typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string" ? cause.code : null;
-}
-
 /**
  * Open `target` (file, directory, or URL) in the default OS application, detached. Returns `ok` once the
  * opener is spawned and `err` (never a throw) when the opener binary is missing or the spawn fails, so the
@@ -106,10 +103,10 @@ export function openExternal(target: string, seams: OpenSeams = realSeams): Resu
                     seams.spawn(["explorer.exe", win]);
                     return ok(undefined);
                 } catch (fallbackCause) {
-                    return err({ type: "open_failed", code: errorCode(fallbackCause), cause: fallbackCause });
+                    return err({ type: "open_failed", code: errnoCode(fallbackCause) ?? null, cause: fallbackCause });
                 }
             }
         }
-        return err({ type: "open_failed", code: errorCode(cause), cause });
+        return err({ type: "open_failed", code: errnoCode(cause) ?? null, cause });
     }
 }

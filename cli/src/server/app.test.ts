@@ -60,6 +60,22 @@ describe("the credential check", () => {
     });
 });
 
+describe("the file system routes", () => {
+    // A boot with no runtime: the routes must answer while the runtime boot is not ready.
+    const { boot } = fakeBoot({ ...identity, phase: "starting" });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+    const listPath = "/api/v1/fs/list?path=%2F";
+
+    test("no credential gives 401, and the bearer token gives 200 before the runtime boot is ready", async () => {
+        expect((await app.request(listPath)).status).toBe(401);
+        expect((await app.request("/api/v1/fs/home")).status).toBe(401);
+        const response = await app.request(listPath, { headers: AUTH });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ folder: { path: "/" }, entries: expect.any(Array) });
+        expect((await app.request("/api/v1/fs/home", { headers: AUTH })).status).toBe(200);
+    });
+});
+
 describe("the session cookie", () => {
     const { boot } = fakeBoot({ ...identity, phase: "starting" });
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
