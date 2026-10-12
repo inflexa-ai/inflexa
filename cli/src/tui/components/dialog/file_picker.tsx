@@ -1,13 +1,13 @@
 import { dirname, isAbsolute, sep } from "node:path";
-import type { Result } from "neverthrow";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import type { ResultAsync } from "neverthrow";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { InputRenderable } from "@opentui/core";
 
 import { GLYPHS, space } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel, type Chord } from "../../keymap.ts";
-import { entryDetails, readFolder, type EntryDetails } from "../../../lib/folder_listing.ts";
+import { entryDetails, readFolder, type EntryDetails, type FolderEntry } from "../../../lib/folder_listing.ts";
 import { processIdentity, type ProcessIdentity } from "../../../lib/fs.ts";
 import { canonicalPath } from "../../../lib/paths.ts";
 import { openExternal } from "../../../lib/open_external.ts";
@@ -97,6 +97,9 @@ type Listing = { rows: Row[]; withMetadata: boolean };
  */
 const EMPTY_LISTING: Listing = { rows: [], withMetadata: true };
 
+/** The outcome of the last read: its listing, or the message of an unreadable folder with no rows. */
+type ListState = { listing: Listing; error: string | null };
+
 /**
  * The fixed-width local timestamp of the date column.
  *
@@ -144,30 +147,58 @@ export type FilePickerProps = {
  * (permission, broken mount): the caller renders it as the list's error line and the user ascends — a single
  * unreadable folder must not abort the picker.
  */
-function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | null): Result<Listing, string> {
+function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | null): ResultAsync<Listing, string> {
     return readFolder(dir, !hideHidden)
         .mapErr((e) => (e.cause instanceof Error ? e.cause.message : String(e.cause)))
-        .map(({ entries, rawCount }): Listing => {
+        .map(async ({ entries, rawCount }): Promise<Listing> => {
             // Decided from the RAW entry count, not the filtered row count: hiding dot-entries must not be
             // what brings a 50k-entry folder under the ceiling, or `a` would silently start a huge stat pass.
             const withMetadata = rawCount <= METADATA_ENTRY_CEILING;
-            const rows = entries.map((entry): Row => {
-                // A link to a folder browses as a folder (node_modules/* is often a symlink), so a link needs its
-                // `stat` even above the ceiling. Any other entry takes its `stat` only below it.
-                const details = withMetadata || entry.kind === "symlink" ? entryDetails(entry, identity) : undefined;
+            // A link to a folder browses as a folder (node_modules/* is often a symlink), so a link needs its
+            // `stat` even above the ceiling. Any other entry takes its `stat` only below it.
+            const details = await detailsInParallel(entries, (entry) => withMetadata || entry.kind === "symlink", identity);
+            const rows = entries.map((entry, i): Row => {
+                const facts = details[i];
                 // Symlink rows carry their CANONICAL target as the value: the selection space is
                 // canonical (classifyInputPath stores realpaths, the seed re-canonicalizes), so an
                 // uncanonical row would render a recorded input unchecked. canonicalPath degrades to
                 // the textual path for broken links, which then classify as file rows.
                 const abs = entry.kind === "symlink" ? canonicalPath(entry.path) : entry.path;
-                const isDir = entry.kind === "folder" || details?.link?.targetKind === "folder";
-                return { name: entry.name, isDir, abs, meta: withMetadata ? rowMeta(details) : undefined };
+                const isDir = entry.kind === "folder" || facts?.link?.targetKind === "folder";
+                return { name: entry.name, isDir, abs, meta: withMetadata ? rowMeta(facts) : undefined };
             });
             // The flag travels with the rows rather than being inferred from them downstream: "every row
             // lost its stat" is ALSO what a folder holding one broken symlink looks like, and reporting that
             // as a large folder states a cause that is not the one at hand.
             return { rows, withMetadata };
         });
+}
+
+/** The count of `stat` calls in flight in one listing. A folder of 50k links must not open 50k reads at one time. */
+const DETAILS_WIDTH = 16;
+
+/**
+ * The facts of each entry that `wanted` selects, read by a queue of {@link DETAILS_WIDTH} workers. The result is
+ * index-aligned with `entries`, with `undefined` for an entry that was not read.
+ */
+async function detailsInParallel(
+    entries: readonly FolderEntry[],
+    wanted: (entry: FolderEntry) => boolean,
+    identity: ProcessIdentity | null,
+): Promise<(EntryDetails | undefined)[]> {
+    const out: (EntryDetails | undefined)[] = new Array(entries.length).fill(undefined);
+    let next = 0;
+    async function worker(): Promise<void> {
+        // `next` is shared, but each read and increment runs between two awaits, thus no index goes to two workers.
+        while (next < entries.length) {
+            const i = next++;
+            // The loop test keeps `i` below `entries.length`, thus the index holds an entry.
+            const entry = entries[i]!;
+            if (wanted(entry)) out[i] = await entryDetails(entry, identity);
+        }
+    }
+    await Promise.all(Array.from({ length: DETAILS_WIDTH }, worker));
+    return out;
 }
 
 /**
@@ -264,14 +295,29 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     // uid/gid mid-render, so re-reading would be three syscalls bought for a value already known.
     const identity = processIdentity();
 
-    const listed = createMemo(() => listDir(cwd(), hideHidden(), identity));
-    const listing = (): Listing => listed().unwrapOr(EMPTY_LISTING);
-    const rows = (): Row[] => listing().rows;
-    const listError = (): string | null =>
-        listed().match(
-            () => null,
-            (e) => e,
+    // `null` until the first read lands. A later read keeps the rows of the earlier one until it lands, thus a
+    // navigation on a fast disk does not show an empty list for one frame.
+    const [listed, setListed] = createSignal<ListState | null>(null);
+    createEffect(() => {
+        const dir = cwd();
+        const hide = hideHidden();
+        // A read that lands after the user moved on must not replace the rows of the newer folder.
+        let current = true;
+        onCleanup(() => {
+            current = false;
+        });
+        void listDir(dir, hide, identity).match(
+            (listing) => {
+                if (current) setListed({ listing, error: null });
+            },
+            (error) => {
+                if (current) setListed({ listing: EMPTY_LISTING, error });
+            },
         );
+    });
+    const listing = (): Listing => listed()?.listing ?? EMPTY_LISTING;
+    const rows = (): Row[] => listing().rows;
+    const listError = (): string | null => listed()?.error ?? null;
     const parentAbs = (): string => dirname(cwd());
 
     // `..` is synthesized ahead of the rows (never read from disk, so it can't collide with a
@@ -485,7 +531,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
                 <DynamicList
                     items={items()}
                     query={query()}
-                    emptyText={query().trim() === "" ? "Empty folder" : "No matches"}
+                    emptyText={listed() === null ? "Reading the folder" : query().trim() === "" ? "Empty folder" : "No matches"}
                     errorText={listError()}
                     mode="multi"
                     initialSelected={selected()}

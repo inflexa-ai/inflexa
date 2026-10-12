@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
-import { rm } from "node:fs/promises";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
+import { readlink, rm, stat } from "node:fs/promises";
 import { type Result, ResultAsync, ok, err } from "neverthrow";
 
 /**
@@ -75,13 +75,14 @@ export function statResult(path: string, op: string): Result<Stats, FsError> {
     }
 }
 
-/** Read the stored target of a symbolic link, wrapping `readlinkSync` throws into `Result`. */
-export function readlinkResult(path: string, op: string): Result<string, FsError> {
-    try {
-        return ok(readlinkSync(path));
-    } catch (cause) {
-        return err({ type: "io_failed", op, cause });
-    }
+/** Stat a path off the event loop, wrapping the `stat` rejection into `ResultAsync`. */
+export function statResultAsync(path: string, op: string): ResultAsync<Stats, FsError> {
+    return ResultAsync.fromPromise(stat(path), (cause): FsError => ({ type: "io_failed", op, cause }));
+}
+
+/** Read the stored target of a symbolic link off the event loop, wrapping the `readlink` rejection into `ResultAsync`. */
+export function readlinkResultAsync(path: string, op: string): ResultAsync<string, FsError> {
+    return ResultAsync.fromPromise(readlink(path), (cause): FsError => ({ type: "io_failed", op, cause }));
 }
 
 /**

@@ -126,8 +126,8 @@ The new-analysis flow SHALL open `FilePicker` seeded empty with `requireSelectio
 ### Requirement: The listing resolves entry metadata with one stat for each entry
 
 The listing MUST take its entry facts from the shared folder listing. It MUST take one
-`statSync` for each entry that it lists, and one `readlinkSync` for each symbolic link.
-It MUST take no `accessSync` call. The `Stats` object gives the size, the modification
+`stat` for each entry that it lists, and one `readlink` for each symbolic link.
+It MUST take no `access` call. The `Stats` object gives the size, the modification
 time, the mode bits, the owner uid, and the owner gid.
 
 The listing MUST derive readability from those mode bits and owner ids, against the ids
@@ -154,17 +154,22 @@ The date MUST come from one `Intl.DateTimeFormat` for the process. A call to
 `toLocaleString` with options builds a formatter each time, which measured 48.6 ms over
 2000 rows against 2.5 ms for the shared formatter.
 
-The fill MUST be synchronous. The picker MUST NOT fill the metadata asynchronously. A
-late fill mints the items array again, and the list engine then moves the cursor to row 0.
+The listing MUST give the rows and their metadata in one update. The picker MUST NOT fill
+the metadata after the rows render. A late fill mints the items array again, and the list
+engine then moves the cursor to row 0.
+
+The reads MUST run off the event loop, with a fixed count of `stat` calls in flight. A
+read that lands after the user leaves its folder MUST NOT replace the rows of the newer
+folder.
 
 #### Scenario: One syscall for each entry
 
 - **WHEN** the picker lists a directory below the entry ceiling
-- **THEN** it takes one `statSync` for each entry and no `accessSync` call
+- **THEN** it takes one `stat` for each entry and no `access` call
 
 #### Scenario: A failed stat keeps the row
 
-- **WHEN** an entry disappears between the `readdirSync` and its `statSync`
+- **WHEN** an entry disappears between the `readdir` and its `stat`
 - **THEN** the row still lists, with no size, no date, and no permission bits
 - **AND** its name starts in the same column as the name of each row beside it
 

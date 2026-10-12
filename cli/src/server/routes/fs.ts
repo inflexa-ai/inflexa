@@ -5,7 +5,7 @@ import { Hono } from "hono";
 
 import type { FolderEntryView, FolderFacts, FolderList, HomeFolder } from "../../api/fs.ts";
 import { entryDetails, readFolder, type FolderEntry, type FolderReadError } from "../../lib/folder_listing.ts";
-import { errnoCode, isReadableBy, processIdentity, statResult, type ProcessIdentity } from "../../lib/fs.ts";
+import { errnoCode, isReadableBy, processIdentity, statResultAsync, type ProcessIdentity } from "../../lib/fs.ts";
 import { apiError, holdConnection, listEnvelope, parsePage, type ServerEnv } from "../http.ts";
 
 /** The reads of the file system routes. A test replaces one to count the calls. */
@@ -16,8 +16,8 @@ export type FsRouteOpts = {
 /** The production {@link FsRouteOpts}. */
 export const DEFAULT_FS_ROUTE_OPTS: FsRouteOpts = { entryDetails };
 
-function entryView(entry: FolderEntry, identity: ProcessIdentity | null, opts: FsRouteOpts): FolderEntryView {
-    const details = opts.entryDetails(entry, identity);
+async function entryView(entry: FolderEntry, identity: ProcessIdentity | null, opts: FsRouteOpts): Promise<FolderEntryView> {
+    const details = await opts.entryDetails(entry, identity);
     return {
         name: entry.name,
         path: entry.path,
@@ -63,7 +63,7 @@ export function fsRoutes(opts: FsRouteOpts = DEFAULT_FS_ROUTE_OPTS): Hono<Server
         return c.json(body);
     });
 
-    routes.get("/list", (c) => {
+    routes.get("/list", async (c) => {
         const path = c.req.query("path");
         // `node:fs` refuses a NUL byte with `ERR_INVALID_ARG_VALUE`, a fault of the request and not a read failure.
         if (path === undefined || !isAbsolute(path) || path.includes("\0")) {
@@ -81,20 +81,21 @@ export function fsRoutes(opts: FsRouteOpts = DEFAULT_FS_ROUTE_OPTS): Hono<Server
         }
         // A read on a slow mount can run for longer than 10 s.
         holdConnection(c);
-        // `resolve` removes each `..` segment as text, before `realpathSync` sees the path.
-        const folder = readFolder(resolve(path), hidden === "true");
+        // `resolve` removes each `..` segment as text, before `realpath` sees the path.
+        const folder = await readFolder(resolve(path), hidden === "true");
         if (folder.isErr()) return readErrorResponse(c, folder.error);
 
         const { path: canonical, entries } = folder.value;
         const page = parsePage(c.req.query("page"), c.req.query("perPage"));
-        const items = entries.slice(page.page * page.perPage, (page.page + 1) * page.perPage).map((entry) => entryView(entry, identity, opts));
-        const facts: FolderFacts = {
-            path: canonical,
-            readable: statResult(canonical, "fsRoutes:folderStat").match(
+        // `parsePage` caps `perPage`, thus the cap bounds the count of `stat` calls in flight.
+        const [items, readable] = await Promise.all([
+            Promise.all(entries.slice(page.page * page.perPage, (page.page + 1) * page.perPage).map((entry) => entryView(entry, identity, opts))),
+            statResultAsync(canonical, "fsRoutes:folderStat").match(
                 (stats) => (identity ? isReadableBy(stats, identity) : null),
                 () => null,
             ),
-        };
+        ]);
+        const facts: FolderFacts = { path: canonical, readable };
         const body: FolderList = { ...listEnvelope("entries", items, entries.length, page), folder: facts };
         return c.json(body);
     });

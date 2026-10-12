@@ -1,8 +1,9 @@
-import { readdirSync, realpathSync, type Dirent } from "node:fs";
+import type { Dirent } from "node:fs";
+import { readdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { err, ok, type Result } from "neverthrow";
+import { ResultAsync } from "neverthrow";
 
-import { errnoCode, isReadableBy, isWritableBy, readlinkResult, statResult, type ProcessIdentity } from "./fs.ts";
+import { errnoCode, isReadableBy, isWritableBy, readlinkResultAsync, statResultAsync, type ProcessIdentity } from "./fs.ts";
 
 /** What a listed entry is, from the folder read alone. Each type that is not a folder or a link (a FIFO, a socket, a device) is `file`. */
 export type FolderEntryType = "file" | "folder" | "symlink";
@@ -86,42 +87,37 @@ function readError(path: string, cause: unknown): FolderReadError {
 }
 
 /**
- * Read one folder: resolve its canonical path, read its names with one `readdirSync`, drop the hidden entries
+ * Read one folder: resolve its canonical path, read its names with one `readdir`, drop the hidden entries
  * unless `hidden` is true, and sort. It takes no `stat` of an entry, because the kind comes from the dirent. Thus
  * a link to a folder sorts with the files, and a caller reads `entryDetails` for the entries that it shows.
+ *
+ * Each read runs off the event loop: the local server calls this, and a folder on a hung mount must stop only
+ * its own request. The sort needs each name, thus the read of the names has no bound.
  */
-export function readFolder(path: string, hidden: boolean): Result<FolderRead, FolderReadError> {
-    let canonical: string;
-    let dirents: Dirent[];
-    try {
-        canonical = realpathSync(path);
-        dirents = readdirSync(canonical, { withFileTypes: true });
-    } catch (cause) {
-        return err(readError(path, cause));
-    }
-    const entries: FolderEntry[] = [];
-    for (const dirent of dirents) {
-        const isHidden = dirent.name.startsWith(".");
-        if (isHidden && !hidden) continue;
-        entries.push({ name: dirent.name, path: join(canonical, dirent.name), kind: entryKind(dirent), hidden: isHidden });
-    }
-    entries.sort(compareEntries);
-    return ok({ path: canonical, entries, rawCount: dirents.length });
+export function readFolder(path: string, hidden: boolean): ResultAsync<FolderRead, FolderReadError> {
+    return ResultAsync.fromPromise(
+        realpath(path).then(async (canonical) => ({ canonical, dirents: await readdir(canonical, { withFileTypes: true }) })),
+        (cause) => readError(path, cause),
+    ).map(({ canonical, dirents }): FolderRead => {
+        const entries: FolderEntry[] = [];
+        for (const dirent of dirents) {
+            const isHidden = dirent.name.startsWith(".");
+            if (isHidden && !hidden) continue;
+            entries.push({ name: dirent.name, path: join(canonical, dirent.name), kind: entryKind(dirent), hidden: isHidden });
+        }
+        entries.sort(compareEntries);
+        return { path: canonical, entries, rawCount: dirents.length };
+    });
 }
 
 /**
  * The facts of one entry: one `stat` that follows links, and one `readlink` for a link. It never fails. A `stat`
  * that fails gives `null` facts, for example when the entry goes away after the folder read, and the entry stays.
  */
-export function entryDetails(entry: FolderEntry, identity: ProcessIdentity | null): EntryDetails {
+export async function entryDetails(entry: FolderEntry, identity: ProcessIdentity | null): Promise<EntryDetails> {
     const isLink = entry.kind === "symlink";
-    const target = isLink
-        ? readlinkResult(entry.path, "folderListing:entryDetails").match(
-              (stored) => stored,
-              () => null,
-          )
-        : null;
-    return statResult(entry.path, "folderListing:entryDetails").match(
+    const target = isLink ? await readlinkResultAsync(entry.path, "folderListing:entryDetails").unwrapOr(null) : null;
+    return statResultAsync(entry.path, "folderListing:entryDetails").match(
         (stats): EntryDetails => {
             const isFolder = stats.isDirectory();
             return {
