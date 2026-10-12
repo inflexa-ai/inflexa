@@ -8,7 +8,7 @@ import type { AnalysisPurgeOutcome, DbError as PgError, Pool } from "@inflexa-ai
 import type { BusyReason } from "../../api/analyses.ts";
 import type { PruneAnchorsResponse, RelocateAnchorResponse, RepairAnchorResponse } from "../../api/anchors.ts";
 import type { ApiError } from "../../api/common.ts";
-import type { ServerState } from "../../api/server.ts";
+import type { ServerBootState } from "../../api/server.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor } from "../../db/primary_mutation.ts";
 import { getAnchor, listAnalysesByAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
 import { asStr256 } from "../../lib/types.ts";
@@ -25,7 +25,7 @@ import { anchorRoutes, type AnchorRouteOpts } from "./anchors.ts";
 
 const runtime = { pool: {} as unknown as Pool } as unknown as HarnessRuntime;
 const readyBoot: ServerBoot = {
-    state: (): ServerState => ({
+    state: (): ServerBootState => ({
         version: "0.0.0-test",
         apiVersion: 1,
         startedAt: "2026-10-02T00:00:00.000Z",
@@ -228,5 +228,24 @@ describe("POST /api/v1/anchors/prune", () => {
         const empty = (await (await post(anchorRoutes(idleBoot(), t.opts), "/prune", { anchorIds: ["D2"] })).json()) as PruneAnchorsResponse;
         expect(empty.pruned).toEqual(["D2"]);
         expect(t.purged).toEqual([]);
+    });
+
+    test("the 503 names the step that runs, beside the phase", async () => {
+        seedDead("D1", ["a1"]);
+        const running: ServerBoot = {
+            ...idleBoot(),
+            state: (): ServerBootState => ({
+                version: "0.0.0-test",
+                apiVersion: 1,
+                startedAt: "2026-10-02T00:00:00.000Z",
+                phase: "starting",
+                boot: { attemptStartedAt: "2026-10-02T00:00:00.000Z", step: { id: "images", startedAt: "2026-10-02T00:00:01.000Z" }, done: [] },
+            }),
+        };
+
+        const refused = await post(anchorRoutes(running, opts().opts), "/prune", { anchorIds: ["D1"] });
+
+        expect(refused.status).toBe(503);
+        expect(await refused.json()).toMatchObject({ error: "unavailable", details: { phase: "starting", step: "images" } });
     });
 });

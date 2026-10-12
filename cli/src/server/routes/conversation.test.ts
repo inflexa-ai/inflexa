@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { err, errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import type { AnswerOutcome, AskGateway, AskReply, ChatFrame, DbError, PendingAsk, StoredMessage, Thread, ThreadPage, ThreadStore } from "@inflexa-ai/harness";
 
-import type { ServerState } from "../../api/server.ts";
+import type { ServerBootState } from "../../api/server.ts";
 import {
     TURN_ID_HEADER,
     type AskList,
@@ -99,7 +99,7 @@ function readyBoot(gateway: AskGateway = fakeGateway([])): ServerBoot {
         usageRecorder: { record: () => okAsync(undefined) },
         askGateway: gateway,
     } as unknown as HarnessRuntime;
-    const state: ServerState = {
+    const state: ServerBootState = {
         version: "0.0.0-test",
         apiVersion: 1,
         startedAt: new Date().toISOString(),

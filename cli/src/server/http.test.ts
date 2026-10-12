@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
-import type { ServerState } from "../api/server.ts";
+import type { BootStepRunning, ServerBootState } from "../api/server.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { ServerBoot } from "./boot.ts";
 import { apiError, listEnvelope, parsePage, requireRuntime, sseResponse, type ServerEnv } from "./http.ts";
@@ -60,7 +60,11 @@ describe("requireRuntime", () => {
     // The middleware only passes the handle on, so a stand-in object is enough to prove that it arrives.
     const runtime = { tag: "runtime" } as unknown as HarnessRuntime;
 
-    function bootIn(state: ServerState, rt: HarnessRuntime | null): ServerBoot {
+    function startingState(step: BootStepRunning | null): ServerBootState {
+        return { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step, done: [] } };
+    }
+
+    function bootIn(state: ServerBootState, rt: HarnessRuntime | null): ServerBoot {
         return { state: () => state, runtime: () => rt, start: async () => undefined };
     }
 
@@ -71,27 +75,73 @@ describe("requireRuntime", () => {
     }
 
     test("503 `unavailable` with details.phase while the boot is starting or failed", async () => {
-        const starting = await appFor(bootIn({ ...identity, phase: "starting" }, null)).request("/needs");
+        const starting = await appFor(bootIn(startingState(null), null)).request("/needs");
         expect(starting.status).toBe(503);
         expect(await starting.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
 
-        const failedState: ServerState = { ...identity, phase: "failed", bootError: { reason: "x", message: "y", detailLines: [] } };
+        const failedState: ServerBootState = {
+            ...identity,
+            phase: "failed",
+            bootError: { reason: "x", message: "y", detailLines: [] },
+            attemptStartedAt: identity.startedAt,
+            failedAt: identity.startedAt,
+            failedStep: null,
+        };
         const failed = await appFor(bootIn(failedState, null)).request("/needs");
         expect(failed.status).toBe(503);
         expect(await failed.json()).toMatchObject({ error: "unavailable", details: { phase: "failed" } });
     });
 
+    test("details.step names the step that runs in `starting`, and is null before the first step", async () => {
+        const before = await appFor(bootIn(startingState(null), null)).request("/needs");
+        expect(await before.json()).toMatchObject({ details: { phase: "starting", step: null } });
+
+        const running = await appFor(bootIn(startingState({ id: "images", startedAt: identity.startedAt }), null)).request("/needs");
+        expect(running.status).toBe(503);
+        expect(await running.json()).toMatchObject({ error: "unavailable", details: { phase: "starting", step: "images" } });
+    });
+
+    test("details.step is the failed step in `failed`", async () => {
+        const failedAtContainers: ServerBootState = {
+            ...identity,
+            phase: "failed",
+            bootError: { reason: "infra_unready", message: "y", detailLines: [] },
+            attemptStartedAt: identity.startedAt,
+            failedAt: identity.startedAt,
+            failedStep: "containers",
+        };
+        const failed = await appFor(bootIn(failedAtContainers, null)).request("/needs");
+        expect(await failed.json()).toMatchObject({ details: { phase: "failed", step: "containers" } });
+
+        const beforeSteps = await appFor(bootIn({ ...failedAtContainers, failedStep: null }, null)).request("/needs");
+        expect(await beforeSteps.json()).toMatchObject({ details: { phase: "failed", step: null } });
+    });
+
     test("the 503 message gives a person the phase and the command to run, not an API route", async () => {
-        const starting = (await (await appFor(bootIn({ ...identity, phase: "starting" }, null)).request("/needs")).json()) as { message: string };
+        const starting = (await (await appFor(bootIn(startingState(null), null)).request("/needs")).json()) as { message: string };
         expect(starting.message).toContain("phase `starting`");
 
-        const signIn: ServerState = { ...identity, phase: "failed", bootError: { reason: "sign_in_required", message: "No provider login.", detailLines: [] } };
+        const signIn: ServerBootState = {
+            ...identity,
+            phase: "failed",
+            bootError: { reason: "sign_in_required", message: "No provider login.", detailLines: [] },
+            attemptStartedAt: identity.startedAt,
+            failedAt: identity.startedAt,
+            failedStep: null,
+        };
         const signInMessage = ((await (await appFor(bootIn(signIn, null)).request("/needs")).json()) as { message: string }).message;
         expect(signInMessage).toContain("phase `failed`");
         expect(signInMessage).toContain("No provider login.");
         expect(signInMessage).toContain("boots again after the sign-in");
 
-        const other: ServerState = { ...identity, phase: "failed", bootError: { reason: "infra_unready", message: "Docker is not running.", detailLines: [] } };
+        const other: ServerBootState = {
+            ...identity,
+            phase: "failed",
+            bootError: { reason: "infra_unready", message: "Docker is not running.", detailLines: [] },
+            attemptStartedAt: identity.startedAt,
+            failedAt: identity.startedAt,
+            failedStep: null,
+        };
         const otherMessage = ((await (await appFor(bootIn(other, null)).request("/needs")).json()) as { message: string }).message;
         expect(otherMessage).toContain("Docker is not running.");
         expect(otherMessage).toContain("Then run `inflexa up`");
@@ -99,7 +149,7 @@ describe("requireRuntime", () => {
     });
 
     test("a ready boot hands the runtime to the handler", async () => {
-        const readyState: ServerState = { ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } };
+        const readyState: ServerBootState = { ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } };
         const response = await appFor(bootIn(readyState, runtime)).request("/needs");
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ same: true });

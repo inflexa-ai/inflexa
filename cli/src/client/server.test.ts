@@ -21,7 +21,25 @@ const DISCOVERY: ServerDiscovery = {
     channel: "development",
 };
 
-const STARTING: ServerState = { version: pkg.version, apiVersion: API_VERSION, startedAt: DISCOVERY.startedAt, phase: "starting" };
+const STARTING: ServerState = {
+    version: pkg.version,
+    apiVersion: API_VERSION,
+    startedAt: DISCOVERY.startedAt,
+    phase: "starting",
+    boot: { attemptStartedAt: DISCOVERY.startedAt, step: null, done: [] },
+    stopping: null,
+};
+const FAILED: ServerState = {
+    version: pkg.version,
+    apiVersion: API_VERSION,
+    startedAt: DISCOVERY.startedAt,
+    phase: "failed",
+    bootError: { reason: "x", message: "y", detailLines: [] },
+    attemptStartedAt: DISCOVERY.startedAt,
+    failedAt: DISCOVERY.startedAt,
+    failedStep: null,
+    stopping: null,
+};
 
 /**
  * A machine in memory: one discovery file, the listeners by port, the live pids, the spawn lock, and a clock
@@ -110,7 +128,7 @@ function runServer(world: ReturnType<typeof machine>["world"], discovery: Server
 
 describe("ensureServer: connect", () => {
     test("a server that answers in any phase is used, and no lock is taken and nothing starts", async () => {
-        for (const state of [STARTING, { ...STARTING, phase: "failed", bootError: { reason: "x", message: "y", detailLines: [] } } satisfies ServerState]) {
+        for (const state of [STARTING, FAILED]) {
             const { opts, world } = machine();
             runServer(world, DISCOVERY, state);
             expect((await ensureServer(opts))._unsafeUnwrap()).toEqual({ discovery: DISCOVERY, state });

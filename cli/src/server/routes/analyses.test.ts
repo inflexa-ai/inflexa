@@ -19,7 +19,7 @@ import type {
     UpdateAnalysisResponse,
 } from "../../api/analyses.ts";
 import type { ApiError } from "../../api/common.ts";
-import type { ServerState } from "../../api/server.ts";
+import type { ServerBootState } from "../../api/server.ts";
 import { createProject, insertAnalysis, insertAnalysisInput, insertAnchor, upsertLlmUsage } from "../../db/primary_mutation.ts";
 import { getAnalysis, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
@@ -44,7 +44,7 @@ const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T
 // The delete only passes the pool to the injected purge, thus a stand-in object is enough.
 const runtime = { pool: {} as unknown as Pool } as unknown as HarnessRuntime;
 const readyBoot: ServerBoot = {
-    state: (): ServerState => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
+    state: (): ServerBootState => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
     runtime: () => runtime,
     start: async () => undefined,
 };

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { errAsync, ok, okAsync } from "neverthrow";
 
-import type { ServerActivity, ServerState, ShutdownMode } from "../api/server.ts";
+import type { ServerActivity, ServerBootState, ServerState, ShutdownMode } from "../api/server.ts";
 import type { ClientOpts } from "../client/api.ts";
 import { fetchServerState } from "../client/server.ts";
 import { insertAnalysis, insertAnchor } from "../db/primary_mutation.ts";
@@ -25,8 +25,10 @@ const TOKEN = "a".repeat(64);
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
 const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
 
+const STARTING: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
+
 /** A boot that holds `state` and counts the calls of `start`. */
-function fakeBoot(state: ServerState): { boot: ServerBoot; starts: () => number } {
+function fakeBoot(state: ServerBootState): { boot: ServerBoot; starts: () => number } {
     let starts = 0;
     return {
         boot: {
@@ -41,7 +43,7 @@ function fakeBoot(state: ServerState): { boot: ServerBoot; starts: () => number 
 }
 
 describe("the credential check", () => {
-    const { boot } = fakeBoot({ ...identity, phase: "starting" });
+    const { boot } = fakeBoot(STARTING);
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
 
     test("no Authorization header gives 401 `unauthorized`", async () => {
@@ -71,7 +73,7 @@ describe("the credential check", () => {
 
 describe("the file system routes", () => {
     // A boot with no runtime: the routes must answer while the runtime boot is not ready.
-    const { boot } = fakeBoot({ ...identity, phase: "starting" });
+    const { boot } = fakeBoot(STARTING);
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
     const listPath = "/api/v1/fs/list?path=%2F";
 
@@ -131,7 +133,7 @@ describe("the file route", () => {
 });
 
 describe("the session cookie", () => {
-    const { boot } = fakeBoot({ ...identity, phase: "starting" });
+    const { boot } = fakeBoot(STARTING);
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
     const SIGN_IN_AGAIN = "Run `inflexa gui` again.";
 
@@ -217,7 +219,7 @@ describe("the session cookie", () => {
 });
 
 describe("the Host and Origin check", () => {
-    const { boot } = fakeBoot({ ...identity, phase: "starting" });
+    const { boot } = fakeBoot(STARTING);
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
     // The Bun server that `Bun.serve` passes as `c.env`. The check reads the bound port from it.
     const listener = { port: 8436 };
@@ -277,7 +279,7 @@ describe("the Host and Origin check", () => {
 });
 
 describe("the web GUI", () => {
-    const deps = { token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot({ ...identity, phase: "starting" }).boot };
+    const deps = { token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(STARTING).boot };
 
     test("the default app serves the placeholder page at /gui/ with no credential", async () => {
         const response = await buildApp(deps).request("/gui/");
@@ -298,38 +300,88 @@ describe("the web GUI", () => {
 
 describe("GET /api/v1/server", () => {
     test("gives the state of each phase as the boot holds it", async () => {
-        const states: ServerState[] = [
-            { ...identity, phase: "starting" },
+        const states: ServerBootState[] = [
+            {
+                ...STARTING,
+                boot: {
+                    attemptStartedAt: "2026-10-02T00:00:01.000Z",
+                    step: { id: "images", startedAt: "2026-10-02T00:00:03.000Z", progress: { doneBytes: 40, totalBytes: 120 } },
+                    done: [{ id: "container_engine", startedAt: "2026-10-02T00:00:01.000Z", endedAt: "2026-10-02T00:00:03.000Z" }],
+                },
+            },
             { ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "claude-test" } },
-            { ...identity, phase: "failed", bootError: { reason: "postgres_unavailable", message: "start Postgres", detailLines: ["ECONNREFUSED"] } },
+            {
+                ...identity,
+                phase: "failed",
+                bootError: { reason: "postgres_unavailable", message: "start Postgres", detailLines: ["ECONNREFUSED"] },
+                attemptStartedAt: "2026-10-02T00:00:01.000Z",
+                failedAt: "2026-10-02T00:00:09.000Z",
+                failedStep: "containers",
+            },
         ];
         for (const state of states) {
             const response = await buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(state).boot }).request("/api/v1/server", {
                 headers: AUTH,
             });
             expect(response.status).toBe(200);
-            expect(await response.json()).toEqual(state);
+            expect(await response.json()).toEqual({ ...state, stopping: null });
+        }
+    });
+
+    test("gives the mode of a stop in progress in each phase, and the phase does not change", async () => {
+        const ready: ServerBootState = { ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "claude-test" } };
+        for (const state of [STARTING, ready]) {
+            const lifecycle = recordingLifecycle(0);
+            const app = buildApp({ token: TOKEN, lifecycle, boot: fakeBoot(state).boot });
+            const read = async (): Promise<unknown> => (await app.request("/api/v1/server", { headers: AUTH })).json();
+            expect(await read()).toEqual({ ...state, stopping: null });
+
+            const stop = await app.request("/api/v1/server/shutdown", {
+                method: "POST",
+                headers: { ...AUTH, "Content-Type": "application/json" },
+                body: JSON.stringify({ mode: "drain" }),
+            });
+            expect(stop.status).toBe(202);
+            expect(await read()).toEqual({ ...state, stopping: "drain" });
         }
     });
 });
 
 describe("POST /api/v1/server/boot", () => {
     test("starts the boot and gives 202 with the state", async () => {
-        const failed: ServerState = { ...identity, phase: "failed", bootError: { reason: "x", message: "y", detailLines: [] } };
+        const failed: ServerBootState = {
+            ...identity,
+            phase: "failed",
+            bootError: { reason: "x", message: "y", detailLines: [] },
+            attemptStartedAt: identity.startedAt,
+            failedAt: identity.startedAt,
+            failedStep: null,
+        };
         const fake = fakeBoot(failed);
         const response = await buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fake.boot }).request("/api/v1/server/boot", {
             method: "POST",
             headers: AUTH,
         });
         expect(response.status).toBe(202);
-        expect(await response.json()).toEqual(failed);
+        expect(await response.json()).toEqual({ ...failed, stopping: null });
         expect(fake.starts()).toBe(1);
+    });
+
+    test("gives the mode of a stop in progress in the 202 body", async () => {
+        const lifecycle = recordingLifecycle(0);
+        lifecycle.requestShutdown("now");
+        const response = await buildApp({ token: TOKEN, lifecycle, boot: fakeBoot(STARTING).boot }).request("/api/v1/server/boot", {
+            method: "POST",
+            headers: AUTH,
+        });
+        expect(response.status).toBe(202);
+        expect(await response.json()).toMatchObject({ phase: "starting", stopping: "now" });
     });
 });
 
 describe("a handler that throws", () => {
     test("gives 500 `internal_error` with generic text, never the cause", async () => {
-        const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot({ ...identity, phase: "starting" }).boot });
+        const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(STARTING).boot });
         app.get("/api/v1/boom", () => {
             throw new Error("secret internal detail");
         });
@@ -342,7 +394,7 @@ describe("a handler that throws", () => {
 });
 
 describe("the client against the app (no port)", () => {
-    const state: ServerState = { ...identity, phase: "ready", connection: { provider: "openai", mode: "direct", model: "gpt-test" } };
+    const state: ServerBootState = { ...identity, phase: "ready", connection: { provider: "openai", mode: "direct", model: "gpt-test" } };
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(state).boot });
     const clientWith = (token: string): ClientOpts => ({
         discover: () => ok({ baseUrl: "http://127.0.0.1:8436", token }),
@@ -350,7 +402,7 @@ describe("the client against the app (no port)", () => {
     });
 
     test("fetchServerState gives the state that the route sends", async () => {
-        expect((await fetchServerState(clientWith(TOKEN)))._unsafeUnwrap()).toEqual(state);
+        expect((await fetchServerState(clientWith(TOKEN)))._unsafeUnwrap()).toEqual({ ...state, stopping: null } satisfies ServerState);
     });
 
     test("a stale token is an `http` 401 with the `unauthorized` body", async () => {
@@ -378,7 +430,7 @@ function recordingLifecycle(activeTurns: number): ServerLifecycle & { requests: 
 }
 
 describe("POST /api/v1/server/shutdown", () => {
-    const idle = fakeBoot({ ...identity, phase: "starting" }).boot;
+    const idle = fakeBoot(STARTING).boot;
 
     test.each([["now"], ["drain"]] as const)("mode %s gives 202 at once, with the mode and the running turns", async (mode) => {
         const lifecycle = recordingLifecycle(2);
@@ -423,7 +475,7 @@ describe("GET /api/v1/server/activity", () => {
     });
     // The route passes the pool of the runtime to the ledger read and reads nothing else of it.
     const runtime = { pool: {} } as unknown as HarnessRuntime;
-    const readyBoot: ServerBoot = { state: () => ({ ...identity, phase: "starting" }), runtime: () => runtime, start: async () => undefined };
+    const readyBoot: ServerBoot = { state: () => STARTING, runtime: () => runtime, start: async () => undefined };
 
     async function activity(boot: ServerBoot, opts: ServerRouteOpts, lifecycle: ServerLifecycle = idleLifecycle()): Promise<ServerActivity> {
         const response = await serverRoutes(boot, lifecycle, opts).request("/activity");
@@ -442,7 +494,7 @@ describe("GET /api/v1/server/activity", () => {
 
     test("with no runtime, no workflow runs in the server", async () => {
         const body = await activity(
-            fakeBoot({ ...identity, phase: "starting" }).boot,
+            fakeBoot(STARTING).boot,
             counts(() => okAsync({ runs: 9, profiles: 9 })),
         );
         expect(body.durable).toEqual({ state: "no_runtime" });

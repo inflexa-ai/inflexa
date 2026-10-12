@@ -42,9 +42,99 @@ export type ServerIdentity = {
     startedAt: string;
 };
 
+/**
+ * A step of the boot, in the boot order. `proxy` and `credential` run only in `cliproxy` mode. Each step
+ * ends when the next one starts.
+ */
+export type BootStepId = "container_engine" | "proxy" | "images" | "containers" | "credential" | "embedder" | "runtime";
+
+/** The bytes that the pull of the missing images moved. */
+export type BootPullProgress = {
+    /** The sum of the moved bytes over the images that the pull moves now. */
+    doneBytes: number;
+    /** The sum of the image sizes from the registry manifests, or `null` when a size is not known. */
+    totalBytes: number | null;
+};
+
+/** The step that runs now. Only the step `images` can carry the byte progress of its pull. */
+export type BootStepRunning =
+    | {
+          /** Every step except `images`, which has its own variant because only it carries `progress`. */
+          id: Exclude<BootStepId, "images">;
+          /** When the step started, as ISO 8601. */
+          startedAt: string;
+      }
+    | {
+          /** The pull of the missing container images. */
+          id: "images";
+          /** When the step started, as ISO 8601. */
+          startedAt: string;
+          /** Absent until the pull reports bytes. A boot that pulls with `compose pull` never gives it. */
+          progress?: BootPullProgress;
+      };
+
+/** A step of the attempt that ended. */
+export type BootStepDone = {
+    /** The step that ended. */
+    id: BootStepId;
+    /** When the step started, as ISO 8601. */
+    startedAt: string;
+    /** When the step ended, as ISO 8601. */
+    endedAt: string;
+};
+
+/** The progress of the boot attempt that runs now. */
+export type BootProgress = {
+    /** When the attempt started, as ISO 8601. */
+    attemptStartedAt: string;
+    /** The step that runs now, or `null` before the first step starts. */
+    step: BootStepRunning | null;
+    /** Each step of the attempt that ended, in the boot order. */
+    done: BootStepDone[];
+};
+
+/** The part of {@link ServerState} that the boot holder owns: the phase of the boot, and its progress. */
+export type ServerBootState = ServerIdentity &
+    (
+        | {
+              /** The boot runs: the first attempt, or a new one after `failed`. */
+              phase: "starting";
+              /** The progress of the attempt that runs now. */
+              boot: BootProgress;
+          }
+        | {
+              /** The runtime booted. */
+              phase: "ready";
+              /** The model connection that the runtime booted on. */
+              connection: ServerConnection;
+          }
+        | {
+              /** The last attempt failed. A new `POST /api/v1/server/boot` starts another. */
+              phase: "failed";
+              /** Why the attempt failed, with the remedy. */
+              bootError: ServerBootError;
+              /** When the failed attempt started, as ISO 8601. */
+              attemptStartedAt: string;
+              /** When the attempt failed, as ISO 8601. */
+              failedAt: string;
+              /** The step that ran at the fault, or `null` for a fault before the first step. */
+              failedStep: BootStepId | null;
+          }
+    );
+
 /** The body of `GET /api/v1/server`. */
-export type ServerState = ServerIdentity &
-    ({ phase: "starting" } | { phase: "ready"; connection: ServerConnection } | { phase: "failed"; bootError: ServerBootError });
+export type ServerState = ServerBootState & {
+    /** The mode of a stop in progress, kept until the process exits, or `null` while no client asked for a stop. */
+    stopping: ShutdownMode | null;
+};
+
+/** The `details` of the 503 `unavailable` body of a route that needs the runtime. */
+export type RuntimeUnavailableDetails = {
+    /** The boot phase that makes the runtime unavailable: `starting` or `failed`. */
+    phase: ServerPhase;
+    /** The step that runs now (`starting`), the step that failed (`failed`), or `null`. */
+    step: BootStepId | null;
+};
 
 /** The build channel of a server. A dev server and a production server use different ports and files. */
 export type ServerChannel = "development" | "production";

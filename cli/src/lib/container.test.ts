@@ -1,13 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 
 import {
     ContainerRuntimeError,
     firstReadyRuntime,
+    pullImageThroughEngine,
     resolveEngineSocket,
+    resolveImageTotalBytes,
     runtimes,
+    splitImageRef,
     type CaptureResult,
     type ContainerRuntime,
+    type EnginePullProgress,
     type EngineSocketProbes,
 } from "./container.ts";
 
@@ -157,5 +164,178 @@ describe("resolveEngineSocket", () => {
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("systemctl --user enable --now podman.socket");
+    });
+});
+
+const DIGEST = "sha256:a1dffb9c2300099039d9e2dd3dbf6396a72b798c891fe170940d2d8106222a8c";
+
+describe("splitImageRef", () => {
+    test("a bare name pulls the latest tag", () => {
+        expect(splitImageRef("postgres")).toEqual({ repo: "postgres", reference: "latest" });
+    });
+
+    test("a tag is the reference", () => {
+        expect(splitImageRef("ghcr.io/inflexa/sandbox:v1.2")).toEqual({ repo: "ghcr.io/inflexa/sandbox", reference: "v1.2" });
+    });
+
+    test("a registry port is not a tag", () => {
+        expect(splitImageRef("localhost:5000/sandbox")).toEqual({ repo: "localhost:5000/sandbox", reference: "latest" });
+        expect(splitImageRef("localhost:5000/sandbox:dev")).toEqual({ repo: "localhost:5000/sandbox", reference: "dev" });
+    });
+
+    test("a digest is the reference", () => {
+        expect(splitImageRef(`postgres@${DIGEST}`)).toEqual({ repo: "postgres", reference: DIGEST });
+    });
+
+    test("a tag with a digest gives the digest and drops the tag from the repository", () => {
+        expect(splitImageRef(`eceasy/cli-proxy-api:v7.3.17@${DIGEST}`)).toEqual({ repo: "eceasy/cli-proxy-api", reference: DIGEST });
+        expect(splitImageRef(`localhost:5000/pg:16@${DIGEST}`)).toEqual({ repo: "localhost:5000/pg", reference: DIGEST });
+    });
+});
+
+describe("pullImageThroughEngine", () => {
+    const cleanups: Array<() => void> = [];
+    afterEach(() => {
+        for (const cleanup of cleanups.splice(0)) cleanup();
+    });
+
+    /** Serve `handler` on a unix socket, and give the path. The path stays short because a unix socket path has a small limit. */
+    function fakeEngine(handler: (request: Request) => Response): string {
+        const dir = mkdtempSync(join(tmpdir(), "pe-"));
+        const socket = join(dir, "e.sock");
+        const server = Bun.serve({ unix: socket, fetch: handler });
+        cleanups.push(() => {
+            void server.stop(true);
+            rmSync(dir, { recursive: true, force: true });
+        });
+        return socket;
+    }
+
+    const events = (...lines: object[]): string => lines.map((line) => `${JSON.stringify(line)}\n`).join("");
+
+    test("sends the repository as fromImage and the digest as tag for a pinned reference", async () => {
+        const urls: URL[] = [];
+        const socket = fakeEngine((request) => {
+            urls.push(new URL(request.url));
+            return new Response(events({ status: "done" }));
+        });
+
+        const outcome = await pullImageThroughEngine(socket, `eceasy/cli-proxy-api:v7.3.17@${DIGEST}`, () => undefined);
+
+        expect(outcome).toEqual({ kind: "completed" });
+        expect(urls).toHaveLength(1);
+        expect(urls[0]?.pathname).toBe("/v1.41/images/create");
+        expect(urls[0]?.searchParams.get("fromImage")).toBe("eceasy/cli-proxy-api");
+        expect(urls[0]?.searchParams.get("tag")).toBe(DIGEST);
+    });
+
+    test("sends the tag of a tag reference", async () => {
+        const urls: URL[] = [];
+        const socket = fakeEngine((request) => {
+            urls.push(new URL(request.url));
+            return new Response(events({ status: "done" }));
+        });
+
+        await pullImageThroughEngine(socket, "postgres:16", () => undefined);
+
+        expect(urls[0]?.searchParams.get("fromImage")).toBe("postgres");
+        expect(urls[0]?.searchParams.get("tag")).toBe("16");
+    });
+
+    test("sums the newest figure of each layer and counts the completed layers", async () => {
+        const socket = fakeEngine(
+            () =>
+                new Response(
+                    events(
+                        { id: "a", status: "Downloading", progressDetail: { current: 10, total: 100 } },
+                        { id: "b", status: "Downloading", progressDetail: { current: 5, total: 50 } },
+                        // A growing figure replaces the older one, and a lower one does not.
+                        { id: "a", status: "Downloading", progressDetail: { current: 40, total: 100 } },
+                        { id: "a", status: "Downloading", progressDetail: { current: 30, total: 100 } },
+                        { id: "a", status: "Pull complete" },
+                        { id: "c", status: "Already exists" },
+                    ),
+                ),
+        );
+        const reports: EnginePullProgress[] = [];
+
+        const outcome = await pullImageThroughEngine(socket, "postgres:16", (progress) => reports.push(progress));
+
+        expect(outcome).toEqual({ kind: "completed" });
+        expect(reports.length).toBeGreaterThan(0);
+        expect(reports.at(-1)).toEqual({ doneBytes: 45, layersCompleted: 2 });
+    });
+
+    test("an error event fails the pull with its message", async () => {
+        const socket = fakeEngine(() => new Response(events({ id: "a", status: "Downloading" }, { error: "manifest unknown" })));
+
+        const outcome = await pullImageThroughEngine(socket, "postgres:16", () => undefined);
+
+        expect(outcome).toEqual({ kind: "failed", message: "manifest unknown" });
+    });
+
+    test("a response that is not OK reads as unavailable", async () => {
+        const socket = fakeEngine(() => new Response("no", { status: 500 }));
+
+        expect(await pullImageThroughEngine(socket, "postgres:16", () => undefined)).toEqual({ kind: "unavailable" });
+    });
+
+    test("a socket that does not answer reads as unavailable", async () => {
+        expect(await pullImageThroughEngine(join(tmpdir(), "pe-missing.sock"), "postgres:16", () => undefined)).toEqual({ kind: "unavailable" });
+    });
+
+    test("a stream that breaks before its end fails the pull, and the function does not reject", async () => {
+        const encoder = new TextEncoder();
+        const socket = fakeEngine(
+            () =>
+                new Response(
+                    new ReadableStream({
+                        start(controller) {
+                            controller.enqueue(encoder.encode(events({ id: "a", status: "Downloading", progressDetail: { current: 7 } })));
+                        },
+                        async pull(controller) {
+                            await Promise.sleep(20);
+                            controller.error(new Error("engine went away"));
+                        },
+                    }),
+                ),
+        );
+
+        const outcome = await pullImageThroughEngine(socket, "postgres:16", () => undefined);
+
+        expect(outcome.kind).toBe("failed");
+        expect(outcome.kind === "failed" ? outcome.message : "").toContain("The pull stream of the engine broke");
+    });
+});
+
+describe("resolveImageTotalBytes", () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+        for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** A runtime whose binary logs its arguments and prints a one-layer-set manifest. */
+    function fakeRuntime(): { rt: ContainerRuntime; calls: () => string[] } {
+        const dir = mkdtempSync(join(tmpdir(), "rt-"));
+        dirs.push(dir);
+        const bin = join(dir, "engine");
+        const log = join(dir, "calls.log");
+        writeFileSync(bin, `#!/bin/sh\necho "$@" >> '${log}'\necho '{"layers":[{"size":10},{"size":5}]}'\n`);
+        chmodSync(bin, 0o755);
+        return { rt: { ...runtimes.podman, bin }, calls: () => readFileSync(log, "utf8").trim().split("\n") };
+    }
+
+    test("a digest reference reads the manifest of the repository at the digest", async () => {
+        const { rt, calls } = fakeRuntime();
+
+        expect(await resolveImageTotalBytes(rt, `eceasy/cli-proxy-api:v7.3.17@${DIGEST}`)).toBe(15);
+        expect(calls()).toEqual([`manifest inspect eceasy/cli-proxy-api@${DIGEST}`]);
+    });
+
+    test("a tag reference reads the manifest of the reference", async () => {
+        const { rt, calls } = fakeRuntime();
+
+        expect(await resolveImageTotalBytes(rt, "postgres:16")).toBe(15);
+        expect(calls()).toEqual(["manifest inspect postgres:16"]);
     });
 });

@@ -3,7 +3,7 @@ import { err, errAsync, ok, okAsync, type ResultAsync } from "neverthrow";
 import { createRoot } from "solid-js";
 
 import type { AgentList, AgentSelection } from "../../api/machine.ts";
-import type { ServerDiscovery, ServerState } from "../../api/server.ts";
+import type { BootProgress, ServerDiscovery, ServerState } from "../../api/server.ts";
 import type { ClientError } from "../../client/api.ts";
 import { describeServerError } from "../../client/server.ts";
 import {
@@ -25,8 +25,10 @@ import { dialogClear, dialogIsOpen, dialogPush } from "../components/dialog/dial
 
 afterEach(() => __resetBootForTest());
 
-const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
-const starting: ServerState = { ...identity, phase: "starting" };
+const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z", stopping: null } as const;
+const noBoot: BootProgress = { attemptStartedAt: identity.startedAt, step: null, done: [] };
+const failedAt = { attemptStartedAt: identity.startedAt, failedAt: identity.startedAt, failedStep: null } as const;
+const starting: ServerState = { ...identity, phase: "starting", boot: noBoot };
 const ready = (model: string): ServerState => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model } });
 
 /** The discovery file of the server that the scripted reads answer for. */
@@ -86,6 +88,7 @@ describe("boot store transitions", () => {
             ...identity,
             phase: "failed",
             bootError: { reason: "runtime_already_active", message: "pid 4821 holds it", detailLines: [] },
+            ...failedAt,
         };
         await watchServerBoot(scripted([() => okAsync(failed)]).opts);
         expect(bootState()).toEqual({ phase: "failed", message: "pid 4821 holds it", recovery: "boot_again" });
@@ -96,6 +99,7 @@ describe("boot store transitions", () => {
             ...identity,
             phase: "failed",
             bootError: { reason: "sign_in_required", message: "no provider login", detailLines: [] },
+            ...failedAt,
         };
         await watchServerBoot(scripted([() => okAsync(failed)]).opts);
         expect(bootState()).toEqual({ phase: "failed", message: "no provider login", recovery: "sign_in" });
@@ -138,7 +142,12 @@ describe("boot store transitions", () => {
 });
 
 describe("the recovery of a failed boot", () => {
-    const failed: ServerState = { ...identity, phase: "failed", bootError: { reason: "sign_in_required", message: "no provider login", detailLines: [] } };
+    const failed: ServerState = {
+        ...identity,
+        phase: "failed",
+        bootError: { reason: "sign_in_required", message: "no provider login", detailLines: [] },
+        ...failedAt,
+    };
 
     /** Recovery opts over `answers`, with a log of the sign-in, the boot request, the server start, and each read, in order. */
     function recovery(
@@ -157,7 +166,7 @@ describe("the recovery of a failed boot", () => {
             signIn: async () => void calls.push("sign-in"),
             requestBoot: () => {
                 calls.push("boot");
-                return requestBoot === undefined ? okAsync({ ...identity, phase: "starting" }) : requestBoot();
+                return requestBoot === undefined ? okAsync({ ...identity, phase: "starting", boot: noBoot }) : requestBoot();
             },
             startServer: () => {
                 calls.push("start");
@@ -256,6 +265,7 @@ describe("the probe of the server at each poll tick", () => {
         ...identity,
         phase: "failed",
         bootError: { reason: "runtime_already_active", message: "pid 4821 holds it", detailLines: [] },
+        ...failedAt,
     };
 
     /** Let the boot that a probe follows read the server to its end. */
@@ -296,7 +306,7 @@ describe("the probe of the server at each poll tick", () => {
         await checkServer(scripted([() => errAsync(unreachable)]).opts);
 
         const back = scripted([
-            () => okAsync({ ...later, phase: "starting" }),
+            () => okAsync({ ...later, phase: "starting", boot: noBoot }),
             () => okAsync({ ...later, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m2" } }),
         ]);
         expect(await checkServer(back.opts)).toBe(false);
@@ -310,7 +320,7 @@ describe("the probe of the server at each poll tick", () => {
         await watchServerBoot(scripted([() => okAsync(ready("m"))]).opts);
 
         const restarted = scripted([
-            () => okAsync({ ...later, phase: "starting" }),
+            () => okAsync({ ...later, phase: "starting", boot: noBoot }),
             () => okAsync({ ...later, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m2" } }),
         ]);
         expect(await checkServer(restarted.opts)).toBe(false);

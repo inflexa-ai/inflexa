@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 
 import { ok } from "neverthrow";
 
-import { API_VERSION, type ServerDiscovery, type ServerState } from "../api/server.ts";
+import { API_VERSION, type ServerBootState, type ServerDiscovery } from "../api/server.ts";
 import type { ClientOpts } from "../client/api.ts";
 import { env } from "../lib/env.ts";
 import { buildApp } from "../server/app.ts";
@@ -34,7 +34,14 @@ export type TestServer = {
  * `unavailable`, and each SQLite route works.
  */
 export function idleBoot(): ServerBoot {
-    const state: ServerState = { version: "0.0.0-test", apiVersion: API_VERSION, startedAt: new Date().toISOString(), phase: "starting" };
+    const startedAt = new Date().toISOString();
+    const state: ServerBootState = {
+        version: "0.0.0-test",
+        apiVersion: API_VERSION,
+        startedAt,
+        phase: "starting",
+        boot: { attemptStartedAt: startedAt, step: null, done: [] },
+    };
     return { state: () => state, runtime: () => null, start: async () => undefined };
 }
 

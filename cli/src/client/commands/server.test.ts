@@ -25,6 +25,7 @@ const READY: ServerState = {
     startedAt: DISCOVERY.startedAt,
     phase: "ready",
     connection: { provider: "anthropic", mode: "cliproxy", model: "claude-test" },
+    stopping: null,
 };
 
 const IDLE: ServerActivity = { stopping: null, turns: 0, profileDrives: 0, durable: { state: "counted", runs: 0, profiles: 0 } };
@@ -375,6 +376,10 @@ describe("the boot after `inflexa up`", () => {
         startedAt: DISCOVERY.startedAt,
         phase: "failed",
         bootError: { reason: "sign_in_required", message: "no provider login", detailLines: [] },
+        attemptStartedAt: DISCOVERY.startedAt,
+        failedAt: DISCOVERY.startedAt,
+        failedStep: null,
+        stopping: null,
     };
 
     test("a server whose boot failed boots again, and the command says so", async () => {

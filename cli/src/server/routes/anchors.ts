@@ -18,7 +18,7 @@ import { analysisPurgeFor } from "../../modules/harness/purge.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { ServerBoot } from "../boot.ts";
 import { workspaceBusyReasons } from "../busy_gate.ts";
-import { apiError, internalError, readBody, type ServerEnv } from "../http.ts";
+import { apiError, internalError, readBody, unavailableDetails, type ServerEnv } from "../http.ts";
 import { absolutePath } from "./analyses.ts";
 
 /** What the anchor routes read beyond SQLite and the disk. Tests replace each one. */
@@ -130,7 +130,7 @@ export function anchorRoutes(boot: ServerBoot, opts: AnchorRouteOpts = DEFAULT_A
                 c,
                 "unavailable",
                 "The harness runtime is not ready, and these anchors hold analyses whose conversations and run history live in its database. Nothing was pruned.",
-                { phase: boot.state().phase },
+                unavailableDetails(boot.state()),
             );
         }
 

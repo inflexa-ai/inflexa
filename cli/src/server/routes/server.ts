@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import type { ResultAsync } from "neverthrow";
 import { z } from "zod";
 
-import type { DurableWork, ServerActivity, ShutdownAccepted } from "../../api/server.ts";
+import type { DurableWork, ServerActivity, ServerState, ShutdownAccepted } from "../../api/server.ts";
 import { getLogger } from "../../lib/log.ts";
 import type { ServerBoot } from "../boot.ts";
 import { countLiveDurableWork, type LiveDurableWork } from "../durable_work.ts";
@@ -35,11 +35,12 @@ const shutdownBody = z.object({ mode: z.enum(["now", "drain"]) });
  */
 export function serverRoutes(boot: ServerBoot, lifecycle: ServerLifecycle, opts: ServerRouteOpts = DEFAULT_SERVER_ROUTE_OPTS): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
-    routes.get("/", (c) => c.json(boot.state()));
+    // The stop is a field apart from the phase: a server can stop in each boot phase.
+    routes.get("/", (c) => c.json<ServerState>({ ...boot.state(), stopping: lifecycle.stopping() }));
     // 202: the boot runs after the response. The client reads `GET /api/v1/server` until the phase settles.
     routes.post("/boot", (c) => {
         void boot.start();
-        return c.json(boot.state(), 202);
+        return c.json<ServerState>({ ...boot.state(), stopping: lifecycle.stopping() }, 202);
     });
     routes.get("/activity", async (c) => {
         const runtime = boot.runtime();
