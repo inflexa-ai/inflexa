@@ -29,8 +29,8 @@
 
 A new file `src/lib/folder_listing.ts` holds the listing. It gives two functions, and each caller uses both:
 
-- `readFolder(path, hidden)` makes the path canonical with `realpathSync`, reads it with one `readdirSync` (`withFileTypes`), drops the hidden entries unless `hidden` is true, and sorts. It takes no `stat` of an entry. It gives the canonical folder path, the sorted entries, and the raw count of the read. Each entry has its name, its absolute path (the canonical folder joined with the name), its kind, and its hidden flag.
-- `entryDetails(entry, identity)` gives the facts of one entry from one `stat`, and from one `readlinkSync` for a link. It never fails. A failed `stat` gives `null` facts, and the row stays.
+- `readFolder(path, hidden)` makes the path canonical with `realpath`, reads it with one `readdir` (`withFileTypes`), drops the hidden entries unless `hidden` is true, and sorts. It takes no `stat` of an entry. It gives the canonical folder path, the sorted entries, and the raw count of the read. Each entry has its name, its absolute path (the canonical folder joined with the name), its kind, and its hidden flag.
+- `entryDetails(entry, identity)` gives the facts of one entry from one `stat`, and from one `readlink` for a link. It never fails. A failed `stat` gives `null` facts, and the row stays.
 
 The issue asks for "one function". The two parts stay apart because the callers select different entries for the `stat`. The route selects the entries of one page. The picker selects each entry at or below the ceiling, and only the links above it. One entry point would have to carry both policies. Thus the read, the filter, and the sort are one function, and neither caller copies any part of the listing.
 
@@ -53,7 +53,7 @@ Alternative: a `stat` for each link before the sort. The route would then take a
 - `mode`: the permission bits, `stats.mode & 0o7777`. It is `null` when the process has no POSIX identity (Windows), because Node makes up the bits there.
 - `readable` and `writable`: the verdict of `isReadableBy` and of a new `isWritableBy` in `src/lib/fs.ts`, from the mode bits and the owner ids. They are `null` with no POSIX identity. Both are advisory. They do not see an ACL, a macOS TCC rule, a read-only mount, or a file flag. `isWritableBy` mirrors `isReadableBy`: root writes each entry, the owner needs `0o200`, a member of the group needs `0o020`, and each other user needs `0o002`.
 - `link`: `null` for an entry that is not a link. For a link, it gives these facts:
-  - `target`: the text of `readlinkSync`, as the link stores it. It can be relative. It is `null` when `readlinkSync` fails.
+  - `target`: the text of `readlink`, as the link stores it. It can be relative. It is `null` when `readlink` fails.
   - `broken`: true when the `stat` of the target fails with `ENOENT`, `ENOTDIR`, or `ELOOP`.
   - `targetKind`: `folder` or `file` from the `stat` of the target, or `null` when that `stat` fails.
 
@@ -107,7 +107,7 @@ export type FolderList = ListEnvelope<"entries", FolderEntryView> & { folder: Fo
 
 Each fact that can be absent is `null`, never an absent key. Thus a client reads one shape for each entry. `symlink` is the literal for a symbolic link, the name that the dirent and `node:fs` use.
 
-The `path` of a query must be absolute. The route makes it normal with `resolve` before the read, thus a `..` segment does not reach `realpathSync` as text.
+The `path` of a query must be absolute. The route makes it normal with `resolve` before the read, thus a `..` segment does not reach `realpath` as text.
 
 ### D6. The errors
 
@@ -115,8 +115,8 @@ The `path` of a query must be absolute. The route makes it normal with `resolve`
 |-|-|
 | `path` is absent, is not absolute, or holds a NUL byte | 400 `validation_error`, `details.fieldErrors.path` |
 | `hidden` is present and is not `true` or `false` | 400 `validation_error`, `details.fieldErrors.hidden` |
-| `realpathSync` or `readdirSync` fails with `ENOENT` | 404 `not_found` |
-| `readdirSync` fails with `ENOTDIR` (the path is a file) | 400 `validation_error`, `details.fieldErrors.path` |
+| `realpath` or `readdir` fails with `ENOENT` | 404 `not_found` |
+| `readdir` fails with `ENOTDIR` (the path is a file) | 400 `validation_error`, `details.fieldErrors.path` |
 | each other failure of the read, for example `EACCES` or `EPERM` | 403 `forbidden`, with the cause in the message and the error code in `details.code` |
 
 Each `validation_error` carries the flatten shape `{ formErrors: [], fieldErrors: { <field>: [<reason>] } }` in `details`, as the embedding check of `routes/machine.ts` does. The local-server spec requires the zod flatten output for this code, and `z.flattenError` gives both keys. `node:fs` refuses a path with a NUL byte with `ERR_INVALID_ARG_VALUE`, which is a fault of the request, thus the route refuses it before the read.
@@ -129,16 +129,18 @@ Alternative: a new code, for example `unreadable`. It changes `ApiErrorCode`, `A
 
 ### D7. The picker on the listing module
 
-`listDir` of the picker keeps its signature and its `Listing` result. It calls `readFolder` with `hidden = !hideHidden`. It sets `withMetadata` from the raw count, as today. At or below the ceiling, it calls `entryDetails` for each entry and makes `RowMeta` from the facts. Above the ceiling, it calls `entryDetails` only for each link, to read `targetKind`, and the rows carry no metadata. A row of a link keeps the canonical target as its value (`canonicalPath(entry.path)`). The row is a folder row when its kind is `folder`, or when it is a link whose `targetKind` is `folder`. `COLUMN_TIME`, `modeTriple`, `entryHint`, and the footer stay in the picker. The fill stays synchronous.
+`listDir` of the picker keeps its signature and its `Listing` result. It calls `readFolder` with `hidden = !hideHidden`. It sets `withMetadata` from the raw count, as today. At or below the ceiling, it calls `entryDetails` for each entry and makes `RowMeta` from the facts. Above the ceiling, it calls `entryDetails` only for each link, to read `targetKind`, and the rows carry no metadata. A row of a link keeps the canonical target as its value (`canonicalPath(entry.path)`). The row is a folder row when its kind is `folder`, or when it is a link whose `targetKind` is `folder`. `COLUMN_TIME`, `modeTriple`, `entryHint`, and the footer stay in the picker. The rows and their metadata land in one update, thus no late fill moves the cursor.
 
-### D8. The listing is synchronous on the server
+### D8. The listing is asynchronous
 
-The route calls the synchronous listing on the event loop: one `realpathSync`, one `readdirSync`, one `stat` of the folder, and at most `MAX_PER_PAGE` (200) `stat` calls with a `readlinkSync` for each link. The picker needs the synchronous form, and a second, asynchronous copy of the module would split the one listing.
+Each read of the listing runs off the event loop: `realpath`, `readdir`, `stat`, and `readlink` from `node:fs/promises`. The route awaits at most `MAX_PER_PAGE` (200) `stat` calls at one time. The picker reads its entries with a queue of 16 workers, because a folder above the ceiling can hold any count of links. The picker keeps the rows of the last read until the next read lands, and a read that lands after the user leaves its folder changes nothing.
+
+Alternative: a synchronous listing. A folder on a hung mount then stops each other request of the server, for example a run stream. Rejected.
 
 ## Risks / Trade-offs
 
-- [A read of a folder on a hung mount stops each other request of the server] → The page bounds the `stat` calls at 200. No mitigation for a hung mount. An asynchronous read would need a second listing.
-- [Each page reads and sorts the whole folder, because the sort comes before the slice] → No bound is possible with a global sort. The cost is one `readdirSync` and a sort of the names, with no `stat`. The picker already reads each name of a folder.
+- [A read of a folder on a hung mount does not end] → It stops only its own request. The server does not time out the read.
+- [Each page reads and sorts the whole folder, because the sort comes before the slice] → No bound is possible with a global sort. The cost is one `readdir` and a sort of the names, with no `stat`. The picker already reads each name of a folder.
 - [A link to a folder moves from the folder group to the file group in the TUI] → The row keeps its `/` and still opens. The file-picker spec gets the new order.
 - [`readable`, `writable`, and `broken` are advisory. An ACL, a TCC rule, or a read-only mount can make them wrong] → The same accepted imprecision as `isReadableBy`. The open of a file stays the authoritative test.
 - [The paging is not a snapshot. A change of the folder between two page requests can move an entry across a page edge] → The same as each other list of the server. `total` comes from the read of each request.

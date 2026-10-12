@@ -610,6 +610,8 @@ The list MUST hide each hidden entry. The query value `hidden=true` MUST show th
 
 The list MUST take the paging values of the other lists. The server MUST read the facts of an entry only for the entries of the page that it gives.
 
+The server MUST run each read of the list off the event loop. A folder on a hung mount MUST stop only its own request.
+
 #### Scenario: The home folder
 
 - **WHEN** a client sends `GET /api/v1/fs/home`

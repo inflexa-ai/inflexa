@@ -30,7 +30,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-function read(path: string, hidden = false): ReturnType<typeof readFolder> {
+async function read(path: string, hidden = false): Promise<Awaited<ReturnType<typeof readFolder>>> {
     return readFolder(path, hidden);
 }
 
@@ -41,7 +41,7 @@ function entryNamed(entries: FolderEntry[], name: string): FolderEntry {
 }
 
 describe("readFolder", () => {
-    test("sorts each folder first, then each other entry, with a link to a folder in the second group", () => {
+    test("sorts each folder first, then each other entry, with a link to a folder in the second group", async () => {
         const outside = join(root, "outside");
         mkdirSync(outside);
         const dir = join(root, "dir");
@@ -52,7 +52,7 @@ describe("readFolder", () => {
         writeFileSync(join(dir, "Zeta.txt"), "x");
         symlinkSync(outside, join(dir, "ext"));
 
-        const folder = read(dir)._unsafeUnwrap();
+        const folder = (await read(dir))._unsafeUnwrap();
         expect(folder.entries.map((e) => [e.name, e.kind])).toEqual([
             ["beta", "folder"],
             ["Gamma", "folder"],
@@ -62,44 +62,36 @@ describe("readFolder", () => {
         ]);
     });
 
-    test.skipIf(CASE_INSENSITIVE_VOLUME)("orders two names that differ only in case the same way on each read", () => {
+    test.skipIf(CASE_INSENSITIVE_VOLUME)("orders two names that differ only in case the same way on each read", async () => {
         const dir = join(root, "dir");
         mkdirSync(dir);
         for (const name of ["b.txt", "a.txt", "A.txt", "B.txt"]) writeFileSync(join(dir, name), "x");
 
-        const names = read(dir)
-            ._unsafeUnwrap()
-            .entries.map((e) => e.name);
+        const names = (await read(dir))._unsafeUnwrap().entries.map((e) => e.name);
         expect(names).toEqual(["A.txt", "a.txt", "B.txt", "b.txt"]);
-        expect(
-            read(dir)
-                ._unsafeUnwrap()
-                .entries.map((e) => e.name),
-        ).toEqual(names);
+        expect((await read(dir))._unsafeUnwrap().entries.map((e) => e.name)).toEqual(names);
     });
 
-    test("orders two names that the collator calls equal by their code units, on any volume", () => {
+    test("orders two names that the collator calls equal by their code units, on any volume", async () => {
         const dir = join(root, "dir");
         mkdirSync(dir);
         // The base-sensitivity collator ignores the accent, thus `e.txt` and `\u00e9.txt` tie.
         for (const name of ["\u00e9.txt", "e.txt", "f.txt"]) writeFileSync(join(dir, name), "x");
 
-        const names = read(dir)
-            ._unsafeUnwrap()
-            .entries.map((e) => e.name.normalize("NFC"));
+        const names = (await read(dir))._unsafeUnwrap().entries.map((e) => e.name.normalize("NFC"));
         expect(names).toEqual(["e.txt", "\u00e9.txt", "f.txt"]);
     });
 
-    test("drops the hidden entries by default, shows them on request, and counts the raw read", () => {
+    test("drops the hidden entries by default, shows them on request, and counts the raw read", async () => {
         writeFileSync(join(root, "a.txt"), "x");
         writeFileSync(join(root, ".env"), "x");
         mkdirSync(join(root, ".git"));
 
-        const hiddenOff = read(root, false)._unsafeUnwrap();
+        const hiddenOff = (await read(root, false))._unsafeUnwrap();
         expect(hiddenOff.entries.map((e) => e.name)).toEqual(["a.txt"]);
         expect(hiddenOff.rawCount).toBe(3);
 
-        const hiddenOn = read(root, true)._unsafeUnwrap();
+        const hiddenOn = (await read(root, true))._unsafeUnwrap();
         expect(hiddenOn.entries.map((e) => [e.name, e.hidden])).toEqual([
             [".git", true],
             [".env", true],
@@ -108,38 +100,38 @@ describe("readFolder", () => {
         expect(hiddenOn.rawCount).toBe(3);
     });
 
-    test("gives the canonical path through a link, and the entry paths under it", () => {
+    test("gives the canonical path through a link, and the entry paths under it", async () => {
         const real = join(root, "real");
         mkdirSync(real);
         writeFileSync(join(real, "f.txt"), "x");
         symlinkSync(real, join(root, "l"));
 
-        const folder = read(join(root, "l"))._unsafeUnwrap();
+        const folder = (await read(join(root, "l")))._unsafeUnwrap();
         expect(folder.path).toBe(real);
         expect(folder.entries.map((e) => e.path)).toEqual([join(real, "f.txt")]);
     });
 
-    test("gives `absent` for a path that does not exist", () => {
+    test("gives `absent` for a path that does not exist", async () => {
         const missing = join(root, "missing");
-        const error = read(missing)._unsafeUnwrapErr();
+        const error = (await read(missing))._unsafeUnwrapErr();
         expect(error).toMatchObject({ type: "absent", path: missing });
         expect(error.cause).toMatchObject({ code: "ENOENT" });
     });
 
-    test("gives `not_folder` for a file", () => {
+    test("gives `not_folder` for a file", async () => {
         const file = join(root, "f.txt");
         writeFileSync(file, "x");
-        const error = read(file)._unsafeUnwrapErr();
+        const error = (await read(file))._unsafeUnwrapErr();
         expect(error).toMatchObject({ type: "not_folder", path: file });
         expect(error.cause).toMatchObject({ code: "ENOTDIR" });
     });
 
-    test.skipIf(process.getuid?.() === 0)("gives `unreadable` for a folder with mode 000", () => {
+    test.skipIf(process.getuid?.() === 0)("gives `unreadable` for a folder with mode 000", async () => {
         const locked = join(root, "locked");
         mkdirSync(locked);
         chmodSync(locked, 0o000);
         try {
-            const error = read(locked)._unsafeUnwrapErr();
+            const error = (await read(locked))._unsafeUnwrapErr();
             expect(error).toMatchObject({ type: "unreadable", path: locked });
             expect(error.cause).toMatchObject({ code: "EACCES" });
         } finally {
@@ -151,15 +143,15 @@ describe("readFolder", () => {
 describe("entryDetails", () => {
     const identity = processIdentity();
 
-    function details(name: string, hidden = false): ReturnType<typeof entryDetails> {
-        const folder = read(root, hidden)._unsafeUnwrap();
+    async function details(name: string, hidden = false): ReturnType<typeof entryDetails> {
+        const folder = (await read(root, hidden))._unsafeUnwrap();
         return entryDetails(entryNamed(folder.entries, name), identity);
     }
 
-    test("gives the facts of a file", () => {
+    test("gives the facts of a file", async () => {
         writeFileSync(join(root, "f.txt"), "hello");
         chmodSync(join(root, "f.txt"), 0o640);
-        const facts = details("f.txt");
+        const facts = await details("f.txt");
         expect(facts).toMatchObject({ size: 5, link: null });
         expect(facts.modifiedMs).toBeGreaterThan(0);
         expect(facts.mode).toBe(0o640);
@@ -167,27 +159,27 @@ describe("entryDetails", () => {
         expect(facts.writable).toBe(true);
     });
 
-    test("gives a null size for a folder", () => {
+    test("gives a null size for a folder", async () => {
         mkdirSync(join(root, "d"));
-        expect(details("d")).toMatchObject({ size: null, link: null });
-        expect(details("d").modifiedMs).not.toBeNull();
+        expect(await details("d")).toMatchObject({ size: null, link: null });
+        expect((await details("d")).modifiedMs).not.toBeNull();
     });
 
-    test("gives the stored target and the kind of the target for a link to a folder", () => {
+    test("gives the stored target and the kind of the target for a link to a folder", async () => {
         mkdirSync(join(root, "d"));
         symlinkSync("d", join(root, "l"));
-        expect(details("l")).toMatchObject({ size: null, link: { target: "d", broken: false, targetKind: "folder" } });
+        expect(await details("l")).toMatchObject({ size: null, link: { target: "d", broken: false, targetKind: "folder" } });
     });
 
-    test("describes the target of a link to a file", () => {
+    test("describes the target of a link to a file", async () => {
         writeFileSync(join(root, "f.txt"), "abc");
         symlinkSync("f.txt", join(root, "l"));
-        expect(details("l")).toMatchObject({ size: 3, link: { target: "f.txt", broken: false, targetKind: "file" } });
+        expect(await details("l")).toMatchObject({ size: 3, link: { target: "f.txt", broken: false, targetKind: "file" } });
     });
 
-    test("marks a broken link and gives null facts", () => {
+    test("marks a broken link and gives null facts", async () => {
         symlinkSync(join(root, "gone"), join(root, "l"));
-        expect(details("l")).toEqual({
+        expect(await details("l")).toEqual({
             size: null,
             modifiedMs: null,
             mode: null,
@@ -197,17 +189,17 @@ describe("entryDetails", () => {
         });
     });
 
-    test("marks a loop of links as broken", () => {
+    test("marks a loop of links as broken", async () => {
         symlinkSync("b", join(root, "a"));
         symlinkSync("a", join(root, "b"));
-        expect(details("a").link).toEqual({ target: "b", broken: true, targetKind: null });
+        expect((await details("a")).link).toEqual({ target: "b", broken: true, targetKind: null });
     });
 
-    test("gives null facts for an entry that disappears before its stat", () => {
+    test("gives null facts for an entry that disappears before its stat", async () => {
         writeFileSync(join(root, "f.txt"), "x");
-        const folder = read(root)._unsafeUnwrap();
+        const folder = (await read(root))._unsafeUnwrap();
         rmSync(join(root, "f.txt"));
-        expect(entryDetails(entryNamed(folder.entries, "f.txt"), identity)).toEqual({
+        expect(await entryDetails(entryNamed(folder.entries, "f.txt"), identity)).toEqual({
             size: null,
             modifiedMs: null,
             mode: null,
@@ -217,10 +209,10 @@ describe("entryDetails", () => {
         });
     });
 
-    test("gives null for mode, readable, and writable without a process identity", () => {
+    test("gives null for mode, readable, and writable without a process identity", async () => {
         writeFileSync(join(root, "f.txt"), "x");
-        const folder = read(root)._unsafeUnwrap();
-        const facts = entryDetails(entryNamed(folder.entries, "f.txt"), null);
+        const folder = (await read(root))._unsafeUnwrap();
+        const facts = await entryDetails(entryNamed(folder.entries, "f.txt"), null);
         expect(facts).toMatchObject({ size: 1, mode: null, readable: null, writable: null });
         expect(facts.modifiedMs).not.toBeNull();
     });

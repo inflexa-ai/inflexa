@@ -122,6 +122,27 @@ describe("GET /api/v1/fs/list", () => {
         expect(read[0]).toBe("f200.txt");
     });
 
+    test("a read that does not end stops only its own request", async () => {
+        writeFileSync(join(root, "f.txt"), "x");
+        let release: () => void = () => {};
+        const held = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const hung = fsRoutes({
+            ...DEFAULT_FS_ROUTE_OPTS,
+            entryDetails: async (entry, identity) => {
+                await held;
+                return entryDetails(entry, identity);
+            },
+        });
+        const pending = Promise.resolve(hung.request(`/list?path=${encodeURIComponent(root)}`));
+        const home = await hung.request("/home");
+        expect(home.status).toBe(200);
+
+        release();
+        expect((await pending).status).toBe(200);
+    });
+
     test("gives the canonical path of a folder reached through a link", async () => {
         const real = join(root, "real");
         mkdirSync(real);

@@ -25,7 +25,7 @@
 
 ## 3. The picker
 
-- [x] 3.1 Change `listDir` in `src/tui/components/dialog/file_picker.tsx` to use `readFolder` and `entryDetails` (design D7). Remove its own `readdirSync`, `entryMeta`, and `safeSymlinkIsDir` code. Keep `Listing`, the ceiling flag from the raw count, the canonical target as the value of a link row, and the synchronous fill.
+- [x] 3.1 Change `listDir` in `src/tui/components/dialog/file_picker.tsx` to use `readFolder` and `entryDetails` (design D7). Remove its own `readdirSync`, `entryMeta`, and `safeSymlinkIsDir` code. Keep `Listing`, the ceiling flag from the raw count, the canonical target as the value of a link row, and the fill of the rows and their metadata in one update.
 - [x] 3.2 Add a render test in `src/tui/components/dialog/file_picker.render.test.tsx` for the file-picker scenario "A symlink to a folder sorts with the files and still opens". Make sure that each test of the file stays green.
 
 ## 4. Verification

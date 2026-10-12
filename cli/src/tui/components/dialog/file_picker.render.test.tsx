@@ -575,7 +575,10 @@ describe("FilePicker entry metadata", () => {
 
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressEnter();
+            // The folder read is async, and a render of the 2002 rows of `big` does not yield to it. Thus one
+            // fixed wait can capture the old rows.
             frame = await settle(setup);
+            for (let tries = 0; tries < 10 && !frame.includes("payload.txt"); tries++) frame = await settle(setup);
             expect(frame).toContain("payload.txt");
             expect(frame).not.toContain("f0.txt");
         } finally {
