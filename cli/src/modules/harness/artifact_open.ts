@@ -1,8 +1,8 @@
 import { dirname, join, posix } from "node:path";
 import { validatePath } from "@inflexa-ai/harness/tools/lib/path-validation";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 
-import { mkdirResult, pathExistsAsync, writeFileResult } from "../../lib/fs.ts";
+import { mkdirResultAsync, pathExistsAsync, writeFileResultAsync } from "../../lib/fs.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import type { OpenTarget } from "../../types/session.ts";
 
@@ -113,9 +113,9 @@ export async function materializeTarget(analysisId: string, target: OpenTarget):
 }
 
 /** Write `content` to the presentations file at `dest` (creating its directory), mapping fs faults onto the error channel. */
-function writePresentationFile(dest: string, content: string): Result<string, OpenArtifactError> {
-    return mkdirResult(dirname(dest), "materialize:mkdir")
-        .andThen(() => writeFileResult(dest, content, "materialize:write"))
+function writePresentationFile(dest: string, content: string): ResultAsync<string, OpenArtifactError> {
+    return mkdirResultAsync(dirname(dest), "materialize:mkdir")
+        .andThen(() => writeFileResultAsync(dest, content, "materialize:write"))
         .map(() => dest)
         .mapErr((e): OpenArtifactError => ({ type: "materialize_failed", cause: e.cause }));
 }

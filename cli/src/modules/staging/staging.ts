@@ -1,12 +1,14 @@
-import { linkSync, copyFileSync, readdirSync, rmSync, rmdirSync, existsSync, utimesSync, type Stats } from "node:fs";
+import type { Stats } from "node:fs";
+import { copyFile, link, readdir, rm, rmdir, utimes } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { ok, err, Result, ResultAsync } from "neverthrow";
+import PQueue from "p-queue";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { resolveInputPath } from "../analysis/input.ts";
 import { sha256File } from "../../lib/hash.ts";
-import { mkdirResult, statResult } from "../../lib/fs.ts";
+import { mkdirResultAsync, pathExistsAsync, pathsExistAsync, statResultAsync } from "../../lib/fs.ts";
 import type { FsError } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
 
@@ -58,51 +60,49 @@ function deriveFileId(input: AnalysisInput, subpath?: string): string {
  * `srcStats` is the source's stat taken before placement — the same reading the manifest records —
  * and is consumed ONLY by the copy fallback's timestamp stamp (see the constraint at that call site).
  */
-function stageFile(src: string, dest: string, srcStats: Stats): Result<void, FsError> {
-    // The callback's return type is annotated so the `err(...)` object literals below infer
-    // `type: "io_failed"` as the literal, not `string` — without it each would need an `as FsError`.
-    return mkdirResult(dirname(dest), "stageFile:mkdir").andThen((): Result<void, FsError> => {
-        // Remove any stale destination before linking: re-staging must refresh, and a
-        // stale dest is typically a hardlink OF src itself — linkSync would fail EEXIST
-        // and copyFileSync onto the same inode truncates the source before reading it
-        // (libuv performs no same-file check), destroying the user's input.
+async function stageFile(src: string, dest: string, srcStats: Stats): Promise<Result<void, FsError>> {
+    const made = await mkdirResultAsync(dirname(dest), "stageFile:mkdir");
+    if (made.isErr()) return err(made.error);
+    // Remove any stale destination before linking: re-staging must refresh, and a
+    // stale dest is typically a hardlink OF src itself — `link` would fail EEXIST
+    // and `copyFile` onto the same inode truncates the source before reading it
+    // (libuv performs no same-file check), destroying the user's input.
+    try {
+        await rm(dest, { force: true });
+    } catch (cause) {
+        return err({ type: "io_failed", op: "stageFile:rm", cause });
+    }
+    try {
+        await link(src, dest);
+    } catch {
         try {
-            rmSync(dest, { force: true });
+            await copyFile(src, dest);
         } catch (cause) {
-            return err({ type: "io_failed", op: "stageFile:rm", cause });
+            return err({ type: "io_failed", op: "stageFile:copy", cause });
         }
+        // A copy carries its own creation time (measured: `copyFile` does not preserve the
+        // source's mtime), and the staged tree is the ONLY record that an input set was
+        // materialized — a record read by comparing size + mtime against the source. Without this
+        // stamp a copy-mode analysis would read as permanently unmaterialized and re-hash forever.
+        //
+        // The stamp belongs to THIS branch alone. A hardlinked destination shares the source's
+        // inode, so `utimes` on it rewrites the user's own input file (measured) — and since
+        // {@link isInputSetMaterialized} compares that file's mtime against the staged copy's,
+        // staging would manufacture a permanent mismatch against the tree it just wrote.
+        // Seconds, not the `Date` fields: `utimes` takes an
+        // f64 seconds value, and `mtimeMs / 1000` keeps far more of the sub-millisecond fraction
+        // than a `Date` (which truncates to whole ms and misses every fractional mtime). It is still
+        // NOT bit-exact — the seconds round-trip drops a few float-ULPs of the tail a nanosecond
+        // filesystem reports (measured on APFS: ~90% of natural mtimes read back a fraction off, up
+        // to 2^-10 ms) — which is exactly why {@link isInputSetMaterialized} compares mtimes within
+        // {@link MTIME_MATCH_TOLERANCE_MS} rather than with `===`.
         try {
-            linkSync(src, dest);
-        } catch {
-            try {
-                copyFileSync(src, dest);
-            } catch (cause) {
-                return err({ type: "io_failed", op: "stageFile:copy", cause });
-            }
-            // A copy carries its own creation time (measured: `copyFileSync` does not preserve the
-            // source's mtime), and the staged tree is the ONLY record that an input set was
-            // materialized — a record read by comparing size + mtime against the source. Without this
-            // stamp a copy-mode analysis would read as permanently unmaterialized and re-hash forever.
-            //
-            // The stamp belongs to THIS branch alone. A hardlinked destination shares the source's
-            // inode, so `utimesSync` on it rewrites the user's own input file (measured) — and since
-            // {@link isInputSetMaterialized} compares that file's mtime against the staged copy's,
-            // staging would manufacture a permanent mismatch against the tree it just wrote.
-            // Seconds, not the `Date` fields: `utimesSync` takes an
-            // f64 seconds value, and `mtimeMs / 1000` keeps far more of the sub-millisecond fraction
-            // than a `Date` (which truncates to whole ms and misses every fractional mtime). It is still
-            // NOT bit-exact — the seconds round-trip drops a few float-ULPs of the tail a nanosecond
-            // filesystem reports (measured on APFS: ~90% of natural mtimes read back a fraction off, up
-            // to 2^-10 ms) — which is exactly why {@link isInputSetMaterialized} compares mtimes within
-            // {@link MTIME_MATCH_TOLERANCE_MS} rather than with `===`.
-            try {
-                utimesSync(dest, srcStats.atimeMs / 1000, srcStats.mtimeMs / 1000);
-            } catch (cause) {
-                return err({ type: "io_failed", op: "stageFile:utimes", cause });
-            }
+            await utimes(dest, srcStats.atimeMs / 1000, srcStats.mtimeMs / 1000);
+        } catch (cause) {
+            return err({ type: "io_failed", op: "stageFile:utimes", cause });
         }
-        return ok(undefined);
-    });
+    }
+    return ok(undefined);
 }
 
 /**
@@ -142,6 +142,18 @@ const LOCAL_MOUNT_NAME = "local";
 const LOCAL_MOUNT_SUBDIR = join("inputs", LOCAL_MOUNT_NAME);
 
 /**
+ * How many `readdir`, `stat`, `rm`, and `rmdir` calls one walk or one stat pass keeps in flight. The local
+ * server runs staging for a request, thus a tree on a hung mount holds this many threads of the pool, not all.
+ */
+const METADATA_WIDTH = 16;
+
+/**
+ * How many files staging places and hashes at one time. Each slot holds one link or copy, or one streamed
+ * hash, so a large input set neither runs one file at a time nor opens every file at once.
+ */
+const MATERIALIZE_WIDTH = 4;
+
+/**
  * Recursively enumerate all files under `dir`, returning paths relative to `dir`.
  * Directories are traversed, not yielded; directories named in `ignoredDirs` are
  * skipped whole (staging passes {@link IGNORED_WALK_DIRS}; the reconcile pass
@@ -151,36 +163,47 @@ const LOCAL_MOUNT_SUBDIR = join("inputs", LOCAL_MOUNT_NAME);
  * stat-resolved explicitly: a link to a file is yielded, a link to a directory is
  * traversed, and a dangling link is skipped — an unreadable target is a property
  * of the user's source tree, not a staging failure.
+ *
+ * The reads run off the event loop, with at most {@link METADATA_WIDTH} in flight. The paths come back in
+ * the order a depth-first walk of the `readdir` order gives, whatever order the reads complete in. The
+ * first failed `readdir` fails the walk and drops the reads still queued.
  */
-export function walkFiles(dir: string, ignoredDirs: ReadonlySet<string>): Result<string[], FsError> {
-    try {
-        const results: string[] = [];
-        const entries = readdirSync(dir, { withFileTypes: true });
-        for (const entry of entries) {
-            const full = join(dir, entry.name);
-            let isDirectory = entry.isDirectory();
-            let isFile = entry.isFile();
-            if (entry.isSymbolicLink()) {
-                const target = statResult(full, "walkFiles:stat");
-                if (target.isErr()) continue;
-                isDirectory = target.value.isDirectory();
-                isFile = target.value.isFile();
-            }
-            if (isDirectory) {
-                if (ignoredDirs.has(entry.name)) continue;
-                const subResult = walkFiles(full, ignoredDirs);
-                if (subResult.isErr()) return subResult;
-                for (const sub of subResult.value) {
-                    results.push(join(entry.name, sub));
+export function walkFiles(dir: string, ignoredDirs: ReadonlySet<string>): ResultAsync<string[], FsError> {
+    const queue = new PQueue({ concurrency: METADATA_WIDTH });
+    let failed = false;
+    // The priority is the depth, so deeper work runs first and the walk drains one subtree before it
+    // opens the next. The queue then holds about one listing for each level, as a recursive walk does,
+    // and not the whole frontier of the tree.
+    async function walk(path: string, depth: number): Promise<string[]> {
+        if (failed) return [];
+        const entries = await queue.add(() => readdir(path, { withFileTypes: true }), { priority: depth });
+        const nested = await Promise.all(
+            entries.map(async (entry): Promise<string[]> => {
+                const full = join(path, entry.name);
+                let isDirectory = entry.isDirectory();
+                let isFile = entry.isFile();
+                if (entry.isSymbolicLink()) {
+                    const target = await queue.add(async () => statResultAsync(full, "walkFiles:stat"), { priority: depth + 1 });
+                    if (target.isErr()) return [];
+                    isDirectory = target.value.isDirectory();
+                    isFile = target.value.isFile();
                 }
-            } else if (isFile) {
-                results.push(entry.name);
-            }
-        }
-        return ok(results);
-    } catch (cause) {
-        return err({ type: "io_failed", op: "walkFiles", cause });
+                if (isDirectory) {
+                    if (ignoredDirs.has(entry.name)) return [];
+                    return (await walk(full, depth + 1)).map((sub) => join(entry.name, sub));
+                }
+                return isFile ? [entry.name] : [];
+            }),
+        );
+        return nested.flat();
     }
+    return ResultAsync.fromPromise(walk(dir, 0), (cause): FsError => {
+        // The result is decided, thus the queued reads of the other subtrees are waste. A cleared task never
+        // settles, which is safe: only the rejected walk waits on it.
+        failed = true;
+        queue.clear();
+        return { type: "io_failed", op: "walkFiles", cause };
+    });
 }
 
 /**
@@ -196,11 +219,11 @@ async function materializeStagedFile(file: InputFile, targetDir: string): Promis
     // placement so the copy fallback's timestamp stamp and the manifest record the same reading —
     // two stats straddling the copy could disagree, and the staged tree would then misreport the set
     // it materialized.
-    const statsResult = statResult(file.absPath, "materializeStagedFile:stat");
+    const statsResult = await statResultAsync(file.absPath, "materializeStagedFile:stat");
     if (statsResult.isErr()) return err(statsResult.error);
 
     const dest = join(targetDir, file.relativePath);
-    const stageResult = stageFile(file.absPath, dest, statsResult.value);
+    const stageResult = await stageFile(file.absPath, dest, statsResult.value);
     if (stageResult.isErr()) return err(stageResult.error);
 
     const hashResult = await sha256File(file.absPath);
@@ -214,7 +237,7 @@ async function materializeStagedFile(file: InputFile, targetDir: string): Promis
         hash: `sha256:${hashResult.value}`,
         size: statsResult.value.size,
         // Verbatim, fraction and all: this is the value the ledger records, and
-        // {@link isInputSetMaterialized} compares it against a fresh `statSync` of the same file.
+        // {@link isInputSetMaterialized} compares it against a fresh `stat` of the same file.
         // Rounding here and not there — or the reverse — would make every analysis read as
         // permanently unmaterialized.
         mtimeMs: statsResult.value.mtimeMs,
@@ -225,20 +248,28 @@ async function materializeStagedFile(file: InputFile, targetDir: string): Promis
 /** Staging-layer error: wraps I/O failures from the filesystem operations during staging. */
 export type StagingError = { type: "staging_failed"; cause: unknown };
 
-/** Remove now-empty directories under `dir` (bottom-up), leaving `dir` itself in place. */
-function pruneEmptyDirs(dir: string): Result<void, FsError> {
-    try {
-        for (const entry of readdirSync(dir, { withFileTypes: true })) {
-            if (!entry.isDirectory()) continue;
-            const full = join(dir, entry.name);
-            const sub = pruneEmptyDirs(full);
-            if (sub.isErr()) return sub;
-            if (readdirSync(full).length === 0) rmdirSync(full);
-        }
-        return ok(undefined);
-    } catch (cause) {
-        return err({ type: "io_failed", op: "pruneEmptyDirs", cause });
+/**
+ * Remove now-empty directories under `dir` (bottom-up), leaving `dir` itself in place. A directory is read
+ * again only after each of its children is pruned, because a child that becomes empty and goes is what
+ * can make its parent empty. At most {@link METADATA_WIDTH} reads and removals are in flight.
+ */
+function pruneEmptyDirs(dir: string): ResultAsync<void, FsError> {
+    const queue = new PQueue({ concurrency: METADATA_WIDTH });
+    // The depth priority keeps the queue to about one listing for each level, as in {@link walkFiles}.
+    async function prune(path: string, depth: number): Promise<void> {
+        const entries = await queue.add(() => readdir(path, { withFileTypes: true }), { priority: depth });
+        await Promise.all(
+            entries
+                .filter((entry) => entry.isDirectory())
+                .map(async (entry) => {
+                    const full = join(path, entry.name);
+                    await prune(full, depth + 1);
+                    const left = await queue.add(() => readdir(full), { priority: depth + 1 });
+                    if (left.length === 0) await queue.add(() => rmdir(full), { priority: depth + 1 });
+                }),
+        );
     }
+    return ResultAsync.fromPromise(prune(dir, 0), (cause): FsError => ({ type: "io_failed", op: "pruneEmptyDirs", cause }));
 }
 
 /**
@@ -251,11 +282,11 @@ function pruneEmptyDirs(dir: string): Result<void, FsError> {
  * ignore set: it must see files staged under names the staging walk now
  * skips, or they would linger forever.
  */
-function reconcileStagedTree(targetDir: string, staged: StagedInput[]): Result<void, FsError> {
+async function reconcileStagedTree(targetDir: string, staged: StagedInput[]): Promise<Result<void, FsError>> {
     const localRoot = join(targetDir, LOCAL_MOUNT_SUBDIR);
-    if (!existsSync(localRoot)) return ok(undefined);
+    if (!(await pathExistsAsync(localRoot))) return ok(undefined);
 
-    const existingResult = walkFiles(localRoot, WALK_EVERYTHING);
+    const existingResult = await walkFiles(localRoot, WALK_EVERYTHING);
     if (existingResult.isErr()) return err(existingResult.error);
 
     // Compare absolute path to absolute path — `join` normalizes both sides.
@@ -264,14 +295,12 @@ function reconcileStagedTree(targetDir: string, staged: StagedInput[]): Result<v
     // when writing, so key and on-disk path diverge and reconcile would delete
     // freshly staged files).
     const expected = new Set(staged.map((s) => join(targetDir, s.relativePath)));
-    for (const rel of existingResult.value) {
-        const abs = join(localRoot, rel);
-        if (expected.has(abs)) continue;
-        try {
-            rmSync(abs, { force: true });
-        } catch (cause) {
-            return err({ type: "io_failed", op: "reconcileStagedTree:rm", cause });
-        }
+    const stale = existingResult.value.map((rel) => join(localRoot, rel)).filter((abs) => !expected.has(abs));
+    const queue = new PQueue({ concurrency: METADATA_WIDTH });
+    try {
+        await Promise.all(stale.map((abs) => queue.add(() => rm(abs, { force: true }))));
+    } catch (cause) {
+        return err({ type: "io_failed", op: "reconcileStagedTree:rm", cause });
     }
     return pruneEmptyDirs(localRoot);
 }
@@ -323,19 +352,25 @@ async function walkInputFilesAsync(analysisId: string): Promise<Result<InputFile
         if (absPath.value !== null) resolvedInputs.push({ input, absPath: absPath.value });
     }
 
+    // Resolve existence ONCE, in the walk both callers share, so enumeration and staging can never
+    // disagree about whether a source is still on disk. A source deleted while its input row
+    // survives is a routine DB/filesystem desync — the user may delete an input at any moment — not
+    // a fault: treat it as removed and skip it here. Without this shared gate the two callers
+    // diverge: enumeration skips the stat-missing file and reports drift, but staging deletes the
+    // previously staged copy and then fails to re-link the gone source, which wedges the
+    // drift-repair loop into a recurring "could not start profiling" toast that never converges.
+    // Directory MEMBERS are existence-checked by `walkFiles` itself; this covers the input root — a
+    // lone file, or a whole directory that vanished (whose `walkFiles` would otherwise ENOENT-fault
+    // in staging while enumeration silently skipped it).
+    const present = await pathsExistAsync(
+        resolvedInputs.map(({ absPath }) => absPath),
+        METADATA_WIDTH,
+    );
     const files: InputFile[] = [];
-    for (const { input, absPath } of resolvedInputs) {
-        // Resolve existence ONCE, in the walk both callers share, so enumeration and staging can never
-        // disagree about whether a source is still on disk. A source deleted while its input row
-        // survives is a routine DB/filesystem desync — the user may delete an input at any moment — not
-        // a fault: treat it as removed and skip it here. Without this shared gate the two callers
-        // diverge: enumeration skips the stat-missing file and reports drift, but staging deletes the
-        // previously staged copy and then fails to re-link the gone source, which wedges the
-        // drift-repair loop into a recurring "could not start profiling" toast that never converges.
-        // Directory MEMBERS are existence-checked by `walkFiles` itself; this covers the input root — a
-        // lone file, or a whole directory that vanished (whose `walkFiles` would otherwise ENOENT-fault
-        // in staging while enumeration silently skipped it).
-        if (statResult(absPath, "walkInputFiles:exists").isErr()) {
+    // One directory walk at a time: each walk keeps its own fixed-width queue, so parallel walks would multiply
+    // the bound by the count of directory inputs.
+    for (const [index, { input, absPath }] of resolvedInputs.entries()) {
+        if (!present[index]) {
             getLogger("staging").warn({ absPath, path: input.path }, "input source missing on disk — skipping it (treating it as removed)");
             continue;
         }
@@ -348,7 +383,7 @@ async function walkInputFilesAsync(analysisId: string): Promise<Result<InputFile
         // files from different locations, deterministic across runs).
         const keyRoot = input.anchorId === null ? join(deriveFileId(input), basename(input.path)) : input.path;
         if (input.isDir) {
-            const walkResult = walkFiles(absPath, IGNORED_WALK_DIRS);
+            const walkResult = await walkFiles(absPath, IGNORED_WALK_DIRS);
             if (walkResult.isErr()) return err({ type: "staging_failed", cause: walkResult.error });
             for (const subpath of walkResult.value) {
                 const key = join(keyRoot, subpath);
@@ -381,36 +416,57 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
     const filesResult = await walkInputFiles(analysisId);
     if (filesResult.isErr()) return err(filesResult.error);
 
-    const staged: StagedInput[] = [];
-    for (const file of filesResult.value) {
-        const result = await materializeStagedFile(file, targetDir);
-        if (result.isErr()) return err({ type: "staging_failed", cause: result.error });
-        staged.push(result.value);
-    }
-
     // Overlapping inputs stage to the SAME dest path: a directory input plus a
     // file input inside it, or two anchors whose subtrees share a relative path.
-    // Sequential linking leaves the last writer's bytes on disk, and two manifest
-    // entries with one `relativePath` would break the harness's multi-row artifact
-    // upsert — Postgres rejects two rows that hit the same ON CONFLICT key in a
-    // single statement. Dedup by `relativePath`, keeping the LAST entry so the
-    // manifest matches what is actually on disk; warn only when the dropped entry
-    // held DIFFERENT content (a genuine input clash, not the benign dir-holds-file
-    // overlap where both resolve to the same source).
-    const byPath = new Map<string, StagedInput>();
-    for (const entry of staged) {
-        const prior = byPath.get(entry.relativePath);
-        if (prior && prior.hash !== entry.hash) {
-            getLogger("staging").warn(
-                { relativePath: entry.relativePath, droppedKey: prior.key, keptKey: entry.key },
-                "two inputs stage to the same path with different content — keeping the last-staged file",
-            );
-        }
-        byPath.set(entry.relativePath, entry);
+    // The files of one dest stage in walk order, one after the other, never at the
+    // same time: two concurrent placements race on the dest, and a `link` that loses
+    // with EEXIST falls back to `copyFile` onto a hardlink of the same source, which
+    // truncates the user's input. Distinct dests stage in parallel.
+    //
+    // In order, the last writer's bytes stay on disk, and two manifest entries with
+    // one `relativePath` would break the harness's multi-row artifact upsert —
+    // Postgres rejects two rows that hit the same ON CONFLICT key in a single
+    // statement. Thus each dest keeps its LAST entry, so the manifest matches what is
+    // actually on disk; warn only when the dropped entry held DIFFERENT content (a
+    // genuine input clash, not the benign dir-holds-file overlap where both resolve
+    // to the same source).
+    const byDest = new Map<string, [InputFile, ...InputFile[]]>();
+    for (const file of filesResult.value) {
+        const group = byDest.get(file.relativePath);
+        if (group) group.push(file);
+        else byDest.set(file.relativePath, [file]);
     }
-    const uniqueStaged = [...byPath.values()];
 
-    const reconcileResult = reconcileStagedTree(targetDir, uniqueStaged);
+    // After a failure the result is decided, thus a group that has not started stages nothing.
+    let failed = false;
+    async function stageDest([first, ...rest]: readonly [InputFile, ...InputFile[]]): Promise<Result<StagedInput, FsError> | null> {
+        if (failed) return null;
+        let kept = await materializeStagedFile(first, targetDir);
+        for (const file of rest) {
+            if (kept.isErr() || failed) break;
+            const next = await materializeStagedFile(file, targetDir);
+            if (next.isOk() && kept.value.hash !== next.value.hash) {
+                getLogger("staging").warn(
+                    { relativePath: next.value.relativePath, droppedKey: kept.value.key, keptKey: next.value.key },
+                    "two inputs stage to the same path with different content — keeping the last-staged file",
+                );
+            }
+            kept = next;
+        }
+        if (kept.isErr()) failed = true;
+        return kept;
+    }
+
+    const queue = new PQueue({ concurrency: MATERIALIZE_WIDTH });
+    const outcomes = await Promise.all([...byDest.values()].map((group) => queue.add(() => stageDest(group))));
+    const uniqueStaged: StagedInput[] = [];
+    for (const outcome of outcomes) {
+        if (outcome === null) continue;
+        if (outcome.isErr()) return err({ type: "staging_failed", cause: outcome.error });
+        uniqueStaged.push(outcome.value);
+    }
+
+    const reconcileResult = await reconcileStagedTree(targetDir, uniqueStaged);
     if (reconcileResult.isErr()) return err({ type: "staging_failed", cause: reconcileResult.error });
 
     return ok(uniqueStaged);
@@ -440,12 +496,16 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
  *   anchor resolution) or `StagingError` (a directory-input walk that hit an I/O fault).
  */
 export function enumerateInputPaths(analysisId: string): ResultAsync<ReadonlySet<string>, DbError | StagingError> {
-    return walkInputFiles(analysisId).map((files) => {
+    return walkInputFiles(analysisId).map(async (files) => {
+        const exists = await pathsExistAsync(
+            files.map((file) => file.absPath),
+            METADATA_WIDTH,
+        );
         // Overlapping inputs can resolve to the same `relativePath`; staging keeps the LAST
         // such entry, and a Set on that key collapses them identically.
         const present = new Set<string>();
-        for (const file of files) {
-            if (statResult(file.absPath, "enumerateInputPaths:stat").isErr()) {
+        for (const [index, file] of files.entries()) {
+            if (!exists[index]) {
                 getLogger("staging").warn({ absPath: file.absPath }, "input file disappeared between the walk and its stat — treating it as removed");
                 continue;
             }
@@ -508,28 +568,39 @@ export function mtimesMatch(a: number, b: number): boolean {
  * @param targetDir - The data directory root staging writes under (`workspaceDataDir(analysis)`).
  */
 export function isInputSetMaterialized(analysisId: string, targetDir: string): ResultAsync<boolean, DbError | StagingError> {
-    return walkInputFiles(analysisId).map((files) => {
+    return walkInputFiles(analysisId).map(async (files) => {
         // Overlapping inputs can resolve to one `relativePath`; staging keeps the LAST entry, so the
         // expected tree is that same collapse — comparing against the dropped entry's source would
         // report a mismatch for a path the manifest never claimed.
         const expected = new Map<string, InputFile>();
         for (const file of files) expected.set(file.relativePath, file);
 
-        for (const [relativePath, file] of expected) {
-            const srcStats = statResult(file.absPath, "isInputSetMaterialized:src");
+        // One mismatch decides the answer, thus a pair that has not started stats nothing after it.
+        let mismatch = false;
+        const queue = new PQueue({ concurrency: METADATA_WIDTH });
+        async function matches(relativePath: string, file: InputFile): Promise<boolean> {
+            const srcStats = await statResultAsync(file.absPath, "isInputSetMaterialized:src");
             if (srcStats.isErr()) return false;
-            const stagedStats = statResult(join(targetDir, relativePath), "isInputSetMaterialized:staged");
+            const stagedStats = await statResultAsync(join(targetDir, relativePath), "isInputSetMaterialized:staged");
             if (stagedStats.isErr()) return false;
-            if (stagedStats.value.size !== srcStats.value.size || !mtimesMatch(stagedStats.value.mtimeMs, srcStats.value.mtimeMs)) return false;
+            return stagedStats.value.size === srcStats.value.size && mtimesMatch(stagedStats.value.mtimeMs, srcStats.value.mtimeMs);
         }
+        await Promise.all(
+            [...expected].map(([relativePath, file]) =>
+                queue.add(async () => {
+                    if (!mismatch && !(await matches(relativePath, file))) mismatch = true;
+                }),
+            ),
+        );
+        if (mismatch) return false;
 
         // A staged file no current input yields means the mirror pass has deletions to perform, which
         // is work — so the set is not materialized as staging would leave it. The walk passes no ignore
         // set, exactly as `reconcileStagedTree` does: it must see files staged under names the staging
         // walk now skips, since those are precisely the ones reconciliation would remove.
         const localRoot = join(targetDir, LOCAL_MOUNT_SUBDIR);
-        if (!existsSync(localRoot)) return expected.size === 0;
-        const existingResult = walkFiles(localRoot, WALK_EVERYTHING);
+        if (!(await pathExistsAsync(localRoot))) return expected.size === 0;
+        const existingResult = await walkFiles(localRoot, WALK_EVERYTHING);
         if (existingResult.isErr()) return false;
         // Absolute-vs-absolute, the comparison `reconcileStagedTree` makes for the same reason: a
         // manifest key is not always a clean relative path, so only `join`ed absolutes agree.

@@ -155,7 +155,7 @@ The system SHALL extend `inflexa prov export` to write an attestation file `prov
 
 ### Requirement: The export runs in the local server after a recorder flush
 
-`inflexa prov export` and the export entries of the TUI palette SHALL be clients of `POST {A}/provenance/export`. The server SHALL flush the in-memory appends of the provenance recorder into the signed chain before it serializes the document, thus each export holds each event that the server recorded. A flush that fails SHALL NOT stop the export: the export then holds the last stored chain. The command SHALL resolve `--output` against its own working folder and send the absolute path. Without `--output`, the server SHALL write into the output folder of the analysis. A signing failure SHALL refuse the export with its signing error named, and nothing SHALL be written.
+`inflexa prov export` and the export entries of the TUI palette SHALL be clients of `POST {A}/provenance/export`. The server SHALL flush the in-memory appends of the provenance recorder into the signed chain before it serializes the document, thus each export holds each event that the server recorded. A flush that fails SHALL NOT stop the export: the export then holds the last stored chain. The command SHALL resolve `--output` against its own working folder and send the absolute path. Without `--output`, the server SHALL write into the output folder of the analysis. A signing failure SHALL refuse the export with its signing error named, and nothing SHALL be written. The server SHALL write the folder, the document, and the attestation off the event loop, so an output folder on a hung mount stops only the export request.
 
 #### Scenario: An export includes the newest events
 

@@ -345,6 +345,29 @@ describe("stageInputs", () => {
         expect(idsByKey(second)).toEqual(idsByKey(first));
         expect(readFileSync(join(targetDir, "inputs", "local", "stable", "member.txt"), "utf-8")).toBe("v2");
     });
+
+    test("a file input inside a directory input stages to one path and leaves the source intact", async () => {
+        // The two inputs share a dest, which staging places one after the other while the other members
+        // stage in parallel. This pins the outcome on a fresh tree and again over the hardlinks of the
+        // first pass: one manifest entry for the dest, and the user's source unchanged. It does not force
+        // the interleaving where a lost `link` falls back to `copyFile` onto the same inode.
+        const dirPath = join(anchorDir, "overlap");
+        mkdirSync(dirPath, { recursive: true });
+        const content = "x".repeat(64 * 1024);
+        writeFileSync(join(dirPath, "shared.csv"), content);
+        for (let i = 0; i < 32; i++) writeFileSync(join(dirPath, `member-${i}.csv`), `m${i}`);
+        insertAnalysisInput({ path: "overlap", isDir: true, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: join("overlap", "shared.csv"), isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        for (let pass = 0; pass < 2; pass++) {
+            const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+            const shared = staged.filter((s) => s.key === join("overlap", "shared.csv"));
+            expect(shared).toHaveLength(1);
+            expect(staged).toHaveLength(33);
+            expect(readFileSync(join(dirPath, "shared.csv"), "utf-8")).toBe(content);
+            expect(readFileSync(join(targetDir, shared[0]!.relativePath), "utf-8")).toBe(content);
+        }
+    });
 });
 
 describe("stageInputs — the staged tree records what it materialized", () => {

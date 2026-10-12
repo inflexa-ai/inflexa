@@ -30,6 +30,16 @@ covered, and `isInputSetMaterialized`, which compares them against the staged co
 whether the tree is current. They are no longer a drift comparand — a re-profile is invoked on
 the input-mutation edge rather than derived from comparing them.
 
+Every disk operation of the module — the walks, the `stat` calls, the link or copy, the content
+hash, the reconcile of the staged tree, and the reads of the enumeration and the already-materialized
+predicate — SHALL run off the event loop (`node:fs/promises`), because the local server stages for a
+request and an input tree on a hung mount must stop only that request. A walk or a `stat` pass SHALL
+keep a fixed count of operations in flight, and staging SHALL place and hash a fixed count of files at
+one time, so a large tree neither runs one file at a time nor fills the thread pool of the server. The
+content hash SHALL stream the file. Files that stage to the same destination SHALL stage one after
+the other in walk order, never at the same time: a concurrent placement can lose its `link` and copy
+onto a hardlink of the same source, which truncates the user's file.
+
 #### Scenario: The manifest carries the size and mtime
 
 - **WHEN** `stageInputs` materializes an input file
@@ -58,6 +68,13 @@ the input-mutation edge rather than derived from comparing them.
 - **WHEN** one input's anchor cannot be resolved and another input is resolvable
 - **THEN** the unresolvable input is omitted from the manifest
 - **AND** the resolvable input is staged normally (partial staging over total failure)
+
+#### Scenario: Inputs that share a destination stage in order
+
+- **GIVEN** a directory input and a file input inside it, which stage to the same destination
+- **WHEN** `stageInputs` runs, on a fresh tree or over a staged one
+- **THEN** the manifest has one entry for that destination
+- **AND** the source file is unchanged
 
 #### Scenario: Staging I/O errors fail the whole operation
 
