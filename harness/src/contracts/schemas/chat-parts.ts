@@ -160,6 +160,19 @@ export const DagStatePartSchema = z
 
 // ── Step Activity ───────────────────────────────────────────────────
 
+export const SynthesisPhaseSchema = z.enum([
+    "starting",
+    "researching",
+    "drafting",
+    "validating",
+    "refining",
+    "indexing",
+    "persisting",
+    "complete",
+    "skipped",
+    "failed",
+]);
+
 export const StepPhaseSchema = z.enum([
     "sandbox-init",
     "executing",
@@ -188,7 +201,7 @@ export const ActivityEntryPartSchema = z.object({
     id: z.string(),
     runId: z.string(),
     stepId: z.string(),
-    phase: StepPhaseSchema,
+    phase: z.union([StepPhaseSchema, SynthesisPhaseSchema]),
     activity: z.string(),
     at: z.string(),
 });
@@ -319,25 +332,13 @@ export const RunSynthesisPartSchema = z.object({
 
 // ── Synthesis Progress ─────────────────────────────────────────────
 
-export const SynthesisPhaseSchema = z.enum([
-    "starting",
-    "researching",
-    "drafting",
-    "validating",
-    "refining",
-    "indexing",
-    "persisting",
-    "complete",
-    "skipped",
-    "failed",
-]);
-
 export const SynthesisProgressPartSchema = z.object({
     type: z.literal("data-synthesis-progress"),
     id: z.string(),
     runId: z.string(),
     phase: SynthesisPhaseSchema,
     activity: z.string(),
+    at: z.string().optional(),
     delegationCount: z.number().int().nonnegative().optional(),
     reason: z.string().optional(),
     error: z.string().optional(),

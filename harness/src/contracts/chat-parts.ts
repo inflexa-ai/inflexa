@@ -204,7 +204,8 @@ export interface ActivityEntryPart {
     id: string;
     runId: string;
     stepId: string;
-    phase: StepPhase;
+    /** A `SynthesisPhase` for the entries of the synthesis step, a `StepPhase` for each other step. */
+    phase: StepPhase | SynthesisPhase;
     activity: string;
     /** ISO 8601 time of the emission. */
     at: string;
@@ -400,6 +401,8 @@ export interface SynthesisProgressPart {
     phase: SynthesisPhase;
     /** Human-readable activity description. */
     activity: string;
+    /** ISO 8601 time of the emission. Absent in a stream that an older harness wrote. */
+    at?: string;
     /** Number of literature-reviewer delegations started so far. */
     delegationCount?: number;
     /** Agent-provided reason — set when phase === "skipped". */

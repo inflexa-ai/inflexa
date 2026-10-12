@@ -79,7 +79,9 @@ When `ctx.ask` runs and a matching grant exists — the same analysis, the same
 user, and the same grant key — it MUST short-circuit with no pause. No prompt
 reaches a surface. The ask MUST still be recorded in `cortex_asks` as
 `resolved`, thus the ledger stays a complete audit of every approval-gated
-action. A grant MUST last for the lifecycle of its analysis, and it MUST survive
+action. It MUST emit one `data-ask` part that is already settled, with
+`status: "resolved"` and `reply: "always"`, and no pending part before it. Thus
+the transcript shows that a standing grant approved the call. A grant MUST last for the lifecycle of its analysis, and it MUST survive
 a process restart. A grant MUST never apply to another analysis, and it MUST
 never apply to another user.
 
@@ -88,6 +90,7 @@ never apply to another user.
 - **GIVEN** an analysis in which an earlier ask for a given grant key was answered `always`
 - **WHEN** a tool calls `ctx.ask` for the same grant key, in that analysis, for the same user
 - **THEN** `ctx.ask` returns approved without surfacing a prompt, and a `resolved` ledger row records the invocation
+- **AND** the one `data-ask` part that it emits has `status: "resolved"` and `reply: "always"`
 
 #### Scenario: A grant does not cross users
 

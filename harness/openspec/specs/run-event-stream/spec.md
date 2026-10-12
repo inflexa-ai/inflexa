@@ -214,6 +214,15 @@ The entries reach the handler in write order among themselves. A live reader tha
 
 `at` is optional in the part contract, because a stream that an older harness wrote holds activity parts with no time.
 
+The synthesis SHALL report its progress the same way. It SHALL set `at` on each `data-synthesis-progress` part, and after each such part it SHALL write one `data-activity-entry` part with the step id `synthesis`, the `SynthesisPhase` of the report as `phase`, and the same `activity` and `at`. Thus the `phase` of an entry is a `StepPhase` or a `SynthesisPhase`. The synthesis runs inside one step of the parent workflow, thus its `at` comes from the wall clock, and a rerun of that step after a crash writes its entries again under the same ids. A reader SHALL treat two entries with the same id as one entry.
+
+#### Scenario: A late subscriber gets each synthesis line with its time
+
+- **GIVEN** a run whose synthesis reported some progress lines
+- **WHEN** a caller subscribes after those lines and the history replays
+- **THEN** the handler receives one `data-activity-entry` with the step id `synthesis` for each line, in write order, each with its `at`
+- **AND** the handler receives the current `data-synthesis-progress`, with its `at`
+
 #### Scenario: A late subscriber gets each activity line with its time
 
 - **GIVEN** a step that reported some activity lines

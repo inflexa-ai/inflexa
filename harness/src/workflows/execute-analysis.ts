@@ -104,6 +104,7 @@ import {
 } from "../state/index.js";
 import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
+import type { SynthesisPhase } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
 import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, emptyStepMemory, type StepBriefing, type UpstreamHandoff } from "../prompts/briefing.js";
@@ -116,7 +117,7 @@ import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
 import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
-import { isChatDataPart } from "../sandbox/sandbox-step-translate.js";
+import { isChatDataPart, synthesisEmission } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
 import { recordCancelledChild } from "./metrics.js";
@@ -662,6 +663,16 @@ export function synthesizeFindings(args: {
     deps: ExecuteAnalysisDeps;
 }): Promise<{ findings: readonly RunFinding[]; synthesisStatus: Exclude<SynthesisStatus, "failed">; synthesisReason: string | null }> {
     const { analysisId, runId, completedSteps, session, deps } = args;
+    const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis.synthesis");
+    // Observation is a diagnostic channel: a failed progress write is logged and never fails the synthesis.
+    let progressSeq = 0;
+    const writeProgressAlone = async (part: unknown, phase: SynthesisPhase): Promise<void> => {
+        try {
+            await DBOS.writeStream("events", part);
+        } catch (err) {
+            logger.warn("synthesis progress write failed (non-fatal)", { phase, ...logger.errorFields(err) });
+        }
+    };
     const emit: EmitFn = (event) => {
         const part = isChatDataPart(event)
             ? event
@@ -700,15 +711,15 @@ export function synthesizeFindings(args: {
             // call path.
             session: forStep(session, SYNTHESIS_STEP_ID),
             emit,
-            onProgress: (phase, activity, extra = {}) =>
-                DBOS.writeStream("events", {
-                    type: "data-synthesis-progress",
-                    id: `synthesis-progress-${runId}`,
-                    runId,
-                    phase,
-                    activity,
-                    ...extra,
-                }),
+            onProgress: async (phase, activity, extra = {}) => {
+                // Synthesis runs inside one `DBOS.runStep`, thus `DBOS.now()` reads the wall clock here, and a rerun of
+                // the step after a crash writes its entries again under the same ids. A reader dedups an entry by id.
+                const seq = progressSeq++;
+                const at = new Date(await DBOS.now()).toISOString();
+                const parts = synthesisEmission(runId, SYNTHESIS_STEP_ID, seq, phase, activity, at, extra);
+                await writeProgressAlone(parts.progress, phase);
+                await writeProgressAlone(parts.entry, phase);
+            },
         },
     );
 }
