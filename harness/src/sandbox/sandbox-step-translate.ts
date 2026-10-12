@@ -6,7 +6,7 @@
  * into its emitters.
  */
 
-import type { ActivityEntryPart, StepActivityPart, StepPhase } from "../contracts/chat-parts.js";
+import type { ActivityEntryPart, StepActivityPart, StepPhase, SynthesisPhase, SynthesisProgressPart } from "../contracts/chat-parts.js";
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
 import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
@@ -41,6 +41,26 @@ export function activityEmission(
     const { runId, stepId } = frame;
     return {
         activity: { type: "data-step-activity", id: stepPartId("step-activity", runId, stepId), runId, stepId, phase, activity, at },
+        entry: { type: "data-activity-entry", id: `${stepPartId("activity-entry", runId, stepId)}-${seq}`, runId, stepId, phase, activity, at },
+    };
+}
+
+/**
+ * The two parts of one synthesis progress report: the reconciling `data-synthesis-progress` that holds the current
+ * phase, and the `data-activity-entry` that keeps the report in the run stream under the synthesis step. `seq` is the
+ * position of the report in the synthesis, so each entry has its own id. The `extra` fields stay on the progress part.
+ */
+export function synthesisEmission(
+    runId: string,
+    stepId: string,
+    seq: number,
+    phase: SynthesisPhase,
+    activity: string,
+    at: string,
+    extra: Pick<SynthesisProgressPart, "delegationCount" | "reason" | "error">,
+): { readonly progress: SynthesisProgressPart; readonly entry: ActivityEntryPart } {
+    return {
+        progress: { type: "data-synthesis-progress", id: `synthesis-progress-${runId}`, runId, phase, activity, at, ...extra },
         entry: { type: "data-activity-entry", id: `${stepPartId("activity-entry", runId, stepId)}-${seq}`, runId, stepId, phase, activity, at },
     };
 }

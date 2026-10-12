@@ -92,8 +92,11 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
         // A standing grant this user holds for this ask's grant key — the command
         // unless the tool supplied a broader key — short-circuits the prompt: record
         // the invocation as `resolved` for the audit trail and return without pausing.
+        // The one part it emits is already settled, so no surface prompts, and the
+        // transcript still shows that a standing grant approved the call.
         if (unwrapOrThrow(await selectGrant(pool, ctx.analysisId, ctx.userId, request.grantKey ?? request.command))) {
             unwrapOrThrow(await insertGrantedAsk(pool, row, now));
+            await emitAskPart(ctx.emit, id, request, "resolved", "always");
             return { kind: "always" };
         }
 

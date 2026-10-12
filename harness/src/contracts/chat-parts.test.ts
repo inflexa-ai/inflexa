@@ -118,6 +118,31 @@ describe("the activity history parts", () => {
         expect(ChatPartSchema.safeParse({ ...entry, at: undefined }).success).toBe(false);
     });
 
+    test("a data-activity-entry of the synthesis step carries a synthesis phase", () => {
+        const entry = {
+            type: "data-activity-entry" as const,
+            id: "activity-entry-r1-synthesis-0",
+            runId: "r1",
+            stepId: "synthesis",
+            phase: "researching" as const,
+            activity: "Reviewing the literature",
+            at: "2026-10-12T10:00:00.000Z",
+        };
+        expect(ChatPartSchema.parse(entry)).toEqual(entry);
+    });
+
+    test("a data-synthesis-progress part keeps its time", () => {
+        const part = {
+            type: "data-synthesis-progress" as const,
+            id: "synthesis-progress-r1",
+            runId: "r1",
+            phase: "drafting" as const,
+            activity: "Drafting the synthesis",
+            at: "2026-10-12T10:00:00.000Z",
+        };
+        expect(ChatPartSchema.parse(part)).toEqual(part);
+    });
+
     test("a data-subagent-activity part round-trips through the union schema", () => {
         const part = {
             type: "data-subagent-activity" as const,

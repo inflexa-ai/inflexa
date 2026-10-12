@@ -6,7 +6,8 @@ import { defineTool } from "../tools/define-tool.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import { createEditFileTool } from "../tools/workspace/edit-file.js";
 import { createWriteFileTool } from "../tools/workspace/write-file.js";
-import { activityForTool, applyTreeDelta, sandboxTreeDelta, stepPartId } from "./sandbox-step-translate.js";
+import { ChatPartSchema } from "../contracts/schemas/chat-parts.js";
+import { activityForTool, applyTreeDelta, sandboxTreeDelta, stepPartId, synthesisEmission } from "./sandbox-step-translate.js";
 
 describe("stepPartId", () => {
     it("pins the id shape the run-stream fold reconciles on", () => {
@@ -110,5 +111,40 @@ describe("applyTreeDelta", () => {
         applyTreeDelta(files, { removed: ["tmp/scratch"] });
 
         expect([...files].sort()).toEqual(["logs/run.log", "output/a.csv", "scripts/run.R"]);
+    });
+});
+
+describe("synthesisEmission", () => {
+    it("gives the reconciling progress part and one history entry under the synthesis step", () => {
+        const at = "2026-10-12T10:00:00.000Z";
+        const { progress, entry } = synthesisEmission("r1", "synthesis", 2, "researching", "Reviewing the literature", at, { delegationCount: 3 });
+
+        expect(progress).toEqual({
+            type: "data-synthesis-progress",
+            id: "synthesis-progress-r1",
+            runId: "r1",
+            phase: "researching",
+            activity: "Reviewing the literature",
+            at,
+            delegationCount: 3,
+        });
+        expect(entry).toEqual({
+            type: "data-activity-entry",
+            id: `${stepPartId("activity-entry", "r1", "synthesis")}-2`,
+            runId: "r1",
+            stepId: "synthesis",
+            phase: "researching",
+            activity: "Reviewing the literature",
+            at,
+        });
+        expect(ChatPartSchema.parse(progress)).toEqual(progress);
+        expect(ChatPartSchema.parse(entry)).toEqual(entry);
+    });
+
+    it("gives each report of one synthesis its own entry id", () => {
+        const first = synthesisEmission("r1", "synthesis", 0, "starting", "Beginning", "2026-10-12T10:00:00.000Z", {});
+        const second = synthesisEmission("r1", "synthesis", 1, "complete", "Ready", "2026-10-12T10:00:01.000Z", {});
+        expect(first.entry.id).not.toBe(second.entry.id);
+        expect(first.progress.id).toBe(second.progress.id);
     });
 });
