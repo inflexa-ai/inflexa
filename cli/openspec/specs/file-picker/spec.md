@@ -22,12 +22,29 @@ The system SHALL provide `FilePicker` in `src/tui/components/dialog/` (a content
 
 ### Requirement: Directory listing semantics
 
-The listing SHALL read the current directory with `withFileTypes` dirents, sort directories first then files (each group case-insensitively alphabetical), classify a symlink-to-directory as a directory (broken symlinks degrade to file rows), and canonicalize the cwd on descent. A symlink entry's row value SHALL be its canonical (realpath) target — the selection space is canonical (`classifyInputPath` stores realpaths), so an uncanonical row value would render a recorded input unchecked. An unreadable directory SHALL NOT crash the picker: it renders the error as the empty-state text and the user ascends. A synthetic `..` row SHALL be prepended when the filter is empty; it SHALL be hidden while a filter query is active, SHALL NOT be toggleable, and SHALL render no selection gutter even when the parent directory it points at is in the selection.
+The listing MUST come from the shared folder listing of the CLI. The folder list route of the local server uses the same listing.
+
+The listing MUST read the current directory one time, with `withFileTypes` dirents. The sort MUST use the kind from that read: directories first, then each other entry. Each group MUST be in case-insensitive alphabetical order. A symlink entry MUST sort with the files, because the sort takes no `stat`.
+
+A symlink whose target is a directory MUST still render with the trailing `/`, and it MUST open as a directory. A broken symlink degrades to a file row. The listing MUST canonicalize the cwd on descent.
+
+The row value of a symlink entry MUST be its canonical (realpath) target. The selection space is canonical, because `classifyInputPath` stores realpaths. An uncanonical row value would thus render a recorded input unchecked.
+
+An unreadable directory MUST NOT crash the picker. The picker renders the error as the empty-state text, and the user ascends.
+
+A synthetic `..` row MUST come first when the filter is empty. It MUST be hidden while a filter query is active. It MUST NOT be toggleable. It MUST render no selection gutter, even when the parent directory that it points at is in the selection.
 
 #### Scenario: Dirs-first ordering
 
 - **WHEN** a folder holds files and subfolders
 - **THEN** subfolders list first, each group alphabetically (case-insensitive)
+
+#### Scenario: A symlink to a folder sorts with the files and still opens
+
+- **GIVEN** a folder that holds the subfolder `beta`, the files `alpha.txt` and `zeta.txt`, and a symlink `ext` to a folder
+- **WHEN** the picker lists it
+- **THEN** the rows are `beta/`, `alpha.txt`, `ext/`, and `zeta.txt`, in this order
+- **AND** enter on `ext/` descends into the target folder
 
 #### Scenario: Unreadable folder degrades
 
@@ -108,9 +125,10 @@ The new-analysis flow SHALL open `FilePicker` seeded empty with `requireSelectio
 
 ### Requirement: The listing resolves entry metadata with one stat for each entry
 
-The listing MUST take one `statSync` for each entry that it lists. It MUST take no
-`accessSync` call. The `Stats` object gives the size, the modification time, the mode
-bits, the owner uid, and the owner gid.
+The listing MUST take its entry facts from the shared folder listing. It MUST take one
+`statSync` for each entry that it lists, and one `readlinkSync` for each symbolic link.
+It MUST take no `accessSync` call. The `Stats` object gives the size, the modification
+time, the mode bits, the owner uid, and the owner gid.
 
 The listing MUST derive readability from those mode bits and owner ids, against the ids
 of the process. It MUST read `process.getuid()`, `process.getgid()`, and
@@ -118,8 +136,10 @@ of the process. It MUST read `process.getuid()`, `process.getgid()`, and
 
 A `stat` that fails MUST NOT remove the row. That row lists with no metadata.
 
-The listing MUST apply an entry ceiling. Above the ceiling it lists the names alone, it
-takes no `stat`, and the footer reports the absent metadata.
+The listing MUST apply an entry ceiling. Above the ceiling it lists the names alone, and
+the footer reports the absent metadata. It takes no `stat` for an entry that is not a
+symbolic link. A symbolic link still takes its `stat`, because a link to a directory
+opens as a directory.
 
 The listing MUST carry the ceiling decision as a flag beside its rows. The footer MUST
 report from that flag. It MUST NOT infer the decision from the rows, because a folder that
@@ -151,7 +171,7 @@ late fill mints the items array again, and the list engine then moves the cursor
 #### Scenario: A large directory skips the metadata
 
 - **WHEN** the directory holds more entries than the ceiling
-- **THEN** the rows carry names alone, no `stat` runs, and the footer reports it
+- **THEN** the rows carry names alone, no `stat` runs for an entry that is not a symbolic link, and the footer reports it
 
 #### Scenario: A failed stat is not a large folder
 

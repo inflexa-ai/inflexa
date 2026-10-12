@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Stats } from "node:fs";
 
-import { isReadableBy, type ProcessIdentity } from "./fs.ts";
+import { isReadableBy, isWritableBy, type ProcessIdentity } from "./fs.ts";
 
 // Only the four fields `isReadableBy` reads. A cast is the pragmatic shape here: constructing a real
 // `Stats` means touching the filesystem, which would test the OS rather than the class resolution.
@@ -41,5 +41,33 @@ describe("isReadableBy", () => {
         const dirMode = 0o040000 | 0o750;
         expect(isReadableBy(statLike(dirMode, 501, 20), ME)).toBe(true);
         expect(isReadableBy(statLike(0o040000 | 0o310, 501, 20), ME)).toBe(false);
+    });
+});
+
+describe("isWritableBy", () => {
+    test("the owner class decides for the owner, and it can DENY", () => {
+        expect(isWritableBy(statLike(0o600, 501, 20), ME)).toBe(true);
+        expect(isWritableBy(statLike(0o466, 501, 20), ME)).toBe(false);
+    });
+
+    test("the group class covers a supplementary group, not just the effective gid", () => {
+        expect(isWritableBy(statLike(0o020, 0, 20), ME)).toBe(true);
+        expect(isWritableBy(statLike(0o020, 0, 12), ME)).toBe(true);
+        expect(isWritableBy(statLike(0o020, 0, 99), ME)).toBe(false);
+    });
+
+    test("the other class is the fallback for an unrelated file", () => {
+        expect(isWritableBy(statLike(0o002, 0, 0), ME)).toBe(true);
+        expect(isWritableBy(statLike(0o600, 0, 0), ME)).toBe(false);
+    });
+
+    test("root writes regardless of the bits", () => {
+        const root: ProcessIdentity = { uid: 0, gid: 0, groups: [0] };
+        expect(isWritableBy(statLike(0o000, 501, 20), root)).toBe(true);
+    });
+
+    test("a read bit does not grant a write", () => {
+        expect(isWritableBy(statLike(0o444, 501, 20), ME)).toBe(false);
+        expect(isWritableBy(statLike(0o040000 | 0o755, 501, 20), ME)).toBe(true);
     });
 });
