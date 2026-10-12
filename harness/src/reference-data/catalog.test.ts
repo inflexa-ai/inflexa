@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 
 import {
     REFERENCE_DATA_CATALOG,
@@ -10,7 +11,7 @@ import {
     resolveReferenceInstallPlan,
     resolveReferenceInstallPlanFromCatalogForTesting,
 } from "./catalog.js";
-import { REFERENCE_INSTALL_RECEIPT_VERSION, parseReferenceInstallReceipt } from "./receipt.js";
+import { REFERENCE_INSTALL_RECEIPT_VERSION, parseReferenceInstallReceipt, referenceReceiptContentDigest } from "./receipt.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -411,26 +412,53 @@ describe("reference-data catalog", () => {
 });
 
 describe("reference installation receipt", () => {
-    const valid = {
-        version: REFERENCE_INSTALL_RECEIPT_VERSION,
+    const content = {
         datasetId: "alpha",
         datasetVersion: "2026.07",
-        activatedAt: "2026-07-14T10:30:00.000Z",
         artifacts: [
             { path: "one.parquet", bytes: 42, sha256: HASH_A },
             { path: "nested/current.gz", bytes: 0, sha256: HASH_B },
         ],
     };
+    const valid = {
+        version: REFERENCE_INSTALL_RECEIPT_VERSION,
+        ...content,
+        activatedAt: "2026-07-14T10:30:00.000Z",
+        contentDigest: referenceReceiptContentDigest(content),
+    };
+
+    // Consumers outside the harness recompute the digest, so the canonical bytes are part of the contract.
+    it("digests the canonical JSON array of the content, with artifacts sorted by path", () => {
+        const canonical = `["alpha","2026.07",[["nested/current.gz",0,"${HASH_B}"],["one.parquet",42,"${HASH_A}"]]]`;
+        expect(referenceReceiptContentDigest(content)).toBe(createHash("sha256").update(canonical, "utf8").digest("hex"));
+    });
+
+    it("gives one content digest for the same content at a different install time or artifact order", () => {
+        const later = { ...valid, activatedAt: "2026-09-01T08:00:00.000Z" };
+        const reordered = { ...content, artifacts: [...content.artifacts].reverse() };
+
+        expect(parseReferenceInstallReceipt(later)?.contentDigest).toBe(valid.contentDigest);
+        expect(referenceReceiptContentDigest(reordered)).toBe(valid.contentDigest);
+    });
+
+    it("changes the content digest when the content changes", () => {
+        expect(referenceReceiptContentDigest({ ...content, datasetVersion: "2026.08" })).not.toBe(valid.contentDigest);
+        expect(referenceReceiptContentDigest({ ...content, artifacts: [{ ...content.artifacts[0]!, bytes: 43 }] })).not.toBe(valid.contentDigest);
+    });
+
+    it("rejects a receipt whose content digest disagrees with its fields", () => {
+        expect(parseReferenceInstallReceipt({ ...valid, contentDigest: HASH_A })).toBeUndefined();
+        expect(parseReferenceInstallReceipt({ ...valid, artifacts: [valid.artifacts[0]] })).toBeUndefined();
+        const { contentDigest: _contentDigest, ...noDigest } = valid;
+        expect(parseReferenceInstallReceipt(noDigest)).toBeUndefined();
+    });
+
+    it("rejects a version 1 receipt", () => {
+        expect(parseReferenceInstallReceipt({ ...valid, version: 1 })).toBeUndefined();
+    });
 
     it("records the observed size and digest for every artifact", () => {
         expect(parseReferenceInstallReceipt(valid)).toEqual(valid);
-    });
-
-    // A receipt written by an older build carries a now-removed `integrity` field. It must still
-    // parse (the install stays valid across the upgrade); the unknown key is simply dropped.
-    it("accepts a legacy receipt carrying an integrity field, ignoring it", () => {
-        const legacy = { ...valid, artifacts: [{ ...valid.artifacts[0], integrity: "pinned" }] };
-        expect(parseReferenceInstallReceipt(legacy)).toEqual({ ...valid, artifacts: [valid.artifacts[0]] });
     });
 
     it("degrades invalid receipt metadata to undefined", () => {

@@ -3,7 +3,13 @@ import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type ReferenceDataCatalog } from "@inflexa-ai/harness";
+import {
+    REFERENCE_DATA_CATALOG_VERSION,
+    REFERENCE_INSTALL_RECEIPT_VERSION,
+    UnknownReferenceDatasetError,
+    referenceReceiptContentDigest,
+    type ReferenceDataCatalog,
+} from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 
 // Side-effect import: the command actions render byte counts through Number.prototype.formatBytes,
@@ -99,14 +105,16 @@ function seedIntactInstall(): void {
     mkdirSync(join(paths.managed, "demo", "1"), { recursive: true });
     mkdirSync(paths.receipts, { recursive: true });
     writeFileSync(join(paths.managed, "demo", "1", "file"), "alpha");
+    const artifacts = [{ path: "file", bytes: 5, sha256: sha("alpha") }];
     writeFileSync(
         join(paths.receipts, "demo.json"),
         JSON.stringify({
-            version: 1,
+            version: REFERENCE_INSTALL_RECEIPT_VERSION,
             datasetId: "demo",
             datasetVersion: "1",
             activatedAt: "2026-07-14T12:00:00.000Z",
-            artifacts: [{ path: "file", bytes: 5, sha256: sha("alpha") }],
+            contentDigest: referenceReceiptContentDigest({ datasetId: "demo", datasetVersion: "1", artifacts }),
+            artifacts,
         }),
     );
 }
