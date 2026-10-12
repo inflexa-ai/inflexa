@@ -102,3 +102,47 @@ describe("CompactionPartSchema", () => {
         expect(CompactionPartSchema.safeParse({ ...running, trigger: "idle" }).success).toBe(false);
     });
 });
+
+describe("the activity history parts", () => {
+    test("a data-activity-entry part round-trips through the union schema", () => {
+        const entry = {
+            type: "data-activity-entry" as const,
+            id: "activity-entry-r1-s1-3",
+            runId: "r1",
+            stepId: "s1",
+            phase: "executing" as const,
+            activity: "Running script",
+            at: "2026-10-12T10:00:00.000Z",
+        };
+        expect(ChatPartSchema.parse(entry)).toEqual(entry);
+        expect(ChatPartSchema.safeParse({ ...entry, at: undefined }).success).toBe(false);
+    });
+
+    test("a data-subagent-activity part round-trips through the union schema", () => {
+        const part = {
+            type: "data-subagent-activity" as const,
+            id: "subagent-activity-t1",
+            toolCallId: "t1",
+            entries: [
+                {
+                    agentId: "planner",
+                    callPath: ["conversation-agent", "planner"],
+                    tool: "search_pubmed",
+                    label: "TP53",
+                    startedAt: "2026-10-12T10:00:00.000Z",
+                    endedAt: "2026-10-12T10:00:00.800Z",
+                    outcome: "ok" as const,
+                },
+                { agentId: "planner", callPath: ["conversation-agent", "planner"], tool: "read_file", startedAt: "2026-10-12T10:00:01.000Z" },
+            ],
+            dropped: 2,
+        };
+        expect(ChatPartSchema.parse(part)).toEqual(part);
+        expect(ChatPartSchema.safeParse({ ...part, dropped: -1 }).success).toBe(false);
+    });
+
+    test("the registry marks the two parts", () => {
+        expect(PART_REGISTRY["data-subagent-activity"]).toEqual({ emitter: "conversation", consumer: "conversation", transient: false, reconciling: true });
+        expect(PART_REGISTRY["data-activity-entry"]).toEqual({ emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false });
+    });
+});

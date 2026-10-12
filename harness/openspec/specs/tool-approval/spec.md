@@ -231,6 +231,17 @@ so readers fold the pending part into its outcome latest-wins. When multiple
 asks are pending concurrently, each SHALL be its own part under its own id, so a
 surface can stack them and the user can answer them one by one.
 
+The terminal part SHALL carry `reply`, the kind of the reply that the ledger row
+recorded:
+
+- A `resolved` ask carries `once` or `always`. A ledger reply that is not one of
+  the two gives `once`, the same narrowing that the approval of `ctx.ask` uses.
+- A `rejected` ask carries `reject`.
+- A `pending`, `aborted`, or `expired` part carries no `reply`.
+
+The part SHALL NOT carry the feedback of a rejection, because that text is for the
+model.
+
 #### Scenario: The pending part names the exact command
 
 - **WHEN** `ctx.ask` pauses on a request
@@ -241,6 +252,18 @@ surface can stack them and the user can answer them one by one.
 - **GIVEN** an emitted pending `data-ask` part
 - **WHEN** the ask reaches a terminal status
 - **THEN** a part with the same id carries the terminal status, and reconciling readers keep only the latest
+
+#### Scenario: An always approval shows its reply kind
+
+- **GIVEN** an emitted pending `data-ask` part
+- **WHEN** the user answers `always`
+- **THEN** the terminal part has the status `resolved` and the `reply` `always`
+
+#### Scenario: A rejection shows its reply kind and no feedback
+
+- **GIVEN** an emitted pending `data-ask` part
+- **WHEN** the user answers `reject` with feedback
+- **THEN** the terminal part has the status `rejected` and the `reply` `reject`, and it holds no feedback
 
 #### Scenario: Concurrent asks stack as distinct parts
 

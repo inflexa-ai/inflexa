@@ -27,6 +27,8 @@ import type {
     PresentationPart,
     ReportRenderedPart,
     RunCardPart,
+    SubAgentActivityEntry,
+    SubAgentActivityPart,
 } from "../contracts/chat-parts.js";
 import {
     AskPartSchema,
@@ -37,6 +39,8 @@ import {
     PresentationPartSchema,
     ReportRenderedPartSchema,
     RunCardPartSchema,
+    SubAgentActivityEntrySchema,
+    SubAgentActivityPartSchema,
 } from "../contracts/schemas/chat-parts.js";
 import { ToolCallOutcomeSchema } from "../contracts/schemas/chat-events.js";
 import type { ToolCallOutcome } from "../contracts/chat-events.js";
@@ -64,6 +68,9 @@ export type ConversationUIData = {
     "child-session-started": Payload<ChildSessionStartedPart>;
     "report-rendered": Payload<ReportRenderedPart>;
     compaction: Payload<CompactionPart>;
+    "subagent-activity": Omit<Payload<SubAgentActivityPart>, "entries"> & {
+        entries: (Omit<SubAgentActivityEntry, "outcome"> & { outcome: ToolCallOutcome })[];
+    };
 };
 
 export interface ConversationDisplayMetadata {
@@ -125,6 +132,9 @@ const dataSchemas = {
     "child-session-started": ChildSessionStartedPartSchema.omit({ type: true }),
     "report-rendered": ReportRenderedPartSchema.omit({ type: true }),
     compaction: CompactionPartSchema.omit({ type: true }),
+    "subagent-activity": SubAgentActivityPartSchema.omit({ type: true }).extend({
+        entries: z.array(SubAgentActivityEntrySchema.extend({ outcome: ToolCallOutcomeSchema })),
+    }),
 };
 
 export interface StoredDisplayEnvelope {
@@ -224,6 +234,12 @@ function displayPartType(part: Exclude<MessagePart, { type: "text" }>): `data-${
     return (part.type === "tool-call" ? "data-tool-call" : part.type) as `data-${keyof ConversationUIData & string}`;
 }
 
+function closedEntry(entry: SubAgentActivityEntry): ConversationUIData["subagent-activity"]["entries"][number] {
+    if (entry.outcome !== undefined) return { ...entry, outcome: entry.outcome };
+    const { endedAt: _endedAt, ...open } = entry;
+    return { ...open, outcome: "incomplete" };
+}
+
 /** The id a part reconciles on: a tool call by its call id, a card by its own stable id. */
 function displayPartId(part: Exclude<MessagePart, { type: "text" }>): string | undefined {
     if (part.type === "tool-call") return part.toolCallId;
@@ -238,11 +254,17 @@ function displayPartId(part: Exclude<MessagePart, { type: "text" }>): string | u
  * flight) and required here, because a record is of a call that is no longer
  * running. An in-flight call being recorded is one the turn never saw finish, so
  * absence resolves to `incomplete` at exactly this boundary — once, where the
- * lifetime changes — rather than at each reader.
+ * lifetime changes — rather than at each reader. An entry of a sub-agent call
+ * closes the same way, and an `incomplete` entry has no end time.
  */
 export function conversationDisplayPart(part: Exclude<MessagePart, { type: "text" }>): DataUIPart<ConversationUIData> {
     const { type: _type, ...rest } = part;
-    const data = part.type === "tool-call" ? { ...rest, outcome: part.outcome ?? "incomplete" } : rest;
+    const data =
+        part.type === "tool-call"
+            ? { ...rest, outcome: part.outcome ?? "incomplete" }
+            : part.type === "data-subagent-activity"
+              ? { ...rest, entries: part.entries.map(closedEntry) }
+              : rest;
     return { type: displayPartType(part), id: displayPartId(part), data } as DataUIPart<ConversationUIData>;
 }
 

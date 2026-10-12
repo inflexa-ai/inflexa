@@ -22,7 +22,7 @@
 
 import type { StepPhase } from "../contracts/chat-parts.js";
 import type { Logger } from "../lib/logger.js";
-import { activityForTool, stepPartId } from "../sandbox/sandbox-step-translate.js";
+import { activityEmission, activityForTool } from "../sandbox/sandbox-step-translate.js";
 import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
 /**
@@ -110,20 +110,35 @@ export interface ProfileActivityFrame {
  * A failing write is swallowed and logged, never propagated: observation is a
  * diagnostic channel, and a dropped frame must not fail a profile that is otherwise
  * succeeding. This mirrors the sandbox-step producer's stance on the same write.
+ *
+ * Each emission writes the reconciling activity part, so a late subscriber folds to the
+ * current activity, and then one `data-activity-entry`, so it also gets each earlier line.
+ * The two parts carry one time from `now`, which the body binds to the checkpointed clock of
+ * its workflow. The two writes fail alone. The sequence number of the entry advances before
+ * the clock read and the writes, thus a failure cannot shift a later id.
  */
-export function createProfileActivityEmitter(write: ActivityWrite, frame: ProfileActivityFrame, logger: Logger): ProfileActivityEmitter {
-    // One reconciling id for the profile's single step, so the run-stream fold
-    // collapses every phase transition latest-wins onto one frame rather than
-    // accumulating them. Minted through the shared construction because that
-    // sameness across producers is what makes the fold correct.
-    const id = stepPartId("step-activity", frame.runId, frame.stepId);
+export function createProfileActivityEmitter(
+    write: ActivityWrite,
+    frame: ProfileActivityFrame,
+    logger: Logger,
+    now: () => Promise<number>,
+): ProfileActivityEmitter {
+    let seq = 0;
 
-    const emit = async (phase: StepPhase, activity: string): Promise<void> => {
+    const writeAlone = async (part: unknown, phase: StepPhase): Promise<void> => {
         try {
-            await write({ type: "data-step-activity", id, runId: frame.runId, stepId: frame.stepId, phase, activity });
+            await write(part);
         } catch (err) {
             logger.warn("run-event write failed (non-fatal)", { phase, ...logger.errorFields(err) });
         }
+    };
+
+    const emit = async (phase: StepPhase, activity: string): Promise<void> => {
+        const position = seq++;
+        const at = new Date(await now()).toISOString();
+        const parts = activityEmission(frame, position, phase, activity, at);
+        await writeAlone(parts.activity, phase);
+        await writeAlone(parts.entry, phase);
     };
 
     return {

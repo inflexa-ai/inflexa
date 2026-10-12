@@ -22,6 +22,8 @@ import type { TokenUsageRollup } from "./usage.js";
 export interface EventSource {
     agentId: string;
     callPath: string[];
+    /** The id of the tool call that runs this loop. For a data profile, the workflow id of its attempt. */
+    invocationId?: string;
 }
 
 /** A run of assistant text. Deltas accumulate into the turn's reply. */

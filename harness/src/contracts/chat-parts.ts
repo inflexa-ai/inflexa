@@ -10,9 +10,11 @@
  *   Run lifecycle:   run-started, dag-state, run-completed, run-failed, run-synthesis,
  *                    synthesis-progress
  *   Per-step live:   step-activity, step-file-tree
+ *   Activity history: activity-entry (run stream), subagent-activity (conversation)
  *   Per-step final:  step-output, step-summary, step-usage
  */
 
+import type { ToolCallOutcome } from "./chat-events.js";
 import type { TokenUsageRollup } from "./usage.js";
 
 // ── Presentation (agent-synthesized content) ────────────────────────
@@ -110,6 +112,8 @@ export interface AskPart {
     /** Optional additional detail a surface may render. */
     detail?: string;
     status: "pending" | "resolved" | "rejected" | "aborted" | "expired";
+    /** The kind of the ledger reply. Only a `resolved` or `rejected` part carries it, and never the rejection feedback. */
+    reply?: "once" | "always" | "reject";
 }
 
 // ── Run Started ─────────────────────────────────────────────────────
@@ -186,6 +190,24 @@ export interface StepActivityPart {
     phase: StepPhase;
     /** Human-readable activity description (e.g., "Running DESeq2 analysis"). */
     activity: string;
+    /** ISO 8601 time of the emission. Absent on a part that an older harness wrote. */
+    at?: string;
+}
+
+/**
+ * One activity emission of a step or a data profile, kept in the run stream with no reconciliation. The fold
+ * delivers each entry in write order.
+ */
+export interface ActivityEntryPart {
+    type: "data-activity-entry";
+    /** Unique per emission within a stream. */
+    id: string;
+    runId: string;
+    stepId: string;
+    phase: StepPhase;
+    activity: string;
+    /** ISO 8601 time of the emission. */
+    at: string;
 }
 
 // ── Step File Tree (reconciliating per-step) ────────────────────────
@@ -462,6 +484,37 @@ export interface CompactionPart {
     trigger?: "turn-start" | "mid-turn";
 }
 
+// ── Sub-agent activity (reconciling) ────────────────────────────────
+
+/** One tool call of a sub-agent. It holds no input, no output, and no text of the sub-agent. */
+export interface SubAgentActivityEntry {
+    agentId: string;
+    callPath: string[];
+    tool: string;
+    /** The one-line detail of the call, normalized, redacted, and capped by the loop. */
+    label?: string;
+    /** ISO 8601. */
+    startedAt: string;
+    /** ISO 8601. Absent while the call is in flight and for an `incomplete` call. */
+    endedAt?: string;
+    /** Absent while the call is in flight. A stored entry always has it. */
+    outcome?: ToolCallOutcome;
+}
+
+/**
+ * The tool calls of the sub-agents below one root tool call. Re-emitted under the same `id` after each change,
+ * so reconciling readers keep the latest list.
+ */
+export interface SubAgentActivityPart {
+    type: "data-subagent-activity";
+    id: string;
+    /** The id of the root tool call. */
+    toolCallId: string;
+    entries: SubAgentActivityEntry[];
+    /** The count of calls past the cap of the entries. */
+    dropped: number;
+}
+
 // ── Union ───────────────────────────────────────────────────────────
 
 export type ChatPart =
@@ -473,6 +526,8 @@ export type ChatPart =
     | RunStartedPart
     | DagStatePart
     | StepActivityPart
+    | ActivityEntryPart
+    | SubAgentActivityPart
     | StepFileTreePart
     | StepOutputPart
     | StepSummaryPart

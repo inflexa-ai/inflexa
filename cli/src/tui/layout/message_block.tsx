@@ -268,6 +268,8 @@ export function MessageBlock(props: MessageBlockProps) {
                     case "data-run-started":
                     case "data-dag-state":
                     case "data-step-activity":
+                    case "data-activity-entry":
+                    case "data-subagent-activity":
                     case "data-step-file-tree":
                     case "data-step-output":
                     case "data-step-summary":

@@ -12,6 +12,18 @@ import { foldRunEventParts, parseRunEventPart, pipeFoldedRunEvents } from "./run
 const activity = (id: string, phase: string, text: string): ChatPart =>
     ({ type: "data-step-activity", id, runId: "run-1", stepId: "T1S1", phase, activity: text }) as ChatPart;
 
+// The cast gives `phase` its union type: the callers pass only phases of `StepPhase`.
+const entry = (seq: number, phase: string, text: string): ChatPart =>
+    ({
+        type: "data-activity-entry",
+        id: `activity-entry-run-1-T1S1-${seq}`,
+        runId: "run-1",
+        stepId: "T1S1",
+        phase,
+        activity: text,
+        at: `2026-10-12T10:00:0${seq}.000Z`,
+    }) as ChatPart;
+
 const summary = (stepId: string, markdown: string): ChatPart => ({
     type: "data-step-summary",
     id: `step-summary-run-1-${stepId}`,
@@ -92,6 +104,24 @@ describe("foldRunEventParts", () => {
         ]);
     });
 
+    it("keeps each activity entry and folds the activity part to the newest one", () => {
+        const folded = foldRunEventParts([
+            activity("step-activity-run-1-T1S1", "sandbox-init", "Starting sandbox"),
+            entry(0, "sandbox-init", "Starting sandbox"),
+            activity("step-activity-run-1-T1S1", "executing", "Running deseq2.R"),
+            entry(1, "executing", "Running deseq2.R"),
+            activity("step-activity-run-1-T1S1", "complete", "Step complete"),
+            entry(2, "complete", "Step complete"),
+        ]);
+
+        expect(folded).toEqual([
+            entry(0, "sandbox-init", "Starting sandbox"),
+            entry(1, "executing", "Running deseq2.R"),
+            activity("step-activity-run-1-T1S1", "complete", "Step complete"),
+            entry(2, "complete", "Step complete"),
+        ]);
+    });
+
     it("does not collapse across part types that share an id", () => {
         const dag = { type: "data-dag-state", id: "shared", runId: "run-1", steps: [] } as ChatPart;
         const ask = { type: "data-ask", id: "shared", title: "t", command: "c", status: "pending" } as ChatPart;
@@ -167,6 +197,24 @@ describe("pipeFoldedRunEvents", () => {
         expect(await delivered(burst(history))).toEqual(history);
     });
 
+    it("delivers each activity entry at once, in write order, beside the newest activity part", async () => {
+        const out = await delivered(
+            burst([
+                activity("step-activity-run-1-T1S1", "sandbox-init", "Starting sandbox"),
+                entry(0, "sandbox-init", "Starting sandbox"),
+                activity("step-activity-run-1-T1S1", "complete", "Step complete"),
+                entry(1, "complete", "Step complete"),
+            ]),
+        );
+
+        expect(out.map((part) => [part.type, "id" in part ? part.id : undefined])).toEqual([
+            ["data-activity-entry", "activity-entry-run-1-T1S1-0"],
+            ["data-activity-entry", "activity-entry-run-1-T1S1-1"],
+            ["data-step-activity", "step-activity-run-1-T1S1"],
+        ]);
+        expect(out.at(-1)).toEqual(activity("step-activity-run-1-T1S1", "complete", "Step complete"));
+    });
+
     it("delivers an entry of a type that the registry does not know at once", async () => {
         const envelope = { type: "data-loop-event", data: { stepId: "T1S1", event: {} } };
 
@@ -182,10 +230,7 @@ describe("pipeFoldedRunEvents", () => {
     it("delivers each update of a key when the updates are more than one window apart", async () => {
         const out = await delivered(
             withGaps(
-                [
-                    activity("step-activity-run-1-T1S1", "executing", "Running deseq2.R"),
-                    activity("step-activity-run-1-T1S1", "complete", "Step complete"),
-                ],
+                [activity("step-activity-run-1-T1S1", "executing", "Running deseq2.R"), activity("step-activity-run-1-T1S1", "complete", "Step complete")],
                 50,
             ),
             5,

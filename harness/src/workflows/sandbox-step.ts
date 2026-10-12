@@ -47,7 +47,7 @@ import { durableStep } from "../loop/run-step.js";
 import { maskExcept } from "../loop/tool-mask.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
-import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
+import { activityEmission, activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
 import { forSubAgent, type RunSession, type SpawnSession } from "../auth/types.js";
@@ -570,18 +570,19 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             logger.warn("emitToParentStream failed (non-fatal)", logger.errorFields(err));
         }
     };
-    // Schema-conformant step-activity emitter — stable id per (runId, stepId)
-    // so the run-stream fold collapses every phase transition latest-wins.
-    const activityId = stepPartId("step-activity", input.runId, input.stepId);
-    const emitActivity = (phase: StepPhase, activity: string): Promise<void> =>
-        safeEmit({
-            type: "data-step-activity",
-            id: activityId,
-            runId: input.runId,
-            stepId: input.stepId,
-            phase,
-            activity,
-        });
+    // Schema-conformant step-activity emitter. `data-step-activity` has a stable id per (runId, stepId),
+    // so the run-stream fold collapses every phase transition latest-wins. Each emission also leaves one
+    // `data-activity-entry` that the fold keeps, thus a late subscriber gets each line with its time. The
+    // two parts share one checkpointed clock read. `activitySeq` advances before the clock read and the
+    // writes, and each write fails alone through `safeEmit`.
+    let activitySeq = 0;
+    const emitActivity = async (phase: StepPhase, activity: string): Promise<void> => {
+        const seq = activitySeq++;
+        const at = new Date(await DBOS.now()).toISOString();
+        const parts = activityEmission(input, seq, phase, activity, at);
+        await safeEmit(parts.activity);
+        await safeEmit(parts.entry);
+    };
 
     // Single exit for the two terminal failure paths (agent loop, lineage
     // attestation). Tears the sandbox down, logs the internal detail for

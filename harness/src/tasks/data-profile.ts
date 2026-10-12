@@ -473,6 +473,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         (part) => DBOS.writeStream("events", part),
         { runId: DATA_PROFILE_RUN_LITERAL, stepId: DATA_PROFILE_STEP_LITERAL },
         logger,
+        () => DBOS.now(),
     );
 
     try {

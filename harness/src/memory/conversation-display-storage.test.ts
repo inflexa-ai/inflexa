@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import type { SubAgentActivityPart } from "../contracts/chat-parts.js";
 import {
+    conversationDisplayPart,
     conversationUIToChatMessages,
     envelopeDisplayMessages,
     parseStoredDisplayEnvelope,
@@ -135,5 +137,61 @@ describe("a stored compaction divider", () => {
 
         expect(parsed.messages).toEqual([divider]);
         expect(conversationUIToChatMessages(parsed.messages)).toEqual([{ id: "c-1", role: "system", parts: [{ type: "data-compaction", ...figures }] }]);
+    });
+});
+
+describe("a stored sub-agent activity part", () => {
+    const entry = {
+        agentId: "planner",
+        callPath: ["conversation-agent", "planner"],
+        tool: "search_pubmed",
+        label: "TP53",
+        startedAt: "2026-10-12T10:00:00.000Z",
+        endedAt: "2026-10-12T10:00:00.800Z",
+        outcome: "ok" as const,
+    };
+    const part: SubAgentActivityPart = { type: "data-subagent-activity", id: "subagent-activity-t1", toolCallId: "t1", entries: [entry], dropped: 3 };
+
+    it("round-trips field for field", async () => {
+        const stored: ConversationUIMessage = { id: "a1", role: "assistant", parts: [conversationDisplayPart(part)] };
+
+        const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))) as unknown, "t/0/display");
+
+        expect(parsed.messages).toEqual([stored]);
+        expect(conversationUIToChatMessages(parsed.messages)[0]!.parts).toEqual([part]);
+    });
+
+    it("stores an open entry as incomplete, with no end time", () => {
+        const { outcome: _outcome, endedAt: _endedAt, ...open } = entry;
+
+        const stored = conversationDisplayPart({ ...part, entries: [open, entry] });
+
+        expect(stored).toEqual({
+            type: "data-subagent-activity",
+            id: "subagent-activity-t1",
+            data: { toolCallId: "t1", dropped: 3, id: "subagent-activity-t1", entries: [{ ...open, outcome: "incomplete" }, entry] },
+        });
+    });
+
+    it("drops a stored part whose entry has no outcome", async () => {
+        const { outcome: _outcome, ...open } = entry;
+        const { type: _type, ...data } = part;
+        const value = {
+            ...envelopeDisplayMessages(messages),
+            messages: [
+                {
+                    id: "a1",
+                    role: "assistant",
+                    parts: [
+                        { type: "data-subagent-activity", id: "x", data: { ...data, entries: [open] } },
+                        { type: "text", text: "kept" },
+                    ],
+                },
+            ],
+        };
+
+        const parsed = await parseStoredDisplayEnvelope(value, "t/0/display");
+
+        expect(parsed.messages[0]!.parts).toEqual([{ type: "text", text: "kept" }]);
     });
 });

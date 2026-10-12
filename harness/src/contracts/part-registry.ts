@@ -25,6 +25,8 @@ export const PART_REGISTRY: Record<ChatPartType, PartDescriptor> = {
     "data-run-started": { emitter: "workflow", consumer: "sidebar", transient: true, reconciling: false },
     "data-dag-state": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: true },
     "data-step-activity": { emitter: "workflow", consumer: "sidebar", transient: true, reconciling: true },
+    "data-activity-entry": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
+    "data-subagent-activity": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: true },
     "data-step-file-tree": { emitter: "workflow", consumer: "sidebar", transient: true, reconciling: true },
     "data-step-output": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-step-summary": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },

@@ -1602,6 +1602,56 @@ describe("runAgent — event provenance", () => {
         expect(events.map((e) => e.type)).toContain("tool-started");
         expect(events.map((e) => e.type)).toContain("tool-finished");
     });
+
+    it("stamps the invocation id of the run on each event source", async () => {
+        const events: EmitEvent[] = [];
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+        const session = makeSession({ agentId: "planner", callPath: ["conversation-agent", "planner"] });
+
+        await runAgent(
+            agentDef([echoTool()]),
+            GO,
+            session,
+            opts(provider, {
+                invocationId: "tu-parent",
+                emit: (e) => {
+                    // The scripted provider does not stream, so the loop emits only events with a source and no provider text.
+                    events.push(e as EmitEvent);
+                },
+            }),
+        );
+
+        expect(events.map((e) => e.type)).toEqual(expect.arrayContaining(["iteration", "tool-started", "tool-finished"]));
+        for (const event of events) {
+            expect(event.source).toEqual({ agentId: "planner", callPath: ["conversation-agent", "planner"], invocationId: "tu-parent" });
+        }
+    });
+
+    it("stamps no invocation id key when the run has none", async () => {
+        const events: EmitEvent[] = [];
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        await runAgent(
+            agentDef([echoTool()]),
+            GO,
+            makeSession({ agentId: "conversation-agent", callPath: ["conversation-agent"] }),
+            opts(provider, {
+                emit: (e) => {
+                    // The scripted provider does not stream, so the loop emits only events with a source and no provider text.
+                    events.push(e as EmitEvent);
+                },
+            }),
+        );
+
+        expect(events.length).toBeGreaterThan(0);
+        for (const event of events) expect(Object.hasOwn(event.source, "invocationId")).toBe(false);
+    });
 });
 
 // ── Call detail and the three-way outcome (tool-call-detail) ─────────
@@ -2762,6 +2812,7 @@ describe("runAgent — compaction", () => {
         expect(markerIn(messages)).toEqual({ kind: "summary", id: running!.id, tokensBefore: OVER, durationMs: done!.durationMs!, trigger: "mid-turn" });
         const exchangeEvents = events.filter((event) => event.type === "tool-started" && event.toolUseId === "tu-m");
         expect(exchangeEvents.map((event) => ("source" in event ? event.source?.callPath : undefined))).toEqual([["tui-chat", "test-agent-compaction"]]);
+        for (const event of exchangeEvents) expect(Object.hasOwn("source" in event && event.source ? event.source : {}, "invocationId")).toBe(false);
     });
 
     it("records the calls of the exchange under the compaction id, and the turn total holds them", async () => {

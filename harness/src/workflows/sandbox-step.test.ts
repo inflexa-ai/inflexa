@@ -403,6 +403,72 @@ describe("sandbox-step data-step-usage part", () => {
     });
 });
 
+// ── the activity history: data-step-activity with a time, then data-activity-entry ──
+
+describe("sandbox-step activity history", () => {
+    const ENTRY_ID = `activity-entry-${USAGE_RUN_ID}-${USAGE_STEP_ID}`;
+    const partsOf = (type: string) => dbosState.emittedParts.filter((part) => part.type === type);
+
+    it("gives each activity part its time, and writes one matching entry after it", async () => {
+        await runSandboxStepBody(usageStepInput(), usageStepDeps(undefined));
+
+        const stream = dbosState.emittedParts.filter((part) => part.type === "data-step-activity" || part.type === "data-activity-entry");
+        const activities = partsOf("data-step-activity");
+        expect(activities.length).toBeGreaterThan(1);
+        for (const activity of activities) expect(activity.at).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/));
+        // Pairs in write order: the activity part, then its entry.
+        expect(stream.map((part) => part.type)).toEqual(activities.flatMap(() => ["data-step-activity", "data-activity-entry"]));
+        for (const [index, part] of stream.entries()) {
+            if (part.type !== "data-activity-entry") continue;
+            const { type: _type, id: _id, ...entry } = part;
+            const { type: _activityType, id: _activityId, ...activity } = stream[index - 1]!;
+            expect(entry).toEqual(activity);
+        }
+        expect(ChatPartSchema.safeParse(partsOf("data-activity-entry")[0]).success).toBe(true);
+    });
+
+    it("gives the entries unique ids in sequence", async () => {
+        await runSandboxStepBody(usageStepInput(), usageStepDeps(undefined));
+
+        const ids = partsOf("data-activity-entry").map((part) => part.id);
+        expect(ids).toEqual(ids.map((_, index) => `${ENTRY_ID}-${index}`));
+    });
+
+    it("keeps each entry in the local fold and folds the activity to the newest part", async () => {
+        await runSandboxStepBody(usageStepInput(), usageStepDeps(undefined));
+
+        const folded = foldStream(dbosState.emittedParts);
+        expect(folded.filter((part) => part.type === "data-activity-entry")).toEqual(partsOf("data-activity-entry"));
+        const activity = folded.filter((part) => part.type === "data-step-activity");
+        expect(activity).toHaveLength(1);
+        expect(activity[0]).toEqual(partsOf("data-step-activity").at(-1)!);
+    });
+
+    it("logs a rejected entry write, continues the step, and gives the next entry the next number", async () => {
+        const dbos = await import("@dbos-inc/dbos-sdk");
+        let rejected = false;
+        // A direct assignment through `unknown`, the same as `mockDbos`; the `afterAll` hook restores the original.
+        (dbos.DBOS.writeStream as unknown) = mock(async (_name: string, part: unknown) => {
+            // The body writes only object parts to its stream, so the part is a record with a `type` key.
+            const recorded = part as Record<string, unknown>;
+            if (!rejected && recorded.type === "data-activity-entry") {
+                rejected = true;
+                throw new Error("stream unavailable");
+            }
+            dbosState.emittedParts.push(recorded);
+        });
+        const logger = createCapturingLogger();
+
+        const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), logger });
+
+        expect(rejected).toBe(true);
+        expect(result.status).toBe("complete");
+        expect(logger.records.filter((r) => r.level === "warn" && r.msg.includes("emitToParentStream failed"))).toHaveLength(1);
+        expect(partsOf("data-activity-entry")[0]!.id).toBe(`${ENTRY_ID}-1`);
+        expect(partsOf("data-step-activity").at(-1)!.phase).toBe("complete");
+    });
+});
+
 // ── the output tool of the file-metadata continuation ───────────────
 
 function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
