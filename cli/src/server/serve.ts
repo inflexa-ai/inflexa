@@ -17,6 +17,7 @@ import { mkdirResult, renameResult, rmResult, writeFileResult, type FsError } fr
 import { isPidAlive } from "../lib/lock.ts";
 import { getLogger } from "../lib/log.ts";
 import { onShutdown, setSignalStop, shutdown } from "../lib/shutdown.ts";
+import { watchAnalysisActivity } from "../modules/analysis/activity.ts";
 import { watchPendingFlush } from "../modules/libs/store.ts";
 import { buildApp } from "./app.ts";
 import { createServerBoot, DEFAULT_SERVER_BOOT_OPTS } from "./boot.ts";
@@ -96,6 +97,13 @@ export async function runServe(mode: ServeMode): Promise<void> {
     const stopInputDrift = watchInputDrift(defaultInputDriftOpts(() => boot.runtime()));
     onShutdown(() => {
         stopInputDrift();
+        return Promise.resolve();
+    });
+    // The activity time of an analysis, which the list shows and sorts by: a run start, a run end, and an
+    // input change raise it.
+    const stopAnalysisActivity = watchAnalysisActivity();
+    onShutdown(() => {
+        stopAnalysisActivity();
         return Promise.resolve();
     });
     // The 10-second flush gate of the pending store adds runs here, not in a client: an agent add can

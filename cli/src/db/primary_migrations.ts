@@ -457,6 +457,26 @@ export const migrations: Migration[] = [
                 WHERE analysis_id IS NULL;
         `,
     },
+    {
+        // The time of the newest activity of an analysis, which the list shows and sorts by (epoch
+        // milliseconds, as the other timestamps). An activity is a row change, a turn, an applied ask
+        // answer, an input change, a run start or end, and a profile settle. Most of those leave no
+        // SQLite record, thus the server raises this column at each one.
+        //
+        // The backfill takes `updated_at`, the only time an old row knows: a run, a turn, or an ask of
+        // an old row left nothing in SQLite. The next activity corrects it. An older binary ignores
+        // the column, and a row that it inserts gets the default 0 until a current binary raises it.
+        //
+        // An additive ADD COLUMN appends the column after the foreign keys. A rebuild of `analyses`
+        // would put it in the house order, but the children of the table cascade on a drop of the
+        // parent (see migration 10).
+        version: 11,
+        up: `
+            ALTER TABLE analyses ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0;
+            UPDATE analyses SET last_activity_at = updated_at;
+            CREATE INDEX idx_analyses_activity ON analyses(last_activity_at, id);
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

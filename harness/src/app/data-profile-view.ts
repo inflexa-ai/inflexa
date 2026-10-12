@@ -141,7 +141,7 @@ export function profileFileRecords(result: DataProfileResult): DataProfileFile[]
  * rows fall back to coverage, then to summed kind counts, then to `null`: reporting the
  * described-file count would be a dataset size the row cannot support.
  */
-export function profileDatasetFileCount(result: DataProfileResult): number | null {
+export function profileDatasetFileCount(result: Pick<DataProfileResult, "partition" | "coverage" | "kinds">): number | null {
     if (result.partition) return result.partition.keptFiles;
     if (result.coverage) return result.coverage.total;
     if (result.kinds && result.kinds.length > 0) return result.kinds.reduce((sum, kind) => sum + kind.count, 0);

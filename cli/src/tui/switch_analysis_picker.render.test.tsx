@@ -51,6 +51,12 @@ function analysisIn(dir: string, name: string, usage?: UsageTotals): AnalysisSum
         anchorId: `anchor-${dir}`,
         projectId: null,
         anchorPath: dir,
+        lastActivityAt: new Date(Date.UTC(2026, 8, next)).toISOString(),
+        folderPresent: true,
+        profile: null,
+        latestRun: null,
+        pendingAsks: null,
+        busy: [],
         ...(usage === undefined ? {} : { usage }),
     };
     rows.unshift(row);

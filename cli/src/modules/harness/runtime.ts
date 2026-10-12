@@ -46,6 +46,7 @@ import { createCredentialSource, credentialErrorMessage, type Credential, type C
 import { acquireInstanceLock, HARNESS_RUNTIME_LOCK_KEY, releaseInstanceLock } from "../../lib/lock.ts";
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
+import { notifyProfileSettledActivity } from "../analysis/activity.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { analysisFarmPath, linkPackagesIntoFarm, resolveAnalysisFarm } from "../libs/composition.ts";
 import { readPoolInventorySections } from "../libs/packages.ts";
@@ -1087,6 +1088,7 @@ async function bootHarnessRuntimeOnce(
                 // reader the farm does not hold yet. The link runs without an
                 // ask — the analysis consent covered the store at setup.
                 extendAnalysisFarm: (id, queries) => ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
+                notifyDataProfileSettled: notifyProfileSettledActivity,
             },
         };
         // The conversation agent's dep surface minus the three fields

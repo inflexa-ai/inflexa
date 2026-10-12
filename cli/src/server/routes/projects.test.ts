@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
 
 import type { ApiError } from "../../api/common.ts";
-import type { ProjectList, ProjectView } from "../../api/projects.ts";
+import type { ProjectList, ProjectSummary, ProjectView } from "../../api/projects.ts";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { getAnalysis } from "../../db/primary_query.ts";
 import { asStr256 } from "../../lib/types.ts";
@@ -77,6 +77,33 @@ describe("GET /api/v1/projects", () => {
         const second = (await (await routes.request("/?page=1&perPage=2")).json()) as ProjectList;
         expect(second.projects.map((p) => p.name)).toEqual(["first"]);
         expect(second.hasMore).toBe(false);
+    });
+});
+
+describe("GET /api/v1/projects/:projectId", () => {
+    test("gives the project with its analysis count", async () => {
+        const project = (await (await post({ name: "Liver", description: "rna" })).json()) as ProjectView;
+        const now = Date.now();
+        const anchorId = randomUUIDv7();
+        insertAnchor({ id: anchorId, createdAt: now, updatedAt: now, cachedPath: "/tmp/a", markerWritten: false, lastSeen: now })._unsafeUnwrap();
+        for (const slug of ["a", "b"]) {
+            insertAnalysis({ id: randomUUIDv7(), createdAt: now, updatedAt: now, name: asStr256(slug), slug, anchorId, projectId: project.id })._unsafeUnwrap();
+        }
+
+        const response = await routes.request(`/${project.id}`);
+
+        expect(response.status).toBe(200);
+        expect((await response.json()) as ProjectSummary).toEqual({ ...project, analysisCount: 2 });
+    });
+
+    test("404 `not_found` for an unknown id, and for a project name", async () => {
+        const project = (await (await post({ name: "trial-42" })).json()) as ProjectView;
+
+        for (const ref of ["nope", project.name]) {
+            const response = await routes.request(`/${ref}`);
+            expect(response.status).toBe(404);
+            expect(await response.json()).toEqual({ error: "not_found", message: "Project not found." });
+        }
     });
 });
 

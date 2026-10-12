@@ -89,7 +89,8 @@ export type {
     DataProfileCoverage,
 } from "./data-profile.js";
 
-export { queryRunCountsByAnalyses, queryThreadCountsByAnalyses, queryDataProfileStatusByAnalyses } from "./analyses-metrics.js";
+export { queryRunCountsByAnalyses, queryThreadCountsByAnalyses, queryDataProfileStatusByAnalyses, queryLatestRunsByAnalyses } from "./analyses-metrics.js";
+export type { DataProfileSummary, LatestRunSummary } from "./analyses-metrics.js";
 
 // Not per-entity: one analysis's whole Postgres footprint, reached from its id
 // alone, with the workflow ledger behind an injected seam.

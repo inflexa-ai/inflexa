@@ -82,23 +82,34 @@ export function deleteAnchor(id: string): Result<number, DbError> {
 /** Inserts a fully-formed analysis row. The caller mints the id (`randomUUIDv7()`) and resolves the slug before calling. */
 export function insertAnalysis(analysis: Analysis): Result<Analysis, DbError> {
     return tryMutation("insertAnalysis", (conn) => {
-        conn.query("INSERT INTO analyses (id, created_at, updated_at, name, slug, anchor_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-            analysis.id,
-            analysis.createdAt,
-            analysis.updatedAt,
-            analysis.name,
-            analysis.slug,
-            analysis.anchorId,
-            analysis.projectId,
-        );
+        conn.query(
+            "INSERT INTO analyses (id, created_at, updated_at, name, slug, anchor_id, project_id, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ).run(analysis.id, analysis.createdAt, analysis.updatedAt, analysis.name, analysis.slug, analysis.anchorId, analysis.projectId, analysis.createdAt);
         return analysis;
     });
 }
 
-/** Attaches/moves/clears an analysis's project grouping in one targeted write (bumps `updated_at`). Returns rows changed — `0` when no such analysis exists. */
+/**
+ * Attaches/moves/clears an analysis's project grouping in one targeted write (bumps `updated_at`, and raises
+ * `last_activity_at` to the same time). Returns rows changed — `0` when no such analysis exists.
+ */
 export function updateAnalysisProject(id: string, projectId: string | null): Result<number, DbError> {
     return tryMutation("updateAnalysisProject", (conn) => {
-        return conn.query("UPDATE analyses SET project_id = ?, updated_at = ? WHERE id = ?").run(projectId, Date.now(), id).changes;
+        const now = Date.now();
+        return conn
+            .query("UPDATE analyses SET project_id = ?, updated_at = ?, last_activity_at = MAX(last_activity_at, ?) WHERE id = ?")
+            .run(projectId, now, now, id).changes;
+    });
+}
+
+/**
+ * Raises the activity time of an analysis to `atMs`, never lower: an event that fires again after a recovery,
+ * or an event with an old time, changes nothing. It leaves `updated_at` alone, because an activity is not an
+ * edit of the row. Returns rows changed — `0` when no such analysis exists.
+ */
+export function recordAnalysisActivity(id: string, atMs: number): Result<number, DbError> {
+    return tryMutation("recordAnalysisActivity", (conn) => {
+        return conn.query("UPDATE analyses SET last_activity_at = MAX(last_activity_at, ?) WHERE id = ?").run(atMs, id).changes;
     });
 }
 
@@ -145,7 +156,12 @@ export function deleteAnalysis(id: string): Result<number, DbError> {
 export function deleteProject(id: string): Result<number, DbError> {
     return withTransaction("deleteProject", () =>
         tryMutation("deleteProject.unlink", (conn) => {
-            conn.query("UPDATE analyses SET project_id = NULL, updated_at = ? WHERE project_id = ?").run(Date.now(), id);
+            const now = Date.now();
+            conn.query("UPDATE analyses SET project_id = NULL, updated_at = ?, last_activity_at = MAX(last_activity_at, ?) WHERE project_id = ?").run(
+                now,
+                now,
+                id,
+            );
         }).andThen(() =>
             tryMutation("deleteProject.delete", (conn) => {
                 return conn.query("DELETE FROM projects WHERE id = ?").run(id).changes;
@@ -157,7 +173,10 @@ export function deleteProject(id: string): Result<number, DbError> {
 /** Renames an analysis and regenerates its slug. The caller provides the new name + slug. Returns rows changed — `0` when no such analysis exists. */
 export function renameAnalysis(id: string, name: Str256, slug: string): Result<number, DbError> {
     return tryMutation("renameAnalysis", (conn) => {
-        return conn.query("UPDATE analyses SET name = ?, slug = ?, updated_at = ? WHERE id = ?").run(name, slug, Date.now(), id).changes;
+        const now = Date.now();
+        return conn
+            .query("UPDATE analyses SET name = ?, slug = ?, updated_at = ?, last_activity_at = MAX(last_activity_at, ?) WHERE id = ?")
+            .run(name, slug, now, now, id).changes;
     });
 }
 

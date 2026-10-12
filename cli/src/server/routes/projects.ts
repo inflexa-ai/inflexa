@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { DeleteProjectResponse, ProjectSummary, ProjectView } from "../../api/projects.ts";
 import { createProject, deleteProject } from "../../db/primary_mutation.ts";
-import { listProjectPage } from "../../db/primary_query.ts";
+import { getProjectWithCount, listProjectPage } from "../../db/primary_query.ts";
 import { str256 } from "../../lib/types.ts";
 import type { Project } from "../../types/project.ts";
 import { apiError, internalError, listEnvelope, parsePage, readBody, type ServerEnv } from "../http.ts";
@@ -34,6 +34,16 @@ export function projectRoutes(): Hono<ServerEnv> {
             (e) => internalError(c, e, "list the projects"),
         );
     });
+
+    routes.get("/:projectId", (c) =>
+        getProjectWithCount(c.req.param("projectId")).match(
+            (found) =>
+                found === null
+                    ? apiError(c, "not_found", "Project not found.")
+                    : c.json({ ...toProjectView(found.project), analysisCount: found.analysisCount } satisfies ProjectSummary),
+            (e) => internalError(c, e, "read the project"),
+        ),
+    );
 
     routes.post("/", async (c) => {
         const body = await readBody(c, createProjectBody);

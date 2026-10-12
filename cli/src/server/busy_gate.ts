@@ -26,6 +26,38 @@ export const DEFAULT_BUSY_GATE_OPTS: BusyGateOpts = {
 };
 
 /**
+ * What the busy rule knows about one analysis:
+ *
+ * - `turn`: a chat turn of the analysis runs.
+ * - `profileDrive`: the profile queue holds a drive of the analysis. The ledger row is then not read, and `profile` is ignored.
+ * - `profile`: the ledger row is `running` or not (`idle`). `unreadable` is a failed read, and `unknown` is no read, because there is no runtime.
+ * - `liveRuns`: the count of the runs with a live durable workflow, `unreadable` for a failed read, and `unknown` for no read.
+ */
+export type BusyFacts = {
+    readonly turn: boolean;
+    readonly profileDrive: boolean;
+    readonly profile: "running" | "idle" | "unreadable" | "unknown";
+    readonly liveRuns: number | "unreadable" | "unknown";
+};
+
+/**
+ * The one rule of the busy reasons, for the gate and for the list. An unreadable state reads as busy, because
+ * the gate must refuse rather than guess, and an unknown state adds nothing. The order is `chat_turn`,
+ * `data_profile`, `profile_state_unreadable`, and then `run` or `run_state_unreadable`. A profile drive holds
+ * `data_profile` by itself, thus the ledger row is not read for it.
+ */
+export function busyReasonsOf(facts: BusyFacts): BusyReason[] {
+    const reasons: BusyReason[] = [];
+    if (facts.turn) reasons.push("chat_turn");
+    if (facts.profileDrive) reasons.push("data_profile");
+    else if (facts.profile === "unreadable") reasons.push("profile_state_unreadable");
+    else if (facts.profile === "running") reasons.push("data_profile");
+    if (facts.liveRuns === "unreadable") reasons.push("run_state_unreadable");
+    else if (facts.liveRuns !== "unknown" && facts.liveRuns > 0) reasons.push("run");
+    return reasons;
+}
+
+/**
  * Why the workspace folder of an analysis must not move or be retired now. Empty when it may.
  *
  * A rename moves the folder and a delete archives or removes it. The harness resolves paths beneath that
@@ -47,19 +79,15 @@ export async function workspaceBusyReasons(
     runtime: HarnessRuntime | null,
     opts: BusyGateOpts = DEFAULT_BUSY_GATE_OPTS,
 ): Promise<BusyReason[]> {
-    const reasons: BusyReason[] = [];
-    if (opts.hasRunningTurn(analysisId)) reasons.push("chat_turn");
+    const turn = opts.hasRunningTurn(analysisId);
     const profileDrive = opts.profileWorkInFlight(analysisId);
-    if (profileDrive) reasons.push("data_profile");
-    if (runtime === null) return reasons;
+    if (runtime === null) return busyReasonsOf({ turn, profileDrive, profile: "unknown", liveRuns: "unknown" });
 
+    let profile: BusyFacts["profile"] = "unknown";
     if (!profileDrive) {
-        const profile = await opts.profileStatus(runtime.pool, analysisId);
-        if (profile.isErr()) reasons.push("profile_state_unreadable");
-        else if (profile.value?.status === "running") reasons.push("data_profile");
+        const status = await opts.profileStatus(runtime.pool, analysisId);
+        profile = status.isErr() ? "unreadable" : status.value?.status === "running" ? "running" : "idle";
     }
-
     const live = await opts.liveDurableWork(runtime.pool, analysisId);
-    if (live.isErr()) return [...reasons, "run_state_unreadable"];
-    return live.value.runs > 0 ? [...reasons, "run"] : reasons;
+    return busyReasonsOf({ turn, profileDrive, profile, liveRuns: live.isErr() ? "unreadable" : live.value.runs });
 }

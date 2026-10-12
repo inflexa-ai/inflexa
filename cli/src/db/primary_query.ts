@@ -111,6 +111,21 @@ export function listProjectPage(page: { limit: number; offset: number }): Result
 }
 
 /**
+ * The project with exactly this id and its analysis count, in one statement. A name never matches: the id
+ * comes from a route path. `null` when the row is gone. The count is the subquery of {@link listProjectPage}.
+ */
+export function getProjectWithCount(id: string): Result<ProjectWithCount | null, DbError> {
+    return tryQuery("getProjectWithCount", (conn) => {
+        const row = conn
+            .query(
+                `SELECT ${PROJECT_COLS}, (SELECT COUNT(*) FROM analyses WHERE analyses.project_id = projects.id) AS analysis_count FROM projects WHERE id = ?`,
+            )
+            .get(id) as (ProjectRow & { analysis_count: number }) | null;
+        return row ? { project: projectFromRow(row), analysisCount: row.analysis_count } : null;
+    });
+}
+
+/**
  * Resolve an id-or-name reference to a single project in ONE query: an exact `id` hit wins
  * over a `name` hit (both columns are unique). `null` when nothing matches. See CLAUDE.md →
  * "Resolving an id-or-name reference".
@@ -232,28 +247,41 @@ export function getAnalysis(id: string): Result<Analysis | null, DbError> {
     });
 }
 
+/** The order of the analysis page: `created` is the creation time, `activity` is the time of the newest activity. Both are newest first. */
+export type AnalysisPageSort = "activity" | "created";
+
+/** An analysis of the page with the cached path of its anchor and the time of its newest activity (epoch milliseconds). */
+export type AnalysisPageItem = { analysis: Analysis; anchorPath: string | null; lastActivityAt: number };
+
 /**
- * One page of the analyses, newest first, each with the cached path of its anchor, plus the count of all
- * analyses of the filter. `projectId` narrows to one project. The LEFT JOIN keeps an analysis whose anchor
- * row is gone, with a `null` path. `id` breaks a tie of `created_at`, so the pages do not overlap.
+ * One page of the analyses, newest first, each with the cached path of its anchor and its `last_activity_at`,
+ * plus the count of all analyses of the filter. `sort` picks the order: `created` orders by `created_at`, and
+ * `activity` orders by `last_activity_at` through `idx_analyses_activity`. `projectId` narrows to one project.
+ * The LEFT JOIN keeps an analysis whose anchor row is gone, with a `null` path. `id` breaks a tie of either
+ * order, so the pages do not overlap. The column stays off {@link Analysis}: only the list reads it.
  */
 export function listAnalysisPage(page: {
     projectId: string | null;
+    sort: AnalysisPageSort;
     limit: number;
     offset: number;
-}): Result<{ items: { analysis: Analysis; anchorPath: string | null }[]; total: number }, DbError> {
+}): Result<{ items: AnalysisPageItem[]; total: number }, DbError> {
     return tryQuery("listAnalysisPage", (conn) => {
         const where = page.projectId === null ? "" : "WHERE analyses.project_id = ?";
         const filter = page.projectId === null ? [] : [page.projectId];
+        const orderColumn = page.sort === "activity" ? "analyses.last_activity_at" : "analyses.created_at";
         const rows = conn
             .query(
-                `SELECT ${ANALYSIS_COLS_QUALIFIED}, anchors.cached_path AS anchor_cached_path
+                `SELECT ${ANALYSIS_COLS_QUALIFIED}, analyses.last_activity_at AS last_activity_at, anchors.cached_path AS anchor_cached_path
                  FROM analyses LEFT JOIN anchors ON anchors.id = analyses.anchor_id ${where}
-                 ORDER BY analyses.created_at DESC, analyses.id DESC LIMIT ? OFFSET ?`,
+                 ORDER BY ${orderColumn} DESC, analyses.id DESC LIMIT ? OFFSET ?`,
             )
-            .all(...filter, page.limit, page.offset) as AnalysisWithAnchorRow[];
+            .all(...filter, page.limit, page.offset) as (AnalysisWithAnchorRow & { last_activity_at: number })[];
         const total = (conn.query(`SELECT COUNT(*) AS n FROM analyses ${where}`).get(...filter) as { n: number }).n;
-        return { items: rows.map((r) => ({ analysis: analysisFromRow(r), anchorPath: r.anchor_cached_path })), total };
+        return {
+            items: rows.map((r) => ({ analysis: analysisFromRow(r), anchorPath: r.anchor_cached_path, lastActivityAt: r.last_activity_at })),
+            total,
+        };
     });
 }
 
