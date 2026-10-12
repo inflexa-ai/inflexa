@@ -88,7 +88,7 @@ describe("the file system routes", () => {
 });
 
 describe("the file route", () => {
-    const { boot } = fakeBoot({ ...identity, phase: "starting" });
+    const { boot } = fakeBoot(STARTING);
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
     const FIGURE = "runs/R/A/figures/volcano.png";
     let home = "";
