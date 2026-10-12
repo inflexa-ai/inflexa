@@ -1,6 +1,6 @@
 import { linkSync, copyFileSync, readdirSync, rmSync, rmdirSync, existsSync, utimesSync, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { ok, err, Result } from "neverthrow";
+import { ok, err, Result, ResultAsync } from "neverthrow";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
@@ -307,14 +307,21 @@ type InputFile = {
  * and {@link enumerateInputPaths} adds nothing, so their identity spaces are
  * structurally unable to diverge.
  */
-function walkInputFiles(analysisId: string): Result<InputFile[], DbError | StagingError> {
+function walkInputFiles(analysisId: string): ResultAsync<InputFile[], DbError | StagingError> {
+    return new ResultAsync(walkInputFilesAsync(analysisId));
+}
+
+async function walkInputFilesAsync(analysisId: string): Promise<Result<InputFile[], DbError | StagingError>> {
     const inputsResult = listAnalysisInputs(analysisId);
     if (inputsResult.isErr()) return err(inputsResult.error);
 
-    const resolveResult = Result.combine(inputsResult.value.map((input) => resolveInputPath(input).map((absPath) => ({ input, absPath }))));
-    if (resolveResult.isErr()) return err(resolveResult.error);
-
-    const resolvedInputs = resolveResult.value.filter((p): p is { input: AnalysisInput; absPath: string } => p.absPath !== null);
+    // One input at a time: an anchored input can run a bounded search of its own.
+    const resolvedInputs: { input: AnalysisInput; absPath: string }[] = [];
+    for (const input of inputsResult.value) {
+        const absPath = await resolveInputPath(input);
+        if (absPath.isErr()) return err(absPath.error);
+        if (absPath.value !== null) resolvedInputs.push({ input, absPath: absPath.value });
+    }
 
     const files: InputFile[] = [];
     for (const { input, absPath } of resolvedInputs) {
@@ -371,7 +378,7 @@ function walkInputFiles(analysisId: string): Result<InputFile[], DbError | Stagi
  * an input (or an ignore rule newly excluding a subtree) cleans up on the next run.
  */
 export async function stageInputs(analysisId: string, targetDir: string): Promise<Result<StagedInput[], DbError | StagingError>> {
-    const filesResult = walkInputFiles(analysisId);
+    const filesResult = await walkInputFiles(analysisId);
     if (filesResult.isErr()) return err(filesResult.error);
 
     const staged: StagedInput[] = [];
@@ -432,7 +439,7 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
  * @returns The analysis-relative paths staging would write, or a `DbError` (input listing /
  *   anchor resolution) or `StagingError` (a directory-input walk that hit an I/O fault).
  */
-export function enumerateInputPaths(analysisId: string): Result<ReadonlySet<string>, DbError | StagingError> {
+export function enumerateInputPaths(analysisId: string): ResultAsync<ReadonlySet<string>, DbError | StagingError> {
     return walkInputFiles(analysisId).map((files) => {
         // Overlapping inputs can resolve to the same `relativePath`; staging keeps the LAST
         // such entry, and a Set on that key collapses them identically.
@@ -500,7 +507,7 @@ export function mtimesMatch(a: number, b: number): boolean {
  * @param analysisId - The analysis whose current input set to check.
  * @param targetDir - The data directory root staging writes under (`workspaceDataDir(analysis)`).
  */
-export function isInputSetMaterialized(analysisId: string, targetDir: string): Result<boolean, DbError | StagingError> {
+export function isInputSetMaterialized(analysisId: string, targetDir: string): ResultAsync<boolean, DbError | StagingError> {
     return walkInputFiles(analysisId).map((files) => {
         // Overlapping inputs can resolve to one `relativePath`; staging keeps the LAST entry, so the
         // expected tree is that same collapse — comparing against the dropped entry's source would

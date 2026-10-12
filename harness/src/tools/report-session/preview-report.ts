@@ -127,7 +127,7 @@ export type ResolvePageAsset = (specifier: string) => string;
  */
 export interface PreviewReportToolDeps {
     readonly gateway: ReportSessionStateGateway;
-    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
+    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => Promise<ReferenceResolver>;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly resolvePageAsset?: ResolvePageAsset;
     readonly makeSessionPages?: MakeSessionPagePublisher;
@@ -272,8 +272,8 @@ type PreviewWriteFailure = { kind: "fs"; error: FsError } | { kind: "figure-out-
 /**
  * Resolve the page root, stage each bound image and each manifest entry, and write the page.
  *
- * The workspace-root seam signals an unresolvable resource by a throw, thus the resolution sits inside
- * the protection and its throw becomes a value. Each `fs` call runs through `tryFsWrite`, the one
+ * The workspace-root seam signals an unresolvable resource by a rejection, thus the resolution sits inside
+ * the protection and its rejection becomes a value. Each `fs` call runs through `tryFsWrite`, the one
  * sanctioned `fs` guard, thus a genuine I/O fault becomes a value and a control-flow exception such as a
  * cancellation propagates.
  *
@@ -304,7 +304,7 @@ async function renderToWorkspace(args: {
 }): Promise<Result<string, PreviewWriteFailure>> {
     let root: string;
     try {
-        root = args.resolveWorkspaceRoot(args.analysisId);
+        root = await args.resolveWorkspaceRoot(args.analysisId);
     } catch (cause) {
         return err({ kind: "fs", error: { type: "read_failed", op: "preview.resolveWorkspaceRoot", path: args.analysisId, cause } });
     }
@@ -516,12 +516,12 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             if (deps.makeResolver === undefined) {
                 return ok({ outcome: "resolver-unavailable" });
             }
-            // The resolver construction resolves the workspace root inside, and that seam throws on an
-            // unresolvable root. The guard turns the throw into a typed outcome that names the fault, thus a
+            // The resolver construction resolves the workspace root inside, and that seam rejects on an
+            // unresolvable root. The guard turns the rejection into a typed outcome that names the fault, thus a
             // control-flow exception propagates and the unresolvable root does not.
             let resolver: ReferenceResolver;
             try {
-                resolver = deps.makeResolver({ analysisId, auth: ctx.session.auth });
+                resolver = await deps.makeResolver({ analysisId, auth: ctx.session.auth });
             } catch (cause) {
                 logger.warn("the workspace root did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
                 return ok({ outcome: "root-unresolvable", detail: "the workspace root did not resolve" });

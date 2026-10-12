@@ -35,7 +35,7 @@ function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputSto
         anchorReportSession: (async () => {
             throw new Error("not used at composition time");
         }) as never,
-        resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
         runAuthorizer: {} as RunAuthorizer,
         runLauncher: {} as RunLauncher,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },

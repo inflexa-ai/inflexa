@@ -34,9 +34,9 @@ function tmp(): string {
 // the cached path still holds the marker. An anchor cached at a path that does not exist falls
 // through to the bounded search instead and writes nothing — so seeding one would make the
 // no-heartbeat assertion below pass no matter how the command resolves.
-function seedAnalysis(): void {
+async function seedAnalysis(): Promise<void> {
     const home = tmp();
-    writeMarker(home, "anc1")._unsafeUnwrap();
+    (await writeMarker(home, "anc1"))._unsafeUnwrap();
     insertAnchor({ id: "anc1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
     insertAnalysis({
         id: "ana1",
@@ -91,7 +91,7 @@ function usage(args: string[], cwd: string): ReturnType<typeof runCliAsync> {
 
 describe("usage command (e2e)", () => {
     test("reports an analysis's consumption with no harness runtime booted", async () => {
-        seedAnalysis();
+        await seedAnalysis();
         seedUsage();
 
         const result = await usage(["usage", "--analysis", "My Analysis"], tmp());
@@ -109,7 +109,7 @@ describe("usage command (e2e)", () => {
     });
 
     test("reports an analysis with no recorded usage as such", async () => {
-        seedAnalysis();
+        await seedAnalysis();
 
         const result = await usage(["usage", "--analysis", "My Analysis"], tmp());
 
@@ -119,7 +119,7 @@ describe("usage command (e2e)", () => {
     });
 
     test("the report writes nothing — no marker in the cwd, no sighting heartbeat, and no change to the ledger", async () => {
-        seedAnalysis();
+        await seedAnalysis();
         seedUsage();
         const anchorBefore = getAnchor("anc1")._unsafeUnwrap();
         const dir = tmp();
@@ -166,7 +166,7 @@ describe("usage grain subcommands (e2e)", () => {
     test(
         "each grain reports from the local ledger with no harness runtime booted",
         async () => {
-            seedAnalysis();
+            await seedAnalysis();
             seedGrains();
             const cwd = tmp();
 
@@ -204,7 +204,7 @@ describe("usage grain subcommands (e2e)", () => {
     );
 
     test("a grain with nothing recorded says so rather than printing an empty table", async () => {
-        seedAnalysis();
+        await seedAnalysis();
         const cwd = tmp();
 
         const sessions = await usage(["usage", "sessions", "--analysis", "My Analysis"], cwd);
@@ -220,7 +220,7 @@ describe("usage grain subcommands (e2e)", () => {
     test(
         "every grain writes nothing — no marker in the cwd, no sighting heartbeat, and no change to the ledger",
         async () => {
-            seedAnalysis();
+            await seedAnalysis();
             seedGrains();
             const anchorBefore = getAnchor("anc1")._unsafeUnwrap();
             const ledgerBefore = getAnalysisUsageTotals("ana1")._unsafeUnwrap();

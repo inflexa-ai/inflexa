@@ -1,5 +1,6 @@
 import { validatePath } from "@inflexa-ai/harness/tools/lib/path-validation";
 import { Hono } from "hono";
+import PQueue from "p-queue";
 import { z } from "zod";
 
 import type { ArtifactError, ResolvedArtifact, ResolvedArtifacts } from "../../api/artifacts.ts";
@@ -23,6 +24,9 @@ const resolveBody = z.object({
     materialize: z.boolean(),
 });
 
+/** How many entries of one request resolve at one time. Each entry reads the disk, and the body caps the entries at 1000. */
+const RESOLVE_WIDTH = 8;
+
 /**
  * The route `POST {A}/artifacts/resolve` (draft 2.5): the path on disk and the degraded mark of each
  * openable entry of a card. With `materialize`, it first writes the echart or svg file of each entry into
@@ -36,14 +40,15 @@ export function artifactRoutes(): Hono<ServerEnv> {
         const body = await readBody(c, resolveBody);
         if (body.isErr()) return body.error;
         const analysisId = c.req.param("analysisId") ?? "";
-        const entries = body.value.entries.map((target) => resolveArtifact(analysisId, target, body.value.materialize));
+        const queue = new PQueue({ concurrency: RESOLVE_WIDTH });
+        const entries = await Promise.all(body.value.entries.map((target) => queue.add(() => resolveArtifact(analysisId, target, body.value.materialize))));
         return c.json({ entries } satisfies ResolvedArtifacts);
     });
 
     return routes;
 }
 
-function resolveArtifact(analysisId: string, target: OpenTarget, materialize: boolean): ResolvedArtifact {
+async function resolveArtifact(analysisId: string, target: OpenTarget, materialize: boolean): Promise<ResolvedArtifact> {
     // A card reference is analysis-rooted. A stored part that reloads from a persisted tool call skips the
     // validation of the live tool, thus a path that leaves the workspace degrades here and resolves nowhere.
     if (target.kind === "workspace-file" && validatePath(target.path) !== null) {
@@ -54,10 +59,10 @@ function resolveArtifact(analysisId: string, target: OpenTarget, materialize: bo
             ...(materialize ? { error: { type: "unavailable", reason: "the path is not inside the analysis" } } : {}),
         };
     }
-    const path = resolveEntryPath(analysisId, target);
-    const degraded = entryDegraded(analysisId, target);
+    const path = await resolveEntryPath(analysisId, target);
+    const degraded = await entryDegraded(analysisId, target);
     if (!materialize) return { kind: target.kind, path, degraded };
-    return materializeTarget(analysisId, target).match(
+    return (await materializeTarget(analysisId, target)).match(
         (ready): ResolvedArtifact => ({ kind: target.kind, path: ready, degraded }),
         (e): ResolvedArtifact => ({ kind: target.kind, path, degraded, error: toArtifactError(e) }),
     );

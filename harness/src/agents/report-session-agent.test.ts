@@ -24,7 +24,7 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
         embedding: {} as EmbeddingProvider,
         workspaceFs: {} as WorkspaceFilesystem,
         gateway: {} as ReportSessionStateGateway,
-        resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
         store: {} as ReportVersionStore,
         threads: {} as Pick<ThreadStore, "getThread" | "setAutoTitle">,
         chrome: {},

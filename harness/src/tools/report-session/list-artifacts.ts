@@ -254,11 +254,11 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
             }
             const { threadId, analysisId, state } = opened.value;
 
-            // The seam signals an unresolvable resource by a throw. The listing still serves the path and
+            // The seam signals an unresolvable resource by a rejection. The listing still serves the path and
             // the file type of each entry, thus the fault costs the columns alone and never the whole call.
             let root: string | undefined;
             try {
-                root = deps.resolveWorkspaceRoot(analysisId);
+                root = await deps.resolveWorkspaceRoot(analysisId);
             } catch (cause) {
                 logger.warn("the workspace root did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
             }

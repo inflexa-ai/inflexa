@@ -1,12 +1,13 @@
 import { randomUUIDv7 } from "bun";
-import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { ok, err, Result } from "neverthrow";
+import { ok, err, Result, ResultAsync } from "neverthrow";
+import PQueue from "p-queue";
 import type { Anchor, AnchorMarker } from "../../types/anchor.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getAnchor, listAnchors } from "../../db/primary_query.ts";
 import { insertAnchor, touchAnchor, updateAnchorCachedPath } from "../../db/primary_mutation.ts";
-import { canonicalPath } from "../../lib/paths.ts";
+import { pathExistsAsync } from "../../lib/fs.ts";
+import { canonicalPathAsync } from "../../lib/paths.ts";
 import { findMarkerUpwards, isDirWritable, readMarker, writeMarker, type MarkerError } from "./marker.ts";
 
 /** Bridge a marker-layer failure into the db-layer error type so callers that return `Result<T, DbError>` can propagate it without widening their error union. */
@@ -18,9 +19,10 @@ function markerToDbError(op: string, e: MarkerError, kind: "query_failed" | "mut
  * `id` is the marker UUID (from the on-disk marker or freshly minted), stored as the
  * anchor row's primary key.
  */
-function makeAnchor(id: string, dir: string, markerWritten: boolean): Anchor {
+async function makeAnchor(id: string, dir: string, markerWritten: boolean): Promise<Anchor> {
+    const cachedPath = await canonicalPathAsync(dir);
     const now = Date.now();
-    return { id, cachedPath: canonicalPath(dir), markerWritten, createdAt: now, updatedAt: now, lastSeen: now };
+    return { id, cachedPath, markerWritten, createdAt: now, updatedAt: now, lastSeen: now };
 }
 
 /**
@@ -32,44 +34,48 @@ function makeAnchor(id: string, dir: string, markerWritten: boolean): Anchor {
  * never from a passive/background flow like TUI launch — that would litter markers in every
  * folder the app opens (no-litter policy). For startup reconciliation use {@link recoverAnchors}.
  */
-export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
-    const abs = canonicalPath(dir);
+export function getOrCreateAnchorForCwd(dir: string): ResultAsync<Anchor, DbError> {
+    return new ResultAsync(getOrCreateAnchor(dir));
+}
 
-    const markerResult = readMarker(abs);
+async function getOrCreateAnchor(dir: string): Promise<Result<Anchor, DbError>> {
+    const abs = await canonicalPathAsync(dir);
+
+    const markerResult = await readMarker(abs);
     if (markerResult.isErr()) return err(markerToDbError("getOrCreateAnchorForCwd:readMarker", markerResult.error));
     const marker = markerResult.value;
 
     if (marker) {
         const anchorId = marker.anchorId;
-        return getAnchor(anchorId).andThen((existing): Result<Anchor, DbError> => {
-            // Marker on disk but no DB row (DB reset, or folder authored on another
-            // machine): re-establish the row keyed on the existing UUID to keep identity.
-            if (!existing) return insertAnchor(makeAnchor(anchorId, abs, true));
-            // Self-heal a drifted cached path.
-            if (existing.cachedPath !== abs) {
-                const healed: Anchor = { ...existing, cachedPath: abs };
-                return updateAnchorCachedPath(anchorId, abs).map(() => healed);
-            }
-            return ok(existing);
-        });
+        const existing = getAnchor(anchorId);
+        if (existing.isErr()) return err(existing.error);
+        // Marker on disk but no DB row (DB reset, or folder authored on another
+        // machine): re-establish the row keyed on the existing UUID to keep identity.
+        if (!existing.value) return insertAnchor(await makeAnchor(anchorId, abs, true));
+        // Self-heal a drifted cached path.
+        if (existing.value.cachedPath !== abs) {
+            const healed: Anchor = { ...existing.value, cachedPath: abs };
+            return updateAnchorCachedPath(anchorId, abs).map(() => healed);
+        }
+        return ok(existing.value);
     }
 
     // No marker: mint a UUID. Only write a marker when the dir is writable; otherwise
     // the anchor degrades to path-only (markerWritten: false), per the spec.
     const anchorId = randomUUIDv7();
-    const writable = isDirWritable(abs);
+    const writable = await isDirWritable(abs);
     if (writable) {
-        const writeResult = writeMarker(abs, anchorId);
+        const writeResult = await writeMarker(abs, anchorId);
         if (writeResult.isErr()) return err(markerToDbError("getOrCreateAnchorForCwd:writeMarker", writeResult.error, "mutation_failed"));
     }
-    return insertAnchor(makeAnchor(anchorId, abs, writable));
+    return insertAnchor(await makeAnchor(anchorId, abs, writable));
 }
 
 /**
  * True if `dir` holds a valid marker whose UUID matches. Corrupt or absent markers are
  * treated as non-matching here: resolution must not abort on an unrelated corrupt marker.
  */
-function markerMatches(dir: string, anchorId: string): boolean {
+function markerMatches(dir: string, anchorId: string): Promise<boolean> {
     return readMarker(dir)
         .map((m) => m?.anchorId === anchorId)
         .unwrapOr(false);
@@ -79,7 +85,7 @@ function markerMatches(dir: string, anchorId: string): boolean {
  * Walk up from startDir for the nearest marker matching uuid; corruption-safe (a corrupt
  * marker on the walk falls through to the bounded search rather than aborting resolution).
  */
-function findMatchingMarkerUpwards(startDir: string, anchorId: string): string | null {
+function findMatchingMarkerUpwards(startDir: string, anchorId: string): Promise<string | null> {
     return findMarkerUpwards(startDir)
         .map((found) => (found && found.marker.anchorId === anchorId ? found.dir : null))
         .unwrapOr(null);
@@ -104,11 +110,19 @@ export function resolvedPathOrCached(r: ResolvedAnchor | null): string | null {
     return r ? (r.path ?? r.anchor.cachedPath) : null;
 }
 
-function selfHeal(anchor: Anchor, anchorId: string, dir: string): Result<ResolvedAnchor, DbError> {
-    const canonical = canonicalPath(dir);
+async function selfHeal(anchor: Anchor, anchorId: string, dir: string): Promise<Result<ResolvedAnchor, DbError>> {
+    const canonical = await canonicalPathAsync(dir);
     const healed: Anchor = { ...anchor, cachedPath: canonical };
     return updateAnchorCachedPath(anchorId, canonical).map(() => ({ anchor: healed, path: canonical }));
 }
+
+/**
+ * How many marker reads of the bounded search run at one time. Each candidate costs one `stat` (and one read
+ * on a hit), and the candidate set grows with the count of known anchors. The width keeps that set from
+ * flooding the libuv thread pool that each other request of the server shares, and a folder on a hung mount
+ * holds one slot, not the whole search.
+ */
+const MARKER_READ_WIDTH = 8;
 
 /**
  * Resolve a UUID to its current path, reconciling the cached path lazily. See the spec
@@ -126,53 +140,68 @@ function selfHeal(anchor: Anchor, anchorId: string, dir: string): Result<Resolve
  * not ask for — notably the harness's workspace-root lookup, which runs once per agent file read:
  * `last_seen` would then measure agent I/O rather than folder liveness, and each read would pay a
  * synchronous SQLite write.
+ *
+ * The disk reads run off the event loop, and the SQLite reads and writes stay synchronous.
  */
-export function resolveAnchor(anchorId: string, opts?: { searchRoots?: string[]; touch?: boolean }): Result<ResolvedAnchor | null, DbError> {
+export function resolveAnchor(anchorId: string, opts?: { searchRoots?: string[]; touch?: boolean }): ResultAsync<ResolvedAnchor | null, DbError> {
+    return new ResultAsync(resolveAnchorPath(anchorId, opts));
+}
+
+async function resolveAnchorPath(anchorId: string, opts?: { searchRoots?: string[]; touch?: boolean }): Promise<Result<ResolvedAnchor | null, DbError>> {
     const touch = opts?.touch ?? true;
-    return getAnchor(anchorId).andThen((anchor): Result<ResolvedAnchor | null, DbError> => {
-        if (!anchor) return ok(null);
+    const found = getAnchor(anchorId);
+    if (found.isErr()) return err(found.error);
+    const anchor = found.value;
+    if (!anchor) return ok(null);
 
-        // Step 1: the cached path still holds our marker — cheapest, highest-hit case.
-        if (markerMatches(anchor.cachedPath, anchorId)) {
-            const resolved: ResolvedAnchor = { anchor, path: anchor.cachedPath };
-            return touch ? touchAnchor(anchorId).map(() => resolved) : ok(resolved);
-        }
+    // Step 1: the cached path still holds our marker — cheapest, highest-hit case.
+    if (await markerMatches(anchor.cachedPath, anchorId)) {
+        const resolved: ResolvedAnchor = { anchor, path: anchor.cachedPath };
+        return touch ? touchAnchor(anchorId).map(() => resolved) : ok(resolved);
+    }
 
-        const roots = (opts?.searchRoots ?? [process.cwd()]).map((r) => canonicalPath(r));
+    const roots = await Promise.all((opts?.searchRoots ?? [process.cwd()]).map((r) => canonicalPathAsync(r)));
 
-        // Step 2: cwd or an ancestor holds our marker (we cd'd into the moved folder).
-        for (const root of roots) {
-            const hit = findMatchingMarkerUpwards(root, anchorId);
-            if (hit) return selfHeal(anchor, anchorId, hit);
-        }
+    // Step 2: cwd or an ancestor holds our marker (we cd'd into the moved folder).
+    for (const root of roots) {
+        const hit = await findMatchingMarkerUpwards(root, anchorId);
+        if (hit) return selfHeal(anchor, anchorId, hit);
+    }
 
-        // Step 3: bounded search over roots (+ ancestors) and known anchor cached paths.
-        return listAnchors().andThen((anchors): Result<ResolvedAnchor, DbError> => {
-            const candidates = new Set<string>();
-            for (const root of roots) for (const d of ancestorsOf(root)) candidates.add(d);
-            for (const a of anchors) candidates.add(resolve(a.cachedPath));
+    // Step 3: bounded search over roots (+ ancestors) and known anchor cached paths.
+    const anchors = listAnchors();
+    if (anchors.isErr()) return err(anchors.error);
+    const candidates = new Set<string>();
+    for (const root of roots) for (const d of ancestorsOf(root)) candidates.add(d);
+    for (const a of anchors.value) candidates.add(resolve(a.cachedPath));
 
-            const matches = [...candidates].filter((d) => markerMatches(d, anchorId));
-            const unique = matches.length === 1 ? matches[0] : null;
-            if (unique) return selfHeal(anchor, anchorId, unique);
-            // Zero or multiple hits: do not guess — caller surfaces "run `inflexa relocate`".
-            return ok({ anchor, path: null });
-        });
-    });
+    // Each candidate is read, with no stop at the first hit: a second match must be seen to refuse a guess.
+    const queue = new PQueue({ concurrency: MARKER_READ_WIDTH });
+    const ordered = [...candidates];
+    const hits = await Promise.all(ordered.map((d) => queue.add(() => markerMatches(d, anchorId))));
+    const matches = ordered.filter((_, i) => hits[i]);
+    const unique = matches.length === 1 ? matches[0] : null;
+    if (unique) return selfHeal(anchor, anchorId, unique);
+    // Zero or multiple hits: do not guess — caller surfaces "run `inflexa relocate`".
+    return ok({ anchor, path: null });
 }
 
 /**
  * Classify a marker sighting at `dir` against the UUID's known location. Only classifies;
  * callers own the UX and never auto-merge a copy.
  */
-export function classifyMarkerSighting(dir: string, marker: AnchorMarker): Result<"copy" | "move" | "ok", DbError> {
-    const abs = canonicalPath(dir);
-    return getAnchor(marker.anchorId).map((anchor): "copy" | "move" | "ok" => {
-        if (!anchor) return "ok"; // no existing identity to conflict with
-        const cached = canonicalPath(anchor.cachedPath);
-        if (cached === abs) return "ok";
-        return existsSync(cached) ? "copy" : "move";
-    });
+export function classifyMarkerSighting(dir: string, marker: AnchorMarker): ResultAsync<"copy" | "move" | "ok", DbError> {
+    return new ResultAsync(classifySighting(dir, marker));
+}
+
+async function classifySighting(dir: string, marker: AnchorMarker): Promise<Result<"copy" | "move" | "ok", DbError>> {
+    const abs = await canonicalPathAsync(dir);
+    const anchor = getAnchor(marker.anchorId);
+    if (anchor.isErr()) return err(anchor.error);
+    if (!anchor.value) return ok("ok"); // no existing identity to conflict with
+    const cached = await canonicalPathAsync(anchor.value.cachedPath);
+    if (cached === abs) return ok("ok");
+    return ok((await pathExistsAsync(cached)) ? "copy" : "move");
 }
 
 /**
@@ -183,14 +212,25 @@ export function classifyMarkerSighting(dir: string, marker: AnchorMarker): Resul
  * operator to `relocate` or `prune`. Recovery only — it never mints or writes a marker.
  * Returns how many anchors resolved to a live path (`recovered`) versus could not
  * (`unresolved`), so the caller can log a one-line summary.
+ *
+ * The anchors resolve one at a time: each resolve can run a bounded search of its own, and a
+ * second level of width would multiply the reads in flight.
  */
-export function recoverAnchors(searchRoots: string[] = [process.cwd()]): Result<{ recovered: number; unresolved: number }, DbError> {
-    return listAnchors().andThen((anchors) =>
-        // Every id comes from listAnchors, so the row always exists (r is non-null); the guard is
-        // only to satisfy resolveAnchor's nullable contract — a null would count as unresolved anyway.
-        Result.combine(anchors.map((a) => resolveAnchor(a.id, { searchRoots }).map((r) => r?.path ?? null))).map((paths) => {
-            const unresolved = paths.filter((p) => p === null).length;
-            return { recovered: paths.length - unresolved, unresolved };
-        }),
-    );
+export function recoverAnchors(searchRoots: string[] = [process.cwd()]): ResultAsync<{ recovered: number; unresolved: number }, DbError> {
+    return listAnchors().asyncAndThen((anchors) => new ResultAsync(recoverEach(anchors, searchRoots)));
+}
+
+async function recoverEach(anchors: readonly Anchor[], searchRoots: string[]): Promise<Result<{ recovered: number; unresolved: number }, DbError>> {
+    // Each anchor gets its resolve even after a failure, and the first failure is the answer.
+    let failure: DbError | null = null;
+    let recovered = 0;
+    for (const a of anchors) {
+        const resolved = await resolveAnchor(a.id, { searchRoots });
+        if (resolved.isErr()) failure ??= resolved.error;
+        // Every id comes from listAnchors, so the row always exists (the value is non-null); a null
+        // would count as unresolved anyway.
+        else if (resolved.value?.path != null) recovered++;
+    }
+    if (failure !== null) return err(failure);
+    return ok({ recovered, unresolved: anchors.length - recovered });
 }

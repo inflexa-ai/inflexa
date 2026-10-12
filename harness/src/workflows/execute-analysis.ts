@@ -534,7 +534,7 @@ export async function gatherStepPackage(args: {
     }
 
     const analysisId = input.analysisId;
-    const workspaceRoot = deps.resolveWorkspaceRoot(analysisId);
+    const workspaceRoot = await deps.resolveWorkspaceRoot(analysisId);
     // The paths the agent actually sees: the tree is bind-mounted at
     // `/{analysisId}`, and the step's writable directory is its cwd. Derived
     // through the same helpers the sandbox mount and the mutate tools use, so
@@ -1013,10 +1013,10 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
 
     await DBOS.runStep(
         async () => {
-            // A resolver throw here (unknown analysis, unresolvable root) fails the
+            // A resolver rejection here (unknown analysis, unresolvable root) fails the
             // step durably — exactly the contract the workspace-root-resolution spec
             // requires of failures inside DBOS bodies.
-            await mkdir(join(deps.resolveWorkspaceRoot(input.analysisId), runDir(runId)), {
+            await mkdir(join(await deps.resolveWorkspaceRoot(input.analysisId), runDir(runId)), {
                 recursive: true,
             });
         },

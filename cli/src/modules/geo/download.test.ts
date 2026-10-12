@@ -29,8 +29,8 @@ function tmp(): string {
 }
 
 /** A folder that IS an anchor: the on-disk marker plus the row whose cached path points back at it. */
-function anchorAt(id: string, dir: string): void {
-    writeMarker(dir, id)._unsafeUnwrap();
+async function anchorAt(id: string, dir: string): Promise<void> {
+    (await writeMarker(dir, id))._unsafeUnwrap();
     insertAnchor({ id, createdAt: 1, updatedAt: 1, cachedPath: dir, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
 }
 
@@ -98,7 +98,7 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
 
     test("an anchor holding several analyses still resolves to the one shared folder", async () => {
         const dir = tmp();
-        anchorAt("A1", dir);
+        await anchorAt("A1", dir);
         analysisOn("an1", "alpha", "A1");
         analysisOn("an2", "beta", "A1");
         // The read-only bit turns the pre-transfer writability guard into a resolution probe: its message
@@ -115,7 +115,7 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
 
     test("a marker whose anchor row the database no longer has still resolves to the marker's folder", async () => {
         const dir = tmp();
-        writeMarker(dir, "A9")._unsafeUnwrap();
+        (await writeMarker(dir, "A9"))._unsafeUnwrap();
         chmodSync(dir, 0o555);
 
         // Routine desync, not an error: the row is gone, the marker is not, and the folder is what was asked for.
@@ -127,7 +127,7 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
     test("--analysis targets that analysis's home folder, not the working directory", async () => {
         const home = tmp();
         const elsewhere = tmp();
-        anchorAt("A2", home);
+        await anchorAt("A2", home);
         analysisOn("an3", "gamma", "A2");
         chmodSync(home, 0o555);
 
@@ -140,7 +140,7 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
     });
 
     test("an unmatched --analysis names the ref and lists the analyses that do exist", async () => {
-        anchorAt("A4", tmp());
+        await anchorAt("A4", tmp());
         analysisOn("an4", "delta", "A4");
         analysisOn("an5", "epsilon", "A4");
 
@@ -155,9 +155,9 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
     test("a copied folder is refused with the repair/relocate way forward", async () => {
         const original = tmp();
         const copy = tmp();
-        anchorAt("A3", original);
+        await anchorAt("A3", original);
         // The same marker in a second place while the original still exists — a copied folder, not a moved one.
-        writeMarker(copy, "A3")._unsafeUnwrap();
+        (await writeMarker(copy, "A3"))._unsafeUnwrap();
 
         const result = await runCliAsync(["geo", "download", "GSE12345"], { cwd: copy, env: server.childEnv });
         expect(result.exitCode).toBe(1);
@@ -166,7 +166,7 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
 
     test("the download never claims the analysis instance lock", async () => {
         const dir = tmp();
-        anchorAt("A5", dir);
+        await anchorAt("A5", dir);
         analysisOn("an6", "held", "A5");
         chmodSync(dir, 0o555);
 

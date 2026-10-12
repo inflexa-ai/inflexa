@@ -361,7 +361,7 @@ function describeTriggerError(e: TriggerAnalysisRunError): string {
  * terminal.
  */
 export async function runAnalysis(flags: ContextFlags, planPath: string | undefined): Promise<void> {
-    const analysis = resolveSingleAnalysis(flags, RUN_EMPTY_HINT);
+    const analysis = await resolveSingleAnalysis(flags, RUN_EMPTY_HINT);
     if (!planPath) {
         fail("Provide a plan file with `--plan <file>` (a JSON analysis plan to execute). Use `inflexa run --status` to view existing runs.");
     }
@@ -389,7 +389,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     // unresolvable or non-writable workspace short-circuits like any other failed
     // prerequisite; there is no fallback location). Resolution only — the tree is
     // created by staging below, after boot.
-    const workspaceDataRoot = workspaceDataDir(analysis).match(
+    const workspaceDataRoot = await workspaceDataDir(analysis).match(
         (dir) => dir,
         (e) => fail(e.type === "workspace_unavailable" ? e.message : `Failed to resolve the analysis workspace (${e.type})`),
     );

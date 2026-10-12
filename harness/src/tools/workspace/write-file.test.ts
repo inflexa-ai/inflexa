@@ -51,7 +51,7 @@ describe("write_file tool", () => {
         const out = (await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/result.csv`, content: "id,value\n1,42\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
 
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessionsBasePath, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessionsBasePath, id) });
         const readTool = createReadFileTool(fs);
         const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/result.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");
@@ -156,7 +156,7 @@ describe("write_file tool", () => {
         const { ctx } = makeToolContext();
         const content = "α,β,γ\n1,2,3\n";
         await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/u.csv`, content }, ctx);
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessionsBasePath, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessionsBasePath, id) });
         const readTool = createReadFileTool(fs);
         const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/u.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");

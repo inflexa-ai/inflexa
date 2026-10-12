@@ -8,7 +8,7 @@ import { getAnchor } from "../../db/primary_query.ts";
 import { deleteAnchor } from "../../db/primary_mutation.ts";
 import { expandAndResolve } from "../../lib/paths.ts";
 import { classifyInputPath, matchInputRefs } from "./input.ts";
-import { canonicalPath } from "../../lib/paths.ts";
+import { canonicalPathAsync } from "../../lib/paths.ts";
 import { writeMarker } from "../anchor/marker.ts";
 
 const created: string[] = [];
@@ -29,47 +29,47 @@ afterEach(() => {
 });
 
 describe("classifyInputPath", () => {
-    test("inside a tracked anchor → an anchor-relative ref that rides the anchor's UUID", () => {
+    test("inside a tracked anchor → an anchor-relative ref that rides the anchor's UUID", async () => {
         const dir = tmp();
-        writeMarker(dir, "A1")._unsafeUnwrap();
+        (await writeMarker(dir, "A1"))._unsafeUnwrap();
         mkdirSync(join(dir, "src"));
-        const ref = classifyInputPath("ana1", "src", dir)._unsafeUnwrap();
+        const ref = (await classifyInputPath("ana1", "src", dir))._unsafeUnwrap();
         expect(ref).toEqual({ path: "src", isDir: true, analysisId: "ana1", anchorId: "A1" });
     });
 
-    test("at the anchor directory itself → relative path '.'", () => {
+    test("at the anchor directory itself → relative path '.'", async () => {
         const dir = tmp();
-        writeMarker(dir, "A1")._unsafeUnwrap();
-        const ref = classifyInputPath("ana1", ".", dir)._unsafeUnwrap();
+        (await writeMarker(dir, "A1"))._unsafeUnwrap();
+        const ref = (await classifyInputPath("ana1", ".", dir))._unsafeUnwrap();
         expect(ref.path).toBe(".");
         expect(ref.anchorId).toBe("A1");
     });
 
-    test("a marker the database does not hold recovers its anchor row", () => {
+    test("a marker the database does not hold recovers its anchor row", async () => {
         const dir = tmp();
-        writeMarker(dir, "GHOST-ANCHOR")._unsafeUnwrap();
+        (await writeMarker(dir, "GHOST-ANCHOR"))._unsafeUnwrap();
         mkdirSync(join(dir, "src"));
         expect(getAnchor("GHOST-ANCHOR")._unsafeUnwrap()).toBeNull();
 
-        const ref = classifyInputPath("ana1", "src", dir)._unsafeUnwrap();
+        const ref = (await classifyInputPath("ana1", "src", dir))._unsafeUnwrap();
 
         // The ref keeps the identity of the marker, and the row exists again —
         // the insert of the ref no longer trips the anchor foreign key.
         expect(ref.anchorId).toBe("GHOST-ANCHOR");
-        expect(getAnchor("GHOST-ANCHOR")._unsafeUnwrap()?.cachedPath).toBe(canonicalPath(dir));
+        expect(getAnchor("GHOST-ANCHOR")._unsafeUnwrap()?.cachedPath).toBe(await canonicalPathAsync(dir));
     });
 
-    test("not under any anchor → an absolute ref with no anchor", () => {
+    test("not under any anchor → an absolute ref with no anchor", async () => {
         const dir = tmp(); // no marker anywhere upward
         mkdirSync(join(dir, "src"));
-        const ref = classifyInputPath("ana1", "src", dir)._unsafeUnwrap();
+        const ref = (await classifyInputPath("ana1", "src", dir))._unsafeUnwrap();
         expect(ref.anchorId).toBeNull();
-        expect(ref.path).toBe(canonicalPath(join(dir, "src")));
+        expect(ref.path).toBe(await canonicalPathAsync(join(dir, "src")));
     });
 
-    test("a non-existent path → error, never stored as a dangling ref", () => {
+    test("a non-existent path → error, never stored as a dangling ref", async () => {
         const dir = tmp();
-        classifyInputPath("ana1", "ghost", dir).match(
+        (await classifyInputPath("ana1", "ghost", dir)).match(
             () => {
                 throw new Error("expected an error for a missing path");
             },
@@ -99,34 +99,34 @@ describe("matchInputRefs", () => {
         return { path, isDir: false, analysisId: "ana1", anchorId: null };
     }
 
-    test("matches a raw path by an input's stored ref", () => {
+    test("matches a raw path by an input's stored ref", async () => {
         const foo = absInput(join("/data", "foo.csv"));
         const bar = absInput(join("/data", "bar.csv"));
-        const { matched, notInputs } = matchInputRefs([foo, bar], [join("/data", "foo.csv")], "/cwd");
+        const { matched, notInputs } = await matchInputRefs([foo, bar], [join("/data", "foo.csv")], "/cwd");
         expect(matched).toEqual([foo]);
         expect(notInputs).toEqual([]);
     });
 
-    test("matches an anchorless input by cwd-resolved path", () => {
+    test("matches an anchorless input by cwd-resolved path", async () => {
         const foo = absInput(join("/proj", "foo.csv"));
-        const { matched, notInputs } = matchInputRefs([foo], ["foo.csv"], "/proj");
+        const { matched, notInputs } = await matchInputRefs([foo], ["foo.csv"], "/proj");
         expect(matched).toEqual([foo]);
         expect(notInputs).toEqual([]);
     });
 
-    test("a path that is no current input is reported, never matched", () => {
+    test("a path that is no current input is reported, never matched", async () => {
         const foo = absInput(join("/data", "foo.csv"));
-        const { matched, notInputs } = matchInputRefs([foo], [join("/data", "ghost.csv")], "/cwd");
+        const { matched, notInputs } = await matchInputRefs([foo], [join("/data", "ghost.csv")], "/cwd");
         expect(matched).toEqual([]);
         expect(notInputs).toEqual([join("/data", "ghost.csv")]);
     });
 
-    test("matches without any on-disk check — an input whose file is gone stays removable", () => {
+    test("matches without any on-disk check — an input whose file is gone stays removable", async () => {
         // A path under a tmp dir that never existed: matchInputRefs must still match it by ref alone.
         const goneAbs = join(tmpdir(), "inflexa-never-existed", "deleted.csv");
         expect(isAbsolute(goneAbs)).toBe(true);
         const gone = absInput(goneAbs);
-        const { matched } = matchInputRefs([gone], [goneAbs], "/cwd");
+        const { matched } = await matchInputRefs([gone], [goneAbs], "/cwd");
         expect(matched).toEqual([gone]);
     });
 });

@@ -1,10 +1,9 @@
-import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { err, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, ResultAsync, type Result } from "neverthrow";
 import type { Analysis } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { findAnalysesByRef } from "../../db/primary_query.ts";
-import { mkdirResult, renameResult, rmResultAsync, type FsError } from "../../lib/fs.ts";
+import { mkdirResultAsync, pathExistsAsync, renameResultAsync, rmResultAsync, type FsError } from "../../lib/fs.ts";
 import { isDirWritable } from "../anchor/marker.ts";
 import { resolveAnchor } from "../anchor/anchor.ts";
 
@@ -51,20 +50,20 @@ export function archivedOutputSubdir(slug: string): string {
  * read-only reveal path ({@link locateExistingOutputDir}) report the same message
  * for a lost folder and differ only on the writability requirement.
  */
-function locateAnchorPath(analysis: Analysis): Result<string, WorkspaceError> {
+function locateAnchorPath(analysis: Analysis): ResultAsync<string, WorkspaceError> {
     // `touch: false` — resolving a workspace root is not a folder sighting. This runs on the
     // harness's per-read path, where a heartbeat write would be both meaningless and hot.
     return resolveAnchor(analysis.anchorId, { touch: false }).andThen((resolved) => {
         const path = resolved?.path ?? null;
         if (path === null) {
-            return err<string, WorkspaceError>({
+            return errAsync<string, WorkspaceError>({
                 type: "workspace_unavailable",
                 message:
                     `analysis "${analysis.slug}": its home folder cannot be located (the folder was deleted or its .inflexa/id marker is gone). ` +
                     `Restore the folder or create the analysis again in a reachable location.`,
             });
         }
-        return ok(path);
+        return okAsync<string, WorkspaceError>(path);
     });
 }
 
@@ -77,11 +76,11 @@ function locateAnchorPath(analysis: Analysis): Result<string, WorkspaceError> {
  * a working directory for a spawned child — has a sound fallback in every case, so a storage error
  * collapses into the same `null` instead of failing a command that would otherwise have run.
  */
-export function anchorPathForAnalysisId(analysisId: string): string | null {
+export function anchorPathForAnalysisId(analysisId: string): Promise<string | null> {
     return findAnalysesByRef(analysisId)
-        .andThen((rows) => {
+        .asyncAndThen((rows) => {
             const analysis = rows[0];
-            if (analysis === undefined) return ok<string | null, DbError>(null);
+            if (analysis === undefined) return okAsync<string | null, DbError>(null);
             // `touch: false` — picking a working directory is not a folder sighting.
             return resolveAnchor(analysis.anchorId, { touch: false }).map((resolved) => resolved?.path ?? null);
         })
@@ -91,19 +90,21 @@ export function anchorPathForAnalysisId(analysisId: string): string | null {
         );
 }
 
-export function resolveOutputDir(analysis: Analysis): Result<string, WorkspaceError> {
-    return locateAnchorPath(analysis).andThen((path) => {
-        if (!isDirWritable(path)) {
-            return err<string, WorkspaceError>({
-                type: "workspace_unavailable",
-                message:
-                    `analysis "${analysis.slug}": its folder ${path} is not writable, so the workspace at ` +
-                    `${join(path, defaultOutputSubdir(analysis.slug))} cannot be written. ` +
-                    `Make the folder writable, or create the analysis in a writable folder (inputs can be referenced from anywhere).`,
-            });
-        }
-        return ok(join(path, defaultOutputSubdir(analysis.slug)));
-    });
+export function resolveOutputDir(analysis: Analysis): ResultAsync<string, WorkspaceError> {
+    return locateAnchorPath(analysis).andThen((path) => new ResultAsync(writableOutputDir(analysis, path)));
+}
+
+async function writableOutputDir(analysis: Analysis, path: string): Promise<Result<string, WorkspaceError>> {
+    if (!(await isDirWritable(path))) {
+        return err({
+            type: "workspace_unavailable",
+            message:
+                `analysis "${analysis.slug}": its folder ${path} is not writable, so the workspace at ` +
+                `${join(path, defaultOutputSubdir(analysis.slug))} cannot be written. ` +
+                `Make the folder writable, or create the analysis in a writable folder (inputs can be referenced from anywhere).`,
+        });
+    }
+    return ok(join(path, defaultOutputSubdir(analysis.slug)));
 }
 
 /**
@@ -115,10 +116,10 @@ export function resolveOutputDir(analysis: Analysis): Result<string, WorkspaceEr
  * reachable but nothing was ever written there — the caller decides whether to
  * create it. `workspace_unavailable` is reserved for a folder that cannot be found.
  */
-export function locateExistingOutputDir(analysis: Analysis): Result<string | null, WorkspaceError> {
-    return locateAnchorPath(analysis).map((path) => {
+export function locateExistingOutputDir(analysis: Analysis): ResultAsync<string | null, WorkspaceError> {
+    return locateAnchorPath(analysis).map(async (path) => {
         const dir = join(path, defaultOutputSubdir(analysis.slug));
-        return existsSync(dir) ? dir : null;
+        return (await pathExistsAsync(dir)) ? dir : null;
     });
 }
 
@@ -127,7 +128,7 @@ export function locateExistingOutputDir(analysis: Analysis): Result<string | nul
  * `stageInputs`, which writes `inputs/local/{key}` beneath it. Passing anything
  * deeper (e.g. an `…/inputs` path) doubles the segment.
  */
-export function workspaceDataDir(analysis: Analysis): Result<string, WorkspaceError> {
+export function workspaceDataDir(analysis: Analysis): ResultAsync<string, WorkspaceError> {
     return resolveOutputDir(analysis).map((root) => join(root, "data"));
 }
 
@@ -143,12 +144,25 @@ const ROOT_CACHE_TTL_MS = 5_000;
 const rootCache = new Map<string, { root: string; resolvedAt: number }>();
 
 /**
+ * The derivation in flight for each analysis. Each caller that arrives during it shares it, thus a burst of
+ * agent reads costs one derivation. The entry goes when the derivation ends, so an error reaches only the
+ * callers that waited on it, and the next caller derives again.
+ */
+const rootInFlight = new Map<string, Promise<Result<string, WorkspaceError>>>();
+
+/**
  * Forget a cached root — after a rename moves the tree, or a delete retires it. Pass no id to
- * clear the whole cache (tests, which reset the database beneath it).
+ * clear the whole cache (tests, which reset the database beneath it). A derivation in flight is
+ * dropped too: its root can name the tree from before the move, thus it must not reach the cache.
  */
 export function invalidateWorkspaceRoot(analysisId?: string): void {
-    if (analysisId === undefined) rootCache.clear();
-    else rootCache.delete(analysisId);
+    if (analysisId === undefined) {
+        rootCache.clear();
+        rootInFlight.clear();
+    } else {
+        rootCache.delete(analysisId);
+        rootInFlight.delete(analysisId);
+    }
 }
 
 /**
@@ -163,19 +177,32 @@ export function invalidateWorkspaceRoot(analysisId?: string): void {
  * resolves from durable state — the property the workspace-root-resolution spec requires of the
  * seam, and the reason the memo may not be seeded from anywhere but this function.
  */
-export function workspaceRootForAnalysisId(analysisId: string): Result<string, WorkspaceError> {
+export function workspaceRootForAnalysisId(analysisId: string): ResultAsync<string, WorkspaceError> {
     const cached = rootCache.get(analysisId);
-    if (cached !== undefined && Date.now() - cached.resolvedAt < ROOT_CACHE_TTL_MS) return ok(cached.root);
+    if (cached !== undefined && Date.now() - cached.resolvedAt < ROOT_CACHE_TTL_MS) return okAsync(cached.root);
 
-    return findAnalysesByRef(analysisId).andThen((rows) => {
+    const inFlight = rootInFlight.get(analysisId);
+    if (inFlight !== undefined) return new ResultAsync(inFlight);
+
+    const started: Promise<Result<string, WorkspaceError>> = deriveWorkspaceRoot(analysisId).then((result) => {
+        // An invalidation during the derivation removed this entry, and its root then must not be cached.
+        if (rootInFlight.get(analysisId) === started) {
+            rootInFlight.delete(analysisId);
+            if (result.isOk()) rootCache.set(analysisId, { root: result.value, resolvedAt: Date.now() });
+        }
+        return result;
+    });
+    rootInFlight.set(analysisId, started);
+    return new ResultAsync(started);
+}
+
+async function deriveWorkspaceRoot(analysisId: string): Promise<Result<string, WorkspaceError>> {
+    return await findAnalysesByRef(analysisId).asyncAndThen((rows) => {
         const analysis = rows[0] ?? null;
         if (analysis === null) {
-            return err<string, WorkspaceError>({ type: "workspace_unavailable", message: `analysis ${analysisId} no longer exists` });
+            return errAsync<string, WorkspaceError>({ type: "workspace_unavailable", message: `analysis ${analysisId} no longer exists` });
         }
-        return resolveOutputDir(analysis).map((root) => {
-            rootCache.set(analysisId, { root, resolvedAt: Date.now() });
-            return root;
-        });
+        return resolveOutputDir(analysis);
     });
 }
 
@@ -187,12 +214,12 @@ export type WorkspaceDisposal =
     | { kind: "absent" };
 
 /** First unused `.inflexa/analyses_archived/<slug>` name, so archiving the same slug twice never clobbers. */
-function freeArchivePath(anchorPath: string, slug: string): string {
+async function freeArchivePath(anchorPath: string, slug: string): Promise<string> {
     const base = join(anchorPath, archivedOutputSubdir(slug));
-    if (!existsSync(base)) return base;
+    if (!(await pathExistsAsync(base))) return base;
     for (let i = 2; ; i++) {
         const candidate = `${base}-${i}`;
-        if (!existsSync(candidate)) return candidate;
+        if (!(await pathExistsAsync(candidate))) return candidate;
     }
 }
 
@@ -210,7 +237,7 @@ export function disposeWorkspace(
     mode: "archive" | "delete",
     removeTree: (path: string) => ResultAsync<void, FsError> = (path) => rmResultAsync(path, "disposeWorkspace:delete"),
 ): ResultAsync<WorkspaceDisposal, WorkspaceError> {
-    return resolveAnchor(analysis.anchorId, { touch: false }).asyncAndThen((resolved): ResultAsync<WorkspaceDisposal, WorkspaceError> => {
+    return resolveAnchor(analysis.anchorId, { touch: false }).andThen((resolved): ResultAsync<WorkspaceDisposal, WorkspaceError> => {
         const anchorPath = resolved?.path ?? null;
         // Drop any cached root up front so the disposal is never shadowed by a stale
         // memo, regardless of which branch we return through below.
@@ -219,21 +246,22 @@ export function disposeWorkspace(
         if (anchorPath === null) return okAsync({ kind: "absent" });
 
         const root = join(anchorPath, defaultOutputSubdir(analysis.slug));
-        if (!existsSync(root)) return okAsync({ kind: "absent" });
+        return ResultAsync.fromSafePromise(pathExistsAsync(root)).andThen((exists): ResultAsync<WorkspaceDisposal, WorkspaceError> => {
+            if (!exists) return okAsync({ kind: "absent" });
 
-        if (mode === "delete") {
-            return removeTree(root)
-                .map((): WorkspaceDisposal => ({ kind: "deleted", path: root }))
-                .mapErr((e): WorkspaceError => ({ type: "mutation_failed", op: "disposeWorkspace", cause: e.cause }));
-        }
+            if (mode === "delete") {
+                return removeTree(root)
+                    .map((): WorkspaceDisposal => ({ kind: "deleted", path: root }))
+                    .mapErr((e): WorkspaceError => ({ type: "mutation_failed", op: "disposeWorkspace", cause: e.cause }));
+            }
 
-        const dest = freeArchivePath(anchorPath, analysis.slug);
-        return okAsync(undefined).andThen(() =>
-            mkdirResult(dirname(dest), "disposeWorkspace:mkdir")
-                .andThen(() => renameResult(root, dest, "disposeWorkspace:archive"))
-                .map((): WorkspaceDisposal => ({ kind: "archived", path: dest }))
-                .mapErr((e): WorkspaceError => ({ type: "mutation_failed", op: "disposeWorkspace", cause: e.cause })),
-        );
+            return ResultAsync.fromSafePromise(freeArchivePath(anchorPath, analysis.slug)).andThen((dest) =>
+                mkdirResultAsync(dirname(dest), "disposeWorkspace:mkdir")
+                    .andThen(() => renameResultAsync(root, dest, "disposeWorkspace:archive"))
+                    .map((): WorkspaceDisposal => ({ kind: "archived", path: dest }))
+                    .mapErr((e): WorkspaceError => ({ type: "mutation_failed", op: "disposeWorkspace", cause: e.cause })),
+            );
+        });
     });
 }
 
@@ -241,9 +269,9 @@ export function disposeWorkspace(
  * `resolveOutputDir` + `mkdir -p` (idempotent). The workspace root is the only writable target
  * (the write boundary); nothing here touches source data. Resolution errors propagate unchanged.
  */
-export function ensureOutputDir(analysis: Analysis): Result<string, WorkspaceError> {
+export function ensureOutputDir(analysis: Analysis): ResultAsync<string, WorkspaceError> {
     return resolveOutputDir(analysis).andThen((dir) =>
-        mkdirResult(dir, "ensureOutputDir")
+        mkdirResultAsync(dir, "ensureOutputDir")
             .map(() => dir)
             .mapErr((e): WorkspaceError => ({ type: "mutation_failed", op: "ensureOutputDir", cause: e.cause })),
     );

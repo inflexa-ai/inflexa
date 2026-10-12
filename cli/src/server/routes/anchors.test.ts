@@ -91,7 +91,7 @@ afterEach(() => {
 describe("POST /api/v1/anchors/repair", () => {
     test("points the anchor of the marker at the folder, then reports nothing to repair", async () => {
         const dir = tmp();
-        writeMarker(dir, "A1")._unsafeUnwrap();
+        (await writeMarker(dir, "A1"))._unsafeUnwrap();
         insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: "/stale", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         const routes = anchorRoutes(idleBoot());
 
@@ -159,7 +159,7 @@ describe("POST /api/v1/anchors/prune", () => {
 
     test("an anchor folder that moved under the folder of the client is not dead", async () => {
         const moved = tmp();
-        writeMarker(moved, "M1")._unsafeUnwrap();
+        (await writeMarker(moved, "M1"))._unsafeUnwrap();
         insertAnchor({ id: "M1", createdAt: 1, updatedAt: 1, cachedPath: "/gone/M1", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
 
         const response = (await (await post(anchorRoutes(readyBoot, opts().opts), "/prune", { dryRun: true, cwd: moved })).json()) as PruneAnchorsResponse;

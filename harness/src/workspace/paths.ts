@@ -46,11 +46,14 @@ import { posix as posixPath, relative as relativePath, resolve as resolvePath, s
  *   - **Stable while the resource has an active run** — derived paths are
  *     recorded in durable step outputs; preventing mid-run moves is the
  *     embedder's job.
- *   - **Throws on unknown resources** — inside DBOS bodies the failure must
- *     cross the step boundary as a throw so the step is durably recorded as
- *     failed (see `lib/result.ts` house rules).
+ *   - **Rejects on unknown resources** — inside DBOS bodies the awaited
+ *     rejection must cross the step boundary as a throw so the step is durably
+ *     recorded as failed (see `lib/result.ts` house rules).
+ *
+ * Async so that a realization can read host state (a marker file on a network
+ * mount) without a block of the event loop.
  */
-export type ResolveWorkspaceRoot = (resourceId: string) => string;
+export type ResolveWorkspaceRoot = (resourceId: string) => Promise<string>;
 
 /** Result of resolving a workspace path against the canonical layout. */
 export type ResolvedPath = { readonly kind: "ok"; readonly absolute: string; readonly relative: string } | { readonly kind: "out_of_scope" };

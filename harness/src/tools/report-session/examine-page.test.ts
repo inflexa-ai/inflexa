@@ -264,7 +264,7 @@ describe("the no-browser outcome", () => {
         await writePage(root, threadId);
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {} });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {} });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -284,7 +284,7 @@ describe("the no-browser outcome", () => {
         gateway.seed(threadId, "rendered-hash");
         const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: { browserUrl: "http://localhost:9222" }, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: { browserUrl: "http://localhost:9222" }, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -298,7 +298,7 @@ describe("the no-page outcome", () => {
         const gateway = makeFakeGateway();
         gateway.seed("t1", null);
         const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when no page exists"));
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -318,7 +318,7 @@ describe("the missed stamp", () => {
         gateway.seed(threadId, null);
         const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -347,7 +347,7 @@ describe("the seen-stamp copy", () => {
             capturedUrl = url;
             return Promise.resolve(stub);
         };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -382,7 +382,7 @@ describe("the seen-stamp copy", () => {
         // The browser refused the full-page bitmap, thus the capture gives the window alone.
         const stub: PageCapture = { screenshots: [{ base64: "VIEWPORTPNG" }], coverage: { kind: "viewport" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -414,7 +414,7 @@ describe("the seen-stamp copy", () => {
             failedRequests: [],
         };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -453,7 +453,7 @@ describe("the fault digest", () => {
             consoleErrors: [font, font, font],
             failedRequests: [],
         };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture: () => Promise.resolve(stub) });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture: () => Promise.resolve(stub) });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -484,7 +484,7 @@ describe("the block look", () => {
             asked.push(options?.blockId);
             return Promise.resolve(stub);
         };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
 
         const result = (await tool.execute({ blockId: "sec-results" }, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -511,7 +511,7 @@ describe("the block look", () => {
             asked.push(options?.blockId);
             return Promise.resolve(stub);
         };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
 
         const result = (await tool.execute({ blockId: null }, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -526,7 +526,7 @@ describe("the block look", () => {
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
         const stub: PageCapture = { screenshots: [], coverage: { kind: "no-block" }, consoleErrors: [], failedRequests: [] };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture: () => Promise.resolve(stub) });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture: () => Promise.resolve(stub) });
 
         const result = (await tool.execute({ blockId: "gone" }, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -536,7 +536,7 @@ describe("the block look", () => {
     });
 
     it("names the block in the call detail, and the page when the input names none", () => {
-        const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => "/unused", chrome: {} });
+        const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: async () => "/unused", chrome: {} });
 
         expect(tool.describeCall).toBeDefined();
         expect(tool.describeCall!({ blockId: "sec-results" })).toBe("look at sec-results");
@@ -557,7 +557,7 @@ describe("the lease of one look", () => {
             return Promise.resolve(makeFakeBrowser("LEASEPNG"));
         });
         const eyes = makeFakeEyes({ browserUrl: LEASE_ENDPOINT });
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, eyes: eyes.acquire });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, eyes: eyes.acquire });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -580,7 +580,7 @@ describe("the lease of one look", () => {
         // The browser of the lease refuses the connection, thus the capture fails after the acquire.
         restoreConnector = setBrowserConnector(() => Promise.reject(new Error("connect refused")));
         const eyes = makeFakeEyes({ browserUrl: CAPTURE_FAULT_ENDPOINT });
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, eyes: eyes.acquire });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, eyes: eyes.acquire });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -602,7 +602,7 @@ describe("the lease of one look", () => {
         restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser("KEPTPNG")));
         const eyes = makeFakeEyes({ browserUrl: RELEASE_FAULT_ENDPOINT, failRelease: new Error("the browser did not stop") });
         const { logger, warns } = recordingLogger();
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, eyes: eyes.acquire, logger });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, eyes: eyes.acquire, logger });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -622,7 +622,7 @@ describe("the lease of one look", () => {
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
         const eyes = makeFakeEyes({ browserUrl: "http://examine-unreached.test:9222", failAcquire: new Error("no browser started") });
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, eyes: eyes.acquire });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, eyes: eyes.acquire });
 
         const outcome = await tool.execute({}, ctxForThread(threadId));
 
@@ -646,7 +646,7 @@ describe("the lease of one look", () => {
         const eyes = makeFakeEyes({ browserUrl: "http://examine-acquire-hang.test:9222", hangAcquire: true });
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: () => root,
+            resolveWorkspaceRoot: async () => root,
             chrome: {},
             eyes: eyes.acquire,
             deadlines: { acquireMs: HUNG_DEADLINE_MS },
@@ -675,7 +675,7 @@ describe("the lease of one look", () => {
         const { logger, warns } = recordingLogger();
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: () => root,
+            resolveWorkspaceRoot: async () => root,
             chrome: {},
             eyes: eyes.acquire,
             logger,
@@ -706,7 +706,7 @@ describe("the transport precedence", () => {
         const eyes = makeFakeEyes({ browserUrl: "http://examine-unused.test:9222" });
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: () => root,
+            resolveWorkspaceRoot: async () => root,
             chrome: { browserUrl: CONFIGURED_ENDPOINT },
             eyes: eyes.acquire,
             capture,
@@ -731,7 +731,7 @@ describe("the transport precedence", () => {
             connected.push(browserUrl);
             return Promise.resolve(makeFakeBrowser("STATICPNG"));
         });
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: { browserUrl: CONFIGURED_ENDPOINT } });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: { browserUrl: CONFIGURED_ENDPOINT } });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -758,7 +758,7 @@ describe("the result detail", () => {
         gateway.seed(threadId, "rendered-hash");
         const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -770,7 +770,7 @@ describe("the result detail", () => {
         const gateway = makeFakeGateway();
         gateway.seed("t1", null);
         const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when no page exists"));
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -784,7 +784,7 @@ describe("the result detail", () => {
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
         const capture: CapturePage = () => Promise.reject(new Error("the browser refused the page"));
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture, logger: recordingLogger().logger });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture, logger: recordingLogger().logger });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -810,7 +810,7 @@ describe("the URL seam", () => {
         };
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: () => root,
+            resolveWorkspaceRoot: async () => root,
             chrome: {},
             capture,
             resolvePageUrl: (args) => {
@@ -848,7 +848,7 @@ describe("the URL seam", () => {
         const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when the URL did not resolve"));
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: () => root,
+            resolveWorkspaceRoot: async () => root,
             chrome: {},
             capture,
             resolvePageUrl,

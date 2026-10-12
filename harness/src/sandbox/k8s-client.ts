@@ -188,11 +188,11 @@ function buildKubeApi(): { batchApi: BatchV1Api; coreApi: CoreV1Api } {
  * mount a directory the harness never wrote to — fail loudly instead. `createSandbox` runs
  * inside a DBOS workflow body, where a throw is the durable failure signal.
  */
-function workspaceSubPathFor(config: K8sClientConfig, analysisId: string): string {
+async function workspaceSubPathFor(config: K8sClientConfig, analysisId: string): Promise<string> {
     if (!config.sessionPvcRoot) {
         throw new Error("k8s sandbox: sessionPvc is set but sessionPvcRoot is not — the PVC subPath of a workspace root cannot be derived");
     }
-    const rel = relativePath(config.sessionPvcRoot, config.resolveWorkspaceRoot(analysisId));
+    const rel = relativePath(config.sessionPvcRoot, await config.resolveWorkspaceRoot(analysisId));
     const posix = rel.split(sep).join("/");
     if (posix.length === 0 || posix.startsWith("..")) {
         throw new Error(`k8s sandbox: workspace root for ${analysisId} does not live under sessionPvcRoot (${config.sessionPvcRoot})`);
@@ -213,7 +213,7 @@ function pvcSubPath(value: string, what: string): string {
     return value;
 }
 
-function buildJobSpec(
+async function buildJobSpec(
     session: SpawnSession,
     sandboxSpec: SandboxSpec,
     hostLabels: SandboxLabels,
@@ -221,7 +221,7 @@ function buildJobSpec(
     identity: SandboxIdentity,
     farm: FarmLocation | undefined,
     libsMounted: boolean,
-): V1Job {
+): Promise<V1Job> {
     const { sandboxId } = identity;
     // The lock gate of the package-store spec: `farmPath` is PVC-relative,
     // thus this host can prove the lock only through `libStorePvcRoot`. The
@@ -261,7 +261,7 @@ function buildJobSpec(
     const volumeMounts: V1VolumeMount[] = [];
 
     if (config.sessionPvc) {
-        const subPaths = buildSessionSubPaths(coords, workspaceSubPathFor(config, session.scope.analysisId));
+        const subPaths = buildSessionSubPaths(coords, await workspaceSubPathFor(config, session.scope.analysisId));
         volumes.push({
             name: SESSION_VOLUME_NAME,
             persistentVolumeClaim: { claimName: config.sessionPvc },
@@ -668,7 +668,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                         }
                     }
 
-                    const job = buildJobSpec(session, spec, hostLabels, config, identity, farm, libsMounted);
+                    const job = await buildJobSpec(session, spec, hostLabels, config, identity, farm, libsMounted);
 
                     const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, spec.childWorkflowId, job);
                     if (adopted.isErr()) return err(adopted.error);

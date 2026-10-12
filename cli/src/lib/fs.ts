@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
-import { readlink, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import { type Result, ResultAsync, ok, err } from "neverthrow";
+import PQueue from "p-queue";
 
 /**
  * Filesystem error for operations that can fail with an OS-level I/O error.
@@ -18,6 +19,11 @@ export function readFileResult(path: string, op: string): Result<string, FsError
     }
 }
 
+/** {@link readFileResult} off the event loop, for a caller that must not stop on a hung mount. */
+export function readFileResultAsync(path: string, op: string): ResultAsync<string, FsError> {
+    return ResultAsync.fromPromise(readFile(path, "utf8"), (cause): FsError => ({ type: "io_failed", op, cause }));
+}
+
 /** Write a text file, wrapping `writeFileSync` throws into `Result`. */
 export function writeFileResult(path: string, data: string, op: string, opts?: Parameters<typeof writeFileSync>[2]): Result<void, FsError> {
     try {
@@ -26,6 +32,11 @@ export function writeFileResult(path: string, data: string, op: string, opts?: P
     } catch (cause) {
         return err({ type: "io_failed", op, cause });
     }
+}
+
+/** {@link writeFileResult} off the event loop, for a caller that must not stop on a hung mount. */
+export function writeFileResultAsync(path: string, data: string, op: string): ResultAsync<void, FsError> {
+    return ResultAsync.fromPromise(writeFile(path, data), (cause): FsError => ({ type: "io_failed", op, cause }));
 }
 
 /** Create directories recursively, wrapping `mkdirSync` throws into `Result`. */
@@ -38,6 +49,11 @@ export function mkdirResult(path: string, op: string): Result<void, FsError> {
     }
 }
 
+/** {@link mkdirResult} off the event loop, for a caller that must not stop on a hung mount. */
+export function mkdirResultAsync(path: string, op: string): ResultAsync<void, FsError> {
+    return ResultAsync.fromPromise(mkdir(path, { recursive: true }), (cause): FsError => ({ type: "io_failed", op, cause })).map(() => undefined);
+}
+
 /** Move/rename a path, wrapping `renameSync` throws into `Result`. */
 export function renameResult(from: string, to: string, op: string): Result<void, FsError> {
     try {
@@ -46,6 +62,11 @@ export function renameResult(from: string, to: string, op: string): Result<void,
     } catch (cause) {
         return err({ type: "io_failed", op, cause });
     }
+}
+
+/** {@link renameResult} off the event loop, for a caller that must not stop on a hung mount. */
+export function renameResultAsync(from: string, to: string, op: string): ResultAsync<void, FsError> {
+    return ResultAsync.fromPromise(rename(from, to), (cause): FsError => ({ type: "io_failed", op, cause }));
 }
 
 /** Recursively remove a path, wrapping `rmSync` throws into `Result`. An absent path is a success. */
@@ -78,6 +99,26 @@ export function statResult(path: string, op: string): Result<Stats, FsError> {
 /** Stat a path off the event loop, wrapping the `stat` rejection into `ResultAsync`. */
 export function statResultAsync(path: string, op: string): ResultAsync<Stats, FsError> {
     return ResultAsync.fromPromise(stat(path), (cause): FsError => ({ type: "io_failed", op, cause }));
+}
+
+/**
+ * Whether a path exists, off the event loop. It has the meaning of `existsSync`: each failure of the `stat`, not
+ * only `ENOENT`, reads as absent, thus a caller that moves from `existsSync` keeps its decisions.
+ */
+export function pathExistsAsync(path: string): Promise<boolean> {
+    return stat(path).then(
+        () => true,
+        () => false,
+    );
+}
+
+/**
+ * {@link pathExistsAsync} for each path, in the order of `paths`, with at most `width` checks in flight. The width
+ * bounds a list that a request or a model gives, and a path on a hung mount holds one slot only.
+ */
+export function pathsExistAsync(paths: readonly string[], width: number): Promise<boolean[]> {
+    const queue = new PQueue({ concurrency: width });
+    return Promise.all(paths.map((path) => queue.add(() => pathExistsAsync(path))));
 }
 
 /** Read the stored target of a symbolic link off the event loop, wrapping the `readlink` rejection into `ResultAsync`. */

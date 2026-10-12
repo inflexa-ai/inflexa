@@ -12,6 +12,8 @@ Each OS user MUST have one server process for each build channel. That process M
 
 The server MUST give no guarantee that the harness and Cortex do not give together. Thus it adds a coordination item only when the harness does not enforce it and a client breaks without it.
 
+The server MUST read the input paths and the anchor markers off the event loop, so a folder on a hung mount stops only its own request.
+
 #### Scenario: Two clients see one state
 
 - **GIVEN** a TUI that is open on an analysis

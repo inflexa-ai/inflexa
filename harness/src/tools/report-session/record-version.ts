@@ -96,7 +96,7 @@ export interface RecordVersionToolDeps {
     readonly store: ReportVersionStore;
     readonly threads: Pick<ThreadStore, "getThread">;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
-    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
+    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => Promise<ReferenceResolver>;
     /** The provenance seam; an unbound session emit emits nothing and the record runs the same. */
     readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
@@ -152,7 +152,7 @@ async function pruneUnusedDerivations(args: {
     let root: string;
     let derivedDir: string;
     try {
-        root = args.resolveWorkspaceRoot(args.analysisId);
+        root = await args.resolveWorkspaceRoot(args.analysisId);
         derivedDir = resolvePath(root, reportSessionDerivedDir(args.threadId));
     } catch (cause) {
         args.logger.warn("the unused derivations did not prune", {
@@ -240,12 +240,12 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
             if (deps.makeResolver === undefined) {
                 return ok({ outcome: "resolver-unavailable" });
             }
-            // The resolver construction resolves the workspace root inside, and that seam throws on an
-            // unresolvable root. The guard turns the throw into a typed outcome that names the fault, thus a
+            // The resolver construction resolves the workspace root inside, and that seam rejects on an
+            // unresolvable root. The guard turns the rejection into a typed outcome that names the fault, thus a
             // control-flow exception propagates and the unresolvable root does not.
             let resolver: ReferenceResolver;
             try {
-                resolver = deps.makeResolver({ analysisId, auth: ctx.session.auth });
+                resolver = await deps.makeResolver({ analysisId, auth: ctx.session.auth });
             } catch (cause) {
                 logger.warn("the workspace root did not resolve", { threadId, analysisId, ...logger.errorFields(cause) });
                 return ok({ outcome: "root-unresolvable", detail: "the workspace root did not resolve" });

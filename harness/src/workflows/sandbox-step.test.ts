@@ -280,10 +280,10 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
             sync: () => okAsync(undefined),
         } as ArtifactRegistry,
         workspaceFs: {} as WorkspaceFilesystem,
-        resolveWorkspaceRoot: () => workspaceRoot,
+        resolveWorkspaceRoot: async () => workspaceRoot,
         model: STEP_MODEL_ID,
-        buildAgent: ({ fileMetadata }) => stepAgent(fileMetadata),
-        resolveWritePrefix: (stepInput) => join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId),
+        buildAgent: async ({ fileMetadata }) => stepAgent(fileMetadata),
+        resolveWritePrefix: async (stepInput) => join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId),
     };
 }
 
@@ -429,7 +429,7 @@ describe("sandbox-step file-metadata output tool", () => {
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider,
-            buildAgent: ({ fileMetadata }) => {
+            buildAgent: async ({ fileMetadata }) => {
                 cell = fileMetadata;
                 return stepAgent(fileMetadata);
             },
@@ -555,7 +555,7 @@ describe("sandbox-step kept tool outputs", () => {
             provider,
             sandboxClient,
             toolOutputStore: store,
-            buildAgent: (ctx) =>
+            buildAgent: async (ctx) =>
                 stepAgent(ctx.fileMetadata, [
                     createExecuteCommandTool({
                         sandboxClient,
@@ -599,7 +599,7 @@ describe("sandbox-step kept tool outputs", () => {
             ...usageStepDeps(undefined),
             provider,
             toolOutputStore: store,
-            buildAgent: (ctx) => stepAgent(ctx.fileMetadata, [big, createReadToolOutputTool(ctx.toolOutputStore!)]),
+            buildAgent: async (ctx) => stepAgent(ctx.fileMetadata, [big, createReadToolOutputTool(ctx.toolOutputStore!)]),
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
@@ -638,7 +638,7 @@ describe("sandbox-step blocker replay", () => {
         const blockerDeps = (provider: AgentChat): SandboxStepDeps => ({
             ...usageStepDeps(undefined),
             provider,
-            buildAgent: ({ blockerHolder, fileMetadata }) => {
+            buildAgent: async ({ blockerHolder, fileMetadata }) => {
                 holders.push(blockerHolder);
                 return stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]);
             },
@@ -670,7 +670,7 @@ describe("sandbox-step blocker replay", () => {
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider: scriptedProvider((i) => replies[i]!),
-            buildAgent: ({ blockerHolder, fileMetadata }) => stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]),
+            buildAgent: async ({ blockerHolder, fileMetadata }) => stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]),
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
@@ -978,7 +978,7 @@ describe("sandbox-step capped-out empty manifest", () => {
             ...usageStepDeps(undefined),
             pool,
             provider,
-            buildAgent: ({ blockerHolder, fileMetadata }) =>
+            buildAgent: async ({ blockerHolder, fileMetadata }) =>
                 stepAgent(
                     fileMetadata,
                     [

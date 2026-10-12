@@ -13,7 +13,7 @@ varies per resource — which is what makes per-resource roots possible at all.
 ## Requirements
 ### Requirement: The workspace root is resolved through an embedder-supplied seam
 
-The harness SHALL derive every host-side workspace path through a single construction-time dependency, `resolveWorkspaceRoot(resourceId) → absolute path`, supplied by the embedder at the composition root and closed over once at workflow registration. The returned path IS the analysis workspace tree root: the harness joins its own interior layout (`data/`, `runs/{runId}/{stepId}/…`, `reports/`, `report-sessions/`) directly onto it, with no `{resourceId}` path segment on the host. No harness module SHALL accept or derive a global session base (`sessionsBasePath` / `sessionPath` / `SESSION_PATH`).
+The harness SHALL derive every host-side workspace path through a single construction-time dependency, `resolveWorkspaceRoot(resourceId) → Promise<absolute path>`, supplied by the embedder at the composition root and closed over once at workflow registration. The seam is async. Thus a realization can read durable host state, for example a marker file on a network mount, and the event loop of the host does not stop while the read waits. The returned path IS the analysis workspace tree root: the harness joins its own interior layout (`data/`, `runs/{runId}/{stepId}/…`, `reports/`, `report-sessions/`) directly onto it, with no `{resourceId}` path segment on the host. No harness module SHALL accept or derive a global session base (`sessionsBasePath` / `sessionPath` / `SESSION_PATH`).
 
 #### Scenario: All consumers derive from the resolver
 
@@ -34,7 +34,7 @@ Injectivity is a property of *live* resources only, and the embedder SHALL keep 
 
 A realization MAY memoize its resolutions provided the memo is process-local and starts empty, so recovery on a fresh process still derives from durable state; a memo SHALL be invalidated by any in-process action that moves a root.
 
-Resolution failures SHALL be signalled by throwing. That contract is scoped to callers whose failure protocol is an exception — above all DBOS workflow and step bodies, where only a throw records a step as durably failed. A caller that promises `Result` (the workspace read seam) SHALL convert the throw into its own error value at its boundary rather than let it escape into a caller that only incidentally catches it.
+Resolution failures SHALL be signalled by a rejection of the returned promise. A caller awaits the promise, thus the rejection is a throw at the call site. That contract is scoped to callers whose failure protocol is an exception — above all DBOS workflow and step bodies, where only a throw records a step as durably failed. A caller that promises `Result` (the workspace read seam) SHALL convert the rejection into its own error value at its boundary rather than let it escape into a caller that only incidentally catches it.
 
 #### Scenario: Recovery re-resolves from durable state
 
@@ -45,7 +45,7 @@ Resolution failures SHALL be signalled by throwing. That contract is scoped to c
 #### Scenario: Unknown resource fails the step loudly
 
 - **WHEN** resolution fails inside a DBOS workflow or step body (unknown resource id, unresolvable root)
-- **THEN** the failure SHALL cross the DBOS boundary as a throw (via the sanctioned `unwrapOrThrow` bridge where the realization returns a Result), so the step is durably recorded as failed — never returned as an err value that DBOS would cache as success
+- **THEN** the failure SHALL cross the DBOS boundary as a throw (the awaited rejection, or the sanctioned `unwrapOrThrow` bridge where the realization holds a Result), so the step is durably recorded as failed — never returned as an err value that DBOS would cache as success
 
 #### Scenario: A deleted resource's tree does not become a new resource's tree
 

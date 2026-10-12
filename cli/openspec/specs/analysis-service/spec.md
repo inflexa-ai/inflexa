@@ -34,7 +34,7 @@ The system SHALL provide `createAnalysis(opts)` returning `Result<Analysis, Work
 
 ### Requirement: Add inputs to an analysis
 
-The system SHALL provide `addInputs(analysisId, rawPaths, cwd)` returning `Result<AnalysisInput[], DbError>` that classifies each raw path via the path-resolution layer, inserts the resulting refs, de-duplicates identical refs (within the batch and against existing inputs), and rejects a non-existent path with a clear error rather than storing a dangling reference.
+The system SHALL provide `addInputs(analysisId, rawPaths, cwd)` returning `ResultAsync<AnalysisInput[], DbError>` that classifies each raw path via the path-resolution layer, inserts the resulting refs, de-duplicates identical refs (within the batch and against existing inputs), and rejects a non-existent path with a clear error rather than storing a dangling reference.
 
 #### Scenario: Inputs classified and stored
 
@@ -53,7 +53,7 @@ The system SHALL provide `addInputs(analysisId, rawPaths, cwd)` returning `Resul
 
 ### Requirement: List analyses for a directory's anchor
 
-The system SHALL provide `listAnalysesForAnchorAt(dir)` returning `Result<Analysis[], DbError>` that finds the nearest marker at or above `dir` and lists the analyses anchored there, returning an empty list when no marker is found.
+The system SHALL provide `listAnalysesForAnchorAt(dir)` returning `ResultAsync<Analysis[], DbError>` that finds the nearest marker at or above `dir` and lists the analyses anchored there, returning an empty list when no marker is found.
 
 #### Scenario: Lists analyses anchored at the directory
 

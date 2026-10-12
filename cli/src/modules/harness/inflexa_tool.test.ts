@@ -670,7 +670,7 @@ describe("run_inflexa — the child's working directory", () => {
             isDevelopment: true,
             execPath: "/bin/bun",
             scriptPath: "/app/src/index.ts",
-            resolveAnalysisFolder: (id) => folders[id],
+            resolveAnalysisFolder: async (id) => folders[id],
         });
     }
 

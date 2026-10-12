@@ -1,4 +1,4 @@
-import { ok, err, type Result } from "neverthrow";
+import { okAsync, type ResultAsync } from "neverthrow";
 import type { Analysis } from "../../types/analysis.ts";
 import type { AnchorMarker } from "../../types/anchor.ts";
 import type { IdOrName } from "../../lib/types.ts";
@@ -41,12 +41,12 @@ export type ContextOptions = {
  * `cwd` is the folder of the client, and the anchor reconciliation searches from it, never from the
  * folder of the process: the local server resolves for a client in a different folder.
  */
-export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextOptions): Result<ResolvedContext, DbError> {
+export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextOptions): ResultAsync<ResolvedContext, DbError> {
     // 1. Explicit flags win outright.
     if (flags.analysis) {
-        return findAnalysis(flags.analysis).andThen((analysis): Result<ResolvedContext, DbError> => {
+        return findAnalysis(flags.analysis).asyncAndThen((analysis): ResultAsync<ResolvedContext, DbError> => {
             // Unmatched flag: surface recent analyses so the command can report the mismatch.
-            if (!analysis) return listRecentAnalyses().map((analyses) => ({ kind: "pick", analyses }));
+            if (!analysis) return listRecentAnalyses().asyncAndThen((analyses) => okAsync<ResolvedContext, DbError>({ kind: "pick", analyses }));
             // The analysis's anchor row may be gone (user edited the DB) — fall back to cwd for display
             // rather than failing; the analysis is still openable.
             return resolveAnchor(analysis.anchorId, { searchRoots: [cwd], ...opts }).map((resolved) => ({
@@ -57,35 +57,36 @@ export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextO
         });
     }
     if (flags.project) {
-        return findProjectByRef(flags.project).andThen((project): Result<ResolvedContext, DbError> => {
-            if (!project) return ok({ kind: "pick", analyses: [] }); // unknown project → empty picker
-            return listRecentAnalyses({ projectId: project.id }).map((analyses) => ({ kind: "pick", analyses }));
+        return findProjectByRef(flags.project).asyncAndThen((project): ResultAsync<ResolvedContext, DbError> => {
+            if (!project) return okAsync({ kind: "pick", analyses: [] }); // unknown project → empty picker
+            return listRecentAnalyses({ projectId: project.id }).asyncAndThen((analyses) => okAsync<ResolvedContext, DbError>({ kind: "pick", analyses }));
         });
     }
 
     // 2. The folder (or an ancestor) is an anchor.
-    const markerResult = findMarkerUpwards(cwd);
-    if (markerResult.isErr()) return err({ type: "query_failed", op: "resolveContext:marker", cause: markerResult.error });
-    const found = markerResult.value;
-    if (!found) return ok({ kind: "empty", cwd }); // 3. Nothing here.
+    return findMarkerUpwards(cwd)
+        .mapErr((cause): DbError => ({ type: "query_failed", op: "resolveContext:marker", cause }))
+        .andThen((found): ResultAsync<ResolvedContext, DbError> => {
+            if (!found) return okAsync({ kind: "empty", cwd }); // 3. Nothing here.
 
-    const marker = found.marker;
-    return classifyMarkerSighting(found.dir, marker).andThen((sighting): Result<ResolvedContext, DbError> => {
-        // Copy guard: never auto-resolve a copied folder — let the command prompt.
-        if (sighting === "copy") return ok({ kind: "copy", cwd, marker });
-        // A marker on disk whose anchor row the DB no longer has (e.g. the user deleted the DB) is a
-        // routine desync, not an error: fall back to the marker's own directory for the anchor path and
-        // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
-        // user can start an analysis in (which re-establishes the row from the marker).
-        return resolveAnchor(marker.anchorId, { searchRoots: [cwd], ...opts }).andThen((resolved) => {
-            const anchorPath = resolvedPathOrCached(resolved) ?? found.dir;
-            return listAnalysesForAnchorAt(cwd).map((analyses): ResolvedContext => {
-                const [only] = analyses;
-                if (analyses.length === 1 && only) return { kind: "analysis", analysis: only, anchorPath };
-                return { kind: "anchor", anchorPath, analyses };
+            const marker = found.marker;
+            return classifyMarkerSighting(found.dir, marker).andThen((sighting): ResultAsync<ResolvedContext, DbError> => {
+                // Copy guard: never auto-resolve a copied folder — let the command prompt.
+                if (sighting === "copy") return okAsync({ kind: "copy", cwd, marker });
+                // A marker on disk whose anchor row the DB no longer has (e.g. the user deleted the DB) is a
+                // routine desync, not an error: fall back to the marker's own directory for the anchor path and
+                // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
+                // user can start an analysis in (which re-establishes the row from the marker).
+                return resolveAnchor(marker.anchorId, { searchRoots: [cwd], ...opts }).andThen((resolved) => {
+                    const anchorPath = resolvedPathOrCached(resolved) ?? found.dir;
+                    return listAnalysesForAnchorAt(cwd).map((analyses): ResolvedContext => {
+                        const [only] = analyses;
+                        if (analyses.length === 1 && only) return { kind: "analysis", analysis: only, anchorPath };
+                        return { kind: "anchor", anchorPath, analyses };
+                    });
+                });
             });
         });
-    });
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -119,8 +120,8 @@ export function describeContext(ctx: ResolvedContext): string {
  * `opts` reaches {@link resolveContext} unchanged; see {@link ContextOptions} for when a
  * command opts out of the sighting heartbeat.
  */
-export function resolveSingleAnalysis(flags: ContextFlags, emptyHint: string, opts?: ContextOptions): Analysis {
-    const ctx = resolveContext(process.cwd(), flags, opts).match((c) => c, dieOn("Failed to resolve context"));
+export async function resolveSingleAnalysis(flags: ContextFlags, emptyHint: string, opts?: ContextOptions): Promise<Analysis> {
+    const ctx = (await resolveContext(process.cwd(), flags, opts)).match((c) => c, dieOn("Failed to resolve context"));
     const listCandidates = (analyses: Analysis[]): string => analyses.map((a) => `  - ${a.id}  ${a.name}`).join("\n");
     switch (ctx.kind) {
         case "analysis":

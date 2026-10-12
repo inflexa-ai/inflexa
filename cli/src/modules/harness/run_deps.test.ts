@@ -37,7 +37,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
     const pool = createPool({ host: "localhost", port: "5", database: "d", user: "u", password: "p", sslMode: "disable" });
     // A `<base>/<analysisId>` resolver keeps the byte layout the old fixed base
     // produced, so every expected path below stays literal and readable.
-    const resolveWorkspaceRoot = (analysisId: string): string => join("/tmp/sessions", analysisId);
+    const resolveWorkspaceRoot = async (analysisId: string): Promise<string> => join("/tmp/sessions", analysisId);
     const makeProvider = (model: string): ChatProvider =>
         createConfiguredAiSdkProvider({ config: { kind: "anthropic", baseURL: "http://proxy.test", apiKey: "t", model } });
     const sandboxModel = overrides.sandbox ?? "claude-test";
@@ -285,19 +285,19 @@ describe("per-agent composition — run-engine bundles draw the sandbox agent", 
 });
 
 describe("buildSandboxStepDeps", () => {
-    test("resolveWritePrefix is the absolute runs/{runId}/{stepId} path under the analysis's workspace root", () => {
+    test("resolveWritePrefix is the absolute runs/{runId}/{stepId} path under the analysis's workspace root", async () => {
         const deps = buildSandboxStepDeps(testComposition());
-        const prefix = deps.resolveWritePrefix({ analysisId: "an-1", runId: "run-1", stepId: "step-1" } as never);
+        const prefix = await deps.resolveWritePrefix({ analysisId: "an-1", runId: "run-1", stepId: "step-1" } as never);
 
         expect(prefix).toBe("/tmp/sessions/an-1/runs/run-1/step-1");
     });
 
-    test("buildAgent returns the catalog definition for a known agent id, wired with the step write prefix", () => {
+    test("buildAgent returns the catalog definition for a known agent id, wired with the step write prefix", async () => {
         const comp = testComposition();
         const deps = buildSandboxStepDeps(comp);
         const writePrefix = "/tmp/sessions/an-1/runs/run-1/step-1";
 
-        const agent = deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", writePrefix));
+        const agent = await deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", writePrefix));
 
         // The returned definition is the catalog's own entry for that id.
         expect(agent.id).toBe("bulk-transcriptomics-agent");
@@ -305,32 +305,32 @@ describe("buildSandboxStepDeps", () => {
         expect(agent.tools.at(-1)?.id).toBe("submit_file_metadata");
     });
 
-    test("buildAgent gives the tool output store of the step to the agent, thus it declares read_tool_output", () => {
+    test("buildAgent gives the tool output store of the step to the agent, thus it declares read_tool_output", async () => {
         const deps = buildSandboxStepDeps(testComposition());
 
-        const agent = deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
+        const agent = await deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
 
         expect(agent.tools.map((tool) => tool.id)).toContain("read_tool_output");
     });
 
-    test("buildAgent throws for an unknown agent id, naming the id and the known catalog ids", () => {
+    test("buildAgent rejects for an unknown agent id, naming the id and the known catalog ids", async () => {
         const deps = buildSandboxStepDeps(testComposition());
 
-        let thrown: Error | null = null;
-        try {
-            // The write prefix must sit under the analysis's workspace root — agent
-            // construction maps it to a sandbox path — so the unknown-id lookup is
-            // what fails, not the path mapping.
-            deps.buildAgent(fakeBuildContext("not-a-real-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
-        } catch (e) {
-            thrown = e as Error;
-        }
+        // The write prefix must sit under the analysis's workspace root — agent
+        // construction maps it to a sandbox path — so the unknown-id lookup is
+        // what fails, not the path mapping.
+        const built = deps.buildAgent(fakeBuildContext("not-a-real-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
 
-        expect(thrown).not.toBeNull();
-        expect(thrown?.message).toContain("not-a-real-agent");
+        const thrown = await built.then(
+            () => null,
+            (e: unknown) => e,
+        );
+        expect(thrown).toBeInstanceOf(Error);
+        const message = thrown instanceof Error ? thrown.message : "";
+        expect(message).toContain('unknown sandbox agent id "not-a-real-agent"');
         // Every known catalog id is listed for the operator.
         for (const id of Object.keys(SANDBOX_AGENT_META)) {
-            expect(thrown?.message).toContain(id);
+            expect(message).toContain(id);
         }
     });
 });

@@ -531,10 +531,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         const executionId = generateExecutionId(DATA_PROFILE_AGENT_ID);
         const workflowId = DBOS.workflowID ?? `${DATA_PROFILE_RUN_LITERAL}:${executionId}`;
         const childSession = forSubAgent(runSession, DATA_PROFILE_AGENT_ID);
-        // A resolver throw fails the workflow loudly (workspace-root-resolution
+        // A resolver rejection fails the workflow loudly (workspace-root-resolution
         // contract) — profiling an analysis whose root cannot be resolved is
         // meaningless, so no softer handling is warranted.
-        const workspaceRoot = deps.resolveWorkspaceRoot(analysisId);
+        const workspaceRoot = await deps.resolveWorkspaceRoot(analysisId);
         const profileWritePrefix = `${workspaceRoot}/runs/${DATA_PROFILE_RUN_LITERAL}/${DATA_PROFILE_STEP_LITERAL}`;
 
         // 3. The deterministic scan, before any container and before the agent's first turn.

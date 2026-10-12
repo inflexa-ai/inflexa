@@ -295,7 +295,7 @@ describe("stageInputs", () => {
         rmSync(join(anchorDir, "gone.csv"), { force: true });
 
         // Enumeration skips the gone file…
-        const enumPaths = enumerateInputPaths(analysisId)._unsafeUnwrap();
+        const enumPaths = (await enumerateInputPaths(analysisId))._unsafeUnwrap();
         expect(enumPaths.size).toBe(1);
 
         // …and staging COMPLETES over the survivor rather than hard-failing on the dead link.
@@ -320,7 +320,7 @@ describe("stageInputs", () => {
 
         rmSync(dirPath, { recursive: true, force: true });
 
-        const enumPaths = enumerateInputPaths(analysisId)._unsafeUnwrap();
+        const enumPaths = (await enumerateInputPaths(analysisId))._unsafeUnwrap();
         expect(enumPaths.size).toBe(1);
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
         expect(staged.map((s) => s.key)).toEqual(["survivor.csv"]);
@@ -421,7 +421,7 @@ describe("stageInputs — the staged tree records what it materialized", () => {
         (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
 
         expect(statSync(src).mtimeMs).toBe(before);
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);
     });
 });
 
@@ -437,7 +437,7 @@ describe("isInputSetMaterialized", () => {
 
     test("an unchanged input set reads as materialized", async () => {
         await stagedBaseline();
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);
     });
 
     test("an input replaced at the same path reads as not materialized", async () => {
@@ -447,7 +447,7 @@ describe("isInputSetMaterialized", () => {
         const replacement = join(testDir, "replacement.csv");
         writeFileSync(replacement, "id,value\n9,9,9\n");
         renameSync(replacement, src);
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(false);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(false);
     });
 
     test("a truncate-in-place edit is carried by the shared inode, so the tree stays current", async () => {
@@ -459,7 +459,7 @@ describe("isInputSetMaterialized", () => {
         const src = await stagedBaseline();
         writeFileSync(src, "id,value\n9,9\n");
         utimesSync(src, 3, 3);
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);
         expect(statSync(join(targetDir, "inputs", "local", "counts.csv")).mtimeMs).toBe(statSync(src).mtimeMs);
     });
 
@@ -467,7 +467,7 @@ describe("isInputSetMaterialized", () => {
         await stagedBaseline();
         writeFileSync(join(anchorDir, "extra.csv"), "extra");
         insertAnalysisInput({ path: "extra.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(false);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(false);
     });
 
     test("a removed input whose staged file lingers reads as not materialized", async () => {
@@ -482,7 +482,7 @@ describe("isInputSetMaterialized", () => {
         // Every expected file still matches; only the orphan the mirror pass owes a deletion says
         // otherwise — which is exactly the extra-file arm of the predicate.
         expect(existsSync(join(targetDir, "inputs", "local", "removed.csv"))).toBe(true);
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(false);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(false);
     });
 
     test("a hand-deleted staged file reads as not materialized, and staging restores it", async () => {
@@ -490,18 +490,18 @@ describe("isInputSetMaterialized", () => {
         const stagedPath = join(targetDir, "inputs", "local", "counts.csv");
         rmSync(stagedPath, { force: true });
 
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(false);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(false);
 
         (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
         expect(existsSync(stagedPath)).toBe(true);
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);
     });
 
     test("an input set that was never staged reads as not materialized", async () => {
         writeFileSync(join(anchorDir, "fresh.csv"), "fresh");
         insertAnalysisInput({ path: "fresh.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
         // The tree does not exist at all — the wedged-analysis state this predicate has to catch.
-        expect(isInputSetMaterialized(analysisId, join(testDir, "never-staged"))._unsafeUnwrap()).toBe(false);
+        expect((await isInputSetMaterialized(analysisId, join(testDir, "never-staged")))._unsafeUnwrap()).toBe(false);
     });
 
     test("a copy-staged input set reads as materialized on the next check", async () => {
@@ -509,7 +509,7 @@ describe("isInputSetMaterialized", () => {
         // its whole input set on every parity check, forever.
         insertAnalysisInput({ path: "/bin/ls", isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
         (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);
     });
 
     test("reads no file content — a mode-000 input is still answerable", async () => {
@@ -518,7 +518,7 @@ describe("isInputSetMaterialized", () => {
         const src = await stagedBaseline("locked.csv", "secret");
         chmodSync(src, 0o000);
         try {
-            expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+            expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);
         } finally {
             chmodSync(src, 0o644);
         }
@@ -547,7 +547,7 @@ describe("enumerateInputPaths", () => {
         insertAnalysisInput({ path: loosePath, isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
         insertAnalysisInput({ path: "dir", isDir: true, analysisId, anchorId })._unsafeUnwrap();
 
-        const enumPaths = enumerateInputPaths(analysisId)._unsafeUnwrap();
+        const enumPaths = (await enumerateInputPaths(analysisId))._unsafeUnwrap();
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
 
         // solo.csv + ext.csv + dir/a.txt + dir/sub/b.txt (broken.txt skipped).
@@ -555,14 +555,14 @@ describe("enumerateInputPaths", () => {
         expect([...enumPaths].sort()).toEqual([...staged.map((st) => st.relativePath)].sort());
     });
 
-    test("enumerates with no staging target, returns ok, and writes nothing", () => {
+    test("enumerates with no staging target, returns ok, and writes nothing", async () => {
         writeFileSync(join(anchorDir, "data.csv"), "x");
         insertAnalysisInput({ path: "data.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
 
         // A workspace data-dir path staging would use, deliberately never created.
         const absentTree = join(testDir, "absent-data-dir");
 
-        const result = enumerateInputPaths(analysisId);
+        const result = await enumerateInputPaths(analysisId);
         expect(result.isOk()).toBe(true);
         expect(result._unsafeUnwrap().size).toBe(1);
         // Read-only: enumeration neither needs the tree nor stages any file.
@@ -580,7 +580,7 @@ describe("enumerateInputPaths", () => {
         insertAnchor({ id: orphanAnchorId, createdAt: 1, updatedAt: 1, cachedPath: "/nonexistent/path", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysisInput({ path: "ghost.csv", isDir: false, analysisId, anchorId: orphanAnchorId })._unsafeUnwrap();
 
-        const enumPaths = enumerateInputPaths(analysisId)._unsafeUnwrap();
+        const enumPaths = (await enumerateInputPaths(analysisId))._unsafeUnwrap();
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
 
         expect(staged).toHaveLength(1);
@@ -604,10 +604,10 @@ describe("enumerateInputPaths", () => {
         expect(staged[0]!.mtimeMs).toBe(statSync(src).mtimeMs);
 
         // The manifest and a fresh stat must agree, or the tree reads as permanently unmaterialized.
-        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+        expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);
     });
 
-    test("enumeration reads no file content", () => {
+    test("enumeration reads no file content", async () => {
         // The hash-free contract: enumeration must never open an input. A file whose bytes are
         // unreadable (mode 000) still yields a signature, because stat does not need read permission.
         const p = join(anchorDir, "unreadable.csv");
@@ -615,20 +615,20 @@ describe("enumerateInputPaths", () => {
         chmodSync(p, 0o000);
         insertAnalysisInput({ path: "unreadable.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
         try {
-            expect(enumerateInputPaths(analysisId)._unsafeUnwrap().size).toBe(1);
+            expect((await enumerateInputPaths(analysisId))._unsafeUnwrap().size).toBe(1);
         } finally {
             chmodSync(p, 0o644);
         }
     });
 
-    test("a file deleted between the walk and its stat is treated as removed, not an error", () => {
+    test("a file deleted between the walk and its stat is treated as removed, not an error", async () => {
         // The DB and the filesystem routinely disagree; a gone input is a removal, never a hard failure.
         writeFileSync(join(anchorDir, "kept.csv"), "k");
         insertAnalysisInput({ path: "kept.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
         insertAnalysisInput({ path: "vanished.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
 
         // `vanished.csv` was never created, so the walk resolves its path and the stat then misses.
-        const result = enumerateInputPaths(analysisId);
+        const result = await enumerateInputPaths(analysisId);
         expect(result.isOk()).toBe(true);
         expect(result._unsafeUnwrap().size).toBe(1);
     });

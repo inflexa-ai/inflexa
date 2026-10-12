@@ -37,8 +37,8 @@ const ANALYSIS: Analysis = {
 let home = "";
 
 /** The analysis row, under an anchor folder that holds its marker, thus its output folder resolves. */
-function seedAnalysis(): void {
-    writeMarker(home, ANALYSIS.anchorId)._unsafeUnwrap();
+async function seedAnalysis(): Promise<void> {
+    (await writeMarker(home, ANALYSIS.anchorId))._unsafeUnwrap();
     insertAnchor({ id: ANALYSIS.anchorId, createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
     insertAnalysis(ANALYSIS)._unsafeUnwrap();
 }
@@ -79,13 +79,13 @@ function get(path: string): Promise<Response> {
     return Promise.resolve(app.request(`/api/v1/analyses/${ANALYSIS.id}/provenance/${path}`));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     freshDb();
     invalidateWorkspaceRoot();
     home = mkdtempSync(join(tmpdir(), "inflexa-prov-route-"));
     // A signing key of this test only: the export signs with the key of this machine.
     resetSigningForTests(join(home, "prov_key.json"));
-    seedAnalysis();
+    await seedAnalysis();
 });
 
 afterEach(() => {

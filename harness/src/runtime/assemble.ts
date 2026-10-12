@@ -125,7 +125,7 @@ export interface ReportResolverScope {
  * The factory that gives the reference resolver of one report tool call. The harness wires the production
  * realization, and an embedder can bind its own at its composition root.
  */
-export type MakeReportReferenceResolver = (scope: ReportResolverScope) => ReferenceResolver;
+export type MakeReportReferenceResolver = (scope: ReportResolverScope) => Promise<ReferenceResolver>;
 
 export interface CoreRuntimeDeps {
     readonly conversation: ConversationAssemblyDeps;
@@ -389,12 +389,12 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     // for each tool call. The extraction arm falls through to the registered extract-values
     // callable for an over-cap file or a host parse fault. The cap gates the host read, and
     // the resolver defaults it to 16 MiB.
-    const makeProductionReportResolver = (scope: ReportResolverScope): ReferenceResolver => {
+    const makeProductionReportResolver = async (scope: ReportResolverScope): Promise<ReferenceResolver> => {
         const arm = createExtractionArm(
             bindExtractionTrigger({ runAuthorizer: conversation.runAuthorizer, workflow: extractValues }, { auth: scope.auth, analysisId: scope.analysisId }),
         );
         return createProductionResolver({
-            workspaceRoot: conversation.resolveWorkspaceRoot(scope.analysisId),
+            workspaceRoot: await conversation.resolveWorkspaceRoot(scope.analysisId),
             analysisId: scope.analysisId,
             extractionArm: arm,
             readCache: reportArtifactReads.forAnalysis(scope.analysisId),

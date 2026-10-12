@@ -52,12 +52,12 @@ describe("materializeTarget — the workspace presentations directory", () => {
     }
 
     /** Seed a resolvable analysis (anchor marker + rows) and return its materialized workspace root. */
-    function seedAnalysis(analysisId: string, slug: string): string {
+    async function seedAnalysis(analysisId: string, slug: string): Promise<string> {
         const home = tmp();
-        writeMarker(home, "A1")._unsafeUnwrap();
+        (await writeMarker(home, "A1"))._unsafeUnwrap();
         insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysis({ id: analysisId, createdAt: 1, updatedAt: 1, name: asStr256("A"), slug, anchorId: "A1", projectId: null })._unsafeUnwrap();
-        const root = workspaceRootForAnalysisId(analysisId)._unsafeUnwrap();
+        const root = (await workspaceRootForAnalysisId(analysisId))._unsafeUnwrap();
         mkdirSync(root, { recursive: true });
         return root;
     }
@@ -74,45 +74,45 @@ describe("materializeTarget — the workspace presentations directory", () => {
         created.length = 0;
     });
 
-    test("an identical echart card materializes once into {root}/presentations (idempotent)", () => {
-        const root = seedAnalysis("ana-idem", "idem");
+    test("an identical echart card materializes once into {root}/presentations (idempotent)", async () => {
+        const root = await seedAnalysis("ana-idem", "idem");
         const target: OpenTarget = { kind: "echart", presId: "pres-idem-echart", spec: { series: [{ type: "bar" }] } };
-        const first = materializeTarget("ana-idem", target)._unsafeUnwrap();
+        const first = (await materializeTarget("ana-idem", target))._unsafeUnwrap();
         expect(first).toBe(join(root, "presentations", "pres-idem-echart.html"));
         const content = readFileSync(first, "utf8");
-        const second = materializeTarget("ana-idem", target)._unsafeUnwrap();
+        const second = (await materializeTarget("ana-idem", target))._unsafeUnwrap();
         expect(second).toBe(first); // same deterministic path
         expect(readFileSync(second, "utf8")).toBe(content); // reused, not rewritten differently
     });
 
-    test("an svg card materializes to presentations/<pres-id>.svg", () => {
-        const root = seedAnalysis("ana-svg", "svg");
+    test("an svg card materializes to presentations/<pres-id>.svg", async () => {
+        const root = await seedAnalysis("ana-svg", "svg");
         const target: OpenTarget = { kind: "svg", presId: "pres-idem-svg", markup: "<svg><rect/></svg>" };
-        const path = materializeTarget("ana-svg", target)._unsafeUnwrap();
+        const path = (await materializeTarget("ana-svg", target))._unsafeUnwrap();
         expect(path).toBe(join(root, "presentations", "pres-idem-svg.svg"));
         expect(readFileSync(path, "utf8")).toBe("<svg><rect/></svg>");
     });
 
-    test("an existing presentation file is served untouched (no rewrite)", () => {
-        seedAnalysis("ana-reuse", "reuse");
+    test("an existing presentation file is served untouched (no rewrite)", async () => {
+        await seedAnalysis("ana-reuse", "reuse");
         const target: OpenTarget = { kind: "echart", presId: "pres-norewrite", spec: { series: [{ type: "bar" }] } };
-        const dest = materializeTarget("ana-reuse", target)._unsafeUnwrap();
+        const dest = (await materializeTarget("ana-reuse", target))._unsafeUnwrap();
         // Tamper with the materialized file; a re-open that rewrote it would clobber the sentinel. The
         // existsSync shortcut — valid because the pres- id is a genuine content hash of the whole tool
         // input and the shell embeds nothing beyond that input — serves the file untouched.
         writeFileSync(dest, "SENTINEL");
-        const again = materializeTarget("ana-reuse", target)._unsafeUnwrap();
+        const again = (await materializeTarget("ana-reuse", target))._unsafeUnwrap();
         expect(again).toBe(dest);
         expect(readFileSync(again, "utf8")).toBe("SENTINEL");
     });
 
-    test("a dataPath chart references its CSV by relative URL and never embeds the bytes", () => {
-        const root = seedAnalysis("ana-ref", "ref");
+    test("a dataPath chart references its CSV by relative URL and never embeds the bytes", async () => {
+        const root = await seedAnalysis("ana-ref", "ref");
         mkdirSync(join(root, "runs", "r"), { recursive: true });
         writeFileSync(join(root, "runs", "r", "out.csv"), "label,value\nSENTINEL_CELL_9137,10");
         const target: OpenTarget = { kind: "echart", presId: "pres-ref", spec: { series: [{ type: "line" }] }, dataPath: "runs/r/out.csv" };
 
-        const path = materializeTarget("ana-ref", target)._unsafeUnwrap();
+        const path = (await materializeTarget("ana-ref", target))._unsafeUnwrap();
         expect(path).toBe(join(root, "presentations", "pres-ref.html"));
         const html = readFileSync(path, "utf8");
         // The shell imports the artifact from where it sits ({root}/presentations → ../runs/…).
@@ -121,25 +121,25 @@ describe("materializeTarget — the workspace presentations directory", () => {
 
         // A rewritten CSV needs no rematerialization — the shell fetches the current bytes at render time.
         writeFileSync(join(root, "runs", "r", "out.csv"), "label,value\nB,999");
-        const again = materializeTarget("ana-ref", target)._unsafeUnwrap();
+        const again = (await materializeTarget("ana-ref", target))._unsafeUnwrap();
         expect(again).toBe(path);
         expect(readFileSync(again, "utf8")).toBe(html);
     });
 
-    test("an untrusted traversal dataPath is refused before a URL is derived — the shell pre-degrades", () => {
+    test("an untrusted traversal dataPath is refused before a URL is derived — the shell pre-degrades", async () => {
         // validatePath rejects the shape (it survives a reload from a persisted tool_use, bypassing the
         // live tool's validation), so no URL is derived and the shell carries the visible no-data note.
-        seedAnalysis("ana-guard", "guard");
+        await seedAnalysis("ana-guard", "guard");
         const target: OpenTarget = { kind: "echart", presId: "pres-traversal-guard", spec: { series: [] }, dataPath: "../../etc/passwd" };
-        const html = readFileSync(materializeTarget("ana-guard", target)._unsafeUnwrap(), "utf8");
+        const html = readFileSync((await materializeTarget("ana-guard", target))._unsafeUnwrap(), "utf8");
         expect(html).toContain('<div id="datanote">Data file "../../etc/passwd" could not be loaded');
         expect(html).toContain("var dataUrl = null");
     });
 
-    test("an unresolvable workspace root is `unresolved` — nothing materializes", () => {
+    test("an unresolvable workspace root is `unresolved` — nothing materializes", async () => {
         const echart: OpenTarget = { kind: "echart", presId: "pres-lost", spec: {} };
         const svg: OpenTarget = { kind: "svg", presId: "pres-lost", markup: "<svg/>" };
-        expect(materializeTarget("ana-nonexistent", echart)._unsafeUnwrapErr()).toEqual({ type: "unresolved" });
-        expect(materializeTarget("ana-nonexistent", svg)._unsafeUnwrapErr()).toEqual({ type: "unresolved" });
+        expect((await materializeTarget("ana-nonexistent", echart))._unsafeUnwrapErr()).toEqual({ type: "unresolved" });
+        expect((await materializeTarget("ana-nonexistent", svg))._unsafeUnwrapErr()).toEqual({ type: "unresolved" });
     });
 });

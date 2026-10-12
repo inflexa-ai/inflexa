@@ -201,7 +201,7 @@ export async function precreateStepTree(
     // `tailWritePrefix` (not a raw `join`) so every segment runs through the same
     // id validation the mount builders apply — a crafted tail cannot escape the
     // resolved root.
-    const writeDir = tailWritePrefix({ workspaceRoot: deps.resolveWorkspaceRoot(coords.analysisId), tail: write.tail });
+    const writeDir = tailWritePrefix({ workspaceRoot: await deps.resolveWorkspaceRoot(coords.analysisId), tail: write.tail });
     await mkdir(writeDir, { recursive: true });
     await Promise.all(write.subdirs.map((sub) => mkdir(join(writeDir, sub), { recursive: true })));
     if (deps.stepTreeAccess === "world-writable") {

@@ -78,7 +78,7 @@ function makeDeps(pool: Pool, embedding: EmbeddingProvider, logger: Logger): Pos
         embedding,
         provider: {} as AgentChat,
         artifactRegistry: {} as ArtifactRegistry,
-        resolveWorkspaceRoot: (id) => id,
+        resolveWorkspaceRoot: async (id) => id,
     };
 }
 

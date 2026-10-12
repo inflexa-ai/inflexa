@@ -182,7 +182,7 @@ export async function reconcileAndRegisterStepArtifacts(
     const { input, session, lineageCollector } = postCtx;
 
     const reconciled = await reconcileManifestWithDisk({
-        workspaceRoot: deps.resolveWorkspaceRoot(input.analysisId),
+        workspaceRoot: await deps.resolveWorkspaceRoot(input.analysisId),
         resourceId: input.analysisId,
         runId: input.runId,
         stepId: input.stepId,

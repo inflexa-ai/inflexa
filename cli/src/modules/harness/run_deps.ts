@@ -132,15 +132,15 @@ export type RunEngineComposition = {
  * does (`tasks/data-profile.ts:207-235`): composition backends on the flat
  * fields, per-step coordinates under `step`.
  *
- * An agent id absent from the catalog throws. `throw` is correct here despite
+ * An agent id absent from the catalog rejects. `throw` is correct here despite
  * the cli's neverthrow-first default: `buildAgent` runs inside the harness
- * workflow body where an exception IS the step's failure channel (the seam
- * returns `AgentDefinition`, not a `Result`), and `validatePlan` already rejects
+ * workflow body where a rejection IS the step's failure channel (the seam
+ * returns `Promise<AgentDefinition>`, not a `Result`), and `validatePlan` already rejects
  * unknown agent ids upstream — so this is defense-in-depth on a path the plan
  * gate makes unreachable, and the message names the id and the known catalog ids
  * for the operator who somehow reaches it.
  */
-function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContext): AgentDefinition {
+async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContext): Promise<AgentDefinition> {
     const deps: SandboxAgentDeps = {
         provider: comp.sandbox.provider,
         pool: comp.pool,
@@ -160,7 +160,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         ...(ctx.toolOutputStore ? { toolOutputStore: ctx.toolOutputStore } : {}),
         step: {
             sandbox: ctx.sandbox,
-            workspaceRoot: comp.resolveWorkspaceRoot(ctx.input.analysisId),
+            workspaceRoot: await comp.resolveWorkspaceRoot(ctx.input.analysisId),
             analysisId: ctx.input.analysisId,
             allowedWritePrefix: ctx.stepWritePrefix,
             deadlineMs: ctx.deadlineMs,
@@ -220,7 +220,7 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): CoreWorkflowDe
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         model: comp.sandbox.model,
         buildAgent: (ctx) => buildStepAgent(comp, ctx),
-        resolveWritePrefix: (input: SandboxStepInput) => join(comp.resolveWorkspaceRoot(input.analysisId), runStepDir(input.runId, input.stepId)),
+        resolveWritePrefix: async (input: SandboxStepInput) => join(await comp.resolveWorkspaceRoot(input.analysisId), runStepDir(input.runId, input.stepId)),
     };
 }
 

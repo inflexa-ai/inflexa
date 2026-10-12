@@ -86,7 +86,7 @@ export type ConversationRouteOpts = {
     /** The sweep of the queued package adds at the end of each turn. Real: `startPendingFlushChild`. */
     readonly flushPendingAdds: () => void;
     /** The workspace root of an analysis. Real: `locateExistingOutputDir` over the analysis row. */
-    readonly workspaceRoot: (analysisId: string) => WorkspaceRootLookup;
+    readonly workspaceRoot: (analysisId: string) => Promise<WorkspaceRootLookup>;
     /** Remove one report page folder by force. Ok when the folder is gone. Real: `rmResultAsync`. */
     readonly removeDir: (dir: string) => ResultAsync<void, FsError>;
     readonly sse: SseOpts;
@@ -678,7 +678,7 @@ function threadAnalysisId(pool: Pool, threadId: string): ResultAsync<string | nu
 }
 
 /** The workspace root of the analysis on disk. A missing analysis row or a failed read cannot name the tree. */
-function workspaceRoot(analysisId: string): WorkspaceRootLookup {
+async function workspaceRoot(analysisId: string): Promise<WorkspaceRootLookup> {
     const analysis = findAnalysesByRef(analysisId)
         .map((found) => found.find((candidate) => candidate.id === analysisId) ?? null)
         .unwrapOr(null);
@@ -700,7 +700,7 @@ async function reclaimReportPages(
     opts: ConversationRouteOpts,
 ): Promise<ReportPageFate> {
     if (files === "keep") return { kind: "kept" };
-    const lookup = opts.workspaceRoot(analysisId);
+    const lookup = await opts.workspaceRoot(analysisId);
     if (lookup.kind === "absent") return { kind: "removed" };
     if (lookup.kind === "unlocatable") return { kind: "unlocatable" };
     const stayed: string[] = [];

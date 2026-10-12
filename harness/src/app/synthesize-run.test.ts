@@ -146,7 +146,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             pool: emptyPool(),
             provider,
             embedding,
-            resolveWorkspaceRoot: (id) => join(base, id),
+            resolveWorkspaceRoot: async (id) => join(base, id),
             synthesisModel: "claude-test",
             bioKeys: BIO_KEYS,
             citationResolver: unusedCitationResolver,
@@ -240,7 +240,7 @@ describe("synthesizeRun", () => {
             // The final run-synthesis chat part was emitted.
             expect(emitted.some((e) => typeof e === "object" && e !== null && (e as { type?: string }).type === "data-run-synthesis")).toBe(true);
             // synthesis.json was written under the run directory.
-            const path = join(h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
+            const path = join(await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
             expect((await stat(path)).isFile()).toBe(true);
         } finally {
             await h.cleanup();
@@ -274,7 +274,7 @@ describe("synthesizeRun", () => {
             const warn = h.logs.find((r) => r.level === "warn");
             expect(warn?.fields).toMatchObject({ runId: RUN_ID, reason: BLOCKER_REASON });
             // A blocker writes no synthesis result to disk.
-            const path = join(h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
+            const path = join(await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
             await expect(stat(path)).rejects.toThrow();
         } finally {
             await h.cleanup();

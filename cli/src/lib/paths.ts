@@ -1,4 +1,3 @@
-import { realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -13,8 +12,8 @@ export function contractHome(path: string): string {
     const home = homedir();
     if (path === home) return "~";
     // A path-boundary prefix is home followed by the platform separator (`/` on POSIX, `\` on
-    // Windows). Both `homedir()` and `canonicalPath` (which backs these display paths via
-    // realpathSync/resolve) yield platform-native separators — they are NOT normalized to `/` —
+    // Windows). Both `homedir()` and `canonicalPathAsync` (which backs these display paths via
+    // realpath/resolve) yield platform-native separators — they are NOT normalized to `/` —
     // so hard-coding `/` would fail to contract any path on Windows.
     return path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path;
 }
@@ -24,16 +23,10 @@ export function contractHome(path: string): string {
  * path doesn't exist yet (realpath requires existence). Identity must key on the canonical
  * path, or the same physical folder reached via two textual forms — e.g. macOS /var vs
  * /private/var, or any user symlink — would be misread as a move or a copy.
+ *
+ * The `realpath` runs off the event loop: the local server calls this, and a folder on a hung
+ * mount must stop only its own request.
  */
-export function canonicalPath(p: string): string {
-    try {
-        return realpathSync(p);
-    } catch {
-        return resolve(p);
-    }
-}
-
-/** {@link canonicalPath} off the event loop, for a caller that must not stop on a hung mount. */
 export function canonicalPathAsync(p: string): Promise<string> {
     return realpath(p).catch(() => resolve(p));
 }

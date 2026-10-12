@@ -22,13 +22,13 @@ const app = new Hono<ServerEnv>().route("/api/v1/analyses/:analysisId/artifacts"
 const created: string[] = [];
 
 /** Seed a resolvable analysis (anchor marker + rows) and return its workspace root, made on disk. */
-function seedAnalysis(analysisId: string): string {
+async function seedAnalysis(analysisId: string): Promise<string> {
     const home = mkdtempSync(join(tmpdir(), "inflexa-artifact-route-"));
     created.push(home);
-    writeMarker(home, "A1")._unsafeUnwrap();
+    (await writeMarker(home, "A1"))._unsafeUnwrap();
     insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
     insertAnalysis({ id: analysisId, createdAt: 1, updatedAt: 1, name: asStr256("A"), slug: "a", anchorId: "A1", projectId: null })._unsafeUnwrap();
-    const root = workspaceRootForAnalysisId(analysisId)._unsafeUnwrap();
+    const root = (await workspaceRootForAnalysisId(analysisId))._unsafeUnwrap();
     mkdirSync(root, { recursive: true });
     return root;
 }
@@ -57,7 +57,7 @@ describe("POST {A}/artifacts/resolve", () => {
     const chart: OpenTarget = { kind: "echart", presId: "pres-0123abcd", spec: { series: [{ type: "bar" }] } };
 
     test("without `materialize`, each entry gets its path and its degraded mark, in order, and nothing is written", async () => {
-        const root = seedAnalysis("ana-1");
+        const root = await seedAnalysis("ana-1");
         mkdirSync(join(root, "runs"), { recursive: true });
         writeFileSync(join(root, "runs", "out.csv"), "a,b\n");
 
@@ -84,7 +84,7 @@ describe("POST {A}/artifacts/resolve", () => {
     });
 
     test("with `materialize`, the echart file is written, and an entry that cannot open names why", async () => {
-        const root = seedAnalysis("ana-1");
+        const root = await seedAnalysis("ana-1");
 
         const response = await resolve(
             "ana-1",
@@ -100,7 +100,7 @@ describe("POST {A}/artifacts/resolve", () => {
     });
 
     test("a workspace path that leaves the workspace resolves nowhere and is degraded", async () => {
-        seedAnalysis("ana-1");
+        await seedAnalysis("ana-1");
 
         for (const materialize of [false, true]) {
             const response = await resolve("ana-1", [{ kind: "workspace-file", path: "../../outside.txt" }], materialize);
@@ -118,7 +118,7 @@ describe("POST {A}/artifacts/resolve", () => {
     });
 
     test("a presentation id that is not `pres-` and a digest is 400 `validation_error`, and writes nothing", async () => {
-        const root = seedAnalysis("ana-1");
+        const root = await seedAnalysis("ana-1");
 
         const response = await resolve("ana-1", [{ kind: "svg", presId: "../../escape", markup: "<svg/>" }], true);
 

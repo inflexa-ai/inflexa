@@ -1,9 +1,8 @@
-import { existsSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { validatePath } from "@inflexa-ai/harness/tools/lib/path-validation";
 import { err, ok, type Result } from "neverthrow";
 
-import { mkdirResult, writeFileResult } from "../../lib/fs.ts";
+import { mkdirResult, pathExistsAsync, writeFileResult } from "../../lib/fs.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import type { OpenTarget } from "../../types/session.ts";
 
@@ -30,7 +29,7 @@ export type OpenArtifactError =
 const PRESENTATIONS_DIR = "presentations";
 
 /** `{workspaceRoot}/presentations/<filename>`, or `null` when the root is unresolvable (moved/deleted anchor). */
-function presentationFilePath(analysisId: string, filename: string): string | null {
+function presentationFilePath(analysisId: string, filename: string): Promise<string | null> {
     return workspaceRootForAnalysisId(analysisId).match(
         (root): string | null => join(root, PRESENTATIONS_DIR, filename),
         () => null,
@@ -43,7 +42,7 @@ function presentationFilePath(analysisId: string, filename: string): string | nu
  * deleted anchor); `echart`/`svg` name their deterministic presentations file (which may not exist until
  * opened); `unavailable` has no path.
  */
-export function resolveEntryPath(analysisId: string, target: OpenTarget): string | null {
+export async function resolveEntryPath(analysisId: string, target: OpenTarget): Promise<string | null> {
     switch (target.kind) {
         case "workspace-file":
             return workspaceRootForAnalysisId(analysisId).match(
@@ -68,11 +67,11 @@ export function resolveEntryPath(analysisId: string, target: OpenTarget): string
  * missing (workspace desync) or `unavailable` (a failed preview). `echart`/`svg` are never degraded —
  * they materialize on demand, so their presentations file's absence is expected, not a fault.
  */
-export function entryDegraded(analysisId: string, target: OpenTarget): boolean {
+export async function entryDegraded(analysisId: string, target: OpenTarget): Promise<boolean> {
     switch (target.kind) {
         case "workspace-file": {
-            const path = resolveEntryPath(analysisId, target);
-            return path === null || !existsSync(path);
+            const path = await resolveEntryPath(analysisId, target);
+            return path === null || !(await pathExistsAsync(path));
         }
         case "echart":
         case "svg":
@@ -92,12 +91,12 @@ export function entryDegraded(analysisId: string, target: OpenTarget): boolean {
  * file and return it; `unavailable` never resolves. The REPL printer links to the path (an OSC 8
  * `file://` path), and the artifact route of the server gives it to the client that opens it. Never throws.
  */
-export function materializeTarget(analysisId: string, target: OpenTarget): Result<string, OpenArtifactError> {
+export async function materializeTarget(analysisId: string, target: OpenTarget): Promise<Result<string, OpenArtifactError>> {
     switch (target.kind) {
         case "workspace-file": {
-            const path = resolveEntryPath(analysisId, target);
+            const path = await resolveEntryPath(analysisId, target);
             if (path === null) return err({ type: "unresolved" });
-            if (!existsSync(path)) return err({ type: "missing", path });
+            if (!(await pathExistsAsync(path))) return err({ type: "missing", path });
             return ok(path);
         }
         case "echart":
@@ -122,10 +121,10 @@ function writePresentationFile(dest: string, content: string): Result<string, Op
 }
 
 /** Materialize a `svg` presentation as `presentations/<pres-id>.svg`, reusing the file when it already exists (idempotent). */
-function materializeSvg(analysisId: string, target: Extract<OpenTarget, { kind: "svg" }>): Result<string, OpenArtifactError> {
-    const dest = presentationFilePath(analysisId, `${target.presId}.svg`);
+async function materializeSvg(analysisId: string, target: Extract<OpenTarget, { kind: "svg" }>): Promise<Result<string, OpenArtifactError>> {
+    const dest = await presentationFilePath(analysisId, `${target.presId}.svg`);
     if (dest === null) return err({ type: "unresolved" });
-    if (existsSync(dest)) return ok(dest);
+    if (await pathExistsAsync(dest)) return ok(dest);
     return writePresentationFile(dest, target.markup);
 }
 
@@ -153,10 +152,10 @@ function dataUrlFor(dataPath: string): string {
  * a persisted tool_use, bypassing the live tool's validation) degrades to a shell with a visible
  * no-data note, never a crash.
  */
-function materializeEchart(analysisId: string, target: Extract<OpenTarget, { kind: "echart" }>): Result<string, OpenArtifactError> {
-    const dest = presentationFilePath(analysisId, `${target.presId}.html`);
+async function materializeEchart(analysisId: string, target: Extract<OpenTarget, { kind: "echart" }>): Promise<Result<string, OpenArtifactError>> {
+    const dest = await presentationFilePath(analysisId, `${target.presId}.html`);
     if (dest === null) return err({ type: "unresolved" });
-    if (existsSync(dest)) return ok(dest);
+    if (await pathExistsAsync(dest)) return ok(dest);
     if (target.dataPath === undefined) return writePresentationFile(dest, echartHtml(target.spec, null, null));
     if (validatePath(target.dataPath) !== null) {
         return writePresentationFile(

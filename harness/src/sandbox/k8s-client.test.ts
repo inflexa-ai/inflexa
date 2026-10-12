@@ -19,7 +19,7 @@ import { splitSpawn } from "./__fixtures__/spawn.js";
 
 /** The conventional managed layout: workspace roots sit directly under the PVC mountpoint. */
 const SESSION_PVC_ROOT = "/sessions";
-const resolveWorkspaceRoot = (analysisId: string) => `${SESSION_PVC_ROOT}/${analysisId}`;
+const resolveWorkspaceRoot = async (analysisId: string) => `${SESSION_PVC_ROOT}/${analysisId}`;
 
 /** The managed shape: one farm location, PVC-relative, for every analysis. */
 const FIXED_FARM: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
@@ -182,7 +182,7 @@ describe("k8s createSandbox", () => {
             sessionPvcRoot: SESSION_PVC_ROOT,
             // An embedder whose roots are NOT `{pvcRoot}/{analysisId}`. The pod must mount the
             // directory the harness pre-creates under this root, not a same-named sibling of it.
-            resolveWorkspaceRoot: (id) => `${SESSION_PVC_ROOT}/tenants/acme/${id}`,
+            resolveWorkspaceRoot: async (id) => `${SESSION_PVC_ROOT}/tenants/acme/${id}`,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -214,7 +214,7 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot: (id) => `${SESSION_PVC_ROOT}/${id}`,
+            resolveWorkspaceRoot: async (id) => `${SESSION_PVC_ROOT}/${id}`,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -258,7 +258,7 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot: () => "/elsewhere/an-1",
+            resolveWorkspaceRoot: async () => "/elsewhere/an-1",
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,

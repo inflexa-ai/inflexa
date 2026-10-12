@@ -7,7 +7,9 @@ Classification and resolution of analysis input path references (anchor-relative
 
 ### Requirement: Classify an input path into a reference
 
-The system SHALL provide `classifyInputPath(analysisId, rawPath, cwd)` returning `Result<AnalysisInput, DbError>` in `src/modules/analysis/input.ts`. It SHALL expand a leading `~`, resolve relative paths against `cwd`, determine `isDir` via a filesystem stat, and use `findMarkerUpwards` on the resolved absolute path to decide membership: when a marker is found and the input is genuinely inside the marker directory, store `(anchorId = marker id, path = clean relative path)`; otherwise store `(anchorId = null, path = absolute)`.
+The system SHALL provide `classifyInputPath(analysisId, rawPath, cwd)` returning `ResultAsync<AnalysisInput, DbError>` in `src/modules/analysis/input.ts`. It SHALL expand a leading `~`, resolve relative paths against `cwd`, determine `isDir` via a filesystem stat, and use `findMarkerUpwards` on the resolved absolute path to decide membership: when a marker is found and the input is genuinely inside the marker directory, store `(anchorId = marker id, path = clean relative path)`; otherwise store `(anchorId = null, path = absolute)`.
+
+Each disk read of the resolution layer — the stat, the canonical path, the marker walk, and the writability check — SHALL run off the event loop (`node:fs/promises`), because the local server runs this layer for a request and a folder on a hung mount must stop only that request. The SQLite reads and writes stay synchronous.
 
 #### Scenario: Path inside a marked directory becomes an anchor-relative ref
 
@@ -37,7 +39,7 @@ The system SHALL provide `classifyInputPath(analysisId, rawPath, cwd)` returning
 
 ### Requirement: Resolve an input reference to an absolute path
 
-The system SHALL provide `resolveInputPath(input)` returning `Result<string | null, DbError>`. When `anchorId` is null it SHALL return the stored absolute `path`; when set it SHALL return `join(resolvedAnchorPath, path)`, or `null` when the anchor cannot be resolved.
+The system SHALL provide `resolveInputPath(input)` returning `ResultAsync<string | null, DbError>`. When `anchorId` is null it SHALL return the stored absolute `path`; when set it SHALL return `join(resolvedAnchorPath, path)`, or `null` when the anchor cannot be resolved.
 
 #### Scenario: Absolute ref resolves to itself
 
@@ -56,7 +58,7 @@ The system SHALL provide `resolveInputPath(input)` returning `Result<string | nu
 
 ### Requirement: Resolve the analysis output directory
 
-The system SHALL provide `resolveOutputDir(analysis)` returning `Result<string, WorkspaceError>` (the `DbError` union widened by an actionable `workspace_unavailable` variant carrying the user-facing message) in `src/modules/analysis/output.ts` with exactly one rule: resolve the analysis's anchor to its live path and return `join(anchorPath, ".inflexa", "analyses", slug)` — the analysis **workspace root**, under which staged inputs (`data/`), run artifacts (`runs/`), reports/previews, and provenance exports all live. When the anchor cannot be resolved, or its folder is not writable, resolution SHALL return an err carrying an actionable message (which folder, why it failed, what the user can do) — there is no fallback and no override. It SHALL NOT create the directory and SHALL NOT persist the result: the root is derived live on every resolution so it follows anchor moves.
+The system SHALL provide `resolveOutputDir(analysis)` returning `ResultAsync<string, WorkspaceError>` (the `DbError` union widened by an actionable `workspace_unavailable` variant carrying the user-facing message) in `src/modules/analysis/output.ts` with exactly one rule: resolve the analysis's anchor to its live path and return `join(anchorPath, ".inflexa", "analyses", slug)` — the analysis **workspace root**, under which staged inputs (`data/`), run artifacts (`runs/`), reports/previews, and provenance exports all live. When the anchor cannot be resolved, or its folder is not writable, resolution SHALL return an err carrying an actionable message (which folder, why it failed, what the user can do) — there is no fallback and no override. It SHALL NOT create the directory and SHALL NOT persist the result: the root is derived live on every resolution so it follows anchor moves.
 
 Resolution SHALL NOT record an anchor sighting (`resolveAnchor(anchorId, { touch: false })`). Deriving a workspace root is not evidence that the user visited the folder, and the harness derives one on every agent file read — a heartbeat here would both misreport folder liveness and put a synchronous database write on the read path.
 
@@ -88,7 +90,7 @@ Resolution SHALL NOT record an anchor sighting (`resolveAnchor(anchorId, { touch
 
 ### Requirement: Create the analysis output directory
 
-The system SHALL provide `ensureOutputDir(analysis)` returning `Result<string, WorkspaceError>` that resolves the workspace root and creates it recursively (idempotently), returning the absolute path. It SHALL write only to the workspace root location, never to source data, and SHALL propagate resolution errors (non-writable/unresolvable anchor) unchanged.
+The system SHALL provide `ensureOutputDir(analysis)` returning `ResultAsync<string, WorkspaceError>` that resolves the workspace root and creates it recursively (idempotently), returning the absolute path. It SHALL write only to the workspace root location, never to source data, and SHALL propagate resolution errors (non-writable/unresolvable anchor) unchanged.
 
 #### Scenario: Output directory created idempotently
 
@@ -102,11 +104,11 @@ The system SHALL provide `ensureOutputDir(analysis)` returning `Result<string, W
 
 ### Requirement: Resolve a workspace root by analysis id, memoized
 
-The system SHALL provide `workspaceRootForAnalysisId(analysisId)` returning `Result<string, WorkspaceError>` in `src/modules/analysis/output.ts` — the id-only lookup the harness's `resolveWorkspaceRoot` realization and the artifact resolution of the local server need. An id with no analysis row SHALL be `workspace_unavailable` (an analysis that does not exist has no workspace), never a `DbError`.
+The system SHALL provide `workspaceRootForAnalysisId(analysisId)` returning `ResultAsync<string, WorkspaceError>` in `src/modules/analysis/output.ts` — the id-only lookup the harness's `resolveWorkspaceRoot` realization and the artifact resolution of the local server need. An id with no analysis row SHALL be `workspace_unavailable` (an analysis that does not exist has no workspace), never a `DbError`.
 
-The harness calls this once per `read_file`, `grep`, and `stat` the agent issues, and each derivation costs an analysis lookup, an anchor lookup, a marker read, and an `access(2)`. Successful resolutions SHALL therefore be memoized. The memo SHALL be process-local and start empty, so a DBOS-recovered workflow on a fresh process still derives from durable state. The process is the local server: the routes that rename or retire a workspace run in the same process as the harness, thus their invalidation reaches the memo that the harness reads. Failures SHALL NOT be memoized: the user may be fixing the folder between calls. The memo SHALL be invalidated for an analysis by any in-process action that moves or retires its root (rename, disposal), and SHALL additionally expire on a short TTL so an out-of-process anchor move cannot pin a stale root for the session's lifetime.
+The harness calls this once per `read_file`, `grep`, and `stat` the agent issues, and each derivation costs an analysis lookup, an anchor lookup, a marker read, and an `access(2)`. Successful resolutions SHALL therefore be memoized. The memo SHALL be process-local and start empty, so a DBOS-recovered workflow on a fresh process still derives from durable state. The process is the local server: the routes that rename or retire a workspace run in the same process as the harness, thus their invalidation reaches the memo that the harness reads. Failures SHALL NOT be memoized: the user may be fixing the folder between calls. Callers that arrive while a derivation for the same analysis is in flight SHALL share that derivation, so a burst of agent reads costs one; its failure reaches only the callers that waited on it. The memo SHALL be invalidated for an analysis by any in-process action that moves or retires its root (rename, disposal), and SHALL additionally expire on a short TTL so an out-of-process anchor move cannot pin a stale root for the session's lifetime.
 
-The system SHALL expose `invalidateWorkspaceRoot(analysisId?)` — clearing one entry, or the whole memo when the id is omitted.
+The system SHALL expose `invalidateWorkspaceRoot(analysisId?)` — clearing one entry, or the whole memo when the id is omitted. An invalidation SHALL also drop a derivation in flight, so a root derived before a move never reaches the memo.
 
 #### Scenario: A resolved root is served from the memo
 
@@ -119,6 +121,12 @@ The system SHALL expose `invalidateWorkspaceRoot(analysisId?)` — clearing one 
 - **GIVEN** a memoized root for an analysis
 - **WHEN** `invalidateWorkspaceRoot(analysisId)` runs and the root is resolved again
 - **THEN** resolution goes back to the database
+
+#### Scenario: Concurrent callers share one derivation
+
+- **GIVEN** no memoized root for an analysis
+- **WHEN** two callers resolve its root before the first derivation ends
+- **THEN** both receive the result of one derivation
 
 #### Scenario: A failure is never memoized
 
