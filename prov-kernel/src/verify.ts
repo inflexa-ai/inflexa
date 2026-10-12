@@ -177,16 +177,19 @@ export async function buildAttestation(signer: ProvSigner, provJson: string, opt
     if (!jwk.success) return err({ type: "keypair_corrupt", cause: jwk.error });
 
     return computePayloadDigest(provJson).andThen((digest) =>
-        signer.sign(digest).map((signature): ProvAttestation => ({
-            payloadType: "application/json; profile=prov-json" as const,
-            payloadDigestAlgorithm: "SHA-256" as const,
-            payloadDigest: digest,
-            payloadDigestMethod: "verbatim" as const,
-            signatureAlgorithm: "Ed25519" as const,
-            signature,
-            publicKey: jwk.data,
-            kid: opts?.kid,
-        })),
+        signer.sign(digest).map((signature): ProvAttestation => {
+            const attestation: ProvAttestation = {
+                payloadType: "application/json; profile=prov-json" as const,
+                payloadDigestAlgorithm: "SHA-256" as const,
+                payloadDigest: digest,
+                payloadDigestMethod: "verbatim" as const,
+                signatureAlgorithm: "Ed25519" as const,
+                signature,
+                publicKey: jwk.data,
+            };
+            if (opts?.kid !== undefined) attestation.kid = opts.kid;
+            return attestation;
+        }),
     );
 }
 

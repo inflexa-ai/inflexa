@@ -57,6 +57,14 @@ describe("attestation", () => {
         expect(await verifyAttestation(provJson, attestation)).toEqual({ status: "valid" });
     });
 
+    test("a missing kid leaves the key off the attestation", async () => {
+        const kp = await makeKeypair();
+        const attestation = (await buildAttestation(createKeypairSigner(kp), provJson))._unsafeUnwrap();
+        expect("kid" in attestation).toBe(false);
+        expect(JSON.parse(JSON.stringify(attestation))).not.toHaveProperty("kid");
+        expect(await verifyAttestation(provJson, attestation)).toEqual({ status: "valid" });
+    });
+
     test("a modified payload reads tampered", async () => {
         const kp = await makeKeypair();
         const attestation = (await buildAttestation(createKeypairSigner(kp), provJson))._unsafeUnwrap();
