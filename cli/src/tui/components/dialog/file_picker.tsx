@@ -9,7 +9,7 @@ import { theme } from "../../theme.ts";
 import { KEYS, chordLabel, type Chord } from "../../keymap.ts";
 import { entryDetails, readFolder, type EntryDetails, type FolderEntry } from "../../../lib/folder_listing.ts";
 import { processIdentity, type ProcessIdentity } from "../../../lib/fs.ts";
-import { canonicalPath } from "../../../lib/paths.ts";
+import { canonicalPathAsync } from "../../../lib/paths.ts";
 import { openExternal } from "../../../lib/open_external.ts";
 import { notify } from "../../hooks/notice.ts";
 import { useDialogBindings, useDialogCancel, useDialogCloseGuard } from "./dialog_host.tsx";
@@ -27,7 +27,7 @@ import type { SelectItem } from "../list_core.tsx";
 //
 // Domain work (path classification, anchor-riding, dedup) is owned by the caller's WRITE path:
 // the picker hands a flat absolute string[] back and imports nothing from `modules/analysis/`
-// except `openerArgv` — that and `canonicalPath` are leaf-ish, render-free helpers (the same
+// except `openerArgv` — that and `canonicalPathAsync` are leaf-ish, render-free helpers (the same
 // class of exception as `chat.tsx` reaching for the marker grammar), which is what lets the
 // widget keep its `components/` home.
 //
@@ -90,6 +90,9 @@ type RowMeta = { mode: number | null; readable: boolean | null; sizeLabel: strin
 /** A directory listing, and whether it resolved metadata at all — see {@link METADATA_ENTRY_CEILING}. */
 type Listing = { rows: Row[]; withMetadata: boolean };
 
+/** One entry after its reads: its facts when the listing wanted them, and the value of its row. */
+type EntryRead = { details: EntryDetails | undefined; abs: string };
+
 /**
  * What an unreadable directory reads as: no rows, and no claim that a ceiling suppressed anything.
  * A module constant rather than a literal at the call site, because every read of the listing runs
@@ -97,8 +100,11 @@ type Listing = { rows: Row[]; withMetadata: boolean };
  */
 const EMPTY_LISTING: Listing = { rows: [], withMetadata: true };
 
-/** The outcome of the last read: its listing, or the message of an unreadable folder with no rows. */
-type ListState = { listing: Listing; error: string | null };
+/**
+ * The outcome of the last read: the folder that it shows, and its listing or the message of an unreadable folder
+ * with no rows. `path` is canonical after a read that worked, and the requested path after a read that failed.
+ */
+type ListState = { path: string; listing: Listing; error: string | null };
 
 /**
  * The fixed-width local timestamp of the date column.
@@ -147,46 +153,43 @@ export type FilePickerProps = {
  * (permission, broken mount): the caller renders it as the list's error line and the user ascends — a single
  * unreadable folder must not abort the picker.
  */
-function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | null): ResultAsync<Listing, string> {
+function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | null): ResultAsync<{ path: string; listing: Listing }, string> {
     return readFolder(dir, !hideHidden)
         .mapErr((e) => (e.cause instanceof Error ? e.cause.message : String(e.cause)))
-        .map(async ({ entries, rawCount }): Promise<Listing> => {
+        .map(async ({ path, entries, rawCount }): Promise<{ path: string; listing: Listing }> => {
             // Decided from the RAW entry count, not the filtered row count: hiding dot-entries must not be
             // what brings a 50k-entry folder under the ceiling, or `a` would silently start a huge stat pass.
             const withMetadata = rawCount <= METADATA_ENTRY_CEILING;
             // A link to a folder browses as a folder (node_modules/* is often a symlink), so a link needs its
             // `stat` even above the ceiling. Any other entry takes its `stat` only below it.
-            const details = await detailsInParallel(entries, (entry) => withMetadata || entry.kind === "symlink", identity);
+            const reads = await readEntries(entries, (entry) => withMetadata || entry.kind === "symlink", identity);
             const rows = entries.map((entry, i): Row => {
-                const facts = details[i];
-                // Symlink rows carry their CANONICAL target as the value: the selection space is
-                // canonical (classifyInputPath stores realpaths, the seed re-canonicalizes), so an
-                // uncanonical row would render a recorded input unchecked. canonicalPath degrades to
-                // the textual path for broken links, which then classify as file rows.
-                const abs = entry.kind === "symlink" ? canonicalPath(entry.path) : entry.path;
-                const isDir = entry.kind === "folder" || facts?.link?.targetKind === "folder";
-                return { name: entry.name, isDir, abs, meta: withMetadata ? rowMeta(facts) : undefined };
+                // The queue gives one read for each entry, index-aligned.
+                const { details, abs } = reads[i]!;
+                const isDir = entry.kind === "folder" || details?.link?.targetKind === "folder";
+                return { name: entry.name, isDir, abs, meta: withMetadata ? rowMeta(details) : undefined };
             });
             // The flag travels with the rows rather than being inferred from them downstream: "every row
             // lost its stat" is ALSO what a folder holding one broken symlink looks like, and reporting that
             // as a large folder states a cause that is not the one at hand.
-            return { rows, withMetadata };
+            return { path, listing: { rows, withMetadata } };
         });
 }
 
-/** The count of `stat` calls in flight in one listing. A folder of 50k links must not open 50k reads at one time. */
-const DETAILS_WIDTH = 16;
+/** The count of entries in flight in one listing. A folder of 50k links must not open 50k reads at one time. */
+const READ_WIDTH = 16;
 
 /**
- * The facts of each entry that `wanted` selects, read by a queue of {@link DETAILS_WIDTH} workers. The result is
- * index-aligned with `entries`, with `undefined` for an entry that was not read.
+ * The reads of each entry, by a queue of {@link READ_WIDTH} workers, index-aligned with `entries`. `wanted` selects
+ * the entries that get their facts.
+ *
+ * Symlink rows carry their CANONICAL target as the value: the selection space is canonical (classifyInputPath stores
+ * realpaths, the seed re-canonicalizes), so an uncanonical row would render a recorded input unchecked. The
+ * canonical form degrades to the textual path for a broken link, which then classifies as a file row. Each other
+ * entry path is already canonical, because the listing joins the canonical folder path with the name.
  */
-async function detailsInParallel(
-    entries: readonly FolderEntry[],
-    wanted: (entry: FolderEntry) => boolean,
-    identity: ProcessIdentity | null,
-): Promise<(EntryDetails | undefined)[]> {
-    const out: (EntryDetails | undefined)[] = new Array(entries.length).fill(undefined);
+async function readEntries(entries: readonly FolderEntry[], wanted: (entry: FolderEntry) => boolean, identity: ProcessIdentity | null): Promise<EntryRead[]> {
+    const out: EntryRead[] = new Array<EntryRead>(entries.length);
     let next = 0;
     async function worker(): Promise<void> {
         // `next` is shared, but each read and increment runs between two awaits, thus no index goes to two workers.
@@ -194,10 +197,14 @@ async function detailsInParallel(
             const i = next++;
             // The loop test keeps `i` below `entries.length`, thus the index holds an entry.
             const entry = entries[i]!;
-            if (wanted(entry)) out[i] = await entryDetails(entry, identity);
+            const [details, abs] = await Promise.all([
+                wanted(entry) ? entryDetails(entry, identity) : undefined,
+                entry.kind === "symlink" ? canonicalPathAsync(entry.path) : entry.path,
+            ]);
+            out[i] = { details, abs };
         }
     }
-    await Promise.all(Array.from({ length: DETAILS_WIDTH }, worker));
+    await Promise.all(Array.from({ length: READ_WIDTH }, worker));
     return out;
 }
 
@@ -273,17 +280,24 @@ function breadcrumbSegments(dir: string): string[] {
 
 export function FilePicker(props: FilePickerProps): JSX.Element {
     /* eslint-disable solid/reactivity -- seed-once: the picker mounts once with fixed props */
-    const [cwd, setCwd] = createSignal(canonicalPath(props.rootPath));
-    // Seed paths are canonicalized here so membership checks match the rows `listDir` constructs
-    // (the shared listing joins the canonical folder path with the name) — an uncanonicalized `/var/...` seed on macOS would silently
-    // miss its `/private/var/...` row. The picker owns this because only it knows its row keys.
-    const seedSelected: ReadonlySet<string> = new Set([...props.selectedPaths].map(canonicalPath));
-    /* eslint-enable solid/reactivity */
-
+    // The folder that the user asked for. The listing makes it canonical, and `cwd` is the folder on screen.
+    const [target, setTarget] = createSignal(props.rootPath);
+    const [root, setRoot] = createSignal(props.rootPath);
     // Mirror of the browse list's live selection (fed by onSelectionChange). The list owns the
     // set while browsing; the picker needs it for the footer count, for review mode, and as the
     // seed when the browse list REMOUNTS after review.
-    const [selected, setSelected] = createSignal<ReadonlySet<string>>(seedSelected);
+    const [selected, setSelected] = createSignal<ReadonlySet<string>>(props.selectedPaths);
+    // Seed paths are canonicalized here so membership checks match the rows `listDir` constructs
+    // (the shared listing joins the canonical folder path with the name) — an uncanonicalized `/var/...` seed on macOS would silently
+    // miss its `/private/var/...` row. The picker owns this because only it knows its row keys.
+    // The browse list reads its seed one time at mount, thus it mounts only after this lands.
+    const [seeded, setSeeded] = createSignal(false);
+    void Promise.all([canonicalPathAsync(props.rootPath), Promise.all([...props.selectedPaths].map(canonicalPathAsync))]).then(([canonicalRoot, seeds]) => {
+        setRoot(canonicalRoot);
+        setSelected(new Set(seeds));
+        setSeeded(true);
+    });
+    /* eslint-enable solid/reactivity */
     const [inputFocused, setInputFocused] = createSignal(false);
     const [hideHidden, setHideHidden] = createSignal(true);
     const [review, setReview] = createSignal(false);
@@ -299,7 +313,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     // navigation on a fast disk does not show an empty list for one frame.
     const [listed, setListed] = createSignal<ListState | null>(null);
     createEffect(() => {
-        const dir = cwd();
+        const dir = target();
         const hide = hideHidden();
         // A read that lands after the user moved on must not replace the rows of the newer folder.
         let current = true;
@@ -307,14 +321,16 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
             current = false;
         });
         void listDir(dir, hide, identity).match(
-            (listing) => {
-                if (current) setListed({ listing, error: null });
+            ({ path, listing }) => {
+                if (current) setListed({ path, listing, error: null });
             },
             (error) => {
-                if (current) setListed({ listing: EMPTY_LISTING, error });
+                if (current) setListed({ path: dir, listing: EMPTY_LISTING, error });
             },
         );
     });
+    // Navigation and the breadcrumb follow the folder on screen, thus they agree with the rows until the next read lands.
+    const cwd = (): string => listed()?.path ?? target();
     const listing = (): Listing => listed()?.listing ?? EMPTY_LISTING;
     const rows = (): Row[] => listing().rows;
     const listError = (): string | null => listed()?.error ?? null;
@@ -350,7 +366,8 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
         return abs === parentAbs() || (rows().find((r) => r.abs === abs)?.isDir ?? false);
     }
     function intoDir(abs: string): void {
-        setCwd(canonicalPath(abs));
+        // A row value is canonical, and the listing makes each other path canonical.
+        setTarget(abs);
         setQuery("");
         if (inputRef) inputRef.value = "";
     }
@@ -385,10 +402,10 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     // Review rows: root-relative when inside the picker's root so paths from different subdirs
     // are distinguishable without repeating the common ancestor on every line.
     const reviewItems = createMemo<SelectItem<string>[]>(() => {
-        const root = canonicalPath(props.rootPath);
+        const base = root();
         return [...selected()].sort().map((abs) => ({
             value: abs,
-            title: abs.startsWith(root + sep) ? abs.slice(root.length + 1) : abs,
+            title: abs.startsWith(base + sep) ? abs.slice(base.length + 1) : abs,
         }));
     });
     function removeSelected(abs: string): void {
@@ -417,7 +434,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
 
     // NORMAL-mode keys. Bare printables are compliant here: the layer is enabled only while no
     // editor holds focus (and suspends entirely during review, whose list owns the keyboard).
-    const normal = (): boolean => !inputFocused() && !review();
+    const normal = (): boolean => seeded() && !inputFocused() && !review();
     useDialogBindings(() => ({
         enabled: normal(),
         bindings: [
@@ -528,20 +545,22 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
                     sits ABOVE the list's flexGrow scrollbox — the one-cell scrollbox bleed only spills
                     onto the sibling BELOW it (there the list's own painted detail box reclaims the row). */}
                 <box height={space.sm} flexShrink={0} />
-                <DynamicList
-                    items={items()}
-                    query={query()}
-                    emptyText={listed() === null ? "Reading the folder" : query().trim() === "" ? "Empty folder" : "No matches"}
-                    errorText={listError()}
-                    mode="multi"
-                    initialSelected={selected()}
-                    canToggle={(abs) => abs !== parentAbs()}
-                    onAction={handleAction}
-                    onConfirm={handleConfirm}
-                    onSelectionChange={setSelected}
-                    onCursorChange={setCursorAbs}
-                    bareKeysEnabled={!inputFocused()}
-                />
+                <Show when={seeded()} fallback={<text fg={theme().fgMuted}>Reading the folder</text>}>
+                    <DynamicList
+                        items={items()}
+                        query={query()}
+                        emptyText={listed() === null ? "Reading the folder" : query().trim() === "" ? "Empty folder" : "No matches"}
+                        errorText={listError()}
+                        mode="multi"
+                        initialSelected={selected()}
+                        canToggle={(abs) => abs !== parentAbs()}
+                        onAction={handleAction}
+                        onConfirm={handleConfirm}
+                        onSelectionChange={setSelected}
+                        onCursorChange={setCursorAbs}
+                        bareKeysEnabled={!inputFocused()}
+                    />
+                </Show>
             </Show>
         </DialogPanel>
     );
