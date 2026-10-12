@@ -74,9 +74,22 @@ Every artifact in the initial catalog format SHALL describe one final file to st
 
 ### Requirement: Reference installation receipts record what was actually received
 
-The harness SHALL define a versioned receipt contract containing the dataset id and version, activation timestamp, and for each installed artifact its relative path and the byte size and SHA-256 digest **observed at install time**. A receipt SHALL be optional metadata: its absence or invalidity SHALL NOT mean the corresponding files are unavailable. A receipt written by an older build MAY carry a now-removed integrity field; parsing SHALL ignore it rather than reject the receipt.
+The harness MUST define a versioned receipt contract. The receipt MUST hold these fields:
 
-Observed digests SHALL NOT be copied from the catalog, which carries none: the receipt is the sole record of what the upstream served at install time, and is therefore what later verification compares the files against.
+- the dataset id and the dataset version
+- the activation timestamp
+- the content digest
+- for each installed artifact, its relative path, and the byte size and the SHA-256 digest **observed at install time**.
+
+A receipt MUST be optional metadata. If a receipt is absent or invalid, the files of the dataset MUST stay available.
+
+The observed digests MUST NOT come from the catalog, because the catalog holds no digest. The receipt is the only record of the bytes that the upstream served at install time. Thus later verification compares the files against the receipt.
+
+The content digest MUST be the lowercase hex SHA-256 of the UTF-8 bytes of one compact JSON array. The array is `[datasetId, datasetVersion, [[path, bytes, sha256], ...]]`. The artifact entries MUST be in ascending code-unit order of `path`.
+
+The activation timestamp MUST NOT enter the content digest. Thus two installs of the same dataset version with the same bytes have the same content digest.
+
+The harness MUST expose the calculation of the content digest, so that each embedder writes the same value. The parse MUST reject a receipt whose content digest is not equal to the digest of its own fields.
 
 #### Scenario: Different embedders describe the same installation
 
@@ -92,6 +105,26 @@ Observed digests SHALL NOT be copied from the catalog, which carries none: the r
 
 - **WHEN** discovery encounters an invalid or stale receipt beside readable reference files
 - **THEN** it reports the filesystem content without receipt enrichment rather than treating the store as unavailable
+
+#### Scenario: The same bytes installed at different times share one content digest
+
+- **WHEN** two installs of the same dataset version observe the same path, size, and digest for each artifact at different activation times
+- **THEN** the receipts have different activation timestamps and the same content digest
+
+#### Scenario: The content digest does not depend on artifact order
+
+- **WHEN** two receipts list the same artifacts in a different order
+- **THEN** the two receipts have the same content digest
+
+#### Scenario: A receipt of an older contract version is rejected
+
+- **WHEN** a receipt has a version other than the current receipt version, even with a correct content digest
+- **THEN** the parse rejects the receipt as invalid
+
+#### Scenario: A content digest that disagrees with the receipt is rejected
+
+- **WHEN** the content digest of a receipt is not equal to the digest of its dataset id, dataset version, and artifacts
+- **THEN** the parse rejects the receipt as invalid
 
 ### Requirement: The harness does not provision reference bytes
 

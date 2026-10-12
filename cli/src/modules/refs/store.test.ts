@@ -5,7 +5,15 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 
-import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type ReferenceDataCatalog } from "@inflexa-ai/harness";
+import {
+    REFERENCE_DATA_CATALOG_VERSION,
+    REFERENCE_INSTALL_RECEIPT_VERSION,
+    UnknownReferenceDatasetError,
+    referenceReceiptContentDigest,
+    type ReferenceDataCatalog,
+    type ReferenceInstallReceipt,
+    type ReferenceReceiptArtifact,
+} from "@inflexa-ai/harness";
 import { err, ok } from "neverthrow";
 
 import {
@@ -33,6 +41,18 @@ function root(): string {
 
 function sha(bytes: string): string {
     return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** A valid receipt, as a completed install writes it. */
+function receipt(datasetId: string, datasetVersion: string, activatedAt: string, artifacts: ReferenceReceiptArtifact[]): ReferenceInstallReceipt {
+    return {
+        version: REFERENCE_INSTALL_RECEIPT_VERSION,
+        datasetId,
+        datasetVersion,
+        activatedAt,
+        contentDigest: referenceReceiptContentDigest({ datasetId, datasetVersion, artifacts }),
+        artifacts,
+    };
 }
 
 /** One catalog artifact paired with the bytes its (offline) upstream serves for it. */
@@ -154,13 +174,7 @@ describe("reference store inspection", () => {
 
         writeFileSync(
             join(paths.receipts, "demo.json"),
-            JSON.stringify({
-                version: 1,
-                datasetId: "demo",
-                datasetVersion: "2025.01",
-                activatedAt: "2026-07-14T12:00:00.000Z",
-                artifacts: [{ path: "old.txt", bytes: 3, sha256: sha("old") }],
-            }),
+            JSON.stringify(receipt("demo", "2025.01", "2026-07-14T12:00:00.000Z", [{ path: "old.txt", bytes: 3, sha256: sha("old") }])),
         );
         mkdirSync(join(paths.managed, "demo", "2025.01"), { recursive: true });
         writeFileSync(join(paths.managed, "demo", "2025.01", "old.txt"), "old");
@@ -201,16 +215,12 @@ describe("installation", () => {
         const paths = referenceStorePaths(path);
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "nested", "a.txt"), "utf8")).toBe("alpha");
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "b.txt"), "utf8")).toBe("beta");
-        expect(JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8"))).toEqual({
-            version: 1,
-            datasetId: "demo",
-            datasetVersion: "2026.07",
-            activatedAt: "2026-07-14T12:00:00.000Z",
-            artifacts: [
+        expect(JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8"))).toEqual(
+            receipt("demo", "2026.07", "2026-07-14T12:00:00.000Z", [
                 { path: "nested/a.txt", bytes: 5, sha256: sha("alpha") },
                 { path: "b.txt", bytes: 4, sha256: sha("beta") },
-            ],
-        });
+            ]),
+        );
         expect(readFileSync(join(path, "user", "mine.fa"), "utf8")).toBe("mine");
         // The WHOLE download cache, not just `*.part`: each entry is a second full copy of its
         // artifact, so one left behind silently doubles the store's size for every dataset installed.
@@ -243,6 +253,29 @@ describe("installation", () => {
     // The installer always refetches whole (covered below) and trusts-on-first-use whatever https
     // serves, recording the observed bytes in the receipt (covered above).
 
+    // A consumer pins a store by the content of its receipts, so the install time must not change the identity.
+    test("installs of the same bytes at different times share one content digest", async () => {
+        const fixture = catalog();
+        const receipts = [];
+        for (const now of ["2026-07-14T12:00:00.000Z", "2026-09-01T08:00:00.000Z"]) {
+            const path = root();
+            const installed = await installReferenceDatasets(["demo"], {
+                root: path,
+                source: source(fixture),
+                fetch: serve(ARTIFACTS),
+                now: () => new Date(now),
+            });
+            expect(installed.isOk()).toBe(true);
+            receipts.push(JSON.parse(readFileSync(join(referenceStorePaths(path).receipts, "demo.json"), "utf8")));
+        }
+
+        expect(receipts[0].activatedAt).not.toBe(receipts[1].activatedAt);
+        expect(receipts[0].contentDigest).toBe(receipts[1].contentDigest);
+        expect(receipts[0].contentDigest).toBe(
+            referenceReceiptContentDigest({ datasetId: "demo", datasetVersion: "2026.07", artifacts: [{ path: "a.txt", bytes: 5, sha256: sha("alpha") }] }),
+        );
+    });
+
     test("an interrupted stream never activates partial data", async () => {
         const path = root();
         const fixture = catalog();
@@ -265,13 +298,7 @@ describe("installation", () => {
         mkdirSync(join(paths.managed, "demo", "2025.01"), { recursive: true });
         mkdirSync(dirname(receiptPath), { recursive: true });
         writeFileSync(join(paths.managed, "demo", "2025.01", "old.txt"), "old");
-        const prior = JSON.stringify({
-            version: 1,
-            datasetId: "demo",
-            datasetVersion: "2025.01",
-            activatedAt: "2025-01-01T00:00:00.000Z",
-            artifacts: [{ path: "old.txt", bytes: 3, sha256: sha("old") }],
-        });
+        const prior = JSON.stringify(receipt("demo", "2025.01", "2025-01-01T00:00:00.000Z", [{ path: "old.txt", bytes: 3, sha256: sha("old") }]));
         writeFileSync(receiptPath, prior);
 
         // The update fetch fails outright (a 404 from the upstream); activation is atomic, so the prior
@@ -640,13 +667,7 @@ describe("installer-owned path safety", () => {
 
         writeFileSync(
             join(paths.receipts, "demo.json"),
-            JSON.stringify({
-                version: 1,
-                datasetId: "demo",
-                datasetVersion: "2026.07",
-                activatedAt: "2026-07-14T10:30:00.000Z",
-                artifacts: [{ path: "../../../user/private.txt", bytes: 42, sha256: sha("alpha") }],
-            }),
+            JSON.stringify(receipt("demo", "2026.07", "2026-07-14T10:30:00.000Z", [{ path: "../../../user/private.txt", bytes: 42, sha256: sha("alpha") }])),
         );
 
         const verified = await verifyReferenceDatasets(path, ["demo"], source(fixture));
@@ -676,13 +697,7 @@ describe("projection documents", () => {
                     artifacts: [{ path: "a.txt", url: "https://upstream.test/a.txt", format: "txt", contents: "test fixture artifact" }],
                 },
                 state: "installed",
-                receipt: {
-                    version: 1,
-                    datasetId: "alpha",
-                    datasetVersion: "2026.07",
-                    activatedAt: "2026-07-14T12:00:00.000Z",
-                    artifacts: [{ path: "a.txt", bytes: 5, sha256: sha("alpha") }],
-                },
+                receipt: receipt("alpha", "2026.07", "2026-07-14T12:00:00.000Z", [{ path: "a.txt", bytes: 5, sha256: sha("alpha") }]),
             },
             {
                 dataset: {
@@ -764,13 +779,7 @@ describe("projection documents", () => {
                         artifacts: [{ path: "g.txt", url: "https://upstream.test/g.txt", format: "txt", contents: "test fixture artifact" }],
                     },
                     state: "partial",
-                    receipt: {
-                        version: 1,
-                        datasetId: "gamma",
-                        datasetVersion: "2026.07",
-                        activatedAt: "2026-07-14T12:00:00.000Z",
-                        artifacts: [{ path: "g.txt", bytes: 5, sha256: sha("gamma") }],
-                    },
+                    receipt: receipt("gamma", "2026.07", "2026-07-14T12:00:00.000Z", [{ path: "g.txt", bytes: 5, sha256: sha("gamma") }]),
                 },
             ],
             userContent: [],

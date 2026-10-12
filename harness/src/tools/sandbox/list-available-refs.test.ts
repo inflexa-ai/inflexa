@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { REFERENCE_INSTALL_RECEIPT_VERSION, referenceReceiptContentDigest } from "../../reference-data/receipt.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { createListAvailableRefsTool } from "./list-available-refs.js";
 
@@ -19,15 +20,17 @@ function createTool(refStorePath?: string) {
 }
 
 async function writeReceipt(root: string, datasetId: string, datasetVersion: string, artifacts: { path: string; bytes: number }[]): Promise<void> {
+    const receiptArtifacts = artifacts.map((artifact) => ({ ...artifact, sha256: HASH }));
     await mkdir(join(root, ".inflexa", "receipts"), { recursive: true });
     await writeFile(
         join(root, ".inflexa", "receipts", `${datasetId}.json`),
         JSON.stringify({
-            version: 1,
+            version: REFERENCE_INSTALL_RECEIPT_VERSION,
             datasetId,
             datasetVersion,
             activatedAt: "2026-07-14T10:30:00.000Z",
-            artifacts: artifacts.map((artifact) => ({ ...artifact, sha256: HASH })),
+            contentDigest: referenceReceiptContentDigest({ datasetId, datasetVersion, artifacts: receiptArtifacts }),
+            artifacts: receiptArtifacts,
         }),
     );
 }

@@ -8,6 +8,7 @@ import {
     REFERENCE_DATA_CATALOG,
     REFERENCE_INSTALL_RECEIPT_VERSION,
     parseReferenceInstallReceipt,
+    referenceReceiptContentDigest,
     referenceArtifactKey,
     resolveReferenceInstallPlan,
     type ReferenceArtifact,
@@ -1015,6 +1016,7 @@ async function installDataset(
             datasetId: dataset.id,
             datasetVersion: dataset.version,
             activatedAt: (deps.now?.() ?? new Date()).toISOString(),
+            contentDigest: referenceReceiptContentDigest({ datasetId: dataset.id, datasetVersion: dataset.version, artifacts: observed }),
             artifacts: observed,
         };
         const receiptWrite = await writeReceiptAtomic(receiptPath, receipt);

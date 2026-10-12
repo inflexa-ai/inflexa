@@ -766,8 +766,13 @@ export {
     resolveReferenceInstallPlan,
 } from "./reference-data/catalog.js";
 export type { ReferenceArtifact, ReferenceDataCatalog, ReferenceDataset, ReferenceInstallPlan, ReferenceInstallPlanDataset } from "./reference-data/catalog.js";
-export { REFERENCE_INSTALL_RECEIPT_VERSION, ReferenceInstallReceiptSchema, parseReferenceInstallReceipt } from "./reference-data/receipt.js";
-export type { ReferenceInstallReceipt, ReferenceReceiptArtifact } from "./reference-data/receipt.js";
+export {
+    REFERENCE_INSTALL_RECEIPT_VERSION,
+    ReferenceInstallReceiptSchema,
+    parseReferenceInstallReceipt,
+    referenceReceiptContentDigest,
+} from "./reference-data/receipt.js";
+export type { ReferenceInstallReceipt, ReferenceReceiptArtifact, ReferenceReceiptContent } from "./reference-data/receipt.js";
 
 // Workspace-tree path convention — the root-relative step directory each
 // sandbox step confines its artifact writes to (join onto the resolved root).
