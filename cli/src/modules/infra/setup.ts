@@ -9,6 +9,7 @@ import pkg from "../../../package.json";
 import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
 import { Result, ok, err } from "neverthrow";
 import { z } from "zod";
+import type { BootPullProgress, BootStepId } from "../../api/server.ts";
 import {
     ensureRuntime,
     readConfig,
@@ -3178,10 +3179,17 @@ export type ProxyReadyOpts = {
      * the boot until someone answers it.
      */
     readonly interactiveLogin: boolean;
+    /** Runs at the start of each boot step. */
+    readonly onStep: (id: BootStepId) => void;
+    /** Runs with the moved bytes of the pull of the missing images, when the engine API reports them. */
+    readonly onPullProgress: (progress: BootPullProgress) => void;
 };
 
-/** The {@link ProxyReadyOpts} of `inflexa up` in the terminal of the user: the login prompts when stdin is a TTY. */
-export const DEFAULT_PROXY_READY_OPTS: ProxyReadyOpts = { interactiveLogin: true };
+/**
+ * The {@link ProxyReadyOpts} of `inflexa up` in the terminal of the user: the login prompts when stdin is a TTY,
+ * and nothing reports the steps.
+ */
+export const DEFAULT_PROXY_READY_OPTS: ProxyReadyOpts = { interactiveLogin: true, onStep: () => undefined, onPullProgress: () => undefined };
 
 /**
  * Make the chat backend's local prerequisites ready: for the server boot, and for
@@ -3199,6 +3207,7 @@ export async function ensureProxyReady(
     mode: "cliproxy" | "direct",
     opts: ProxyReadyOpts = DEFAULT_PROXY_READY_OPTS,
 ): Promise<Result<void, ProxyError | ContainerRuntimeError>> {
+    opts.onStep("container_engine");
     const rtResult = await ensureRuntime();
     if (rtResult.isErr()) return err(rtResult.error);
     const rt = rtResult.value;
@@ -3208,6 +3217,7 @@ export async function ensureProxyReady(
     // and embedder steps below still run as mode-independent prerequisites.
     let proxyIsStale = false;
     if (mode === "cliproxy") {
+        opts.onStep("proxy");
         const writeResult = await writeProxyConfig();
         if (writeResult.isErr()) {
             // Known filesystem-state faults surface with their diagnosis + remediation naming the path,
@@ -3255,6 +3265,7 @@ export async function ensureProxyReady(
     // Compose up is idempotent — starts only containers that aren't running. Always regenerate the
     // compose file for the resolved mode (authoritative regeneration point): a mode switch since the
     // last launch rewrites it coherently — proxy service dropped for direct, present for cliproxy.
+    opts.onStep("images");
     const conn = resolvePostgresConfig();
     const composeWriteErr = writeComposeFile(conn, mode).match(
         () => null,
@@ -3267,11 +3278,12 @@ export async function ensureProxyReady(
     // Pull missing images with streaming progress before compose up. compose up -d
     // would implicitly pull via capture(), but that buffers silently and makes the
     // TUI launch appear to hang on a fresh install.
-    const pullResult = await composePullIfMissing(rt, mode);
+    const pullResult = await composePullIfMissing(rt, mode, opts.onPullProgress);
     if (pullResult.isErr()) {
         return err(new ProxyError(pullResult.error.message));
     }
 
+    opts.onStep("containers");
     const upResult = await composeUp(rt, mode);
     if (upResult.isErr()) {
         return err(new ProxyError(`Failed to start containers: ${upResult.error.message}`));
@@ -3291,6 +3303,7 @@ export async function ensureProxyReady(
                 return err(new ProxyError(`Could not restart the proxy to pick up the changed config or login: ${restarted.error.message}`));
             }
         }
+        opts.onStep("credential");
         const live = await verifyCredentialAtLaunch(rt, opts);
         if (live.isErr()) return err(live.error);
 
@@ -3304,6 +3317,7 @@ export async function ensureProxyReady(
     // ensure the GGUF is still present. We do NOT run the interactive setup
     // prompt here (that belongs to `inflexa setup`) — a missing model after a
     // prior opt-in surfaces as an actionable error.
+    opts.onStep("embedder");
     const { ensureEmbedderReady } = await import("../embedding/setup.ts");
     const embedResult = await ensureEmbedderReady();
     if (embedResult.isErr()) {

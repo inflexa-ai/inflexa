@@ -20,11 +20,18 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
-import { z } from "zod";
 
 import { selfInvocation } from "../../lib/cli.ts";
 import { ensureRuntime } from "../../lib/config.ts";
-import { capture, resolveEngineSocket, type ContainerRuntime } from "../../lib/container.ts";
+import {
+    capture,
+    pullImageThroughEngine,
+    resolveEngineSocket,
+    resolveImageTotalBytes,
+    type ContainerRuntime,
+    type EnginePullOutcome,
+    type EnginePullProgress,
+} from "../../lib/container.ts";
 import { acquireInstanceLock, instanceLockHolder, releaseInstanceLock, TRANSFER_LOCK_KEY_PREFIX } from "../../lib/lock.ts";
 import { getTransfer, listTransfers } from "../../db/primary_query.ts";
 import { recordTransferProgress, recordTransferResolve, settleTransfer, startTransferRun } from "../../db/primary_mutation.ts";
@@ -180,150 +187,6 @@ const PULL_PROGRESS_WRITE_INTERVAL_MS = 500;
 /** The heartbeat cadence of the CLI-pull fallback: the row's `updated_at` moves, thus the row never reads as stuck. */
 const PULL_HEARTBEAT_MS = 2000;
 
-/** The docker-API architecture name of this host, for the manifest-index pick. */
-function hostArchitecture(): string {
-    return process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "amd64" : process.arch;
-}
-
-/** An image reference split for the docker-compat pull API: the repository, and the tag (`latest` when the reference names none). */
-function splitImageRef(image: string): { repo: string; tag: string } {
-    const slash = image.lastIndexOf("/");
-    const name = image.slice(slash + 1);
-    const colon = name.indexOf(":");
-    if (colon < 0) return { repo: image, tag: "latest" };
-    return { repo: image.slice(0, slash + 1) + name.slice(0, colon), tag: name.slice(colon + 1) };
-}
-
-/** One registry manifest, leniently: an image manifest carries `layers`, and an index carries `manifests`. */
-const manifestSchema = z
-    .object({
-        layers: z.array(z.object({ size: z.number() }).passthrough()).optional(),
-        manifests: z
-            .array(z.object({ digest: z.string(), platform: z.object({ architecture: z.string() }).passthrough().optional() }).passthrough())
-            .optional(),
-    })
-    .passthrough();
-
-/**
- * The total bytes of an image, summed over the layer sizes of its registry
- * manifest — resolved BEFORE the pull, thus the meter has its total from the
- * first byte. An index resolves through the entry of this host architecture.
- * `null` when the manifest cannot answer, and the row then renders the moved
- * bytes alone.
- */
-async function resolveImageTotalBytes(rt: ContainerRuntime, image: string): Promise<number | null> {
-    const probe = async (ref: string): Promise<{ code: number; stdout: string } | null> => {
-        try {
-            return await capture(rt, ["manifest", "inspect", ref]);
-        } catch {
-            return null;
-        }
-    };
-    const sumLayers = (raw: string): number | null => {
-        const parsed = JSON.parseWith(raw, manifestSchema);
-        if (parsed?.layers === undefined || parsed.layers.length === 0) return null;
-        return parsed.layers.reduce((n, layer) => n + layer.size, 0);
-    };
-    const first = await probe(image);
-    if (first === null || first.code !== 0) return null;
-    const direct = sumLayers(first.stdout);
-    if (direct !== null) return direct;
-    const parsed = JSON.parseWith(first.stdout, manifestSchema);
-    const entry = parsed?.manifests?.find((candidate) => candidate.platform?.architecture === hostArchitecture());
-    if (entry === undefined) return null;
-    const { repo } = splitImageRef(image);
-    const arch = await probe(`${repo}@${entry.digest}`);
-    if (arch === null || arch.code !== 0) return null;
-    return sumLayers(arch.stdout);
-}
-
-/** One progress event of the docker-compat pull stream. An `error` event ends the pull with that reason. */
-const pullEventSchema = z
-    .object({
-        id: z.string().optional(),
-        status: z.string().optional(),
-        error: z.string().optional(),
-        progressDetail: z.object({ current: z.number().optional(), total: z.number().optional() }).optional(),
-    })
-    .passthrough();
-
-/** How one API pull ended. `unavailable` sends the caller to the CLI fallback, and it is not a failure. */
-type ApiPullOutcome = { readonly kind: "completed" } | { readonly kind: "failed"; readonly message: string } | { readonly kind: "unavailable" };
-
-/**
- * Pull through the docker-compat API of the engine, and stream the per-layer
- * byte progress into the row. The engine serves `POST /images/create` as a
- * line stream of JSON events, and each `progressDetail.current` is the bytes
- * of one layer so far — the sum is what the meter renders. The CLI `pull`
- * reports no byte figure at all, which is the reason this path exists.
- *
- * An unreachable socket, or a stream that cannot start, reads as
- * `unavailable`: the caller then pulls through the CLI, and only the byte
- * readout is lost.
- */
-async function apiPullImage(rt: ContainerRuntime, image: string, kind: "runtime_image" | "provisioner_image"): Promise<ApiPullOutcome> {
-    const socket = (await resolveEngineSocket(rt)).unwrapOr(undefined);
-    if (socket === undefined) return { kind: "unavailable" };
-    const { repo, tag } = splitImageRef(image);
-    let response: Response;
-    try {
-        // `unix` is the Bun fetch extension that dials a unix socket; the host
-        // name of the URL is decoration the engine never reads.
-        response = await fetch(`http://engine/v1.41/images/create?fromImage=${encodeURIComponent(repo)}&tag=${encodeURIComponent(tag)}`, {
-            method: "POST",
-            unix: socket,
-        });
-    } catch {
-        return { kind: "unavailable" };
-    }
-    if (!response.ok || response.body === null) return { kind: "unavailable" };
-
-    const layerBytes = new Map<string, number>();
-    const layersDone = new Set<string>();
-    let failure: string | null = null;
-    let lastWrite = 0;
-    let buffer = "";
-    const decoder = new TextDecoder();
-    const consume = (line: string): void => {
-        const event = JSON.parseWith(line, pullEventSchema);
-        if (event === null) return;
-        if (event.error !== undefined) failure = event.error;
-        if (event.id === undefined) return;
-        const current = event.progressDetail?.current;
-        // The stream repeats each layer with a growing `current`; the map keeps
-        // the newest figure, and the sum over the map is the moved total.
-        if (current !== undefined) layerBytes.set(event.id, Math.max(current, layerBytes.get(event.id) ?? 0));
-        if (event.status === "Pull complete" || event.status === "Already exists") layersDone.add(event.id);
-    };
-    for await (const chunk of response.body) {
-        buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk);
-        for (;;) {
-            const newline = buffer.indexOf("\n");
-            if (newline < 0) break;
-            const line = buffer.slice(0, newline).trim();
-            buffer = buffer.slice(newline + 1);
-            if (line !== "") consume(line);
-        }
-        const now = Date.now();
-        if (now - lastWrite >= PULL_PROGRESS_WRITE_INTERVAL_MS) {
-            lastWrite = now;
-            // Discarded on failure, and deliberately: the row is a readout, thus a
-            // database this child cannot write must never abort a pull.
-            recordTransferProgress(kind, {
-                bytesTransferred: [...layerBytes.values()].reduce((n, b) => n + b, 0),
-                layersCompleted: layersDone.size,
-            }).unwrapOr(0);
-        }
-    }
-    if (buffer.trim() !== "") consume(buffer.trim());
-    recordTransferProgress(kind, {
-        bytesTransferred: [...layerBytes.values()].reduce((n, b) => n + b, 0),
-        layersCompleted: layersDone.size,
-    }).unwrapOr(0);
-    if (failure !== null) return { kind: "failed", message: failure };
-    return { kind: "completed" };
-}
-
 /**
  * The body of one detached image-transfer child: pull the image, make sure of
  * the digest, and only then remove the superseded image.
@@ -380,7 +243,26 @@ export async function runImageTransfer(kind: "runtime_image" | "provisioner_imag
         const totalBytes = await resolveImageTotalBytes(rt, image);
         if (totalBytes !== null) recordTransferResolve(kind, { digest: "", totalBytes, totalLayers: null }).unwrapOr(0);
 
-        const api = await apiPullImage(rt, image, kind);
+        const socket = (await resolveEngineSocket(rt)).unwrapOr(undefined);
+        const latest: { progress: EnginePullProgress | null } = { progress: null };
+        let lastWrite = 0;
+        const writeProgress = (progress: EnginePullProgress): void => {
+            // Discarded on failure, and deliberately: the row is a readout, thus a
+            // database this child cannot write must never abort a pull.
+            recordTransferProgress(kind, { bytesTransferred: progress.doneBytes, layersCompleted: progress.layersCompleted }).unwrapOr(0);
+        };
+        const api: EnginePullOutcome =
+            socket === undefined
+                ? { kind: "unavailable" }
+                : await pullImageThroughEngine(socket, image, (progress) => {
+                      latest.progress = progress;
+                      const now = Date.now();
+                      if (now - lastWrite < PULL_PROGRESS_WRITE_INTERVAL_MS) return;
+                      lastWrite = now;
+                      writeProgress(progress);
+                  });
+        // The throttle can skip the last report, thus the final figure is written once more.
+        if (latest.progress !== null) writeProgress(latest.progress);
         if (api.kind === "failed") {
             settleTransfer(kind, {
                 state: "failed",

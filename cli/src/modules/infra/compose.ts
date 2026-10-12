@@ -3,7 +3,8 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { Result, ok, err } from "neverthrow";
-import { capture, inherit, type ContainerRuntime } from "../../lib/container.ts";
+import type { BootPullProgress } from "../../api/server.ts";
+import { capture, inherit, pullImageThroughEngine, resolveEngineSocket, resolveImageTotalBytes, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { CONTAINER_DATA_PATH, CONTAINER_PG_PORT, DEFAULT_IMAGE, type PostgresConnection, type PostgresError } from "./postgres_types.ts";
 import { formatInfraStateError, writeProxyConfig, type InfraStateError } from "./proxy_config.ts";
@@ -383,22 +384,73 @@ export async function composePullInteractive(rt: ContainerRuntime): Promise<Resu
 }
 
 /**
- * Pull any compose images that are not already present locally, streaming progress
- * to the terminal. Skips the network round-trip entirely when every image is cached.
+ * Pull any compose images that are not already present locally. Skips the network round-trip entirely when
+ * every image is cached.
+ *
+ * When the engine socket resolves (Podman), each missing image pulls through the engine API, so
+ * `onProgress` gets the summed moved bytes with the summed total. A report with a sum of 0 bytes is not a
+ * byte report, thus `onProgress` does not run for it. Else (Docker resolves no socket) the pull is
+ * `compose pull` with inherited stdio, and `onProgress` never runs.
+ *
+ * An error event, or a broken stream, of the engine fails the pull. An engine that cannot start the pull,
+ * and an image that the engine does not hold under its compose reference after a completed pull, go to
+ * `compose pull`: the step must end with every image under its compose reference, or `compose up` pulls
+ * again with no report. The fallback reports no more progress.
  */
-export async function composePullIfMissing(rt: ContainerRuntime, mode: ConnectionMode): Promise<Result<void, PostgresError>> {
+export async function composePullIfMissing(
+    rt: ContainerRuntime,
+    mode: ConnectionMode,
+    onProgress: (progress: BootPullProgress) => void,
+): Promise<Result<void, PostgresError>> {
     // Only the images the compose file for this mode actually defines: direct mode omits the proxy.
     const images = mode === "cliproxy" ? [PROXY_IMAGE, DEFAULT_IMAGE] : [DEFAULT_IMAGE];
-    const missing = await Promise.all(
+    const held = await Promise.all(
         images.map(async (image) => {
             const { code } = await capture(rt, ["image", "inspect", image]);
-            return code !== 0;
+            return code === 0;
         }),
     );
-    if (!missing.some(Boolean)) return ok(undefined);
+    const missing = images.filter((_, i) => !held[i]);
+    if (missing.length === 0) return ok(undefined);
 
     console.log("  Pulling container images (this may take a moment)…");
-    return composePullInteractive(rt);
+    const pulled = await pullMissingImages(rt, missing, onProgress);
+    console.log(pulled.isOk() ? "  Container images are ready." : "  The pull of the container images failed.");
+    return pulled;
+}
+
+/** The pull of the missing images: through the engine API when a socket resolves, else `compose pull`. */
+async function pullMissingImages(
+    rt: ContainerRuntime,
+    missing: string[],
+    onProgress: (progress: BootPullProgress) => void,
+): Promise<Result<void, PostgresError>> {
+    const socket = (await resolveEngineSocket(rt)).unwrapOr(undefined);
+    if (socket === undefined) return composePullInteractive(rt);
+
+    const sizes = await Promise.all(missing.map((image) => resolveImageTotalBytes(rt, image)));
+    const totalBytes = sizes.every((size) => size !== null) ? sizes.reduce<number>((sum, size) => sum + (size ?? 0), 0) : null;
+    const moved = new Map<string, number>();
+    // Every pull settles before the outcome is read, so no pull reports after the gate moved on.
+    const results = await Promise.all(
+        missing.map(async (image) => ({
+            image,
+            outcome: await pullImageThroughEngine(socket, image, (progress) => {
+                moved.set(image, progress.doneBytes);
+                const doneBytes = [...moved.values()].reduce((sum, bytes) => sum + bytes, 0);
+                if (doneBytes > 0) onProgress({ doneBytes, totalBytes });
+            }),
+        })),
+    );
+
+    for (const { image, outcome } of results) {
+        if (outcome.kind === "failed") return err({ type: "image_pull_failed", image, message: `Failed to pull ${image}: ${outcome.message}` });
+    }
+    if (results.some(({ outcome }) => outcome.kind === "unavailable")) return composePullInteractive(rt);
+
+    const heldNow = await Promise.all(missing.map(async (image) => (await capture(rt, ["image", "inspect", image])).code === 0));
+    if (!heldNow.every(Boolean)) return composePullInteractive(rt);
+    return ok(undefined);
 }
 
 /** Stop and remove all compose-managed containers and the shared network. */

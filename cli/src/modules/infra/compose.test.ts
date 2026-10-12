@@ -6,6 +6,7 @@ import { ok, err } from "neverthrow";
 import * as compose from "./compose.ts";
 import {
     POSTGRES_CONTAINER_NAME,
+    PROXY_IMAGE,
     POSTGRES_VOLUME_NAME,
     PROXY_CONTAINER_NAME,
     ensureMountSources,
@@ -19,12 +20,14 @@ import {
 } from "./compose.ts";
 import { up } from "./lifecycle.ts";
 import { ensurePostgresReady } from "./postgres.ts";
+import { DEFAULT_IMAGE } from "./postgres_types.ts";
 import * as config from "../../lib/config.ts";
 import { resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import * as container from "../../lib/container.ts";
-import { runtimes } from "../../lib/container.ts";
+import { runtimes, type EnginePullOutcome, type EnginePullProgress } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
+import type { BootPullProgress } from "../../api/server.ts";
 
 /**
  * Every absolute host path bound as a volume in a generated compose file, read back as the YAML parser
@@ -437,5 +440,176 @@ describe("removePostgresVolume", () => {
         expect(error.type).toBe("volume_remove_failed");
         expect(error.message).toContain("volume is in use");
         expect(error.message).toContain(`docker volume rm ${POSTGRES_VOLUME_NAME}`);
+    });
+});
+
+describe("composePullIfMissing", () => {
+    const spies: Array<{ mockRestore: () => void }> = [];
+    afterEach(() => {
+        for (const spy of spies.splice(0)) spy.mockRestore();
+    });
+
+    type Pull = { reports?: number[]; outcome?: EnginePullOutcome };
+
+    /**
+     * Script the engine. `held` lists the images the engine holds before the pull. A pull that completes adds its
+     * image to the engine unless `holdsAfterPull` is false. `socket` is the resolved engine socket.
+     */
+    function script(opts: { held?: string[]; socket?: string; holdsAfterPull?: boolean; sizes?: Record<string, number | null>; pulls?: Record<string, Pull> }) {
+        const held = new Set(opts.held ?? []);
+        const inherited: string[][] = [];
+        const pulled: Array<{ socket: string; image: string }> = [];
+        const logs: string[] = [];
+        spies.push(
+            spyOn(container, "capture").mockImplementation(async (_rt, args) => ({ code: held.has(args[2] ?? "") ? 0 : 1, stdout: "", stderr: "" })),
+            spyOn(container, "inherit").mockImplementation(async (_rt, args) => {
+                inherited.push(args);
+                return 0;
+            }),
+            spyOn(container, "resolveEngineSocket").mockImplementation(async () => ok(opts.socket)),
+            spyOn(container, "resolveImageTotalBytes").mockImplementation(async (_rt, image) => opts.sizes?.[image] ?? null),
+            spyOn(container, "pullImageThroughEngine").mockImplementation(async (socket, image, onProgress) => {
+                pulled.push({ socket, image });
+                const pull = opts.pulls?.[image] ?? {};
+                for (const doneBytes of pull.reports ?? []) onProgress({ doneBytes, layersCompleted: 0 } satisfies EnginePullProgress);
+                const outcome = pull.outcome ?? { kind: "completed" };
+                if (outcome.kind === "completed" && opts.holdsAfterPull !== false) held.add(image);
+                return outcome;
+            }),
+            spyOn(console, "log").mockImplementation((line: unknown) => {
+                logs.push(String(line));
+            }),
+        );
+        return { inherited, pulled, logs };
+    }
+
+    test("nothing is missing: no pull, no line, no report", async () => {
+        const run = script({ held: [PROXY_IMAGE, DEFAULT_IMAGE], socket: "/engine.sock" });
+        const reports: BootPullProgress[] = [];
+
+        expect((await compose.composePullIfMissing(runtimes.podman, "cliproxy", (p) => reports.push(p))).isOk()).toBe(true);
+
+        expect(run.pulled).toEqual([]);
+        expect(run.inherited).toEqual([]);
+        expect(run.logs).toEqual([]);
+        expect(reports).toEqual([]);
+    });
+
+    test("no socket path pulls with `compose pull` and reports no progress", async () => {
+        const run = script({ socket: undefined });
+        const reports: BootPullProgress[] = [];
+
+        expect((await compose.composePullIfMissing(runtimes.docker, "direct", (p) => reports.push(p))).isOk()).toBe(true);
+
+        expect(run.pulled).toEqual([]);
+        expect(run.inherited).toHaveLength(1);
+        expect(run.inherited[0]).toContain("compose");
+        expect(run.inherited[0]?.at(-1)).toBe("pull");
+        expect(reports).toEqual([]);
+    });
+
+    test("a socket path pulls each missing image through the engine and reports the summed bytes with the summed total", async () => {
+        const run = script({
+            socket: "/engine.sock",
+            held: [],
+            sizes: { [PROXY_IMAGE]: 100, [DEFAULT_IMAGE]: 200 },
+            pulls: { [PROXY_IMAGE]: { reports: [30] }, [DEFAULT_IMAGE]: { reports: [50, 120] } },
+        });
+        const reports: BootPullProgress[] = [];
+
+        expect((await compose.composePullIfMissing(runtimes.podman, "cliproxy", (p) => reports.push(p))).isOk()).toBe(true);
+
+        expect(run.pulled).toEqual([
+            { socket: "/engine.sock", image: PROXY_IMAGE },
+            { socket: "/engine.sock", image: DEFAULT_IMAGE },
+        ]);
+        expect(run.inherited).toEqual([]);
+        expect(reports).toEqual([
+            { doneBytes: 30, totalBytes: 300 },
+            { doneBytes: 80, totalBytes: 300 },
+            { doneBytes: 150, totalBytes: 300 },
+        ]);
+    });
+
+    test("only the missing image pulls", async () => {
+        const run = script({ socket: "/engine.sock", held: [PROXY_IMAGE] });
+
+        expect((await compose.composePullIfMissing(runtimes.podman, "cliproxy", () => undefined)).isOk()).toBe(true);
+
+        expect(run.pulled.map((p) => p.image)).toEqual([DEFAULT_IMAGE]);
+    });
+
+    test("a report of 0 bytes gives no call of onProgress", async () => {
+        script({ socket: "/engine.sock", pulls: { [DEFAULT_IMAGE]: { reports: [0, 0] } } });
+        const reports: BootPullProgress[] = [];
+
+        expect((await compose.composePullIfMissing(runtimes.podman, "direct", (p) => reports.push(p))).isOk()).toBe(true);
+
+        expect(reports).toEqual([]);
+    });
+
+    test("an unknown size gives totalBytes null", async () => {
+        script({
+            socket: "/engine.sock",
+            sizes: { [PROXY_IMAGE]: 100, [DEFAULT_IMAGE]: null },
+            pulls: { [PROXY_IMAGE]: { reports: [10] } },
+        });
+        const reports: BootPullProgress[] = [];
+
+        expect((await compose.composePullIfMissing(runtimes.podman, "cliproxy", (p) => reports.push(p))).isOk()).toBe(true);
+
+        expect(reports).toEqual([{ doneBytes: 10, totalBytes: null }]);
+    });
+
+    test("a failed pull gives image_pull_failed with the image and the message of the engine, and no compose pull", async () => {
+        const run = script({
+            socket: "/engine.sock",
+            pulls: { [DEFAULT_IMAGE]: { outcome: { kind: "failed", message: "manifest unknown" } } },
+        });
+
+        const error = (await compose.composePullIfMissing(runtimes.podman, "cliproxy", () => undefined))._unsafeUnwrapErr();
+
+        expect(error.type).toBe("image_pull_failed");
+        expect(error.type === "image_pull_failed" ? error.image : "").toBe(DEFAULT_IMAGE);
+        expect(error.message).toContain("manifest unknown");
+        // Both pulls settled before the outcome was read.
+        expect(run.pulled).toHaveLength(2);
+        expect(run.inherited).toEqual([]);
+    });
+
+    test("an unavailable pull pulls with `compose pull`", async () => {
+        const run = script({ socket: "/engine.sock", pulls: { [DEFAULT_IMAGE]: { outcome: { kind: "unavailable" } } } });
+
+        expect((await compose.composePullIfMissing(runtimes.podman, "direct", () => undefined)).isOk()).toBe(true);
+
+        expect(run.inherited).toHaveLength(1);
+        expect(run.inherited[0]?.at(-1)).toBe("pull");
+    });
+
+    test("a completed pull whose image the engine does not hold pulls with `compose pull`", async () => {
+        const run = script({ socket: "/engine.sock", holdsAfterPull: false });
+        const reports: BootPullProgress[] = [];
+
+        expect((await compose.composePullIfMissing(runtimes.podman, "direct", (p) => reports.push(p))).isOk()).toBe(true);
+
+        expect(run.pulled).toHaveLength(1);
+        expect(run.inherited).toHaveLength(1);
+        expect(reports).toEqual([]);
+    });
+
+    test("writes a start line and an outcome line", async () => {
+        const run = script({ socket: "/engine.sock" });
+
+        await compose.composePullIfMissing(runtimes.podman, "direct", () => undefined);
+
+        expect(run.logs).toEqual(["  Pulling container images (this may take a moment)…", "  Container images are ready."]);
+    });
+
+    test("writes a failure line when the pull fails", async () => {
+        const run = script({ socket: "/engine.sock", pulls: { [DEFAULT_IMAGE]: { outcome: { kind: "failed", message: "denied" } } } });
+
+        await compose.composePullIfMissing(runtimes.podman, "direct", () => undefined);
+
+        expect(run.logs).toEqual(["  Pulling container images (this may take a moment)…", "  The pull of the container images failed."]);
     });
 });

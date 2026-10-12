@@ -17,7 +17,9 @@ import {
     collectDirectModel,
     detectedGatewayURL,
     directModelPrefill,
+    DEFAULT_PROXY_READY_OPTS,
     ensureLiveCredential,
+    ensureProxyReady,
     explicitPostgresFields,
     hasProviderCredential,
     launchProgress,
@@ -44,7 +46,9 @@ import * as refsCommands from "../refs/commands.ts";
 import * as refsStore from "../refs/store.ts";
 import { detectedMachine, writeAgentModel, type ResolvedModelConnection } from "../harness/config.ts";
 import { __resetModelCacheForTest, type ModelAccess } from "../proxy/models.ts";
+import * as configModule from "../../lib/config.ts";
 import { readConfig, writeConfig } from "../../lib/config.ts";
+import type { BootStepId } from "../../api/server.ts";
 import * as container from "../../lib/container.ts";
 import * as cliPrompts from "../../lib/cli.ts";
 // Namespace import beside the named one purely so `detectProviderEnv` is spyable at the seam setup.ts
@@ -2501,5 +2505,75 @@ describe("setup() — batch orchestration", () => {
             expect(asked(prompts, "Port")).toBe(true);
             expect(existsSync(env.setupStatePath)).toBe(false);
         });
+    });
+});
+
+describe("ensureProxyReady — the boot steps", () => {
+    const spies: Array<{ mockRestore: () => void }> = [];
+    afterEach(() => {
+        for (const spy of spies.splice(0)) spy.mockRestore();
+    });
+
+    /** Stub the engine and the compose steps, and record the order in which the gate starts its steps. */
+    function recordSteps(opts: { composeUpFails: boolean }): BootStepId[] {
+        const steps: BootStepId[] = [];
+        spies.push(
+            spyOn(configModule, "ensureRuntime").mockImplementation(async () => ok(container.runtimes.docker)),
+            spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)),
+            spyOn(compose, "composePullIfMissing").mockImplementation(async () => ok(undefined)),
+            spyOn(compose, "composeProxyRunning").mockImplementation(async () => ok(false)),
+            spyOn(compose, "composeUp").mockImplementation(async () =>
+                opts.composeUpFails ? err({ type: "container_start_failed", message: "stub: stop the gate after the containers step" }) : ok(undefined),
+            ),
+            spyOn(embeddingSetup, "ensureEmbedderReady").mockImplementation(async () => ok(undefined)),
+        );
+        return steps;
+    }
+
+    test("direct mode starts the engine, the images, the containers, and the embedder", async () => {
+        const steps = recordSteps({ composeUpFails: false });
+
+        const ready = await ensureProxyReady("direct", { ...DEFAULT_PROXY_READY_OPTS, interactiveLogin: false, onStep: (id) => steps.push(id) });
+
+        expect(ready.isOk()).toBe(true);
+        expect(steps).toEqual(["container_engine", "images", "containers", "embedder"]);
+    });
+
+    test("cliproxy mode adds the proxy step before the images", async () => {
+        const steps = recordSteps({ composeUpFails: true });
+        // A staged credential passes the login check with no prompt. The gate writes the proxy config, thus a
+        // config that the test created is removed with the credential.
+        const credentialPath = join(env.cliproxyAuthDir, "steps-test.json");
+        const configExisted = existsSync(env.cliproxyConfigPath);
+        assertTestSandbox(credentialPath);
+        assertTestSandbox(env.cliproxyConfigPath);
+        mkdirSync(env.cliproxyAuthDir, { recursive: true });
+        writeFileSync(credentialPath, JSON.stringify({ type: "gemini" }));
+
+        try {
+            const ready = await ensureProxyReady("cliproxy", { ...DEFAULT_PROXY_READY_OPTS, interactiveLogin: false, onStep: (id) => steps.push(id) });
+            expect(ready.isErr()).toBe(true);
+        } finally {
+            rmSync(credentialPath, { force: true });
+            if (!configExisted) rmSync(env.cliproxyConfigPath, { force: true });
+        }
+
+        expect(steps).toEqual(["container_engine", "proxy", "images", "containers"]);
+    });
+
+    test("the pull progress callback reaches the pull of the images", async () => {
+        recordSteps({ composeUpFails: true });
+        const onPullProgress = (): void => undefined;
+        let given: unknown;
+        spies.push(
+            spyOn(compose, "composePullIfMissing").mockImplementation(async (_rt, _mode, callback) => {
+                given = callback;
+                return ok(undefined);
+            }),
+        );
+
+        await ensureProxyReady("direct", { ...DEFAULT_PROXY_READY_OPTS, interactiveLogin: false, onPullProgress });
+
+        expect(given).toBe(onPullProgress);
     });
 });

@@ -7,7 +7,7 @@ import type { Hono } from "hono";
 import { err, ok, Result } from "neverthrow";
 
 import pkg from "../../package.json";
-import { API_VERSION, type ServerDiscovery, type ServerState, type ShutdownMode } from "../api/server.ts";
+import { API_VERSION, type ServerBootState, type ServerDiscovery, type ShutdownMode } from "../api/server.ts";
 import { readServerDiscovery, serverBaseUrl } from "../client/api.ts";
 import { DEFAULT_ENSURE_SERVER_OPTS, describeServerError, lookupServer, waitForServer } from "../client/server.ts";
 import { describeCause } from "../lib/cause.ts";
@@ -288,7 +288,7 @@ function spawnDetachedServer(logPath: string): Result<Subprocess, FsError> {
     });
 }
 
-function printBootOutcome(state: ServerState): void {
+function printBootOutcome(state: ServerBootState): void {
     switch (state.phase) {
         case "ready":
             console.log(`  The harness runtime is ready (${state.connection.provider} · ${state.connection.mode} · ${state.connection.model}).`);

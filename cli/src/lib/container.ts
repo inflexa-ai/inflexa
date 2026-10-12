@@ -7,6 +7,7 @@
 
 import { existsSync } from "node:fs";
 import { type Result, ok, err } from "neverthrow";
+import { z } from "zod";
 
 /**
  * Ordered id list — single source of truth for the picker order, the
@@ -291,4 +292,155 @@ export async function resolveEngineSocket(
             throw new Error(`unhandled runtime: ${JSON.stringify(exhaustive)}`);
         }
     }
+}
+
+/** The docker-API architecture name of this host, for the manifest-index pick. */
+function hostArchitecture(): string {
+    return process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "amd64" : process.arch;
+}
+
+/**
+ * An image reference split for the docker-compat pull API: the repository, and the reference that the pull
+ * sends as `tag`. A `name:tag@sha256:…` or `name@sha256:…` reference gives the digest, because the digest is
+ * what the registry resolves. Else the reference is the tag, or `latest` when the image names none.
+ */
+export function splitImageRef(image: string): { repo: string; reference: string } {
+    const at = image.indexOf("@");
+    const named = at < 0 ? image : image.slice(0, at);
+    const slash = named.lastIndexOf("/");
+    const name = named.slice(slash + 1);
+    const colon = name.indexOf(":");
+    const repo = colon < 0 ? named : named.slice(0, slash + 1) + name.slice(0, colon);
+    if (at >= 0) return { repo, reference: image.slice(at + 1) };
+    return { repo, reference: colon < 0 ? "latest" : name.slice(colon + 1) };
+}
+
+/** One registry manifest, leniently: an image manifest carries `layers`, and an index carries `manifests`. */
+const manifestSchema = z
+    .object({
+        layers: z.array(z.object({ size: z.number() }).passthrough()).optional(),
+        manifests: z
+            .array(z.object({ digest: z.string(), platform: z.object({ architecture: z.string() }).passthrough().optional() }).passthrough())
+            .optional(),
+    })
+    .passthrough();
+
+/**
+ * The total bytes of an image, summed over the layer sizes of its registry
+ * manifest — resolved BEFORE the pull, thus the meter has its total from the
+ * first byte. A reference that pins a digest reads the manifest of that
+ * digest. An index resolves through the entry of this host architecture.
+ * `null` when the manifest cannot answer, and the caller then renders the
+ * moved bytes alone.
+ */
+export async function resolveImageTotalBytes(rt: ContainerRuntime, image: string): Promise<number | null> {
+    const probe = async (ref: string): Promise<{ code: number; stdout: string } | null> => {
+        try {
+            return await capture(rt, ["manifest", "inspect", ref]);
+        } catch {
+            return null;
+        }
+    };
+    const sumLayers = (raw: string): number | null => {
+        const parsed = JSON.parseWith(raw, manifestSchema);
+        if (parsed?.layers === undefined || parsed.layers.length === 0) return null;
+        return parsed.layers.reduce((n, layer) => n + layer.size, 0);
+    };
+    const { repo, reference } = splitImageRef(image);
+    // A tag cannot hold a colon, thus a reference with one is a digest.
+    const first = await probe(reference.includes(":") ? `${repo}@${reference}` : image);
+    if (first === null || first.code !== 0) return null;
+    const direct = sumLayers(first.stdout);
+    if (direct !== null) return direct;
+    const parsed = JSON.parseWith(first.stdout, manifestSchema);
+    const entry = parsed?.manifests?.find((candidate) => candidate.platform?.architecture === hostArchitecture());
+    if (entry === undefined) return null;
+    const arch = await probe(`${repo}@${entry.digest}`);
+    if (arch === null || arch.code !== 0) return null;
+    return sumLayers(arch.stdout);
+}
+
+/** One progress event of the docker-compat pull stream. An `error` event ends the pull with that reason. */
+const pullEventSchema = z
+    .object({
+        id: z.string().optional(),
+        status: z.string().optional(),
+        error: z.string().optional(),
+        progressDetail: z.object({ current: z.number().optional(), total: z.number().optional() }).optional(),
+    })
+    .passthrough();
+
+/** The moved bytes of one engine pull, and the layers that completed. */
+export type EnginePullProgress = { doneBytes: number; layersCompleted: number };
+
+/** How one engine pull ended. `unavailable` sends the caller to the CLI pull, and it is not a failure. */
+export type EnginePullOutcome = { kind: "completed" } | { kind: "failed"; message: string } | { kind: "unavailable" };
+
+/**
+ * Pull through the docker-compat API of the engine, and report the per-layer
+ * byte progress. The engine serves `POST /images/create` as a line stream of
+ * JSON events, and each `progressDetail.current` is the bytes of one layer so
+ * far — the sum is what a meter renders. The CLI `pull` reports no byte figure
+ * at all, which is the reason this path exists.
+ *
+ * `onProgress` runs after each chunk of the stream, and one time at the end.
+ * It is a notification: this function does not guard it, as {@link stream} does
+ * not guard `onLine`.
+ *
+ * It never rejects. A socket that does not answer, and a response that is not
+ * OK or has no body, read as `unavailable`: the caller then pulls through the
+ * CLI, and only the byte readout is lost. An `error` event, and a stream that
+ * breaks before its end, read as `failed`.
+ */
+export async function pullImageThroughEngine(socket: string, image: string, onProgress: (progress: EnginePullProgress) => void): Promise<EnginePullOutcome> {
+    const { repo, reference } = splitImageRef(image);
+    let response: Response;
+    try {
+        // `unix` is the Bun fetch extension that dials a unix socket; the host
+        // name of the URL is decoration the engine never reads.
+        response = await fetch(`http://engine/v1.41/images/create?fromImage=${encodeURIComponent(repo)}&tag=${encodeURIComponent(reference)}`, {
+            method: "POST",
+            unix: socket,
+        });
+    } catch {
+        return { kind: "unavailable" };
+    }
+    if (!response.ok || response.body === null) return { kind: "unavailable" };
+
+    const layerBytes = new Map<string, number>();
+    const layersDone = new Set<string>();
+    let failure: string | null = null;
+    let buffer = "";
+    const decoder = new TextDecoder();
+    const report = (): void => onProgress({ doneBytes: [...layerBytes.values()].reduce((n, b) => n + b, 0), layersCompleted: layersDone.size });
+    const consume = (line: string): void => {
+        const event = JSON.parseWith(line, pullEventSchema);
+        if (event === null) return;
+        if (event.error !== undefined) failure = event.error;
+        if (event.id === undefined) return;
+        const current = event.progressDetail?.current;
+        // The stream repeats each layer with a growing `current`; the map keeps
+        // the newest figure, and the sum over the map is the moved total.
+        if (current !== undefined) layerBytes.set(event.id, Math.max(current, layerBytes.get(event.id) ?? 0));
+        if (event.status === "Pull complete" || event.status === "Already exists") layersDone.add(event.id);
+    };
+    try {
+        for await (const chunk of response.body) {
+            buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+            for (;;) {
+                const newline = buffer.indexOf("\n");
+                if (newline < 0) break;
+                const line = buffer.slice(0, newline).trim();
+                buffer = buffer.slice(newline + 1);
+                if (line !== "") consume(line);
+            }
+            report();
+        }
+    } catch (cause) {
+        return { kind: "failed", message: `The pull stream of the engine broke: ${cause instanceof Error ? cause.message : String(cause)}` };
+    }
+    if (buffer.trim() !== "") consume(buffer.trim());
+    report();
+    if (failure !== null) return { kind: "failed", message: failure };
+    return { kind: "completed" };
 }

@@ -3,7 +3,7 @@ import { err, ok, ResultAsync, type Result } from "neverthrow";
 import { z, type ZodType } from "zod";
 
 import { API_ERROR_STATUS, DEFAULT_PER_PAGE, MAX_PER_PAGE, type ApiError, type ApiErrorCode, type ListEnvelope, type PageQuery } from "../api/common.ts";
-import { SIGN_IN_REQUIRED, type ServerState } from "../api/server.ts";
+import { SIGN_IN_REQUIRED, type RuntimeUnavailableDetails, type ServerBootState } from "../api/server.ts";
 import { getLogger } from "../lib/log.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { ServerBoot } from "./boot.ts";
@@ -75,14 +75,14 @@ export function listEnvelope<K extends string, T>(key: K, items: T[], total: num
 
 /**
  * A middleware for each route that needs the harness runtime. Until the boot is ready it gives 503
- * `unavailable`, with the boot phase in `details.phase`. After that it sets `runtime` for the handler.
+ * `unavailable`, with the boot phase in `details.phase` and the step in `details.step`. After that it sets `runtime` for the handler.
  */
 export function requireRuntime(boot: ServerBoot): MiddlewareHandler<ServerEnv> {
     return async (c, next) => {
         const runtime = boot.runtime();
         if (runtime === null) {
             const state = boot.state();
-            return apiError(c, "unavailable", unavailableMessage(state), { phase: state.phase });
+            return apiError(c, "unavailable", unavailableMessage(state), unavailableDetails(state));
         }
         c.set("runtime", runtime);
         await next();
@@ -90,10 +90,30 @@ export function requireRuntime(boot: ServerBoot): MiddlewareHandler<ServerEnv> {
 }
 
 /**
+ * The `details` of a 503 `unavailable` body: the phase, and the step. In `starting` the step is the one that
+ * runs now, or `null` before the first step. In `failed` it is the step that failed, or `null` for a fault
+ * before the first step. A ready boot has no step.
+ */
+export function unavailableDetails(state: ServerBootState): RuntimeUnavailableDetails {
+    switch (state.phase) {
+        case "starting":
+            return { phase: state.phase, step: state.boot.step?.id ?? null };
+        case "failed":
+            return { phase: state.phase, step: state.failedStep };
+        case "ready":
+            return { phase: state.phase, step: null };
+        default: {
+            const exhaustive: never = state;
+            throw new Error(`unhandled boot phase: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}
+
+/**
  * The 503 message for a person: the phase, the cause of a failed boot, and the command after which the server
  * boots again. A command prints it as its remedy, thus it names no API route.
  */
-function unavailableMessage(state: ServerState): string {
+function unavailableMessage(state: ServerBootState): string {
     if (state.phase !== "failed") return "The Inflexa server is still booting its runtime (phase `starting`). Try again in a moment.";
     const after =
         state.bootError.reason === SIGN_IN_REQUIRED ? "The server boots again after the sign-in." : "Then run `inflexa up`: the server boots again after it.";

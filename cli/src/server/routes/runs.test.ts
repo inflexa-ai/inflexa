@@ -24,7 +24,7 @@ import type {
     RunList,
     SandboxReadiness,
 } from "../../api/runs.ts";
-import type { ServerState } from "../../api/server.ts";
+import type { ServerBootState } from "../../api/server.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor, upsertLlmUsage } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -246,7 +246,7 @@ describe("GET {A}/runs", () => {
     });
 
     test("503 `unavailable` while the runtime boots", async () => {
-        const starting: ServerState = { ...identity, phase: "starting" };
+        const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
         const app = appWith({}, { state: () => starting, runtime: () => null, start: async () => undefined });
         const response = await app.request("/api/v1/analyses/x/runs");
         expect(response.status).toBe(503);
@@ -563,7 +563,11 @@ describe("GET {A}/sandbox-readiness", () => {
                 readiness: () =>
                     Promise.resolve({ image: { state: "present", image: "i" }, store: "local", farm: { present: true, catalogPresent: true, failure: null } }),
             },
-            { state: () => ({ ...identity, phase: "starting" }), runtime: () => null, start: async () => undefined },
+            {
+                state: () => ({ ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } }),
+                runtime: () => null,
+                start: async () => undefined,
+            },
         );
         expect((await app.request("/api/v1/analyses/x/sandbox-readiness")).status).toBe(200);
     });
