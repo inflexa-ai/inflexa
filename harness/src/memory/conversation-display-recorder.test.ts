@@ -201,6 +201,90 @@ describe("conversation display recorder", () => {
     });
 });
 
+describe("conversation display recorder — sub-agent activity", () => {
+    const PLANNER = { agentId: "planner", callPath: ["conversation", "planner"], invocationId: "t1" };
+    const T0 = Date.parse("2026-10-12T10:00:00.000Z");
+
+    function timed() {
+        let tick = 0;
+        const recorder = createConversationDisplayRecorder({
+            userText: "question",
+            agentId: TOP.agentId,
+            sink: () => {},
+            userMessageId: "u1",
+            assistantMessageId: "a1",
+            now: () => T0 + 1000 * tick++,
+        });
+        return recorder;
+    }
+
+    it("keeps the tool calls of a sub-agent as entries of the part of their root call", async () => {
+        const recorder = timed();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "iteration", source: PLANNER, index: 0, final: false });
+        await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed", input: { secret: "key" }, detail: "TP53" });
+        await recorder.emit({ type: "tool-finished", source: PLANNER, toolUseId: "s1", name: "search_pubmed", outcome: "ok", durationMs: 250 });
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "generate_plan", outcome: "ok" });
+
+        const parts = recorder.finish()[1]!.parts;
+        const stored = parts.find((part) => part.type === "data-subagent-activity");
+        expect(stored).toEqual({
+            type: "data-subagent-activity",
+            id: "subagent-activity-t1",
+            data: {
+                id: "subagent-activity-t1",
+                toolCallId: "t1",
+                dropped: 0,
+                entries: [
+                    {
+                        agentId: "planner",
+                        callPath: ["conversation", "planner"],
+                        tool: "search_pubmed",
+                        label: "TP53",
+                        startedAt: new Date(T0 + 2000).toISOString(),
+                        endedAt: new Date(T0 + 2250).toISOString(),
+                        outcome: "ok",
+                    },
+                ],
+            },
+        });
+        expect(JSON.stringify(parts)).not.toContain("secret");
+        expect(parts.filter((part) => part.type === "data-subagent-activity")).toHaveLength(1);
+    });
+
+    it("keeps a sub-agent display part out", async () => {
+        const recorder = timed();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "data-presentation", source: PLANNER, data: { id: "hidden", content: { kind: "markdown", body: "child" } } });
+
+        expect(recorder.finish()[1]!.parts).toEqual([
+            { type: "data-tool-call", id: "t1", data: { toolCallId: "t1", toolName: "generate_plan", outcome: "incomplete" } },
+        ]);
+    });
+
+    it("leaves no record for a frame with no invocation id", async () => {
+        const recorder = timed();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        const compaction = { agentId: "conversation-compaction", callPath: ["conversation", "conversation-compaction"] };
+        await recorder.emit({ type: "tool-started", source: compaction, toolUseId: "c1", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-finished", source: compaction, toolUseId: "c1", name: "read_file", outcome: "ok" });
+
+        expect(recorder.finish()[1]!.parts.map((part) => part.type)).toEqual(["data-tool-call"]);
+    });
+
+    it("closes an unfinished entry as incomplete", async () => {
+        const recorder = timed();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed", input: {} });
+
+        const stored = recorder.takeRound([{ role: "assistant", content: "" }])[0]!.parts.find((part) => part.type === "data-subagent-activity");
+        expect(stored).toMatchObject({
+            data: { toolCallId: "t1", entries: [{ tool: "search_pubmed", outcome: "incomplete", startedAt: new Date(T0 + 1000).toISOString() }] },
+        });
+        expect(stored && "data" in stored ? stored.data.entries[0] : undefined).not.toHaveProperty("endedAt");
+    });
+});
+
 describe("conversation display recorder — rounds", () => {
     it("gives the user message of the turn at the opening", () => {
         const { recorder } = harness();

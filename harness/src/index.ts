@@ -411,6 +411,8 @@ export type {
     ChatErrorEvent,
 } from "./contracts/chat-events.js";
 export { toChatFrame, applyChatFrame, checkChatPart } from "./contracts/chat-frame.js";
+export { createSubAgentActivityTracker, SUBAGENT_ACTIVITY_MAX_ENTRIES } from "./contracts/subagent-activity.js";
+export type { SubAgentActivityTracker } from "./contracts/subagent-activity.js";
 export type { TextPart, ToolCallPart, MessagePart, ChatMessage } from "./contracts/message.js";
 export type { TurnTerminal, ApplyFrameResult, ChatPartCheck } from "./contracts/chat-frame.js";
 export type { TokenUsageRollup } from "./contracts/usage.js";
@@ -427,6 +429,9 @@ export type {
     DagStepState,
     StepStatus,
     StepActivityPart,
+    ActivityEntryPart,
+    SubAgentActivityEntry,
+    SubAgentActivityPart,
     StepPhase,
     StepFileTreePart,
     FileTreeEntry,

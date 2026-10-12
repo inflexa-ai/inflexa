@@ -16,6 +16,7 @@ interface AskPartData {
     readonly command: string;
     readonly detail?: string;
     readonly status: string;
+    readonly reply?: string;
 }
 
 interface StartedAsk {
@@ -110,6 +111,9 @@ describe("createAskGateway — deferred round-trip", () => {
         expect(started.parts.map((p) => p.status)).toEqual(["pending", "resolved"]);
         expect(started.parts.map((p) => p.id)).toEqual([id, id]);
         expect(started.parts[0]!.command).toBe(REQUEST.command);
+        // Only the terminal part names the reply kind.
+        expect(started.parts[0]).not.toHaveProperty("reply");
+        expect(started.parts[1]!.reply).toBe("once");
     });
 
     it("resolves with the always reply an out-of-band answer writes", async () => {
@@ -119,6 +123,7 @@ describe("createAskGateway — deferred round-trip", () => {
         expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
 
         expect(await started.promise).toEqual({ kind: "always" });
+        expect(started.parts.at(-1)).toMatchObject({ status: "resolved", reply: "always" });
     });
 
     it("throws AskRejectedError carrying the feedback when the answer rejects", async () => {
@@ -133,6 +138,22 @@ describe("createAskGateway — deferred round-trip", () => {
         );
         expect(caught).toBeInstanceOf(AskRejectedError);
         expect((caught as AskRejectedError).feedback).toBe("not this time");
+        // The part shows the kind of the reply, and never the feedback, which is for the model.
+        const terminal = started.parts.at(-1)!;
+        expect(terminal).toMatchObject({ status: "rejected", reply: "reject" });
+        expect(JSON.stringify(terminal)).not.toContain("not this time");
+    });
+
+    it("emits an aborted part with no reply when the turn aborts", async () => {
+        const started = startAsk(REQUEST);
+        await waitForPendingId();
+
+        started.controller.abort();
+        await started.promise.catch(() => {});
+
+        const terminal = started.parts.at(-1)!;
+        expect(terminal.status).toBe("aborted");
+        expect(terminal).not.toHaveProperty("reply");
     });
 });
 

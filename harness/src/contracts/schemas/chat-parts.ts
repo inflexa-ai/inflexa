@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 
+import { ToolCallOutcomeSchema } from "./chat-events.js";
 import { TokenUsageRollupSchema } from "./usage.js";
 
 // ── Presentation ────────────────────────────────────────────────────
@@ -117,6 +118,7 @@ export const AskPartSchema = z.object({
     command: z.string(),
     detail: z.string().optional(),
     status: AskStatusSchema,
+    reply: z.enum(["once", "always", "reject"]).optional(),
 });
 
 // ── Run Started ─────────────────────────────────────────────────────
@@ -178,6 +180,17 @@ export const StepActivityPartSchema = z.object({
     stepId: z.string(),
     phase: StepPhaseSchema,
     activity: z.string(),
+    at: z.string().optional(),
+});
+
+export const ActivityEntryPartSchema = z.object({
+    type: z.literal("data-activity-entry"),
+    id: z.string(),
+    runId: z.string(),
+    stepId: z.string(),
+    phase: StepPhaseSchema,
+    activity: z.string(),
+    at: z.string(),
 });
 
 // ── Step File Tree ──────────────────────────────────────────────────
@@ -371,6 +384,26 @@ export const CompactionPartSchema = z.object({
     trigger: z.enum(["turn-start", "mid-turn"]).optional(),
 });
 
+// ── Sub-agent activity ──────────────────────────────────────────────
+
+export const SubAgentActivityEntrySchema = z.object({
+    agentId: z.string(),
+    callPath: z.array(z.string()),
+    tool: z.string(),
+    label: z.string().optional(),
+    startedAt: z.string(),
+    endedAt: z.string().optional(),
+    outcome: ToolCallOutcomeSchema.optional(),
+});
+
+export const SubAgentActivityPartSchema = z.object({
+    type: z.literal("data-subagent-activity"),
+    id: z.string(),
+    toolCallId: z.string(),
+    entries: z.array(SubAgentActivityEntrySchema),
+    dropped: z.number().int().nonnegative(),
+});
+
 // ── Union ───────────────────────────────────────────────────────────
 
 export const ChatPartSchema = z.discriminatedUnion("type", [
@@ -382,6 +415,8 @@ export const ChatPartSchema = z.discriminatedUnion("type", [
     RunStartedPartSchema,
     DagStatePartSchema,
     StepActivityPartSchema,
+    ActivityEntryPartSchema,
+    SubAgentActivityPartSchema,
     StepFileTreePartSchema,
     StepOutputPartSchema,
     StepSummaryPartSchema,

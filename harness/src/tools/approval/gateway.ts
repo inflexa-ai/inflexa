@@ -124,7 +124,7 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
                 throw new AskRejectedError("approval request is no longer available");
             }
             if (resolution.status !== "pending") {
-                await emitAskPart(ctx.emit, id, request, resolution.status);
+                await emitAskPart(ctx.emit, id, request, resolution.status, replyKindOf(resolution.status, resolution.reply));
                 return settle(resolution.status, resolution.reply, ctx.signal);
             }
 
@@ -149,7 +149,7 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
 }
 
 /** Emit (or reconcile, under the same id) the ask's `data-ask` chat part. */
-function emitAskPart(emit: EmitFn, id: string, request: AskRequest, status: AskStatus): void | Promise<void> {
+function emitAskPart(emit: EmitFn, id: string, request: AskRequest, status: AskStatus, reply?: AskReply["kind"]): void | Promise<void> {
     return emit({
         type: "data-ask",
         data: {
@@ -158,17 +158,39 @@ function emitAskPart(emit: EmitFn, id: string, request: AskRequest, status: AskS
             command: request.command,
             ...(request.detail !== undefined ? { detail: request.detail } : {}),
             status,
+            ...(reply !== undefined ? { reply } : {}),
         },
     });
+}
+
+/**
+ * The kind of reply the terminal part shows: the kind that `settle` acts on for a `resolved` or `rejected` row,
+ * and none for any other status. It never reads the feedback of a rejection, which is for the model.
+ */
+function replyKindOf(status: Exclude<AskStatus, "pending">, reply: AskReply | null): AskReply["kind"] | undefined {
+    switch (status) {
+        case "resolved":
+            return approvalOf(reply).kind;
+        case "rejected":
+            return "reject";
+        case "expired":
+        case "aborted":
+            return undefined;
+    }
+}
+
+/** The approval that a `resolved` row grants. */
+function approvalOf(reply: AskReply | null): AskApproval {
+    // Only `once` / `always` reach `resolved`; guard the JSONB round-trip and
+    // default to the narrowest approval if a malformed reply ever slipped in.
+    return reply && (reply.kind === "once" || reply.kind === "always") ? reply : { kind: "once" };
 }
 
 /** Resolve an approval or throw the terminal denial the ledger recorded. */
 function settle(status: Exclude<AskStatus, "pending">, reply: AskReply | null, signal: AbortSignal): AskApproval {
     switch (status) {
         case "resolved":
-            // Only `once` / `always` reach `resolved`; guard the JSONB round-trip and
-            // default to the narrowest approval if a malformed reply ever slipped in.
-            return reply && (reply.kind === "once" || reply.kind === "always") ? reply : { kind: "once" };
+            return approvalOf(reply);
         case "rejected":
             throw new AskRejectedError(reply && reply.kind === "reject" ? reply.feedback : undefined);
         case "expired":

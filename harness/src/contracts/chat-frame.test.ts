@@ -69,6 +69,21 @@ describe("toChatFrame", () => {
         expect(toChatFrame(finished, fallback)).toEqual({ type: "tool-finished", toolUseId: "tu_2", name: "search_pubmed", outcome: "ok", source: nested });
     });
 
+    test("keeps the invocation id of a source", () => {
+        const source = { ...nested, invocationId: "tu_1" };
+        const started: EmitEvent = { type: "tool-started", source, toolUseId: "tu_2", name: "search_pubmed", input: {} };
+        const frame = toChatFrame(started, fallback);
+        expect(frame).toEqual({ type: "tool-started", toolUseId: "tu_2", name: "search_pubmed", source });
+        expect(frame?.source?.invocationId).toBe("tu_1");
+    });
+
+    test("gives a source with no invocation id no invocationId key", () => {
+        const started: EmitEvent = { type: "tool-started", source: nested, toolUseId: "tu_2", name: "search_pubmed", input: {} };
+        const frame = toChatFrame(started, fallback);
+        expect(frame?.source).toBeDefined();
+        expect(Object.hasOwn(frame?.source ?? {}, "invocationId")).toBe(false);
+    });
+
     test("gives a text-delta the fallback source", () => {
         const ev: ChatStreamEvent = { type: "text-delta", text: "hello" };
         expect(toChatFrame(ev, fallback)).toEqual({ type: "text-delta", text: "hello", source: fallback });
@@ -416,6 +431,34 @@ describe("checkChatPart", () => {
             ok: true,
             frame: { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, source: topLevel },
         });
+    });
+
+    test("keeps the time of a step activity and the reply of an ask", () => {
+        const activity = {
+            type: "data-step-activity",
+            id: "a-1",
+            runId: "r1",
+            stepId: "s1",
+            phase: "executing",
+            activity: "Running",
+            at: "2026-10-12T10:00:00.000Z",
+        };
+        const ask = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "always" };
+        expect(checkChatPart(activity as unknown as Frame)).toEqual({ ok: true, frame: activity as unknown as Frame });
+        expect(checkChatPart(ask as unknown as Frame)).toEqual({ ok: true, frame: ask as unknown as Frame });
+    });
+
+    test("accepts a step activity with no time and an ask with no reply", () => {
+        const activity = { type: "data-step-activity", id: "a-1", runId: "r1", stepId: "s1", phase: "executing", activity: "Running" };
+        const ask = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "pending" };
+        expect(checkChatPart(activity as unknown as Frame)).toEqual({ ok: true, frame: activity as unknown as Frame });
+        expect(checkChatPart(ask as unknown as Frame)).toEqual({ ok: true, frame: ask as unknown as Frame });
+    });
+
+    test("refuses an ask reply of an unknown kind", () => {
+        const checked = checkChatPart({ type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "maybe" } as unknown as Frame);
+        expect(checked.ok).toBe(false);
+        if (!checked.ok) expect(checked.error).toContain("reply");
     });
 
     test("refuses a part of a known type that its schema rejects", () => {

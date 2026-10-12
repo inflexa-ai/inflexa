@@ -18,6 +18,9 @@ export type {
     DagStatePart,
     StepPhase,
     StepActivityPart,
+    ActivityEntryPart,
+    SubAgentActivityEntry,
+    SubAgentActivityPart,
     FileTreeEntry,
     StepFileTreePart,
     StepOutputFile,
@@ -106,6 +109,8 @@ export type {
 export type { TextPart, ToolCallPart, MessagePart, ChatMessage } from "./message.js";
 export { toChatFrame, applyChatFrame, checkChatPart } from "./chat-frame.js";
 export type { TurnTerminal, ApplyFrameResult, ChatPartCheck } from "./chat-frame.js";
+export { createSubAgentActivityTracker, SUBAGENT_ACTIVITY_MAX_ENTRIES } from "./subagent-activity.js";
+export type { SubAgentActivityTracker } from "./subagent-activity.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./part-registry.js";
 export type { ChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./part-registry.js";
 

@@ -4,6 +4,7 @@ import type { ModelMessage } from "ai";
 
 import { applyChatFrame, toChatFrame } from "../contracts/chat-frame.js";
 import type { ChatMessage, MessagePart } from "../contracts/message.js";
+import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { EmitFn } from "../loop/types.js";
 import { envelopeMessage, markCompactionExchange, summaryMarkerMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
@@ -28,12 +29,20 @@ interface RowFacts {
 }
 
 const ROOT = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
-const SUB = { agentId: "literature-reviewer", callPath: ["conversation-agent", "literature-reviewer"] };
+const SUB = { agentId: "literature-reviewer", callPath: ["conversation-agent", "literature-reviewer"], invocationId: "t2" };
 const USER_TEXT = "Compare the two groups.";
 const USER_ID = "user-1";
 const ASSISTANT_ID = "assistant-1";
 const USAGE: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
 const ASK = { id: "ask-1", title: "Run the plan?", command: "inflexa run pln-0a1b2c3d" };
+
+const CLOCK_START = Date.parse("2026-10-12T10:00:00.000Z");
+
+/** A clock that gives one second more at each call. Each path gets its own, and each path reads it once for each frame. */
+function stepClock(): () => number {
+    let calls = 0;
+    return () => CLOCK_START + 1000 * calls++;
+}
 
 /** A round whose model reply holds the text that the round streamed, as a streaming provider gives it. */
 function round(events: readonly TurnEvent[]): Round {
@@ -41,12 +50,17 @@ function round(events: readonly TurnEvent[]): Round {
     return { events, model: [{ role: "assistant", content: text }] };
 }
 
-/** The live path: each event through `toChatFrame` and `applyChatFrame`, then the `finish` of the host. */
+/** The live path: each event through `toChatFrame`, the sub-agent tracker, and `applyChatFrame`, then the `finish` of the host. */
 function live(rounds: readonly Round[], turnUsage?: TokenUsageRollup): ChatMessage[] {
     let messages: ChatMessage[] = [{ id: USER_ID, role: "user", parts: [{ type: "text", text: USER_TEXT }] }];
+    const tracker = createSubAgentActivityTracker();
+    const now = stepClock();
     for (const event of rounds.flatMap((r) => r.events)) {
         const frame = toChatFrame(event, ROOT);
-        if (frame !== null) messages = applyChatFrame(messages, frame, ASSISTANT_ID).messages;
+        if (frame === null) continue;
+        messages = applyChatFrame(messages, frame, ASSISTANT_ID).messages;
+        const activity = tracker.track(frame, now());
+        if (activity !== null) messages = applyChatFrame(messages, activity, ASSISTANT_ID).messages;
     }
     return applyChatFrame(messages, { type: "finish", source: ROOT, ...(turnUsage === undefined ? {} : { turnUsage }) }, ASSISTANT_ID).messages;
 }
@@ -59,6 +73,7 @@ async function replay(rounds: readonly Round[], facts: RowFacts = {}): Promise<C
         sink: () => {},
         userMessageId: USER_ID,
         assistantMessageId: ASSISTANT_ID,
+        now: stepClock(),
     });
     const user: ModelMessage = { role: "user", content: USER_TEXT };
     const groups: { model: readonly ModelMessage[]; display: ConversationUIMessage[] }[] = [{ model: [user], display: recorder.takeOpening() }];
@@ -147,6 +162,24 @@ describe("the live path and the replay of one turn", () => {
             { type: "text", text: "I read the counts and ask the reviewer." },
             { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "ok", detail: "data/counts.csv", durationMs: 12 },
             { type: "tool-call", toolCallId: "t2", toolName: "literature_review", outcome: "ok", detail: "TP53 in colorectal cancer", durationMs: 4200 },
+            {
+                type: "data-subagent-activity",
+                id: "subagent-activity-t2",
+                toolCallId: "t2",
+                // The clock reads once for each frame: the fifth read of the turn is the start of the call `s1`.
+                entries: [
+                    {
+                        agentId: "literature-reviewer",
+                        callPath: ["conversation-agent", "literature-reviewer"],
+                        tool: "search_pubmed",
+                        label: "TP53",
+                        startedAt: new Date(CLOCK_START + 5000).toISOString(),
+                        endedAt: new Date(CLOCK_START + 5800).toISOString(),
+                        outcome: "ok",
+                    },
+                ],
+                dropped: 0,
+            },
             { type: "text", text: "Here is the plan." },
             { type: "tool-call", toolCallId: "t3", toolName: "show_plan", outcome: "ok" },
             { type: "tool-call", toolCallId: "t4", toolName: "grep", outcome: "error", detail: "TP53", durationMs: 3 },
@@ -169,6 +202,33 @@ describe("the known differences between the live path and the replay", () => {
 
         expect(live(rounds)[1]!.parts).toEqual([call]);
         expect((await replay(rounds))[1]!.parts).toEqual([{ ...call, outcome: "incomplete" }]);
+    });
+
+    it("a sub-agent call that never finished: the replay gives incomplete, and the live entry gives no outcome", async () => {
+        const rounds = [
+            round([
+                { type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan", input: {} },
+                { type: "tool-started", source: { ...SUB, invocationId: "t1" }, toolUseId: "s1", name: "search_pubmed", input: {}, detail: "TP53" },
+            ]),
+        ];
+        const entry = {
+            agentId: "literature-reviewer",
+            callPath: ["conversation-agent", "literature-reviewer"],
+            tool: "search_pubmed",
+            label: "TP53",
+            startedAt: new Date(CLOCK_START + 1000).toISOString(),
+        };
+        const activity = (entries: unknown[]) => ({
+            type: "data-subagent-activity" as const,
+            id: "subagent-activity-t1",
+            toolCallId: "t1",
+            entries,
+            dropped: 0,
+        });
+        const part = (messages: ChatMessage[]): unknown[] => messages[1]!.parts.filter((p) => p.type === "data-subagent-activity");
+
+        expect(part(live(rounds))).toEqual([activity([entry])]);
+        expect(part(await replay(rounds))).toEqual([activity([{ ...entry, outcome: "incomplete" }])]);
     });
 
     it("an ask that is pending at the end of the turn: the replay gives aborted, and the live message keeps pending", async () => {

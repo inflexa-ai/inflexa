@@ -351,6 +351,7 @@ export function openLoop(
     const source: EventSource = {
         agentId: session.provenance.agentId ?? agent.id,
         callPath: session.provenance.callPath,
+        ...(opts.invocationId === undefined ? {} : { invocationId: opts.invocationId }),
     };
     const policy = opts.compaction;
     const viewOptions = { keepFirstTurn: policy?.keepFirstTurn === true };

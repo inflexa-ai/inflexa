@@ -52,6 +52,8 @@ export type RunStep = <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 export interface EventSource {
     readonly agentId: string;
     readonly callPath: readonly string[];
+    /** The id of the tool call that runs this loop. For a data profile, the workflow id of its attempt. */
+    readonly invocationId?: string;
 }
 
 /**

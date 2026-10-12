@@ -9,6 +9,7 @@ import { TokenUsageRollupSchema } from "./usage.js";
 export const EventSourceSchema = z.object({
     agentId: z.string(),
     callPath: z.array(z.string()),
+    invocationId: z.string().optional(),
 });
 
 export const TextDeltaEventSchema = z.object({

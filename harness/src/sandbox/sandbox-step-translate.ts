@@ -6,6 +6,7 @@
  * into its emitters.
  */
 
+import type { ActivityEntryPart, StepActivityPart, StepPhase } from "../contracts/chat-parts.js";
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
 import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
@@ -22,6 +23,26 @@ import type { ToolDetailResolver } from "../tools/detail-resolver.js";
  */
 export function stepPartId(kind: string, runId: string, stepId: string): string {
     return `${kind}-${runId}-${stepId}`;
+}
+
+/**
+ * The two parts of one activity emission: the reconciling `data-step-activity` that holds the current activity,
+ * and the `data-activity-entry` that keeps the emission in the run stream. Both carry the same phase, activity,
+ * and time. `seq` is the position of the emission in the body of its workflow, so each entry has its own id, and a
+ * recovered body counts the same emissions again and gives the same ids. Every producer mints the two parts here.
+ */
+export function activityEmission(
+    frame: { readonly runId: string; readonly stepId: string },
+    seq: number,
+    phase: StepPhase,
+    activity: string,
+    at: string,
+): { readonly activity: StepActivityPart; readonly entry: ActivityEntryPart } {
+    const { runId, stepId } = frame;
+    return {
+        activity: { type: "data-step-activity", id: stepPartId("step-activity", runId, stepId), runId, stepId, phase, activity, at },
+        entry: { type: "data-activity-entry", id: `${stepPartId("activity-entry", runId, stepId)}-${seq}`, runId, stepId, phase, activity, at },
+    };
 }
 
 /**

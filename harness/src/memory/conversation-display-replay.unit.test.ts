@@ -114,6 +114,67 @@ describe("recorded conversation display replay", () => {
         expect(replay[1]!.interrupted).toBe(true);
     });
 
+    it("replays a sub-agent activity part field for field", async () => {
+        const recorder = createConversationDisplayRecorder({
+            userText: "plan it",
+            agentId: SOURCE.agentId,
+            sink: () => {},
+            userMessageId: "u",
+            assistantMessageId: "a",
+            now: () => Date.parse("2026-10-12T10:00:00.000Z"),
+        });
+        const planner = { agentId: "planner", callPath: ["conversation", "planner"], invocationId: "t1" };
+        await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "tool-started", source: planner, toolUseId: "s1", name: "search_pubmed", input: {}, detail: "TP53" });
+        await recorder.emit({ type: "tool-finished", source: planner, toolUseId: "s1", name: "search_pubmed", outcome: "ok", durationMs: 800 });
+        await recorder.emit({ type: "tool-finished", source: SOURCE, toolUseId: "t1", name: "generate_plan", outcome: "ok" });
+
+        const model = { role: "user" as const, content: "plan it" };
+        const replay = storedMessagesToChat([
+            { seq: 0, envelope: envelopeMessage(model), message: model, displayEnvelope: envelopeDisplayMessages(recorder.finish()) },
+        ]);
+
+        expect(replay[1]!.parts.filter((part) => part.type === "data-subagent-activity")).toEqual([
+            {
+                type: "data-subagent-activity",
+                id: "subagent-activity-t1",
+                toolCallId: "t1",
+                dropped: 0,
+                entries: [
+                    {
+                        agentId: "planner",
+                        callPath: ["conversation", "planner"],
+                        tool: "search_pubmed",
+                        label: "TP53",
+                        startedAt: "2026-10-12T10:00:00.000Z",
+                        endedAt: "2026-10-12T10:00:00.800Z",
+                        outcome: "ok",
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it("replays a settled ask with its reply", async () => {
+        const recorder = createConversationDisplayRecorder({
+            userText: "run it",
+            agentId: SOURCE.agentId,
+            sink: () => {},
+            userMessageId: "u",
+            assistantMessageId: "a",
+        });
+        const base = { id: "ask", title: "Proceed?", command: "inflexa run" };
+        await recorder.emit({ type: "data-ask", source: SOURCE, data: { ...base, status: "pending" } });
+        await recorder.emit({ type: "data-ask", source: SOURCE, data: { ...base, status: "resolved", reply: "always" } });
+
+        const model = { role: "user" as const, content: "run it" };
+        const replay = storedMessagesToChat([
+            { seq: 0, envelope: envelopeMessage(model), message: model, displayEnvelope: envelopeDisplayMessages(recorder.finish()) },
+        ]);
+
+        expect(replay[1]!.parts).toEqual([{ type: "data-ask", ...base, status: "resolved", reply: "always" }]);
+    });
+
     it("folds a stored rollup onto the append's assistant reply", () => {
         const user = { role: "user" as const, content: "q" };
         const assistant = { role: "assistant" as const, content: "a" };

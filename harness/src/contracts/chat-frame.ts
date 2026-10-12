@@ -20,7 +20,11 @@ export interface ApplyFrameResult {
 export type ChatPartCheck = { readonly ok: true; readonly frame: ChatPartFrame } | { readonly ok: false; readonly error: string };
 
 function toSource(source: EmitEvent["source"]): EventSource {
-    return { agentId: source.agentId, callPath: [...source.callPath] };
+    return {
+        agentId: source.agentId,
+        callPath: [...source.callPath],
+        ...(source.invocationId === undefined ? {} : { invocationId: source.invocationId }),
+    };
 }
 
 /**

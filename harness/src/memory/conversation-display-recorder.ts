@@ -5,6 +5,7 @@ import type { ChatFrame, ChatPartFrame, EventSource } from "../contracts/chat-ev
 import { applyChatFrame, checkChatPart, isRootFrame, toChatFrame } from "../contracts/chat-frame.js";
 import type { ChatMessage, MessagePart } from "../contracts/message.js";
 import { PART_REGISTRY, type ChatPartType } from "../contracts/part-registry.js";
+import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js";
 import type { EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, type CompactionMarker } from "./ai-sdk-message-storage.js";
 import { conversationDisplayPart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
@@ -26,6 +27,8 @@ export interface ConversationDisplayRecorderOptions {
     readonly sink: EmitFn;
     readonly userMessageId?: string;
     readonly assistantMessageId?: string;
+    /** The clock for the times of the sub-agent activity, in milliseconds. The default is the wall clock. */
+    readonly now?: () => number;
 }
 
 type DisplayPart = UIMessagePart<ConversationUIData, Record<string, never>>;
@@ -100,6 +103,8 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
     // The messages of the open round. A later update of a part lands in the next round, and the replay replaces the earlier copy.
     let round: ChatMessage[] = [];
     let finished = false;
+    const now = options.now ?? Date.now;
+    const subAgentActivity = createSubAgentActivityTracker();
 
     function apply(frame: ChatFrame): void {
         round = applyChatFrame(round, frame, assistantMessageId).messages;
@@ -119,7 +124,11 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
 
     function record(event: Parameters<EmitFn>[0]): void {
         const frame = toChatFrame(event, rootSource);
-        if (frame === null || !isRootFrame(frame)) return;
+        if (frame === null) return;
+        // The tracker reads the frames of the sub-agents, and `applyChatFrame` ignores them.
+        const activity = subAgentActivity.track(frame, now());
+        if (activity !== null && durableConversationType(activity.type)) apply(recordedPart(activity));
+        if (!isRootFrame(frame)) return;
         if (frame.type.startsWith("data-")) {
             // Each chat event type is named without the `data-` prefix, thus a `data-` frame is a part frame.
             if (durableConversationType(frame.type)) apply(recordedPart(frame as ChatPartFrame));
