@@ -3,7 +3,7 @@ import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "@inflexa-ai/harness";
 
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
-import { DEFAULT_BUSY_GATE_OPTS, workspaceBusyReasons, type BusyGateOpts } from "./busy_gate.ts";
+import { busyReasonsOf, DEFAULT_BUSY_GATE_OPTS, workspaceBusyReasons, type BusyFacts, type BusyGateOpts } from "./busy_gate.ts";
 
 // The gate over a runtime whose pool answers from fixed rows. Each `as` cast below makes a stand-in that
 // carries only the pool, which is the one part of the runtime that the gate reads.
@@ -60,5 +60,29 @@ describe("workspaceBusyReasons", () => {
         expect(await workspaceBusyReasons("analysis-1", runtime, { ...idle, liveDurableWork: () => errAsync(new Error("down")) })).toEqual([
             "run_state_unreadable",
         ]);
+    });
+});
+
+describe("busyReasonsOf", () => {
+    const idle: BusyFacts = { turn: false, profileDrive: false, profile: "idle", liveRuns: 0 };
+
+    test("an idle analysis has no reason", () => {
+        expect(busyReasonsOf(idle)).toEqual([]);
+    });
+
+    test("each fact gives its reason, in the order chat_turn, data_profile, profile_state_unreadable, run", () => {
+        expect(busyReasonsOf({ turn: true, profileDrive: true, profile: "idle", liveRuns: 2 })).toEqual(["chat_turn", "data_profile", "run"]);
+        expect(busyReasonsOf({ ...idle, profile: "running" })).toEqual(["data_profile"]);
+        expect(busyReasonsOf({ ...idle, turn: true, profile: "unreadable", liveRuns: 1 })).toEqual(["chat_turn", "profile_state_unreadable", "run"]);
+    });
+
+    test("an unreadable run ledger reads as busy, and an unknown state adds nothing", () => {
+        expect(busyReasonsOf({ ...idle, liveRuns: "unreadable" })).toEqual(["run_state_unreadable"]);
+        expect(busyReasonsOf({ turn: false, profileDrive: false, profile: "unknown", liveRuns: "unknown" })).toEqual([]);
+    });
+
+    test("a profile drive holds data_profile by itself, and the ledger fact is ignored", () => {
+        expect(busyReasonsOf({ ...idle, profileDrive: true, profile: "running" })).toEqual(["data_profile"]);
+        expect(busyReasonsOf({ ...idle, profileDrive: true, profile: "unreadable" })).toEqual(["data_profile"]);
     });
 });

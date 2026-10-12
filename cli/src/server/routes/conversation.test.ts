@@ -16,6 +16,10 @@ import {
     type TurnSummary,
 } from "../../api/conversation.ts";
 import { readSseFrames } from "../../client/api.ts";
+import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
+import { listAnalysisPage } from "../../db/primary_query.ts";
+import { asStr256 } from "../../lib/types.ts";
+import { freshDb } from "../../test_support/db.ts";
 import type { RunChatTurnArgs } from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { conversationThread, FIXTURE_ANALYSIS_ID, reportThread } from "../../test_support/threads.ts";
@@ -618,5 +622,91 @@ describe("the ask routes", () => {
         const bad = await routesWith().request(`/${A}/asks/k1/answer`, json("POST", { kind: "maybe" }));
         expect(bad.status).toBe(400);
         expect(await bad.json()).toMatchObject({ error: "validation_error" });
+    });
+});
+
+describe("the activity time of the analysis", () => {
+    const SEEDED = 1_000;
+
+    beforeEach(() => {
+        freshDb();
+        insertAnchor({ id: "anchor-1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/a", markerWritten: false, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({ id: A, createdAt: SEEDED, updatedAt: SEEDED, name: asStr256("a"), slug: "a", anchorId: "anchor-1", projectId: null })._unsafeUnwrap();
+    });
+
+    function activityAt(): number {
+        return listAnalysisPage({ projectId: null, sort: "created", limit: 10, offset: 0 })
+            ._unsafeUnwrap()
+            .items.find((item) => item.analysis.id === A)!.lastActivityAt;
+    }
+
+    const pendingAsk: PendingAsk = {
+        id: "k1",
+        analysisId: A,
+        userId: "local",
+        threadId: T,
+        title: "Run a command",
+        command: "rm -rf scratch",
+        detail: null,
+        createdAt: "2026-10-02T10:00:00.000Z",
+    };
+
+    test("a turn raises it when the turn opens and again when the turn ends", async () => {
+        const release = gate();
+        const routes = routesWith({
+            runTurn: async (args) => {
+                args.onOpened?.();
+                await release.wait;
+                return { kind: "ok", opened: true, fallbackText: "" };
+            },
+        });
+
+        const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
+        const opened = activityAt();
+        expect(opened).toBeGreaterThan(SEEDED);
+
+        await Bun.sleep(5);
+        release.open();
+        await framesOf(response);
+        expect(activityAt()).toBeGreaterThan(opened);
+    });
+
+    test("a refused turn changes nothing", async () => {
+        const routes = routesWith({ runTurn: () => Promise.resolve({ kind: "thread_gone" }) });
+
+        const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
+
+        expect(response.status).toBe(404);
+        expect(activityAt()).toBe(SEEDED);
+    });
+
+    test("a turn that the draining server refuses changes nothing", async () => {
+        refuseNewTurns();
+
+        const response = await routesWith().request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
+
+        expect(response.status).toBe(503);
+        expect(activityAt()).toBe(SEEDED);
+    });
+
+    test("an applied answer raises it", async () => {
+        const response = await routesWith({ boot: readyBoot(fakeGateway([pendingAsk])) }).request(`/${A}/asks/k1/answer`, json("POST", { kind: "once" }));
+
+        expect(response.status).toBe(200);
+        expect(activityAt()).toBeGreaterThan(SEEDED);
+    });
+
+    test("an answer that is not applied changes nothing", async () => {
+        for (const outcome of ["already_terminal", "not_found"] as const) {
+            const response = await routesWith({ boot: readyBoot(fakeGateway([], outcome)) }).request(`/${A}/asks/k1/answer`, json("POST", { kind: "once" }));
+            expect(response.status).not.toBe(200);
+        }
+        const foreign = await routesWith({ boot: readyBoot(fakeGateway([{ ...pendingAsk, analysisId: "other" }])) }).request(
+            `/${A}/asks/k1/answer`,
+            json("POST", { kind: "once" }),
+        );
+        expect(foreign.status).toBe(404);
+
+        expect(activityAt()).toBe(SEEDED);
     });
 });

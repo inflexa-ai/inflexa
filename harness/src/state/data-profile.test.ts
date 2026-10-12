@@ -451,6 +451,8 @@ describe("terminal writes CAS on running — a cleared row is never resurrected"
         expect(write.stamped).toBe(true);
         // The accepted stamp carries the start of the claim it closed.
         expect(write.stamped && write.startedAt).toBe((await loadDataProfileStatus(pool, "a-complete-running"))._unsafeUnwrap()?.startedAt ?? null);
+        // And the completion time that it stamped, the one the settle notice carries.
+        expect(write.stamped ? write.completedAt : null).toBe((await loadDataProfileStatus(pool, "a-complete-running"))._unsafeUnwrap()?.completedAt ?? null);
 
         const status = (await loadDataProfileStatus(pool, "a-complete-running"))._unsafeUnwrap();
         expect(status?.status).toBe("completed");
@@ -464,6 +466,7 @@ describe("terminal writes CAS on running — a cleared row is never resurrected"
         const write = (await failDataProfile(pool, "a-fail-running", "boom"))._unsafeUnwrap();
         expect(write.stamped).toBe(true);
         expect(write.stamped && write.startedAt).toBe((await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap()?.startedAt ?? null);
+        expect(write.stamped ? write.completedAt : null).toBe((await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap()?.completedAt ?? null);
 
         const status = (await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap();
         expect(status?.status).toBe("failed");

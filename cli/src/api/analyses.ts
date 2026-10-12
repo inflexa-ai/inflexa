@@ -1,5 +1,8 @@
+import type { DataProfileLifecycleStatus } from "@inflexa-ai/harness/contracts/index.js";
+
 import type { ListEnvelope } from "./common.ts";
 import type { ProjectView } from "./projects.ts";
+import type { RunStatus } from "./runs.ts";
 import type { UsageTotals } from "./usage.ts";
 
 /** An analysis on the wire. Timestamps are ISO 8601. */
@@ -14,15 +17,57 @@ export type AnalysisView = {
     projectId: string | null;
 };
 
-/** An analysis of the list, with its folder and its recorded LLM usage. */
+/** The order of `GET /api/v1/analyses`: `activity` is the time of the newest activity, `created` is the creation time. Both are newest first. */
+export type AnalysisSort = "activity" | "created";
+
+/** The data profile of an analysis of the list. */
+export type AnalysisProfileSummary = {
+    status: DataProfileLifecycleStatus;
+    /** The count of the dataset files of the stored profile. `null` when the profile has no result that can establish it. */
+    profiledFiles: number | null;
+    /** When the profile settled. `null` while it has not. */
+    completedAt: string | null;
+};
+
+/** The newest run of an analysis of the list. */
+export type AnalysisLatestRun = {
+    runId: string;
+    status: RunStatus;
+    /** The title of the plan of the run. `null` when the run has no title. */
+    planTitle: string | null;
+    /** The step rows of the run in the status `completed`. */
+    doneSteps: number;
+    /** All step rows of the run, the synthesis row included. */
+    totalSteps: number;
+    startedAt: string;
+    completedAt: string | null;
+};
+
+/**
+ * An analysis of the list, with its folder, its recorded LLM usage, and its summary. `profile`, `latestRun`,
+ * and `pendingAsks` come from the runtime, thus they are `null` until the server is `ready`, and `null` for a
+ * read that failed. Each field is required, so the shape of an item does not depend on the phase.
+ */
 export type AnalysisSummary = AnalysisView & {
     /** The last known path of the anchor folder, not reconciled. `null` when the anchor row is gone. */
     anchorPath: string | null;
     /** Absent when the ledger read failed: a list with no figures is better than no list. */
     usage?: UsageTotals;
+    /** The time of the newest activity: a row change, a turn, an applied ask answer, an input change, a run start or end, or a profile settle. */
+    lastActivityAt: string;
+    /** `true` when the cached anchor path exists on disk at the request. */
+    folderPresent: boolean;
+    /** `null` when the analysis has no profile, or the profile could not be read. */
+    profile: AnalysisProfileSummary | null;
+    /** `null` when the analysis has no run, or the runs could not be read. */
+    latestRun: AnalysisLatestRun | null;
+    /** The count of the pending asks of the analysis. `null` while the runtime is not ready, or when the read failed. */
+    pendingAsks: number | null;
+    /** What `GET {A}` gives for the same state of the server. Empty when the workspace folder can move. */
+    busy: BusyReason[];
 };
 
-/** The body of `GET /api/v1/analyses`: newest first. */
+/** The body of `GET /api/v1/analyses`, in the order of its `sort` query value (default `created`). */
 export type AnalysisList = ListEnvelope<"analyses", AnalysisSummary>;
 
 /** The home folder of an analysis. */

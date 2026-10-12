@@ -58,7 +58,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1", machineRoutes());
     app.route("/api/v1", storeRoutes());
     app.route("/api/v1/anchors", anchorRoutes(deps.boot));
-    app.route("/api/v1/analyses", analysisCollectionRoutes());
+    app.route("/api/v1/analyses", analysisCollectionRoutes(deps.boot));
     // The guard of each `{A}` route: 404 for an unknown analysis, then its instance lock. Each route under
     // `/api/v1/analyses/:analysisId` mounts AFTER this line, or it answers before the guard runs.
     app.use("/api/v1/analyses/:analysisId/*", analysisGuard());

@@ -40,6 +40,7 @@ import { findAnalysesByRef } from "../../db/primary_query.ts";
 import { causeDetailLines, describeCause, findAuthCause } from "../../lib/cause.ts";
 import { rmResultAsync, type FsError } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
+import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
 import { locateExistingOutputDir } from "../../modules/analysis/output.ts";
 import { resolveModelConnection, type ModelConnectionIdentity } from "../../modules/harness/config.ts";
 import { buildChatSession, healTailOrphan, retractTailTurn, runChatTurn, type RunChatTurnArgs, type TurnOutcome } from "../../modules/harness/turn.ts";
@@ -331,6 +332,7 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
             (outcome) => {
                 switch (outcome) {
                     case "applied":
+                        noteAnalysisActivity(analysisId, Date.now());
                         return c.json<AnswerAskResponse>({ applied: true });
                     case "not_found":
                         return apiError(c, "not_found", "Ask not found.");
@@ -409,8 +411,10 @@ async function startChatTurn(c: Context<ServerEnv>, analysisId: string, threadId
             return refusal;
         }
     }
+    // A refused turn ran nothing, thus it is no activity.
+    noteAnalysisActivity(analysisId, Date.now());
 
-    void settled.then((outcome) => closeTurn(turnId, outcome, queue, opts));
+    void settled.then((outcome) => closeTurn(turnId, analysisId, outcome, queue, opts));
     return sseResponse(
         async (writer) => {
             writer.signal.addEventListener("abort", () => queue.stop(), { once: true });
@@ -446,7 +450,7 @@ function refusalOf(c: Context<ServerEnv>, outcome: TurnOutcome): Response | null
  * and start the sweep of the package adds that the turn queued. A failure of this tail goes to the log only,
  * because no client waits on a reply from it.
  */
-async function closeTurn(turnId: string, outcome: TurnOutcome, queue: FrameQueue, opts: ConversationRouteOpts): Promise<void> {
+async function closeTurn(turnId: string, analysisId: string, outcome: TurnOutcome, queue: FrameQueue, opts: ConversationRouteOpts): Promise<void> {
     const end = await ResultAsync.fromPromise(endingOf(outcome, opts), (cause) => cause);
     end.match(
         ({ ending, frame }) => {
@@ -459,6 +463,7 @@ async function closeTurn(turnId: string, outcome: TurnOutcome, queue: FrameQueue
             queue.push({ type: "error", message: "The server failed to record the end of the turn.", source: ROOT_SOURCE });
         },
     );
+    noteAnalysisActivity(analysisId, Date.now());
     queue.close();
     // Each approved `store add` of the turn only queued its package. The sweep covers what the 10 s timer did
     // not take yet, thus no approved add outlives its turn unflushed. An empty queue starts nothing.

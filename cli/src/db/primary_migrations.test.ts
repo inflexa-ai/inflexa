@@ -85,7 +85,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -116,6 +116,7 @@ describe("runMigrations", () => {
             .all()
             .map((r) => r.name);
         expect(indexes).toEqual([
+            "idx_analyses_activity",
             "idx_analyses_anchor",
             "idx_analyses_project",
             "idx_analysis_inputs_analysis",
@@ -200,7 +201,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {
@@ -365,5 +366,29 @@ describe("migration 10 — one spelling for each request", () => {
             .query<{ spelling: string; state: string; message: string | null }, []>("SELECT spelling, state, message FROM package_store_flights")
             .get();
         expect(flight).toEqual({ spelling: "scanpy", state: "failed", message: "resolve: offline" });
+    });
+});
+
+describe("migration 11 — the activity time of an analysis", () => {
+    test("a row from before the column takes its updated_at as its activity time", () => {
+        const db = new Database(":memory:");
+        runMigrations(
+            db,
+            migrations.filter((m) => m.version <= 10),
+        )._unsafeUnwrap();
+        db.run("INSERT INTO anchors (id, created_at, updated_at, cached_path, marker_written, last_seen) VALUES ('anc', 1, 1, '/tmp/x', 1, 1)");
+        db.run("INSERT INTO analyses (id, created_at, updated_at, name, slug, anchor_id) VALUES ('old', 100, 700, 'Old', 'old', 'anc')");
+
+        runMigrations(db, migrations)._unsafeUnwrap();
+
+        expect(db.query<{ last_activity_at: number }, []>("SELECT last_activity_at FROM analyses WHERE id = 'old'").get()?.last_activity_at).toBe(700);
+    });
+
+    test("the column is the last one of the table, a NOT NULL integer with the default 0", () => {
+        const columns = migratedMemoryDb()
+            .query<{ name: string; type: string; notnull: number; dflt_value: string | null }, []>("PRAGMA table_info(analyses)")
+            .all();
+        const last = columns[columns.length - 1];
+        expect(last).toMatchObject({ name: "last_activity_at", type: "INTEGER", notnull: 1, dflt_value: "0" });
     });
 });

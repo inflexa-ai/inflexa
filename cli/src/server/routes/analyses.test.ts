@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import type { AnalysisPurgeOutcome, DbError as PgError, Pool } from "@inflexa-ai/harness";
+import type { AnalysisPurgeOutcome, DataProfileSummary, DbError as PgError, LatestRunSummary, Pool } from "@inflexa-ai/harness";
 
 import type {
     AnalysisDetail,
@@ -20,7 +20,7 @@ import type {
 } from "../../api/analyses.ts";
 import type { ApiError } from "../../api/common.ts";
 import type { ServerBootState } from "../../api/server.ts";
-import { createProject, insertAnalysis, insertAnalysisInput, insertAnchor, upsertLlmUsage } from "../../db/primary_mutation.ts";
+import { createProject, insertAnalysis, insertAnalysisInput, insertAnchor, recordAnalysisActivity, upsertLlmUsage } from "../../db/primary_mutation.ts";
 import { getAnalysis, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { asStr256 } from "../../lib/types.ts";
@@ -33,7 +33,14 @@ import { idleBoot, idleLifecycle } from "../../test_support/server.ts";
 import { buildApp } from "../app.ts";
 import type { ServerBoot } from "../boot.ts";
 import type { ServerEnv } from "../http.ts";
-import { analysisCollectionRoutes, analysisRoutes, DEFAULT_ANALYSIS_ROUTE_OPTS, type AnalysisRouteOpts } from "./analyses.ts";
+import {
+    analysisCollectionRoutes,
+    analysisRoutes,
+    DEFAULT_ANALYSIS_LIST_OPTS,
+    DEFAULT_ANALYSIS_ROUTE_OPTS,
+    type AnalysisListOpts,
+    type AnalysisRouteOpts,
+} from "./analyses.ts";
 
 // The routes under their mount paths, with no bearer check and no guard, except the guard tests, which drive
 // the whole app. Each `as` cast of a body below reads JSON that the route under test builds from the same
@@ -51,9 +58,9 @@ const readyBoot: ServerBoot = {
 
 const IDLE: AnalysisRouteOpts = { ...DEFAULT_ANALYSIS_ROUTE_OPTS, busyReasons: async () => [] };
 
-function appWith(boot: ServerBoot, opts: AnalysisRouteOpts = IDLE): Hono<ServerEnv> {
+function appWith(boot: ServerBoot, opts: AnalysisRouteOpts = IDLE, listOpts: AnalysisListOpts = DEFAULT_ANALYSIS_LIST_OPTS): Hono<ServerEnv> {
     const app = new Hono<ServerEnv>();
-    app.route("/api/v1/analyses", analysisCollectionRoutes());
+    app.route("/api/v1/analyses", analysisCollectionRoutes(boot, listOpts));
     app.route("/api/v1/analyses/:analysisId", analysisRoutes(boot, opts));
     return app;
 }
@@ -175,6 +182,240 @@ describe("GET /api/v1/analyses", () => {
         const unknown = await appWith(idleBoot()).request("/api/v1/analyses?project=nope");
         expect(unknown.status).toBe(404);
         expect(((await unknown.json()) as ApiError).message).toBe('No project found matching "nope".');
+    });
+});
+
+/** The list reads with no work to report. A test replaces the reads that it is about. */
+function listOptsOf(over: Partial<AnalysisListOpts> = {}): AnalysisListOpts {
+    return {
+        ...DEFAULT_ANALYSIS_LIST_OPTS,
+        latestRuns: () => okAsync([]),
+        profiles: () => okAsync([]),
+        liveWork: () => okAsync(new Map()),
+        pendingAsks: async () => [],
+        hasRunningTurn: () => false,
+        profileWorkInFlight: () => false,
+        ...over,
+    };
+}
+
+async function listOf(boot: ServerBoot, listOpts: AnalysisListOpts, query = ""): Promise<{ status: number; list: AnalysisList }> {
+    const response = await appWith(boot, IDLE, listOpts).request(`/api/v1/analyses${query}`);
+    return { status: response.status, list: (await response.json()) as AnalysisList };
+}
+
+function runOf(analysisId: string, over: Partial<LatestRunSummary> = {}): LatestRunSummary {
+    return {
+        analysisId,
+        runId: `run-${analysisId}`,
+        status: "running",
+        planTitle: "Differential expression",
+        doneSteps: 2,
+        totalSteps: 5,
+        startedAt: "2026-10-05T10:00:00.000Z",
+        completedAt: null,
+        ...over,
+    };
+}
+
+describe("GET /api/v1/analyses: the summary of each analysis", () => {
+    test("`sort=activity` puts the analysis with the newest activity first, and the default stays the created order", async () => {
+        const older = await seedAnalysis(tmp(), "Older", { createdAt: 1_000, updatedAt: 1_000 });
+        const newer = await seedAnalysis(tmp(), "Newer", { createdAt: 2_000, updatedAt: 2_000 });
+        recordAnalysisActivity(older.id, 9_000)._unsafeUnwrap();
+
+        const byActivity = await listOf(idleBoot(), listOptsOf(), "?sort=activity");
+        expect(byActivity.list.analyses.map((a) => a.id)).toEqual([older.id, newer.id]);
+        expect(byActivity.list.analyses.map((a) => a.lastActivityAt)).toEqual([new Date(9_000).toISOString(), new Date(2_000).toISOString()]);
+
+        for (const query of ["", "?sort=created", "?sort="]) {
+            expect((await listOf(idleBoot(), listOptsOf(), query)).list.analyses.map((a) => a.id)).toEqual([newer.id, older.id]);
+        }
+    });
+
+    test("a `sort` value that is not activity or created is a 400 with a field error under `sort`", async () => {
+        const response = await appWith(idleBoot()).request("/api/v1/analyses?sort=name");
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { sort: [expect.any(String)] } } });
+    });
+
+    test("`sort=activity` keeps the project filter", async () => {
+        const project = createProject({ name: asStr256("Liver"), description: null, tags: [] })._unsafeUnwrap();
+        const inProject = await seedAnalysis(tmp(), "In", { projectId: project.id });
+        await seedAnalysis(tmp(), "Out");
+
+        const { list } = await listOf(idleBoot(), listOptsOf(), "?sort=activity&project=Liver");
+
+        expect(list.analyses.map((a) => a.id)).toEqual([inProject.id]);
+    });
+
+    test("until the phase is ready, the runtime fields are null, the SQLite fields stay, and the busy rule keeps what it knows", async () => {
+        const a = await seedAnalysis(tmp(), "Alpha");
+        let runtimeReads = 0;
+        const count = () => {
+            runtimeReads += 1;
+            return okAsync([]);
+        };
+        const listOpts = listOptsOf({ latestRuns: count, profiles: count, hasRunningTurn: () => true, profileWorkInFlight: () => true });
+
+        const { status, list } = await listOf(idleBoot(), listOpts);
+
+        expect(status).toBe(200);
+        expect(list.analyses[0]).toMatchObject({
+            id: a.id,
+            lastActivityAt: new Date(1).toISOString(),
+            folderPresent: true,
+            profile: null,
+            latestRun: null,
+            pendingAsks: null,
+            busy: ["chat_turn", "data_profile"],
+        });
+        expect(runtimeReads).toBe(0);
+    });
+
+    test("a ready server gives the profile, the newest run, the asks, and the busy reasons of each analysis", async () => {
+        const live = await seedAnalysis(tmp(), "Live", { createdAt: 2 });
+        const idle = await seedAnalysis(tmp(), "Idle", { createdAt: 1 });
+        const listOpts = listOptsOf({
+            latestRuns: () => okAsync([runOf(live.id)]),
+            profiles: () =>
+                okAsync<DataProfileSummary[]>([{ analysisId: live.id, status: "completed", completedAt: "2026-10-04T10:00:00.000Z", profiledFiles: 12 }]),
+            liveWork: () => okAsync(new Map([[live.id, { runs: 1, profiles: 0 }]])),
+            pendingAsks: async () => [{ analysisId: live.id }, { analysisId: live.id }, { analysisId: "someone-else" }],
+        });
+
+        const { list } = await listOf(readyBoot, listOpts);
+
+        const [first, second] = list.analyses;
+        expect(first).toMatchObject({
+            id: live.id,
+            profile: { status: "completed", profiledFiles: 12, completedAt: "2026-10-04T10:00:00.000Z" },
+            latestRun: {
+                runId: `run-${live.id}`,
+                status: "running",
+                planTitle: "Differential expression",
+                doneSteps: 2,
+                totalSteps: 5,
+                startedAt: "2026-10-05T10:00:00.000Z",
+                completedAt: null,
+            },
+            pendingAsks: 2,
+            busy: ["run"],
+        });
+        expect(second).toMatchObject({ id: idle.id, profile: null, latestRun: null, pendingAsks: 0, busy: [] });
+    });
+
+    test("a running profile row reads as busy `data_profile`, as `GET {A}` does", async () => {
+        const a = await seedAnalysis(tmp(), "Alpha");
+        const listOpts = listOptsOf({
+            profiles: () => okAsync<DataProfileSummary[]>([{ analysisId: a.id, status: "running", completedAt: null, profiledFiles: null }]),
+        });
+
+        const { list } = await listOf(readyBoot, listOpts);
+
+        expect(list.analyses[0]).toMatchObject({ profile: { status: "running", profiledFiles: null, completedAt: null }, busy: ["data_profile"] });
+    });
+
+    test("a failed newest-run read leaves `latestRun` null and fails nothing", async () => {
+        await seedAnalysis(tmp(), "Alpha");
+
+        const { status, list } = await listOf(readyBoot, listOptsOf({ latestRuns: () => errAsync(new Error("boom")) }));
+
+        expect(status).toBe(200);
+        expect(list.analyses[0]).toMatchObject({ latestRun: null, busy: [] });
+    });
+
+    test("a failed profile read leaves `profile` null and adds `profile_state_unreadable`", async () => {
+        await seedAnalysis(tmp(), "Alpha");
+
+        const { status, list } = await listOf(readyBoot, listOptsOf({ profiles: () => errAsync(new Error("boom")) }));
+
+        expect(status).toBe(200);
+        expect(list.analyses[0]).toMatchObject({ profile: null, busy: ["profile_state_unreadable"] });
+    });
+
+    test("a failed live-work read adds `run_state_unreadable`", async () => {
+        await seedAnalysis(tmp(), "Alpha");
+
+        const { status, list } = await listOf(readyBoot, listOptsOf({ liveWork: () => errAsync(new Error("boom")) }));
+
+        expect(status).toBe(200);
+        expect(list.analyses[0]).toMatchObject({ busy: ["run_state_unreadable"] });
+    });
+
+    test("a rejected `askGateway.pending()` gives 200 with `pendingAsks` null on each item", async () => {
+        await seedAnalysis(tmp(), "One", { createdAt: 1 });
+        await seedAnalysis(tmp(), "Two", { createdAt: 2 });
+
+        const { status, list } = await listOf(
+            readyBoot,
+            listOptsOf({
+                pendingAsks: () => Promise.reject(new Error("the ask ledger is down")),
+            }),
+        );
+
+        expect(status).toBe(200);
+        expect(list.analyses.map((a) => a.pendingAsks)).toEqual([null, null]);
+    });
+
+    test("`folderPresent` is true for a folder on disk and false for a missing path", async () => {
+        const present = await seedAnalysis(tmp(), "Here", { createdAt: 2 });
+        const gone = tmp();
+        const missing = await seedAnalysis(gone, "Gone", { createdAt: 1 });
+        rmSync(gone, { recursive: true, force: true });
+
+        const { list } = await listOf(idleBoot(), listOptsOf());
+
+        expect(list.analyses.map((a) => [a.id, a.folderPresent])).toEqual([
+            [present.id, true],
+            [missing.id, false],
+        ]);
+    });
+
+    test("the count of the reads does not depend on the page size", async () => {
+        // Distinct activity times in an order that differs from the creation order: 7 and 25 share no factor.
+        const activity = new Map<string, number>();
+        for (let i = 0; i < 25; i++) {
+            const a = await seedAnalysis(tmp(), `A${i}`, { createdAt: i + 1 });
+            const at = 10_000 + ((i * 7) % 25);
+            recordAnalysisActivity(a.id, at)._unsafeUnwrap();
+            activity.set(a.id, at);
+        }
+        const newestByActivity = [...activity].sort((x, y) => y[1] - x[1]).map(([id]) => id);
+        const reads = { runs: 0, profiles: 0, live: 0, asks: 0, paths: 0 };
+        const listOpts = listOptsOf({
+            latestRuns: () => {
+                reads.runs += 1;
+                return okAsync([]);
+            },
+            profiles: () => {
+                reads.profiles += 1;
+                return okAsync([]);
+            },
+            liveWork: () => {
+                reads.live += 1;
+                return okAsync(new Map());
+            },
+            pendingAsks: async () => {
+                reads.asks += 1;
+                return [];
+            },
+            pathsExist: (paths, width) => {
+                reads.paths += 1;
+                return DEFAULT_ANALYSIS_LIST_OPTS.pathsExist(paths, width);
+            },
+        });
+
+        const one = await listOf(readyBoot, listOpts, "?sort=activity&perPage=1");
+        const afterOne = { ...reads };
+        const twenty = await listOf(readyBoot, listOpts, "?sort=activity&perPage=20");
+
+        expect(one.list.analyses).toHaveLength(1);
+        expect(one.list.analyses.map((a) => a.id)).toEqual(newestByActivity.slice(0, 1));
+        expect(twenty.list.analyses.map((a) => a.id)).toEqual(newestByActivity.slice(0, 20));
+        expect(afterOne).toEqual({ runs: 1, profiles: 1, live: 1, asks: 1, paths: 1 });
+        expect({ runs: reads.runs - 1, profiles: reads.profiles - 1, live: reads.live - 1, asks: reads.asks - 1, paths: reads.paths - 1 }).toEqual(afterOne);
     });
 });
 

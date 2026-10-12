@@ -205,12 +205,21 @@ export function recordDataProfileWorkflowId(pool: Querier, analysisId: string, w
  * write per `running` claim, so `stamped: true` is the exactly-once point of a
  * profile's terminal transition. It carries the `data_profile_started_at` of the
  * claim it closed, so the caller measures the profile from the ledger's own start.
+ * It also carries the `data_profile_completed_at` that the write stamped.
  */
-export type DataProfileTerminalWrite = { readonly stamped: false } | { readonly stamped: true; readonly startedAt: string | null };
+export type DataProfileTerminalWrite =
+    { readonly stamped: false } | { readonly stamped: true; readonly startedAt: string | null; readonly completedAt: string };
 
-function terminalWriteOf(rows: ReadonlyArray<{ data_profile_started_at: string | null }>): DataProfileTerminalWrite {
+interface TerminalWriteRow {
+    data_profile_started_at: string | null;
+    data_profile_completed_at: string;
+}
+
+function terminalWriteOf(rows: ReadonlyArray<TerminalWriteRow>): DataProfileTerminalWrite {
     const row = rows[0];
-    return row === undefined ? { stamped: false } : { stamped: true, startedAt: row.data_profile_started_at ?? null };
+    return row === undefined
+        ? { stamped: false }
+        : { stamped: true, startedAt: row.data_profile_started_at ?? null, completedAt: row.data_profile_completed_at };
 }
 
 /**
@@ -229,18 +238,18 @@ function terminalWriteOf(rows: ReadonlyArray<{ data_profile_started_at: string |
  * guard only ever refuses a row another writer already moved on from.
  *
  * `stamped: true` when this call stamped the row, with the `data_profile_started_at`
- * of the claim it closed; `stamped: false` when the guard refused it (the row was
+ * of the claim it closed and the `data_profile_completed_at` it stamped; `stamped: false` when the guard refused it (the row was
  * cleared/expired/replayed away) — a no-op the caller logs, not an error.
  */
 export function completeDataProfile(pool: Querier, analysisId: string, result?: DataProfileResult): ResultAsync<DataProfileTerminalWrite, DbError> {
     const now = new Date().toISOString();
     return tryMutation("dataProfile.completeDataProfile", async () => {
-        const res = await pool.query<{ data_profile_started_at: string | null }>({
+        const res = await pool.query<TerminalWriteRow>({
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'completed', data_profile_completed_at = $1,
                 data_profile_result = $2::jsonb
             WHERE analysis_id = $3 AND data_profile_status = 'running'
-            RETURNING data_profile_started_at`,
+            RETURNING data_profile_started_at, data_profile_completed_at`,
             values: [now, result ? JSON.stringify(result) : null, analysisId],
         });
         return terminalWriteOf(res.rows);
@@ -256,18 +265,18 @@ export function completeDataProfile(pool: Querier, analysisId: string, result?: 
  * prior profile survives the failure (the re-profile/retry route can keep serving it).
  *
  * `stamped: true` when this call stamped the row, with the `data_profile_started_at`
- * of the claim it closed; `stamped: false` when the guard refused it — a logged
+ * of the claim it closed and the `data_profile_completed_at` it stamped; `stamped: false` when the guard refused it — a logged
  * no-op, not an error.
  */
 export function failDataProfile(pool: Querier, analysisId: string, error: string): ResultAsync<DataProfileTerminalWrite, DbError> {
     const now = new Date().toISOString();
     return tryMutation("dataProfile.failDataProfile", async () => {
-        const res = await pool.query<{ data_profile_started_at: string | null }>({
+        const res = await pool.query<TerminalWriteRow>({
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'failed', data_profile_error = $1,
                 data_profile_completed_at = $2
             WHERE analysis_id = $3 AND data_profile_status = 'running'
-            RETURNING data_profile_started_at`,
+            RETURNING data_profile_started_at, data_profile_completed_at`,
             values: [error, now, analysisId],
         });
         return terminalWriteOf(res.rows);

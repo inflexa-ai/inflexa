@@ -1,8 +1,16 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { freshDb } from "../test_support/db.ts";
-import { createProject, insertAnalysis, insertAnchor } from "./primary_mutation.ts";
-import { getAnchor, findProjectByRef } from "./primary_query.ts";
+import {
+    createProject,
+    deleteProject,
+    insertAnalysis,
+    insertAnchor,
+    recordAnalysisActivity,
+    renameAnalysis,
+    updateAnalysisProject,
+} from "./primary_mutation.ts";
+import { findProjectByRef, getAnchor, getProjectWithCount, listAnalysisPage } from "./primary_query.ts";
 import { asStr256 } from "../lib/types.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Analysis } from "../types/analysis.ts";
@@ -91,5 +99,125 @@ describe("DbError constraint classification", () => {
                 if (e.type === "constraint_violation") expect(e.constraint).toBe("not_null");
             },
         );
+    });
+});
+
+function analysis(id: string, createdAt: number, overrides: Partial<Analysis> = {}): Analysis {
+    return { id, createdAt, updatedAt: createdAt, name: asStr256(id), slug: id, anchorId: "anc", projectId: null, ...overrides };
+}
+
+/** The activity time of one analysis, read through the list page: the column stays off the entity. */
+function activityOf(id: string): number | undefined {
+    const page = listAnalysisPage({ projectId: null, sort: "created", limit: 100, offset: 0 })._unsafeUnwrap();
+    return page.items.find((item) => item.analysis.id === id)?.lastActivityAt;
+}
+
+describe("the activity time of an analysis", () => {
+    beforeEach(() => {
+        insertAnchor(anchor("anc"))._unsafeUnwrap();
+    });
+
+    test("an inserted analysis has its creation time as its activity time", () => {
+        insertAnalysis(analysis("a1", 5_000))._unsafeUnwrap();
+        expect(activityOf("a1")).toBe(5_000);
+    });
+
+    test("recordAnalysisActivity raises the time, never lowers it, and leaves updated_at alone", () => {
+        insertAnalysis(analysis("a1", 5_000))._unsafeUnwrap();
+
+        expect(recordAnalysisActivity("a1", 9_000)._unsafeUnwrap()).toBe(1);
+        expect(activityOf("a1")).toBe(9_000);
+        expect(recordAnalysisActivity("a1", 8_000)._unsafeUnwrap()).toBe(1);
+        expect(activityOf("a1")).toBe(9_000);
+
+        const page = listAnalysisPage({ projectId: null, sort: "created", limit: 10, offset: 0 })._unsafeUnwrap();
+        expect(page.items[0]?.analysis.updatedAt).toBe(5_000);
+    });
+
+    test("recordAnalysisActivity changes 0 rows for an unknown id", () => {
+        expect(recordAnalysisActivity("nope", 9_000)._unsafeUnwrap()).toBe(0);
+    });
+
+    test("a rename, a project change, and a project delete raise the time to their write time, never lower", () => {
+        const project = createProject({ name: asStr256("Acme"), description: null, tags: [] })._unsafeUnwrap();
+        insertAnalysis(analysis("a1", 1_000))._unsafeUnwrap();
+        insertAnalysis(analysis("a2", 1_000))._unsafeUnwrap();
+        insertAnalysis(analysis("a3", 1_000, { projectId: project.id }))._unsafeUnwrap();
+        const before = Date.now();
+
+        renameAnalysis("a1", asStr256("renamed"), "renamed")._unsafeUnwrap();
+        updateAnalysisProject("a2", project.id)._unsafeUnwrap();
+        deleteProject(project.id)._unsafeUnwrap();
+
+        for (const id of ["a1", "a2", "a3"]) {
+            const item = listAnalysisPage({ projectId: null, sort: "created", limit: 10, offset: 0 })
+                ._unsafeUnwrap()
+                .items.find((i) => i.analysis.id === id);
+            expect(item?.lastActivityAt).toBe(item?.analysis.updatedAt as number);
+            expect(item?.lastActivityAt).toBeGreaterThanOrEqual(before);
+        }
+
+        recordAnalysisActivity("a1", Date.now() + 100_000)._unsafeUnwrap();
+        const later = activityOf("a1") as number;
+        renameAnalysis("a1", asStr256("again"), "again")._unsafeUnwrap();
+        expect(activityOf("a1")).toBe(later);
+    });
+});
+
+describe("the analysis page orders", () => {
+    beforeEach(() => {
+        insertAnchor(anchor("anc"))._unsafeUnwrap();
+    });
+
+    test("activity puts an older analysis with newer activity first, and created does not", () => {
+        insertAnalysis(analysis("old", 1_000))._unsafeUnwrap();
+        insertAnalysis(analysis("new", 2_000))._unsafeUnwrap();
+        recordAnalysisActivity("old", 3_000)._unsafeUnwrap();
+
+        const ids = (sort: "activity" | "created") =>
+            listAnalysisPage({ projectId: null, sort, limit: 10, offset: 0 })
+                ._unsafeUnwrap()
+                .items.map((item) => item.analysis.id);
+
+        expect(ids("activity")).toEqual(["old", "new"]);
+        expect(ids("created")).toEqual(["new", "old"]);
+    });
+
+    test("each order breaks a tie with the id, thus two pages never overlap", () => {
+        for (const id of ["a", "b", "c"]) insertAnalysis(analysis(id, 1_000))._unsafeUnwrap();
+
+        for (const sort of ["activity", "created"] as const) {
+            const first = listAnalysisPage({ projectId: null, sort, limit: 2, offset: 0 })._unsafeUnwrap();
+            const second = listAnalysisPage({ projectId: null, sort, limit: 2, offset: 2 })._unsafeUnwrap();
+            expect(first.items.map((item) => item.analysis.id)).toEqual(["c", "b"]);
+            expect(second.items.map((item) => item.analysis.id)).toEqual(["a"]);
+            expect(first.total).toBe(3);
+        }
+    });
+
+    test("the project filter applies to the activity order", () => {
+        const project = createProject({ name: asStr256("Acme"), description: null, tags: [] })._unsafeUnwrap();
+        insertAnalysis(analysis("in-1", 1_000, { projectId: project.id }))._unsafeUnwrap();
+        insertAnalysis(analysis("in-2", 2_000, { projectId: project.id }))._unsafeUnwrap();
+        insertAnalysis(analysis("out", 3_000))._unsafeUnwrap();
+        recordAnalysisActivity("in-1", 9_000)._unsafeUnwrap();
+
+        const page = listAnalysisPage({ projectId: project.id, sort: "activity", limit: 10, offset: 0 })._unsafeUnwrap();
+
+        expect(page.items.map((item) => item.analysis.id)).toEqual(["in-1", "in-2"]);
+        expect(page.total).toBe(2);
+    });
+});
+
+describe("getProjectWithCount", () => {
+    test("gives the project with its analysis count, null for an unknown id, and null for a name", () => {
+        insertAnchor(anchor("anc"))._unsafeUnwrap();
+        const project = createProject({ name: asStr256("trial-42"), description: null, tags: [] })._unsafeUnwrap();
+        insertAnalysis(analysis("a1", 1_000, { projectId: project.id }))._unsafeUnwrap();
+        insertAnalysis(analysis("a2", 2_000, { projectId: project.id }))._unsafeUnwrap();
+
+        expect(getProjectWithCount(project.id)._unsafeUnwrap()).toEqual({ project, analysisCount: 2 });
+        expect(getProjectWithCount("nope")._unsafeUnwrap()).toBeNull();
+        expect(getProjectWithCount("trial-42")._unsafeUnwrap()).toBeNull();
     });
 });

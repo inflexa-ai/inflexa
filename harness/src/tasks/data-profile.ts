@@ -36,7 +36,7 @@ import { durableStep } from "../loop/run-step.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { DbError } from "../lib/db-result.js";
-import { deliverNotice, passGate, type GateRefusal } from "../lib/hooks.js";
+import { deliverNotice, passGate, type GateRefusal, type NoticeFailure } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -115,6 +115,17 @@ const MAX_SUBMIT_ROUNDS = 2;
 /** Where the embedder stages this analysis's inputs (see the data-profile-init spec). */
 const STAGED_INPUT_ROOT = "data/inputs";
 
+/** The settle of one profile claim: the ledger row left `running`, and the terminal write stamped it. */
+export interface DataProfileSettlement {
+    readonly analysisId: string;
+    readonly status: "completed" | "failed";
+    /** The `data_profile_completed_at` that the terminal write stamped, as an ISO 8601 string. */
+    readonly completedAt: string;
+}
+
+/** The notice of a profile settle. The workflow body calls it one time for each settled claim. */
+export type NotifyDataProfileSettled = (settlement: DataProfileSettlement) => ResultAsync<void, NoticeFailure>;
+
 /** The body's construction-time deps — closed over at registration. */
 export interface DataProfileDeps extends EnvironmentStorePaths {
     /** Operational logging seam; omitted falls back to no-op. */
@@ -150,6 +161,11 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
      * Unbound keeps the current shape: no link tool, and no error.
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
+    /**
+     * Notice of each profile settle, for the records of the embedder. Unbound, the
+     * body calls nothing. It is not a provenance hook.
+     */
+    readonly notifyDataProfileSettled?: NotifyDataProfileSettled;
 }
 
 /**
@@ -455,7 +471,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
     // ledger has no suspended state and the retry path takes a `failed` row again.
     const suspendProfile = async (suspension: Suspension): Promise<void> => {
         logger.warn("profile suspended", { reason: suspension.reason });
-        settleTerminalWrite(logger, analysisId, unwrapOrThrow(await failDataProfile(deps.pool, analysisId, suspension.reason)), "failed");
+        await settleTerminalWrite(
+            logger,
+            analysisId,
+            unwrapOrThrow(await failDataProfile(deps.pool, analysisId, suspension.reason)),
+            "failed",
+            deps.notifyDataProfileSettled,
+        );
         await revoke("data-profile-suspended");
         unwrapOrThrow(await suspendAnalysis(deps.pool, analysisId));
         await activity.failed(suspension.reason);
@@ -506,7 +528,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // catalogue's fit is measured, and a completion that emitted none would make the
             // empty-manifest path invisible to the same monitoring that watches every other.
             logProfileMonitoring(logger, { dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
-            settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId)), "completed");
+            await settleTerminalWrite(
+                logger,
+                analysisId,
+                unwrapOrThrow(await completeDataProfile(deps.pool, analysisId)),
+                "completed",
+                deps.notifyDataProfileSettled,
+            );
             await revoke("data-profile-completed");
             // This is a terminal completion like any other, so it reports one — a consumer watching
             // an empty-manifest profile sees it settle rather than seeing the stream simply stop.
@@ -568,7 +596,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             await activity.indexing();
             await indexProfile({ deps, analysisId, session: runSession, record, scan, logger });
             logProfileMonitoring(logger, { resolution, dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
-            settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, record)), "completed");
+            await settleTerminalWrite(
+                logger,
+                analysisId,
+                unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, record)),
+                "completed",
+                deps.notifyDataProfileSettled,
+            );
             await revoke("data-profile-completed");
             await activity.complete();
             return;
@@ -595,7 +629,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 repairRounds: 0,
                 absorb: absorb.kind,
             });
-            settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, absorbed)), "completed");
+            await settleTerminalWrite(
+                logger,
+                analysisId,
+                unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, absorbed)),
+                "completed",
+                deps.notifyDataProfileSettled,
+            );
             await revoke("data-profile-completed");
             await activity.complete();
             return;
@@ -787,7 +827,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
 
             // 6. Complete — store the FULL profiler finding plus the input signature for
             // staleness detection. The scratch tree is gone; this row is all that survives.
-            settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, profileRecord)), "completed");
+            await settleTerminalWrite(
+                logger,
+                analysisId,
+                unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, profileRecord)),
+                "completed",
+                deps.notifyDataProfileSettled,
+            );
             await revoke("data-profile-completed");
             // LAST statement of the success path, and that placement is the guarantee that exactly
             // one terminal activity is ever emitted. Everything that could still throw — the ledger
@@ -809,7 +855,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         if (suspension !== undefined) return await suspendProfile(suspension);
         logger.error("profile failed", logger.errorFields(err));
         const reason = profileFailureReason(err);
-        settleTerminalWrite(logger, analysisId, unwrapOrThrow(await failDataProfile(deps.pool, analysisId, reason)), "failed");
+        await settleTerminalWrite(
+            logger,
+            analysisId,
+            unwrapOrThrow(await failDataProfile(deps.pool, analysisId, reason)),
+            "failed",
+            deps.notifyDataProfileSettled,
+        );
         await revoke("data-profile-failed");
         // The same bounded, user-safe line the ledger receives — never the raw error, whose paths and
         // stack frames stay in the log record above. This is the only other terminal emission, so
@@ -830,18 +882,28 @@ function logTerminalNoop(logger: Logger, analysisId: string, write: string): voi
 
 /**
  * Settle one terminal write of the profile ledger. A refused stamp is logged
- * (see `logTerminalNoop`). An accepted stamp records the profile's run outcome:
- * the CAS admits one write per `running` claim, so this is the exactly-once
+ * (see `logTerminalNoop`) and sends no notice. An accepted stamp records the
+ * profile's run outcome and then delivers the settle notice when the deps bind
+ * one: the CAS admits one write per `running` claim, so this is the exactly-once
  * point of the transition — a recovery replay of the body finds the row no
- * longer `running`, and records nothing again. The duration runs from the
+ * longer `running`, and does neither again. The duration runs from the
  * `data_profile_started_at` the claim stamped, never from a body-local clock.
+ * A crash between the stamp and the notice loses that one notice.
  */
-function settleTerminalWrite(logger: Logger, analysisId: string, write: DataProfileTerminalWrite, status: "completed" | "failed"): void {
+async function settleTerminalWrite(
+    logger: Logger,
+    analysisId: string,
+    write: DataProfileTerminalWrite,
+    status: "completed" | "failed",
+    notify: NotifyDataProfileSettled | undefined,
+): Promise<void> {
     if (!write.stamped) {
         logTerminalNoop(logger, analysisId, status === "completed" ? "completion" : "failure");
         return;
     }
     recordRunCompleted({ workflow: "data_profile", status, durationMs: elapsedSinceIso(write.startedAt) });
+    if (notify === undefined) return;
+    await deliverNotice(logger, "notifyDataProfileSettled", notify({ analysisId, status, completedAt: write.completedAt }));
 }
 
 /**

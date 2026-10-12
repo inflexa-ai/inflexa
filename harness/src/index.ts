@@ -507,6 +507,8 @@ export type {
     DataProfileTriggerParams,
     DataProfileTriggerResult,
     DataProfileStartError,
+    DataProfileSettlement,
+    NotifyDataProfileSettled,
 } from "./tasks/data-profile.js";
 /**
  * The synthetic run id the data-profile workflow stamps onto its own frame — the profile has no run
@@ -560,6 +562,9 @@ export type {
     DataProfileSubjectSource,
 } from "./contracts/data-profile.js";
 export type { DataProfileStatus } from "./state/data-profile.js";
+// The grouped reads that summarize a page of analyses: one statement for the whole list.
+export { queryLatestRunsByAnalyses, queryDataProfileStatusByAnalyses } from "./state/analyses-metrics.js";
+export type { DataProfileSummary, LatestRunSummary } from "./state/analyses-metrics.js";
 
 // The controlled vocabulary the profiler draws from, as data. A consumer rendering a
 // stored group needs the category's meaning, and the package owns the catalogue — a host

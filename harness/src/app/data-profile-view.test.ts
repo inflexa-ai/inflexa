@@ -115,7 +115,7 @@ describe("reading a snapshot of either era", () => {
     it("prefers the census over the older coverage figure, and admits when a row can say neither", () => {
         expect(profileDatasetFileCount(RESOLVED)).toBe(82);
         expect(profileDatasetFileCount(LEGACY)).toBe(82);
-        expect(profileDatasetFileCount({ ...BASE, files: [] })).toBeNull();
+        expect(profileDatasetFileCount({})).toBeNull();
     });
 
     it("reads a legacy row's concerns as caveats", () => {

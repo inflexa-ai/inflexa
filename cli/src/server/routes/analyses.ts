@@ -1,6 +1,14 @@
 import { isAbsolute } from "node:path";
 
-import type { AnalysisPurgeOutcome, DbError as PgError, Pool } from "@inflexa-ai/harness";
+import {
+    queryDataProfileStatusByAnalyses,
+    queryLatestRunsByAnalyses,
+    type AnalysisPurgeOutcome,
+    type DataProfileSummary,
+    type DbError as PgError,
+    type LatestRunSummary,
+    type Pool,
+} from "@inflexa-ai/harness";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import { Hono, type Context } from "hono";
 import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
@@ -10,6 +18,9 @@ import { z } from "zod";
 import {
     describeBusyReason,
     type AnalysisDetail,
+    type AnalysisLatestRun,
+    type AnalysisProfileSummary,
+    type AnalysisSort,
     type AnalysisSummary,
     type AnalysisView,
     type BusyReason,
@@ -53,7 +64,10 @@ import { flushProvenanceAsync } from "../../modules/prov/prov.ts";
 import { env } from "../../lib/env.ts";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
 import type { ServerBoot } from "../boot.ts";
-import { workspaceBusyReasons } from "../busy_gate.ts";
+import { busyReasonsOf, workspaceBusyReasons, type BusyFacts } from "../busy_gate.ts";
+import { countLiveDurableWorkByAnalysis, type LiveDurableWork } from "../durable_work.ts";
+import { profileWorkInFlight } from "../profile_queue.ts";
+import { hasRunningTurn } from "../turns.ts";
 import { apiError, holdConnection, internalError, listEnvelope, parsePage, readBody, requireRuntime, type ServerEnv } from "../http.ts";
 import { toProjectView } from "./projects.ts";
 
@@ -121,6 +135,38 @@ export const DEFAULT_ANALYSIS_ROUTE_OPTS: AnalysisRouteOpts = {
     },
 };
 
+/**
+ * The reads of the list beyond SQLite: the grouped Postgres reads, the pending asks, the existence checks of the
+ * folders, and the two in-memory facts of the busy rule. Tests replace each one.
+ */
+export type AnalysisListOpts = {
+    /** The newest run of each analysis of the page. The error channel means the ledger is unreadable. */
+    readonly latestRuns: (pool: Pool, analysisIds: string[]) => ResultAsync<LatestRunSummary[], unknown>;
+    /** The profile state of each analysis of the page. The error channel means the ledger is unreadable. */
+    readonly profiles: (pool: Pool, analysisIds: string[]) => ResultAsync<DataProfileSummary[], unknown>;
+    /** The live durable work of each analysis of the page. The error channel means the ledger is unreadable. */
+    readonly liveWork: (pool: Pool, analysisIds: string[]) => ResultAsync<Map<string, LiveDurableWork>, unknown>;
+    /** Each pending ask of the runtime. It rejects on a failure. */
+    readonly pendingAsks: (runtime: HarnessRuntime) => Promise<readonly { analysisId: string }[]>;
+    /** Whether each path exists, in the order of `paths`, with at most `width` checks in flight. */
+    readonly pathsExist: (paths: readonly string[], width: number) => Promise<boolean[]>;
+    readonly hasRunningTurn: (analysisId: string) => boolean;
+    readonly profileWorkInFlight: (analysisId: string) => boolean;
+};
+
+/** The production {@link AnalysisListOpts}. */
+export const DEFAULT_ANALYSIS_LIST_OPTS: AnalysisListOpts = {
+    latestRuns: queryLatestRunsByAnalyses,
+    profiles: queryDataProfileStatusByAnalyses,
+    liveWork: countLiveDurableWorkByAnalysis,
+    pendingAsks: (runtime) => runtime.askGateway.pending(),
+    pathsExist: pathsExistAsync,
+    hasRunningTurn,
+    profileWorkInFlight,
+};
+
+const sortQuery = z.enum(["activity", "created"] satisfies AnalysisSort[]);
+
 const createBody = z.object({
     name: z.string(),
     folder: absolutePath,
@@ -156,7 +202,7 @@ const exportQuery = z.enum(["none", "prov-json", "prov-n"]);
  * Mount them BEFORE the analysis guard: the guard pattern `/api/v1/analyses/:analysisId/*` also matches
  * `/resolve`, and a handler that answers first ends the chain.
  */
-export function analysisCollectionRoutes(): Hono<ServerEnv> {
+export function analysisCollectionRoutes(boot: ServerBoot, opts: AnalysisListOpts = DEFAULT_ANALYSIS_LIST_OPTS): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
 
     routes.post("/resolve", async (c) => {
@@ -184,21 +230,41 @@ export function analysisCollectionRoutes(): Hono<ServerEnv> {
         );
     });
 
-    routes.get("/", (c) => {
+    routes.get("/", async (c) => {
         const page = parsePage(c.req.query("page"), c.req.query("perPage"));
+        // An empty value selects the default, the same as an empty `project`.
+        const sortValue = c.req.query("sort");
+        const sort = sortQuery.safeParse(sortValue === undefined || sortValue === "" ? "created" : sortValue);
+        if (!sort.success) {
+            return apiError(c, "validation_error", "`sort` must be `activity` or `created`.", { fieldErrors: { sort: ["must be activity or created"] } });
+        }
         const projectRef = c.req.query("project");
         const project = projectRef === undefined || projectRef === "" ? ok(null) : findProjectByRef(projectRef);
         if (project.isErr()) return internalError(c, project.error, "resolve the project");
         if (projectRef && project.value === null) return apiError(c, "not_found", `No project found matching "${projectRef}".`);
 
-        const listed = listAnalysisPage({ projectId: project.value?.id ?? null, limit: page.perPage, offset: page.page * page.perPage });
+        const listed = listAnalysisPage({ projectId: project.value?.id ?? null, sort: sort.data, limit: page.perPage, offset: page.page * page.perPage });
         if (listed.isErr()) return internalError(c, listed.error, "list the analyses");
         // One grouped ledger read for the page. A failed read leaves `usage` absent: a list that cannot show
         // figures is far better than no list.
-        const usage = listUsageTotalsByAnalysis(listed.value.items.map((item) => item.analysis.id)).unwrapOr(null);
-        const items = listed.value.items.map((item): AnalysisSummary => {
+        const ids = listed.value.items.map((item) => item.analysis.id);
+        const usage = listUsageTotalsByAnalysis(ids).unwrapOr(null);
+        const summaries = await summarizePage(
+            ids,
+            boot.runtime(),
+            opts,
+            listed.value.items.map((item) => item.anchorPath),
+        );
+        const items = listed.value.items.map((item, index): AnalysisSummary => {
             const totals = usage?.get(item.analysis.id);
-            return { ...toAnalysisView(item.analysis), anchorPath: item.anchorPath, ...(totals === undefined ? {} : { usage: totals }) };
+            return {
+                ...toAnalysisView(item.analysis),
+                anchorPath: item.anchorPath,
+                ...(totals === undefined ? {} : { usage: totals }),
+                lastActivityAt: new Date(item.lastActivityAt).toISOString(),
+                // `summarizePage` gives one summary for each id, in the order of `ids`.
+                ...summaries[index]!,
+            };
         });
         return c.json(listEnvelope("analyses", items, listed.value.total, page));
     });
@@ -235,6 +301,96 @@ export function analysisCollectionRoutes(): Hono<ServerEnv> {
     });
 
     return routes;
+}
+
+/** The fields of {@link AnalysisSummary} that come from the disk, the runtime, and the busy rule. */
+type PageSummary = Pick<AnalysisSummary, "folderPresent" | "profile" | "latestRun" | "pendingAsks" | "busy">;
+
+/** One read of the runtime, as a value: the rows, or `null` for a read that failed. The failure goes to the log. */
+function settled<T>(read: () => ResultAsync<T, unknown>, what: string): Promise<T | null> {
+    return read().match(
+        (value) => value,
+        (cause) => {
+            getLogger("server").warn({ err: cause }, `could not read ${what} for the list of analyses`);
+            return null;
+        },
+    );
+}
+
+/**
+ * The summary of each analysis of a page, in the order of `ids`. The runtime reads are one grouped statement
+ * each, thus their count does not depend on the page size. Until the runtime is ready, the runtime fields are
+ * `null` and the busy rule keeps the facts that the server knows without it. A read that fails leaves its field
+ * `null` on each item, and the busy rule reads that state as unreadable, as the busy gate of `GET {A}` does.
+ */
+async function summarizePage(
+    ids: string[],
+    runtime: HarnessRuntime | null,
+    opts: AnalysisListOpts,
+    anchorPaths: readonly (string | null)[],
+): Promise<PageSummary[]> {
+    // The folders and the runtime reads start together.
+    const present = existenceOf(anchorPaths, opts);
+    const reads =
+        runtime === null
+            ? null
+            : await Promise.all([
+                  settled(() => opts.latestRuns(runtime.pool, ids), "the newest runs"),
+                  settled(() => opts.profiles(runtime.pool, ids), "the data profiles"),
+                  settled(() => opts.liveWork(runtime.pool, ids), "the live durable work"),
+                  settled(() => ResultAsync.fromPromise(opts.pendingAsks(runtime), (cause) => cause), "the pending asks"),
+              ]);
+    const folderPresent = await present;
+
+    const [runs, profiles, live, asks] = reads ?? [null, null, null, null];
+    const runOf = new Map(runs?.map((run) => [run.analysisId, run]));
+    const profileOf = new Map(profiles?.map((profile) => [profile.analysisId, profile]));
+    const asksOf = new Map<string, number>();
+    for (const ask of asks ?? []) asksOf.set(ask.analysisId, (asksOf.get(ask.analysisId) ?? 0) + 1);
+
+    return ids.map((id, index): PageSummary => {
+        const profile = profileOf.get(id);
+        const run = runOf.get(id);
+        const facts: BusyFacts = {
+            turn: opts.hasRunningTurn(id),
+            profileDrive: opts.profileWorkInFlight(id),
+            profile: runtime === null ? "unknown" : profiles === null ? "unreadable" : profile?.status === "running" ? "running" : "idle",
+            liveRuns: runtime === null ? "unknown" : live === null ? "unreadable" : (live.get(id)?.runs ?? 0),
+        };
+        return {
+            // `existenceOf` gives one boolean for each anchor path, in the order of `ids`.
+            folderPresent: folderPresent[index]!,
+            profile: profile === undefined ? null : toProfileSummary(profile),
+            latestRun: run === undefined ? null : toLatestRun(run),
+            pendingAsks: asks === null ? null : (asksOf.get(id) ?? 0),
+            busy: busyReasonsOf(facts),
+        };
+    });
+}
+
+/** Whether the anchor folder of each analysis exists, with a bounded width. A `null` path reads as absent. */
+async function existenceOf(anchorPaths: readonly (string | null)[], opts: AnalysisListOpts): Promise<boolean[]> {
+    const paths = anchorPaths.filter((path): path is string => path !== null);
+    const exists = await opts.pathsExist(paths, DISK_READ_WIDTH);
+    let next = 0;
+    // `pathsExist` gives one boolean for each path that it got, in order, and `next` walks the non-null paths.
+    return anchorPaths.map((path) => path !== null && exists[next++]!);
+}
+
+function toProfileSummary(profile: DataProfileSummary): AnalysisProfileSummary {
+    return { status: profile.status, profiledFiles: profile.profiledFiles, completedAt: profile.completedAt };
+}
+
+function toLatestRun(run: LatestRunSummary): AnalysisLatestRun {
+    return {
+        runId: run.runId,
+        status: run.status,
+        planTitle: run.planTitle,
+        doneSteps: run.doneSteps,
+        totalSteps: run.totalSteps,
+        startedAt: run.startedAt,
+        completedAt: run.completedAt,
+    };
 }
 
 /**
