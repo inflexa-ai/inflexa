@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -108,6 +108,59 @@ describe("POST {A}/artifacts/resolve", () => {
             expect(entry).toMatchObject({ path: null, degraded: true });
             if (materialize) expect(entry?.error?.type).toBe("unavailable");
         }
+    });
+
+    test("a symbolic link that leaves the workspace resolves nowhere and is degraded", async () => {
+        const root = await seedAnalysis("ana-1");
+        const outside = mkdtempSync(join(tmpdir(), "inflexa-artifact-outside-"));
+        created.push(outside);
+        writeFileSync(join(outside, "secret.txt"), "TOP-SECRET");
+        mkdirSync(join(root, "runs", "R", "A"), { recursive: true });
+        symlinkSync(join(outside, "secret.txt"), join(root, "runs", "R", "A", "leak.txt"));
+        symlinkSync(outside, join(root, "runs", "R", "A", "linked"));
+
+        for (const materialize of [false, true]) {
+            const response = await resolve(
+                "ana-1",
+                [
+                    { kind: "workspace-file", path: "runs/R/A/leak.txt" },
+                    { kind: "workspace-file", path: "runs/R/A/linked/secret.txt" },
+                ],
+                materialize,
+            );
+            for (const entry of ((await response.json()) as ResolvedArtifacts).entries) {
+                expect(entry).toMatchObject({ path: null, degraded: true });
+                if (materialize) expect(entry.error).toEqual({ type: "unavailable", reason: "the path is not inside the analysis" });
+            }
+        }
+    });
+
+    test("a link that stays inside the workspace, a folder, and an absent file still resolve as before", async () => {
+        const root = await seedAnalysis("ana-1");
+        mkdirSync(join(root, "runs", "R", "A", "figures"), { recursive: true });
+        writeFileSync(join(root, "runs", "R", "A", "real.csv"), "a\n");
+        symlinkSync(join(root, "runs", "R", "A", "real.csv"), join(root, "runs", "R", "A", "alias.csv"));
+
+        const response = await resolve(
+            "ana-1",
+            [
+                { kind: "workspace-file", path: "runs/R/A/alias.csv" },
+                { kind: "workspace-file", path: "runs/R/A/figures" },
+                { kind: "workspace-file", path: "runs/R/A/gone.csv" },
+            ],
+            true,
+        );
+
+        const { entries } = (await response.json()) as ResolvedArtifacts;
+        // The response keeps the joined path, not the real path.
+        expect(entries[0]).toEqual({ kind: "workspace-file", path: join(root, "runs", "R", "A", "alias.csv"), degraded: false });
+        expect(entries[1]).toEqual({ kind: "workspace-file", path: join(root, "runs", "R", "A", "figures"), degraded: false });
+        expect(entries[2]).toEqual({
+            kind: "workspace-file",
+            path: join(root, "runs", "R", "A", "gone.csv"),
+            degraded: true,
+            error: { type: "missing", path: join(root, "runs", "R", "A", "gone.csv") },
+        });
     });
 
     test("an analysis whose folder cannot be located resolves each entry to `unresolved`", async () => {

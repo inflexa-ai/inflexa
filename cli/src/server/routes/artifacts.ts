@@ -1,11 +1,10 @@
-import { validatePath } from "@inflexa-ai/harness/tools/lib/path-validation";
 import { Hono } from "hono";
 import PQueue from "p-queue";
 import { z } from "zod";
 
 import type { ArtifactError, ResolvedArtifact, ResolvedArtifacts } from "../../api/artifacts.ts";
 import { getLogger } from "../../lib/log.ts";
-import { entryDegraded, materializeTarget, resolveEntryPath, type OpenArtifactError } from "../../modules/harness/artifact_open.ts";
+import { entryDegraded, materializeTarget, resolveEntryPath, workspaceFileResolvable, type OpenArtifactError } from "../../modules/harness/artifact_open.ts";
 import type { OpenTarget } from "../../types/session.ts";
 import { readBody, type ServerEnv } from "../http.ts";
 
@@ -50,8 +49,8 @@ export function artifactRoutes(): Hono<ServerEnv> {
 
 async function resolveArtifact(analysisId: string, target: OpenTarget, materialize: boolean): Promise<ResolvedArtifact> {
     // A card reference is analysis-rooted. A stored part that reloads from a persisted tool call skips the
-    // validation of the live tool, thus a path that leaves the workspace degrades here and resolves nowhere.
-    if (target.kind === "workspace-file" && validatePath(target.path) !== null) {
+    // validation of the live tool, thus a path that leaves the workspace, also through a symbolic link, degrades here and resolves nowhere.
+    if (target.kind === "workspace-file" && !(await workspaceFileResolvable(analysisId, target.path))) {
         return {
             kind: target.kind,
             path: null,

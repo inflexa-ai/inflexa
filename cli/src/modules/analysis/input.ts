@@ -1,5 +1,6 @@
 import { isAbsolute, join, relative } from "node:path";
 import { ok, err, okAsync, ResultAsync, type Result } from "neverthrow";
+import PQueue from "p-queue";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { statResultAsync } from "../../lib/fs.ts";
@@ -94,4 +95,39 @@ export async function matchInputRefs(
         else notInputs.push(raw);
     }
     return { matched, notInputs };
+}
+
+/** How many canonical-path reads of {@link inputAbsolutePaths} run at one time. An analysis holds a number of inputs that the user chose, and each read can wait on a mount. */
+const INPUT_READ_WIDTH = 8;
+
+/**
+ * The canonical absolute path of each input, with ONE anchor resolution for each distinct anchor and no
+ * sighting write. Looking at the inputs is not a sighting of their folders, and a write for each row would
+ * make `lastSeen` measure the reads of a list. `null` is an unlocatable anchor folder.
+ */
+export async function inputAbsolutePaths(inputs: readonly AnalysisInput[]): Promise<Map<AnalysisInput, string | null>> {
+    const byAnchor = new Map<string, string | null>();
+    // One anchor at a time: each resolve can run a bounded search of its own.
+    for (const input of inputs) {
+        const anchorId = input.anchorId;
+        if (anchorId === null || byAnchor.has(anchorId)) continue;
+        byAnchor.set(
+            anchorId,
+            await resolveAnchor(anchorId, { touch: false }).match(
+                (resolved) => resolved?.path ?? null,
+                () => null,
+            ),
+        );
+    }
+    const queue = new PQueue({ concurrency: INPUT_READ_WIDTH });
+    const paths = await Promise.all(
+        inputs.map((input) =>
+            queue.add(async (): Promise<string | null> => {
+                if (input.anchorId === null) return input.path;
+                const dir = byAnchor.get(input.anchorId) ?? null;
+                return dir === null ? null : canonicalPathAsync(join(dir, input.path));
+            }),
+        ),
+    );
+    return new Map(inputs.map((input, i) => [input, paths[i] ?? null]));
 }

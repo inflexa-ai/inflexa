@@ -11,6 +11,7 @@ export type ApiErrorCode =
     | "conflict"
     | "busy"
     | "locked"
+    | "range_not_satisfiable"
     | "internal_error"
     | "unavailable"
     | "draining";
@@ -25,6 +26,7 @@ export const API_ERROR_STATUS = {
     conflict: 409,
     busy: 409,
     locked: 409,
+    range_not_satisfiable: 416,
     internal_error: 500,
     unavailable: 503,
     draining: 503,

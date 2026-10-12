@@ -33,23 +33,18 @@ blocked turn.
 
 ### Requirement: Openable cards resolve their reference at open time
 
-Openable card parts SHALL store the semantic reference from the harness
-contract (analysis-rooted paths, the embedded
-echart spec and `dataPath`, the deterministic `pres-` id) and SHALL NOT store
-a resolved location. Resolution to an openable location happens when the user
-opens, in the local server: the client sends the reference to
-`POST {A}/artifacts/resolve`, the server resolves it, and the client opens the
-path that the server gives. `data-file-reference` paths resolve
-against the workspace root of the analysis; `echart`/`svg` presentations
-resolve to their materialized file under the workspace's `presentations/`
-directory, which the server writes first when the request asks to
-materialize. A `data-file-reference` path that leaves the workspace SHALL
-resolve nowhere and render degraded, because a stored part that reloads from
-a persisted tool call skips the validation of the live tool. A reference that
-fails to resolve (missing file, workspace desync) SHALL render that entry in a
-degraded state with its path visible, and open attempts on it SHALL produce a
-notice — never an error. A failed request to the server SHALL also produce a
-notice.
+An openable card part MUST store the semantic reference of the harness contract. The reference is an analysis-rooted path, the embedded echart spec and `dataPath`, or the deterministic `pres-` id. A card part MUST NOT store a resolved location.
+
+The local server resolves the reference when the user opens the card. The client sends the reference to `POST {A}/artifacts/resolve`. The server resolves it, and the client opens the path that the server gives.
+
+- A `data-file-reference` path resolves against the workspace root of the analysis.
+- An `echart` or `svg` presentation resolves to its file in the `presentations/` folder of the workspace. When the request asks to materialize, the server writes that file first.
+
+A `data-file-reference` path that leaves the workspace MUST resolve nowhere and render degraded. A stored part that reloads from a persisted tool call skips the validation of the live tool.
+
+For a `data-file-reference` path that exists, the server MUST also resolve each symbolic link. A real path outside the real path of the workspace root MUST resolve nowhere. The entry then renders degraded, the same as a path with a bad form. An agent can write a symbolic link in its step folder. A failure of this test MUST also resolve nowhere. A file or a folder whose real path is inside the workspace root resolves as before.
+
+A reference that fails to resolve, for example a missing file or a workspace desync, MUST render degraded with its path visible. An open of such an entry MUST give a notice, never an error. A failed request to the server MUST also give a notice.
 
 #### Scenario: Referenced file is gone
 
@@ -60,6 +55,17 @@ notice.
 
 - **WHEN** a reloaded `data-file-reference` entry names `../../etc/passwd`
 - **THEN** the server gives no path for it, the entry renders degraded, and an open produces a notice
+
+#### Scenario: A symbolic link that leaves the workspace resolves nowhere
+
+- **GIVEN** a symbolic link `runs/R/A/leak.txt` in the workspace, to a file outside the workspace
+- **WHEN** a `data-file-reference` entry names `runs/R/A/leak.txt`
+- **THEN** the server gives no path for it, the entry renders degraded, and an open produces a notice
+
+#### Scenario: A folder inside the workspace still resolves
+
+- **WHEN** an entry names the folder `runs/R/A/figures` of the workspace, to reveal it
+- **THEN** the server gives the path of the folder
 
 ### Requirement: Presentations materialize into the workspace presentations directory
 

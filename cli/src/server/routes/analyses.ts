@@ -1,4 +1,4 @@
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
 
 import type { AnalysisPurgeOutcome, DbError as PgError, Pool } from "@inflexa-ai/harness";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
@@ -41,7 +41,7 @@ import { canonicalPathAsync } from "../../lib/paths.ts";
 import { str256, type Str256 } from "../../lib/types.ts";
 import { addInputs, applyInputsDiff, createAnalysis, removeInput, renameAnalysisAndMoveWorkspace } from "../../modules/analysis/analysis.ts";
 import { describeContext, resolveContext, type ResolvedContext } from "../../modules/analysis/context.ts";
-import { matchInputRefs } from "../../modules/analysis/input.ts";
+import { inputAbsolutePaths, matchInputRefs } from "../../modules/analysis/input.ts";
 import { defaultOutputSubdir, disposeWorkspace, ensureOutputDir, locateExistingOutputDir, resolveOutputDir } from "../../modules/analysis/output.ts";
 import { recoverAnchors, resolveAnchor } from "../../modules/anchor/anchor.ts";
 import { analysisPurgeFor } from "../../modules/harness/purge.ts";
@@ -484,33 +484,6 @@ async function refuseMissing(c: Context<ServerEnv>, paths: readonly string[]): P
     const exists = await pathsExistAsync(paths, DISK_READ_WIDTH);
     const missing = paths.filter((_, i) => !exists[i]);
     return missing.length === 0 ? null : apiError(c, "validation_error", `no such file: ${missing.join(", ")}`, { missing });
-}
-
-/**
- * The canonical absolute path of each input, with ONE anchor resolution for each distinct anchor and no
- * sighting write. Looking at the inputs is not a sighting of their folders, and a write for each row would
- * make `lastSeen` measure the reads of a list. `null` is an unlocatable anchor folder.
- */
-async function inputAbsolutePaths(inputs: readonly AnalysisInput[]): Promise<Map<AnalysisInput, string | null>> {
-    const byAnchor = new Map<string, string | null>();
-    // One anchor at a time: each resolve can run a bounded search of its own.
-    for (const input of inputs) {
-        const anchorId = input.anchorId;
-        if (anchorId === null || byAnchor.has(anchorId)) continue;
-        byAnchor.set(
-            anchorId,
-            await resolveAnchor(anchorId, { touch: false }).match(
-                (resolved) => resolved?.path ?? null,
-                () => null,
-            ),
-        );
-    }
-    const paths = await mapBounded(inputs, async (input): Promise<string | null> => {
-        if (input.anchorId === null) return input.path;
-        const dir = byAnchor.get(input.anchorId) ?? null;
-        return dir === null ? null : canonicalPathAsync(join(dir, input.path));
-    });
-    return new Map(inputs.map((input, i) => [input, paths[i] ?? null]));
 }
 
 async function inputViews(inputs: readonly AnalysisInput[]): Promise<InputView[]> {
