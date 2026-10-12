@@ -444,8 +444,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         // Each edge draws one elbow, and each leaf sits at its own place under its column or beside its row.
         const xTree = treeSeries(option, "x");
         const yTree = treeSeries(option, "y");
-        expect((xTree.data as unknown[]).length).toBe(trees?.x?.rows.length);
-        expect((yTree.data as unknown[]).length).toBe(trees?.y?.rows.length);
+        if (trees?.x === undefined || trees.y === undefined) throw new Error("expected both trees");
+        expect((xTree.data as unknown[]).length).toBe(trees.x.rows.length);
+        expect((yTree.data as unknown[]).length).toBe(trees.y.rows.length);
         expect(leafPlaces(xTree, "x").sort((a, b) => a - b)).toEqual(samples.map((_name, place) => place));
         expect(leafPlaces(yTree, "y").sort((a, b) => a - b)).toEqual(genes.map((_name, place) => place));
     });
@@ -461,7 +462,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         expect(depthFirstLeaves(trees?.x?.rows ?? [])).toEqual(rows);
         for (const axis of ["x", "y"] as const) {
             const tree = treeSeries(option, axis);
-            expect((tree.data as unknown[]).length).toBe(trees?.[axis]?.rows.length);
+            const treeRows = trees?.[axis]?.rows;
+            if (treeRows === undefined) throw new Error(`expected a tree for ${axis}`);
+            expect((tree.data as unknown[]).length).toBe(treeRows.length);
             expect(leafPlaces(tree, axis).sort((a, b) => a - b)).toEqual(rows.map((_name, place) => place));
         }
     });

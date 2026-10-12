@@ -422,6 +422,7 @@ describe("createSandboxClient — engine connection threading", () => {
                 env: { backend: "docker", namespace: "default" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
+                farmSource: { kind: "fixed", location: { farmPath: "/tmp/inflexa-test-farm" } },
                 resolveWorkspaceRoot: (id) => join("/sessions", id),
                 engineSocketPath: socketPath,
             });

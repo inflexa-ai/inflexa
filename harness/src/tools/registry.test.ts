@@ -35,7 +35,11 @@ describe("createRegistry", () => {
         expect(Object.keys(defs)).toEqual(["alpha", "beta"]);
         expect(defs.alpha).toBeDefined();
         expect(defs.alpha!.description).toBe("The alpha tool.");
-        expect(defs.alpha!.inputSchema.jsonSchema.type).toBe("object");
+        const schema = defs.alpha!.inputSchema;
+        if (!("jsonSchema" in schema)) throw new Error("expected a json-schema definition");
+        const emitted = schema.jsonSchema;
+        if (!("type" in emitted)) throw new Error("expected a typed JSON schema");
+        expect(emitted.type).toBe("object");
     });
 
     it("rejects duplicate tool ids", () => {

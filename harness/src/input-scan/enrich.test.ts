@@ -4,7 +4,7 @@ import { okAsync } from "neverthrow";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { ExecRequest, ExecResult } from "../sandbox/types.js";
 import type { ReadBytesResult, WorkspaceFilesystem } from "../workspace/filesystem.js";
-import { enrichShapes } from "./enrich.js";
+import { enrichShapes, type EnrichShapesArgs } from "./enrich.js";
 import { observeShapes } from "./shapes.js";
 import type { ScannedFile } from "./types.js";
 
@@ -62,14 +62,14 @@ function failingSandbox(result: Partial<ExecResult>): SandboxClient {
     } as unknown as SandboxClient;
 }
 
-function enrichArgs(overrides: Record<string, unknown>) {
+function enrichArgs(overrides: Pick<EnrichShapesArgs, "shapes" | "fs"> & Partial<EnrichShapesArgs>) {
     return {
         session: SESSION,
         mountRoot: "/a1",
         deadlineMs: Date.now() + 60_000,
         emit: async () => {},
         ...overrides,
-    } as Parameters<typeof enrichShapes>[0];
+    };
 }
 
 describe("enrichShapes", () => {
@@ -78,7 +78,9 @@ describe("enrichShapes", () => {
         const { fs, reads } = readSeam({});
         const { client, submitted } = recordingSandbox();
 
-        const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
+        const shapes = await enrichShapes(
+            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+        );
 
         expect(reads.map((read) => read.path).sort()).toEqual([
             "data/inputs/bam/SAMPLE_0001.bam",
@@ -132,7 +134,9 @@ describe("enrichShapes", () => {
         const { fs } = readSeam({ "data/inputs/meta/sheet_1.csv": Buffer.from("a,b\n1,2\n") });
         const { client, submitted } = recordingSandbox();
 
-        const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
+        const shapes = await enrichShapes(
+            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+        );
 
         expect(submitted.map((body) => body.command.slice(3))).toEqual([["/a1/data/inputs/tables/counts_1.parquet"]]);
         expect(submitted[0]!.command[0]).toBe("python3");
@@ -157,7 +161,9 @@ describe("enrichShapes", () => {
         const { fs } = readSeam({});
         const client = failingSandbox({ exitCode: 1, stderr: "python3: not found" });
 
-        const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
+        const shapes = await enrichShapes(
+            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+        );
 
         expect(shapes[0]!.header!.unavailable).toBe("container decoder exited 1: python3: not found");
     });
@@ -167,7 +173,9 @@ describe("enrichShapes", () => {
         const { fs } = readSeam({});
         const client = failingSandbox({ exitCode: null, timedOut: true });
 
-        const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
+        const shapes = await enrichShapes(
+            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+        );
 
         expect(shapes[0]!.header!.unavailable).toBe("container decoder timed out after 120s");
     });
@@ -177,7 +185,9 @@ describe("enrichShapes", () => {
         const { fs } = readSeam({});
         const client = failingSandbox({ exitCode: 0 });
 
-        const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
+        const shapes = await enrichShapes(
+            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+        );
 
         expect(shapes[0]!.header!.unavailable).toBe("container decoder reported nothing for this member");
     });
@@ -186,7 +196,9 @@ describe("enrichShapes", () => {
         const { fs, reads } = readSeam({});
         const { client, submitted } = recordingSandbox();
 
-        const shapes = await enrichShapes(enrichArgs({ shapes: [], fs, sandboxClient: client, sandbox: { id: "s1" } }));
+        const shapes = await enrichShapes(
+            enrichArgs({ shapes: [], fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+        );
 
         expect(shapes).toEqual([]);
         expect(reads).toEqual([]);

@@ -4,6 +4,11 @@ import { createCrossrefClient } from "./clients/crossref.js";
 import { createCitationResolver } from "./resolve.js";
 import type { CitationRecord, CitationSource, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "./types.js";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 const SOURCES: readonly CitationSource[] = ["doi_registry", "crossref", "pubmed", "arxiv", "semantic_scholar"];
 
 function noData(source: CitationSource, request: CitationSourceRequest): CitationSourceOutcome {
@@ -30,9 +35,9 @@ function clientSet(
 /** The real Crossref client over a fetch that would fail the test if it were ever reached. */
 function realCrossref(): CitationSourceClient {
     return createCrossrefClient({
-        fetch: async () => {
+        fetch: fetchDouble(async () => {
             throw new Error("Crossref must not be called without an established registration agency");
-        },
+        }),
     });
 }
 

@@ -4,6 +4,11 @@ import { createArxivSource } from "./arxiv.js";
 import { createPubmedSource } from "./pubmed.js";
 import { createSemanticScholarSource } from "./semantic-scholar.js";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 const ARXIV_XML = `<?xml version="1.0"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <entry>
@@ -31,10 +36,10 @@ describe("shared literature authority sources", () => {
     it("uses one arXiv URL builder and Atom parser for search and exact lookup", async () => {
         const seen: URL[] = [];
         const source = createArxivSource({
-            fetch: async (url) => {
+            fetch: fetchDouble(async (url) => {
                 seen.push(new URL(String(url)));
                 return new Response(ARXIV_XML);
-            },
+            }),
         });
 
         const search = await source.search({ query: "shared clients", categories: ["cs.LG"], limit: 3 });
@@ -50,7 +55,7 @@ describe("shared literature authority sources", () => {
         const seen: Array<{ url: URL; apiKey: string | null }> = [];
         const source = createSemanticScholarSource({
             apiKey: "test-key",
-            fetch: async (url, init) => {
+            fetch: fetchDouble(async (url, init) => {
                 const parsed = new URL(String(url));
                 seen.push({ url: parsed, apiKey: new Headers(init?.headers).get("x-api-key") });
                 const paper = {
@@ -61,7 +66,7 @@ describe("shared literature authority sources", () => {
                     externalIds: { DOI: "10.1000/example" },
                 };
                 return Response.json(parsed.pathname.endsWith("/paper/search") ? { data: [paper] } : paper);
-            },
+            }),
         });
 
         const search = await source.search("shared clients", 2);
@@ -78,13 +83,13 @@ describe("shared literature authority sources", () => {
         const seen: URL[] = [];
         const source = createPubmedSource({
             apiKey: "ncbi-key",
-            fetch: async (url) => {
+            fetch: fetchDouble(async (url) => {
                 const parsed = new URL(String(url));
                 seen.push(parsed);
                 return parsed.pathname.endsWith("esearch.fcgi")
                     ? Response.json({ esearchresult: { idlist: ["12345678"], count: "1" } })
                     : new Response(PUBMED_XML);
-            },
+            }),
         });
 
         const ids = await source.searchIds("shared source[Title]", 5);
@@ -100,10 +105,10 @@ describe("shared literature authority sources", () => {
         const seen: URL[] = [];
         const source = createPubmedSource({
             apiKey: "",
-            fetch: async (url) => {
+            fetch: fetchDouble(async (url) => {
                 seen.push(new URL(String(url)));
                 return Response.json({ esearchresult: { idlist: ["12345678"], count: "1" } });
-            },
+            }),
         });
 
         const ids = await source.searchIds("shared source[Title]", 5);

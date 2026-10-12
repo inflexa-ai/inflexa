@@ -333,7 +333,7 @@ describe("list_available_packages — reading the inventory", () => {
 
         const result = (
             await createListAvailablePackagesTool({ farmLockFile }).execute({ names: ["Seurat", "nonesuch"] }, makeToolContext().ctx)
-        )._unsafeUnwrap() as { available: true; checked: { requested: string; present: boolean }[] };
+        )._unsafeUnwrap() as { available: true; checked: readonly CheckedPackage[] };
 
         expect(result.available).toBe(true);
         // The lock records the store identity, thus the targeted check carries it.
@@ -406,7 +406,7 @@ describe("list_available_packages — reading the inventory", () => {
 
         const result = (await createListAvailablePackagesTool(deps).execute({ names: ["eagle", "eagle2"] }, makeToolContext().ctx))._unsafeUnwrap() as {
             available: true;
-            checked: { requested: string; present: boolean }[];
+            checked: readonly CheckedPackage[];
         };
 
         expect(result.checked).toEqual([
@@ -591,7 +591,7 @@ describe("list_available_packages — reading the inventory", () => {
     /** The presence answer of `Seurat`, the package that only the full lock holds. */
     async function seuratPresent(deps: Parameters<typeof createListAvailablePackagesTool>[0], analysisId: string): Promise<boolean> {
         const result = (await createListAvailablePackagesTool(deps).execute({ names: ["Seurat"] }, contextFor(analysisId)))._unsafeUnwrap() as {
-            checked: { present: boolean }[];
+            checked: readonly CheckedPackage[];
         };
         return result.checked[0]?.present ?? false;
     }

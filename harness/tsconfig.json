@@ -5,18 +5,16 @@
     "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
-    "declaration": true,
     "resolveJsonModule": true,
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx",
     "skipLibCheck": true,
-    "outDir": "dist",
-    "rootDir": "src",
+    "types": ["bun", "node"],
     "paths": {
       "@inflexa-ai/harness": ["./src/index.ts"],
       "@inflexa-ai/harness/*": ["./src/*"]
     }
   },
   "include": ["src"],
-  "exclude": ["node_modules", "src/**/*.test.ts", "src/**/*.test.tsx", "src/**/__tests__", "src/**/__fixtures__", "src/report-render/fixture.ts", "src/report-render/gallery"]
+  "exclude": ["node_modules"]
 }

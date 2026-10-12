@@ -135,7 +135,9 @@ describe("initCortexState and an open transaction on cortex_analysis_threads", (
     it("stops a pending migration at the lock timeout, and records nothing", async () => {
         await forgetMigrations(pool);
 
-        await withOpenReader(() => expect(initCortexState(pool)).rejects.toThrow("lock timeout"));
+        await withOpenReader(async () => {
+            await expect(initCortexState(pool)).rejects.toThrow("lock timeout");
+        });
 
         await initCortexState(pool);
         const { rows } = await pool.query<{ name: string }>("SELECT name FROM cortex_migration");

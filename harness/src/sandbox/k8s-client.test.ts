@@ -1056,7 +1056,16 @@ describe("k8s isAlive", () => {
             {
                 status: {
                     phase: "Failed",
-                    containerStatuses: [{ state: { terminated: { reason: "OOMKilled" } } }],
+                    containerStatuses: [
+                        {
+                            state: { terminated: { reason: "OOMKilled", exitCode: 137 } },
+                            image: "sandbox-base:latest",
+                            imageID: "sha256:test",
+                            name: "step",
+                            ready: false,
+                            restartCount: 0,
+                        },
+                    ],
                 },
                 metadata: { name: "p" },
             },

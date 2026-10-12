@@ -181,7 +181,7 @@ describe("the two draws of a hybrid SVG", () => {
             expect.objectContaining({ large: false, data: [expect.objectContaining({ value: [500, 1] }), expect.objectContaining({ value: [900, 4] })] }),
         );
         // A name series is no point layer, thus the vector draw keeps it as it is.
-        expect(series[2]).toBe((input.series as unknown[])[2]);
+        expect((input.series as unknown[])[2]!).toBe(series[2]);
         expect(vector.graphic).toBe(input.graphic);
     });
 
@@ -445,6 +445,7 @@ describe("the page build of a hybrid SVG", () => {
         expect(raster.init).toEqual(
             expect.objectContaining({ theme: CHART_PRINT_THEME_NAME, renderer: "canvas", width: 336, height: 253, devicePixelRatio: 300 / 96 }),
         );
+        if (raster.ratio === undefined) throw new Error("expected a raster ratio");
         expect(raster.ratio).toBe(300 / 96);
         const [sx, sy, sw, sh] = drawn[0];
         const image = /<image [^>]*x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(text);

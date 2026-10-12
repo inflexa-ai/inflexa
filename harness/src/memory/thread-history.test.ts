@@ -152,7 +152,13 @@ describe("appendTurn / loadRecent round-trip", () => {
         (await append(THREAD, [userText("reason about this"), assistantThinking("step-by-step reasoning", signature)]))._unsafeUnwrap();
 
         const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
-        const reasoning = loaded.flatMap((m) => (typeof m.content === "string" ? [] : m.content)).find((b) => b.type === "reasoning");
+        let reasoning: { type: string; providerOptions?: unknown } | undefined;
+        for (const message of loaded) {
+            if (typeof message.content === "string") continue;
+            for (const block of message.content) {
+                if (block.type === "reasoning") reasoning = block;
+            }
+        }
         expect(reasoning).toMatchObject({
             type: "reasoning",
             providerOptions: { anthropic: { signature } },

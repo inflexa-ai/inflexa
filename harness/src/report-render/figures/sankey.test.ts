@@ -159,7 +159,10 @@ describe("the sankey labels over the flows", () => {
                 attributes: match[2],
                 text: match[3],
             }));
-            const lastFlow = elements.findLastIndex((element) => element.attributes.includes(`fill-opacity="${SANKEY_LINK_OPACITY}"`));
+            // `findLastIndex` needs the es2023 lib, above this program's target, so the last
+            // flow index comes from a reversed copy.
+            const lastFlow =
+                elements.length - 1 - [...elements].reverse().findIndex((element) => element.attributes.includes(`fill-opacity="${SANKEY_LINK_OPACITY}"`));
             const m7 = elements.findIndex((element) => element.tag === "text" && element.text === "M7");
             // The box of the label draws after every flow, and the label draws on its box.
             expect(m7).toBeGreaterThan(lastFlow + 1);

@@ -196,7 +196,7 @@ describe("runToTerminal", () => {
                 emit: () => {},
                 runStep: passthroughStep,
             },
-            { resolved: () => cell.value !== null, tools: [tool], nudge: NUDGE },
+            { tools: [tool], nudge: NUDGE },
         );
 
         // The salvage continuation is the same logical run, so its rollups cover
@@ -230,7 +230,7 @@ describe("runToTerminal", () => {
                 emit: () => {},
                 runStep: passthroughStep,
             },
-            { resolved: () => cell.value !== null, tools: [tool], nudge: NUDGE },
+            { tools: [tool], nudge: NUDGE },
         );
 
         expect(cell.value).toBe("salvaged");

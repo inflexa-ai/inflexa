@@ -39,10 +39,11 @@ describe("package-identity — the conformance fixture", () => {
                     expect(query).toEqual(entry.query as PackageQuery);
                 },
                 (issue) => {
-                    if (!("error" in entry)) throw new Error(`"${entry.entry}" answered the error "${issue.type}", and the fixture expects a query`);
-                    expect(issue.type).toBe(entry.error);
-                    if ("prefix" in issue && "prefix" in entry) expect(issue.prefix).toBe(entry.prefix);
-                    if ("specifier" in issue && "specifier" in entry) expect(issue.specifier).toBe(entry.specifier);
+                    const expectedError = "error" in entry ? entry.error : undefined;
+                    if (expectedError === undefined) throw new Error(`"${entry.entry}" answered the error "${issue.type}", and the fixture expects a query`);
+                    expect(expectedError).toBe(issue.type);
+                    if ("prefix" in issue && entry.prefix !== undefined) expect(issue.prefix).toBe(entry.prefix);
+                    if ("specifier" in issue && entry.specifier !== undefined) expect(issue.specifier).toBe(entry.specifier);
                 },
             );
         }
@@ -51,7 +52,7 @@ describe("package-identity — the conformance fixture", () => {
     it("mints the name, the key, and the address of each identity of the fixture", () => {
         for (const entry of fixture.identity) {
             const identity = identityOf(entry.track as Track, entry.input);
-            expect(identity.name).toBe(entry.name);
+            expect(entry.name).toBe(identity.name);
             expect(identityKey(identity)).toBe(entry.key);
             expect(identityAddress(identity)).toBe(entry.address);
         }
@@ -68,8 +69,8 @@ describe("package-identity — the conformance fixture", () => {
 
 describe("package-identity — the two constructors", () => {
     it("a Python identity folds and an R identity keeps its spelling", () => {
-        expect(pythonIdentity("PyYAML").name).toBe("pyyaml");
-        expect(rIdentity("decoupleR").name).toBe("decoupleR");
+        expect("pyyaml").toBe(pythonIdentity("PyYAML").name);
+        expect("decoupleR").toBe(rIdentity("decoupleR").name);
     });
 
     it("a dispatch over an emitted name gives the same identity as the constructor", () => {

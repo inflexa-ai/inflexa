@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "neverthrow";
 import {
+    AttrValue,
     Literal,
     PROV_LABEL,
     ProvActivity,
@@ -163,6 +164,8 @@ function entityKindOf(types: string[], qn: string): "analysis" | "input" | "file
     return "file";
 }
 
+// Each builder assigns an optional member only when the record holds one: a node's key set is
+// part of the read model's shape, so an unset member stays absent rather than present as `undefined`.
 function toEntityNode(record: ProvEntity): LineageNode {
     const qn = String(record.identifier);
     const kind = entityKindOf(dialectTypes(record), qn);
@@ -170,49 +173,46 @@ function toEntityNode(record: ProvEntity): LineageNode {
     if (kind === "analysis") {
         const name = attrString(record, "name");
         const slug = attrString(record, "slug");
-        return { kind, qn, label: name ?? localpart(qn), ...(name !== undefined ? { name } : {}), ...(slug !== undefined ? { slug } : {}) };
+        const node: LineageAnalysisNode = { kind, qn, label: name ?? localpart(qn) };
+        if (name !== undefined) node.name = name;
+        if (slug !== undefined) node.slug = slug;
+        return node;
     }
     if (kind === "input") {
         const isDir = attrBoolean(record, "isDir");
-        return { kind, qn, label: path ?? localpart(qn), ...(path !== undefined ? { path } : {}), ...(isDir !== undefined ? { isDir } : {}) };
+        const node: LineageInputNode = { kind, qn, label: path ?? localpart(qn) };
+        if (path !== undefined) node.path = path;
+        if (isDir !== undefined) node.isDir = isDir;
+        return node;
     }
     const threadId = attrString(record, "threadId");
     if (kind === "report") {
         const parentThreadId = attrString(record, "parentThreadId");
-        return {
-            kind,
-            qn,
-            label: threadId ?? localpart(qn),
-            ...(threadId !== undefined ? { threadId } : {}),
-            ...(parentThreadId !== undefined ? { parentThreadId } : {}),
-        };
+        const node: LineageReportNode = { kind, qn, label: threadId ?? localpart(qn) };
+        if (threadId !== undefined) node.threadId = threadId;
+        if (parentThreadId !== undefined) node.parentThreadId = parentThreadId;
+        return node;
     }
     if (kind === "report_version") {
         const versionId = attrString(record, "versionId");
-        return {
-            kind,
-            qn,
-            label: versionId ?? localpart(qn),
-            ...(versionId !== undefined ? { versionId } : {}),
-            ...(threadId !== undefined ? { threadId } : {}),
-        };
+        const node: LineageReportVersionNode = { kind, qn, label: versionId ?? localpart(qn) };
+        if (versionId !== undefined) node.versionId = versionId;
+        if (threadId !== undefined) node.threadId = threadId;
+        return node;
     }
     const hash = attrString(record, "hash");
     const size = attrNumber(record, "size");
     const producer = attrString(record, "producer");
     const source = attrString(record, "source");
     const fileId = attrString(record, "fileId");
-    return {
-        kind,
-        qn,
-        label: path ?? localpart(qn),
-        ...(path !== undefined ? { path } : {}),
-        ...(hash !== undefined ? { hash } : {}),
-        ...(size !== undefined ? { size } : {}),
-        ...(producer !== undefined ? { producer } : {}),
-        ...(source !== undefined ? { source } : {}),
-        ...(fileId !== undefined ? { fileId } : {}),
-    };
+    const node: LineageFileNode = { kind, qn, label: path ?? localpart(qn) };
+    if (path !== undefined) node.path = path;
+    if (hash !== undefined) node.hash = hash;
+    if (size !== undefined) node.size = size;
+    if (producer !== undefined) node.producer = producer;
+    if (source !== undefined) node.source = source;
+    if (fileId !== undefined) node.fileId = fileId;
+    return node;
 }
 
 function activityKindOf(types: string[], qn: string): { activity: LineageActivityKind; actionType?: string } {
@@ -221,19 +221,20 @@ function activityKindOf(types: string[], qn: string): { activity: LineageActivit
     if (types.includes("Command")) return { activity: "command" };
     if (types.includes("FileToolWrite")) return { activity: "file_tool" };
     const local = localpart(qn);
-    if (local.startsWith("action-")) return { activity: "action", ...(types[0] !== undefined ? { actionType: types[0] } : {}) };
+    if (local.startsWith("action-")) return { activity: "action", actionType: types[0] };
     if (local.startsWith("run-")) return { activity: "run" };
     if (local.startsWith("step-")) return { activity: "step" };
     if (local.startsWith("cmd-")) return { activity: "command" };
     if (local.startsWith("call-")) return { activity: "file_tool" };
     // A lifecycle action is the only remaining dialect activity kind.
-    return { activity: "action", ...(types[0] !== undefined ? { actionType: types[0] } : {}) };
+    return { activity: "action", actionType: types[0] };
 }
 
 /** A formal time as its ISO string; dialect times are always UTC. */
-function timeString(value: unknown): string | undefined {
-    if (value === undefined || value === null) return undefined;
-    return String(value);
+function timeString(value: AttrValue | undefined): string | undefined {
+    if (value === undefined) return undefined;
+    // `Literal` is the one AttrValue without a `toString` of its own — its value already is the string.
+    return value instanceof Literal ? value.value : String(value);
 }
 
 function toActivityNode(record: ProvActivity): LineageActivityNode {
@@ -262,26 +263,22 @@ function toActivityNode(record: ProvActivity): LineageActivityNode {
     const invocationId = attrString(record, "invocationId");
     const unresolvedScript = attrString(record, "unresolvedScript");
     const planSummary = attrString(record, "planSummary");
-    return {
-        kind: "activity",
-        qn,
-        activity,
-        label,
-        ...(actionType !== undefined ? { actionType } : {}),
-        ...(startTime !== undefined ? { startTime } : {}),
-        ...(endTime !== undefined ? { endTime } : {}),
-        ...(status !== undefined ? { status } : {}),
-        ...(durationMs !== undefined ? { durationMs } : {}),
-        ...(runId !== undefined ? { runId } : {}),
-        ...(stepId !== undefined ? { stepId } : {}),
-        ...(command !== undefined ? { command } : {}),
-        ...(args !== undefined ? { args } : {}),
-        ...(exitCode !== undefined ? { exitCode } : {}),
-        ...(tool !== undefined ? { tool } : {}),
-        ...(invocationId !== undefined ? { invocationId } : {}),
-        ...(unresolvedScript !== undefined ? { unresolvedScript } : {}),
-        ...(planSummary !== undefined ? { planSummary } : {}),
-    };
+    const node: LineageActivityNode = { kind: "activity", qn, activity, label };
+    if (actionType !== undefined) node.actionType = actionType;
+    if (startTime !== undefined) node.startTime = startTime;
+    if (endTime !== undefined) node.endTime = endTime;
+    if (status !== undefined) node.status = status;
+    if (durationMs !== undefined) node.durationMs = durationMs;
+    if (runId !== undefined) node.runId = runId;
+    if (stepId !== undefined) node.stepId = stepId;
+    if (command !== undefined) node.command = command;
+    if (args !== undefined) node.args = args;
+    if (exitCode !== undefined) node.exitCode = exitCode;
+    if (tool !== undefined) node.tool = tool;
+    if (invocationId !== undefined) node.invocationId = invocationId;
+    if (unresolvedScript !== undefined) node.unresolvedScript = unresolvedScript;
+    if (planSummary !== undefined) node.planSummary = planSummary;
+    return node;
 }
 
 function agentKindOf(record: ProvAgent): LineageAgentKind {
@@ -297,16 +294,12 @@ function toAgentNode(record: ProvAgent): LineageAgentNode {
     const version = attrString(record, "version");
     const commit = attrString(record, "commit");
     const model = attrString(record, "model");
-    return {
-        kind: "agent",
-        qn,
-        agent: agentKindOf(record),
-        label: provLabel(record) ?? email ?? localpart(qn),
-        ...(email !== undefined ? { email } : {}),
-        ...(version !== undefined ? { version } : {}),
-        ...(commit !== undefined ? { commit } : {}),
-        ...(model !== undefined ? { model } : {}),
-    };
+    const node: LineageAgentNode = { kind: "agent", qn, agent: agentKindOf(record), label: provLabel(record) ?? email ?? localpart(qn) };
+    if (email !== undefined) node.email = email;
+    if (version !== undefined) node.version = version;
+    if (commit !== undefined) node.commit = commit;
+    if (model !== undefined) node.model = model;
+    return node;
 }
 
 type EndpointRole = "entity" | "activity" | "agent";
@@ -439,7 +432,7 @@ function traverse(
     }
     const reached = new Map<string, LineageEdge>();
     for (let i = 0; i < queue.length; i++) {
-        const { qn, remaining } = queue[i]!;
+        const { qn, remaining } = queue[i];
         if (remaining !== best.get(qn) || remaining <= 0) continue;
         for (const { edge, to } of adjacency.get(qn) ?? []) {
             reached.set(edge.id, edge);
@@ -514,5 +507,5 @@ export function computeReachable(
  * artifact record to its entity in the model (entity QNames are document-internal).
  */
 export function findFileEntity(model: LineageModel, key: ProvFileKey): LineageFileNode | undefined {
-    return model.nodes.find((n): n is LineageFileNode => n.kind === "file" && n.path === key.path && n.hash === key.hash);
+    return model.nodes.find((n: LineageNode): n is LineageFileNode => n.kind === "file" && n.path === key.path && n.hash === key.hash);
 }

@@ -41,7 +41,9 @@ const tool = createSearchPatentsTool({ apiKey: "amass_test" });
 /** Parse the input the way the loop does, thus the defaults of the schema apply. */
 async function run(input: Record<string, unknown>) {
     const { ctx } = makeToolContext();
-    return tool.execute(tool.inputSchema.parse(input), ctx);
+    // `Tool` erases the schema generic, so `parse` hands back `unknown`; the schema
+    // and the execute input type come from one declaration in the tool module.
+    return tool.execute(tool.inputSchema.parse(input) as Parameters<typeof tool.execute>[0], ctx);
 }
 
 const PATENT = "AMPC_EzkKarMF7cIFSt3SZg13CV1tr3M";
@@ -112,7 +114,10 @@ describe("search_patents — the key", () => {
         const seen = stubFetch([]);
         const keyless = createSearchPatentsTool({ apiKey: "" });
         const { ctx } = makeToolContext();
-        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow(/AMASS_API_KEY/);
+        // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
+        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }) as Parameters<typeof keyless.execute>[0], ctx)).rejects.toThrow(
+            /AMASS_API_KEY/,
+        );
         expect(seen).toHaveLength(0);
     });
 

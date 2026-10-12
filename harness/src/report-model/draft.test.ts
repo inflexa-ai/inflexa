@@ -51,7 +51,11 @@ describe("the draft grammar", () => {
         // The draft spreads the same atom tuple as the contract union. A ninth kind that lands in the
         // contract and not here would be unauthorable, and nothing in the build would say so.
         const contractKinds = ATOM_BLOCK_SCHEMAS.map((schema) => schema.shape.kind.value);
-        const draftKinds = DraftBlockSchema.options.map((option) => option.shape.kind.value);
+        // `DraftBlockSchema` is annotated as the bare `ZodType` for its own recursion, which erases
+        // `options`; the runtime value is the discriminated union built one line above the annotation.
+        const draftKinds = (DraftBlockSchema as unknown as { options: readonly { shape: { kind: { value: string } } }[] }).options.map(
+            (option) => option.shape.kind.value,
+        );
 
         expect(draftKinds.sort()).toEqual([...contractKinds, "section"].sort());
     });

@@ -48,15 +48,15 @@ map: `.` goes to `dist/index.js`, and `./*` and `./*.js` go to `dist/*.js`.
 `@inflexa-ai/prov-kernel` is a library. There is no server entry point.
 
 ```bash
-tsc -p tsconfig.json    # Build: emit dist/ from src/ (also `npm run build`)
-bun test                # Unit tests (colocated in src/)
-bun run typecheck       # tsc -p tsconfig.eslint.json --noEmit (covers the test files)
-bun run lint            # eslint .
+tsc -p tsconfig.build.json    # Build: emit dist/ from src/ (also `bun run build`)
+bun test                # Unit tests (in src/test/)
+bun run typecheck       # the type check command over tsconfig.json (covers the test files)
+bun run lint            # oxlint (oxlint.config.ts)
 bun run smoke           # load dist/ under Node, one QName + one sign/verify roundtrip
 ```
 
 **Runtime**: browser and server. A module in `src/` must not import a
-`node:`-prefixed module — `src/browser-safety.test.ts` guards the built
+`node:`-prefixed module — `src/test/browser-safety.test.ts` guards the built
 `dist/`. Bun is only for the tests (`bun test`).
 
 **After a change**, run `bun run typecheck`, `bun run lint`, `bun test`, and
@@ -97,7 +97,8 @@ These invariants are load-bearing. Read them before you change `src/`.
 ## Error handling — neverthrow
 
 Failure is modeled as a `Result` or `ResultAsync` value (neverthrow). The
-`must-use-result` lint rule enforces consumption. Verification functions
+`must-use-result` rule of the type check command (`typecheck.config.ts`)
+enforces consumption. Verification functions
 return a `VerifyResult` status value instead — a verification outcome is data,
 not a failure.
 
@@ -110,7 +111,7 @@ bug.
 
 ## Testing
 
-Tests are colocated in `src/` and run with `bun test`. No database and no
+Tests live in `src/test/` and run with `bun test`. No database and no
 container is necessary.
 
 **Test the state, not the interactions.** Assert on returned values and on

@@ -1,12 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import type { ContentBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { ModelMessage, ToolResultPart } from "ai";
 
 import { countTokens } from "./count-tokens.js";
 
 describe("countTokens", () => {
     it("counts a text block as a stable positive number", () => {
-        const content: ContentBlockParam[] = [{ type: "text", text: "the quick brown fox jumps over the lazy dog" }];
+        const content: ModelMessage["content"] = [{ type: "text", text: "the quick brown fox jumps over the lazy dog" }];
         const count = countTokens(content);
         expect(count).toBeGreaterThan(0);
         // Deterministic — the same content always tokenizes to the same count.
@@ -14,11 +13,12 @@ describe("countTokens", () => {
     });
 
     it("counts a tool_result block as a stable positive number", () => {
-        const content: ContentBlockParam[] = [
+        const content: ModelMessage["content"] = [
             {
-                type: "tool_result",
-                tool_use_id: "toolu_abc",
-                content: JSON.stringify({ genes: ["TP53", "EGFR"], hits: 2 }),
+                type: "tool-result",
+                toolCallId: "toolu_abc",
+                toolName: "probe",
+                output: { type: "text", value: JSON.stringify({ genes: ["TP53", "EGFR"], hits: 2 }) },
             },
         ];
         const count = countTokens(content);
@@ -85,7 +85,7 @@ describe("countTokens", () => {
     });
 
     it("sums across multiple blocks", () => {
-        const text: ContentBlockParam = { type: "text", text: "hello world" };
+        const text: Extract<ModelMessage["content"], readonly unknown[]>[number] = { type: "text", text: "hello world" };
         const single = countTokens([text]);
         expect(countTokens([text, text])).toBe(single * 2);
     });

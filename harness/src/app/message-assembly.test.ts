@@ -1,5 +1,4 @@
 import { describe, test, expect } from "bun:test";
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { ModelMessage } from "ai";
 import { okAsync } from "neverthrow";
 
@@ -14,11 +13,19 @@ import { emptyWorkingMemory } from "../memory/working-memory.js";
 const WM_RENDER = "# Working Memory\n\n## Goal\n\n_none yet_\n";
 const RUN_ACTIVITY = "[Run Activity]\nNo runs are currently running or suspended.";
 
-function stubHistory(window: MessageParam[]): ThreadHistory {
+function stubHistory(window: ModelMessage[]): ThreadHistory {
+    const unreachable = (): never => {
+        throw new Error("this history stub serves loadRecent only");
+    };
     return {
         appendTurn: () => okAsync(undefined),
+        writeTurn: unreachable,
         loadRecent: () => okAsync(window),
         loadAll: () => okAsync([]),
+        retractLastTurn: unreachable,
+        latestSeq: unreachable,
+        latestTurnAt: unreachable,
+        countUserTurnsAfter: unreachable,
     };
 }
 
@@ -52,13 +59,13 @@ function stubWorkingMemory(render = WM_RENDER): WorkingMemoryStore {
     };
 }
 
-function contentText(m: MessageParam): string {
+function contentText(m: ModelMessage): string {
     return typeof m.content === "string" ? m.content : JSON.stringify(m.content);
 }
 
 describe("assembleMessages", () => {
     test("gives the view as the history, the user input, and then the analysis context, the run activity, and the working memory", async () => {
-        const window: MessageParam[] = [
+        const window: ModelMessage[] = [
             { role: "user", content: "earlier question" },
             { role: "assistant", content: "earlier answer" },
         ];
@@ -192,7 +199,7 @@ describe("assembleMessages", () => {
 
     test("sanitization is not applied to history or analysis context", async () => {
         const secret = "AKIAIOSFODNN7EXAMPLE";
-        const window: MessageParam[] = [{ role: "user", content: `prior turn mentioned ${secret}` }];
+        const window: ModelMessage[] = [{ role: "user", content: `prior turn mentioned ${secret}` }];
         const { history, contextRecords } = await assembleMessages({
             threadId: "t",
             threadType: "conversation",

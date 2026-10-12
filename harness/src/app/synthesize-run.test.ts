@@ -22,7 +22,7 @@ import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunSession } from "../auth/types.js";
 import type { EmitFn } from "../loop/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
-import { synthesizeRun, type SynthesizeRunDeps } from "./synthesize-run.js";
+import { synthesizeRun, type SynthesizeRunDeps, type SynthesisProgressExtra } from "./synthesize-run.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 
 const ANALYSIS_ID = "analysis-001";
@@ -290,7 +290,7 @@ describe("synthesizeRun", () => {
             return makeMessage([textBlock("done")], "end_turn");
         });
         const h = await makeHarness(provider, { withSummary: true });
-        const records: { phase: string; extra: Record<string, unknown> }[] = [];
+        const records: { phase: string; extra: SynthesisProgressExtra | Record<string, unknown> }[] = [];
         try {
             const result = await synthesizeRun(h.deps, {
                 analysisId: ANALYSIS_ID,

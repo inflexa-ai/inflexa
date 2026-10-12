@@ -33,12 +33,12 @@ export type ProvSigningError =
  * key first. An implementation backed by a lazily-created keypair must generate the pair on
  * demand at export time, not fail because no `sign` has run yet.
  */
-export interface ProvSigner {
+export type ProvSigner = {
     sign(digestHex: string): ResultAsync<string, ProvSigningError>;
     exportPublicKeyJwk(): ResultAsync<ProvPublicKeyJwk | null, ProvSigningError>;
-}
+};
 
-function hexToBytes(hex: string): Uint8Array {
+function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
     const bytes = new Uint8Array(hex.length / 2);
     for (let i = 0; i < hex.length; i += 2) {
         bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
@@ -88,6 +88,9 @@ export function computePayloadDigest(provJson: string): ResultAsync<string, Prov
 
 /** Import an Ed25519 private key from its JWK form (a JWK with `d`), ready for {@link signHexDigest}. */
 export function importPrivateKeyJwk(jwk: Record<string, unknown>): ResultAsync<CryptoKey, ProvSigningError> {
+    // SAFETY: the record is the wire form of a JWK that a host read from its own key store; the
+    // members WebCrypto reads (kty, crv, d) are exactly the members a stored JWK carries, and an
+    // import that mismatches fails below as `crypto_failed`, not as an unchecked value flowing on.
     return ResultAsync.fromPromise(crypto.subtle.importKey("jwk", jwk as JsonWebKey, "Ed25519", false, ["sign"]), (cause): ProvSigningError => ({
         type: "crypto_failed",
         op: "importPrivateKeyJwk",
@@ -97,6 +100,9 @@ export function importPrivateKeyJwk(jwk: Record<string, unknown>): ResultAsync<C
 
 /** Import an Ed25519 public key from its JWK form, ready for {@link verifyHexDigest}. */
 export function importPublicKeyJwk(jwk: ProvPublicKeyJwk): ResultAsync<CryptoKey, ProvSigningError> {
+    // SAFETY: the record is the wire form of a JWK that arrived inside a signed attestation; the
+    // attestation schema has already pinned kty/crv/x, and an import that mismatches fails below
+    // as `crypto_failed`, not as an unchecked value flowing on.
     return ResultAsync.fromPromise(crypto.subtle.importKey("jwk", jwk as JsonWebKey, "Ed25519", true, ["verify"]), (cause): ProvSigningError => ({
         type: "crypto_failed",
         op: "importPublicKeyJwk",
@@ -107,9 +113,8 @@ export function importPublicKeyJwk(jwk: ProvPublicKeyJwk): ResultAsync<CryptoKey
 /** Sign a hex-encoded digest with an Ed25519 private key, returning a hex-encoded 64-byte signature. */
 export function signHexDigest(privateKey: CryptoKey, digestHex: string): ResultAsync<string, ProvSigningError> {
     const data = hexToBytes(digestHex);
-    // Safe: hexToBytes allocates a fresh Uint8Array, so .buffer starts at offset 0 and is not shared.
     return ResultAsync.fromPromise(
-        crypto.subtle.sign("Ed25519", privateKey, data.buffer as ArrayBuffer).then((sig) => bytesToHex(new Uint8Array(sig))),
+        crypto.subtle.sign("Ed25519", privateKey, data).then((sig) => bytesToHex(new Uint8Array(sig))),
         (cause): ProvSigningError => ({ type: "crypto_failed", op: "signHexDigest", cause }),
     );
 }
@@ -118,11 +123,11 @@ export function signHexDigest(privateKey: CryptoKey, digestHex: string): ResultA
 export function verifyHexDigest(publicKey: CryptoKey, signatureHex: string, digestHex: string): ResultAsync<boolean, ProvSigningError> {
     const sig = hexToBytes(signatureHex);
     const data = hexToBytes(digestHex);
-    // Safe: both Uint8Arrays are freshly allocated by hexToBytes — offset 0, not shared.
-    return ResultAsync.fromPromise(
-        crypto.subtle.verify("Ed25519", publicKey, sig.buffer as ArrayBuffer, data.buffer as ArrayBuffer),
-        (cause): ProvSigningError => ({ type: "crypto_failed", op: "verifyHexDigest", cause }),
-    );
+    return ResultAsync.fromPromise(crypto.subtle.verify("Ed25519", publicKey, sig, data), (cause): ProvSigningError => ({
+        type: "crypto_failed",
+        op: "verifyHexDigest",
+        cause,
+    }));
 }
 
 /**
@@ -134,10 +139,13 @@ export function createKeypairSigner(keypair: { privateKey: CryptoKey; publicKey:
     return {
         sign: (digestHex) => signHexDigest(keypair.privateKey, digestHex),
         exportPublicKeyJwk: () =>
-            ResultAsync.fromPromise(crypto.subtle.exportKey("jwk", keypair.publicKey) as Promise<ProvPublicKeyJwk>, (cause): ProvSigningError => ({
-                type: "crypto_failed",
-                op: "exportPublicKeyJwk",
-                cause,
-            })),
+            ResultAsync.fromPromise(
+                crypto.subtle.exportKey("jwk", keypair.publicKey).then((jwk: JsonWebKey): ProvPublicKeyJwk => ({ ...jwk })),
+                (cause): ProvSigningError => ({
+                    type: "crypto_failed",
+                    op: "exportPublicKeyJwk",
+                    cause,
+                }),
+            ),
     };
 }

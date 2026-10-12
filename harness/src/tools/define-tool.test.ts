@@ -139,11 +139,11 @@ describe("defineTool", () => {
             // The guard this capability rests on: the hook and the schema are
             // checked against each other.
             //
-            // CAUTION: the directive below documents the contract, and no gate
-            // enforces it. `tsconfig.json` excludes `src/**/*.test.ts`, thus the
-            // build typecheck never reads this file. ESLint builds its program
-            // from `tsconfig.eslint.json`, but it reports its own rules only and
-            // never a type error. Thus a regression here stays green.
+            // CAUTION: the directive below documents the contract, and a gate
+            // now enforces it: `bun run typecheck` (`tsc -p tsconfig.json
+            // --noEmit`) reads this file, so if the hook ever stops being
+            // typed against its input, the suppressed error vanishes and the
+            // unused directive fails the run with TS2578.
             const tool = defineTool({
                 id: "typed-hook",
                 description: "Declares only `path`.",
@@ -158,9 +158,8 @@ describe("defineTool", () => {
 
         it("requires the decision — an omitted describeCall does not typecheck", () => {
             // The point of the required decision: a tool cannot ship undescribed
-            // by omission. Read the CAUTION above — no gate enforces this
-            // directive either, thus it documents the contract rather than
-            // guards it.
+            // by omission. The gate of the CAUTION above holds here too: an
+            // unused `@ts-expect-error` fails `bun run typecheck` with TS2578.
             // @ts-expect-error -- the definition declares neither a hook nor "none".
             const tool = defineTool({
                 id: "undecided",
@@ -240,8 +239,10 @@ describe("defineTool", () => {
         });
 
         it("types the hook against the tool's own output", () => {
-            // Read the CAUTION on the call hook above: the directive documents the
-            // contract, and no gate enforces it.
+            // Read the CAUTION on the call hook above: the directive documents
+            // the contract, and the same gate enforces it. `bun run typecheck`
+            // reads this file, so if the hook stops being typed against its
+            // output, the unused directive fails the run with TS2578.
             const tool = defineTool({
                 id: "typed-result-hook",
                 description: "Produces only `page`.",

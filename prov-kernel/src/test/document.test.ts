@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
-import { buildDocumentModel, createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModelInternal } from "./document.js";
-import type { ProvActor, ProvStepRef } from "./types.js";
+import { buildDocumentModel, createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModelInternal } from "../document.js";
+import type { ProvActor, ProvStepRef } from "../types.js";
+import { parseProvJson } from "./prov-json.js";
 
 const actor: ProvActor = { kind: "system", label: "test-host", version: "0.0.0", commit: "abc123" };
 
@@ -39,8 +40,8 @@ function appendRun(model: ProvDocumentModelInternal, doc: ProvDocument, analysis
     model.appendRunCompleted(doc, analysisId, actor, { runId: "r1", status: "completed", completedAtMs: 1_700_000_200_000, durationMs: 200_000 });
 }
 
-function serializeUnified(doc: ProvDocument): Record<string, Record<string, unknown>> {
-    return JSON.parse(doc.unified(PROV_UNIFY_OPTIONS).serialize("json")) as Record<string, Record<string, unknown>>;
+function serializeUnified(doc: ProvDocument): Record<string, Record<string, unknown> | undefined> {
+    return parseProvJson(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"));
 }
 
 describe("QName derivation", () => {

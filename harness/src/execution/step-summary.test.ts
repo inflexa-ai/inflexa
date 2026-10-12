@@ -58,6 +58,9 @@ const NOOP_FS: WorkspaceFilesystem = {
     readFile() {
         return okAsync({ kind: "not_found" });
     },
+    readBytes() {
+        return okAsync({ kind: "not_found" });
+    },
     list() {
         return okAsync({ kind: "not_found" });
     },

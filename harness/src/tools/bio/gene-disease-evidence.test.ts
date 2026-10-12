@@ -40,7 +40,7 @@ const GWAS_ASSOCIATION = {
 const tool = createGeneDiseaseEvidenceTool({ disgenetApiKey: "test-key", ncbiApiKey: "test-ncbi" });
 const toolNoDisgenetKey = createGeneDiseaseEvidenceTool({ disgenetApiKey: "" });
 
-function outcome(perSource: { source: string; status: string }[], source: string) {
+function outcome(perSource: { source: string; status: string; detail?: string }[], source: string) {
     return perSource.find((s) => s.source === source);
 }
 

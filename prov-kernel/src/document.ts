@@ -72,21 +72,64 @@ export function defaultProvDigest(s: string): string {
     return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0).toString(36);
 }
 
-export interface ProvDocumentModelOptions {
+export type ProvDocumentModelOptions = {
     /** QName digest derivation — see {@link ProvDigest}. Defaults to {@link defaultProvDigest}. */
     readonly digest?: ProvDigest;
     /** Id minter for analysis-lifecycle action activities (one fresh id per genuine user action). */
     readonly mintActionId?: () => string;
     /** Clock for lifecycle-action occurrence times. Defaults to `() => new Date()`; inject a fixed clock for deterministic output. */
     readonly now?: () => Date;
-}
+};
 
 /**
  * The in-package model shape: {@link ProvDocumentModel} plus the per-core-event statement builders
  * `applyProvEvent` dispatches. Off the supported surface — a direct-builder producer could drift
  * from the switch's statement choice and order, forking the signed bytes.
  */
-export type ProvDocumentModelInternal = ReturnType<typeof buildDocumentModel>;
+export type ProvDocumentModelInternal = {
+    analysisQName(analysisId: string): string;
+    inputQName(input: ProvInputRef): string;
+    runQName(runId: string): string;
+    stepQName(step: ProvStepRef): string;
+    fileQName(file: ProvFileKey): string;
+    commandQName(step: ProvStepRef, outputs: ProvFileKey[]): string;
+    modelAgentQName(model: ProvModelId): string;
+    freshDocument(subject: ProvSubject): ProvDocument;
+    loadDocument(subject: ProvSubject, storedJson: string | null): Result<ProvDocument, { type: "prov_corrupt"; cause: unknown }>;
+    appendLifecycleAction(
+        doc: ProvDocument,
+        analysisId: string,
+        actor: ProvActor,
+        activityType: string,
+    ): { analysisQn: string; actionQn: string; time: string; agentQn: string };
+    appendCreation(doc: ProvDocument, analysisId: string, actor: ProvActor): void;
+    appendInputAdded(doc: ProvDocument, analysisId: string, actor: ProvActor, input: ProvInputRef, derivedFromAnalysisId: string | null): void;
+    appendInputRemoved(doc: ProvDocument, analysisId: string, actor: ProvActor, input: ProvInputRef): void;
+    appendRunStarted(doc: ProvDocument, analysisId: string, actor: ProvActor, run: ProvRunRef): void;
+    appendRunCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvRunOutcome): void;
+    appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome, model: ProvModelId): void;
+    appendCommandExecuted(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, command: ProvCommandRef, model: ProvModelId): void;
+    appendFileWritten(
+        doc: ProvDocument,
+        analysisId: string,
+        actor: ProvActor,
+        file: ProvFileRef,
+        generation: "command" | "step" | "call",
+        model: ProvModelId,
+        call?: ProvCallRef,
+        step?: ProvStepRef,
+    ): void;
+    appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void;
+    appendSessionCreated(doc: ProvDocument, analysisId: string, actor: ProvActor, session: ProvSessionRef, model: ProvModelId): void;
+    appendReportBlockAdded(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void;
+    appendReportBlockChanged(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void;
+    appendReportBlockRemoved(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void;
+    appendReportBlockMoved(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void;
+    appendReportTitleSet(doc: ProvDocument, analysisId: string, actor: ProvActor, title: ProvReportTitleRef, model: ProvModelId): void;
+    appendReportDerivationRun(doc: ProvDocument, analysisId: string, actor: ProvActor, derivation: ProvReportDerivationRef, model: ProvModelId): void;
+    appendReportPreviewed(doc: ProvDocument, analysisId: string, actor: ProvActor, preview: ProvReportPreviewRef, model: ProvModelId): void;
+    appendReportVersionRecorded(doc: ProvDocument, analysisId: string, actor: ProvActor, version: ProvReportVersionRef, model: ProvModelId): void;
+};
 
 /**
  * The document model a host holds — the QName derivations, document seed/load, and the
@@ -138,7 +181,7 @@ function qnameSafe(s: string): string {
  * `time` argument is omitted from every identified relation: two same-id relations with differing
  * formal times throw on merge, and the occurrence times already live on the run/step activities.
  */
-export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
+export function buildDocumentModel(options: ProvDocumentModelOptions = {}): ProvDocumentModelInternal {
     const digest = options.digest ?? defaultProvDigest;
     // `globalThis.crypto.randomUUID` exists in browsers and in Node.js — no `node:crypto` import.
     const mintActionId = options.mintActionId ?? ((): string => globalThis.crypto.randomUUID());
@@ -161,7 +204,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
                 const qn = `${NS_PREFIX}:agent-user-${qnameSafe(actor.id)}`;
                 doc.agent(qn, {
                     "prov:type": "prov:Person",
-                    ...(actor.email !== undefined ? { "inflexa:email": actor.email } : {}),
+                    "inflexa:email": actor.email,
                 });
                 return qn;
             }
@@ -176,7 +219,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
                     "prov:type": "prov:SoftwareAgent",
                     "prov:label": actor.label,
                     "inflexa:version": actor.version,
-                    ...(actor.commit !== undefined ? { "inflexa:commit": actor.commit } : {}),
+                    "inflexa:commit": actor.commit,
                 });
                 return qn;
             }
@@ -200,8 +243,8 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         doc.addNamespace(NS_PREFIX, NS_URI);
         doc.entity(analysisQName(subject.analysisId), {
             "prov:type": "inflexa:Analysis",
-            ...(subject.name !== undefined ? { "inflexa:name": subject.name } : {}),
-            ...(subject.slug !== undefined ? { "inflexa:slug": subject.slug } : {}),
+            "inflexa:name": subject.name,
+            "inflexa:slug": subject.slug,
         });
         return doc;
     }
@@ -419,7 +462,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         doc.activity(rQn, occurrenceTime(doc, rQn, "prov:startTime", startTime), undefined, {
             "prov:type": "inflexa:Run",
             "inflexa:runId": run.runId,
-            ...(run.planSummary ? { "inflexa:planSummary": run.planSummary } : {}),
+            "inflexa:planSummary": run.planSummary || undefined,
         });
         doc.wasAssociatedWith(rQn, agentQn, undefined, `${NS_PREFIX}:assoc-run-${run.runId}-${agentDigest(agentQn)}`);
         doc.used(rQn, analysisQn, undefined, `${NS_PREFIX}:used-run-${run.runId}`);
@@ -444,7 +487,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         const endTime = new Date(outcome.completedAtMs).toISOString();
         doc.activity(rQn, undefined, endTime, {
             "inflexa:status": outcome.status,
-            ...(outcome.durationMs !== undefined ? { "inflexa:durationMs": outcome.durationMs } : {}),
+            "inflexa:durationMs": outcome.durationMs,
         });
     }
 
@@ -467,7 +510,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
             "inflexa:runId": outcome.runId,
             "inflexa:stepId": outcome.stepId,
             "inflexa:status": outcome.status,
-            ...(outcome.durationMs !== undefined ? { "inflexa:durationMs": outcome.durationMs } : {}),
+            "inflexa:durationMs": outcome.durationMs,
         });
         doc.wasInformedBy(sQn, rQn, `${NS_PREFIX}:informed-${outcome.runId}-${outcome.stepId}`);
         const assocIdBase = `${NS_PREFIX}:assoc-step-${outcome.runId}-${outcome.stepId}`;
@@ -515,10 +558,10 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         doc.activity(cmdQn, undefined, undefined, {
             "prov:type": "inflexa:Command",
             "inflexa:command": command.command,
-            ...(command.args !== undefined && command.args.length > 0 ? { "inflexa:args": command.args.join(" ") } : {}),
+            "inflexa:args": command.args !== undefined && command.args.length > 0 ? command.args.join(" ") : undefined,
             "inflexa:exitCode": command.exitCode,
-            ...(command.durationMs !== undefined ? { "inflexa:durationMs": command.durationMs } : {}),
-            ...(unresolvedScript !== undefined ? { "inflexa:unresolvedScript": unresolvedScript } : {}),
+            "inflexa:durationMs": command.durationMs,
+            "inflexa:unresolvedScript": unresolvedScript,
         });
         doc.wasInformedBy(cmdQn, sQn, `${NS_PREFIX}:informed-cmd-${step.runId}-${step.stepId}-${groupDigest}`);
         const assocIdBase = `${NS_PREFIX}:assoc-cmd-${step.runId}-${step.stepId}-${groupDigest}`;
@@ -595,7 +638,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
                 "prov:type": "inflexa:FileToolWrite",
                 "inflexa:tool": call.tool,
                 "inflexa:invocationId": call.invocationId,
-                ...(call.threadId !== undefined ? { "inflexa:threadId": call.threadId } : {}),
+                "inflexa:threadId": call.threadId,
             });
             if (step !== undefined) doc.wasInformedBy(cQn, stepQName(step), `${NS_PREFIX}:informed-call-${cDigest}`);
             const assocIdBase = `${NS_PREFIX}:assoc-call-${cDigest}`;
@@ -639,7 +682,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
             "inflexa:path": input.path,
             "inflexa:hash": input.hash,
             "inflexa:source": input.source,
-            ...(input.fileId !== undefined ? { "inflexa:fileId": input.fileId } : {}),
+            "inflexa:fileId": input.fileId,
         });
         doc.used(sQn, eQn, undefined, `${NS_PREFIX}:used-input-${step.runId}-${step.stepId}-${fileDigest(input)}`);
     }
@@ -650,7 +693,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
     // replay. Thus a deterministic execution-style QName would buy nothing.
 
     /** The attribute bag a report act stamps on its action activity — the plain-record form of tsprov's attributes. */
-    type ReportActAttributes = Record<string, string | number | boolean | readonly string[]>;
+    type ReportActAttributes = Record<string, string | number | boolean | readonly string[] | undefined>;
 
     /** What a mapped act mints, so its arm can hang the edges that only that act wants. */
     type ReportAction = { actionQn: string; agentQn: string; time: string };
@@ -676,7 +719,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         doc.entity(qn, {
             "prov:type": "inflexa:Report",
             "inflexa:threadId": threadId,
-            ...(parentThreadId !== undefined ? { "inflexa:parentThreadId": parentThreadId } : {}),
+            "inflexa:parentThreadId": parentThreadId,
         });
         return qn;
     }
@@ -737,7 +780,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         const action = appendReportAction(doc, analysisId, actor, model, "inflexa:CreateSession", {
             "inflexa:threadId": threadId,
             "inflexa:sessionKind": kind,
-            ...(parentThreadId !== undefined ? { "inflexa:parentThreadId": parentThreadId } : {}),
+            "inflexa:parentThreadId": parentThreadId,
         });
         if (kind !== "report") return;
         // The generation edge and the attribution are anonymous, and the generation lands on a fresh
@@ -800,7 +843,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
             // Each source rides as one `path|hash` value of a repeated attribute. Parallel path and
             // hash attributes would read the same but lose WHICH hash belongs to which path, and a
             // verifier wants that pairing to mount the evidence again.
-            ...(derivation.sources.length > 0 ? { "inflexa:source": derivation.sources.map((s) => `${s.path}|${s.hash}`) } : {}),
+            "inflexa:source": derivation.sources.length > 0 ? derivation.sources.map((s) => `${s.path}|${s.hash}`) : undefined,
         });
     }
 

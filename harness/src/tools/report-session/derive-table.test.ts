@@ -196,6 +196,7 @@ function makeSandbox(args: {
             return Promise.resolve();
         },
         isAlive: () => Promise.resolve({ alive: true, oomKilled: false }),
+        isAliveById: () => Promise.resolve({ alive: true, oomKilled: false }),
         teardownById: () => Promise.resolve(),
         listManagedSandboxes: () => Promise.resolve([]),
     } satisfies SandboxClient;

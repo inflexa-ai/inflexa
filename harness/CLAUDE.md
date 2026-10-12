@@ -64,7 +64,7 @@ to `dist/index.js`, and `./*` and `./*.js` go to `dist/*.js`.
 The pattern with the extension exists because a harness-internal self-import and a
 consumer alike can write a deep specifier with a `.js` suffix. A lone `./*` would
 capture the extension into `*` and resolve them to `dist/*.js.js`. The manifest
-also declares the `tsc -p tsconfig.json` build that emits `dist/`.
+also declares the `tsc -p tsconfig.build.json` build that emits `dist/`.
 
 At publish time a consumer resolves the public surface through that `exports` map.
 During in-repo development the bare and deep specifiers (`@inflexa-ai/harness`,
@@ -80,7 +80,7 @@ member.
 runner here.
 
 ```bash
-tsc -p tsconfig.json    # Build: emit dist/ from src/ (also `npm run build`)
+tsc -p tsconfig.build.json    # Build: emit dist/ from src/ (also `npm run build`)
 bun test                # Unit tests only — DB/DBOS suites need Postgres (see Testing notes)
 ```
 
@@ -105,7 +105,7 @@ The sandbox client includes a Docker backend and a Kubernetes backend. The
 `SANDBOX_BACKEND` value (`docker` or `k8s`) selects the backend that the
 composition root wires.
 
-**After a big change**, run `tsc -p tsconfig.json` and `bun test`.
+**After a big change**, run `tsc -p tsconfig.build.json` and `bun test`.
 
 ## Formatting
 

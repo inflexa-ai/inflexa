@@ -43,12 +43,16 @@ const REASONER_TOOLS = ["search_semantic_scholar", "search_arxiv", "search_githu
 const BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
 
 const ctxFor = (sessionAgentId = "conversation-agent"): ToolContext => ({
+    invocationId: "tool-call-test",
     session: makeSession({
         agentId: sessionAgentId,
         callPath: [sessionAgentId],
     }),
     signal: new AbortController().signal,
     emit: () => {},
+    ask: async () => {
+        throw new Error("ask should not be reached");
+    },
 });
 
 const submitReport = (id: string, report: unknown) => makeMessage([toolUseBlock(id, "submit_analogy_report", report)], "tool_use");

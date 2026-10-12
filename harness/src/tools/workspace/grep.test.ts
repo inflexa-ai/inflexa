@@ -32,6 +32,9 @@ function fakeFs(tree: FakeTree): WorkspaceFilesystem {
             if (content === undefined) return okAsync({ kind: "not_found" });
             return okAsync({ kind: "ok", content: Buffer.from(content), truncated: false });
         },
+        readBytes() {
+            return okAsync({ kind: "not_found" });
+        },
     };
 }
 
@@ -103,6 +106,9 @@ describe("createGrepTool", () => {
                 return okAsync({ kind: "out_of_scope" });
             },
             readFile() {
+                return okAsync({ kind: "out_of_scope" });
+            },
+            readBytes() {
                 return okAsync({ kind: "out_of_scope" });
             },
         };

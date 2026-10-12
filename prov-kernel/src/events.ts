@@ -85,10 +85,20 @@ export type ProvEvent =
  * extension events onto `appendLifecycleAction`, the QName derivations, and tsprov interop
  * themselves.
  */
+/**
+ * The runtime half of {@link createProvDocumentModel}'s contract: every model a program can hold
+ * comes from that constructor, which returns `buildDocumentModel`'s full model — the public type
+ * only narrows the static view. The membership check below is what proves it at this boundary.
+ */
+function hasCoreBuilders(model: ProvDocumentModel): model is ProvDocumentModelInternal {
+    return "appendCreation" in model;
+}
+
 export function applyProvEvent(model: ProvDocumentModel, doc: ProvDocument, event: ProvEvent): void {
     // Every model comes from `createProvDocumentModel`, so the builders exist at runtime; the
     // public type omits them to keep this switch the only core-statement producer.
-    const m = model as ProvDocumentModelInternal;
+    if (!hasCoreBuilders(model)) throw new Error("applyProvEvent requires a model from createProvDocumentModel");
+    const m = model;
     switch (event.type) {
         case "analysis_created":
             m.appendCreation(doc, event.analysisId, event.actor);

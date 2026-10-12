@@ -709,7 +709,7 @@ describe("the export of a faceted chart", () => {
         const exported = exportOption(facetedBars(), CHART_PRINT_TEXT_PX, CHART_EXPORT_SIZES.single.widthPx, CHART_EXPORT_SIZES.single.heightPx);
         const axes = exported.xAxis as EchartOption[];
         expect(axes.length).toBe(3);
-        for (const axis of axes) expect([45, 90]).toContain((axis.axisLabel as EchartOption).rotate);
+        for (const axis of axes) expect([45, 90]).toContain(Number((axis.axisLabel as EchartOption).rotate));
     });
 
     it("takes the room of the legend band from each row of panels, and each label moves with its row", () => {

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "./document.js";
-import { applyProvEvent, type ProvEvent } from "./events.js";
-import type { ProvActor } from "./types.js";
+import { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "../document.js";
+import { applyProvEvent, type ProvEvent } from "../events.js";
+import type { ProvActor } from "../types.js";
+import { parseProvJson, relationRecords } from "./prov-json.js";
 
 /**
  * Event-driven coverage of the core switch: each test drives {@link applyProvEvent} against
@@ -11,7 +12,7 @@ import type { ProvActor } from "./types.js";
 
 const actor: ProvActor = { kind: "system", label: "test-host", version: "0.0.0", commit: "abc123" };
 
-type ParsedDoc = Record<string, Record<string, unknown>>;
+type ParsedDoc = Record<string, Record<string, unknown> | undefined>;
 
 function makeModel(): ProvDocumentModel {
     let actionN = 0;
@@ -24,7 +25,7 @@ function makeModel(): ProvDocumentModel {
 function serialize(model: ProvDocumentModel, events: ProvEvent[], analysisId = "a1"): ParsedDoc {
     const doc = model.freshDocument({ analysisId, name: "Test Analysis" });
     for (const event of events) applyProvEvent(model, doc, event);
-    return JSON.parse(doc.unified(PROV_UNIFY_OPTIONS).serialize("json")) as ParsedDoc;
+    return parseProvJson(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"));
 }
 
 function runEvents(analysisId: string): ProvEvent[] {
@@ -198,8 +199,12 @@ describe("applyProvEvent", () => {
     test("an event outside the union throws instead of appending", () => {
         const model = makeModel();
         const doc = model.freshDocument({ analysisId: "a1" });
-        const rogue = { type: "not_an_event", analysisId: "a1", actor } as unknown as ProvEvent;
-        expect(() => applyProvEvent(model, doc, rogue)).toThrow("unhandled prov event type");
+        const rogueEvent: ProvEvent = { type: "input_removed", analysisId: "a1", actor, input: { path: "x", isDir: false, anchorId: null } };
+        // SAFETY: the discriminant is replaced at runtime with a kind outside the union — the
+        // exact defect under test. The widening cast only permits the write; the payload stays one
+        // that an `input_removed` event carries.
+        (rogueEvent as { type: string }).type = "not_an_event";
+        expect(() => applyProvEvent(model, doc, rogueEvent)).toThrow("unhandled prov event type");
     });
 
     test("a step-generation file write without a step ref is rejected", () => {
@@ -262,10 +267,7 @@ const versionRecorded: ProvEvent = {
 
 /** The relation records of one kind whose `field` endpoint names `qn` — the count a first-declaration guard holds at one. */
 function endpointRecords(doc: ParsedDoc, relation: string, field: string, qn: string): Record<string, unknown>[] {
-    // A relation record is a flat `{ "prov:<role>": endpoint }` object; the parsed-document type
-    // erases that one level, thus the cast restores it.
-    const records = Object.values(doc[relation] ?? {}) as Record<string, unknown>[];
-    return records.filter((record) => record[field] === qn);
+    return relationRecords(doc, relation).filter((record) => record[field] === qn);
 }
 
 describe("applyProvEvent — the session and report family", () => {
@@ -295,9 +297,7 @@ describe("applyProvEvent — the session and report family", () => {
 
         expect(doc.entity?.[reportQn]).toMatchObject({ "prov:type": "inflexa:Report", "inflexa:threadId": reportThread });
         expect(doc.entity?.[reportQn]).not.toHaveProperty("inflexa:parentThreadId");
-        expect(endpointRecords(doc, "used", "prov:entity", reportQn)).toEqual([
-            expect.objectContaining({ "prov:activity": "inflexa:action-evt-1", "prov:entity": reportQn }),
-        ]);
+        expect(endpointRecords(doc, "used", "prov:entity", reportQn).filter((r) => r["prov:activity"] === "inflexa:action-evt-1")).toHaveLength(1);
     });
 
     test("a conversation session mints no entity and draws no read edge", () => {

@@ -1415,7 +1415,7 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
 
         const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider));
 
-        expect(finish.reason).toBe("unknown");
+        expect(String(finish.reason)).toBe("unknown");
         expect(wasExecuted()).toBe(false);
         // [user, assistant(tu-x), tool(not run)]
         expect(messages).toHaveLength(3);
@@ -2667,7 +2667,11 @@ describe("runAgent — compaction", () => {
         const [beforeFailure, afterFailure] = sent.slice(-2);
         expect(afterFailure!.messages[0]!.content).toBe("[Conversation Summary]\nfirst summary");
         expect(JSON.stringify(afterFailure!.messages.slice(0, beforeFailure!.messages.length))).toBe(JSON.stringify(beforeFailure!.messages));
-        const parts = afterFailure!.messages.flatMap((message) => (typeof message.content === "string" ? [] : message.content));
+        const parts: Array<{ type: string }> = [];
+        for (const message of afterFailure!.messages) {
+            if (typeof message.content === "string") continue;
+            for (const part of message.content) parts.push(part);
+        }
         expect(parts.some((part) => part.type === "reasoning")).toBe(true);
         expect(afterFailure!.messages.some((message) => compactionExchangeOf(message) !== undefined)).toBe(false);
     });

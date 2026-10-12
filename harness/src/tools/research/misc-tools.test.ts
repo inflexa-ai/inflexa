@@ -216,9 +216,10 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const { ctx } = makeToolContext();
 
         const result = (await createInspectRunTool(pool).execute({ runId: "run-1" }, ctx))._unsafeUnwrap();
-        const { run, steps } = result as { inspectionState: string; run: Record<string, unknown>; steps: Array<Record<string, unknown>> };
+        if (!("steps" in result)) throw new Error("expected the terminal inspection variant");
+        const { run, steps } = result;
 
-        expect((result as { inspectionState: string }).inspectionState).toBe("terminal");
+        expect(result.inspectionState).toBe("terminal");
         const dagStep = steps.find((s) => s.stepId === "T1S1");
         const synthesisStep = steps.find((s) => s.stepId === "synthesis");
         expect(dagStep?.summaryPath).toBe("runs/run-1/T1S1/output/summary.md");

@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { ModelMessage } from "ai";
 
 import { applyChatFrame, toChatFrame } from "../contracts/chat-frame.js";
-import type { ChatMessage } from "../contracts/message.js";
+import type { ChatMessage, MessagePart } from "../contracts/message.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { EmitFn } from "../loop/types.js";
 import { envelopeMessage, markCompactionExchange, summaryMarkerMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
@@ -165,7 +165,7 @@ describe("the live path and the replay of one turn", () => {
 describe("the known differences between the live path and the replay", () => {
     it("a call that never finished: the replay gives incomplete, and the live message gives no outcome", async () => {
         const rounds = [round([{ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {}, detail: "data/counts.csv" }])];
-        const call = { type: "tool-call", toolCallId: "t1", toolName: "read_file", detail: "data/counts.csv" };
+        const call = { type: "tool-call", toolCallId: "t1", toolName: "read_file", detail: "data/counts.csv" } satisfies MessagePart;
 
         expect(live(rounds)[1]!.parts).toEqual([call]);
         expect((await replay(rounds))[1]!.parts).toEqual([{ ...call, outcome: "incomplete" }]);
@@ -195,7 +195,7 @@ describe("the known differences between the live path and the replay", () => {
                 { type: "text-delta", text: "after" },
             ]),
         ];
-        const compaction = { type: "data-compaction", id: "c-1", status: "done", ...figures };
+        const compaction = { type: "data-compaction", id: "c-1", status: "done", ...figures } satisfies MessagePart;
 
         expect(live(rounds)[1]!.parts).toEqual([{ type: "text", text: "before" }, compaction, { type: "text", text: "after" }]);
         const replayed = await replay(rounds);

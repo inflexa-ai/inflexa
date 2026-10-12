@@ -55,9 +55,13 @@ function makeRunSession(): RunSession {
 
 function makeToolCtx(): ToolContext {
     return {
+        invocationId: "tool-call-test",
         session: makeRunSession(),
         signal: new AbortController().signal,
         emit: () => {},
+        ask: async () => {
+            throw new Error("ask should not be reached");
+        },
     };
 }
 
@@ -66,7 +70,7 @@ function makeToolCtx(): ToolContext {
  * semantic checks (stepId in known set, theme references match findings,
  * keyReferences cited by findings, PMIDs numeric).
  */
-function validSynthesisPayload(): unknown {
+function validSynthesisPayload(): Record<string, unknown> {
     return {
         runId: RUN_ID,
         overview: "A test run analyzed gene expression in T-cells.",
@@ -273,7 +277,7 @@ describe("validate_synthesis inner tool", () => {
             await validate.execute({ synthesis: JSON.stringify({ ...validSynthesisPayload(), runId: "other-run" }) }, makeToolCtx())
         )._unsafeUnwrap() as {
             valid: false;
-            issues: { path: string; code: string; message: string }[];
+            issues: { path: string; code: string; message: string; hint?: string }[];
         };
 
         expect(result.valid).toBe(false);
@@ -317,7 +321,7 @@ describe("validate_synthesis inner tool", () => {
 
         const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
             valid: false;
-            issues: { path: string; code: string; message: string }[];
+            issues: { path: string; code: string; message: string; hint?: string }[];
         };
 
         expect(result.valid).toBe(false);
@@ -350,7 +354,7 @@ describe("validate_synthesis inner tool", () => {
 
         const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
             valid: false;
-            issues: { path: string; code: string; message: string }[];
+            issues: { path: string; code: string; message: string; hint?: string }[];
         };
 
         expect(result.valid).toBe(false);
@@ -375,7 +379,7 @@ describe("validate_synthesis inner tool", () => {
 
         const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
             valid: false;
-            issues: { path: string; code: string; message: string }[];
+            issues: { path: string; code: string; message: string; hint?: string }[];
         };
 
         expect(result.valid).toBe(false);

@@ -113,7 +113,7 @@ async function insertReportChildren(prefix: string, count: number, parentThreadI
 
 /** Seed the analysis-state row that the foreign key of the session state needs. */
 async function seedAnalysisRow(analysisId: string): Promise<void> {
-    (await upsertAnalysis(pool, analysisId, null, null))._unsafeUnwrap();
+    (await upsertAnalysis(pool, analysisId, null))._unsafeUnwrap();
 }
 
 /** One artifact of the ledger, which the pin reads into the snapshot. */
@@ -506,7 +506,10 @@ describe("reportSessionDelta", () => {
 
         expect(delta.newestChild?.threadId).toBe(child.threadId);
         expect(delta.newestChild?.title).toBe(child.title);
-        expect(delta.newestChild?.anchor).toBe(await latestSeqOf("p1"));
+        if (delta.newestChild === undefined || delta.newestChild === null) throw new Error("expected a newest child");
+        const expectedAnchor = await latestSeqOf("p1");
+        if (expectedAnchor === null) throw new Error("expected a thread anchor");
+        expect(delta.newestChild.anchor).toBe(expectedAnchor);
         expect(delta.userTurnsSinceAnchor).toBe(0);
     });
 
