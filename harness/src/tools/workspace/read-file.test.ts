@@ -10,6 +10,9 @@ function fakeFs(behavior: (path: string) => ReadFileResult): WorkspaceFilesystem
         readFile({ path }) {
             return okAsync(behavior(path));
         },
+        readBytes() {
+            throw new Error("not used");
+        },
         list() {
             throw new Error("list: not used");
         },
@@ -97,6 +100,9 @@ describe("createReadFileTool", () => {
             readFile() {
                 throw new Error("upstream 502");
             },
+            readBytes() {
+                throw new Error("not used");
+            },
             list() {
                 throw new Error("not used");
             },
@@ -129,6 +135,9 @@ describe("createReadFileTool", () => {
                 seenTail = tailLines;
                 return okAsync({ kind: "ok", content: Buffer.from("a\nb\nc"), truncated: false });
             },
+            readBytes() {
+                throw new Error("not used");
+            },
             list() {
                 throw new Error("not used");
             },
@@ -151,6 +160,9 @@ describe("createReadFileTool", () => {
                 seenTail = tailLines;
                 return okAsync({ kind: "ok", content: Buffer.from("y\nz"), truncated: false });
             },
+            readBytes() {
+                throw new Error("not used");
+            },
             list() {
                 throw new Error("not used");
             },
@@ -170,6 +182,9 @@ describe("createReadFileTool", () => {
             readFile() {
                 called = true;
                 return okAsync({ kind: "not_found" });
+            },
+            readBytes() {
+                throw new Error("not used");
             },
             list() {
                 throw new Error("not used");

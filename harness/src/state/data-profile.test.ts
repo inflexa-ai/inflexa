@@ -578,8 +578,8 @@ describe("the persisted profile record", () => {
         expect(result?.summary).toBe("3 RNA-seq count matrices");
         expect(result?.profiledAt).toBe("2026-01-02T03:04:05.000Z");
         expect(result?.files).toHaveLength(2);
-        expect(result?.files[0]?.path).toBe("data/inputs/f1/counts.csv");
-        expect(result?.files[0]?.description).toBe("Raw count matrix");
+        expect(result?.files?.[0]?.path).toBe("data/inputs/f1/counts.csv");
+        expect(result?.files?.[0]?.description).toBe("Raw count matrix");
 
         // And every field added by the widening is absent, not a lie.
         expect(result?.domain).toBeUndefined();
@@ -591,9 +591,9 @@ describe("the persisted profile record", () => {
         expect(result?.accessions).toBeUndefined();
         expect(result?.experimentalDesign).toBeUndefined();
         expect(result?.qualityAssessment).toBeUndefined();
-        expect(result?.files[0]?.dataType).toBeUndefined();
-        expect(result?.files[0]?.rows).toBeUndefined();
-        expect(result?.files[0]?.metrics).toBeUndefined();
+        expect(result?.files?.[0]?.dataType).toBeUndefined();
+        expect(result?.files?.[0]?.rows).toBeUndefined();
+        expect(result?.files?.[0]?.metrics).toBeUndefined();
     });
 
     it("an explicit null organism survives as null — distinct from a legacy row's absent one", async () => {

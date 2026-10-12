@@ -115,7 +115,7 @@ describe("a recipe that covers the fresh tree absorbs in full", () => {
         expect(outcome.resolution.recipe.map((step) => step.op)).toEqual(prior.recipe!.map((step) => step.op));
         const nextTree = detectSets(tree(9));
         expect(
-            absorbRecipe({ ...prior, groups: outcome.resolution.groups, recipe: [...outcome.resolution.recipe] }, nextTree, buildSetMenu(nextTree)).kind,
+            absorbRecipe({ ...prior, groups: [...outcome.resolution.groups], recipe: [...outcome.resolution.recipe] }, nextTree, buildSetMenu(nextTree)).kind,
         ).toBe("full");
     });
 });

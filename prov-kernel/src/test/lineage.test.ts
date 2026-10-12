@@ -1,16 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
-import { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "./document.js";
-import { applyProvEvent } from "./events.js";
-import { computeLineage, computeReachable, deriveLineageModel, findFileEntity, type LineageModel } from "./lineage.js";
-import type { ProvActor, ProvCallRef, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef } from "./types.js";
+import { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "../document.js";
+import { applyProvEvent } from "../events.js";
+import { computeLineage, computeReachable, deriveLineageModel, findFileEntity, type LineageEdge, type LineageEdgeKind, type LineageModel } from "../lineage.js";
+import type { ProvActor, ProvCallRef, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef } from "../types.js";
+import { parseProvJson } from "./prov-json.js";
 
 // The read model is tested against two sources: the committed golden fixture (the exact stored
 // bytes every consumer reads) and documents built with the real event switch — the record shapes
 // production writes — round-tripped through PROV-JSON like a stored column.
 
-const goldenJson = readFileSync(new URL("./__fixtures__/golden-document.json", import.meta.url), "utf8");
+const goldenJson = readFileSync(new URL("../__fixtures__/golden-document.json", import.meta.url), "utf8");
 const provModel = createProvDocumentModel();
 
 // The two entities the golden fixture's report family declares: the thread `t-report` and its version `v-1`.
@@ -27,6 +28,11 @@ function edgeOf(model: LineageModel, id: string): LineageModel["edges"][number] 
 
 function qns(model: LineageModel): string[] {
     return model.nodes.map((n) => n.qn);
+}
+
+/** Whether the walk carries one edge of `kind` between `from` and `to`. */
+function hasEdge(edges: readonly LineageEdge[], kind: LineageEdgeKind, from: string, to: string): boolean {
+    return edges.some((e) => e.kind === kind && e.from === from && e.to === to);
 }
 
 describe("deriveLineageModel — golden fixture", () => {
@@ -76,6 +82,40 @@ describe("deriveLineageModel — golden fixture", () => {
             slug: "golden-analysis",
         });
         expect(nodeOf(model, "inflexa:input-39n74a7sqlbvc")).toMatchObject({ kind: "input", path: "data/inputs/counts.csv", isDir: false });
+    });
+
+    test("omits each member the record does not hold — absent, never present as `undefined`", () => {
+        const file = nodeOf(model, "inflexa:file-18bvqsvo19q9p");
+        expect(file).toStrictEqual({
+            kind: "file",
+            qn: "inflexa:file-18bvqsvo19q9p",
+            label: "runs/r1/s1/output/result.csv",
+            path: "runs/r1/s1/output/result.csv",
+            hash: "sha256:bbb",
+            size: 10,
+            producer: "command",
+        });
+        expect(Object.keys(file ?? {})).toEqual(["kind", "qn", "label", "path", "hash", "size", "producer"]);
+        const threadCall = nodeOf(model, "inflexa:call-1jhn1c2qpy187");
+        expect(threadCall).toStrictEqual({
+            kind: "activity",
+            qn: "inflexa:call-1jhn1c2qpy187",
+            activity: "file_tool",
+            label: "edit_file",
+            tool: "edit_file",
+            invocationId: "call-42",
+        });
+        expect(Object.keys(threadCall ?? {})).toEqual(["kind", "qn", "activity", "label", "tool", "invocationId"]);
+        const systemAgent = nodeOf(model, "inflexa:agent-system");
+        expect(systemAgent).toStrictEqual({
+            kind: "agent",
+            qn: "inflexa:agent-system",
+            agent: "system",
+            label: "golden-host",
+            version: "1.0.0",
+            commit: "deadbeef",
+        });
+        expect(Object.keys(systemAgent ?? {})).toEqual(["kind", "qn", "agent", "label", "version", "commit"]);
     });
 
     test("maps the report entities onto their own node kinds", () => {
@@ -321,9 +361,9 @@ describe("computeLineage — backward", () => {
     test("walks the chain heatmap → B → de_results → A → counts + script → write_file", () => {
         expect(qns(walk).sort()).toEqual([fileQn(heatmapKey), bQn, fileQn(deResultsKey), aQn, fileQn(countsKey), fileQn(scriptKey), writeQn].sort());
         expect(edgeOf(walk, "inflexa:gen-" + fileQn(heatmapKey).slice("inflexa:file-".length))).toMatchObject({ kind: "generated", to: bQn });
-        expect(walk.edges).toContainEqual(expect.objectContaining({ kind: "used", from: aQn, to: fileQn(countsKey) }));
-        expect(walk.edges).toContainEqual(expect.objectContaining({ kind: "used", from: aQn, to: fileQn(scriptKey) }));
-        expect(walk.edges).toContainEqual(expect.objectContaining({ kind: "generated", from: fileQn(scriptKey), to: writeQn }));
+        expect(hasEdge(walk.edges, "used", aQn, fileQn(countsKey))).toBe(true);
+        expect(hasEdge(walk.edges, "used", aQn, fileQn(scriptKey))).toBe(true);
+        expect(hasEdge(walk.edges, "generated", fileQn(scriptKey), writeQn)).toBe(true);
     });
 
     test("traverses only generation and usage — the derived edge, the informed spine, and the agents stay out", () => {
@@ -335,7 +375,7 @@ describe("computeLineage — backward", () => {
 
     test("a leaf file's generator is its step, and the step's own reads lie behind it", () => {
         const leafWalk = computeLineage(chainModel, [fileQn(leafKey)], { direction: "backward" });
-        expect(leafWalk.edges).toContainEqual(expect.objectContaining({ kind: "generated", from: fileQn(leafKey), to: stepQn }));
+        expect(hasEdge(leafWalk.edges, "generated", fileQn(leafKey), stepQn)).toBe(true);
         // The step-level read of counts.csv is one hop further.
         expect(qns(leafWalk)).toContain(fileQn(countsKey));
     });
@@ -371,8 +411,8 @@ describe("computeLineage — backward", () => {
         const walk2 = computeLineage(modelFrom(doc), [fileQn(modelKey)], { direction: "backward" });
         const fitQn = provModel.commandQName(readerStep, fit.outputs);
         // The prior read IS run-001's entity — the walk continues into its producing command.
-        expect(walk2.edges).toContainEqual(expect.objectContaining({ kind: "used", from: fitQn, to: fileQn(deResultsKey) }));
-        expect(walk2.edges).toContainEqual(expect.objectContaining({ kind: "generated", from: fileQn(deResultsKey), to: aQn }));
+        expect(hasEdge(walk2.edges, "used", fitQn, fileQn(deResultsKey))).toBe(true);
+        expect(hasEdge(walk2.edges, "generated", fileQn(deResultsKey), aQn)).toBe(true);
         expect(qns(walk2)).toContain(fileQn(countsKey));
     });
 
@@ -393,8 +433,8 @@ describe("computeLineage — backward", () => {
         const genQn = provModel.commandQName(stepRef, selfRead.outputs);
         const walk3 = computeLineage(modelFrom(doc), [fileQn(selfKey)], { direction: "backward" });
         expect(qns(walk3).sort()).toEqual([fileQn(selfKey), genQn].sort());
-        expect(walk3.edges).toContainEqual(expect.objectContaining({ kind: "generated", from: fileQn(selfKey), to: genQn }));
-        expect(walk3.edges).toContainEqual(expect.objectContaining({ kind: "used", from: genQn, to: fileQn(selfKey) }));
+        expect(hasEdge(walk3.edges, "generated", fileQn(selfKey), genQn)).toBe(true);
+        expect(hasEdge(walk3.edges, "used", genQn, fileQn(selfKey))).toBe(true);
     });
 });
 
@@ -408,8 +448,8 @@ describe("computeLineage — forward", () => {
         expect(qns(walk)).toContain(fileQn(leafKey));
         expect(qns(walk)).toContain(bQn);
         expect(qns(walk)).toContain(fileQn(heatmapKey));
-        expect(walk.edges).toContainEqual(expect.objectContaining({ kind: "used", from: stepQn, to: fileQn(countsKey) }));
-        expect(walk.edges).toContainEqual(expect.objectContaining({ kind: "generated", from: fileQn(leafKey), to: stepQn }));
+        expect(hasEdge(walk.edges, "used", stepQn, fileQn(countsKey))).toBe(true);
+        expect(hasEdge(walk.edges, "generated", fileQn(leafKey), stepQn)).toBe(true);
     });
 });
 
@@ -424,7 +464,8 @@ describe("computeLineage — depth", () => {
     test("an activity root spends one edge less — its direct files sit at the first file hop", () => {
         const walk = computeLineage(chainModel, [bQn], { direction: "backward", depth: 1 });
         expect(qns(walk).sort()).toEqual([bQn, fileQn(deResultsKey)].sort());
-        expect(walk.edges).toEqual([expect.objectContaining({ kind: "used", from: bQn, to: fileQn(deResultsKey) })]);
+        expect(walk.edges).toHaveLength(1);
+        expect(hasEdge(walk.edges, "used", bQn, fileQn(deResultsKey))).toBe(true);
     });
 
     test("a multi-root walk bounds each node by its minimum distance over all roots", () => {
@@ -543,11 +584,10 @@ describe("computeLineage — truncated is equivalent to the depth+1 diff derivat
 
     for (const [name, fixture] of fixtures) {
         test(`${name}: every root set, both directions, depths 0–4`, () => {
-            const rootSets: string[][] = [
-                ...fixture.nodes.map((n) => [n.qn]),
-                fixture.nodes.filter((n) => n.kind === "file").map((n) => n.qn),
-                [fixture.nodes.find((n) => n.kind === "activity")!.qn, fixture.nodes.find((n) => n.kind === "file")!.qn],
-            ];
+            const rootSets: string[][] = [...fixture.nodes.map((n) => [n.qn]), fixture.nodes.filter((n) => n.kind === "file").map((n) => n.qn)];
+            const activityRoot = fixture.nodes.find((n) => n.kind === "activity")?.qn;
+            const fileRoot = fixture.nodes.find((n) => n.kind === "file")?.qn;
+            if (activityRoot !== undefined && fileRoot !== undefined) rootSets.push([activityRoot, fileRoot]);
             for (const roots of rootSets) {
                 for (const direction of ["backward", "forward"] as const) {
                     for (let depth = 0; depth <= 4; depth++) {
@@ -659,14 +699,15 @@ describe("deriveLineageModel — tolerance", () => {
     });
 
     test("an identified invalidation keys by its dialect id", () => {
-        const doc = JSON.parse(removalJson) as Record<string, Record<string, unknown>>;
-        doc["wasInvalidatedBy"] = { "inflexa:inv-1": doc["wasInvalidatedBy"]!["_:id1"] };
+        const doc = parseProvJson(removalJson);
+        const invalidated = doc["wasInvalidatedBy"] ?? {};
+        doc["wasInvalidatedBy"] = { "inflexa:inv-1": invalidated["_:id1"] };
         const derived = deriveLineageModel(JSON.stringify(doc))._unsafeUnwrap();
         expect(derived.edges).toEqual([{ id: "inflexa:inv-1", kind: "invalidated", from: "inflexa:input-gone", to: "inflexa:action-a1-3" }]);
     });
 
     test("synthesizes minimal nodes for undeclared relation endpoints", () => {
-        const doc = JSON.parse(removalJson) as Record<string, unknown>;
+        const doc = parseProvJson(removalJson);
         delete doc["entity"];
         delete doc["activity"];
         const derived = deriveLineageModel(JSON.stringify(doc))._unsafeUnwrap();
@@ -683,14 +724,15 @@ describe("deriveLineageModel — tolerance", () => {
             entity: { "inflexa:report-abc": {}, "inflexa:report-version-abc": {} },
         });
         const derived = deriveLineageModel(untyped)._unsafeUnwrap();
-        expect(derived.nodes).toEqual([
-            { kind: "report", qn: "inflexa:report-abc", label: "report-abc" },
-            { kind: "report_version", qn: "inflexa:report-version-abc", label: "report-version-abc" },
-        ]);
+        const [reportNode, versionNode] = derived.nodes;
+        expect(reportNode).toStrictEqual({ kind: "report", qn: "inflexa:report-abc", label: "report-abc" });
+        expect(Object.keys(reportNode)).toEqual(["kind", "qn", "label"]);
+        expect(versionNode).toStrictEqual({ kind: "report_version", qn: "inflexa:report-version-abc", label: "report-version-abc" });
+        expect(Object.keys(versionNode)).toEqual(["kind", "qn", "label"]);
     });
 
     test("a statement kind outside the seven is skipped, not an error", () => {
-        const doc = JSON.parse(removalJson) as Record<string, unknown>;
+        const doc = parseProvJson(removalJson);
         doc["agent"] = { "inflexa:agent-system": {}, "inflexa:agent-model-x": {} };
         doc["actedOnBehalfOf"] = {
             "inflexa:delegation-x-y": { "prov:delegate": "inflexa:agent-model-x", "prov:responsible": "inflexa:agent-system" },

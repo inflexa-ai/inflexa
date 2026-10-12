@@ -189,7 +189,7 @@ describe("the declared write tail", () => {
         // The RW subPath matches the container RW mount path sans leading slash — the two sides of the
         // same directory.
         expect(`/an-1/${subPaths.rw!.slice("tenants/acme/an-1/".length)}`).toBe(
-            buildMountPlan({ ...COORDS, writableTail: TAIL }, { libs: false, refs: false }).writableStepPath,
+            buildMountPlan({ ...COORDS, writableTail: TAIL }, { libs: false, refs: false }).writableStepPath!,
         );
     });
 

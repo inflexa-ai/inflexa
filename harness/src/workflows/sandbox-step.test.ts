@@ -30,7 +30,8 @@ import { ChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts
 import { isReconciling, type ChatPartType } from "@inflexa-ai/harness/contracts/part-registry.js";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
-import type { RunSession, SpawnSession } from "../auth/types.js";
+import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
+import type { SpawnSession } from "../auth/types.js";
 import { createCapturingLogger, silentLogger, type CapturingLogger } from "../__tests__/setup/logger.js";
 import { classifyReadPath } from "../provenance/collector.js";
 import type { AgentChat, ChatRequest, ChatResponse, ChatUsage, EmbeddingProvider } from "../providers/types.js";
@@ -227,7 +228,7 @@ function makeProvider(usage: ChatUsage | undefined): AgentChat {
     };
 }
 
-function makeRunSession(): RunSession {
+function makeRunSession(): SpawnSession {
     return {
         identity: { user: "u-1" },
         scope: { kind: "analysis", analysisId: ANALYSIS_ID },
@@ -268,6 +269,7 @@ function stepAgent(fileMetadata: FileMetadataCell, tools: readonly Tool[] = [], 
  */
 function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
     return {
+        citationResolver: unusedCitationResolver,
         pool: makeFakePool(),
         logger: silentLogger,
         provider: makeProvider(usage),

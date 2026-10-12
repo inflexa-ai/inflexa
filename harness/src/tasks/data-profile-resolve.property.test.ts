@@ -102,7 +102,7 @@ function makeOperations(detected: DetectedSets, menu: SetMenu, random: () => num
 
     if (sets.length >= 2 && random() < 0.3) {
         const merged = sets.splice(0, 2);
-        operations.push({ op: "merge", setIds: merged.map((set) => set.id), group: annotation("merged sets") });
+        operations.push({ op: "merge", setIds: merged.map((set) => set.id), group: annotation("merged sets"), reason: "" });
     }
 
     for (const set of sets) {
@@ -145,7 +145,7 @@ function makeOverlappingOperations(detected: DetectedSets, menu: SetMenu, random
         if (random() < 0.7) operations.push({ op: "use", setId: set.id, group: annotation(`${set.id} second`) });
     }
     if (menu.sets.length >= 2 && random() < 0.5) {
-        operations.push({ op: "merge", setIds: menu.sets.slice(0, 2).map((set) => set.id), group: annotation("merged over the top") });
+        operations.push({ op: "merge", setIds: menu.sets.slice(0, 2).map((set) => set.id), group: annotation("merged over the top"), reason: "" });
     }
 
     const leftovers = detected.leftoverMembers.map((member) => member.path);

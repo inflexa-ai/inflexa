@@ -185,10 +185,10 @@ export default defineConfig([
             parser: tseslint.parser,
             parserOptions: {
                 projectService: false,
-                // The build tsconfig excludes tests from `dist/`; type-aware lint
-                // rules need every linted file in the program, so eslint gets its
-                // own tsconfig that includes all of src/.
-                project: "./tsconfig.eslint.json",
+                // `tsconfig.json` is the lint program: it includes all of src/, so
+                // the type-aware rules see the test files; the build reads
+                // tsconfig.build.json and excludes them from dist/.
+                project: "./tsconfig.json",
                 tsconfigRootDir: import.meta.dirname,
             },
         },

@@ -856,7 +856,7 @@ describe("acquireModel", () => {
     }
 
     /** Stub globalThis.fetch to record each call's URL and serve `bytes`, standing in for the HuggingFace download. */
-    function stubFetch(bytes: Uint8Array): { calls: string[] } {
+    function stubFetch(bytes: Uint8Array<ArrayBuffer>): { calls: string[] } {
         const spy = { calls: [] as string[] };
         // Test-only replacement of the global fetch: it records call URLs (so a wrongly-taken download
         // branch is caught, not silently exercised) and serves fixture bytes for the source path. The

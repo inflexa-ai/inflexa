@@ -9,7 +9,7 @@ import { join } from "node:path";
  * which the `prepare` script emits at install time — run `bun run build` if it is absent.
  */
 
-const distDir = join(import.meta.dir, "..", "dist");
+const distDir = join(import.meta.dir, "..", "..", "dist");
 
 // One pattern per way an emitted module can name its dependency: a static import or re-export
 // (`from "node:..."`), a bare side-effect import, a dynamic `import("node:...")`, and a

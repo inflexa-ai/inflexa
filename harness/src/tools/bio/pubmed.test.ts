@@ -229,6 +229,7 @@ describe("pubmed — action 'details'", () => {
 
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ action: "details", pmids: ["12345678", "99999999"] }, ctx))._unsafeUnwrap();
+        if (!("articles" in result)) throw new Error("expected the details variant");
 
         // The 'details' action reaches efetch (db=pubmed) and the PMC ID converter.
         const efetch = seen.find((u) => u.pathname.endsWith("efetch.fcgi"))!;
@@ -262,6 +263,7 @@ describe("pubmed — action 'details'", () => {
 
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ action: "details", pmids: ["12345678"], maxAuthors: 0, maxMeshTerms: 0 }, ctx))._unsafeUnwrap();
+        if (!("articles" in result)) throw new Error("expected the details variant");
 
         const article = result.articles[0]!;
         expect(article.authors).toEqual([]);
@@ -275,6 +277,7 @@ describe("pubmed — action 'details'", () => {
 
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ action: "details", pmids: ["12345678"] }, ctx))._unsafeUnwrap();
+        if (!("articles" in result)) throw new Error("expected the details variant");
 
         expect(result).toEqual({
             articles: [expect.objectContaining({ pmid: "12345678", pmcId: null })],
@@ -296,6 +299,7 @@ describe("pubmed — action 'fulltext'", () => {
 
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ action: "fulltext", pmcId: "PMC7654321" }, ctx))._unsafeUnwrap();
+        if (!("fullText" in result)) throw new Error("expected the fulltext variant");
 
         // The 'fulltext' action reaches efetch against db=pmc with the numeric id.
         expect(seen[0]!.searchParams.get("db")).toBe("pmc");
@@ -321,6 +325,7 @@ describe("pubmed — action 'fulltext'", () => {
 
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ action: "fulltext", pmcId: "PMC7654321", sections: ["results"] }, ctx))._unsafeUnwrap();
+        if (!("fullText" in result)) throw new Error("expected the fulltext variant");
 
         expect(result.fullText).toBe("## Results\n\nWe observed resistance.\n\nIt was dose dependent.");
         expect(result.outline.map((o) => [o.heading, o.included])).toEqual([
@@ -336,6 +341,7 @@ describe("pubmed — action 'fulltext'", () => {
 
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ action: "fulltext", pmcId: "PMC7654321", maxChars: 500 }, ctx))._unsafeUnwrap();
+        if (!("fullText" in result)) throw new Error("expected the fulltext variant");
 
         expect(result.outline.every((o) => o.included)).toBe(true);
         expect(result.truncated).toBe(false);

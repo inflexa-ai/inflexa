@@ -9,7 +9,9 @@ export type ThinkingBlock = { type: "reasoning"; text: string; providerOptions?:
 export type ToolUseBlock = { type: "tool-call"; toolCallId: string; toolName: string; input: unknown };
 export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock;
 
-function mapFinishReason(finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal"): ChatResponse["finishReason"] {
+function mapFinishReason(
+    finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal" | "unknown",
+): ChatResponse["finishReason"] {
     switch (finishReason) {
         case "tool_use":
             return "tool-calls";
@@ -20,13 +22,15 @@ function mapFinishReason(finishReason: ChatResponse["finishReason"] | "tool_use"
         case "refusal":
             return "content-filter";
         default:
-            return finishReason;
+            // `unknown` rides through untyped on purpose: this fixture drives a finish
+            // the provider types do not model, and the loop must settle whatever arrives.
+            return finishReason as ChatResponse["finishReason"];
     }
 }
 
 export function makeMessage(
     content: ContentBlock[],
-    finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal",
+    finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal" | "unknown",
     usage?: ChatUsage,
 ): ChatResponse {
     const mapped = mapFinishReason(finishReason);

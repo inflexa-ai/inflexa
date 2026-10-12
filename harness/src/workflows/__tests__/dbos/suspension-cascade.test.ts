@@ -31,6 +31,7 @@ import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { okAsync } from "neverthrow";
 
 import type { ChatProvider, EmbeddingProvider } from "../../../providers/types.js";
+import { unusedCitationResolver } from "../../../citations/__fixtures__/resolver.js";
 import { createWorkingMemory } from "../../../memory/working-memory.js";
 import { upsertAnalysis } from "../../../state/index.js";
 
@@ -210,6 +211,7 @@ describe("the suspension cascade — parent self-cancel", () => {
 
         const order: string[] = [];
         const deps: ExecuteAnalysisDeps = {
+            citationResolver: unusedCitationResolver,
             pool: rig.pool,
             provider: {} as unknown as ChatProvider,
             embedding: {} as unknown as EmbeddingProvider,
@@ -277,6 +279,7 @@ describe("the suspension cascade — parent self-cancel", () => {
 
         const order: string[] = [];
         const deps: ExecuteAnalysisDeps = {
+            citationResolver: unusedCitationResolver,
             pool: rig.pool,
             provider: {} as unknown as ChatProvider,
             embedding: {} as unknown as EmbeddingProvider,

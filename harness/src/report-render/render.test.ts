@@ -2848,10 +2848,10 @@ describe("the chart bootstrap binds the toolbox", () => {
         listeners.beforeprint();
         // A new option draws each series again, and a dense series then draws in chunks, thus the print sets no option.
         expect(applied.length).toBe(1);
-        expect(layers.map((layer) => layer.dom.style.visibility)).toEqual([undefined, undefined, "hidden"]);
+        expect(layers.map((layer) => (layer.dom.style.visibility ?? undefined) as string | undefined)).toEqual([undefined, undefined, "hidden"]);
         listeners.afterprint();
         expect(applied.length).toBe(1);
-        expect(layers.map((layer) => layer.dom.style.visibility)).toEqual([undefined, undefined, ""]);
+        expect(layers.map((layer) => (layer.dom.style.visibility ?? undefined) as string | undefined)).toEqual([undefined, undefined, ""]);
     });
 });
 

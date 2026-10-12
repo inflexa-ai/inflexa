@@ -26,10 +26,14 @@ describe("literatureReviewer sub-agent tool", () => {
         });
         const emitted: unknown[] = [];
         const ctx: ToolContext = {
+            invocationId: "tool-call-test",
             session: parentSession,
             signal: new AbortController().signal,
             emit: (event) => {
                 emitted.push(event);
+            },
+            ask: async () => {
+                throw new Error("ask should not be reached");
             },
         };
 

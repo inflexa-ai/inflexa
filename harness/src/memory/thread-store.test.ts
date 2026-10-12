@@ -854,13 +854,17 @@ describe("archiveThread across a subtree", () => {
         // leaving view nor returning to it is activity — a restored thread lands
         // back where its last turn left it.
         for (const threadId of GENERATIONS) {
-            expect((await readStamps(threadId)).updatedAt).toBe(before.get(threadId));
+            const expected = before.get(threadId);
+            if (expected === undefined) throw new Error(`no stamp recorded for ${threadId}`);
+            expect((await readStamps(threadId)).updatedAt).toBe(expected);
         }
 
         (await store.unarchiveThread("root"))._unsafeUnwrap();
 
         for (const threadId of GENERATIONS) {
-            expect((await readStamps(threadId)).updatedAt).toBe(before.get(threadId));
+            const expected = before.get(threadId);
+            if (expected === undefined) throw new Error(`no stamp recorded for ${threadId}`);
+            expect((await readStamps(threadId)).updatedAt).toBe(expected);
         }
     });
 });

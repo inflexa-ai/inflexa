@@ -2,6 +2,7 @@ import { createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Readable, Transform } from "node:stream";
+import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
 
 import { err, ok, type Result } from "neverthrow";
@@ -265,7 +266,16 @@ async function transferToFile(url: string, dest: string, options: DownloadToFile
                 callback(null, chunk);
             },
         });
-        await pipeline(Readable.fromWeb(response.body), counter, createWriteStream(partPath, { flags: "w" }), { signal: watch.signal });
+        // `response.body` types as the lib.dom `ReadableStream` (bun-types defers to lib.dom
+        // once it is loaded), and `Readable.fromWeb` names the `node:stream/web` declaration of
+        // the same WHATWG interface, whose reader members differ only in their own declarations.
+        // The runtime value is the one stream both describe, which fromWeb accepts.
+        await pipeline(
+            Readable.fromWeb(response.body as unknown as NodeWebReadableStream<Uint8Array<ArrayBuffer>>),
+            counter,
+            createWriteStream(partPath, { flags: "w" }),
+            { signal: watch.signal },
+        );
         const written = (await stat(partPath)).size;
         const digest = await sha256File(partPath);
         if (digest.isErr()) return err({ type: "io_failed", message: `Could not hash the download of ${url}.`, cause: digest.error.cause });

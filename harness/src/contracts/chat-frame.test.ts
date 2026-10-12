@@ -80,18 +80,28 @@ describe("toChatFrame", () => {
     });
 
     test("flattens a data part to the wire part shape", () => {
-        const part: ChatDataPart = { type: "data-presentation", data: { id: "pres-abc", title: "A chart", content: { kind: "markdown" } } };
-        expect(toChatFrame(part, fallback)).toEqual({ type: "data-presentation", id: "pres-abc", title: "A chart", content: { kind: "markdown" } });
+        const part: ChatDataPart = { type: "data-presentation", data: { id: "pres-abc", title: "A chart", content: { kind: "markdown", body: "text" } } };
+        expect(toChatFrame(part, fallback)).toEqual({
+            type: "data-presentation",
+            id: "pres-abc",
+            title: "A chart",
+            content: { kind: "markdown", body: "text" },
+        });
     });
 
     test("keeps the source of a top-level data part", () => {
-        const part: ChatDataPart = { type: "data-presentation", source: topLevel, data: { id: "pres-abc", content: { kind: "markdown" } } };
-        expect(toChatFrame(part, fallback)).toEqual({ type: "data-presentation", id: "pres-abc", content: { kind: "markdown" }, source: topLevel });
+        const part: ChatDataPart = { type: "data-presentation", source: topLevel, data: { id: "pres-abc", content: { kind: "markdown", body: "text" } } };
+        expect(toChatFrame(part, fallback)).toEqual({
+            type: "data-presentation",
+            id: "pres-abc",
+            content: { kind: "markdown", body: "text" },
+            source: topLevel,
+        });
     });
 
     test("keeps a data part of a sub-agent with its source", () => {
-        const part: ChatDataPart = { type: "data-presentation", source: nested, data: { id: "pres-xyz", content: { kind: "markdown" } } };
-        expect(toChatFrame(part, fallback)).toEqual({ type: "data-presentation", id: "pres-xyz", content: { kind: "markdown" }, source: nested });
+        const part: ChatDataPart = { type: "data-presentation", source: nested, data: { id: "pres-xyz", content: { kind: "markdown", body: "text" } } };
+        expect(toChatFrame(part, fallback)).toEqual({ type: "data-presentation", id: "pres-xyz", content: { kind: "markdown", body: "text" }, source: nested });
     });
 
     test("gives a compaction part of the root loop flat", () => {

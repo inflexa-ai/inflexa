@@ -22,6 +22,7 @@ const TEST_BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
 /** A ToolContext whose session scopes the tool to `analysisId` — where it reads the profile from. */
 function toolContext(analysisId = "analysis-001"): ToolContext {
     return {
+        invocationId: "tool-call-test",
         session: makeSession({
             scope: { kind: "analysis", analysisId },
             agentId: "conversation-agent",
@@ -29,6 +30,9 @@ function toolContext(analysisId = "analysis-001"): ToolContext {
         }),
         signal: new AbortController().signal,
         emit: () => {},
+        ask: async () => {
+            throw new Error("ask should not be reached");
+        },
     };
 }
 

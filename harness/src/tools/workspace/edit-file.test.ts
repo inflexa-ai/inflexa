@@ -68,6 +68,7 @@ describe("edit_file tool", () => {
                     old_string: "world",
                     new_string: "harness",
                     replace_all: false,
+                    regex: false,
                 },
                 ctx,
             )
@@ -94,6 +95,7 @@ describe("edit_file tool", () => {
                     old_string: "a",
                     new_string: "b",
                     replace_all: false,
+                    regex: false,
                 },
                 ctx,
             )
@@ -114,6 +116,7 @@ describe("edit_file tool", () => {
                     old_string: "import pandas as pd",
                     new_string: "import polars as pl",
                     replace_all: false,
+                    regex: false,
                 },
                 ctx,
             )
@@ -128,6 +131,7 @@ describe("edit_file tool", () => {
                     old_string: "import pandas as pd",
                     new_string: "import polars as pl",
                     replace_all: true,
+                    regex: false,
                 },
                 ctx,
             )
@@ -147,6 +151,7 @@ describe("edit_file tool", () => {
                     old_string: "bar",
                     new_string: "baz",
                     replace_all: false,
+                    regex: false,
                 },
                 ctx,
             )
@@ -164,6 +169,7 @@ describe("edit_file tool", () => {
                     old_string: "a",
                     new_string: "b",
                     replace_all: false,
+                    regex: false,
                 },
                 ctx,
             )
@@ -185,6 +191,7 @@ describe("edit_file tool", () => {
                     old_string: "^gene_",
                     new_string: "GENE_",
                     regex: true,
+                    replace_all: false,
                     expected_matches: 3,
                 },
                 ctx,
@@ -211,6 +218,7 @@ describe("edit_file tool", () => {
                     old_string: "^gene_",
                     new_string: "GENE_",
                     regex: true,
+                    replace_all: false,
                     expected_matches: 2,
                 },
                 ctx,
@@ -304,7 +312,10 @@ describe("edit_file tool", () => {
         const { ctx } = makeToolContext();
 
         const neither = (
-            await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "a", new_string: "b", regex: true }, ctx)
+            await tool.execute(
+                { path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "a", new_string: "b", regex: true, replace_all: false },
+                ctx,
+            )
         )._unsafeUnwrap();
         expect(neither.status).toBe("invalid_arguments");
 
@@ -330,7 +341,17 @@ describe("edit_file tool", () => {
         const { tool } = buildTool();
         const { ctx } = makeToolContext();
         const out = (
-            await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "a", new_string: "b", expected_matches: 1 }, ctx)
+            await tool.execute(
+                {
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    old_string: "a",
+                    new_string: "b",
+                    regex: false,
+                    replace_all: false,
+                    expected_matches: 1,
+                },
+                ctx,
+            )
         )._unsafeUnwrap();
         expect(out.status).toBe("invalid_arguments");
         expect(await readHostFile(hostPath(), "utf8")).toBe("abc\n");

@@ -49,7 +49,9 @@ const tool = createSearchRegulatoryApprovalsTool({ apiKey: "amass_test" });
 /** Parse the input the way the loop does, thus the defaults of the schema apply. */
 async function run(input: Record<string, unknown>) {
     const { ctx } = makeToolContext();
-    return tool.execute(tool.inputSchema.parse(input), ctx);
+    // `Tool` erases the schema generic, so `parse` hands back `unknown`; the schema
+    // and the execute input type come from one declaration in the tool module.
+    return tool.execute(tool.inputSchema.parse(input) as Parameters<typeof tool.execute>[0], ctx);
 }
 
 const GLEEVEC = "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg";
@@ -71,7 +73,10 @@ describe("search_regulatory_approvals — the key", () => {
         const seen = stubFetch([]);
         const keyless = createSearchRegulatoryApprovalsTool({ apiKey: "" });
         const { ctx } = makeToolContext();
-        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow(/AMASS_API_KEY/);
+        // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
+        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }) as Parameters<typeof keyless.execute>[0], ctx)).rejects.toThrow(
+            /AMASS_API_KEY/,
+        );
         expect(seen).toHaveLength(0);
     });
 });

@@ -33,7 +33,7 @@
         "directory": "harness"
     },
     "scripts": {
-        "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+        "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
         "design:fixture": "bun scripts/render-fixture.ts",
         "design:gallery": "bun scripts/render-gallery.ts",
         "format": "prettier --write src/",
@@ -41,12 +41,12 @@
         "gallery:data": "bash scripts/gallery-data.sh",
         "lint": "eslint .",
         "lint:python": "ruff check src/input-scan/decoder && ruff format --check src/input-scan/decoder",
-        "prepare": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+        "prepare": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
         "prepublishOnly": "bun run build && bun run smoke",
         "smoke": "node scripts/smoke.mjs",
         "test:full": "bash scripts/test-full.sh",
         "test:python": "python3 -m pytest src/input-scan/decoder -q",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc -p tsconfig.json --noEmit"
     },
     "dependencies": {
         "@ai-sdk/anthropic": "^4.0.62",

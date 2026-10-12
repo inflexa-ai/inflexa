@@ -16,9 +16,9 @@
  * The fixture holds one chart for the coverage of the block kinds. The chart forms live in the figure gallery
  * (`gallery/gallery.ts`), which draws each chart type from a table of public data.
  *
- * Only the tests and `scripts/render-fixture.ts` read this module, thus `tsconfig.json` excludes it the same
- * way that it excludes a test file and the build emits no `dist/report-render/fixture.js`. The lint program
- * (`tsconfig.eslint.json`) still holds it.
+ * Only the tests and `scripts/render-fixture.ts` read this module, thus `tsconfig.build.json` excludes it the same
+ * way that it excludes a test file and the build emits no `dist/report-render/fixture.js`. The lint and typecheck
+ * program (`tsconfig.json`) still holds it.
  */
 
 import type { CitationReference, ArtifactTableReference, ArtifactValueReference } from "../contracts/report-reference.js";

@@ -15,16 +15,20 @@ import { describe, expect, it } from "bun:test";
 import type { ToolContext } from "../define-tool.js";
 
 describe("mutate surface invariants", () => {
-    it("ToolContext is exactly { session, signal, emit }", () => {
+    it("ToolContext is exactly { invocationId, session, signal, emit, ask }", () => {
         // Build a value-level fake that satisfies the type; if the type adds a
         // new required field (e.g. `sandboxClient`), TS will refuse to compile
         // this object literal — the test fails at type-check time.
         const ctx: ToolContext = {
+            invocationId: "tool-call-test",
             session: undefined as unknown as ToolContext["session"],
             signal: new AbortController().signal,
             emit: () => {},
+            ask: async () => {
+                throw new Error("ask should not be reached");
+            },
         };
-        expect(Object.keys(ctx).sort()).toEqual(["emit", "session", "signal"]);
+        expect(Object.keys(ctx).sort()).toEqual(["ask", "emit", "invocationId", "session", "signal"]);
     });
 
     it("the SandboxClient dependency is confined to execute_command", () => {

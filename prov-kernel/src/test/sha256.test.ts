@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { defaultProvDigest } from "./document.js";
+import { defaultProvDigest } from "../document.js";
 
 /**
  * The `@noble/hashes` SHA-256 must stay byte-identical to `createHash("sha256")` from

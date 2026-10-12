@@ -333,6 +333,9 @@ function makeDeps(opts: {
                 record.mandateRevokeCalls.push({ reason });
                 return okAsync(undefined);
             },
+            revokeByJti() {
+                throw new Error("runAuthorizer.revokeByJti not exercised in body tests");
+            },
         },
         // Omitted entirely when absent so the "no run emit" tests exercise
         // a genuinely undefined dep, not a present-but-undefined field.

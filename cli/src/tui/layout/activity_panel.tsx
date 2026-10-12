@@ -236,7 +236,9 @@ export function ActivityPanel(props: ActivityPanelProps) {
 
     return (
         <Show when={props.subject}>
-            {() => (
+            {(_subject) => (
+                // The zero-argument form does not resolve the `Show` overloads under the DOM
+                // lib; the `_` prefix marks the unused parameter for no-unused-vars.
                 // Full-width, background-painted, non-shrinking. Both properties are load-bearing, not
                 // stylistic: this row sits directly beneath the Chat stream's flexGrow scrollbox, which
                 // renders one row taller than it contributes to the column, so a bare <text> would let

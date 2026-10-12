@@ -434,7 +434,9 @@ describe("change_block", () => {
         const input = JSON.parse('{"targetId":"s1","title":"Results"}') as Record<string, unknown>;
         expect(tools.change_block.inputSchema.safeParse(input).success).toBe(true);
 
-        const value = (await tools.change_block.execute(input, ctxForThread("t1")))._unsafeUnwrap();
+        // `parse` hands back `unknown` (`Tool` erases the schema generic); the safeParse
+        // above proves the shape against the same schema the execute reads.
+        const value = (await tools.change_block.execute(input as Parameters<typeof tools.change_block.execute>[0], ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
         expect(gateway.peek("t1")!.document.sections[0]!.title).toBe("Results");

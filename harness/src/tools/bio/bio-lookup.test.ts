@@ -43,7 +43,6 @@ describe("searchGene (bio-lookup family)", () => {
                 {
                     identifiers: ["BRCA1"],
                     species: "homo_sapiens",
-                    expand: false,
                 },
                 ctx,
             )
@@ -63,7 +62,6 @@ describe("searchGene (bio-lookup family)", () => {
                 {
                     identifiers: ["NOTAGENE"],
                     species: "homo_sapiens",
-                    expand: false,
                 },
                 ctx,
             )
@@ -77,7 +75,7 @@ describe("searchGene (bio-lookup family)", () => {
         stubFetch(() => new Response("upstream down", { status: 500 }));
 
         const { ctx } = makeToolContext();
-        await expect(searchGeneTool.execute({ identifiers: ["BRCA1"], species: "homo_sapiens", expand: false }, ctx)).rejects.toThrow();
+        await expect(searchGeneTool.execute({ identifiers: ["BRCA1"], species: "homo_sapiens" }, ctx)).rejects.toThrow();
     });
 
     it("resolves an Ensembl gene ID to its approved symbol before it reaches Ensembl", async () => {

@@ -51,7 +51,13 @@ describe("searchClinicalTrials (translational-medicine family)", () => {
         );
 
         const { ctx } = makeToolContext();
-        const result = (await searchClinicalTrialsTool.execute({ query: "imatinib", phase: undefined, status: undefined, limit: 20 }, ctx))._unsafeUnwrap();
+        const result = (
+            await searchClinicalTrialsTool.execute(
+                { action: "search", query: "imatinib", phase: undefined, status: undefined, limit: 20, includeSummaries: false },
+                ctx,
+            )
+        )._unsafeUnwrap();
+        if (!("trials" in result)) throw new Error("expected the search variant");
 
         expect(result.totalFound).toBe(1);
         expect(result.trials).toHaveLength(1);
@@ -64,8 +70,12 @@ describe("searchClinicalTrials (translational-medicine family)", () => {
 
         const { ctx } = makeToolContext();
         const result = (
-            await searchClinicalTrialsTool.execute({ query: "no-such-drug-xyz", phase: undefined, status: undefined, limit: 20 }, ctx)
+            await searchClinicalTrialsTool.execute(
+                { action: "search", query: "no-such-drug-xyz", phase: undefined, status: undefined, limit: 20, includeSummaries: false },
+                ctx,
+            )
         )._unsafeUnwrap();
+        if (!("trials" in result)) throw new Error("expected the search variant");
 
         expect(result.totalFound).toBe(0);
         expect(result.trials).toEqual([]);
@@ -75,7 +85,12 @@ describe("searchClinicalTrials (translational-medicine family)", () => {
         stubFetch(() => new Response("upstream down", { status: 500 }));
 
         const { ctx } = makeToolContext();
-        await expect(searchClinicalTrialsTool.execute({ query: "imatinib", phase: undefined, status: undefined, limit: 20 }, ctx)).rejects.toThrow();
+        await expect(
+            searchClinicalTrialsTool.execute(
+                { action: "search", query: "imatinib", phase: undefined, status: undefined, limit: 20, includeSummaries: false },
+                ctx,
+            ),
+        ).rejects.toThrow();
     });
 
     it("selects the attrition statuses the registry serves", () => {
@@ -106,7 +121,10 @@ describe("searchClinicalTrials — action 'details'", () => {
         }) as unknown as typeof fetch;
 
         const { ctx } = makeToolContext();
-        const result = (await searchClinicalTrialsTool.execute({ action: "details", nctId: "NCT01234567" }, ctx))._unsafeUnwrap();
+        const result = (
+            await searchClinicalTrialsTool.execute({ action: "details", nctId: "NCT01234567", limit: 10, includeSummaries: false }, ctx)
+        )._unsafeUnwrap();
+        if (!("trial" in result)) throw new Error("expected the details variant");
 
         expect(seen[0]).toContain("/studies/NCT01234567");
         expect(result.trial!.trial.nctId).toBe("NCT01234567");
@@ -119,7 +137,10 @@ describe("searchClinicalTrials — action 'details'", () => {
         stubFetch(() => new Response("not found", { status: 404 }));
 
         const { ctx } = makeToolContext();
-        const result = (await searchClinicalTrialsTool.execute({ action: "details", nctId: "NCT99999999" }, ctx))._unsafeUnwrap();
+        const result = (
+            await searchClinicalTrialsTool.execute({ action: "details", nctId: "NCT99999999", limit: 10, includeSummaries: false }, ctx)
+        )._unsafeUnwrap();
+        if (!("trial" in result)) throw new Error("expected the details variant");
 
         expect(result.trial).toBeNull();
     });

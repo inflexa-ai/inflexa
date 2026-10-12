@@ -287,6 +287,7 @@ describe("docker createSandbox — confinement", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -311,6 +312,7 @@ describe("docker createSandbox — confinement", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -335,6 +337,7 @@ describe("docker createSandbox — confinement", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -356,6 +359,7 @@ describe("docker createSandbox — confinement", () => {
             image: "sandbox-base:latest",
             resolveWorkspaceRoot: (id) => join(wsRoot, id),
             readHostCpuinfo: async () => hostCpuinfo,
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -389,6 +393,7 @@ describe("docker createSandbox — confinement", () => {
             image: "sandbox-base:latest",
             resolveWorkspaceRoot: (id) => join(wsRoot, id),
             readHostCpuinfo: async () => undefined,
+            farmSource,
             docker,
             fetch: okFetch,
             logger,
@@ -410,6 +415,7 @@ describe("docker createSandbox — confinement", () => {
             image: "sandbox-base:latest",
             resolveWorkspaceRoot: (id) => join(wsRoot, "absent", id),
             readHostCpuinfo: async () => "processor\t: 0\n\n",
+            farmSource,
             docker,
             fetch: okFetch,
             logger,

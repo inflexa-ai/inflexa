@@ -60,7 +60,7 @@ describe("the design fixture", () => {
         const declared = [...new Set(contractKinds())].sort();
         // A new kind lands in the contract one time. The fixture must then carry it, otherwise the page that
         // a person examines shows no example of it.
-        expect(covered).toEqual(declared);
+        expect(declared).toEqual(covered);
     });
 
     it("holds a text block that carries a list", () => {

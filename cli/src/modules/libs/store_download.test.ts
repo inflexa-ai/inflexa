@@ -54,7 +54,7 @@ function tempDir(prefix: string): string {
     return root;
 }
 
-type FakeLayer = { readonly bytes: Uint8Array; readonly digest: string; readonly mediaType: string; readonly size: number };
+type FakeLayer = { readonly bytes: Uint8Array<ArrayBuffer>; readonly digest: string; readonly mediaType: string; readonly size: number };
 
 /** Build the tar of one layer: a tree on disk, then one tar over its top entries. */
 async function makeLayerTar(build: (root: string) => void): Promise<Buffer> {
@@ -67,7 +67,7 @@ async function makeLayerTar(build: (root: string) => void): Promise<Buffer> {
 }
 
 /** Describe one layer blob to the fake registry: its digest, its media type, and its size. */
-function describeLayer(bytes: Uint8Array, mediaType: string): FakeLayer {
+function describeLayer(bytes: Uint8Array<ArrayBuffer>, mediaType: string): FakeLayer {
     return { bytes, digest: `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`, mediaType, size: bytes.byteLength };
 }
 

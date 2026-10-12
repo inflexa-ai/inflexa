@@ -267,10 +267,11 @@ describe("conversation display recorder — rounds", () => {
 });
 
 describe("conversation display recorder — compaction rounds", () => {
-    const exchange: ModelMessage[] = [
+    const base: ModelMessage[] = [
         syntheticUserMessage("Reply with the summary."),
         { role: "assistant", content: [{ type: "text", text: "The user compares two groups." }] },
-    ].map((message) => markCompactionExchange(message, "c-1"));
+    ];
+    const exchange: ModelMessage[] = base.map((message) => markCompactionExchange(message, "c-1"));
     const figures = { id: "c-1", tokensBefore: 162_000, durationMs: 21_000 };
 
     it("gives no message for an exchange round, and never takes the text of the exchange", async () => {

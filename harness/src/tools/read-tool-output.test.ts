@@ -89,9 +89,9 @@ describe("createReadToolOutputTool", () => {
         const result = await read(storeWith('"'.repeat(40_000)), { ref: REF, limit: 16_384 });
 
         expect(JSON.stringify(result).length).toBeLessThanOrEqual(32_256);
-        expect(result.end as number).toBeLessThan(16_384);
+        expect(Number(result.end)).toBeLessThan(16_384);
         expect(result.more).toBe(true);
-        expect((result.text as string).length).toBe(result.end);
+        expect((result.text as string).length).toBe(Number(result.end));
     });
 
     it("keeps a surrogate pair whole at each edge of a window", async () => {

@@ -21,7 +21,10 @@ describe.skipIf(!KEY)("live Amass", () => {
 
     test("a regulatory search passes the schema and carries matched sections", async () => {
         const { ctx } = makeToolContext();
-        const result = (await regulatory.execute(regulatory.inputSchema.parse({ query: "imatinib", limit: 1 }), ctx))._unsafeUnwrap();
+        // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
+        const result = (
+            await regulatory.execute(regulatory.inputSchema.parse({ query: "imatinib", limit: 1 }) as Parameters<typeof regulatory.execute>[0], ctx)
+        )._unsafeUnwrap();
 
         if (!("authorizations" in result)) throw new Error("expected a search answer");
         expect(result.authorizations).toHaveLength(1);
@@ -31,7 +34,13 @@ describe.skipIf(!KEY)("live Amass", () => {
 
     test("a bare FDA application number resolves to one record with its table of contents", async () => {
         const { ctx } = makeToolContext();
-        const result = (await regulatory.execute(regulatory.inputSchema.parse({ action: "details", fdaApplicationNumber: "021588" }), ctx))._unsafeUnwrap();
+        // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
+        const result = (
+            await regulatory.execute(
+                regulatory.inputSchema.parse({ action: "details", fdaApplicationNumber: "021588" }) as Parameters<typeof regulatory.execute>[0],
+                ctx,
+            )
+        )._unsafeUnwrap();
 
         if (!("authorization" in result)) throw new Error(`expected an authorization, got ${JSON.stringify(result)}`);
         expect(result.authorization.fdaDetails?.applicationNumber).toBe("NDA021588");
@@ -40,7 +49,10 @@ describe.skipIf(!KEY)("live Amass", () => {
 
     test("a patent search passes the schema and carries no claims", async () => {
         const { ctx } = makeToolContext();
-        const result = (await patents.execute(patents.inputSchema.parse({ query: "imatinib mesylate crystal", limit: 1 }), ctx))._unsafeUnwrap();
+        // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
+        const result = (
+            await patents.execute(patents.inputSchema.parse({ query: "imatinib mesylate crystal", limit: 1 }) as Parameters<typeof patents.execute>[0], ctx)
+        )._unsafeUnwrap();
 
         if (!("patents" in result)) throw new Error("expected a search answer");
         expect(result.patents).toHaveLength(1);

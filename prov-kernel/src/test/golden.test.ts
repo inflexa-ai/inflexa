@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
-import { buildDocumentModel, PROV_UNIFY_OPTIONS, type ProvDocumentModelInternal } from "./document.js";
-import type { ProvActor, ProvModelId } from "./types.js";
+import { buildDocumentModel, PROV_UNIFY_OPTIONS, type ProvDocumentModelInternal } from "../document.js";
+import type { ProvActor, ProvModelId } from "../types.js";
 
 /**
  * The golden document: a small, fully deterministic document built from fixed ids, fixed epoch-ms
@@ -143,7 +143,7 @@ export function buildGoldenDocument(m: ProvDocumentModelInternal): ProvDocument 
 describe("golden document", () => {
     test("the deterministic document serializes to the committed fixture bytes", () => {
         const json = buildGoldenDocument(makeModel()).unified(PROV_UNIFY_OPTIONS).serialize("json");
-        const fixture = readFileSync(new URL("./__fixtures__/golden-document.json", import.meta.url), "utf8");
+        const fixture = readFileSync(new URL("../__fixtures__/golden-document.json", import.meta.url), "utf8");
         expect(json).toBe(fixture);
     });
 

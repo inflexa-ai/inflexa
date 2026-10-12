@@ -155,7 +155,11 @@ describe("createConversationAgent", () => {
             expect(typeof name).toBe("string");
             expect(name.length).toBeGreaterThan(0);
             expect(typeof def.description).toBe("string");
-            expect(def.inputSchema.jsonSchema.type).toBe("object");
+            const schema = def.inputSchema;
+            if (!("jsonSchema" in schema)) throw new Error("expected a json-schema definition");
+            const emitted = schema.jsonSchema;
+            if (!("type" in emitted)) throw new Error("expected a typed JSON schema");
+            expect(emitted.type).toBe("object");
         }
     });
 

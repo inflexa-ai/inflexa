@@ -24,6 +24,19 @@ import {
  * `prevChainHash` is the chain hash from the PREVIOUS flush — needed to recompute the current one
  * (`H_n = SHA-256(H_{n-1} || json_n)`). `null` on the first flush, where the seed is SHA-256("").
  */
+/**
+ * A signing failure's human-readable cause for a detail line: the error's message when the cause
+ * carries one, its own text when it is a primitive, and the variant's name otherwise — an object
+ * cause would stringify as `[object Object]` and say nothing.
+ */
+function causeDetail(error: ProvSigningError): string {
+    if (!("cause" in error)) return error.type;
+    const { cause } = error;
+    if (cause instanceof Error) return cause.message;
+    if (typeof cause === "string" || typeof cause === "number" || typeof cause === "boolean") return String(cause);
+    return error.type;
+}
+
 export async function verifyProvenance(
     provJson: string | null,
     prevChainHash: string | null,
@@ -39,7 +52,7 @@ export async function verifyProvenance(
     if (hashResult.isErr())
         return {
             status: "verify-error",
-            detail: `chain hash computation failed: ${String("cause" in hashResult.error ? hashResult.error.cause : hashResult.error.type)}`,
+            detail: `chain hash computation failed: ${causeDetail(hashResult.error)}`,
         };
     if (hashResult.value !== storedChainHash) {
         return { status: "tampered", detail: "chain hash mismatch: the PROV-JSON has been modified since it was signed" };
@@ -49,7 +62,7 @@ export async function verifyProvenance(
     if (sigResult.isErr())
         return {
             status: "verify-error",
-            detail: `signature verification failed: ${String("cause" in sigResult.error ? sigResult.error.cause : sigResult.error.type)}`,
+            detail: `signature verification failed: ${causeDetail(sigResult.error)}`,
         };
     if (!sigResult.value) {
         return { status: "tampered", detail: "signature verification failed: the chain hash or signature has been modified" };
@@ -67,7 +80,7 @@ export async function verifyPayload(provJson: string, storedDigest: string, stor
     if (digestResult.isErr())
         return {
             status: "verify-error",
-            detail: `payload digest computation failed: ${String("cause" in digestResult.error ? digestResult.error.cause : digestResult.error.type)}`,
+            detail: `payload digest computation failed: ${causeDetail(digestResult.error)}`,
         };
     if (digestResult.value !== storedDigest) {
         return { status: "tampered", detail: "payload digest mismatch: the provenance file has been modified since it was signed" };
@@ -77,7 +90,7 @@ export async function verifyPayload(provJson: string, storedDigest: string, stor
     if (sigResult.isErr())
         return {
             status: "verify-error",
-            detail: `signature verification failed: ${String("cause" in sigResult.error ? sigResult.error.cause : sigResult.error.type)}`,
+            detail: `signature verification failed: ${causeDetail(sigResult.error)}`,
         };
     if (!sigResult.value) {
         return { status: "tampered", detail: "signature verification failed: the digest or signature has been modified" };
@@ -115,6 +128,16 @@ export function formatVerifyResult(result: VerifyResult): string {
  * Zod-validated on read so a corrupt or hand-edited attestation surfaces a clear "invalid
  * attestation" error instead of a downstream type confusion.
  */
+/**
+ * The Ed25519 OKP JWK an attestation's `publicKey` carries. JWK defines further optional members,
+ * thus the shape stays loose beyond the three that identify the key.
+ */
+const publicKeyJwkSchema = z.looseObject({
+    kty: z.literal("OKP"),
+    crv: z.literal("Ed25519"),
+    x: z.base64url(),
+});
+
 export const attestationSchema = z.object({
     /** MIME type of the payload. */
     payloadType: z.literal("application/json; profile=prov-json"),
@@ -129,7 +152,7 @@ export const attestationSchema = z.object({
     /** Ed25519 signature over the {@link payloadDigest} — proves it was produced by the key holder. */
     signature: z.string(),
     /** The signer's public key as JWK — lets the recipient verify without any key file. */
-    publicKey: z.record(z.string(), z.unknown()),
+    publicKey: publicKeyJwkSchema,
     /** Optional signer id — when several writers sign one document's exports, `kid` says which key signed this one. */
     kid: z.string().optional(),
 });
@@ -148,6 +171,10 @@ export async function buildAttestation(signer: ProvSigner, provJson: string, opt
     if (pubKeyResult.isErr()) return err(pubKeyResult.error);
     const publicKeyJwk: ProvPublicKeyJwk | null = pubKeyResult.value;
     if (!publicKeyJwk) return err({ type: "public_key_export_failed" });
+    const jwk = publicKeyJwkSchema.safeParse(publicKeyJwk);
+    // A signer whose exported key is not an Ed25519 OKP JWK cannot produce the attestation's
+    // signature form — the keypair is corrupt for this purpose, before any signing runs.
+    if (!jwk.success) return err({ type: "keypair_corrupt", cause: jwk.error });
 
     return computePayloadDigest(provJson).andThen((digest) =>
         signer.sign(digest).map((signature): ProvAttestation => ({
@@ -157,8 +184,8 @@ export async function buildAttestation(signer: ProvSigner, provJson: string, opt
             payloadDigestMethod: "verbatim" as const,
             signatureAlgorithm: "Ed25519" as const,
             signature,
-            publicKey: publicKeyJwk,
-            ...(opts?.kid !== undefined ? { kid: opts.kid } : {}),
+            publicKey: jwk.data,
+            kid: opts?.kid,
         })),
     );
 }

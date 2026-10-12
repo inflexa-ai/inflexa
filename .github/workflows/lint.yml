@@ -1,13 +1,13 @@
 name: Lint
 
-# Lints/typechecks the independent subsystems. Each one has ESLint + a tsc
-# typecheck; `harness/` adds ruff over its Python package asset, and
-# `prov-kernel/` typechecks against its test-inclusive config.
+# Lints/typechecks the independent subsystems. harness/ and cli/ have ESLint +
+# a tsc typecheck; prov-kernel/ has oxlint + the type check command; harness/
+# adds ruff over its Python package asset.
 #
-# Every subsystem that ships an `eslint.config.js` and a `lint` script gets a
-# job step for it. Without one, `bun run lint` fails on a developer machine
-# while CI reports green, and the error survives every review that trusts the
-# check names.
+# Every subsystem that ships a lint config and a `lint` script gets a job step
+# for it. Without one, `bun run lint` fails on a developer machine while CI
+# reports green, and the error survives every review that trusts the check
+# names.
 on:
   push:
     branches: [main]
@@ -130,13 +130,21 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      # The type check command runs under its Node shebang (its TypeScript 7
+      # dependency reads Node child_process internals that Bun's spawn lacks),
+      # so the runner needs Node 22.18 or later — the same pin the release
+      # workflows use. The path resolves against the repo root like setup-bun's.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: ESLint
+      - name: oxlint
         run: bun run lint
 
-      # The eslint tsconfig widens the build tsconfig to the colocated test
-      # files, so the typecheck covers them too.
+      # The typecheck program (`tsconfig.json`) includes the test files; the
+      # build (`tsconfig.build.json`) excludes them.
       - name: Typecheck
-        run: bunx tsc -p tsconfig.eslint.json --noEmit
+        run: bun run typecheck

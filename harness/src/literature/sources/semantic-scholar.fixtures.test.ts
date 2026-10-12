@@ -60,7 +60,12 @@ runFixtureSuite("semantic scholar golden fixtures — the literature source", [
 /** A source whose every request answers with one fixture file. */
 function sourceOver(file: string): SemanticScholarSource {
     const body = readFixture("semantic-scholar", file);
-    return createSemanticScholarSource({ fetch: async () => Response.json(body) });
+    return createSemanticScholarSource({ fetch: fetchDouble(async () => Response.json(body)) });
+}
+
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
 describe("the Semantic Scholar source over the golden fixtures", () => {

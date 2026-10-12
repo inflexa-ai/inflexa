@@ -190,7 +190,8 @@ describe("the Manhattan figure", () => {
             [274000000, -Math.log10(4.4e-15)],
             [49124175, -Math.log10(2.123e-13)],
         ]);
-        expect(leaders.map((pair) => pair[1].coord)).toEqual(items.map((item) => item.value));
+        // `value` is `unknown` in the echarts option type; the equality below is the check of the numbers.
+        expect(leaders.map((pair) => pair[1].coord)).toEqual(items.map((item) => item.value as number[]));
     });
 
     it("places the name of a peak at the top of the axis beside the peak", () => {

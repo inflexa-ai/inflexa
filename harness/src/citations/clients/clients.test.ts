@@ -16,6 +16,11 @@ function text(body: string, status = 200): Response {
     return new Response(body, { status, headers: { "content-type": "application/xml" } });
 }
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 function request(
     input: CitationInput,
     source: CitationSourceRequest["plan"]["source"],
@@ -76,12 +81,12 @@ const ARXIV_XML = `<?xml version="1.0" encoding="utf-8"?>
 describe("DOI registry citation client", () => {
     it("keeps handle existence independent from registration agency and metadata", async () => {
         const urls: string[] = [];
-        const fetcher: typeof fetch = async (url) => {
+        const fetcher: typeof fetch = fetchDouble(async (url) => {
             urls.push(String(url));
             if (String(url).includes("/api/handles/")) return json({ responseCode: 1 });
             if (String(url).includes("/doiRA/")) return json([{ DOI: "10.1000/example", RA: "DataCite" }]);
             return json({ DOI: "10.1000/example", title: "Example dataset", author: [{ given: "Jane", family: "Smith" }], issued: { "date-parts": [[2022]] } });
-        };
+        });
         const client = createDoiRegistryClient({ fetch: fetcher });
         const result = await client.resolve(request({ citation: "10.1000/example" }, "doi_registry", "doi_exact"));
 
@@ -99,11 +104,11 @@ describe("DOI registry citation client", () => {
     });
 
     it("retains existence when negotiated metadata has no supported representation", async () => {
-        const fetcher: typeof fetch = async (url) => {
+        const fetcher: typeof fetch = fetchDouble(async (url) => {
             if (String(url).includes("/api/handles/")) return json({ responseCode: 1 });
             if (String(url).includes("/doiRA/")) return json([{ RA: "EIDR" }]);
             return text("not acceptable", 406);
-        };
+        });
         const result = await createDoiRegistryClient({ fetch: fetcher }).resolve(request({ citation: "10.1000/example" }, "doi_registry", "doi_exact"));
 
         expect(result.status).toBe("ok");
@@ -113,7 +118,7 @@ describe("DOI registry citation client", () => {
     });
 
     it("does not turn an unavailable handle lookup into negative identifier evidence", async () => {
-        const result = await createDoiRegistryClient({ fetch: async () => text("rate limited", 429) }).resolve(
+        const result = await createDoiRegistryClient({ fetch: fetchDouble(async () => text("rate limited", 429)) }).resolve(
             request({ citation: "10.1000/example" }, "doi_registry", "doi_exact"),
         );
 
@@ -125,7 +130,7 @@ describe("DOI registry citation client", () => {
 describe("Crossref citation client", () => {
     it("performs bounded bibliographic lookup with injected polite identity", async () => {
         let seen: { url: URL; headers: Headers } | undefined;
-        const fetcher: typeof fetch = async (url, init) => {
+        const fetcher: typeof fetch = fetchDouble(async (url, init) => {
             seen = { url: new URL(String(url)), headers: new Headers(init?.headers) };
             return json({
                 message: {
@@ -142,7 +147,7 @@ describe("Crossref citation client", () => {
                     ],
                 },
             });
-        };
+        });
         const client = createCrossrefClient({ fetch: fetcher, mailto: "contact@example.org", userAgent: "inflexa-test/1.0", maxCandidates: 3 });
         const result = await client.resolve(request({ citation: "Smith. Example study." }, "crossref", "crossref_bibliographic"));
 
@@ -155,7 +160,7 @@ describe("Crossref citation client", () => {
 
     it("does not call Crossref for a DOI owned by another agency", async () => {
         let called = false;
-        const client = createCrossrefClient({ fetch: async () => ((called = true), json({})) });
+        const client = createCrossrefClient({ fetch: fetchDouble(async () => ((called = true), json({}))) });
         const base = request({ citation: "10.1000/example" }, "crossref", "crossref_doi_if_owned");
         const result = await client.resolve({ ...base, registrationAgency: { status: "determined", agency: "DataCite" } });
         expect(result.status).toBe("not_applicable");
@@ -165,7 +170,7 @@ describe("Crossref citation client", () => {
 
     it("reports an undetermined registration agency as unavailable, never as another agency's DOI", async () => {
         let called = false;
-        const client = createCrossrefClient({ fetch: async () => ((called = true), json({})) });
+        const client = createCrossrefClient({ fetch: fetchDouble(async () => ((called = true), json({}))) });
         const base = request({ citation: "10.1000/example" }, "crossref", "crossref_doi_if_owned");
 
         const result = await client.resolve({ ...base, registrationAgency: { status: "undetermined", detail: "HTTP 503" } });
@@ -177,7 +182,7 @@ describe("Crossref citation client", () => {
 
     it("attributes a skip to the handle when the registry established the DOI does not resolve", async () => {
         let called = false;
-        const client = createCrossrefClient({ fetch: async () => ((called = true), json({})) });
+        const client = createCrossrefClient({ fetch: fetchDouble(async () => ((called = true), json({}))) });
         const base = request({ citation: "10.1000/example" }, "crossref", "crossref_doi_if_owned");
 
         const result = await client.resolve({ ...base, registrationAgency: { status: "absent" } });
@@ -190,10 +195,10 @@ describe("Crossref citation client", () => {
         let seen: URL | undefined;
         const client = createCrossrefClient({
             mailto: "contact@example.org",
-            fetch: async (url) => {
+            fetch: fetchDouble(async (url) => {
                 seen = new URL(String(url));
                 return json({ message: { DOI: "10.1000/example", title: ["Example study"] } });
-            },
+            }),
         });
         const base = request({ citation: "10.1000/example" }, "crossref", "crossref_doi_if_owned");
 
@@ -209,10 +214,10 @@ describe("PubMed citation client", () => {
         const urls: URL[] = [];
         const client = createPubmedCitationClient({
             apiKey: "ncbi-key",
-            fetch: async (url) => {
+            fetch: fetchDouble(async (url) => {
                 urls.push(new URL(String(url)));
                 return text(PUBMED_XML);
-            },
+            }),
         });
         const result = await client.resolve(request({ citation: "PMID: 12345678" }, "pubmed", "pubmed_exact"));
 
@@ -226,11 +231,11 @@ describe("PubMed citation client", () => {
         const urls: URL[] = [];
         const input = { citation: "Raw reference text", venue: "Nature", year: 2021, volume: "12", authors: ["Smith J"] };
         const client = createPubmedCitationClient({
-            fetch: async (url) => {
+            fetch: fetchDouble(async (url) => {
                 const parsed = new URL(String(url));
                 urls.push(parsed);
                 return parsed.pathname.endsWith("ecitmatch.cgi") ? text("Nature|2021|12||Smith J|citation-0|12345678") : text(PUBMED_XML);
-            },
+            }),
         });
         const result = await client.resolve(request(input, "pubmed", "pubmed_structured"));
 
@@ -242,10 +247,10 @@ describe("PubMed citation client", () => {
     it("batches exact PMIDs and maps the shared response back to input order", async () => {
         const urls: URL[] = [];
         const client = createPubmedCitationClient({
-            fetch: async (url) => {
+            fetch: fetchDouble(async (url) => {
                 urls.push(new URL(String(url)));
                 return text(PUBMED_TWO_XML);
-            },
+            }),
         });
         const results = await client.resolveMany!([
             request({ citation: "PMID: 87654321" }, "pubmed", "pubmed_exact"),
@@ -262,10 +267,10 @@ describe("arXiv citation client", () => {
     it("retrieves an exact arXiv id into the common record shape", async () => {
         let seen: URL | undefined;
         const client = createArxivCitationClient({
-            fetch: async (url) => {
+            fetch: fetchDouble(async (url) => {
                 seen = new URL(String(url));
                 return text(ARXIV_XML);
-            },
+            }),
         });
         const result = await client.resolve(request({ citation: "arXiv:2401.01234v1" }, "arxiv", "arxiv_exact"));
 
@@ -280,7 +285,7 @@ describe("Semantic Scholar citation client", () => {
         let seen: { url: string; headers: Headers } | undefined;
         const client = createSemanticScholarCitationClient({
             apiKey: "s2-key",
-            fetch: async (url, init) => {
+            fetch: fetchDouble(async (url, init) => {
                 seen = { url: String(url), headers: new Headers(init?.headers) };
                 return json({
                     paperId: "paper-1",
@@ -291,7 +296,7 @@ describe("Semantic Scholar citation client", () => {
                     // Semantic Scholar serializes CorpusId as a JSON integer.
                     externalIds: { DOI: "10.1000/EXAMPLE", PubMed: "12345678", CorpusId: 215416146 },
                 });
-            },
+            }),
         });
         const result = await client.resolve(request({ citation: "10.1000/example" }, "semantic_scholar", "semantic_scholar_identifier"));
 
@@ -351,26 +356,28 @@ const failureCases: readonly FailureCase[] = [
 for (const entry of failureCases) {
     describe(`${entry.name} failure boundary`, () => {
         it("returns no_data for a successful negative response", async () => {
-            const result = await entry.create(async () => entry.noData()).resolve(entry.request);
+            const result = await entry.create(fetchDouble(async () => entry.noData())).resolve(entry.request);
             expect(result.status).toBe("no_data");
         });
 
         it("returns unavailable for malformed upstream data", async () => {
-            const result = await entry.create(async () => entry.malformed()).resolve(entry.request);
+            const result = await entry.create(fetchDouble(async () => entry.malformed())).resolve(entry.request);
             expect(result.status).toBe("unavailable");
         });
 
         it("returns unavailable for rate limiting", async () => {
-            const result = await entry.create(async () => text("rate limited", 429)).resolve(entry.request);
+            const result = await entry.create(fetchDouble(async () => text("rate limited", 429))).resolve(entry.request);
             expect(result.status).toBe("unavailable");
             expect(result.detail).toContain("429");
         });
 
         it("returns unavailable on timeout", async () => {
-            const fetcher: typeof fetch = async (_url, init) =>
-                await new Promise<Response>((_resolve, reject) => {
-                    init?.signal?.addEventListener("abort", () => reject(new DOMException("timeout", "AbortError")), { once: true });
-                });
+            const fetcher: typeof fetch = fetchDouble(
+                async (_url, init) =>
+                    await new Promise<Response>((_resolve, reject) => {
+                        init?.signal?.addEventListener("abort", () => reject(new DOMException("timeout", "AbortError")), { once: true });
+                    }),
+            );
             const result = await entry.create(fetcher, 5).resolve(entry.request);
             expect(result.status).toBe("unavailable");
             expect(result.detail).toContain("timed out");
@@ -379,7 +386,7 @@ for (const entry of failureCases) {
         it("propagates caller cancellation instead of returning unavailable", async () => {
             const controller = new AbortController();
             controller.abort(new DOMException("caller canceled", "AbortError"));
-            await expect(entry.create(async () => json({})).resolve(entry.request, controller.signal)).rejects.toThrow("caller canceled");
+            await expect(entry.create(fetchDouble(async () => json({}))).resolve(entry.request, controller.signal)).rejects.toThrow("caller canceled");
         });
     });
 }

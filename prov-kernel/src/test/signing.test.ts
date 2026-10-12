@@ -8,10 +8,10 @@ import {
     importPublicKeyJwk,
     signHexDigest,
     verifyHexDigest,
-} from "./signing.js";
+} from "../signing.js";
 
 async function makeKeypair(): Promise<CryptoKeyPair> {
-    return (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+    return crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
 }
 
 function sha256Hex(data: Buffer): string {
@@ -64,11 +64,11 @@ describe("Ed25519 sign/verify", () => {
 
     test("a JWK-imported keypair signs and verifies", async () => {
         const kp = await makeKeypair();
-        const privateJwk = (await crypto.subtle.exportKey("jwk", kp.privateKey)) as Record<string, unknown>;
-        const publicJwk = (await crypto.subtle.exportKey("jwk", kp.publicKey)) as Record<string, unknown>;
+        const privateJwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+        const publicJwk = await crypto.subtle.exportKey("jwk", kp.publicKey);
 
-        const privateKey = (await importPrivateKeyJwk(privateJwk))._unsafeUnwrap();
-        const publicKey = (await importPublicKeyJwk(publicJwk))._unsafeUnwrap();
+        const privateKey = (await importPrivateKeyJwk({ ...privateJwk }))._unsafeUnwrap();
+        const publicKey = (await importPublicKeyJwk({ ...publicJwk }))._unsafeUnwrap();
         const digest = (await computePayloadDigest(`{"a":1}`))._unsafeUnwrap();
         const signature = (await signHexDigest(privateKey, digest))._unsafeUnwrap();
         expect((await verifyHexDigest(publicKey, signature, digest))._unsafeUnwrap()).toBe(true);
