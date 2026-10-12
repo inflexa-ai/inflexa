@@ -14,6 +14,7 @@ import { anchorRoutes } from "./routes/anchors.ts";
 import { artifactRoutes } from "./routes/artifacts.ts";
 import { browserSessionRoutes } from "./routes/browser_session.ts";
 import { conversationRoutes } from "./routes/conversation.ts";
+import { fileRoutes } from "./routes/files.ts";
 import { fsRoutes } from "./routes/fs.ts";
 import { guiRoutes } from "./routes/gui.ts";
 import { machineRoutes } from "./routes/machine.ts";
@@ -66,6 +67,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1/analyses/:analysisId/usage", usageRoutes());
     app.route("/api/v1/analyses/:analysisId/provenance", provenanceRoutes());
     app.route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes());
+    app.route("/api/v1/analyses/:analysisId/files", fileRoutes());
     app.route("/api/v1/analyses/:analysisId", runRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId", farmLinkRoutes());
     app.get("/gui", (c) => c.redirect("/gui/", 301));

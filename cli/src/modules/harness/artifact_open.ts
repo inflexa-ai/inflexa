@@ -1,8 +1,9 @@
-import { dirname, join, posix } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
 import { validatePath } from "@inflexa-ai/harness/tools/lib/path-validation";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 
 import { mkdirResultAsync, pathExistsAsync, writeFileResultAsync } from "../../lib/fs.ts";
+import { classifyRealPath, workspaceReadRoot } from "../analysis/boundary.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import type { OpenTarget } from "../../types/session.ts";
 
@@ -33,6 +34,25 @@ function presentationFilePath(analysisId: string, filename: string): Promise<str
     return workspaceRootForAnalysisId(analysisId).match(
         (root): string | null => join(root, PRESENTATIONS_DIR, filename),
         () => null,
+    );
+}
+
+/**
+ * False when a `workspace-file` path must resolve nowhere: its form is bad, its real path leaves the real path of the
+ * workspace root, or the real-path test fails. An agent can write a symbolic link in its step folder, and a join of
+ * the path to the root does not see it. An absent path resolves only when it is inside the root as text, with each
+ * `.` and `..` resolved: an absent path outside it is the same as `outside`. True for a path that is inside, for an
+ * absent path inside the root as text, and for an unknown workspace root: the flow of {@link resolveEntryPath} and
+ * {@link entryDegraded} decides those. A folder inside the root is inside.
+ */
+export async function workspaceFileResolvable(analysisId: string, path: string): Promise<boolean> {
+    if (validatePath(path) !== null) return false;
+    const root = await workspaceReadRoot(analysisId);
+    if (root.isErr()) return true;
+    const verdict = await classifyRealPath([root.value], resolve(root.value.text, path));
+    return verdict.match(
+        (v) => v.type === "in" || (v.type === "absent" && v.insideAsText),
+        () => false,
     );
 }
 

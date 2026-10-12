@@ -1,11 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { errAsync, ok, okAsync } from "neverthrow";
 
 import type { ServerActivity, ServerState, ShutdownMode } from "../api/server.ts";
 import type { ClientOpts } from "../client/api.ts";
 import { fetchServerState } from "../client/server.ts";
+import { insertAnalysis, insertAnchor } from "../db/primary_mutation.ts";
+import { releaseInstanceLock } from "../lib/lock.ts";
+import { asStr256 } from "../lib/types.ts";
+import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../modules/analysis/output.ts";
+import { writeMarker } from "../modules/anchor/marker.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { signIn } from "../test_support/browser_session.ts";
+import { freshDb } from "../test_support/db.ts";
 import { idleLifecycle, startTestServer } from "../test_support/server.ts";
 import { buildApp } from "./app.ts";
 import type { ServerBoot } from "./boot.ts";
@@ -73,6 +82,51 @@ describe("the file system routes", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ folder: { path: "/" }, entries: expect.any(Array) });
         expect((await app.request("/api/v1/fs/home", { headers: AUTH })).status).toBe(200);
+    });
+});
+
+describe("the file route", () => {
+    const { boot } = fakeBoot({ ...identity, phase: "starting" });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+    const FIGURE = "runs/R/A/figures/volcano.png";
+    let home = "";
+
+    beforeEach(async () => {
+        freshDb();
+        invalidateWorkspaceRoot();
+        home = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-app-files-")));
+        (await writeMarker(home, "A1"))._unsafeUnwrap();
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({ id: "a1", createdAt: 1, updatedAt: 1, name: asStr256("A"), slug: "a", anchorId: "A1", projectId: null })._unsafeUnwrap();
+        const root = (await workspaceRootForAnalysisId("a1"))._unsafeUnwrap();
+        mkdirSync(join(root, "runs", "R", "A", "figures"), { recursive: true });
+        writeFileSync(join(root, FIGURE), "png-bytes");
+    });
+
+    afterEach(() => {
+        releaseInstanceLock("a1");
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    test("a browser with the session cookie of `signIn` gets the figure, and the bearer token gets it too", async () => {
+        const cookie = await signIn(app, TOKEN);
+        const response = await app.request(`/api/v1/analyses/a1/files?path=${FIGURE}`, { headers: { Cookie: cookie } });
+        expect(response.status).toBe(200);
+        expect(response.headers.get("Content-Type")).toBe("image/png");
+        expect(await response.text()).toBe("png-bytes");
+        expect((await app.request(`/api/v1/analyses/a1/files?path=${FIGURE}`, { headers: AUTH })).status).toBe(200);
+    });
+
+    test("a request with no credential gets 401", async () => {
+        const response = await app.request(`/api/v1/analyses/a1/files?path=${FIGURE}`);
+        expect(response.status).toBe(401);
+        expect(await response.json()).toMatchObject({ error: "unauthorized" });
+    });
+
+    test("an unknown analysis gets 404 from the guard", async () => {
+        const response = await app.request(`/api/v1/analyses/nope/files?path=${FIGURE}`, { headers: AUTH });
+        expect(response.status).toBe(404);
+        expect(await response.json()).toMatchObject({ error: "not_found", message: expect.stringContaining("nope") });
     });
 });
 
