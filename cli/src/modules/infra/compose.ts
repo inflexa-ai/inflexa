@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 
 import { Result, ok, err } from "neverthrow";
 import type { BootPullProgress } from "../../api/server.ts";
-import { capture, inherit, pullImageThroughEngine, resolveEngineSocket, resolveImageTotalBytes, type ContainerRuntime } from "../../lib/container.ts";
+import { capture, inherit, pullImageThroughEngine, resolveEngineApiSocket, resolveImageTotalBytes, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { CONTAINER_DATA_PATH, CONTAINER_PG_PORT, DEFAULT_IMAGE, type PostgresConnection, type PostgresError } from "./postgres_types.ts";
 import { formatInfraStateError, writeProxyConfig, type InfraStateError } from "./proxy_config.ts";
@@ -387,9 +387,9 @@ export async function composePullInteractive(rt: ContainerRuntime): Promise<Resu
  * Pull any compose images that are not already present locally. Skips the network round-trip entirely when
  * every image is cached.
  *
- * When the engine socket resolves (Podman), each missing image pulls through the engine API, so
- * `onProgress` gets the summed moved bytes with the summed total. A report with a sum of 0 bytes is not a
- * byte report, thus `onProgress` does not run for it. Else (Docker resolves no socket) the pull is
+ * When the engine socket resolves, each missing image pulls through the engine API, so `onProgress` gets
+ * the summed moved bytes with the summed total. A report with a sum of 0 bytes is not a byte report, thus
+ * `onProgress` does not run for it. Else (a stopped Podman machine, a remote Docker daemon) the pull is
  * `compose pull` with inherited stdio, and `onProgress` never runs.
  *
  * An error event, or a broken stream, of the engine fails the pull. An engine that cannot start the pull,
@@ -425,7 +425,7 @@ async function pullMissingImages(
     missing: string[],
     onProgress: (progress: BootPullProgress) => void,
 ): Promise<Result<void, PostgresError>> {
-    const socket = (await resolveEngineSocket(rt)).unwrapOr(undefined);
+    const socket = await resolveEngineApiSocket(rt);
     if (socket === undefined) return composePullInteractive(rt);
 
     const sizes = await Promise.all(missing.map((image) => resolveImageTotalBytes(rt, image)));

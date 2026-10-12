@@ -1105,6 +1105,13 @@ function composeWithProvisioner(root: string, farmName: string, python: readonly
         // that quietly passes without the other implementation pins nothing.
         throw new Error("the farm parity test needs python3 on PATH to run the provisioner farm builder, and it could not start one", { cause });
     }
+    if (outcome.exitCode !== 0 && outcome.stderr.includes("No module named 'packaging'")) {
+        // The provisioner image installs python3-packaging, and a host python3 can lack it. Name the
+        // missing precondition, because the bare traceback reads as a fault of the farm builder.
+        throw new Error(
+            "the farm parity test needs the Python `packaging` module in the python3 on PATH, as the provisioner image has it. Install it, for example with `python3 -m pip install packaging`.",
+        );
+    }
     if (outcome.exitCode !== 0) {
         throw new Error(`python3 could not build the provisioner farm (exit ${outcome.exitCode}):\n${outcome.stderr}`);
     }

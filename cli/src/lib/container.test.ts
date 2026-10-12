@@ -8,6 +8,7 @@ import {
     ContainerRuntimeError,
     firstReadyRuntime,
     pullImageThroughEngine,
+    resolveEngineApiSocket,
     resolveEngineSocket,
     resolveImageTotalBytes,
     runtimes,
@@ -164,6 +165,65 @@ describe("resolveEngineSocket", () => {
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("systemctl --user enable --now podman.socket");
+    });
+});
+
+describe("resolveEngineApiSocket", () => {
+    function probes(over: {
+        dockerHost?: string;
+        capture?: CaptureResult;
+        exists?: (path: string) => boolean;
+        spawned?: string[][];
+        platform?: NodeJS.Platform;
+    }) {
+        return {
+            platform: over.platform ?? "linux",
+            dockerHost: over.dockerHost,
+            capture: (_rt: ContainerRuntime, args: string[]): Promise<CaptureResult> => {
+                over.spawned?.push(args);
+                return Promise.resolve(over.capture ?? { code: 1, stdout: "", stderr: "" });
+            },
+            exists: over.exists ?? (() => true),
+        };
+    }
+
+    test("docker with a unix DOCKER_HOST gives that socket and spawns no probe", async () => {
+        const spawned: string[][] = [];
+        const socket = await resolveEngineApiSocket(runtimes.docker, probes({ dockerHost: "unix:///run/user/1000/docker.sock", spawned }));
+        expect(socket).toBe("/run/user/1000/docker.sock");
+        expect(spawned).toEqual([]);
+    });
+
+    test("docker with a DOCKER_HOST that is not a unix socket gives no socket, thus the pull goes through the CLI", async () => {
+        const spawned: string[][] = [];
+        for (const dockerHost of ["tcp://10.0.0.2:2375", "ssh://builder@10.0.0.2"]) {
+            expect(await resolveEngineApiSocket(runtimes.docker, probes({ dockerHost, spawned }))).toBeUndefined();
+        }
+        expect(spawned).toEqual([]);
+    });
+
+    test("docker with no DOCKER_HOST gives the socket of the current context", async () => {
+        const spawned: string[][] = [];
+        const socket = await resolveEngineApiSocket(
+            runtimes.docker,
+            probes({ capture: { code: 0, stdout: "unix:///Users/ana/.docker/run/docker.sock\n", stderr: "" }, spawned, platform: "darwin" }),
+        );
+        expect(socket).toBe("/Users/ana/.docker/run/docker.sock");
+        expect(spawned).toEqual([["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]]);
+    });
+
+    test("docker gives no socket when the context socket is absent on disk, the context is remote, or the inspect fails", async () => {
+        const absent = probes({ capture: { code: 0, stdout: "unix:///var/run/docker.sock\n", stderr: "" }, exists: () => false });
+        const remote = probes({ capture: { code: 0, stdout: "tcp://10.0.0.2:2376\n", stderr: "" } });
+        const failed = probes({ capture: { code: 1, stdout: "", stderr: "context not found" } });
+        for (const p of [absent, remote, failed]) expect(await resolveEngineApiSocket(runtimes.docker, p)).toBeUndefined();
+    });
+
+    test("podman gives the engine socket, and no socket when the engine is not ready", async () => {
+        const running = probes({ capture: { code: 0, stdout: "/run/user/1000/podman/podman.sock\n", stderr: "" } });
+        const stopped = probes({ capture: { code: 0, stdout: "/run/user/1000/podman/podman.sock\n", stderr: "" }, exists: () => false });
+        expect(await resolveEngineApiSocket(runtimes.podman, running)).toBe("/run/user/1000/podman/podman.sock");
+        expect(await resolveEngineApiSocket(runtimes.podman, stopped)).toBeUndefined();
     });
 });
 

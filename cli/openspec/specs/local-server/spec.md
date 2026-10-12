@@ -105,7 +105,7 @@ The boot MUST NOT ask for a provider login, also in a terminal. A missing or dea
 
 ### Requirement: The server state gives the stop and the boot progress
 
-`GET /api/v1/server` and the 202 body of `POST /api/v1/server/boot` MUST give `stopping` in each phase. Its value MUST be the mode of a stop in progress (`now` or `drain`), or `null` while no client asked for a stop. After a stop request, it MUST keep the mode until the process exits. The phase does not change because of a stop.
+`GET /api/v1/server` and the 202 body of `POST /api/v1/server/boot` MUST give `stopping` in each phase. Its value MUST be the mode of a stop in progress (`now` or `drain`), or `null` while the server runs. A stop that a signal starts MUST give `now`. After the start of a stop, it MUST keep the mode until the process exits. The phase does not change because of a stop.
 
 In the phase `starting`, the body MUST give `boot` with these fields:
 
@@ -142,6 +142,12 @@ Each time MUST be an ISO 8601 string.
 - **WHEN** a client sends `POST /api/v1/server/shutdown` with the mode `drain`
 - **THEN** each `GET /api/v1/server` until the exit gives `stopping` set to `drain`, and the phase stays `ready`
 
+#### Scenario: A signal stop shows in the server state
+
+- **GIVEN** a server in the phase `ready`
+- **WHEN** the server gets SIGTERM
+- **THEN** each `GET /api/v1/server` until the exit gives `stopping` set to `now`, and a new chat turn gets 503 `draining`
+
 #### Scenario: A failed boot gives its times and its step
 
 - **GIVEN** a boot that fails while it starts the containers
@@ -170,7 +176,7 @@ Each time MUST be an ISO 8601 string.
 
 The boot gate of the server and of `inflexa up` MUST pull only the images that the engine does not hold. When the engine socket resolves, the gate MUST pull each missing image through the engine API. It MUST report the moved bytes, and the total bytes from the registry manifests. An image reference that pins a digest MUST pull that digest. The step `images` MUST end only when the engine holds each image under the reference of the compose file.
 
-When no engine socket resolves, the gate MUST pull with `compose pull` and report no bytes. Docker resolves no socket path. The gate MUST also use `compose pull` in these conditions:
+When no engine socket resolves, the gate MUST pull with `compose pull` and report no bytes. For Docker, the socket is the `unix://` path of `DOCKER_HOST`. With no `DOCKER_HOST`, it is the `unix://` endpoint of the current Docker context. The path counts only when it exists on disk. A `DOCKER_HOST` or a context endpoint that is not a unix socket resolves no socket. The gate MUST also use `compose pull` in these conditions:
 
 - The engine API cannot start a pull: the socket does not answer, or the response is not OK.
 - An engine pull completes, but the engine does not hold the image under its reference.
@@ -185,9 +191,15 @@ The pull MUST write one line at its start and one line for its outcome.
 - **WHEN** the server boots
 - **THEN** the gate pulls the image through the engine API, and the step `images` gives the moved bytes and the total bytes
 
-#### Scenario: Docker pulls with compose
+#### Scenario: Docker reports the bytes of the pull
 
-- **GIVEN** Docker as the container runtime, and a Postgres image that the engine does not hold
+- **GIVEN** Docker as the container runtime, a current context with a unix socket that exists, and a Postgres image that the engine does not hold
+- **WHEN** the server boots
+- **THEN** the gate pulls the image through the engine API, and the step `images` gives the moved bytes and the total bytes
+
+#### Scenario: A remote Docker daemon pulls with compose
+
+- **GIVEN** Docker as the container runtime, a `DOCKER_HOST` that starts with `tcp://`, and a Postgres image that the engine does not hold
 - **WHEN** the server boots
 - **THEN** the gate pulls with `compose pull`, and the step `images` gives no `progress`
 
@@ -249,6 +261,8 @@ The server log is `<dataDir>/inflexa/logs/server.log`, or `server.dev.log` for a
 ### Requirement: The server runs until a stop
 
 The server MUST run until one of these stops it: `POST /api/v1/server/shutdown`, Ctrl+C, SIGTERM, or SIGHUP. It MUST NOT exit because no client is connected. Each stop MUST run the shutdown hooks, the runtime shutdown and the provenance flush, and then remove the discovery file and release the instance locks. A second Ctrl+C during the shutdown MUST exit at once.
+
+A stop signal (Ctrl+C, SIGTERM, or SIGHUP) MUST start a `now` stop, and the process MUST exit with 128 + the signal number. A signal during a stop that a client asked for MUST exit at once with that code. The stop then keeps the mode of the client.
 
 At the start of each stop, the server MUST write one line to its output: its pid, the time, and the reason. The reason is the mode that a client asked for, or a stop signal.
 

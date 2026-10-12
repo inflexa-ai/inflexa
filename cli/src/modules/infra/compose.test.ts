@@ -466,7 +466,7 @@ describe("composePullIfMissing", () => {
                 inherited.push(args);
                 return 0;
             }),
-            spyOn(container, "resolveEngineSocket").mockImplementation(async () => ok(opts.socket)),
+            spyOn(container, "resolveEngineApiSocket").mockImplementation(async () => opts.socket),
             spyOn(container, "resolveImageTotalBytes").mockImplementation(async (_rt, image) => opts.sizes?.[image] ?? null),
             spyOn(container, "pullImageThroughEngine").mockImplementation(async (socket, image, onProgress) => {
                 pulled.push({ socket, image });

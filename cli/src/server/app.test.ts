@@ -426,6 +426,8 @@ function recordingLifecycle(activeTurns: number): ServerLifecycle & { requests: 
             return { mode: first, activeTurns };
         },
         stopping: () => first,
+        stopForSignal: () => undefined,
+        stoppedBySignal: () => false,
     };
 }
 

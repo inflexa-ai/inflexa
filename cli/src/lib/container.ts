@@ -9,6 +9,8 @@ import { existsSync } from "node:fs";
 import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
+import { env } from "./env.ts";
+
 /**
  * Ordered id list — single source of truth for the picker order, the
  * `ContainerRuntimeId` union, and the config zod enum. Docker is first: it is the
@@ -287,6 +289,50 @@ export async function resolveEngineSocket(
             }
             return ok(socket);
         }
+        default: {
+            const exhaustive: never = rt.id;
+            throw new Error(`unhandled runtime: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}
+
+/** The {@link EngineSocketProbes}, plus the `DOCKER_HOST` that the user set. */
+export type EngineApiSocketProbes = EngineSocketProbes & { readonly dockerHost: string | undefined };
+
+/** The path of a `unix://` daemon address, or `undefined` for each other scheme (`tcp://`, `ssh://`, `npipe://`). */
+function unixSocketPath(address: string): string | undefined {
+    return address.startsWith("unix://") ? address.slice("unix://".length) : undefined;
+}
+
+/**
+ * Resolve the Docker-API socket that the image pull dials for its byte progress, or `undefined` when the pull
+ * must go through the CLI. Only the pull reads this: the harness keeps {@link resolveEngineSocket}, which leaves
+ * the Docker resolution of dockerode as it is.
+ *
+ * - **Docker** obeys the order of the Docker CLI: a `DOCKER_HOST` wins over the current context. A
+ *   `DOCKER_HOST` that is not a unix socket gives `undefined` without a look at the context, because the CLI
+ *   does not use the context either. With no `DOCKER_HOST`, `docker context inspect` gives the endpoint of the
+ *   current context, which covers Docker Desktop, colima, and `/var/run/docker.sock`. The path counts only
+ *   when it exists on disk.
+ * - **Podman** gives the socket of {@link resolveEngineSocket}, and `undefined` when the engine is not ready.
+ *
+ * It never fails: a socket that is absent costs only the byte readout.
+ */
+export async function resolveEngineApiSocket(
+    rt: ContainerRuntime,
+    probes: EngineApiSocketProbes = { platform: process.platform, capture, exists: existsSync, dockerHost: env.dockerHost },
+): Promise<string | undefined> {
+    switch (rt.id) {
+        case "docker": {
+            const fromHost = probes.dockerHost === undefined || probes.dockerHost === "" ? null : unixSocketPath(probes.dockerHost);
+            if (fromHost !== null) return fromHost !== undefined && probes.exists(fromHost) ? fromHost : undefined;
+            const { code, stdout } = await probes.capture(rt, ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]);
+            if (code !== 0) return undefined;
+            const socket = unixSocketPath(stdout.trim());
+            return socket !== undefined && probes.exists(socket) ? socket : undefined;
+        }
+        case "podman":
+            return (await resolveEngineSocket(rt, probes)).unwrapOr(undefined);
         default: {
             const exhaustive: never = rt.id;
             throw new Error(`unhandled runtime: ${JSON.stringify(exhaustive)}`);

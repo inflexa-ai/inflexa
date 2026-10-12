@@ -9,11 +9,13 @@ import { createServerLifecycle, type ServerLifecycleOpts } from "./lifecycle.ts"
 function harness(runningTurns: number): {
     opts: ServerLifecycleOpts;
     events: string[];
+    exitCodes: number[];
     endTurns: () => void;
     elapse: (ms: number) => void;
     exited: Promise<void>;
 } {
     const events: string[] = [];
+    const exitCodes: number[] = [];
     let running = runningTurns;
     let idle: (() => void)[] = [];
     let timers: { at: number; fire: () => void }[] = [];
@@ -28,6 +30,7 @@ function harness(runningTurns: number): {
     };
     return {
         events,
+        exitCodes,
         exited,
         endTurns,
         elapse: (ms) => {
@@ -46,8 +49,9 @@ function harness(runningTurns: number): {
             },
             whenNoRunningTurns: () => (running === 0 ? Promise.resolve() : new Promise<void>((resolve) => idle.push(resolve))),
             sleep: (ms) => new Promise<void>((resolve) => timers.push({ at: now + ms, fire: resolve })),
-            exit: () => {
+            exit: (code) => {
                 events.push("exit");
+                exitCodes.push(code);
                 markExited();
                 idle = [];
                 return Promise.resolve();
@@ -72,6 +76,7 @@ describe("the stop of the server", () => {
         h.endTurns();
         await h.exited;
         expect(h.events).toEqual(["refuse", "abort 2", "exit"]);
+        expect(h.exitCodes).toEqual([0]);
     });
 
     test("`drain` waits for the running turns, and aborts none when they end in time", async () => {
@@ -119,5 +124,37 @@ describe("the stop of the server", () => {
 
     test("a server that runs is not stopping", () => {
         expect(createServerLifecycle(harness(0).opts).stopping()).toBeNull();
+    });
+});
+
+describe("a stop signal: Ctrl+C, SIGTERM, or SIGHUP", () => {
+    test("with no stop in progress, it starts a `now` stop that clients see, and exits with the code of the signal", async () => {
+        const h = harness(1);
+        const lifecycle = createServerLifecycle(h.opts);
+        lifecycle.stopForSignal(143);
+        expect(lifecycle.stopping()).toBe("now");
+        expect(lifecycle.stoppedBySignal()).toBe(true);
+        await settle();
+        expect(h.events).toEqual(["refuse", "abort 1"]);
+        h.endTurns();
+        await h.exited;
+        expect(h.exitCodes).toEqual([143]);
+    });
+
+    test("during a stop that a client asked for, it exits at once with its code, and the mode of the client stays", async () => {
+        const h = harness(1);
+        const lifecycle = createServerLifecycle(h.opts);
+        lifecycle.requestShutdown("drain");
+        lifecycle.stopForSignal(130);
+        await h.exited;
+        expect(lifecycle.stopping()).toBe("drain");
+        expect(lifecycle.stoppedBySignal()).toBe(false);
+        expect(h.exitCodes).toEqual([130]);
+    });
+
+    test("a stop that a client asked for is not a stop by signal", () => {
+        const lifecycle = createServerLifecycle(harness(0).opts);
+        lifecycle.requestShutdown("now");
+        expect(lifecycle.stoppedBySignal()).toBe(false);
     });
 });

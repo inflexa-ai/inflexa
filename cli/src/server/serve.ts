@@ -16,7 +16,7 @@ import { env } from "../lib/env.ts";
 import { mkdirResult, renameResult, rmResult, writeFileResult, type FsError } from "../lib/fs.ts";
 import { isPidAlive } from "../lib/lock.ts";
 import { getLogger } from "../lib/log.ts";
-import { onShutdown, shutdown } from "../lib/shutdown.ts";
+import { onShutdown, setSignalStop, shutdown } from "../lib/shutdown.ts";
 import { watchPendingFlush } from "../modules/libs/store.ts";
 import { buildApp } from "./app.ts";
 import { createServerBoot, DEFAULT_SERVER_BOOT_OPTS } from "./boot.ts";
@@ -59,7 +59,8 @@ export async function runServe(mode: ServeMode): Promise<void> {
     const startedAt = new Date();
     const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
     const boot = createServerBoot(startedAt, { ...DEFAULT_SERVER_BOOT_OPTS, onSettle: printBootOutcome });
-    const lifecycle = createServerLifecycle({ ...DEFAULT_SERVER_LIFECYCLE_OPTS, exit: () => shutdown(0) });
+    const lifecycle = createServerLifecycle({ ...DEFAULT_SERVER_LIFECYCLE_OPTS, exit: (code) => shutdown(code) });
+    setSignalStop((code) => lifecycle.stopForSignal(code));
 
     // Bind before the discovery file is written: a second server fails here, and it must not replace the file of
     // the server that holds the port.
@@ -86,7 +87,7 @@ export async function runServe(mode: ServeMode): Promise<void> {
     // The first hook of the stop, for each path to it: a client request, Ctrl+C, SIGTERM, or SIGHUP. Without
     // it the log of a detached server ends with no word of why or when the server stopped.
     onShutdown(() => {
-        console.log(serverStopLine(lifecycle.stopping(), process.pid, new Date()));
+        console.log(serverStopLine(lifecycle.stoppedBySignal() ? null : lifecycle.stopping(), process.pid, new Date()));
         return Promise.resolve();
     });
 
@@ -118,7 +119,7 @@ export async function runServe(mode: ServeMode): Promise<void> {
     process.on("SIGINT", () => {
         if (interrupted) process.exit(SIGINT_EXIT_CODE);
         interrupted = true;
-        void shutdown(SIGINT_EXIT_CODE);
+        lifecycle.stopForSignal(SIGINT_EXIT_CODE);
     });
 
     const url = serverBaseUrl(env.serverPort);

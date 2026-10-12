@@ -26,7 +26,7 @@ import { ensureRuntime } from "../../lib/config.ts";
 import {
     capture,
     pullImageThroughEngine,
-    resolveEngineSocket,
+    resolveEngineApiSocket,
     resolveImageTotalBytes,
     type ContainerRuntime,
     type EnginePullOutcome,
@@ -243,7 +243,7 @@ export async function runImageTransfer(kind: "runtime_image" | "provisioner_imag
         const totalBytes = await resolveImageTotalBytes(rt, image);
         if (totalBytes !== null) recordTransferResolve(kind, { digest: "", totalBytes, totalLayers: null }).unwrapOr(0);
 
-        const socket = (await resolveEngineSocket(rt)).unwrapOr(undefined);
+        const socket = await resolveEngineApiSocket(rt);
         const latest: { progress: EnginePullProgress | null } = { progress: null };
         let lastWrite = 0;
         const writeProgress = (progress: EnginePullProgress): void => {

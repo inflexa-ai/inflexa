@@ -420,6 +420,11 @@ export const env = Object.freeze({
      */
     contentHash: process.env.INFLEXA_CONTENT_HASH,
     /**
+     * The Docker daemon address that the user set, for the engine-API image pull (`resolveEngineApiSocket` of
+     * lib/container.ts). It is a variable of Docker, not of Inflexa, thus it is not in envDoc/--help.
+     */
+    dockerHost: process.env.DOCKER_HOST,
+    /**
      * True unless the `production` channel was baked in — {@link isDevelopmentBuild} over
      * {@link bakedEnv.buildChannel}, never NODE_ENV (the buildChannel note above owns the
      * one-axis rationale). Governs dev-only runtime layout: the compose container/network prefix
@@ -559,6 +564,7 @@ export const envDoc: Readonly<
             | "serverAutoStart"
             | "isDevelopment"
             | "contentHash"
+            | "dockerHost"
         >,
         EnvDocEntry
     >
