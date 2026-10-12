@@ -17,6 +17,7 @@ import { join, sep } from "node:path";
 
 import { defineTool, scopeResource, type ToolError } from "@inflexa-ai/harness";
 import { ok, type Result } from "neverthrow";
+import PQueue from "p-queue";
 import { z } from "zod";
 
 import { listAnalysisInputs } from "../../db/primary_query.ts";
@@ -24,7 +25,10 @@ import { resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { findAnalysis } from "../analysis/analysis.ts";
 import { resolveInputPath } from "../analysis/input.ts";
 import { IGNORED_WALK_DIRS, walkFiles } from "../staging/staging.ts";
-import { statResult } from "../../lib/fs.ts";
+import { statResultAsync } from "../../lib/fs.ts";
+
+/** How many `stat` calls the listing keeps in flight for the sizes. A large launch folder must not fill the thread pool of the server. */
+const SIZE_STAT_WIDTH = 16;
 
 /** One candidate file under the launch folder: its anchor-relative path, size, and whether it is already a registered input. */
 type LaunchDirEntry = { readonly path: string; readonly size: number; readonly registered: boolean };
@@ -102,19 +106,23 @@ export function createLaunchDirTool() {
             const folder = await resolveAnchor(found.value.anchorId).map(resolvedPathOrCached).unwrapOr(null);
             if (folder === null) return ok({ status: "no_anchor" as const });
 
-            const walked = walkFiles(folder, IGNORED_WALK_DIRS);
+            const walked = await walkFiles(folder, IGNORED_WALK_DIRS);
             if (walked.isErr()) return ok({ status: "error" as const, message: `could not read the launch folder: ${walked.error.op}` });
 
             const index = await registrationIndex(analysisId);
-            const entries: LaunchDirEntry[] = walked.value
-                .map((rel) => {
-                    const abs = join(folder, rel);
-                    const size = statResult(abs, "list_launch_dir:size")
-                        .map((s) => s.size)
-                        .unwrapOr(0);
-                    return { path: rel, size, registered: isRegistered(abs, index) };
-                })
-                .sort((a, b) => a.path.localeCompare(b.path));
+            const queue = new PQueue({ concurrency: SIZE_STAT_WIDTH });
+            const entries: LaunchDirEntry[] = await Promise.all(
+                walked.value.map((rel) =>
+                    queue.add(async (): Promise<LaunchDirEntry> => {
+                        const abs = join(folder, rel);
+                        const size = await statResultAsync(abs, "list_launch_dir:size")
+                            .map((s) => s.size)
+                            .unwrapOr(0);
+                        return { path: rel, size, registered: isRegistered(abs, index) };
+                    }),
+                ),
+            );
+            entries.sort((a, b) => a.path.localeCompare(b.path));
 
             return ok({ status: "listed" as const, folder, entries });
         },

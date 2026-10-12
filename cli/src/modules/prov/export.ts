@@ -1,10 +1,10 @@
 import { dirname, join } from "node:path";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { ProvAttestation, ProvSigningError } from "@inflexa-ai/prov-kernel";
-import { err, errAsync, ok, okAsync, ResultAsync, type Result } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
 import type { DbError } from "../../db/errors.ts";
-import { mkdirResult, writeFileResult } from "../../lib/fs.ts";
+import { mkdirResultAsync, writeFileResultAsync, type FsError } from "../../lib/fs.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { resolveOutputDir, type WorkspaceError } from "../analysis/output.ts";
 import { serializeProvenance } from "./document.ts";
@@ -92,15 +92,18 @@ function writeExport(
     document: string,
     attestation: ProvAttestation | null,
     inWorkspace: boolean,
-): Result<ExportedProvenance, ExportProvenanceError> {
+): ResultAsync<ExportedProvenance, ExportProvenanceError> {
     // The workspace folder is made here, after the signature, thus a signing failure leaves no folder
     // behind. The folder of an `output` path is not made: the caller chose it.
-    const folder = inWorkspace ? mkdirResult(dirname(path), "exportProvenance:mkdir") : ok(undefined);
-    const written = folder.andThen(() => writeFileResult(path, document, "exportProvenance:write"));
-    if (written.isErr()) return err({ type: "write", path, cause: written.error.cause });
-    if (attestation === null) return ok({ path });
-    const attestationPath = `${path}.sig.json`;
-    return writeFileResult(attestationPath, JSON.stringify(attestation, null, 2), "exportProvenance:attestation")
-        .map((): ExportedProvenance => ({ path, attestationPath }))
-        .mapErr((e): ExportProvenanceError => ({ type: "attestation_write", path, cause: e.cause }));
+    const folder = inWorkspace ? mkdirResultAsync(dirname(path), "exportProvenance:mkdir") : okAsync<void, FsError>(undefined);
+    return folder
+        .andThen(() => writeFileResultAsync(path, document, "exportProvenance:write"))
+        .mapErr((e): ExportProvenanceError => ({ type: "write", path, cause: e.cause }))
+        .andThen((): ResultAsync<ExportedProvenance, ExportProvenanceError> => {
+            if (attestation === null) return okAsync({ path });
+            const attestationPath = `${path}.sig.json`;
+            return writeFileResultAsync(attestationPath, JSON.stringify(attestation, null, 2), "exportProvenance:attestation")
+                .map((): ExportedProvenance => ({ path, attestationPath }))
+                .mapErr((e): ExportProvenanceError => ({ type: "attestation_write", path, cause: e.cause }));
+        });
 }

@@ -79,7 +79,9 @@ cell typing, header row first) into `dataset.source`, so an open always
 reflects the current artifact bytes. A failed fetch or parse degrades to a
 visible in-page note, never a crash; an invalid `dataPath` shape is refused
 before a URL is derived and pre-degrades the shell. Materialized files are
-disposable: content is regenerable from the transcript.
+disposable: content is regenerable from the transcript. The server materializes
+for a request, thus the directory creation and the file write SHALL run off the
+event loop, so a workspace on a hung mount stops only that request.
 
 #### Scenario: Chart opens interactively
 
