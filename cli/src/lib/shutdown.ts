@@ -124,6 +124,21 @@ export function startExitIndicator(): () => void {
     };
 }
 
+let signalStop: (exitCode: number) => void = (exitCode) => void shutdown(exitCode);
+
+/**
+ * Replace what the first SIGTERM or SIGHUP does. The default runs {@link shutdown} at once. The local server
+ * routes the signal through its stop holder, thus a client sees the stop and no new chat turn starts.
+ */
+export function setSignalStop(stop: (exitCode: number) => void): void {
+    signalStop = stop;
+}
+
+/** Run the stop of the first SIGTERM or SIGHUP, with the conventional 128 + signal number as the exit code. */
+export function stopForSignal(exitCode: number): void {
+    signalStop(exitCode);
+}
+
 /** Async cleanup hooks registered by modules (e.g. provenance flush). Runs alongside log/telemetry flush. */
 const asyncHooks: (() => Promise<void>)[] = [];
 

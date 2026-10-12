@@ -50,7 +50,7 @@ export function idleBoot(): ServerBoot {
  * request and records nothing. A test of the stop builds its own lifecycle (server/lifecycle.test.ts).
  */
 export function idleLifecycle(): ServerLifecycle {
-    return { requestShutdown: (mode) => ({ mode, activeTurns: 0 }), stopping: () => null };
+    return { requestShutdown: (mode) => ({ mode, activeTurns: 0 }), stopping: () => null, stopForSignal: () => undefined, stoppedBySignal: () => false };
 }
 
 /**
