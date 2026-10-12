@@ -38,7 +38,7 @@ describe("precreateStepTree — step-tree access mode", () => {
         stepId: "step-a",
         analysisId: "an-1",
     };
-    const deps = (stepTreeAccess?: "world-writable") => ({ resolveWorkspaceRoot: () => root, stepTreeAccess });
+    const deps = (stepTreeAccess?: "world-writable") => ({ resolveWorkspaceRoot: async () => root, stepTreeAccess });
     const stepDir = () => join(root, "runs", "run-1", "step-a");
     /** POSIX permission bits, with the file-type bits masked off. */
     const modeOf = async (p: string): Promise<number> => (await stat(p)).mode & 0o777;
@@ -139,7 +139,7 @@ describe("createSandboxClient — the k8s libs root threading", () => {
                 env: { backend: "k8s", namespace: "sandbox" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-                resolveWorkspaceRoot: (id) => join("/sessions", id),
+                resolveWorkspaceRoot: async (id) => join("/sessions", id),
                 sessionPvc: "cortex-sessions",
                 sessionPvcRoot: "/sessions",
                 libStorePvc: "cortex-libs",
@@ -166,7 +166,7 @@ describe("createSandboxClient — the required-store fact", () => {
         pool: {} as unknown as Pool,
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-        resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
     };
 
     test("the fact reaches both backend ops, so each gate can refuse instead of degrade", () => {
@@ -290,7 +290,7 @@ describe("createSandboxClient — a spawn failure is a value", () => {
                 env: { backend: "docker", namespace: "default" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-                resolveWorkspaceRoot: () => root,
+                resolveWorkspaceRoot: async () => root,
                 libStorePath: "/mnt/libs",
                 farmSource: { kind: "fixed", location: { farmPath: "/mnt/libs/farms/catalog" } },
                 packageStore: "required",
@@ -365,7 +365,7 @@ describe("createSandboxClient — the label hook", () => {
             env: { backend: "docker", namespace: "default" },
             image: "sandbox-base:latest",
             resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-            resolveWorkspaceRoot: () => root,
+            resolveWorkspaceRoot: async () => root,
             farmSource: { kind: "fixed", location: { farmPath: "/mnt/libs/farms/catalog" } },
             ...(resolveSandboxLabels ? { resolveSandboxLabels } : {}),
         });
@@ -423,7 +423,7 @@ describe("createSandboxClient — engine connection threading", () => {
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
                 farmSource: { kind: "fixed", location: { farmPath: "/tmp/inflexa-test-farm" } },
-                resolveWorkspaceRoot: (id) => join("/sessions", id),
+                resolveWorkspaceRoot: async (id) => join("/sessions", id),
                 engineSocketPath: socketPath,
             });
 
@@ -443,7 +443,7 @@ describe("createSandboxClient — the toolchain on the client", () => {
         env: { backend: "docker" as const, namespace: "" },
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-        resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
         farmSource: { kind: "fixed", location: { farmPath: "/store/farms/catalog" } } as const,
     };
 

@@ -1,9 +1,9 @@
 import { isAbsolute, join, relative } from "node:path";
-import { ok, err, type Result } from "neverthrow";
+import { ok, err, okAsync, ResultAsync, type Result } from "neverthrow";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
-import { statResult } from "../../lib/fs.ts";
-import { canonicalPath, expandAndResolve } from "../../lib/paths.ts";
+import { statResultAsync } from "../../lib/fs.ts";
+import { canonicalPathAsync, expandAndResolve } from "../../lib/paths.ts";
 import { findMarkerUpwards } from "../anchor/marker.ts";
 import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
 
@@ -18,20 +18,24 @@ import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
  * add path of `addInputs`, a deliberate user action, which is what the no-litter policy
  * demands of a recovery; the marker-present branch of the ensure writes nothing to disk.
  */
-export function classifyInputPath(analysisId: string, rawPath: string, cwd: string): Result<AnalysisInput, DbError> {
+export function classifyInputPath(analysisId: string, rawPath: string, cwd: string): ResultAsync<AnalysisInput, DbError> {
+    return new ResultAsync(classify(analysisId, rawPath, cwd));
+}
+
+async function classify(analysisId: string, rawPath: string, cwd: string): Promise<Result<AnalysisInput, DbError>> {
     const target = expandAndResolve(cwd, rawPath);
 
     // `isDir` comes from a real stat. A non-existent path cannot honestly produce `isDir`, so
     // surface it (op marks it not-found) rather than defaulting — the caller rejects it.
-    const stat = statResult(target, "classifyInputPath:notFound");
+    const stat = await statResultAsync(target, "classifyInputPath:notFound");
     if (stat.isErr()) return err({ type: "query_failed", op: "classifyInputPath:notFound", cause: stat.error.cause });
     const isDir = stat.value.isDirectory();
 
     // Canonicalize now that we know it exists, so anchor membership and the stored relpath are
     // computed against symlink-resolved paths (consistent with the anchor's cachedPath).
-    const abs = canonicalPath(target);
+    const abs = await canonicalPathAsync(target);
 
-    const markerResult = findMarkerUpwards(abs);
+    const markerResult = await findMarkerUpwards(abs);
     if (markerResult.isErr()) return err({ type: "query_failed", op: "classifyInputPath:marker", cause: markerResult.error });
     const found = markerResult.value;
 
@@ -44,7 +48,7 @@ export function classifyInputPath(analysisId: string, rawPath: string, cwd: stri
             // cached path. The ref carries the id of the ENSURED row, not the raw
             // marker read above: if the marker vanished between the two reads, the
             // ensured id is the one row that really exists.
-            const ensured = getOrCreateAnchorForCwd(found.dir);
+            const ensured = await getOrCreateAnchorForCwd(found.dir);
             if (ensured.isErr()) return err(ensured.error);
             return ok({ path: rel === "" ? "." : rel, isDir, analysisId, anchorId: ensured.value.id });
         }
@@ -57,8 +61,8 @@ export function classifyInputPath(analysisId: string, rawPath: string, cwd: stri
  * refs ride the anchor's live (reconciled) location; `null` when the anchor can't be resolved.
  * `touch` passes to `resolveAnchor`.
  */
-export function resolveInputPath(input: AnalysisInput, opts?: { touch?: boolean }): Result<string | null, DbError> {
-    if (input.anchorId === null) return ok(input.path);
+export function resolveInputPath(input: AnalysisInput, opts?: { touch?: boolean }): ResultAsync<string | null, DbError> {
+    if (input.anchorId === null) return okAsync(input.path);
     // A missing anchor row (null resolved) or unlocated folder (null path) both mean "can't resolve".
     return resolveAnchor(input.anchorId, opts).map((resolved) => (resolved?.path == null ? null : join(resolved.path, input.path)));
 }
@@ -70,11 +74,16 @@ export function resolveInputPath(input: AnalysisInput, opts?: { touch?: boolean 
  * removable. Returns the matched inputs and the raw paths that matched no current input. A match is a
  * lookup, not a sighting of the folder, thus it records no `lastSeen`.
  */
-export function matchInputRefs(inputs: readonly AnalysisInput[], rawPaths: readonly string[], cwd: string): { matched: AnalysisInput[]; notInputs: string[] } {
+export async function matchInputRefs(
+    inputs: readonly AnalysisInput[],
+    rawPaths: readonly string[],
+    cwd: string,
+): Promise<{ matched: AnalysisInput[]; notInputs: string[] }> {
     const byStored = new Map(inputs.map((i) => [i.path, i]));
     const byAbs = new Map<string, AnalysisInput>();
+    // One at a time, in input order: a later input with the same absolute path wins.
     for (const input of inputs) {
-        const abs = resolveInputPath(input, { touch: false }).unwrapOr(null);
+        const abs = await resolveInputPath(input, { touch: false }).unwrapOr(null);
         if (abs !== null) byAbs.set(abs, input);
     }
     const matched: AnalysisInput[] = [];

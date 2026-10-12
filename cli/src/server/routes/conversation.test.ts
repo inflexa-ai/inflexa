@@ -123,7 +123,7 @@ function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes> {
         connection: () => ({ provider: "anthropic", mode: "direct" }),
         readCredentialVerdict: () => Promise.resolve(err({ type: "no_key" })),
         flushPendingAdds: () => undefined,
-        workspaceRoot: () => ({ kind: "absent" }),
+        workspaceRoot: async () => ({ kind: "absent" }),
         removeDir: () => okAsync(undefined),
         sse: { pingMs: 60_000, headers: {} },
         ...o,
@@ -247,7 +247,7 @@ describe("the thread routes", () => {
         const store = memoryStore([conversationThread(), reportThread()]);
         const routes = routesWith({
             store,
-            workspaceRoot: () => ({ kind: "root", root: "/ws" }),
+            workspaceRoot: async () => ({ kind: "root", root: "/ws" }),
             removeDir: (dir) => (dir.endsWith("thread-report") ? errAsync({ type: "io_failed", op: "test", cause: "EACCES" }) : okAsync(undefined)),
         });
         const body = (await (await routes.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" }))).json()) as PurgedThread;
@@ -260,7 +260,11 @@ describe("the thread routes", () => {
         const removing = new Promise<void>((resolve) => {
             release = resolve;
         });
-        const routes = routesWith({ store, workspaceRoot: () => ({ kind: "root", root: "/ws" }), removeDir: () => ResultAsync.fromSafePromise(removing) });
+        const routes = routesWith({
+            store,
+            workspaceRoot: async () => ({ kind: "root", root: "/ws" }),
+            removeDir: () => ResultAsync.fromSafePromise(removing),
+        });
         let purged = false;
         const purging = Promise.resolve(routes.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" }))).then((response) => {
             purged = true;
@@ -276,7 +280,7 @@ describe("the thread routes", () => {
     });
 
     test("POST {T}/purge reports a workspace that does not resolve, and refuses a body with no `files`", async () => {
-        const unlocatable = routesWith({ workspaceRoot: () => ({ kind: "unlocatable" }) });
+        const unlocatable = routesWith({ workspaceRoot: async () => ({ kind: "unlocatable" }) });
         const body = (await (await unlocatable.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" }))).json()) as PurgedThread;
         expect(body.pages).toEqual({ kind: "unlocatable" });
         expect((await routesWith().request(`/${A}/threads/${T}/purge`, json("POST", {}))).status).toBe(400);

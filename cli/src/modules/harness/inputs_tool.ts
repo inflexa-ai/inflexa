@@ -13,18 +13,19 @@
  * subcommands are the TERMINAL surface and are agent-blocked; the agent uses this.
  */
 
-import { existsSync } from "node:fs";
-
 import { defineTool, scopeResource, DETAIL_MAX_LENGTH, type AskRequest, type ToolError } from "@inflexa-ai/harness";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { listAnalysisInputs } from "../../db/primary_query.ts";
+import { pathsExistAsync } from "../../lib/fs.ts";
 import { holdsInstanceLock } from "../../lib/lock.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { addInputs, findAnalysis, removeInput } from "../analysis/analysis.ts";
 import { expandAndResolve } from "../../lib/paths.ts";
 import { matchInputRefs } from "../analysis/input.ts";
+
+const EXISTS_CHECK_WIDTH = 8;
 
 /** A current input as reported to the agent. */
 type InputEntry = { readonly path: string; readonly isDir: boolean; readonly anchored: boolean };
@@ -45,7 +46,7 @@ type ManageInputsResult =
     | { readonly status: "error"; readonly message: string };
 
 /** The analysis's anchor/launch folder on disk, or null when it can't be located (moved/deleted anchor). */
-function anchorFolder(anchorId: string): string | null {
+function anchorFolder(anchorId: string): Promise<string | null> {
     return resolveAnchor(anchorId).map(resolvedPathOrCached).unwrapOr(null);
 }
 
@@ -102,7 +103,7 @@ export function createManageInputsTool() {
             const found = findAnalysis(analysisId);
             if (found.isErr()) return ok({ status: "error" as const, message: `could not load the analysis: ${found.error.type}` });
             if (!found.value) return ok({ status: "no_analysis" as const });
-            const cwd = anchorFolder(found.value.anchorId);
+            const cwd = await anchorFolder(found.value.anchorId);
             if (cwd === null) return ok({ status: "no_anchor" as const });
 
             if (input.action === "list") {
@@ -131,12 +132,16 @@ export function createManageInputsTool() {
             if (input.action === "add") {
                 // Pre-check existence for a precise, path-named message before mutating. `addInputs`
                 // re-validates authoritatively (via classifyInputPath) — this only sharpens the error.
-                const missing = paths.filter((p) => !existsSync(expandAndResolve(cwd, p)));
+                const exists = await pathsExistAsync(
+                    paths.map((p) => expandAndResolve(cwd, p)),
+                    EXISTS_CHECK_WIDTH,
+                );
+                const missing = paths.filter((_, i) => !exists[i]);
                 if (missing.length > 0) return ok({ status: "not_found" as const, missing });
 
                 // ctx.ask throws AskRejectedError on denial; deliberately not caught — the loop maps it.
                 await ctx.ask(askRequest("add", analysisId, paths));
-                const added = addInputs(analysisId, paths, cwd);
+                const added = await addInputs(analysisId, paths, cwd);
                 if (added.isErr()) {
                     const e = added.error;
                     if (e.type === "query_failed" && e.op === "classifyInputPath:notFound") return ok({ status: "not_found" as const, missing: paths });
@@ -148,7 +153,7 @@ export function createManageInputsTool() {
             // action === "remove"
             const current = listAnalysisInputs(analysisId);
             if (current.isErr()) return ok({ status: "error" as const, message: `could not read inputs: ${current.error.type}` });
-            const { matched, notInputs } = matchInputRefs(current.value, paths, cwd);
+            const { matched, notInputs } = await matchInputRefs(current.value, paths, cwd);
             if (matched.length === 0) return ok({ status: "removed" as const, removed: [], notInputs });
 
             await ctx.ask(

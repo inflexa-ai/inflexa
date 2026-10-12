@@ -1,6 +1,5 @@
-import { existsSync } from "node:fs";
 import { sep } from "node:path";
-import { err, ok, Result, type ResultAsync } from "neverthrow";
+import { err, ok, Result, ResultAsync } from "neverthrow";
 // The harness's Postgres error union, aliased so it never reads as the SQLite `DbError` this file also
 // carries — the two are different stores with different recoveries, and a prune abort has to name which.
 import type { AnalysisPurgeOutcome, DbError as PgError } from "@inflexa-ai/harness";
@@ -9,7 +8,8 @@ import type { Anchor } from "../../types/anchor.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getAnchor, listAnalysesByAnchor, listAnchors } from "../../db/primary_query.ts";
 import { deleteAnalysesForAnchor, deleteAnchor, relocateRawInputPrefix, updateAnchorCachedPath } from "../../db/primary_mutation.ts";
-import { canonicalPath } from "../../lib/paths.ts";
+import { pathExistsAsync } from "../../lib/fs.ts";
+import { canonicalPathAsync } from "../../lib/paths.ts";
 import { readMarker, type MarkerError } from "./marker.ts";
 import { resolveAnchor } from "./anchor.ts";
 
@@ -36,9 +36,13 @@ export type RepairOutcome = { outcome: "repaired" | "unchanged"; anchorId: strin
  * Sync the anchor whose marker sits at `path` back to that path. The marker travelled with the folder, so
  * its on-disk identity is the truth; the stored `cachedPath` is the stale hint this corrects.
  */
-export function repairAnchorAt(path: string): Result<RepairOutcome, RepairError> {
-    const dir = canonicalPath(path);
-    const marker = readMarker(dir);
+export function repairAnchorAt(path: string): ResultAsync<RepairOutcome, RepairError> {
+    return new ResultAsync(repairAnchor(path));
+}
+
+async function repairAnchor(path: string): Promise<Result<RepairOutcome, RepairError>> {
+    const dir = await canonicalPathAsync(path);
+    const marker = await readMarker(dir);
     if (marker.isErr()) return err({ type: "marker_unreadable", dir, cause: marker.error });
     if (marker.value === null) return err({ type: "no_marker", dir });
     const anchorId = marker.value.anchorId;
@@ -75,25 +79,26 @@ export type RelocateError = { type: "not_tracked"; path: string } | { type: "db_
  * even when no marker followed the folder — the case a repair cannot cover. `markerMissing` tells the
  * caller to confirm first, so a mistyped path cannot silently strand the identity.
  */
-export function relocateAnchor(fromPath: string, toPath: string, opts: { dryRun: boolean }): Result<RelocateOutcome, RelocateError> {
-    const from = canonicalPath(fromPath);
-    const to = canonicalPath(toPath);
-    return listAnchors()
-        .mapErr((cause): RelocateError => ({ type: "db_failed", cause }))
-        .andThen((anchors): Result<RelocateOutcome, RelocateError> => {
-            const anchor = anchors.find((a) => a.cachedPath === from);
-            if (!anchor) return err({ type: "not_tracked", path: from });
-            const targetMarker = readMarker(to).unwrapOr(null);
-            const outcome: RelocateOutcome = {
-                relocated: [{ anchorId: anchor.id, before: from, after: to }],
-                rawInputs: 0,
-                markerMissing: anchor.markerWritten && targetMarker?.anchorId !== anchor.id,
-            };
-            if (opts.dryRun) return ok(outcome);
-            return updateAnchorCachedPath(anchor.id, to)
-                .map(() => outcome)
-                .mapErr((cause): RelocateError => ({ type: "db_failed", cause }));
-        });
+export function relocateAnchor(fromPath: string, toPath: string, opts: { dryRun: boolean }): ResultAsync<RelocateOutcome, RelocateError> {
+    return new ResultAsync(relocate(fromPath, toPath, opts));
+}
+
+async function relocate(fromPath: string, toPath: string, opts: { dryRun: boolean }): Promise<Result<RelocateOutcome, RelocateError>> {
+    const [from, to] = await Promise.all([canonicalPathAsync(fromPath), canonicalPathAsync(toPath)]);
+    const anchors = listAnchors();
+    if (anchors.isErr()) return err({ type: "db_failed", cause: anchors.error });
+    const anchor = anchors.value.find((a) => a.cachedPath === from);
+    if (!anchor) return err({ type: "not_tracked", path: from });
+    const targetMarker = await readMarker(to).unwrapOr(null);
+    const outcome: RelocateOutcome = {
+        relocated: [{ anchorId: anchor.id, before: from, after: to }],
+        rawInputs: 0,
+        markerMissing: anchor.markerWritten && targetMarker?.anchorId !== anchor.id,
+    };
+    if (opts.dryRun) return ok(outcome);
+    return updateAnchorCachedPath(anchor.id, to)
+        .map(() => outcome)
+        .mapErr((cause): RelocateError => ({ type: "db_failed", cause }));
 }
 
 /**
@@ -119,17 +124,24 @@ export function relocateAnchorPrefix(fromPrefix: string, toPrefix: string, opts:
  * transient or relocatable miss is never selected. `searchRoots` are the folders that the reconciliation
  * searches first, as in {@link resolveAnchor}.
  */
-export function findDeadAnchors(searchRoots?: string[]): Result<Anchor[], DbError> {
-    return listAnchors().map((anchors) =>
-        anchors.filter((a) => {
-            if (!a.markerWritten) return false;
-            if (existsSync(a.cachedPath)) return false;
-            const refound = resolveAnchor(a.id, { searchRoots }).match(
-                (r) => r?.path ?? null,
-                () => null,
-            );
-            return refound === null;
-        }),
+export function findDeadAnchors(searchRoots?: string[]): ResultAsync<Anchor[], DbError> {
+    return listAnchors().asyncAndThen((anchors) =>
+        ResultAsync.fromSafePromise(
+            (async () => {
+                // One anchor at a time, as `recoverAnchors` does: each reconciliation can run its own bounded search.
+                const dead: Anchor[] = [];
+                for (const a of anchors) {
+                    if (!a.markerWritten) continue;
+                    if (await pathExistsAsync(a.cachedPath)) continue;
+                    const refound = await resolveAnchor(a.id, { searchRoots }).match(
+                        (r) => r?.path ?? null,
+                        () => null,
+                    );
+                    if (refound === null) dead.push(a);
+                }
+                return dead;
+            })(),
+        ),
     );
 }
 

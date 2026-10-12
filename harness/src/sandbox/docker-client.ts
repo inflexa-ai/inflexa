@@ -399,7 +399,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         cache: cacheBindable,
                     });
 
-                    const hostTreePath = config.resolveWorkspaceRoot(analysisId);
+                    const hostTreePath = await config.resolveWorkspaceRoot(analysisId);
                     // `tailWritePrefix` (not a raw `join`) so the RW bind source runs through
                     // the same validation as the pre-created write tree — a crafted stepId or
                     // a crafted tail cannot escape the resolved root into the container. The

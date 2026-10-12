@@ -99,7 +99,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
     await onProgress("starting", "Beginning literature-grounded synthesis");
 
     try {
-        const workspaceRoot = resolveWorkspaceRoot(analysisId);
+        const workspaceRoot = await resolveWorkspaceRoot(analysisId);
         const summaries = await loadStepSummariesFromDisk({
             workspaceRoot,
             runId,

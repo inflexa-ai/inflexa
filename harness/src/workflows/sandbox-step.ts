@@ -308,12 +308,12 @@ export interface SandboxStepDeps {
      * agent from the catalog, wires its workspace tools, and returns the
      * configured `AgentDefinition` runAgent will drive.
      */
-    buildAgent(ctx: SandboxAgentBuildContext): AgentDefinition;
+    buildAgent(ctx: SandboxAgentBuildContext): Promise<AgentDefinition>;
     /**
      * Resolve the absolute writable artifact prefix for this step. The
      * workspace mutate tools enforce write confinement against this path.
      */
-    resolveWritePrefix(input: SandboxStepInput): string;
+    resolveWritePrefix(input: SandboxStepInput): Promise<string>;
 }
 
 /**
@@ -472,7 +472,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // "conversation-agent"). `run-agent.ts` builds source from
     // `session.provenance.agentId`, and billing tags ride the same provenance.
     const session = forSubAgent(input.runSession, input.agentId);
-    const writePrefix = deps.resolveWritePrefix(input);
+    const writePrefix = await deps.resolveWritePrefix(input);
 
     const lineageCollector = createLineageCollector(input);
 
@@ -523,7 +523,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     const stepDeadlineMs = (await DBOS.now()) + (input.timeoutSeconds ?? DEFAULT_STEP_TIMEOUT_SECONDS) * 1000;
     const blockerHolder = createBlockerHolder();
     const fileMetadata = createFileMetadataCell();
-    const agent = deps.buildAgent({
+    const agent = await deps.buildAgent({
         input,
         session,
         sandbox,

@@ -213,13 +213,13 @@ describe("createReportSessionRuntime", () => {
         try {
             await writeSynthesis(root, runId, ["12345", "678"]);
 
-            const runtime = createReportSessionRuntime({ pool, resolveWorkspaceRoot: () => root });
+            const runtime = createReportSessionRuntime({ pool, resolveWorkspaceRoot: async () => root });
             const ensured = await runtime.ensureSessionState(threadId);
             expect(ensured.outcome).toBe("ready");
 
             // The stored row is the anchor. A fresh runtime reads it back, thus the assertion is on the
             // durable state and not on the return of the pin.
-            const loaded = await createReportSessionRuntime({ pool, resolveWorkspaceRoot: () => root }).gateway.load(threadId);
+            const loaded = await createReportSessionRuntime({ pool, resolveWorkspaceRoot: async () => root }).gateway.load(threadId);
             expect(loaded.outcome).toBe("found");
             if (loaded.outcome !== "found") throw new Error("expected found");
             expect(loaded.state.snapshot.citations).toEqual(["pmid:12345", "pmid:678"]);

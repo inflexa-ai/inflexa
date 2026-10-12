@@ -100,7 +100,7 @@ export function anchorRoutes(boot: ServerBoot, opts: AnchorRouteOpts = DEFAULT_A
     routes.post("/prune", async (c) => {
         const body = await readBody(c, pruneBody);
         if (body.isErr()) return body.error;
-        const found = findDeadAnchors(body.value.cwd === undefined ? undefined : [body.value.cwd]);
+        const found = await findDeadAnchors(body.value.cwd === undefined ? undefined : [body.value.cwd]);
         if (found.isErr()) return internalError(c, found.error, "find the dead anchors");
         const wanted = body.value.anchorIds === undefined ? null : new Set(body.value.anchorIds);
         const selected = found.value.filter((a) => wanted === null || wanted.has(a.id));

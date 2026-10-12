@@ -82,14 +82,14 @@ function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParit
         // Default: no orphaned row (the common case) — `false` = nothing reset.
         reconcile: () => okAsync(false),
         // Default: a non-empty set equal to STAGED's file ids — the common (re-)trigger left-hand side.
-        enumerate: () => ok(new Set(["f1", "f2"])),
+        enumerate: () => okAsync(new Set(["f1", "f2"])),
         loadStatus: () => okAsync(null),
         clear: () => okAsync(true),
         // A fixed workspace data dir — no real anchor exists offline, and the fake `stage` ignores it.
-        dataDir: () => ok("/tmp/parity-data"),
+        dataDir: () => okAsync("/tmp/parity-data"),
         // Default: nothing on disk yet — the state every (re-)trigger path is in, and the one a failed
         // row must materialize out of. A test asserting the skip overrides this to `true`.
-        materialized: () => ok(false),
+        materialized: () => okAsync(false),
         stage: async () => {
             ran.stage = true;
             return ok(STAGED);
@@ -111,7 +111,7 @@ function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParit
 
 describe("ensureProfileAtParity — empty input set", () => {
     test("a settled profile over an emptied input set is cleared", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set<string>()), loadStatus: () => okAsync(completedWith()) });
+        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(new Set<string>()), loadStatus: () => okAsync(completedWith()) });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
         expect(outcome).toEqual({ kind: "cleared", materialized: false });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
@@ -119,7 +119,7 @@ describe("ensureProfileAtParity — empty input set", () => {
 
     test("a clear skipped by the running guard (raced a live run) is already_running", async () => {
         const { seams } = trackingSeams({
-            enumerate: () => ok(new Set<string>()),
+            enumerate: () => okAsync(new Set<string>()),
             loadStatus: () => okAsync(completedWith()),
             clear: () => okAsync(false),
         });
@@ -128,7 +128,7 @@ describe("ensureProfileAtParity — empty input set", () => {
 
     test("a clear fault is failed", async () => {
         const { seams } = trackingSeams({
-            enumerate: () => ok(new Set<string>()),
+            enumerate: () => okAsync(new Set<string>()),
             loadStatus: () => okAsync(completedWith()),
             clear: () => errAsync({ type: "query_failed", op: "clearDataProfile", cause: new Error("db down") }),
         });
@@ -138,7 +138,7 @@ describe("ensureProfileAtParity — empty input set", () => {
     test("an emptied set that was never profiled is no_inputs (no clear)", async () => {
         let clearCalled = false;
         const { seams } = trackingSeams({
-            enumerate: () => ok(new Set<string>()),
+            enumerate: () => okAsync(new Set<string>()),
             loadStatus: () => okAsync(null),
             clear: () => {
                 clearCalled = true;
@@ -152,7 +152,7 @@ describe("ensureProfileAtParity — empty input set", () => {
     test("an emptied set never clears while a profile runs — already_running (no clear)", async () => {
         let clearCalled = false;
         const { seams } = trackingSeams({
-            enumerate: () => ok(new Set<string>()),
+            enumerate: () => okAsync(new Set<string>()),
             loadStatus: () => okAsync(statusOf("running")),
             clear: () => {
                 clearCalled = true;
@@ -170,9 +170,9 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // re-profile on any difference. It no longer asks: a chat open is not evidence that anything
         // changed, and the party that would know re-profiles on its own edge.
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1"), file("f2"), file("f3")])),
+            enumerate: () => okAsync(enumerated([file("f1"), file("f2"), file("f3")])),
             loadStatus: () => okAsync(completedWith()),
-            materialized: () => ok(true),
+            materialized: () => okAsync(true),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
@@ -183,9 +183,9 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // Reading that as "the data changed" is what fired a full LLM re-profile on a `git checkout`,
         // an `rsync` without `-a`, or an unzip. `forceReprofile` remains the repair for a real edit.
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1", 999, 5000), file("f2")])),
+            enumerate: () => okAsync(enumerated([file("f1", 999, 5000), file("f2")])),
             loadStatus: () => okAsync(completedWithSignature([file("f1"), file("f2")])),
-            materialized: () => ok(true),
+            materialized: () => okAsync(true),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
@@ -195,9 +195,9 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // Materialization is not conditioned on the profile lifecycle: a workspace behind the database
         // withholds the user's files from the agent whatever the ledger says.
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
+            enumerate: () => okAsync(enumerated([file("f1"), file("f2")])),
             loadStatus: () => okAsync(completedWith()),
-            materialized: () => ok(false),
+            materialized: () => okAsync(false),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
         expect(ran.stage).toBe(true);
@@ -208,9 +208,9 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // `completed` with no result is the empty-manifest path. It used to read as drift and re-trigger
         // on every open; there is nothing here to establish that anything has changed since.
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
+            enumerate: () => okAsync(enumerated([file("f1"), file("f2")])),
             loadStatus: () => okAsync(statusOf("completed")),
-            materialized: () => ok(true),
+            materialized: () => okAsync(true),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
@@ -225,9 +225,9 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // reports the materialization STATE the check finished in — the predicate just confirmed the
         // files are on disk — never whether this drive did the writing.
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(new Set(["f1", "f2"])),
+            enumerate: () => okAsync(new Set(["f1", "f2"])),
             loadStatus: () => okAsync(statusOf("failed")),
-            materialized: () => ok(true),
+            materialized: () => okAsync(true),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "skipped_failed", materialized: true });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
@@ -241,9 +241,9 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         let claimed = false;
         let ranRun = false;
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(new Set(["f1", "f2", "f3"])),
+            enumerate: () => okAsync(new Set(["f1", "f2", "f3"])),
             loadStatus: () => okAsync(statusOf("failed")),
-            materialized: () => ok(false),
+            materialized: () => okAsync(false),
             retryClaim: () => {
                 claimed = true;
                 return okAsync(true);
@@ -268,7 +268,7 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // on disk but profiling did not run" from "nothing happened".
         const { seams, ran } = trackingSeams({
             loadStatus: () => okAsync(statusOf("failed")),
-            materialized: () => ok(false),
+            materialized: () => okAsync(false),
             retryClaim: () => okAsync(false),
         });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
@@ -298,11 +298,11 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // stand in for "the set is on disk". It stays a stat/readdir walk — no hash, no staging.
         let askedMaterialized = false;
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
+            enumerate: () => okAsync(enumerated([file("f1"), file("f2")])),
             loadStatus: () => okAsync(completedWith()),
             materialized: () => {
                 askedMaterialized = true;
-                return ok(true);
+                return okAsync(true);
             },
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
@@ -311,13 +311,13 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
     });
 
     test("a pending / never-profiled analysis triggers (not restarted)", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set(["f1", "f2"])), loadStatus: () => okAsync(null) });
+        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(new Set(["f1", "f2"])), loadStatus: () => okAsync(null) });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: false, materialized: true });
         expect(ran.stage).toBe(true);
     });
 
     test("a running profile skips without staging", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set(["f1", "f2"])), loadStatus: () => okAsync(statusOf("running")) });
+        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(new Set(["f1", "f2"])), loadStatus: () => okAsync(statusOf("running")) });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
         expect(ran.stage).toBe(false);
     });
@@ -326,7 +326,7 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
 describe("reprofileForInputChange", () => {
     test("re-profiles a completed row — the input mutation IS the evidence", async () => {
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1"), file("f2"), file("f3")])),
+            enumerate: () => okAsync(enumerated([file("f1"), file("f2"), file("f3")])),
             loadStatus: () => okAsync(completedWith()),
             trigger: () => okAsync("restarted"),
         });
@@ -339,9 +339,9 @@ describe("reprofileForInputChange", () => {
         // The materialized predicate answers "is the tree current", never "should this re-profile".
         // Removing an input the workspace never held would otherwise leave the profile describing it.
         const { seams } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1")])),
+            enumerate: () => okAsync(enumerated([file("f1")])),
             loadStatus: () => okAsync(completedWith()),
-            materialized: () => ok(true),
+            materialized: () => okAsync(true),
             trigger: () => okAsync("restarted"),
         });
         expect((await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).kind).toBe("triggered");
@@ -350,11 +350,11 @@ describe("reprofileForInputChange", () => {
     test("retries a failed row instead of skipping it — that set is not the one that failed", async () => {
         let claimed = false;
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
+            enumerate: () => okAsync(enumerated([file("f1"), file("f2")])),
             loadStatus: () => okAsync(statusOf("failed")),
             // Deliberately `true`: the open drive would short-circuit to `skipped_failed` here, and an
             // input mutation must not, because the set demonstrably moved.
-            materialized: () => ok(true),
+            materialized: () => okAsync(true),
             retryClaim: () => {
                 claimed = true;
                 return okAsync(true);
@@ -368,7 +368,7 @@ describe("reprofileForInputChange", () => {
 
     test("an emptied input set clears the profile rather than re-profiling nothing", async () => {
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(new Set<string>()),
+            enumerate: () => okAsync(new Set<string>()),
             loadStatus: () => okAsync(completedWith()),
         });
         expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "cleared", materialized: false });
@@ -377,7 +377,7 @@ describe("reprofileForInputChange", () => {
 
     test("defers to a live run — staging would delete the tree its sandbox is reading", async () => {
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1")])),
+            enumerate: () => okAsync(enumerated([file("f1")])),
             loadStatus: () => okAsync(statusOf("running")),
         });
         expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
@@ -389,7 +389,7 @@ describe("ensureProfileAtParity — faults", () => {
     test("an enumerate fault is failed before any ledger read", async () => {
         let statusRead = false;
         const { seams, ran } = trackingSeams({
-            enumerate: () => err({ type: "query_failed", op: "enumerateInputSignatures", cause: new Error("db down") }),
+            enumerate: () => errAsync({ type: "query_failed", op: "enumerateInputSignatures", cause: new Error("db down") }),
             loadStatus: () => {
                 statusRead = true;
                 return okAsync(null);
@@ -458,11 +458,11 @@ describe("ensureProfileAtParity — trigger path (real seed)", () => {
         } as unknown as HarnessRuntime;
         const seams: ProfileParitySeams = {
             reconcile: () => okAsync(false),
-            enumerate: () => ok(new Set(["f1", "f2"])),
+            enumerate: () => okAsync(new Set(["f1", "f2"])),
             loadStatus: () => okAsync(null),
             clear: () => okAsync(true),
-            dataDir: () => ok("/tmp/parity-data"),
-            materialized: () => ok(false),
+            dataDir: () => okAsync("/tmp/parity-data"),
+            materialized: () => okAsync(false),
             stage: async () => ok(STAGED),
             // The real shared core — this is the whole point of the assertion below.
             seed: seedProfileLedger,
@@ -517,7 +517,7 @@ describe("ensureProfileAtParity — orphaned-profile reconcile (S2)", () => {
 describe("forceReprofile", () => {
     test("a completed profile at parity still re-profiles (force ignores the drift gate)", async () => {
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(new Set(["f1", "f2"])),
+            enumerate: () => okAsync(new Set(["f1", "f2"])),
             loadStatus: () => okAsync(completedWith()),
             trigger: () => okAsync("restarted"),
         });
@@ -533,7 +533,7 @@ describe("forceReprofile", () => {
         const { seams, ran } = trackingSeams({
             materialized: () => {
                 askedMaterialized = true;
-                return ok(true);
+                return okAsync(true);
             },
         });
         expect((await forceReprofile(stubRuntime, ANALYSIS, seams)).kind).toBe("triggered");
@@ -542,7 +542,7 @@ describe("forceReprofile", () => {
     });
 
     test("an empty input set is no_inputs — nothing staged", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set<string>()) });
+        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(new Set<string>()) });
         expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "no_inputs", materialized: false });
         expect(ran.stage).toBe(false);
     });

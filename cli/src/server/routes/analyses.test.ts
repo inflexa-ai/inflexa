@@ -72,9 +72,9 @@ function tmp(): string {
 }
 
 /** A tracked folder with its marker and an analysis homed in it. */
-function seedAnalysis(dir: string, name = "Alpha", over: Partial<Analysis> = {}): Analysis {
+async function seedAnalysis(dir: string, name = "Alpha", over: Partial<Analysis> = {}): Promise<Analysis> {
     const anchorId = randomUUIDv7();
-    writeMarker(dir, anchorId)._unsafeUnwrap();
+    (await writeMarker(dir, anchorId))._unsafeUnwrap();
     insertAnchor({ id: anchorId, createdAt: 1, updatedAt: 1, cachedPath: dir, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
     return insertAnalysis({
         id: randomUUIDv7(),
@@ -100,7 +100,7 @@ afterEach(() => {
 describe("POST /api/v1/analyses/resolve", () => {
     test("a tracked folder with one analysis resolves to it, with the folder and the loud context line", async () => {
         const dir = tmp();
-        const a = seedAnalysis(dir);
+        const a = await seedAnalysis(dir);
         const response = await appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: dir }));
         expect(response.status).toBe(200);
         const view = (await response.json()) as ResolvedContextView;
@@ -110,8 +110,8 @@ describe("POST /api/v1/analyses/resolve", () => {
 
     test("a reference by name names the other analyses that share the name", async () => {
         const firstDir = tmp();
-        const first = seedAnalysis(firstDir, "Same");
-        const second = seedAnalysis(tmp(), "Same", { createdAt: 2 });
+        const first = await seedAnalysis(firstDir, "Same");
+        const second = await seedAnalysis(tmp(), "Same", { createdAt: 2 });
         const view = (await (
             await appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: tmp(), ref: "Same" }))
         ).json()) as ResolvedContextView;
@@ -122,7 +122,7 @@ describe("POST /api/v1/analyses/resolve", () => {
     });
 
     test("`touch: false` records no sighting of the anchor folder; the default does", async () => {
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         await appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: tmp(), ref: a.id, touch: false }));
         expect(getAnchor(a.anchorId)._unsafeUnwrap()?.lastSeen).toBe(1);
 
@@ -144,8 +144,8 @@ describe("POST /api/v1/analyses/resolve", () => {
 describe("GET /api/v1/analyses", () => {
     test("pages the analyses newest first, with the cached folder and the usage of each one", async () => {
         const dir = tmp();
-        const older = seedAnalysis(dir, "Older", { createdAt: 1 });
-        const newer = seedAnalysis(tmp(), "Newer", { createdAt: 2 });
+        const older = await seedAnalysis(dir, "Older", { createdAt: 1 });
+        const newer = await seedAnalysis(tmp(), "Newer", { createdAt: 2 });
         upsertLlmUsage({
             recordKey: "k1",
             recordedAt: 1,
@@ -166,8 +166,8 @@ describe("GET /api/v1/analyses", () => {
 
     test("narrows to a project by name, and an unknown project is a 404", async () => {
         const project = createProject({ name: asStr256("Liver"), description: null, tags: [] })._unsafeUnwrap();
-        const inProject = seedAnalysis(tmp(), "In", { projectId: project.id });
-        seedAnalysis(tmp(), "Out");
+        const inProject = await seedAnalysis(tmp(), "In", { projectId: project.id });
+        await seedAnalysis(tmp(), "Out");
 
         const list = (await (await appWith(idleBoot()).request("/api/v1/analyses?project=Liver")).json()) as AnalysisList;
         expect(list.analyses.map((a) => a.id)).toEqual([inProject.id]);
@@ -226,7 +226,7 @@ describe("the analysis guard", () => {
     });
 
     test("409 `locked` while a different live process holds the instance lock of the analysis", async () => {
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         // The parent of the test process is alive for the whole run, thus its pid is a live foreign holder.
         mkdirSync(join(instanceLockPath(a.id), ".."), { recursive: true });
         writeFileSync(instanceLockPath(a.id), String(process.ppid));
@@ -255,7 +255,7 @@ describe("the analysis guard", () => {
 describe("GET {A}", () => {
     test("the analysis with its anchor, its input count, and the busy reasons of the gate", async () => {
         const dir = tmp();
-        const a = seedAnalysis(dir);
+        const a = await seedAnalysis(dir);
         insertAnalysisInput({ path: "in.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
         const busy: AnalysisRouteOpts = { ...IDLE, busyReasons: async () => ["data_profile"] };
 
@@ -270,7 +270,7 @@ describe("GET {A}", () => {
 
     test("`cwd` reconciles a moved anchor folder from the folder of the client, not from the folder of the server", async () => {
         const before = tmp();
-        const a = seedAnalysis(before);
+        const a = await seedAnalysis(before);
         const after = join(tmp(), "moved");
         renameSync(before, after);
 
@@ -279,7 +279,7 @@ describe("GET {A}", () => {
     });
 
     test("a relative `cwd` is a 400", async () => {
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         const response = await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?cwd=here`);
         expect(response.status).toBe(400);
         expect(((await response.json()) as ApiError).error).toBe("validation_error");
@@ -287,7 +287,7 @@ describe("GET {A}", () => {
 
     test("`touch=false` records no sighting of the anchor folder; the default does", async () => {
         // The poll of a chat reads the analysis at each tick. A read of a poll is not an open of the folder.
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         expect((await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?touch=false`)).status).toBe(200);
         expect(getAnchor(a.anchorId)._unsafeUnwrap()?.lastSeen).toBe(1);
 
@@ -296,7 +296,7 @@ describe("GET {A}", () => {
     });
 
     test("a `touch` that is not `true` or `false` is a 400", async () => {
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         const response = await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?touch=no`);
         expect(response.status).toBe(400);
         expect(((await response.json()) as ApiError).error).toBe("validation_error");
@@ -305,7 +305,7 @@ describe("GET {A}", () => {
 
 describe("PATCH {A}", () => {
     test("a rename while work holds the folder is a 409 `busy` that names the work, and nothing changes", async () => {
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         const busy: AnalysisRouteOpts = { ...IDLE, busyReasons: async () => ["chat_turn", "run"] };
         const response = await appWith(idleBoot(), busy).request(`/api/v1/analyses/${a.id}`, json("PATCH", { name: "Beta" }));
         expect(response.status).toBe(409);
@@ -319,7 +319,7 @@ describe("PATCH {A}", () => {
 
     test("a rename moves the workspace folder to the new slug", async () => {
         const dir = tmp();
-        const a = seedAnalysis(dir);
+        const a = await seedAnalysis(dir);
         mkdirSync(join(dir, ".inflexa", "analyses", "alpha"), { recursive: true });
         const updated = (await (
             await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`, json("PATCH", { name: "Beta" }))
@@ -331,7 +331,7 @@ describe("PATCH {A}", () => {
 
     test("sets and clears the project by name, and an unknown project changes nothing", async () => {
         const project = createProject({ name: asStr256("Liver"), description: null, tags: [] })._unsafeUnwrap();
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         const set = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`, json("PATCH", { project: "Liver" }))).json()) as AnalysisDetail;
         expect(set.project?.id).toBe(project.id);
 
@@ -358,7 +358,7 @@ describe("DELETE {A} — the ordered delete", () => {
         const steps: string[] = [];
         const opts: AnalysisRouteOpts = {
             busyReasons: async () => out.busy ?? [],
-            hasWorkspaceOnDisk: () => out.onDisk ?? true,
+            hasWorkspaceOnDisk: async () => out.onDisk ?? true,
             flushProvenance: async () => {
                 steps.push("flush");
                 return out.flushed ?? true;
@@ -390,7 +390,7 @@ describe("DELETE {A} — the ordered delete", () => {
     }
 
     test("keep: flush, export, archive, purge, then the row, then the farm", async () => {
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         const l = ladder();
         const response = await appWith(readyBoot, l.opts).request(`/api/v1/analyses/${a.id}?workspace=keep&export=prov-json`, { method: "DELETE" });
         expect(response.status).toBe(200);
@@ -401,12 +401,12 @@ describe("DELETE {A} — the ordered delete", () => {
 
     test("delete: no export, and an export with no folder on disk is skipped", async () => {
         const deleted = ladder();
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         await appWith(readyBoot, deleted.opts).request(`/api/v1/analyses/${a.id}?workspace=delete&export=prov-json`, { method: "DELETE" });
         expect(deleted.steps).toEqual(["dispose:delete", "purge", "delete-row", "remove-farm"]);
 
         const noFolder = ladder({ onDisk: false });
-        const b = seedAnalysis(tmp(), "Beta");
+        const b = await seedAnalysis(tmp(), "Beta");
         const body = (await (
             await appWith(readyBoot, noFolder.opts).request(`/api/v1/analyses/${b.id}?export=prov-json`, { method: "DELETE" })
         ).json()) as DeleteAnalysisResponse;
@@ -415,7 +415,7 @@ describe("DELETE {A} — the ordered delete", () => {
     });
 
     test("a failed purge keeps the row, and the message names the archive path", async () => {
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         const l = ladder({ purgeError: { type: "query_failed", op: "purgeAnalysis", cause: new Error("boom") } });
         const response = await appWith(readyBoot, l.opts).request(`/api/v1/analyses/${a.id}`, { method: "DELETE" });
         expect(response.status).toBe(500);
@@ -427,7 +427,7 @@ describe("DELETE {A} — the ordered delete", () => {
     });
 
     test("an unusable folder stops the delete before any store changes", async () => {
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         const l = ladder({ disposalError: { type: "workspace_unavailable", message: "the folder is not writable" } });
         const response = await appWith(readyBoot, l.opts).request(`/api/v1/analyses/${a.id}`, { method: "DELETE" });
         expect(response.status).toBe(409);
@@ -437,8 +437,8 @@ describe("DELETE {A} — the ordered delete", () => {
 
     test("a slow remove of the workspace folder holds no other request", async () => {
         const dir = tmp();
-        const a = seedAnalysis(dir);
-        const b = seedAnalysis(tmp(), "Beta");
+        const a = await seedAnalysis(dir);
+        const b = await seedAnalysis(tmp(), "Beta");
         const root = join(dir, defaultOutputSubdir(a.slug));
         mkdirSync(root, { recursive: true });
         let release = (): void => undefined;
@@ -472,8 +472,34 @@ describe("DELETE {A} — the ordered delete", () => {
         expect((await deleting).status).toBe(200);
     });
 
+    test("a read of the workspace folder that does not end stops only its own request", async () => {
+        const a = await seedAnalysis(tmp());
+        const b = await seedAnalysis(tmp(), "Beta");
+        let release = (): void => undefined;
+        const held = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const l = ladder();
+        const app = appWith(readyBoot, {
+            ...l.opts,
+            hasWorkspaceOnDisk: async (analysis) => {
+                await held;
+                return DEFAULT_ANALYSIS_ROUTE_OPTS.hasWorkspaceOnDisk(analysis);
+            },
+        });
+        const pending = Promise.resolve(app.request(`/api/v1/analyses/${a.id}?workspace=keep&export=prov-json`, { method: "DELETE" }));
+
+        expect((await app.request(`/api/v1/analyses/${b.id}`)).status).toBe(200);
+        expect(l.steps).toEqual([]);
+
+        release();
+        expect((await pending).status).toBe(200);
+        // The real read finds no workspace folder, thus the delete steps over the export.
+        expect(l.steps).toEqual(["dispose:archive", "purge", "delete-row", "remove-farm"]);
+    });
+
     test("409 `busy` while work holds the folder, and 503 `unavailable` with no runtime", async () => {
-        const a = seedAnalysis(tmp());
+        const a = await seedAnalysis(tmp());
         const busy = ladder({ busy: ["run"] });
         const refused = await appWith(readyBoot, busy.opts).request(`/api/v1/analyses/${a.id}`, { method: "DELETE" });
         expect(refused.status).toBe(409);
@@ -490,7 +516,7 @@ describe("DELETE {A} — the ordered delete", () => {
 describe("POST {A}/output-dir", () => {
     test("makes the workspace folder and gives its path", async () => {
         const dir = tmp();
-        const a = seedAnalysis(dir);
+        const a = await seedAnalysis(dir);
         const view = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/output-dir`, { method: "POST" })).json()) as OutputDirView;
         expect(view.path).toBe(join(dir, ".inflexa", "analyses", "alpha"));
         expect(existsSync(view.path)).toBe(true);
@@ -500,7 +526,7 @@ describe("POST {A}/output-dir", () => {
 describe("the inputs of an analysis", () => {
     test("POST adds, GET lists with the absolute path, and a missing path is a 400", async () => {
         const dir = tmp();
-        const a = seedAnalysis(dir);
+        const a = await seedAnalysis(dir);
         writeFileSync(join(dir, "a.csv"), "x");
         const app = appWith(idleBoot());
 
@@ -519,7 +545,7 @@ describe("the inputs of an analysis", () => {
         // A listing is not a sighting. `resolveAnchor` writes a `lastSeen` heartbeat by default, and a
         // write for each row would make it measure the reads of a list.
         const dir = tmp();
-        const a = seedAnalysis(dir);
+        const a = await seedAnalysis(dir);
         insertAnalysisInput({ path: "a.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
         await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`);
         expect(getAnchor(a.anchorId)._unsafeUnwrap()?.lastSeen).toBe(1);
@@ -527,7 +553,7 @@ describe("the inputs of an analysis", () => {
 
     test("POST remove records no sighting of an anchor folder", async () => {
         const dir = tmp();
-        const a = seedAnalysis(dir);
+        const a = await seedAnalysis(dir);
         insertAnalysisInput({ path: "a.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
         insertAnalysisInput({ path: "b.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
         await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs/remove`, json("POST", { paths: [join(dir, "a.csv")] }));
@@ -541,7 +567,7 @@ describe("the inputs of an analysis", () => {
 
     test("PUT replaces the set, and keeps an input whose folder cannot be located", async () => {
         const dir = tmp();
-        const a = seedAnalysis(dir);
+        const a = await seedAnalysis(dir);
         writeFileSync(join(dir, "old.csv"), "x");
         writeFileSync(join(dir, "new.csv"), "x");
         insertAnalysisInput({ path: "old.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
@@ -564,7 +590,7 @@ describe("the inputs of an analysis", () => {
 
     test("POST remove matches the absolute path or the stored path, and names the paths that match nothing", async () => {
         const dir = tmp();
-        const a = seedAnalysis(dir);
+        const a = await seedAnalysis(dir);
         insertAnalysisInput({ path: "a.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
         insertAnchor({ id: "lost", createdAt: 1, updatedAt: 1, cachedPath: "/gone/forever", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysisInput({ path: "far.csv", isDir: false, analysisId: a.id, anchorId: "lost" })._unsafeUnwrap();

@@ -160,7 +160,7 @@ const realParitySeams: ProfileParitySeams = {
  * already-materialized check and {@link materializeInputs}, so the predicate and the write it gates can
  * never be asked about different trees.
  */
-function resolveDataDir(analysis: Analysis, seams: ProfileParitySeams): Result<string, string> {
+function resolveDataDir(analysis: Analysis, seams: ProfileParitySeams): ResultAsync<string, string> {
     return seams.dataDir(analysis).mapErr((e) => (e.type === "workspace_unavailable" ? e.message : `workspace resolution failed (${e.type})`));
 }
 
@@ -298,7 +298,7 @@ async function runProfileLadder(
         (e) => getLogger("harness").warn({ analysisId: analysis.id, err: e }, "orphaned-profile reconcile failed"),
     );
 
-    const enumerateResult = seams.enumerate(analysis.id);
+    const enumerateResult = await seams.enumerate(analysis.id);
     if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})`, materialized: false };
     const currentPaths = enumerateResult.value;
 
@@ -332,7 +332,7 @@ async function runProfileLadder(
         // re-runs the check when the run reaches either terminal state.
         return { kind: "already_running", materialized: false };
     }
-    const dataDirResult = resolveDataDir(analysis, seams);
+    const dataDirResult = await resolveDataDir(analysis, seams);
     if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, materialized: false };
     const dataDir = dataDirResult.value;
 
@@ -345,7 +345,7 @@ async function runProfileLadder(
     // and a workspace behind the database withholds the user's files from the agent whatever the ledger
     // says. `already_profiled` reports the materialization STATE, not whether this drive performed it.
     if (cause === "open" && status?.status === "completed") {
-        const materializedResult = seams.materialized(analysis.id, dataDir);
+        const materializedResult = await seams.materialized(analysis.id, dataDir);
         if (materializedResult.isErr()) {
             return { kind: "failed", reason: `could not check the staged inputs (${materializedResult.error.type})`, materialized: false };
         }
@@ -366,7 +366,7 @@ async function runProfileLadder(
     // changed under a wedged analysis or it never landed — and it gets both the files and a fresh run.
     // An "inputs_changed" drive skips this entirely: the set demonstrably is not the one that failed.
     if (cause === "open" && status?.status === "failed") {
-        const materializedResult = seams.materialized(analysis.id, dataDir);
+        const materializedResult = await seams.materialized(analysis.id, dataDir);
         if (materializedResult.isErr()) {
             return { kind: "failed", reason: `could not check the staged inputs (${materializedResult.error.type})`, materialized: false };
         }
@@ -462,7 +462,7 @@ export async function forceReprofile(runtime: HarnessRuntime, analysis: Analysis
         (e) => getLogger("harness").warn({ analysisId: analysis.id, err: e }, "orphaned-profile reconcile failed"),
     );
 
-    const enumerateResult = seams.enumerate(analysis.id);
+    const enumerateResult = await seams.enumerate(analysis.id);
     if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})`, materialized: false };
     if (enumerateResult.value.size === 0) return { kind: "no_inputs", materialized: false };
 
@@ -473,7 +473,7 @@ export async function forceReprofile(runtime: HarnessRuntime, analysis: Analysis
     // and already-materialized gates the open drive applies, because the user asked for it.
     if (statusResult.value?.status === "running") return { kind: "already_running", materialized: false };
 
-    const dataDirResult = resolveDataDir(analysis, seams);
+    const dataDirResult = await resolveDataDir(analysis, seams);
     if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, materialized: false };
 
     const stagedResult = await materializeInputs(analysis, dataDirResult.value, seams);

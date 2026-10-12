@@ -122,7 +122,7 @@ export interface ReportSessionAgentDeps {
      * Reference-resolution factory -- absent until a realization lands; the preview tool and the record tool
      * degrade as data. The factory binds one analysis, thus a tool makes the resolver over the scope of the call.
      */
-    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
+    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => Promise<ReferenceResolver>;
     /**
      * Page-asset lookup -- the preview tool maps the module specifier of a manifest
      * entry onto a file on disk. Omitted falls back to the module resolution of the

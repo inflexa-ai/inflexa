@@ -210,7 +210,7 @@ describe("applyInputsDiff", () => {
 
         // The add batch is all-or-nothing (classification short-circuits on the vanished path);
         // the recorded input must survive because the removals never ran.
-        const { failures } = applyInputsDiff(a.id, [join(dir, "vanished.txt")], existing, dir);
+        const { failures } = await applyInputsDiff(a.id, [join(dir, "vanished.txt")], existing, dir);
         expect(failures.map((f) => f.op)).toEqual(["add"]);
         expect(listAnalysisInputs(a.id)._unsafeUnwrap()).toHaveLength(1);
     });
@@ -221,7 +221,7 @@ describe("applyInputsDiff", () => {
         const a = (await createAnalysis({ cwd: dir, name: str256("diff-b")._unsafeUnwrap(), inputPaths: [join(dir, "old.txt")] }))._unsafeUnwrap();
         const existing = listAnalysisInputs(a.id)._unsafeUnwrap();
 
-        const outcome = applyInputsDiff(a.id, [join(dir, "new.txt")], existing, dir);
+        const outcome = await applyInputsDiff(a.id, [join(dir, "new.txt")], existing, dir);
         expect(outcome.failures).toEqual([]);
         expect(outcome.added.map((i) => i.path)).toEqual(["new.txt"]);
         expect(outcome.removed.map((i) => i.path)).toEqual(["old.txt"]);
@@ -250,7 +250,7 @@ describe("renameAnalysisAndMoveWorkspace", () => {
         mkdirSync(join(oldRoot, "runs"), { recursive: true });
         writeFileSync(join(oldRoot, "runs", "log.txt"), "kept");
 
-        const outcome = renameAnalysisAndMoveWorkspace(a, str256("New Name")._unsafeUnwrap())._unsafeUnwrap();
+        const outcome = (await renameAnalysisAndMoveWorkspace(a, str256("New Name")._unsafeUnwrap()))._unsafeUnwrap();
         expect(outcome.workspaceMoved).toBe(true);
         expect(outcome.analysis.slug).toBe("new-name");
         // The tree moved wholesale: nothing left at the old slug, contents intact at the new one.
@@ -264,7 +264,7 @@ describe("renameAnalysisAndMoveWorkspace", () => {
         // Workspace creation is deferred to first use, so a never-opened analysis has no tree.
         const a = (await createAnalysis({ cwd: dir, name: str256("Loner")._unsafeUnwrap() }))._unsafeUnwrap();
 
-        const outcome = renameAnalysisAndMoveWorkspace(a, str256("Loner Renamed")._unsafeUnwrap())._unsafeUnwrap();
+        const outcome = (await renameAnalysisAndMoveWorkspace(a, str256("Loner Renamed")._unsafeUnwrap()))._unsafeUnwrap();
         expect(outcome.workspaceMoved).toBe(false);
         expect(outcome.moveError).toBeUndefined();
         expect(outcome.analysis.slug).toBe("loner-renamed");
@@ -281,7 +281,7 @@ describe("renameAnalysisAndMoveWorkspace", () => {
         mkdirSync(join(root, "runs"), { recursive: true });
         writeFileSync(join(root, "runs", "log.txt"), "kept");
 
-        const outcome = renameAnalysisAndMoveWorkspace(a, str256("My Analysis")._unsafeUnwrap())._unsafeUnwrap();
+        const outcome = (await renameAnalysisAndMoveWorkspace(a, str256("My Analysis")._unsafeUnwrap()))._unsafeUnwrap();
 
         expect(outcome.analysis.slug).toBe("my-analysis");
         expect(outcome.workspaceMoved).toBe(false);
@@ -294,7 +294,7 @@ describe("renameAnalysisAndMoveWorkspace", () => {
     test("renaming to a name that slugifies identically keeps the slug and updates the name", async () => {
         const a = (await createAnalysis({ cwd: dir, name: str256("My Analysis")._unsafeUnwrap() }))._unsafeUnwrap();
 
-        const outcome = renameAnalysisAndMoveWorkspace(a, str256("my   analysis")._unsafeUnwrap())._unsafeUnwrap();
+        const outcome = (await renameAnalysisAndMoveWorkspace(a, str256("my   analysis")._unsafeUnwrap()))._unsafeUnwrap();
 
         expect(outcome.analysis.slug).toBe("my-analysis");
         expect(outcome.analysis.name).toBe(str256("my   analysis")._unsafeUnwrap());
@@ -306,7 +306,7 @@ describe("renameAnalysisAndMoveWorkspace", () => {
         (await createAnalysis({ cwd: dir, name: str256("Taken")._unsafeUnwrap() }))._unsafeUnwrap();
         const b = (await createAnalysis({ cwd: dir, name: str256("Other")._unsafeUnwrap() }))._unsafeUnwrap();
 
-        const outcome = renameAnalysisAndMoveWorkspace(b, str256("Taken")._unsafeUnwrap())._unsafeUnwrap();
+        const outcome = (await renameAnalysisAndMoveWorkspace(b, str256("Taken")._unsafeUnwrap()))._unsafeUnwrap();
         expect(outcome.analysis.slug).toBe("taken-2");
     });
 });
@@ -326,7 +326,7 @@ describe("delete → recreate does not inherit the previous analysis's artifacts
 
     test("a new analysis of the same name resolves onto a clean tree once the old one is disposed", async () => {
         const first = (await createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() }))._unsafeUnwrap();
-        const firstRoot = resolveOutputDir(first)._unsafeUnwrap();
+        const firstRoot = (await resolveOutputDir(first))._unsafeUnwrap();
         mkdirSync(join(firstRoot, "runs", "run-1"), { recursive: true });
         writeFileSync(join(firstRoot, "runs", "run-1", "result.csv"), "old,data");
 
@@ -335,7 +335,7 @@ describe("delete → recreate does not inherit the previous analysis's artifacts
         deleteAnalysis(first.id)._unsafeUnwrap();
 
         const second = (await createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() }))._unsafeUnwrap();
-        const secondRoot = resolveOutputDir(second)._unsafeUnwrap();
+        const secondRoot = (await resolveOutputDir(second))._unsafeUnwrap();
 
         // The slug is reused — that is fine, because the bytes are no longer under it.
         expect(second.slug).toBe("trial");

@@ -34,7 +34,7 @@ import { constants as fsConstants, type Stats } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
-import { ResultAsync, err, errAsync, ok, type Result } from "neverthrow";
+import { ResultAsync, ok } from "neverthrow";
 
 import type { AgentSession } from "../auth/types.js";
 import { scopeResource } from "../auth/types.js";
@@ -72,10 +72,7 @@ export type StatResult =
     | { readonly kind: "out_of_scope" };
 
 /** A bounded prefix of a file's raw bytes. `bytes` may be shorter than requested. */
-export type ReadBytesResult =
-    | { readonly kind: "ok"; readonly bytes: Buffer }
-    | { readonly kind: "not_found" }
-    | { readonly kind: "out_of_scope" };
+export type ReadBytesResult = { readonly kind: "ok"; readonly bytes: Buffer } | { readonly kind: "not_found" } | { readonly kind: "out_of_scope" };
 
 // ── Seam interface ────────────────────────────────────────────────────────
 
@@ -142,22 +139,21 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
     const { resolveWorkspaceRoot, presignedFallback } = deps;
 
     /**
-     * `ResolveWorkspaceRoot` signals an unresolvable resource by throwing — the contract that
+     * `ResolveWorkspaceRoot` signals an unresolvable resource by a rejection — the contract that
      * makes a resolution failure inside a DBOS body a durably-failed step. This seam is not a
      * DBOS body: it promises `Result`, and the read tools it backs are reachable from a live
      * chat turn whose analysis folder may have been moved or deleted since the turn began.
      * Convert at the boundary so an unresolvable root is a value here, not an exception that
      * only survives because some caller happens to wrap it.
      */
-    function resolveFor(session: AgentSession, path: string, workingDir?: string): Result<{ resolved: ResolvedPath; workspaceRoot: string }, FsError> {
+    function resolveFor(session: AgentSession, path: string, workingDir?: string): ResultAsync<{ resolved: ResolvedPath; workspaceRoot: string }, FsError> {
         const { resourceId: analysisId } = scopeResource(session.scope);
-        let workspaceRoot: string;
-        try {
-            workspaceRoot = resolveWorkspaceRoot(analysisId);
-        } catch (cause) {
-            return err({ type: "read_failed", op: "workspace.resolveWorkspaceRoot", path: analysisId, cause });
-        }
-        return ok({ resolved: resolveWorkspacePath({ workspaceRoot, analysisId, path, workingDir }), workspaceRoot });
+        return ResultAsync.fromThrowable(resolveWorkspaceRoot, (cause): FsError => ({
+            type: "read_failed",
+            op: "workspace.resolveWorkspaceRoot",
+            path: analysisId,
+            cause,
+        }))(analysisId).map((workspaceRoot) => ({ resolved: resolveWorkspacePath({ workspaceRoot, analysisId, path, workingDir }), workspaceRoot }));
     }
 
     /**
@@ -171,16 +167,15 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
      * presigned-fallback handling still runs (a non-existent path leaks nothing).
      */
     function confinedResolve(session: AgentSession, path: string, workingDir?: string): ResultAsync<ResolvedPath, FsError> {
-        const base = resolveFor(session, path, workingDir);
-        if (base.isErr()) return errAsync(base.error);
-        const { resolved, workspaceRoot } = base.value;
-        if (resolved.kind === "out_of_scope") return okAsync<ResolvedPath>(resolved);
-        return ResultAsync.fromPromise(classifyWithinRoot(workspaceRoot, resolved.absolute), (cause): FsError => ({
-            type: "read_failed",
-            op: "workspace.confineRealpath",
-            path: resolved.absolute,
-            cause,
-        })).map((verdict): ResolvedPath => (verdict === "escaped" ? { kind: "out_of_scope" } : resolved));
+        return resolveFor(session, path, workingDir).andThen(({ resolved, workspaceRoot }): ResultAsync<ResolvedPath, FsError> => {
+            if (resolved.kind === "out_of_scope") return okAsync<ResolvedPath>(resolved);
+            return ResultAsync.fromPromise(classifyWithinRoot(workspaceRoot, resolved.absolute), (cause): FsError => ({
+                type: "read_failed",
+                op: "workspace.confineRealpath",
+                path: resolved.absolute,
+                cause,
+            })).map((verdict): ResolvedPath => (verdict === "escaped" ? { kind: "out_of_scope" } : resolved));
+        });
     }
 
     return {

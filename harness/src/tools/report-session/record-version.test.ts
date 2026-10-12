@@ -245,8 +245,8 @@ describe("createRecordVersionTool", () => {
             gateway,
             store,
             threads,
-            resolveWorkspaceRoot: () => root ?? suiteRoot,
-            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: async () => root ?? suiteRoot,
+            makeResolver: async () => createFixtureResolver(),
             ...(logger ? { logger } : {}),
             ...(emitSessionEvent ? { provenance: { emitSessionEvent } } : {}),
         });
@@ -317,11 +317,11 @@ describe("createRecordVersionTool", () => {
         const gateway = gatewayFor(threadId, metricDoc(), metricSnapshot, null);
         // The counting factory proves that the look refuses before the resolver constructs.
         let constructions = 0;
-        const makeResolver = () => {
+        const makeResolver = async () => {
             constructions += 1;
             return createFixtureResolver();
         };
-        const tool = createRecordVersionTool({ gateway, store, threads, resolveWorkspaceRoot: () => suiteRoot, makeResolver });
+        const tool = createRecordVersionTool({ gateway, store, threads, resolveWorkspaceRoot: async () => suiteRoot, makeResolver });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -341,8 +341,8 @@ describe("createRecordVersionTool", () => {
             gateway,
             store,
             threads,
-            resolveWorkspaceRoot: () => suiteRoot,
-            makeResolver: () => {
+            resolveWorkspaceRoot: async () => suiteRoot,
+            makeResolver: async () => {
                 throw new Error("the workspace root did not resolve");
             },
         });
@@ -615,18 +615,18 @@ describe("createRecordVersionTool", () => {
         // gives one fixture realization.
         const resolver = createFixtureResolver();
         let constructions = 0;
-        const makeResolver = () => {
+        const makeResolver = async () => {
             constructions += 1;
             return resolver;
         };
 
         const root = await makeRoot("record-shared-");
 
-        const previewTool = createPreviewReportTool({ gateway, makeResolver, resolveWorkspaceRoot: () => root });
+        const previewTool = createPreviewReportTool({ gateway, makeResolver, resolveWorkspaceRoot: async () => root });
         const preview = (await previewTool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
         expect(preview.outcome).toBe("rendered");
 
-        const recordTool = createRecordVersionTool({ gateway, store, threads, resolveWorkspaceRoot: () => root, makeResolver });
+        const recordTool = createRecordVersionTool({ gateway, store, threads, resolveWorkspaceRoot: async () => root, makeResolver });
         const record = (await recordTool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
         expect(record.outcome).toBe("recorded");
 

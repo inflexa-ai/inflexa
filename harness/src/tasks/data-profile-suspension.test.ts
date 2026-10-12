@@ -84,8 +84,8 @@ function deps(pool: Pool, sandboxClient: SandboxClient, revoked: string[]): Data
         provider: {} as ChatProvider,
         pool,
         sandboxClient,
-        workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(root, id) }),
-        resolveWorkspaceRoot: (id) => join(root, id),
+        workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(root, id) }),
+        resolveWorkspaceRoot: async (id) => join(root, id),
         model: "test-model",
         runAuthorizer: {
             authorize: () => {

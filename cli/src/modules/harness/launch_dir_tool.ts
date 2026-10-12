@@ -49,21 +49,17 @@ type LaunchDirResult =
  * of those is covered). Inputs whose anchor cannot be resolved are skipped — they
  * cannot match a file under this folder anyway.
  */
-function registrationIndex(analysisId: string): { files: Set<string>; dirs: string[] } {
+async function registrationIndex(analysisId: string): Promise<{ files: Set<string>; dirs: string[] }> {
     const files = new Set<string>();
     const dirs: string[] = [];
-    listAnalysisInputs(analysisId).match(
-        (inputs) => {
-            for (const input of inputs) {
-                const abs = resolveInputPath(input).unwrapOr(null);
-                if (abs === null) continue;
-                if (input.isDir) dirs.push(abs);
-                else files.add(abs);
-            }
-        },
-        // A read failure only costs the registered/unregistered marks, never the listing.
-        () => {},
-    );
+    // A read failure only costs the registered/unregistered marks, never the listing.
+    const inputs = listAnalysisInputs(analysisId).unwrapOr([]);
+    for (const input of inputs) {
+        const abs = await resolveInputPath(input).unwrapOr(null);
+        if (abs === null) continue;
+        if (input.isDir) dirs.push(abs);
+        else files.add(abs);
+    }
     return { files, dirs };
 }
 
@@ -103,13 +99,13 @@ export function createLaunchDirTool() {
             if (found.isErr()) return ok({ status: "error" as const, message: `could not load the analysis: ${found.error.type}` });
             if (!found.value) return ok({ status: "no_analysis" as const });
 
-            const folder = resolveAnchor(found.value.anchorId).map(resolvedPathOrCached).unwrapOr(null);
+            const folder = await resolveAnchor(found.value.anchorId).map(resolvedPathOrCached).unwrapOr(null);
             if (folder === null) return ok({ status: "no_anchor" as const });
 
             const walked = walkFiles(folder, IGNORED_WALK_DIRS);
             if (walked.isErr()) return ok({ status: "error" as const, message: `could not read the launch folder: ${walked.error.op}` });
 
-            const index = registrationIndex(analysisId);
+            const index = await registrationIndex(analysisId);
             const entries: LaunchDirEntry[] = walked.value
                 .map((rel) => {
                     const abs = join(folder, rel);

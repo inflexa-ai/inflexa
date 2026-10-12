@@ -325,9 +325,9 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
             const scope = session.scope;
             if (scope.kind !== "analysis") return { status: "out_of_scope", path };
 
-            // Throws on an unknown analysis — the loop's dispatch catch maps
+            // Rejects on an unknown analysis — the loop's dispatch catch maps
             // it to an error tool result, like any unexpected host failure.
-            const workspaceRoot = deps.resolveWorkspaceRoot(scope.analysisId);
+            const workspaceRoot = await deps.resolveWorkspaceRoot(scope.analysisId);
             const landed = await confinedWrite({
                 workspaceRoot,
                 analysisId: scope.analysisId,

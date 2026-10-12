@@ -271,7 +271,7 @@ function makeTool(args: {
     const auth = makeAuthorizer();
     const tool = createDeriveTableTool({
         gateway,
-        resolveWorkspaceRoot: () => args.root,
+        resolveWorkspaceRoot: async () => args.root,
         derivations: ledger,
         // The composition realizes the runner over a registered workflow. The test drives the same body,
         // with a fixed clock, thus the seam calls under test are the seam calls in production.
@@ -312,7 +312,7 @@ describe("a suspended derivation", () => {
                 gateway.seed("t1", pinnedSnapshot());
                 return gateway;
             })(),
-            resolveWorkspaceRoot: () => root,
+            resolveWorkspaceRoot: async () => root,
             derivations: makeLedger(),
             runDerivation: () => {
                 throw new Error("a refused authorization starts no derivation");
@@ -635,7 +635,7 @@ describe("a composition with no sandbox", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", pinnedSnapshot());
-        const tool = createDeriveTableTool({ gateway, resolveWorkspaceRoot: () => root, derivations: makeLedger() });
+        const tool = createDeriveTableTool({ gateway, resolveWorkspaceRoot: async () => root, derivations: makeLedger() });
 
         const result = (await tool.execute({ script: SCRIPT, inputs: [PINNED_PATH], output: "yield.csv" }, ctxForThread("t1")))._unsafeUnwrap();
 

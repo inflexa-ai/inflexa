@@ -14,7 +14,7 @@ import { getAnchor, listAnalysesByAnchor } from "../../db/primary_query.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Anchor } from "../../types/anchor.ts";
 import type { Str256 } from "../../lib/types.ts";
-import { canonicalPath } from "../../lib/paths.ts";
+import { canonicalPathAsync } from "../../lib/paths.ts";
 import { reclaimDeadAnchors, type PurgeAnalysisFn } from "./backstop.ts";
 import { writeMarker } from "./marker.ts";
 
@@ -50,14 +50,14 @@ describe("inflexa repair and prune (e2e)", () => {
 
     test("re-points an anchor's cached path to the marker's current location", async () => {
         const moved = tmp();
-        writeMarker(moved, "A1")._unsafeUnwrap();
+        (await writeMarker(moved, "A1"))._unsafeUnwrap();
         insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: "/stale/old/path", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
 
         const result = await runCliAsync(["repair", moved], { env: server.childEnv });
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Repaired anchor A1");
         // Read back through the DB: the cached path now matches the marker's (canonical) location.
-        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(canonicalPath(moved));
+        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(await canonicalPathAsync(moved));
     });
 
     test("prune with no dead anchor says so and asks nothing", async () => {

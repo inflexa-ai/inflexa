@@ -1,7 +1,6 @@
 import { randomUUIDv7 } from "bun";
-import { existsSync } from "node:fs";
 import { join, sep } from "node:path";
-import { err, ok, Result } from "neverthrow";
+import { err, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
 import type { Str256, IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
@@ -11,7 +10,7 @@ import { currentUserActor } from "../prov/prov.ts";
 import { analysisFarmPath, describeFarmCompositionError, makeEmptyFarm } from "../libs/composition.ts";
 import { Bus } from "../../lib/bus.ts";
 import { env } from "../../lib/env.ts";
-import { renameResult } from "../../lib/fs.ts";
+import { pathExistsAsync, renameResultAsync } from "../../lib/fs.ts";
 import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
 import { findMarkerUpwards, isDirWritable } from "../anchor/marker.ts";
 import { classifyInputPath } from "./input.ts";
@@ -112,11 +111,11 @@ export function detectSourceAnalysis(input: AnalysisInput, excludeAnalysisId: st
  * Classify each raw path, de-dup (batch + existing), and reject a non-existent path with a
  * clear error rather than storing a dangling ref.
  */
-export function addInputs(analysisId: string, rawPaths: string[], cwd: string): Result<AnalysisInput[], DbError> {
-    return listAnalysisInputs(analysisId).andThen((existing) =>
+export function addInputs(analysisId: string, rawPaths: string[], cwd: string): ResultAsync<AnalysisInput[], DbError> {
+    return listAnalysisInputs(analysisId).asyncAndThen((existing) =>
         // Classify every raw path first; the first failure (e.g. a non-existent path)
         // short-circuits so we never store a dangling ref.
-        Result.combine(rawPaths.map((raw) => classifyInputPath(analysisId, raw, cwd))).andThen((classified) => {
+        new ResultAsync(classifyAll(analysisId, rawPaths, cwd)).andThen((classified) => {
             const seen = new Set(existing.map(refKey));
             const toInsert: AnalysisInput[] = [];
             for (const input of classified) {
@@ -147,6 +146,17 @@ export function addInputs(analysisId: string, rawPaths: string[], cwd: string): 
             ).map(() => toInsert);
         }),
     );
+}
+
+/** Classify the raw paths one at a time, in order, and stop at the first failure. */
+async function classifyAll(analysisId: string, rawPaths: readonly string[], cwd: string): Promise<Result<AnalysisInput[], DbError>> {
+    const classified: AnalysisInput[] = [];
+    for (const raw of rawPaths) {
+        const input = await classifyInputPath(analysisId, raw, cwd);
+        if (input.isErr()) return err(input.error);
+        classified.push(input.value);
+    }
+    return ok(classified);
 }
 
 /**
@@ -181,10 +191,10 @@ export type InputsDiffOutcome = { added: AnalysisInput[]; removed: AnalysisInput
  * are collected rather than short-circuited: each removal is independent, so the
  * survivors should still land. `failures` is empty when the whole diff applied.
  */
-export function applyInputsDiff(analysisId: string, toAdd: string[], toRemove: AnalysisInput[], cwd: string): InputsDiffOutcome {
+export async function applyInputsDiff(analysisId: string, toAdd: string[], toRemove: AnalysisInput[], cwd: string): Promise<InputsDiffOutcome> {
     const outcome: InputsDiffOutcome = { added: [], removed: [], failures: [] };
     if (toAdd.length > 0) {
-        addInputs(analysisId, toAdd, cwd).match(
+        (await addInputs(analysisId, toAdd, cwd)).match(
             (added) => outcome.added.push(...added),
             (error) => outcome.failures.push({ op: "add", error }),
         );
@@ -209,7 +219,7 @@ export function applyInputsDiff(analysisId: string, toAdd: string[], toRemove: A
  * touches will live, so a folder that cannot host it must fail creation — there is no fallback.
  */
 export async function createAnalysis(opts: CreateAnalysisInput): Promise<Result<Analysis, WorkspaceError>> {
-    if (!isDirWritable(opts.cwd)) {
+    if (!(await isDirWritable(opts.cwd))) {
         return err({
             type: "workspace_unavailable",
             message:
@@ -217,7 +227,7 @@ export async function createAnalysis(opts: CreateAnalysisInput): Promise<Result<
                 `Create the analysis in a writable folder (inputs can be referenced from anywhere).`,
         });
     }
-    const anchor = getOrCreateAnchorForCwd(opts.cwd);
+    const anchor = await getOrCreateAnchorForCwd(opts.cwd);
     if (anchor.isErr()) return err(anchor.error);
     const slug = uniqueSlugForAnchor(anchor.value.id, opts.name);
     if (slug.isErr()) return err(slug.error);
@@ -254,19 +264,19 @@ export async function createAnalysis(opts: CreateAnalysisInput): Promise<Result<
     // auto-trigger a data profile over all of it. Enrolling an input is always a deliberate
     // act (the file picker, `inflexa new <paths>`, or a later `addInputs`).
     const inputPaths = opts.inputPaths ?? [];
-    return (
-        insertAnalysis(analysis)
-            // Seed the provenance document with the creation event before any input events.
-            .andThen((created) => {
-                Bus.emit("inflexa", {
-                    type: "prov.analysis_created",
-                    analysisId: created.id,
-                    actor: currentUserActor(),
-                });
-                return ok(created);
-            })
-            .andThen((created) => (inputPaths.length > 0 ? addInputs(created.id, inputPaths, opts.cwd).map(() => created) : ok(created)))
-    );
+    return await insertAnalysis(analysis)
+        // Seed the provenance document with the creation event before any input events.
+        .andThen((created) => {
+            Bus.emit("inflexa", {
+                type: "prov.analysis_created",
+                analysisId: created.id,
+                actor: currentUserActor(),
+            });
+            return ok(created);
+        })
+        .asyncAndThen((created): ResultAsync<Analysis, WorkspaceError> =>
+            inputPaths.length > 0 ? addInputs(created.id, inputPaths, opts.cwd).map(() => created) : okAsync(created),
+        );
 }
 
 /** Outcome of {@link renameAnalysisAndMoveWorkspace}: the renamed analysis plus what became of its on-disk tree. */
@@ -296,28 +306,28 @@ export type RenameOutcome = {
  * (workspace-root-resolution: "stable while the resource has an active run"), and the per-analysis
  * instance lock does not help — it excludes other PROCESSES, while the runs live in this one.
  */
-export function renameAnalysisAndMoveWorkspace(analysis: Analysis, name: Str256): Result<RenameOutcome, DbError> {
-    return uniqueSlugForAnchor(analysis.anchorId, name, { excludeAnalysisId: analysis.id }).andThen((slug) =>
-        renameAnalysis(analysis.id, name, slug).andThen((): Result<RenameOutcome, DbError> => {
+export function renameAnalysisAndMoveWorkspace(analysis: Analysis, name: Str256): ResultAsync<RenameOutcome, DbError> {
+    return uniqueSlugForAnchor(analysis.anchorId, name, { excludeAnalysisId: analysis.id }).asyncAndThen((slug) =>
+        renameAnalysis(analysis.id, name, slug).asyncAndThen((): ResultAsync<RenameOutcome, DbError> => {
             const renamed: Analysis = { ...analysis, name, slug };
             invalidateWorkspaceRoot(analysis.id);
 
             // A name that slugifies to the slug it already has: the row's `name` changed, the
             // directory's identity did not. Nothing to move, and nothing went wrong.
-            if (slug === analysis.slug) return ok({ analysis: renamed, workspaceMoved: false });
+            if (slug === analysis.slug) return okAsync({ analysis: renamed, workspaceMoved: false });
 
             // Anchor resolution after the row update; writability is irrelevant here — a
             // read-only anchor still renames the row, and the move then fails visibly.
             // A storage fault is NOT folded into "no tree": the tree may well exist and we
             // simply cannot say where, which the caller must be able to tell the user.
-            return resolveAnchor(analysis.anchorId, { touch: false }).map((resolved): RenameOutcome => {
+            return resolveAnchor(analysis.anchorId, { touch: false }).map(async (resolved): Promise<RenameOutcome> => {
                 const anchorPath = resolved?.path ?? null;
                 if (anchorPath === null) {
                     return { analysis: renamed, workspaceMoved: false, moveError: { type: "anchor_unresolved", anchorId: analysis.anchorId } };
                 }
                 const oldRoot = join(anchorPath, defaultOutputSubdir(analysis.slug));
-                if (!existsSync(oldRoot)) return { analysis: renamed, workspaceMoved: false };
-                return renameResult(oldRoot, join(anchorPath, defaultOutputSubdir(slug)), "renameAnalysisWorkspace").match(
+                if (!(await pathExistsAsync(oldRoot))) return { analysis: renamed, workspaceMoved: false };
+                return renameResultAsync(oldRoot, join(anchorPath, defaultOutputSubdir(slug)), "renameAnalysisWorkspace").match(
                     (): RenameOutcome => ({ analysis: renamed, workspaceMoved: true }),
                     (e): RenameOutcome => ({ analysis: renamed, workspaceMoved: false, moveError: e.cause }),
                 );
@@ -327,7 +337,7 @@ export function renameAnalysisAndMoveWorkspace(analysis: Analysis, name: Str256)
 }
 
 /** Analyses anchored at the nearest marker for `dir`; empty when there is no marker. */
-export function listAnalysesForAnchorAt(dir: string): Result<Analysis[], DbError> {
+export function listAnalysesForAnchorAt(dir: string): ResultAsync<Analysis[], DbError> {
     return findMarkerUpwards(dir)
         .mapErr((cause): DbError => ({ type: "query_failed", op: "listAnalysesForAnchorAt:marker", cause }))
         .andThen((found) => (found ? listAnalysesByAnchor(found.marker.anchorId) : ok([])));

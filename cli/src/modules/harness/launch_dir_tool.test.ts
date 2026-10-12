@@ -49,7 +49,7 @@ describe("list_launch_dir tool", () => {
         writeFileSync(join(dir, "node_modules", "pkg.js"), "x");
 
         // Register a.csv so the tool marks it as already an input.
-        addInputs(analysisId, ["a.csv"], dir)._unsafeUnwrap();
+        (await addInputs(analysisId, ["a.csv"], dir))._unsafeUnwrap();
 
         const result = (await tool.execute({}, ctxFor(analysisId)))._unsafeUnwrap();
         expect(result.status).toBe("listed");

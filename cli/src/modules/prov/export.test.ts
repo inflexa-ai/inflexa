@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProvAttestation, ProvSigningError } from "@inflexa-ai/prov-kernel";
-import { err, ok } from "neverthrow";
+import { err, errAsync, ok, okAsync } from "neverthrow";
 
 import type { DbError } from "../../db/errors.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -42,7 +42,7 @@ describe("exportAnalysisProvenance", () => {
     /** The three edges, with the signature outcome the case is about. */
     function opts(attestation: ExportProvenanceOpts["buildAttestation"]): ExportProvenanceOpts {
         return {
-            resolveOutputDir: () => ok<string, WorkspaceError>(out),
+            resolveOutputDir: () => okAsync<string, WorkspaceError>(out),
             serializeProvenance: () => ok<string, DbError>(DOCUMENT),
             buildAttestation: attestation,
         };
@@ -101,7 +101,7 @@ describe("exportAnalysisProvenance", () => {
         const output = join(root, "elsewhere.json");
         const exported = await exportAnalysisProvenance(ANALYSIS, "json", output, {
             ...opts(async () => ok<ProvAttestation, ProvSigningError>(ATTESTATION)),
-            resolveOutputDir: () => err<string, WorkspaceError>({ type: "workspace_unavailable", message: "not writable" }),
+            resolveOutputDir: () => errAsync<string, WorkspaceError>({ type: "workspace_unavailable", message: "not writable" }),
         });
 
         expect(exported._unsafeUnwrap()).toEqual({ path: output, attestationPath: `${output}.sig.json` });

@@ -410,7 +410,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
 
             let root: string;
             try {
-                root = deps.resolveWorkspaceRoot(analysisId);
+                root = await deps.resolveWorkspaceRoot(analysisId);
             } catch (cause) {
                 logger.warn("the workspace root did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
                 return ok({ outcome: "capture-failed", detail: "the workspace root did not resolve" });

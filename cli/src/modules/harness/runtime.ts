@@ -796,12 +796,12 @@ async function bootHarnessRuntimeOnce(
         // analysis id → `<anchorPath>/.inflexa/analyses/<slug>`, derived from DB
         // state on every call so a DBOS-recovered workflow in a fresh process (or
         // after a reconciled anchor move) resolves the current location. Injective
-        // via `UNIQUE (anchor_id, slug)`. THROWS on failure — the seam contract
-        // requires resolution failures to cross DBOS step boundaries as throws (a
-        // returned err would be durably cached as step success); this is a
+        // via `UNIQUE (anchor_id, slug)`. REJECTS on failure — the seam contract
+        // requires resolution failures to cross DBOS step boundaries as rejections (a
+        // resolved err would be durably cached as step success); this is a
         // sanctioned boundary throw, the same bridge role as the harness's own
-        // `unwrapOrThrow`.
-        const resolveWorkspaceRoot = (analysisId: string): string =>
+        // `unwrapOrThrow`. The disk reads of the derivation run off the event loop.
+        const resolveWorkspaceRoot = (analysisId: string): Promise<string> =>
             workspaceRootForAnalysisId(analysisId).match(
                 (root) => root,
                 (e) => {

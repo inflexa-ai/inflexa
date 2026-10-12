@@ -202,7 +202,7 @@ export type RunSubprocess = (cmd: readonly string[], cwd: string | undefined, si
  * `undefined` means "could not be located", which the caller treats as "inherit this process's
  * directory": a best-effort improvement on the working directory, never a reason to refuse a command.
  */
-export type ResolveAnalysisFolder = (analysisId: string) => string | undefined;
+export type ResolveAnalysisFolder = (analysisId: string) => Promise<string | undefined>;
 
 /**
  * Resolve the OS-level command that runs `argv` through `inflexa`.
@@ -457,7 +457,8 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
     const scriptPath = deps.scriptPath ?? join(import.meta.dir, "../../index.ts");
     const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const idleTimeoutMs = deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
-    const resolveAnalysisFolder: ResolveAnalysisFolder = deps.resolveAnalysisFolder ?? ((analysisId) => anchorPathForAnalysisId(analysisId) ?? undefined);
+    const resolveAnalysisFolder: ResolveAnalysisFolder =
+        deps.resolveAnalysisFolder ?? (async (analysisId) => (await anchorPathForAnalysisId(analysisId)) ?? undefined);
     const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, cwd, signal, bounds) => spawnInflexa(cmd, signal, bounds, cwd));
 
     return defineTool({
@@ -585,7 +586,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // there, as it is for every other approval-gated command. Unlocatable is not a failure: the
             // child then inherits this process's directory.
             const scope = ctx.session.scope;
-            const cwd = scope.kind === "analysis" ? resolveAnalysisFolder(scope.analysisId) : undefined;
+            const cwd = scope.kind === "analysis" ? await resolveAnalysisFolder(scope.analysisId) : undefined;
             // A transfer runs with neither bound: `downloadToFile` ends it when the bytes stop, and a
             // second deadline out here could only ever cut an honest download short (see `TransferTrait`).
             const r = await runSubprocess(cmd, cwd, ctx.signal, transfer ? {} : { timeoutMs, idleTimeoutMs });

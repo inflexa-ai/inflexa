@@ -1,10 +1,10 @@
-import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 import type { AnalysisPurgeOutcome, DbError as PgError, Pool } from "@inflexa-ai/harness";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import { Hono, type Context } from "hono";
-import { err, ok, ResultAsync, type Result } from "neverthrow";
+import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
+import PQueue from "p-queue";
 import { z } from "zod";
 
 import {
@@ -36,7 +36,8 @@ import {
 } from "../../db/primary_query.ts";
 import { releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
-import { canonicalPath } from "../../lib/paths.ts";
+import { pathsExistAsync } from "../../lib/fs.ts";
+import { canonicalPathAsync } from "../../lib/paths.ts";
 import { str256, type Str256 } from "../../lib/types.ts";
 import { addInputs, applyInputsDiff, createAnalysis, removeInput, renameAnalysisAndMoveWorkspace } from "../../modules/analysis/analysis.ts";
 import { describeContext, resolveContext, type ResolvedContext } from "../../modules/analysis/context.ts";
@@ -56,6 +57,18 @@ import { workspaceBusyReasons } from "../busy_gate.ts";
 import { apiError, holdConnection, internalError, listEnvelope, parsePage, readBody, requireRuntime, type ServerEnv } from "../http.ts";
 import { toProjectView } from "./projects.ts";
 
+/**
+ * How many disk reads of one request run at one time: the existence checks of the paths of a body, and the
+ * canonical paths of the inputs. A request names its paths, thus the width bounds what a client can ask for.
+ */
+const DISK_READ_WIDTH = 8;
+
+/** {@link fn} over each item, in the order of `items`, with at most {@link DISK_READ_WIDTH} calls in flight. */
+function mapBounded<T, U>(items: readonly T[], fn: (item: T) => Promise<U>): Promise<U[]> {
+    const queue = new PQueue({ concurrency: DISK_READ_WIDTH });
+    return Promise.all(items.map((item) => queue.add(() => fn(item))));
+}
+
 /** A path of a request body. The client resolves a relative path against its own folder, never the server. */
 export const absolutePath = z.string().refine((path) => isAbsolute(path), "The path must be absolute.");
 
@@ -63,7 +76,7 @@ export const absolutePath = z.string().refine((path) => isAbsolute(path), "The p
 export type AnalysisRouteOpts = {
     readonly busyReasons: (analysisId: string, runtime: HarnessRuntime | null) => Promise<BusyReason[]>;
     /** Whether the analysis has a workspace folder on disk now. An unlocatable anchor folder reads as none. */
-    readonly hasWorkspaceOnDisk: (analysis: Analysis) => boolean;
+    readonly hasWorkspaceOnDisk: (analysis: Analysis) => Promise<boolean>;
     /** Drain the in-memory provenance appends into the stored chain. `false` when the flush could not run. */
     readonly flushProvenance: () => Promise<boolean>;
     /** Write the signed provenance document into the live workspace folder. `false` when nothing landed. */
@@ -152,7 +165,7 @@ export function analysisCollectionRoutes(): Hono<ServerEnv> {
         const { cwd, ref, project, recover, touch } = body.value;
         // Recovery only, never creation (no-litter): an anchor whose folder moved under `cwd` heals in place.
         if (recover) {
-            recoverAnchors([cwd]).match(
+            await recoverAnchors([cwd]).match(
                 ({ recovered, unresolved }) => {
                     if (recovered || unresolved) getLogger("anchor").info({ recovered, unresolved }, "recovered anchors at a launch");
                 },
@@ -165,7 +178,7 @@ export function analysisCollectionRoutes(): Hono<ServerEnv> {
                   findAnalysesByRefWithAnchor(ref).map((rows) => toContextView(ctx, rows[0]?.analysis.id === ref ? [] : rows.slice(1)))
                 : ok<ResolvedContextView, DbError>(toContextView(ctx, [])),
         );
-        return resolved.match(
+        return await resolved.match(
             (view) => c.json(view),
             (e) => internalError(c, e, "resolve the context"),
         );
@@ -205,7 +218,7 @@ export function analysisCollectionRoutes(): Hono<ServerEnv> {
         }
         // Checked before the create: a missing input after the row lands would leave an analysis behind.
         const inputs = body.value.inputs ?? [];
-        const missing = refuseMissing(c, inputs);
+        const missing = await refuseMissing(c, inputs);
         if (missing !== null) return missing;
 
         const created = await createAnalysis({ cwd: body.value.folder, name: name.value, inputPaths: inputs, projectId });
@@ -282,7 +295,7 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
         let workspaceNotMoved: UpdateAnalysisResponse["workspaceNotMoved"];
         if (name !== undefined) {
             // The slug keys the workspace folder, thus the rename also moves `.inflexa/analyses/<old>/`.
-            const renamed = renameAnalysisAndMoveWorkspace(a, name);
+            const renamed = await renameAnalysisAndMoveWorkspace(a, name);
             if (renamed.isErr()) return internalError(c, renamed.error, "rename the analysis");
             if (renamed.value.moveError !== undefined) {
                 getLogger("server").warn({ err: renamed.value.moveError, analysisId: a.id }, "the rename could not move the workspace folder");
@@ -317,39 +330,37 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
         return deleteLadder(c, analysis.value, disposalMode.data, exportFormat.data, c.get("runtime"), opts);
     });
 
-    routes.post("/output-dir", (c) => {
+    routes.post("/output-dir", async (c) => {
         const analysis = loadAnalysis(c);
         if (analysis.isErr()) return analysis.error;
         // An existing folder is given as it is: a folder that later went read-only must not block access to
         // the results that the user already has. Only an absent folder is made, which needs a writable anchor.
-        return locateExistingOutputDir(analysis.value)
-            .andThen((existing) => (existing !== null ? ok(existing) : ensureOutputDir(analysis.value)))
+        return await locateExistingOutputDir(analysis.value)
+            .andThen((existing) => (existing !== null ? okAsync(existing) : ensureOutputDir(analysis.value)))
             .match(
                 (path) => c.json({ path } satisfies OutputDirView),
                 (e) => (e.type === "workspace_unavailable" ? apiError(c, "conflict", e.message) : internalError(c, e, "make the workspace folder")),
             );
     });
 
-    routes.get("/inputs", (c) => {
+    routes.get("/inputs", async (c) => {
         const page = parsePage(c.req.query("page"), c.req.query("perPage"));
         const analysisId = c.req.param("analysisId") ?? "";
-        return listAnalysisInputPage(analysisId, { limit: page.perPage, offset: page.page * page.perPage }).match(
-            ({ items, total }) => c.json(listEnvelope("inputs", inputViews(items), total, page)),
-            (e) => internalError(c, e, "list the inputs"),
-        );
+        const listed = listAnalysisInputPage(analysisId, { limit: page.perPage, offset: page.page * page.perPage });
+        if (listed.isErr()) return internalError(c, listed.error, "list the inputs");
+        return c.json(listEnvelope("inputs", await inputViews(listed.value.items), listed.value.total, page));
     });
 
     routes.post("/inputs", async (c) => {
         const body = await readBody(c, addPathsBody);
         if (body.isErr()) return body.error;
-        const missing = refuseMissing(c, body.value.paths);
+        const missing = await refuseMissing(c, body.value.paths);
         if (missing !== null) return missing;
         const analysisId = c.req.param("analysisId") ?? "";
         // Each path is absolute, thus the folder that `addInputs` resolves a relative path against is never read.
-        return addInputs(analysisId, body.value.paths, "/").match(
-            (added) => c.json({ added: inputViews(added), removed: [], notInputs: [] } satisfies InputsChange),
-            (e) => internalError(c, e, "add the inputs"),
-        );
+        const added = await addInputs(analysisId, body.value.paths, "/");
+        if (added.isErr()) return internalError(c, added.error, "add the inputs");
+        return c.json({ added: await inputViews(added.value), removed: [], notInputs: [] } satisfies InputsChange);
     });
 
     routes.put("/inputs", async (c) => {
@@ -361,18 +372,19 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
 
         // The diff runs in the canonical path space of the picker of a client. An input whose anchor folder
         // cannot be located has no absolute path, thus no client could show it, and the replacement keeps it.
-        const absolute = inputAbsolutePaths(current.value);
-        const wanted = new Set(body.value.paths.map((p) => canonicalPath(p)));
+        const absolute = await inputAbsolutePaths(current.value);
+        const canonical = await mapBounded(body.value.paths, canonicalPathAsync);
+        const wanted = new Set(canonical);
         const have = new Set([...absolute.values()].filter((p): p is string => p !== null));
-        const toAdd = [...new Set(body.value.paths.filter((p) => !have.has(canonicalPath(p))))];
+        const toAdd = [...new Set(body.value.paths.filter((_, i) => !have.has(canonical[i] ?? "")))];
         const toRemove = current.value.filter((input) => {
             const abs = absolute.get(input) ?? null;
             return abs !== null && !wanted.has(abs);
         });
-        const missing = refuseMissing(c, toAdd);
+        const missing = await refuseMissing(c, toAdd);
         if (missing !== null) return missing;
 
-        const outcome = applyInputsDiff(analysisId, toAdd, toRemove, "/");
+        const outcome = await applyInputsDiff(analysisId, toAdd, toRemove, "/");
         const failure = outcome.failures[0];
         if (failure !== undefined) {
             getLogger("server").error({ err: failure.error, op: failure.op }, "an input change failed");
@@ -382,7 +394,7 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
                 `The input ${failure.op === "add" ? "adds failed, thus nothing changed" : `removals failed after +${outcome.added.length} -${outcome.removed.length}`}.`,
             );
         }
-        return c.json({ added: inputViews(outcome.added), removed: inputViews(outcome.removed), notInputs: [] } satisfies InputsChange);
+        return c.json({ added: await inputViews(outcome.added), removed: await inputViews(outcome.removed), notInputs: [] } satisfies InputsChange);
     });
 
     routes.post("/inputs/remove", async (c) => {
@@ -392,7 +404,7 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
         const current = listAnalysisInputs(analysisId);
         if (current.isErr()) return internalError(c, current.error, "read the inputs");
         // A relative path matches a stored `path` only: no folder of the client is known here.
-        const { matched, notInputs } = matchInputRefs(current.value, body.value.paths, "/");
+        const { matched, notInputs } = await matchInputRefs(current.value, body.value.paths, "/");
         const removed: AnalysisInput[] = [];
         for (const target of matched) {
             const result = removeInput(target);
@@ -404,7 +416,7 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
             }
             if (result.value !== null) removed.push(result.value);
         }
-        return c.json({ added: [], removed: inputViews(removed), notInputs } satisfies InputsChange);
+        return c.json({ added: [], removed: await inputViews(removed), notInputs } satisfies InputsChange);
     });
 
     return routes;
@@ -468,8 +480,9 @@ function validName(c: Context<ServerEnv>, raw: string): Result<Str256, Response>
 }
 
 /** The 400 `validation_error` response for the paths that do not exist, or `null` when each one exists. */
-function refuseMissing(c: Context<ServerEnv>, paths: readonly string[]): Response | null {
-    const missing = paths.filter((p) => !existsSync(p));
+async function refuseMissing(c: Context<ServerEnv>, paths: readonly string[]): Promise<Response | null> {
+    const exists = await pathsExistAsync(paths, DISK_READ_WIDTH);
+    const missing = paths.filter((_, i) => !exists[i]);
     return missing.length === 0 ? null : apiError(c, "validation_error", `no such file: ${missing.join(", ")}`, { missing });
 }
 
@@ -478,32 +491,30 @@ function refuseMissing(c: Context<ServerEnv>, paths: readonly string[]): Respons
  * sighting write. Looking at the inputs is not a sighting of their folders, and a write for each row would
  * make `lastSeen` measure the reads of a list. `null` is an unlocatable anchor folder.
  */
-function inputAbsolutePaths(inputs: readonly AnalysisInput[]): Map<AnalysisInput, string | null> {
+async function inputAbsolutePaths(inputs: readonly AnalysisInput[]): Promise<Map<AnalysisInput, string | null>> {
     const byAnchor = new Map<string, string | null>();
-    const out = new Map<AnalysisInput, string | null>();
+    // One anchor at a time: each resolve can run a bounded search of its own.
     for (const input of inputs) {
-        if (input.anchorId === null) {
-            out.set(input, input.path);
-            continue;
-        }
         const anchorId = input.anchorId;
-        if (!byAnchor.has(anchorId)) {
-            byAnchor.set(
-                anchorId,
-                resolveAnchor(anchorId, { touch: false }).match(
-                    (resolved) => resolved?.path ?? null,
-                    () => null,
-                ),
-            );
-        }
-        const dir = byAnchor.get(anchorId) ?? null;
-        out.set(input, dir === null ? null : canonicalPath(join(dir, input.path)));
+        if (anchorId === null || byAnchor.has(anchorId)) continue;
+        byAnchor.set(
+            anchorId,
+            await resolveAnchor(anchorId, { touch: false }).match(
+                (resolved) => resolved?.path ?? null,
+                () => null,
+            ),
+        );
     }
-    return out;
+    const paths = await mapBounded(inputs, async (input): Promise<string | null> => {
+        if (input.anchorId === null) return input.path;
+        const dir = byAnchor.get(input.anchorId) ?? null;
+        return dir === null ? null : canonicalPathAsync(join(dir, input.path));
+    });
+    return new Map(inputs.map((input, i) => [input, paths[i] ?? null]));
 }
 
-function inputViews(inputs: readonly AnalysisInput[]): InputView[] {
-    const absolute = inputAbsolutePaths(inputs);
+async function inputViews(inputs: readonly AnalysisInput[]): Promise<InputView[]> {
+    const absolute = await inputAbsolutePaths(inputs);
     return inputs.map((input) => ({ path: input.path, isDir: input.isDir, anchorId: input.anchorId, absolutePath: absolute.get(input) ?? null }));
 }
 
@@ -517,12 +528,12 @@ async function analysisDetail(
     opts: AnalysisRouteOpts,
     resolve: { touch: boolean; searchRoots?: string[] },
 ): Promise<Result<AnalysisDetail, DbError>> {
-    const anchor = resolveAnchor(analysis.anchorId, resolve);
+    const anchor = await resolveAnchor(analysis.anchorId, resolve);
     if (anchor.isErr()) return err(anchor.error);
     const inputCount = countAnalysisInputs(analysis.id);
     if (inputCount.isErr()) return err(inputCount.error);
     const project = projectForAnalysis(analysis);
-    const outputDir = resolveOutputDir(analysis).unwrapOr(null);
+    const outputDir = await resolveOutputDir(analysis).unwrapOr(null);
     const busy = await opts.busyReasons(analysis.id, runtime);
     const resolved = anchor.value;
     return ok({
@@ -568,7 +579,7 @@ async function deleteLadder(
     opts: AnalysisRouteOpts,
 ): Promise<Response> {
     let exportOutcome: DeleteExportOutcome = "none";
-    if (mode === "keep" && exportFormat !== "none" && opts.hasWorkspaceOnDisk(a)) {
+    if (mode === "keep" && exportFormat !== "none" && (await opts.hasWorkspaceOnDisk(a))) {
         const flushed = await opts.flushProvenance();
         const exported = await opts.exportProvenance(a, exportFormat === "prov-json" ? "json" : "provn");
         exportOutcome = !exported ? "failed" : flushed ? "written" : "written_unflushed";

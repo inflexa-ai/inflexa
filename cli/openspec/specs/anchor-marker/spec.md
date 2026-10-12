@@ -14,16 +14,16 @@ The system SHALL provide `markerPath(dir)` returning `join(dir, ".inflexa", "id"
 
 ### Requirement: Canonical path helper
 
-The system SHALL provide `canonicalPath(p)` returning the canonical absolute form of `p` (resolving symlinks where the path exists, normalizing otherwise) so anchor paths compare and store consistently.
+The system SHALL provide `canonicalPathAsync(p)` resolving to the canonical absolute form of `p` (resolving symlinks where the path exists, normalizing otherwise) so anchor paths compare and store consistently. The `realpath` SHALL run off the event loop.
 
 #### Scenario: Canonicalization is stable
 
-- **WHEN** `canonicalPath` is called twice on paths that denote the same location
+- **WHEN** `canonicalPathAsync` is called twice on paths that denote the same location
 - **THEN** both calls return the same canonical string
 
 ### Requirement: Validated marker read
 
-The system SHALL provide `readMarker(dir)` returning the parsed `AnchorMarker` when `<dir>/.inflexa/id` exists and is valid, `null` when the file is absent, and throwing when the file exists but is malformed JSON or has a `schemaVersion` other than `1`.
+The system SHALL provide `readMarker(dir)` returning `ResultAsync<AnchorMarker | null, MarkerError>`: the parsed `AnchorMarker` when `<dir>/.inflexa/id` exists and is valid, `null` when the file is absent, and an err when the file exists but is malformed JSON or has a `schemaVersion` other than `1`. Each read SHALL run off the event loop. A failed existence `stat` of the file (for example `ENOENT`, `ENOTDIR`, or `EACCES` on a parent) SHALL read as absent.
 
 #### Scenario: Absent marker
 
@@ -38,11 +38,11 @@ The system SHALL provide `readMarker(dir)` returning the parsed `AnchorMarker` w
 #### Scenario: Corrupt marker surfaces as an error
 
 - **WHEN** `<dir>/.inflexa/id` contains malformed JSON or a `schemaVersion` other than `1`
-- **THEN** `readMarker(dir)` throws rather than returning `null` or silently minting a new identity
+- **THEN** `readMarker(dir)` returns an err rather than `null`, and never silently mints a new identity
 
 ### Requirement: Write-once marker write
 
-The system SHALL provide `writeMarker(dir, anchorId)` that writes `<dir>/.inflexa/id` only when no valid marker exists, creating `<dir>/.inflexa/` as needed, and returns the `AnchorMarker` now on disk. The caller supplies the `anchorId` (minted inline with `randomUUIDv7()`); the marker module mints no ids. When a valid marker already exists, it SHALL be returned unchanged without rewriting; when an existing marker is corrupt, it SHALL throw rather than overwrite.
+The system SHALL provide `writeMarker(dir, anchorId)` that writes `<dir>/.inflexa/id` only when no valid marker exists, creating `<dir>/.inflexa/` as needed, and returns the `AnchorMarker` now on disk. The caller supplies the `anchorId` (minted inline with `randomUUIDv7()`); the marker module mints no ids. When a valid marker already exists, it SHALL be returned unchanged without rewriting; when an existing marker is corrupt, it SHALL return an err rather than overwrite. It SHALL return `ResultAsync<AnchorMarker, MarkerError>`, and its reads and writes SHALL run off the event loop.
 
 #### Scenario: First write creates the marker
 
@@ -59,25 +59,25 @@ The system SHALL provide `writeMarker(dir, anchorId)` that writes `<dir>/.inflex
 #### Scenario: Write refuses to clobber a corrupt marker
 
 - **WHEN** `writeMarker(dir, id)` is called and the existing marker is corrupt
-- **THEN** it throws and does not overwrite the file
+- **THEN** it returns an err and does not overwrite the file
 
 ### Requirement: Directory writability check
 
-The system SHALL provide `isDirWritable(dir)` returning `true` when files can be created under `dir` and `false` otherwise (any underlying error treated as not writable), without leaving any probe files behind.
+The system SHALL provide `isDirWritable(dir)` resolving to `true` when files can be created under `dir` and `false` otherwise (any underlying error treated as not writable), without leaving any probe files behind.
 
 #### Scenario: Writable directory
 
 - **WHEN** `isDirWritable(dir)` is called on a writable directory
-- **THEN** it returns `true` and no temporary probe file remains in `dir`
+- **THEN** it resolves to `true` and no temporary probe file remains in `dir`
 
 #### Scenario: Non-writable or missing directory
 
 - **WHEN** `isDirWritable(dir)` is called on a read-only or non-existent directory
-- **THEN** it returns `false`
+- **THEN** it resolves to `false`
 
 ### Requirement: Upward marker discovery
 
-The system SHALL provide `findMarkerUpwards(startDir)` that resolves `startDir` to an absolute path and walks upward to the filesystem root, returning `{ dir, marker }` for the nearest ancestor (including `startDir`) containing a valid marker, or `null` if none is found, stopping at the root without looping.
+The system SHALL provide `findMarkerUpwards(startDir)` returning `ResultAsync` that resolves `startDir` to an absolute path and walks upward to the filesystem root, one folder at a time, returning `{ dir, marker }` for the nearest ancestor (including `startDir`) containing a valid marker, or `null` if none is found, stopping at the root without looping.
 
 #### Scenario: Marker found in an ancestor
 

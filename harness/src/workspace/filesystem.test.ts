@@ -22,7 +22,7 @@ describe("createWorkspaceFilesystem", () => {
 
     beforeEach(async () => {
         sessions = await makeRoot();
-        fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessions, id) });
+        fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessions, id) });
     });
 
     afterEach(async () => {
@@ -42,7 +42,7 @@ describe("createWorkspaceFilesystem", () => {
     // seam promises `Result` and its tools run inside live chat turns. The throw must not escape.
     describe("an unresolvable workspace root", () => {
         const unresolvable = createWorkspaceFilesystem({
-            resolveWorkspaceRoot: () => {
+            resolveWorkspaceRoot: async () => {
                 throw new Error("analysis folder is gone");
             },
         });
@@ -174,7 +174,7 @@ describe("createWorkspaceFilesystem", () => {
             },
         };
         const fs2 = createWorkspaceFilesystem({
-            resolveWorkspaceRoot: (id) => join(sessions, id),
+            resolveWorkspaceRoot: async (id) => join(sessions, id),
             presignedFallback: fallback,
         });
         const r = (await fs2.readFile({ session, path: "data/inputs/cold.csv" }))._unsafeUnwrap();
@@ -191,7 +191,7 @@ describe("createWorkspaceFilesystem", () => {
             },
         };
         const fs2 = createWorkspaceFilesystem({
-            resolveWorkspaceRoot: (id) => join(sessions, id),
+            resolveWorkspaceRoot: async (id) => join(sessions, id),
             presignedFallback: fallback,
         });
         const result = await fs2.readFile({ session, path: "data/inputs/cold.csv" });

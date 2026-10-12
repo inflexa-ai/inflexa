@@ -135,7 +135,7 @@ describe("the citation evidence of the pin", () => {
     });
 
     /** The seam of the test. One analysis maps onto the one temporary tree. */
-    function resolveRoot(): string {
+    async function resolveRoot(): Promise<string> {
         return root;
     }
 

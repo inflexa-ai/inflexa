@@ -47,7 +47,7 @@ export interface SandboxClient {
      * Each spawn failure is an `err` value, the refusal of the label hook
      * (`labels_refused`) included: a spawn path splits the result with
      * `keepSuspendingRefusal`. Only a defect of the deployment config, or a
-     * throw of the workspace-root resolver, throws, and it fails the workflow.
+     * rejection of the workspace-root resolver, throws, and it fails the workflow.
      */
     createSandbox(session: SpawnSession, spec: SandboxSpec, identity: SandboxIdentity): ResultAsync<SandboxRef, SandboxError>;
 

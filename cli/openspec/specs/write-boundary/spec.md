@@ -7,7 +7,7 @@ An analysis's readable/writable roots and the deny-first read/write guards — t
 ### Requirement: Compute an analysis's read/write roots
 
 
-The system SHALL provide `computeRoots(analysis)` returning `Result<Roots, WorkspaceError>` in `src/modules/analysis/boundary.ts`, where `writable` is exactly one path — the resolved (and created) analysis workspace root, `<anchorPath>/.inflexa/analyses/<slug>/`, the same tree that holds staged inputs, run artifacts, and provenance exports — and `readable` is every input resolved to an absolute path plus the workspace root. Inputs that resolve to `null` SHALL be dropped from `readable`. When the workspace root itself cannot be resolved (unresolvable or non-writable anchor), `computeRoots` SHALL return that err — there is no fallback root.
+The system SHALL provide `computeRoots(analysis)` returning `ResultAsync<Roots, WorkspaceError>` in `src/modules/analysis/boundary.ts`, where `writable` is exactly one path — the resolved (and created) analysis workspace root, `<anchorPath>/.inflexa/analyses/<slug>/`, the same tree that holds staged inputs, run artifacts, and provenance exports — and `readable` is every input resolved to an absolute path plus the workspace root. Inputs that resolve to `null` SHALL be dropped from `readable`. When the workspace root itself cannot be resolved (unresolvable or non-writable anchor), `computeRoots` SHALL return that err — there is no fallback root.
 
 #### Scenario: Roots include inputs and the workspace root
 

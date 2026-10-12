@@ -61,13 +61,13 @@ export function exportAnalysisProvenance(
     opts: ExportProvenanceOpts = DEFAULT_EXPORT_PROVENANCE_OPTS,
 ): ResultAsync<ExportedProvenance, ExportProvenanceError> {
     // An `output` path names a file in a folder that the caller chose, thus the workspace is not resolved for it.
-    const destination: Result<string, ExportProvenanceError> =
+    const destination: ResultAsync<string, ExportProvenanceError> =
         output === undefined
             ? opts
                   .resolveOutputDir(analysis)
                   .map((dir) => join(dir, `provenance.${format}`))
                   .mapErr((error): ExportProvenanceError => ({ type: "output_dir", error }))
-            : ok(output);
+            : okAsync(output);
     return destination
         .andThen((path) =>
             opts
@@ -75,7 +75,7 @@ export function exportAnalysisProvenance(
                 .map((document) => ({ path, document }))
                 .mapErr((error): ExportProvenanceError => ({ type: "serialize", error })),
         )
-        .asyncAndThen(({ path, document }) =>
+        .andThen(({ path, document }) =>
             signIfJson(document, format, opts).andThen((attestation) => writeExport(path, document, attestation, output === undefined)),
         );
 }

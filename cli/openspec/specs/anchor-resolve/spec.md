@@ -5,7 +5,7 @@ On-demand anchor creation and lazy UUID→path reconciliation that self-heals mo
 ## Requirements
 ### Requirement: On-demand anchor creation
 
-The system SHALL provide `getOrCreateAnchorForCwd(dir)` returning `Result<Anchor, DbError>` in `src/modules/anchor/anchor.ts`, the single anchor entry point used at analysis creation. For a folder that already has a marker it SHALL return the existing anchors row (self-healing a drifted `cachedPath`); for an unmarked writable folder it SHALL mint an id (`randomUUIDv7()`, inline), write the marker, and insert a row with `markerWritten: true`; for an unmarked non-writable folder it SHALL mint an id and insert a row with `markerWritten: false` without writing any marker. The minted id SHALL be a `randomUUIDv7()`, never `crypto.randomUUID()` or ULID.
+The system SHALL provide `getOrCreateAnchorForCwd(dir)` returning `ResultAsync<Anchor, DbError>` in `src/modules/anchor/anchor.ts`, the single anchor entry point used at analysis creation. For a folder that already has a marker it SHALL return the existing anchors row (self-healing a drifted `cachedPath`); for an unmarked writable folder it SHALL mint an id (`randomUUIDv7()`, inline), write the marker, and insert a row with `markerWritten: true`; for an unmarked non-writable folder it SHALL mint an id and insert a row with `markerWritten: false` without writing any marker. The minted id SHALL be a `randomUUIDv7()`, never `crypto.randomUUID()` or ULID.
 
 #### Scenario: Create anchor for an unmarked writable directory
 
@@ -30,7 +30,7 @@ The system SHALL provide `getOrCreateAnchorForCwd(dir)` returning `Result<Anchor
 
 ### Requirement: Lazy anchor reconciliation
 
-The system SHALL provide `resolveAnchor(anchorId, opts?)` returning `Result<{ anchor: Anchor; path: string | null }, DbError>` that reconciles the id to its live path via a three-step lazy algorithm, in order: (1) if the marker at the row's `cachedPath` matches the id, touch the anchor (`last_seen`) and return `cachedPath`; (2) if a search root (default cwd) or an ancestor holds a marker with the id, self-heal `cachedPath` to that directory and return it without scanning; (3) otherwise perform a bounded search over the search roots and known anchor cached paths, returning a unique hit (self-healed) or `path: null` for zero or multiple hits.
+The system SHALL provide `resolveAnchor(anchorId, opts?)` returning `ResultAsync<{ anchor: Anchor; path: string | null }, DbError>` that reconciles the id to its live path via a three-step lazy algorithm, in order: (1) if the marker at the row's `cachedPath` matches the id, touch the anchor (`last_seen`) and return `cachedPath`; (2) if a search root (default cwd) or an ancestor holds a marker with the id, self-heal `cachedPath` to that directory and return it without scanning; (3) otherwise perform a bounded search over the search roots and known anchor cached paths, returning a unique hit (self-healed) or `path: null` for zero or multiple hits. The marker reads SHALL run off the event loop. The bounded search SHALL read each candidate, with a fixed count of reads in flight, so a candidate on a hung mount holds one slot and the reads of a large anchor set do not fill the thread pool of the server.
 
 #### Scenario: Cached path still valid
 
@@ -49,7 +49,7 @@ The system SHALL provide `resolveAnchor(anchorId, opts?)` returning `Result<{ an
 
 ### Requirement: Passive, no-litter anchor recovery
 
-The system SHALL provide `recoverAnchors(searchRoots = [cwd])` returning `Result<{ recovered, unresolved }, DbError>` that runs reconciliation across anchors to heal moved folders. Recovery SHALL be self-healing only — it NEVER mints an anchor or writes a marker — so it is safe to call on a passive flow (e.g. opening the chat TUI) without violating the no-litter policy.
+The system SHALL provide `recoverAnchors(searchRoots = [cwd])` returning `ResultAsync<{ recovered, unresolved }, DbError>` that runs reconciliation across anchors to heal moved folders. Recovery SHALL be self-healing only — it NEVER mints an anchor or writes a marker — so it is safe to call on a passive flow (e.g. opening the chat TUI) without violating the no-litter policy.
 
 #### Scenario: Launch-time recovery heals without creating
 
@@ -59,7 +59,7 @@ The system SHALL provide `recoverAnchors(searchRoots = [cwd])` returning `Result
 
 ### Requirement: Copy versus move classification
 
-The system SHALL provide `classifyMarkerSighting(dir, marker)` returning `Result<"copy" | "move" | "ok", DbError>`: `"ok"` when the id's anchors `cachedPath` equals `dir` (or no row exists), `"copy"` when that `cachedPath` differs from `dir` and still exists on disk, and `"move"` when that `cachedPath` differs and no longer exists. It SHALL never auto-merge a copy.
+The system SHALL provide `classifyMarkerSighting(dir, marker)` returning `ResultAsync<"copy" | "move" | "ok", DbError>`: `"ok"` when the id's anchors `cachedPath` equals `dir` (or no row exists), `"copy"` when that `cachedPath` differs from `dir` and still exists on disk, and `"move"` when that `cachedPath` differs and no longer exists. It SHALL never auto-merge a copy.
 
 #### Scenario: Same location is ok
 

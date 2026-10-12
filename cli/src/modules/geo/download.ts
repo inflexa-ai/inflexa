@@ -84,7 +84,7 @@ export async function runGeoDownload(rawGse: string, maxSize: string | undefined
     const folder = await resolveFolder();
     // Checked before the transfer rather than after: a read-only folder is a property of the user's
     // filesystem with an obvious remedy, and discovering it only once the bytes have moved wastes them.
-    if (!isDirWritable(folder)) fail(`${folder} is not writable, so ${accession} cannot be downloaded there.`);
+    if (!(await isDirWritable(folder))) fail(`${folder} is not writable, so ${accession} cannot be downloaded there.`);
 
     const destDir = join(folder, accession);
     console.log(`Downloading ${accession} to ${destDir}`);

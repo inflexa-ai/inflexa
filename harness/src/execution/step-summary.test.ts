@@ -160,7 +160,7 @@ describe("generateStepSummary", () => {
         const outDir = join(stepDir, "output");
         await mkdir(outDir, { recursive: true });
         await writeFile(join(outDir, "de-results.csv"), "gene,log2fc,padj\nTP53,2.3,0.001\nMYC,-1.8,0.004\n");
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(base, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) });
 
         const { provider, calls } = makeProvider([readFileCall("t1", "output/de-results.csv"), textMessage("# DE\n\n- 2 significant genes: TP53, MYC")]);
 
@@ -179,7 +179,7 @@ describe("generateStepSummary", () => {
         const stepDir = join(base, "analysis-001", "runs", "run-1", "step-1");
         await mkdir(join(stepDir, "output"), { recursive: true });
         await writeFile(join(stepDir, "output", "de-results.csv"), "gene,padj\nTP53,0.001\n");
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(base, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) });
         const target = join(stepDir, "output", "notes.md");
         const writeProbe = defineTool({
             id: "write_file",
@@ -223,7 +223,7 @@ describe("generateStepSummary", () => {
         const stepDir = join(base, "analysis-001", "runs", "run-1", "step-1");
         await mkdir(join(stepDir, "output"), { recursive: true });
         await writeFile(join(stepDir, "output", "long.txt"), "x".repeat(90_000));
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(base, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) });
         const kept: KeptToolOutput[] = [];
         const store: ToolOutputStore = {
             put: (output) => {

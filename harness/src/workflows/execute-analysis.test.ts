@@ -314,7 +314,7 @@ function makeDeps(opts: {
         sandboxStepCallable: async () => {
             throw new Error("sandboxStepCallable should not be invoked directly");
         },
-        resolveWorkspaceRoot: (id: string) => join("/tmp/cortex-execute-analysis-test", id),
+        resolveWorkspaceRoot: async (id: string) => join("/tmp/cortex-execute-analysis-test", id),
         workingMemory: createWorkingMemory({ query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Pool),
         synthesisModel: "test-synthesis-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },

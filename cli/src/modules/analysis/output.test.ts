@@ -47,9 +47,9 @@ function insertAnchorAt(id: string, cachedPath: string): void {
 
 // A resolvable "A1" anchor: marker on disk + row with the marker's path cached, so
 // resolveAnchor's cheap cached-path step hits without any search.
-function anchoredHome(): string {
+async function anchoredHome(): Promise<string> {
     const home = tmp();
-    writeMarker(home, "A1")._unsafeUnwrap();
+    (await writeMarker(home, "A1"))._unsafeUnwrap();
     insertAnchorAt("A1", home);
     return home;
 }
@@ -73,128 +73,128 @@ afterEach(() => {
 });
 
 describe("resolveOutputDir", () => {
-    test("a resolvable, writable anchor → the derived root at <anchor>/.inflexa/analyses/<slug>", () => {
-        const home = anchoredHome();
-        expect(resolveOutputDir(analysis())._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
+    test("a resolvable, writable anchor → the derived root at <anchor>/.inflexa/analyses/<slug>", async () => {
+        const home = await anchoredHome();
+        expect((await resolveOutputDir(analysis()))._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
     });
 
-    test("a resolvable but non-writable anchor → workspace_unavailable naming the folder (no fallback)", () => {
-        const home = anchoredHome();
+    test("a resolvable but non-writable anchor → workspace_unavailable naming the folder (no fallback)", async () => {
+        const home = await anchoredHome();
         chmodSync(home, 0o555);
-        const error = resolveOutputDir(analysis())._unsafeUnwrapErr();
+        const error = (await resolveOutputDir(analysis()))._unsafeUnwrapErr();
         expect(error.type).toBe("workspace_unavailable");
         if (error.type === "workspace_unavailable") expect(error.message).toContain(home);
     });
 
-    test("an unresolvable anchor → workspace_unavailable (no fallback)", () => {
+    test("an unresolvable anchor → workspace_unavailable (no fallback)", async () => {
         const gone = tmp();
         insertAnchorAt("A1", gone);
         rmSync(gone, { recursive: true, force: true }); // anchor can no longer be located
-        expect(resolveOutputDir(analysis())._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        expect((await resolveOutputDir(analysis()))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
     });
 });
 
 describe("locateExistingOutputDir", () => {
-    test("an existing tree is revealed even when the home folder is not writable", () => {
-        const home = anchoredHome();
+    test("an existing tree is revealed even when the home folder is not writable", async () => {
+        const home = await anchoredHome();
         // Materialize the tree while the folder is still writable, then revoke write.
-        ensureOutputDir(analysis())._unsafeUnwrap();
+        (await ensureOutputDir(analysis()))._unsafeUnwrap();
         chmodSync(home, 0o555);
 
         // resolveOutputDir (the write path) refuses, but the reveal path returns the tree.
-        expect(resolveOutputDir(analysis())._unsafeUnwrapErr().type).toBe("workspace_unavailable");
-        expect(locateExistingOutputDir(analysis())._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
+        expect((await resolveOutputDir(analysis()))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        expect((await locateExistingOutputDir(analysis()))._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
     });
 
-    test("a reachable folder with no materialized tree → ok(null)", () => {
-        anchoredHome();
-        expect(locateExistingOutputDir(analysis())._unsafeUnwrap()).toBeNull();
+    test("a reachable folder with no materialized tree → ok(null)", async () => {
+        await anchoredHome();
+        expect((await locateExistingOutputDir(analysis()))._unsafeUnwrap()).toBeNull();
     });
 
-    test("an unlocatable folder → workspace_unavailable", () => {
+    test("an unlocatable folder → workspace_unavailable", async () => {
         const gone = tmp();
         insertAnchorAt("A1", gone);
         rmSync(gone, { recursive: true, force: true });
-        expect(locateExistingOutputDir(analysis())._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        expect((await locateExistingOutputDir(analysis()))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
     });
 });
 
 describe("workspaceDataDir", () => {
-    test("appends data/ to the resolved workspace root", () => {
-        const home = anchoredHome();
-        expect(workspaceDataDir(analysis())._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug", "data"));
+    test("appends data/ to the resolved workspace root", async () => {
+        const home = await anchoredHome();
+        expect((await workspaceDataDir(analysis()))._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug", "data"));
     });
 
-    test("propagates the root's workspace_unavailable unchanged", () => {
+    test("propagates the root's workspace_unavailable unchanged", async () => {
         const gone = tmp();
         insertAnchorAt("A1", gone);
         rmSync(gone, { recursive: true, force: true });
-        expect(workspaceDataDir(analysis())._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        expect((await workspaceDataDir(analysis()))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
     });
 });
 
 describe("anchorPathForAnalysisId", () => {
-    test("resolves the folder the analysis lives in — its anchor, not its workspace", () => {
-        const home = anchoredHome();
+    test("resolves the folder the analysis lives in — its anchor, not its workspace", async () => {
+        const home = await anchoredHome();
         insertAnalysis(analysis())._unsafeUnwrap();
         // Deliberately the bare home folder: the caller spawns a child there, so it must NOT be the
         // `.inflexa/analyses/<slug>` workspace the other resolver returns.
-        expect(anchorPathForAnalysisId("ana1")).toBe(home);
+        expect(await anchorPathForAnalysisId("ana1")).toBe(home);
     });
 
-    test("an unknown analysis is null, not a throw or an error — the caller has a fallback", () => {
-        expect(anchorPathForAnalysisId("ghost")).toBeNull();
+    test("an unknown analysis is null, not a throw or an error — the caller has a fallback", async () => {
+        expect(await anchorPathForAnalysisId("ghost")).toBeNull();
     });
 
-    test("an analysis whose folder is gone is null (routine desync, never a hard failure)", () => {
+    test("an analysis whose folder is gone is null (routine desync, never a hard failure)", async () => {
         const gone = tmp();
         insertAnchorAt("A1", gone);
         insertAnalysis(analysis())._unsafeUnwrap();
         rmSync(gone, { recursive: true, force: true }); // the folder can no longer be located
-        expect(anchorPathForAnalysisId("ana1")).toBeNull();
+        expect(await anchorPathForAnalysisId("ana1")).toBeNull();
     });
 });
 
 describe("workspaceRootForAnalysisId", () => {
-    test("looks up the analysis row by id and resolves its workspace root", () => {
-        const home = anchoredHome();
+    test("looks up the analysis row by id and resolves its workspace root", async () => {
+        const home = await anchoredHome();
         insertAnalysis(analysis())._unsafeUnwrap();
-        expect(workspaceRootForAnalysisId("ana1")._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
+        expect((await workspaceRootForAnalysisId("ana1"))._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
     });
 
-    test("an unknown id → workspace_unavailable (a deleted row has no workspace), not a DbError", () => {
-        expect(workspaceRootForAnalysisId("ghost")._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+    test("an unknown id → workspace_unavailable (a deleted row has no workspace), not a DbError", async () => {
+        expect((await workspaceRootForAnalysisId("ghost"))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
     });
 
-    test("memoizes a resolved root, and `invalidateWorkspaceRoot` forces a re-derivation", () => {
-        anchoredHome();
+    test("memoizes a resolved root, and `invalidateWorkspaceRoot` forces a re-derivation", async () => {
+        await anchoredHome();
         insertAnalysis(analysis())._unsafeUnwrap();
-        const first = workspaceRootForAnalysisId("ana1")._unsafeUnwrap();
+        const first = (await workspaceRootForAnalysisId("ana1"))._unsafeUnwrap();
 
         // Drop the row the derivation reads. Only a memo hit can still answer; a fresh derivation
         // would report the analysis gone.
         deleteAnalysis("ana1")._unsafeUnwrap();
-        expect(workspaceRootForAnalysisId("ana1")._unsafeUnwrap()).toBe(first);
+        expect((await workspaceRootForAnalysisId("ana1"))._unsafeUnwrap()).toBe(first);
 
         invalidateWorkspaceRoot("ana1");
-        expect(workspaceRootForAnalysisId("ana1")._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        expect((await workspaceRootForAnalysisId("ana1"))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
     });
 
-    test("never caches a failure — the user may be fixing the folder between calls", () => {
-        const home = anchoredHome();
+    test("never caches a failure — the user may be fixing the folder between calls", async () => {
+        const home = await anchoredHome();
         insertAnalysis(analysis())._unsafeUnwrap();
         chmodSync(home, 0o555);
-        expect(workspaceRootForAnalysisId("ana1")._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        expect((await workspaceRootForAnalysisId("ana1"))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
 
         chmodSync(home, 0o755);
-        expect(workspaceRootForAnalysisId("ana1")._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
+        expect((await workspaceRootForAnalysisId("ana1"))._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
     });
 });
 
 describe("disposeWorkspace", () => {
     /** Seed a live workspace tree with one run artifact in it. Returns the anchor home. */
-    function seedWorkspace(): string {
-        const home = anchoredHome();
+    async function seedWorkspace(): Promise<string> {
+        const home = await anchoredHome();
         insertAnalysis(analysis())._unsafeUnwrap();
         const root = join(home, ".inflexa", "analyses", "myslug");
         mkdirSync(join(root, "runs", "run-1"), { recursive: true });
@@ -203,7 +203,7 @@ describe("disposeWorkspace", () => {
     }
 
     test("archive moves the tree out of analyses/ and keeps its contents", async () => {
-        const home = seedWorkspace();
+        const home = await seedWorkspace();
 
         const outcome = (await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap();
         expect(outcome.kind).toBe("archived");
@@ -215,13 +215,13 @@ describe("disposeWorkspace", () => {
 
     // The whole point: a freed slug must not resolve onto its predecessor's artifacts.
     test("after archiving, the live slug path is free for a new analysis of the same name", async () => {
-        const home = seedWorkspace();
+        const home = await seedWorkspace();
         (await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap();
         expect(existsSync(join(home, ".inflexa", "analyses", "myslug", "runs"))).toBe(false);
     });
 
     test("archiving the same slug twice suffixes rather than clobbering the first archive", async () => {
-        const home = seedWorkspace();
+        const home = await seedWorkspace();
         (await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap();
 
         // A second analysis takes the freed slug, then is itself deleted.
@@ -236,7 +236,7 @@ describe("disposeWorkspace", () => {
     });
 
     test("delete removes the tree and archives nothing", async () => {
-        const home = seedWorkspace();
+        const home = await seedWorkspace();
 
         expect((await disposeWorkspace(analysis(), "delete"))._unsafeUnwrap().kind).toBe("deleted");
         expect(existsSync(join(home, ".inflexa", "analyses", "myslug"))).toBe(false);
@@ -244,7 +244,7 @@ describe("disposeWorkspace", () => {
     });
 
     test("a never-created tree is `absent`, not an error", async () => {
-        anchoredHome();
+        await anchoredHome();
         insertAnalysis(analysis())._unsafeUnwrap();
         expect((await disposeWorkspace(analysis(), "archive"))._unsafeUnwrap().kind).toBe("absent");
     });
@@ -258,7 +258,7 @@ describe("disposeWorkspace", () => {
 
     // The delete flow disposes BEFORE dropping the row precisely so this failure changes nothing.
     test("a tree that cannot be moved is an err, and the tree survives", async () => {
-        const home = seedWorkspace();
+        const home = await seedWorkspace();
         // Read-only `.inflexa/` blocks both the archive mkdir and the rename out of `analyses/`.
         chmodSync(join(home, ".inflexa"), 0o555);
         try {

@@ -217,9 +217,9 @@ async function collectCitations(
 ): Promise<Result<CollectedCitations, PinSnapshotError>> {
     let root: string;
     try {
-        root = resolveWorkspaceRoot(analysisId);
+        root = await resolveWorkspaceRoot(analysisId);
     } catch {
-        // The seam signals an unresolvable resource by a throw. The artifact map still states the
+        // The seam signals an unresolvable resource by a rejection. The artifact map still states the
         // membership of the session, thus the fault costs the citation list alone.
         return ok({ keys: [], records: new Map() });
     }
