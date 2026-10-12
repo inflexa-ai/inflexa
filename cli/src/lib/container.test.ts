@@ -345,21 +345,25 @@ describe("pullImageThroughEngine", () => {
     });
 
     test("a stream that breaks before its end fails the pull, and the function does not reject", async () => {
-        const encoder = new TextEncoder();
-        const socket = fakeEngine(
-            () =>
-                new Response(
-                    new ReadableStream({
-                        start(controller) {
-                            controller.enqueue(encoder.encode(events({ id: "a", status: "Downloading", progressDetail: { current: 7 } })));
-                        },
-                        async pull(controller) {
-                            await Promise.sleep(20);
-                            controller.error(new Error("engine went away"));
-                        },
-                    }),
-                ),
-        );
+        // A raw socket, not Bun.serve: a ReadableStream error in Bun.serve ends the chunked body cleanly on
+        // Linux, thus the client sees a complete response. A close before the terminating chunk is a break
+        // that the HTTP client of each platform reports.
+        const dir = mkdtempSync(join(tmpdir(), "pe-"));
+        const socket = join(dir, "e.sock");
+        const line = events({ id: "a", status: "Downloading", progressDetail: { current: 7 } });
+        const listener = Bun.listen({
+            unix: socket,
+            socket: {
+                data(client) {
+                    client.write(`HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n${line.length.toString(16)}\r\n${line}\r\n`);
+                    setTimeout(() => client.end(), 20);
+                },
+            },
+        });
+        cleanups.push(() => {
+            listener.stop(true);
+            rmSync(dir, { recursive: true, force: true });
+        });
 
         const outcome = await pullImageThroughEngine(socket, "postgres:16", () => undefined);
 
