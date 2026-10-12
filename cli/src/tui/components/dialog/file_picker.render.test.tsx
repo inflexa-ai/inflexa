@@ -299,6 +299,21 @@ describe("FilePicker", () => {
         }
     });
 
+    test("a seed through a link renders the row of its canonical path checked", async () => {
+        const links = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-picker-links-")));
+        symlinkSync(root, join(links, "to-root"));
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        try {
+            await settle(setup);
+            const frame = await openPicker(setup, { seed: [join(links, "to-root", "alpha.txt")] });
+            expect(gutterOf(frame, "alpha.txt")).toBe(GLYPHS.circle);
+            expect(frame).toContain("1 selected");
+        } finally {
+            setup.renderer.destroy();
+            rmSync(links, { recursive: true, force: true });
+        }
+    });
+
     test("a symlink to a folder sorts with the files, keeps its trailing slash, and opens as a folder", async () => {
         const outside = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-picker-ext-")));
         writeFileSync(join(outside, "payload.txt"), "x");

@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
@@ -30,6 +31,11 @@ export function canonicalPath(p: string): string {
     } catch {
         return resolve(p);
     }
+}
+
+/** {@link canonicalPath} off the event loop, for a caller that must not stop on a hung mount. */
+export function canonicalPathAsync(p: string): Promise<string> {
+    return realpath(p).catch(() => resolve(p));
 }
 
 /**
