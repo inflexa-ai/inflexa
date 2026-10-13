@@ -700,3 +700,16 @@ export function promoteStoreFlightBatch(params: { ids: readonly string[]; holder
             .run(Date.now(), ...params.ids, params.holderPid, params.cap).changes;
     });
 }
+
+/**
+ * Marks a terminal run as seen at `atMs`. A run keeps its first mark: a second call changes nothing and returns
+ * `0`, so a repeat is idempotent and `seen_at` stays the time of the first sight. Returns rows changed: `1` for a
+ * new mark. An `analysisId` with no row trips the foreign key (`constraint_violation`).
+ */
+export function recordRunSeen(runId: string, analysisId: string, atMs: number): Result<number, DbError> {
+    return tryMutation("recordRunSeen", (conn) => {
+        return conn
+            .query("INSERT INTO run_seen_marks (run_id, seen_at, analysis_id) VALUES (?, ?, ?) ON CONFLICT(run_id) DO NOTHING")
+            .run(runId, atMs, analysisId).changes;
+    });
+}

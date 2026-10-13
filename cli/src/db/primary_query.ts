@@ -1051,3 +1051,42 @@ export function listPendingStoreAdds(): Result<PendingStoreAdd[], DbError> {
         }));
     });
 }
+
+/** What the person saw on this machine: the baseline time and the run id of each seen mark. */
+export type RunSeenState = {
+    /** The time of the migration that added the marks, in epoch milliseconds, or `null` when the baseline row is gone. */
+    readonly since: number | null;
+    /** The id of each run with a seen mark. */
+    readonly runIds: string[];
+};
+
+/**
+ * The seen baseline and each seen mark, in two statements whatever the count of marks. A baseline row that is
+ * gone gives `since` `null`: the table is on the machine of the user, who may have edited it.
+ */
+export function getRunSeenState(): Result<RunSeenState, DbError> {
+    return tryQuery("getRunSeenState", (conn) => {
+        // Both statements select their columns by name, so the row shapes below hold.
+        const baseline = conn.query("SELECT since FROM run_seen_baseline LIMIT 1").get() as { since: number } | null;
+        const marks = conn.query("SELECT run_id FROM run_seen_marks").all() as { run_id: string }[];
+        return { since: baseline?.since ?? null, runIds: marks.map((mark) => mark.run_id) };
+    });
+}
+
+/**
+ * The name of each analysis of the list that has a row, as a map from the id to the name, in one statement.
+ * An id with no row has no entry. An empty list sends no query. The ids ride as one JSON array parameter, thus
+ * the list can pass SQLite's ceiling of 32766 bound parameters.
+ */
+export function listAnalysisNames(ids: readonly string[]): Result<Map<string, string>, DbError> {
+    return tryQuery("listAnalysisNames", (conn) => {
+        const distinct = [...new Set(ids)];
+        if (distinct.length === 0) return new Map<string, string>();
+        // The statement selects `id` and `name` by name, so the row shape below holds.
+        const rows = conn.query("SELECT a.id, a.name FROM analyses a JOIN json_each(?) j ON j.value = a.id").all(JSON.stringify(distinct)) as {
+            id: string;
+            name: string;
+        }[];
+        return new Map(rows.map((row) => [row.id, row.name]));
+    });
+}

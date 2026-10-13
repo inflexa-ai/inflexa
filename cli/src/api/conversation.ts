@@ -27,6 +27,10 @@ export type ThreadSummary = {
     updatedAt: string;
     /** When the thread left view. Only a list with `includeArchived=true` gives an archived thread. */
     archivedAt?: string;
+    /** The id of the newest turn of this thread that runs now, or `null` when none runs. */
+    runningTurnId: string | null;
+    /** The count of the open asks of this thread. */
+    pendingAsks: number;
 };
 
 /** The body of `GET {A}/threads`: the most recently active first. */

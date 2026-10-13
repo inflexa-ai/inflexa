@@ -451,6 +451,89 @@ describe("listThreads", () => {
     });
 });
 
+describe("listRecentThreads", () => {
+    async function seedAt(threadId: string, analysisId: string, updatedAt: string, type: ThreadType = "conversation"): Promise<void> {
+        (await store.createThread({ threadId, analysisId, title: threadId, type }))._unsafeUnwrap();
+        await pool.query("UPDATE cortex_analysis_threads SET updated_at = $2 WHERE thread_id = $1", [threadId, updatedAt]);
+    }
+
+    it("has a partial index on the update time of the live rows after the migrations", async () => {
+        const { rows } = await pool.query<{ indexdef: string }>(
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_cortex_analysis_threads_recent'",
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.indexdef).toContain("(updated_at DESC, thread_id)");
+        expect(rows[0]!.indexdef).toContain("WHERE (deleted_at IS NULL)");
+    });
+
+    it("gives the threads of two analyses in update order, with the fields of a listed thread", async () => {
+        await seedAt("a-early", ANALYSIS_A, "2026-10-01T10:00:00.000Z");
+        await seedAt("a-late", ANALYSIS_A, "2026-10-01T12:00:00.000Z");
+        await seedAt("b-mid", ANALYSIS_B, "2026-10-01T11:00:00.000Z");
+
+        const threads = (await store.listRecentThreads({ limit: 2 }))._unsafeUnwrap();
+
+        expect(threads.map((t) => t.threadId)).toEqual(["a-late", "b-mid"]);
+        const listed = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap().threads.find((t) => t.threadId === "a-late");
+        expect(threads[0]).toEqual(listed!);
+    });
+
+    it("breaks a tie of the update time with the thread id, ascending", async () => {
+        await seedAt("tie-b", ANALYSIS_A, "2026-10-01T10:00:00.000Z");
+        await seedAt("tie-a", ANALYSIS_B, "2026-10-01T10:00:00.000Z");
+
+        const threads = (await store.listRecentThreads({ limit: 10 }))._unsafeUnwrap();
+
+        expect(threads.map((t) => t.threadId)).toEqual(["tie-a", "tie-b"]);
+    });
+
+    it("leaves out an archived thread, even the newest", async () => {
+        await seedAt("live", ANALYSIS_A, "2026-10-01T10:00:00.000Z");
+        await seedAt("archived", ANALYSIS_A, "2026-10-01T12:00:00.000Z");
+        (await store.archiveThread("archived"))._unsafeUnwrap();
+
+        const threads = (await store.listRecentThreads({ limit: 10 }))._unsafeUnwrap();
+
+        expect(threads.map((t) => t.threadId)).toEqual(["live"]);
+    });
+
+    it("narrows to one type, and an omitted type narrows nothing", async () => {
+        await seedAt("conv", ANALYSIS_A, "2026-10-01T10:00:00.000Z");
+        await seedAt("report", ANALYSIS_A, "2026-10-01T12:00:00.000Z", "report");
+
+        const conversations = (await store.listRecentThreads({ limit: 10, type: "conversation" }))._unsafeUnwrap();
+        const all = (await store.listRecentThreads({ limit: 10 }))._unsafeUnwrap();
+
+        expect(conversations.map((t) => t.threadId)).toEqual(["conv"]);
+        expect(all.map((t) => t.threadId)).toEqual(["report", "conv"]);
+    });
+
+    it("clamps the limit to 1 to 200", async () => {
+        for (let i = 0; i < 3; i++) await seedAt(`clamp-${i}`, ANALYSIS_A, `2026-10-01T1${i}:00:00.000Z`);
+
+        expect((await store.listRecentThreads({ limit: 0 }))._unsafeUnwrap()).toHaveLength(1);
+        expect((await store.listRecentThreads({ limit: -5 }))._unsafeUnwrap()).toHaveLength(1);
+        expect((await store.listRecentThreads({ limit: 1000 }))._unsafeUnwrap()).toHaveLength(3);
+    });
+
+    it("sends one query for threads of 20 analyses", async () => {
+        for (let i = 0; i < 20; i++) await seedAt(`many-${i}`, `analysis-many-${i}`, "2026-10-01T10:00:00.000Z");
+        let calls = 0;
+        // The wrapper forwards every `query` call to the pool, and the store reads only through `query`.
+        const countingPool = {
+            query: (...args: unknown[]) => {
+                calls += 1;
+                return (pool.query as (...forwarded: unknown[]) => unknown)(...args);
+            },
+        } as unknown as Pool;
+
+        const threads = (await createThreadStore(countingPool).listRecentThreads({ limit: 50 }))._unsafeUnwrap();
+
+        expect(threads).toHaveLength(20);
+        expect(calls).toBe(1);
+    });
+});
+
 describe("listThreads includeArchived", () => {
     /** One live thread and one archived thread under the same analysis. */
     async function seedLiveAndArchived(): Promise<void> {

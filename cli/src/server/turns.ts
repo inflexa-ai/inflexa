@@ -110,6 +110,26 @@ export function listThreadTurns(analysisId: string, threadId: string): TurnSumma
 }
 
 /**
+ * The newest running turn of each thread that has one, as a map from the thread id to the turn id. The newest
+ * turn has the latest `startedAt`, and the greater turn id breaks a tie. A thread whose turns all ended has no
+ * entry. One read of the registry serves every thread, whatever their count.
+ */
+export function runningTurnsByThread(): Map<string, string> {
+    const newest = new Map<string, TurnSummary>();
+    for (const { summary } of running.values()) {
+        const held = newest.get(summary.threadId);
+        if (held === undefined || isNewerTurn(summary, held)) newest.set(summary.threadId, summary);
+    }
+    return new Map([...newest].map(([threadId, summary]) => [threadId, summary.turnId]));
+}
+
+/** True when `a` started after `b`, or at the same time with the greater turn id. A UUIDv7 turn id sorts by its start. */
+function isNewerTurn(a: TurnSummary, b: TurnSummary): boolean {
+    const byStart = Date.parse(a.startedAt) - Date.parse(b.startedAt);
+    return byStart !== 0 ? byStart > 0 : a.turnId > b.turnId;
+}
+
+/**
  * Abort a turn. `aborting` when the turn runs: it ends when the harness unwinds. `already_ended` when the
  * registry holds its summary. `null` when the registry does not know the turn.
  */

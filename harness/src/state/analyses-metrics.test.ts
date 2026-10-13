@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { queryDataProfileStatusByAnalyses, queryLatestRunsByAnalyses } from "./analyses-metrics.js";
+import { queryDataProfileStatusByAnalyses, queryLatestRunsByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "./analyses-metrics.js";
 import type { Querier } from "./db.js";
 
 async function seedAnalysis(pool: Pool, analysisId: string, dataProfileStatus: string | null = "pending"): Promise<void> {
@@ -23,12 +23,20 @@ async function seedPlan(pool: Pool, planId: string, analysisId: string, plan: un
 
 async function seedRun(
     pool: Pool,
-    run: { runId: string; analysisId: string; startedAt: string; status?: string; planId?: string | null; completedAt?: string | null },
+    run: {
+        runId: string;
+        analysisId: string;
+        startedAt: string;
+        status?: string;
+        planId?: string | null;
+        completedAt?: string | null;
+        threadId?: string | null;
+    },
 ): Promise<void> {
     await pool.query({
-        text: `INSERT INTO cortex_runs (run_id, analysis_id, workflow_name, status, started_at, completed_at, plan_id)
-               VALUES ($1, $2, 'executeAnalysis', $3, $4, $5, $6)`,
-        values: [run.runId, run.analysisId, run.status ?? "running", run.startedAt, run.completedAt ?? null, run.planId ?? null],
+        text: `INSERT INTO cortex_runs (run_id, analysis_id, workflow_name, status, started_at, completed_at, plan_id, thread_id)
+               VALUES ($1, $2, 'executeAnalysis', $3, $4, $5, $6, $7)`,
+        values: [run.runId, run.analysisId, run.status ?? "running", run.startedAt, run.completedAt ?? null, run.planId ?? null, run.threadId ?? null],
     });
 }
 
@@ -55,7 +63,7 @@ function countingQuerier(pool: Pool): { querier: Querier; calls: () => number } 
     return { querier, calls: () => calls };
 }
 
-describe("the index on the runs of an analysis by start time", () => {
+describe("the indexes on the runs", () => {
     let pool: Pool;
     let drop: () => Promise<void>;
 
@@ -72,6 +80,14 @@ describe("the index on the runs of an analysis by start time", () => {
         );
         expect(rows).toHaveLength(1);
         expect(rows[0]!.indexdef).toContain("(analysis_id, started_at DESC, run_id DESC)");
+    });
+
+    it("has an index on the completion time and the run id after the migrations", async () => {
+        const { rows } = await pool.query<{ indexdef: string }>(
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_cortex_runs_completed'",
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.indexdef).toContain("(completed_at DESC, run_id DESC)");
     });
 });
 
@@ -203,6 +219,227 @@ describe("queryLatestRunsByAnalyses", () => {
 
         expect((await queryLatestRunsByAnalyses(counted.querier, []))._unsafeUnwrap()).toEqual([]);
         expect(counted.calls()).toBe(1);
+    });
+});
+
+describe("queryRunProgressByRuns", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("run_progress_by_runs"));
+    });
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("gives an entry for each named run, with its thread, and none for an unknown id", async () => {
+        await seedAnalysis(pool, "named-a1");
+        await seedAnalysis(pool, "named-a2");
+        await seedPlan(pool, "pln-named001", "named-a1", { title: " Pathway scan " });
+        await seedRun(pool, {
+            runId: "named-r1",
+            analysisId: "named-a1",
+            startedAt: "2026-10-01T10:00:00.000Z",
+            planId: "pln-named001",
+            threadId: "named-t1",
+        });
+        await seedRun(pool, {
+            runId: "named-r2",
+            analysisId: "named-a2",
+            startedAt: "2026-10-02T10:00:00.000Z",
+            status: "failed",
+            completedAt: "2026-10-02T11:00:00.000Z",
+        });
+
+        const entries = (await queryRunProgressByRuns(pool, ["named-r1", "named-r2", "named-gone"]))._unsafeUnwrap();
+
+        expect(entries).toEqual([
+            {
+                analysisId: "named-a2",
+                runId: "named-r2",
+                status: "failed",
+                planTitle: null,
+                doneSteps: 0,
+                totalSteps: 0,
+                startedAt: "2026-10-02T10:00:00.000Z",
+                completedAt: "2026-10-02T11:00:00.000Z",
+                threadId: null,
+            },
+            {
+                analysisId: "named-a1",
+                runId: "named-r1",
+                status: "running",
+                planTitle: "Pathway scan",
+                doneSteps: 0,
+                totalSteps: 0,
+                startedAt: "2026-10-01T10:00:00.000Z",
+                completedAt: null,
+                threadId: "named-t1",
+            },
+        ]);
+    });
+
+    it("counts the step rows of each named run only", async () => {
+        await seedAnalysis(pool, "count-a");
+        await seedRun(pool, { runId: "count-r1", analysisId: "count-a", startedAt: "2026-10-01T10:00:00.000Z" });
+        await seedSteps(pool, "count-r1", "count-a", ["completed", "completed", "running", "pending"]);
+        await seedRun(pool, { runId: "count-r2", analysisId: "count-a", startedAt: "2026-10-02T10:00:00.000Z" });
+        await seedSteps(pool, "count-r2", "count-a", ["completed", "failed"]);
+        await seedRun(pool, { runId: "count-other", analysisId: "count-a", startedAt: "2026-10-03T10:00:00.000Z" });
+        await seedSteps(pool, "count-other", "count-a", ["completed", "completed", "completed"]);
+
+        const entries = (await queryRunProgressByRuns(pool, ["count-r1", "count-r2"]))._unsafeUnwrap();
+
+        expect(entries.map((entry) => [entry.runId, entry.doneSteps, entry.totalSteps])).toEqual([
+            ["count-r2", 1, 2],
+            ["count-r1", 2, 4],
+        ]);
+    });
+
+    it("gives a null title for a plan of a different analysis", async () => {
+        await seedAnalysis(pool, "scope-a");
+        await seedAnalysis(pool, "scope-other");
+        await seedPlan(pool, "pln-pscope001", "scope-other", { title: "Not mine" });
+        await seedRun(pool, { runId: "pscope-r", analysisId: "scope-a", startedAt: "2026-10-01T10:00:00.000Z", planId: "pln-pscope001" });
+
+        const [entry] = (await queryRunProgressByRuns(pool, ["pscope-r"]))._unsafeUnwrap();
+
+        expect(entry?.runId).toBe("pscope-r");
+        expect(entry?.planTitle).toBeNull();
+    });
+
+    it("orders the entries newest start first, and breaks a tie with the run id, descending", async () => {
+        await seedAnalysis(pool, "order-a");
+        await seedRun(pool, { runId: "order-r1", analysisId: "order-a", startedAt: "2026-10-01T10:00:00.000Z" });
+        await seedRun(pool, { runId: "order-r2", analysisId: "order-a", startedAt: "2026-10-03T10:00:00.000Z" });
+        await seedRun(pool, { runId: "order-r3", analysisId: "order-a", startedAt: "2026-10-03T10:00:00.000Z" });
+
+        const entries = (await queryRunProgressByRuns(pool, ["order-r1", "order-r2", "order-r3"]))._unsafeUnwrap();
+
+        expect(entries.map((entry) => entry.runId)).toEqual(["order-r3", "order-r2", "order-r1"]);
+    });
+
+    it("sends one query for a long list, and none for an empty list", async () => {
+        const ids = Array.from({ length: 20 }, (_, index) => `pmany-${index}`);
+        await seedAnalysis(pool, "pmany-a");
+        for (const id of ids) await seedRun(pool, { runId: id, analysisId: "pmany-a", startedAt: "2026-10-01T10:00:00.000Z" });
+        const counted = countingQuerier(pool);
+
+        const entries = (await queryRunProgressByRuns(counted.querier, ids))._unsafeUnwrap();
+        expect(entries).toHaveLength(20);
+        expect(counted.calls()).toBe(1);
+
+        expect((await queryRunProgressByRuns(counted.querier, []))._unsafeUnwrap()).toEqual([]);
+        expect(counted.calls()).toBe(1);
+    });
+});
+
+describe("queryRunsEndedSince", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("runs_ended_since"));
+    });
+    afterAll(async () => {
+        await drop();
+    });
+
+    const since = "2026-10-05T00:00:00.000Z";
+
+    it("gives the terminal runs that ended at or after the time, newest completion first, and no run that ended before it", async () => {
+        await seedAnalysis(pool, "since-a1");
+        await seedAnalysis(pool, "since-a2");
+        await seedRun(pool, {
+            runId: "since-old",
+            analysisId: "since-a1",
+            startedAt: "2026-10-04T10:00:00.000Z",
+            status: "completed",
+            completedAt: "2026-10-04T11:00:00.000Z",
+        });
+        await seedRun(pool, { runId: "since-edge", analysisId: "since-a1", startedAt: "2026-10-04T23:00:00.000Z", status: "completed", completedAt: since });
+        await seedRun(pool, {
+            runId: "since-new",
+            analysisId: "since-a2",
+            startedAt: "2026-10-05T01:00:00.000Z",
+            status: "failed",
+            completedAt: "2026-10-05T02:00:00.000Z",
+        });
+
+        const entries = (await queryRunsEndedSince(pool, { since, exceptRunIds: [], limit: 10 }))._unsafeUnwrap();
+
+        expect(entries).toEqual([
+            { analysisId: "since-a2", runId: "since-new", status: "failed", completedAt: "2026-10-05T02:00:00.000Z" },
+            { analysisId: "since-a1", runId: "since-edge", status: "completed", completedAt: since },
+        ]);
+    });
+
+    it("gives each of the four terminal statuses, and no run that still runs or waits for funds", async () => {
+        await seedAnalysis(pool, "status-a");
+        const statuses = ["completed", "partial", "failed", "canceled", "running", "suspended_insufficient_funds"];
+        for (const [index, status] of statuses.entries()) {
+            await seedRun(pool, {
+                runId: `status-${status}`,
+                analysisId: "status-a",
+                startedAt: "2026-10-06T00:00:00.000Z",
+                status,
+                completedAt: `2026-10-06T0${index}:00:00.000Z`,
+            });
+        }
+
+        const entries = (await queryRunsEndedSince(pool, { since: "2026-10-06T00:00:00.000Z", exceptRunIds: [], limit: 10 }))._unsafeUnwrap();
+
+        expect(entries.map((entry) => entry.status)).toEqual(["canceled", "failed", "partial", "completed"]);
+    });
+
+    it("skips the runs of the skip list", async () => {
+        await seedAnalysis(pool, "skip-a");
+        await seedRun(pool, {
+            runId: "skip-r2",
+            analysisId: "skip-a",
+            startedAt: "2026-10-07T00:00:00.000Z",
+            status: "completed",
+            completedAt: "2026-10-07T01:00:00.000Z",
+        });
+        await seedRun(pool, {
+            runId: "skip-r3",
+            analysisId: "skip-a",
+            startedAt: "2026-10-07T00:00:00.000Z",
+            status: "completed",
+            completedAt: "2026-10-07T02:00:00.000Z",
+        });
+
+        const entries = (await queryRunsEndedSince(pool, { since: "2026-10-07T00:00:00.000Z", exceptRunIds: ["skip-r3"], limit: 10 }))._unsafeUnwrap();
+
+        expect(entries.map((entry) => entry.runId)).toEqual(["skip-r2"]);
+    });
+
+    it("bounds the result with the limit, and breaks a tie of the completion time with the run id, descending", async () => {
+        await seedAnalysis(pool, "limit-a");
+        for (const id of ["limit-r1", "limit-r2", "limit-r3", "limit-r4", "limit-r5"]) {
+            await seedRun(pool, {
+                runId: id,
+                analysisId: "limit-a",
+                startedAt: "2026-10-08T00:00:00.000Z",
+                status: "completed",
+                completedAt: "2026-10-08T01:00:00.000Z",
+            });
+        }
+
+        const entries = (await queryRunsEndedSince(pool, { since: "2026-10-08T00:00:00.000Z", exceptRunIds: [], limit: 2 }))._unsafeUnwrap();
+
+        expect(entries.map((entry) => entry.runId)).toEqual(["limit-r5", "limit-r4"]);
+    });
+
+    it("sends one query, with an empty skip list too", async () => {
+        const counted = countingQuerier(pool);
+
+        (await queryRunsEndedSince(counted.querier, { since, exceptRunIds: [], limit: 5 }))._unsafeUnwrap();
+        expect(counted.calls()).toBe(1);
+
+        (await queryRunsEndedSince(counted.querier, { since, exceptRunIds: ["a", "b"], limit: 5 }))._unsafeUnwrap();
+        expect(counted.calls()).toBe(2);
     });
 });
 

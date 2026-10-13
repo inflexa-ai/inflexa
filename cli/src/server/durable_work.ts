@@ -9,8 +9,8 @@ const LIVE_WORKFLOW_STATUSES: readonly string[] = [StatusString.PENDING, StatusS
 
 /**
  * The liveness rule, as two SQL predicates over `cortex_runs r` and `cortex_analysis_state s`. Parameter `$2` is
- * {@link LIVE_WORKFLOW_STATUSES}. The one-analysis count and the grouped count share the text, thus the busy
- * gate and the list cannot disagree on what is live.
+ * {@link LIVE_WORKFLOW_STATUSES}. The one-analysis count, the grouped count, and the list of live run ids share
+ * the text, thus the busy gate and the lists cannot disagree on what is live.
  */
 const RUN_IS_LIVE = `r.status IN ('running', 'suspended_insufficient_funds')
                           AND EXISTS (SELECT 1 FROM dbos.workflow_status ws
@@ -68,4 +68,22 @@ export function countLiveDurableWorkByAnalysis(pool: Pool, analysisIds: readonly
         }),
         (cause) => cause,
     ).map((result) => new Map(result.rows.map((row) => [row.analysis_id, { runs: Number(row.runs), profiles: Number(row.profiles) }])));
+}
+
+/**
+ * The id of each run whose durable workflow is live, over each analysis, the newest start first, with at most
+ * `limit` ids. It reads {@link RUN_IS_LIVE} as it stands: `$1` is the limit and `$2` stays the live workflow
+ * statuses.
+ */
+export function listLiveRunIds(pool: Pool, limit: number): ResultAsync<string[], unknown> {
+    return ResultAsync.fromPromise(
+        pool.query<{ run_id: string }>({
+            text: `SELECT r.run_id FROM cortex_runs r
+                    WHERE ${RUN_IS_LIVE}
+                    ORDER BY r.started_at DESC, r.run_id DESC
+                    LIMIT $1`,
+            values: [limit, LIVE_WORKFLOW_STATUSES],
+        }),
+        (cause) => cause,
+    ).map((result) => result.rows.map((row) => row.run_id));
 }

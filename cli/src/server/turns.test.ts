@@ -13,6 +13,7 @@ import {
     newTurnsRefused,
     refuseNewTurns,
     runningTurnCount,
+    runningTurnsByThread,
     startTurn,
     whenNoRunningTurns,
 } from "./turns.ts";
@@ -82,6 +83,35 @@ describe("the turn registry", () => {
         const held = findTurn("k1")!;
         held.status = "failed";
         expect(findTurn("k1")?.status).toBe("running");
+    });
+});
+
+describe("runningTurnsByThread", () => {
+    test("gives the newest running turn of each thread, and none for a thread whose turns ended", () => {
+        start("k-old", "t1", "a1", T0);
+        start("k-new", "t1", "a1", new Date(T0.getTime() + 5_000));
+        start("k-other", "t2", "a1", T0);
+        start("k-done", "t3", "a1", T0);
+        endTurn("k-done", { status: "done" }, new Date(T0.getTime() + 1_000));
+
+        expect(runningTurnsByThread()).toEqual(
+            new Map([
+                ["t1", "k-new"],
+                ["t2", "k-other"],
+            ]),
+        );
+    });
+
+    test("breaks a tie of the start time with the greater turn id, whatever the order of the starts", () => {
+        start("k-b", "t1", "a1", T0);
+        start("k-c", "t1", "a1", T0);
+        start("k-a", "t1", "a1", T0);
+
+        expect(runningTurnsByThread().get("t1")).toBe("k-c");
+    });
+
+    test("is empty with no running turn", () => {
+        expect(runningTurnsByThread().size).toBe(0);
     });
 });
 

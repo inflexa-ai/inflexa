@@ -11,7 +11,7 @@ import type { DataProfileCoverage, DataProfileKind, DataProfileLifecycleStatus, 
 import { profileDatasetFileCount } from "../app/data-profile-view.js";
 import { tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
-import type { RunStatus } from "./schema.js";
+import type { RunStatus, TerminalRunStatus } from "./schema.js";
 
 /** The newest run of one analysis, with the title of its plan and the counts of its step rows. */
 export interface LatestRunSummary {
@@ -23,6 +23,20 @@ export interface LatestRunSummary {
     readonly totalSteps: number;
     readonly startedAt: string;
     readonly completedAt: string | null;
+}
+
+/** A run of a list of run ids, with the fields of the newest-run read and the thread of the run. */
+export interface RunProgressSummary extends LatestRunSummary {
+    /** The thread of the run as the ledger stores it, or `null`. */
+    readonly threadId: string | null;
+}
+
+/** A terminal run that ended at or after a time. */
+export interface EndedRunSummary {
+    readonly analysisId: string;
+    readonly runId: string;
+    readonly status: TerminalRunStatus;
+    readonly completedAt: string;
 }
 
 /** The data profile state of one analysis that has a profile status. */
@@ -85,6 +99,49 @@ function titleOf(title: string | null): string | null {
     return trimmed === "" ? null : trimmed;
 }
 
+interface RunProgressRow {
+    analysis_id: string;
+    run_id: string;
+    status: RunStatus;
+    started_at: string;
+    completed_at: string | null;
+    plan_title: string | null;
+    done_steps: number;
+    total_steps: number;
+}
+
+/**
+ * The columns of a run summary over a run alias `r`, and the plan alias `p` and
+ * the step count alias `s` of `RUN_PROGRESS_JOINS`. The two reads of a run
+ * summary put these after their own selection of `r`, thus the title rule and
+ * the step count rule have one text.
+ */
+const RUN_PROGRESS_COLUMNS = `r.analysis_id, r.run_id, r.status, r.started_at, r.completed_at,
+                    CASE WHEN jsonb_typeof(p.plan->'title') = 'string' THEN p.plan->>'title' END AS plan_title,
+                    s.done_steps, s.total_steps`;
+
+/** The plan join and the step count subquery for a run alias `r` that selects `analysis_id`, `run_id`, and `plan_id`. */
+const RUN_PROGRESS_JOINS = `LEFT JOIN cortex_plans p ON p.plan_id = r.plan_id AND p.analysis_id = r.analysis_id
+             CROSS JOIN LATERAL (
+                 SELECT COUNT(*)::int AS total_steps,
+                        (COUNT(*) FILTER (WHERE status = 'completed'))::int AS done_steps
+                 FROM cortex_step_executions
+                 WHERE run_id = r.run_id
+             ) s`;
+
+function toRunSummary(row: RunProgressRow): LatestRunSummary {
+    return {
+        analysisId: row.analysis_id,
+        runId: row.run_id,
+        status: row.status,
+        planTitle: titleOf(row.plan_title),
+        doneSteps: row.done_steps,
+        totalSteps: row.total_steps,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+    };
+}
+
 /**
  * The newest run of each analysis of a list, in one statement. An analysis with
  * no run has no entry. The newest run has the latest `started_at`, and `run_id`
@@ -103,45 +160,70 @@ function titleOf(title: string | null): string | null {
 export function queryLatestRunsByAnalyses(pool: Querier, analysisIds: string[]): ResultAsync<LatestRunSummary[], DbError> {
     if (analysisIds.length === 0) return okAsync([]);
     return tryQuery("analysesMetrics.queryLatestRunsByAnalyses", async () => {
-        const result = await pool.query<{
-            analysis_id: string;
-            run_id: string;
-            status: RunStatus;
-            started_at: string;
-            completed_at: string | null;
-            plan_title: string | null;
-            done_steps: number;
-            total_steps: number;
-        }>({
-            text: `SELECT a.id AS analysis_id, r.run_id, r.status, r.started_at, r.completed_at,
-                    CASE WHEN jsonb_typeof(p.plan->'title') = 'string' THEN p.plan->>'title' END AS plan_title,
-                    s.done_steps, s.total_steps
+        const result = await pool.query<RunProgressRow>({
+            text: `SELECT ${RUN_PROGRESS_COLUMNS}
              FROM unnest($1::text[]) AS a(id)
              CROSS JOIN LATERAL (
-                 SELECT run_id, status, started_at, completed_at, plan_id
+                 SELECT analysis_id, run_id, status, started_at, completed_at, plan_id
                  FROM cortex_runs
                  WHERE analysis_id = a.id
                  ORDER BY started_at DESC, run_id DESC
                  LIMIT 1
              ) r
-             LEFT JOIN cortex_plans p ON p.plan_id = r.plan_id AND p.analysis_id = a.id
-             CROSS JOIN LATERAL (
-                 SELECT COUNT(*)::int AS total_steps,
-                        (COUNT(*) FILTER (WHERE status = 'completed'))::int AS done_steps
-                 FROM cortex_step_executions
-                 WHERE run_id = r.run_id
-             ) s`,
+             ${RUN_PROGRESS_JOINS}`,
             values: [analysisIds],
         });
-        return result.rows.map((r) => ({
-            analysisId: r.analysis_id,
-            runId: r.run_id,
-            status: r.status,
-            planTitle: titleOf(r.plan_title),
-            doneSteps: r.done_steps,
-            totalSteps: r.total_steps,
-            startedAt: r.started_at,
-            completedAt: r.completed_at,
+        return result.rows.map(toRunSummary);
+    });
+}
+
+/**
+ * The progress of each run of a list of run ids, in one statement. An id with
+ * no run row has no entry. The entries come newest first by `started_at`, and
+ * `run_id` breaks a tie in descending order. The plan title and the step counts
+ * follow the rules of `queryLatestRunsByAnalyses`, and each entry adds the
+ * thread of the run.
+ */
+export function queryRunProgressByRuns(pool: Querier, runIds: string[]): ResultAsync<RunProgressSummary[], DbError> {
+    if (runIds.length === 0) return okAsync([]);
+    return tryQuery("analysesMetrics.queryRunProgressByRuns", async () => {
+        const result = await pool.query<RunProgressRow & { thread_id: string | null }>({
+            text: `SELECT ${RUN_PROGRESS_COLUMNS}, r.thread_id
+             FROM cortex_runs r
+             ${RUN_PROGRESS_JOINS}
+             WHERE r.run_id = ANY($1::text[])
+             ORDER BY r.started_at DESC, r.run_id DESC`,
+            values: [runIds],
+        });
+        return result.rows.map((row) => ({ ...toRunSummary(row), threadId: row.thread_id }));
+    });
+}
+
+/**
+ * The terminal runs of every analysis that ended at or after `since`, newest
+ * completion first, with `run_id` breaking a tie in descending order. A run in
+ * `exceptRunIds` is absent. `since` is in the form of `toISOString()`, the form
+ * of each `completed_at` stamp, thus the text comparison is the time
+ * comparison. The statement walks `idx_cortex_runs_completed`, and it sends
+ * even when `exceptRunIds` is empty.
+ */
+export function queryRunsEndedSince(pool: Querier, input: { since: string; exceptRunIds: string[]; limit: number }): ResultAsync<EndedRunSummary[], DbError> {
+    return tryQuery("analysesMetrics.queryRunsEndedSince", async () => {
+        const result = await pool.query<{ analysis_id: string; run_id: string; status: TerminalRunStatus; completed_at: string }>({
+            text: `SELECT analysis_id, run_id, status, completed_at
+             FROM cortex_runs
+             WHERE status IN ('completed', 'partial', 'failed', 'canceled')
+               AND completed_at >= $1
+               AND run_id <> ALL($2::text[])
+             ORDER BY completed_at DESC, run_id DESC
+             LIMIT $3`,
+            values: [input.since, input.exceptRunIds, input.limit],
+        });
+        return result.rows.map((row) => ({
+            analysisId: row.analysis_id,
+            runId: row.run_id,
+            status: row.status,
+            completedAt: row.completed_at,
         }));
     });
 }

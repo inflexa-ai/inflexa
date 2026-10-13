@@ -191,6 +191,13 @@ export interface ListThreadsInput {
     readonly parentThreadId?: string;
 }
 
+export interface ListRecentThreadsInput {
+    /** The most threads to give. It clamps to 1 to 200, the bounds of a page of `listThreads`. */
+    readonly limit: number;
+    /** Narrow to one kind of session, exact match. Omitting it narrows nothing. */
+    readonly type?: ThreadType;
+}
+
 export interface ThreadPage {
     readonly threads: Thread[];
     readonly total: number;
@@ -270,6 +277,13 @@ export interface ThreadStore {
      * always describe whichever set the page was drawn from.
      */
     listThreads(input: ListThreadsInput): ResultAsync<ThreadPage, DbError>;
+    /**
+     * The newest live threads over every analysis, newest-updated first, with
+     * `thread_id` breaking a tie in ascending order. One statement that walks
+     * the live-row index on the update time. `type` narrows the result, and an
+     * archived thread is never in it.
+     */
+    listRecentThreads(input: ListRecentThreadsInput): ResultAsync<Thread[], DbError>;
 }
 
 interface ThreadRow {
@@ -687,5 +701,25 @@ export function createThreadStore(pool: Pool): ThreadStore {
         });
     }
 
-    return { createThread, getThread, updateTitle, setAutoTitle, archiveThread, unarchiveThread, purgeThread, listThreads };
+    function listRecentThreads(input: ListRecentThreadsInput): ResultAsync<Thread[], DbError> {
+        const limit = Math.min(Math.max(input.limit, 1), MAX_PER_PAGE);
+        const values: unknown[] = [limit];
+        let typePredicate = "";
+        if (input.type !== undefined) {
+            values.push(input.type);
+            typePredicate = " AND thread_type = $2";
+        }
+        return tryQuery("thread-store.listRecentThreads", () =>
+            pool.query<ThreadRow>(
+                `SELECT ${THREAD_COLUMNS}
+         FROM cortex_analysis_threads
+         WHERE deleted_at IS NULL${typePredicate}
+         ORDER BY updated_at DESC, thread_id
+         LIMIT $1`,
+                values,
+            ),
+        ).map(({ rows }) => rows.map(toThread));
+    }
+
+    return { createThread, getThread, updateTitle, setAutoTitle, archiveThread, unarchiveThread, purgeThread, listThreads, listRecentThreads };
 }
