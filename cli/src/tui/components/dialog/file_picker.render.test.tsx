@@ -51,6 +51,16 @@ async function settle(setup: Setup): Promise<string> {
     return setup.captureCharFrame();
 }
 
+/**
+ * Settle until the frame shows `text`, and give that frame. A folder read is async, and a read of a folder over
+ * the ceiling can outlast one {@link settle} on a slow host. Thus one fixed wait can capture the old rows.
+ */
+async function settleUntil(setup: Setup, text: string): Promise<string> {
+    let frame = await settle(setup);
+    for (let tries = 0; tries < 40 && !frame.includes(text); tries++) frame = await settle(setup);
+    return frame;
+}
+
 async function openPicker(
     setup: Setup,
     opts: { seed?: string[]; requireSelection?: boolean; onConfirm?: (paths: string[]) => void; onCancel?: () => void } = {},
@@ -559,7 +569,7 @@ describe("FilePicker entry metadata", () => {
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressEnter();
-            const frame = await settle(setup);
+            const frame = await settleUntil(setup, "details off (large folder)");
             expect(frame).toContain("details off (large folder)");
             const line = rowLine(frame, "f0.txt");
             expect(line.slice(0, line.indexOf("f0.txt"))).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
@@ -583,7 +593,8 @@ describe("FilePicker entry metadata", () => {
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressEnter();
-            let frame = await settle(setup);
+            // The slash of a link to a folder comes after the stat of its target, a step after the listing.
+            let frame = await settleUntil(setup, "aa-link/");
             expect(frame).toContain("details off (large folder)");
             // A link sorts with the files, thus `aa-link` is the first row after `..`.
             expect(frame).toContain("aa-link/");
@@ -592,8 +603,7 @@ describe("FilePicker entry metadata", () => {
             setup.mockInput.pressEnter();
             // The folder read is async, and a render of the 2002 rows of `big` does not yield to it. Thus one
             // fixed wait can capture the old rows.
-            frame = await settle(setup);
-            for (let tries = 0; tries < 10 && !frame.includes("payload.txt"); tries++) frame = await settle(setup);
+            frame = await settleUntil(setup, "payload.txt");
             expect(frame).toContain("payload.txt");
             expect(frame).not.toContain("f0.txt");
         } finally {
@@ -614,7 +624,7 @@ describe("FilePicker entry metadata", () => {
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressEnter();
-            const frame = await settle(setup);
+            const frame = await settleUntil(setup, "details off (large folder)");
             // The hidden entries are hidden by default, so 1001 rows show and 2001 entries were read.
             expect(frame).not.toContain(".h0");
             expect(frame).toContain("details off (large folder)");
