@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
@@ -353,5 +355,41 @@ describe("reference-data paths", () => {
         // Reference artifacts are fetched from the upstream that publishes them, so there is
         // no distribution endpoint to configure and no env var that could point one elsewhere.
         expect(Object.keys(envDoc)).not.toContain("referenceDataBaseUrl");
+    });
+});
+
+describe("the base folders of the data and the configuration", () => {
+    // env.ts reads the variables at import, thus a child process imports it with the variables under test.
+    function resolvedPaths(vars: Record<string, string>): { dataDir: string; configPath: string; home: string } {
+        const home = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-env-")));
+        try {
+            const run = Bun.spawnSync(
+                [
+                    "bun",
+                    "-e",
+                    `const { env } = await import(${JSON.stringify(join(import.meta.dir, "env.ts"))}); console.log(JSON.stringify({ dataDir: env.dataDir, configPath: env.configPath }));`,
+                ],
+                {
+                    cwd: home,
+                    env: { PATH: process.env.PATH ?? "", HOME: home, NODE_ENV: "test", INFLEXA_TEST_SANDBOX: home, ...vars },
+                },
+            );
+            expect(run.exitCode).toBe(0);
+            return { ...(JSON.parse(run.stdout.toString()) as { dataDir: string; configPath: string }), home };
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    }
+
+    test.skipIf(process.platform === "win32")("a relative XDG_DATA_HOME or XDG_CONFIG_HOME is ignored, as the XDG Base Directory specification says", () => {
+        const paths = resolvedPaths({ XDG_DATA_HOME: "relative/data", XDG_CONFIG_HOME: "relative/config" });
+        expect(paths.dataDir).toBe(join(paths.home, ".local", "share", "inflexa"));
+        expect(paths.configPath).toBe(join(paths.home, ".config", "inflexa", "config.json"));
+    });
+
+    test.skipIf(process.platform === "win32")("an absolute XDG_DATA_HOME and XDG_CONFIG_HOME are the base folders", () => {
+        const paths = resolvedPaths({ XDG_DATA_HOME: "/srv/data", XDG_CONFIG_HOME: "/srv/config" });
+        expect(paths.dataDir).toBe("/srv/data/inflexa");
+        expect(paths.configPath).toBe("/srv/config/inflexa/config.json");
     });
 });
