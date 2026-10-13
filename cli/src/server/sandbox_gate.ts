@@ -78,7 +78,8 @@ export type SandboxGateOpts = {
     readonly inputCount: (analysisId: string) => Result<number, unknown>;
     readonly transfers: () => readonly TransferReport[];
     readonly readiness: (analysisId: string) => Promise<Omit<SandboxReadiness, "inputCount">>;
-    readonly takeFarmFailure: (analysisId: string) => FarmCompositionFailure | null;
+    /** The recorded farm failure. A drive that a person starts takes it. The background re-profile reads it and leaves it. */
+    readonly readFarmFailure: (analysisId: string) => FarmCompositionFailure | null;
 };
 
 /** The production {@link SandboxGateOpts}. */
@@ -86,8 +87,15 @@ export const DEFAULT_SANDBOX_GATE_OPTS: SandboxGateOpts = {
     inputCount: countAnalysisInputs,
     transfers: readTransferReports,
     readiness: readSandboxReadiness,
-    takeFarmFailure: takeFarmCompositionFailure,
+    readFarmFailure: takeFarmCompositionFailure,
 };
+
+/**
+ * The {@link SandboxGateOpts} of the re-profile after an input change. That drive runs in the background, thus no
+ * person sees its refusal. It leaves a recorded farm failure in place, and the next drive that a person starts
+ * names the failure. Until then the background drive refuses again at each retry.
+ */
+export const INPUT_DRIFT_SANDBOX_GATE_OPTS: SandboxGateOpts = { ...DEFAULT_SANDBOX_GATE_OPTS, readFarmFailure: peekFarmCompositionFailure };
 
 /**
  * Why a profile of the analysis cannot start a sandbox now, or `null` when it can. Each profile drive of the
@@ -95,9 +103,9 @@ export const DEFAULT_SANDBOX_GATE_OPTS: SandboxGateOpts = {
  * The refusal is one line for a person, with the command that repairs the machine.
  *
  * A live transfer refuses before the machine is read: an image pull or a catalog merge changes what a sandbox
- * mounts, and the gate clears a recorded farm failure each time it reads the machine, thus the next check must
- * still see it. The gate clears the record also when an image refusal or a store refusal comes first, and then
- * it does not name the failure. The next drive composes again.
+ * mounts, and the gate of a drive that a person starts clears a recorded farm failure each time it reads the
+ * machine, thus the next check must still see it. That gate clears the record also when an image refusal or a
+ * store refusal comes first, and then it does not name the failure. The next drive composes again.
  */
 export async function sandboxRefusal(analysisId: string, opts: SandboxGateOpts = DEFAULT_SANDBOX_GATE_OPTS): Promise<string | null> {
     // An analysis with no inputs profiles nothing, thus it needs no image and no store. A failed count falls
@@ -108,7 +116,7 @@ export async function sandboxRefusal(analysisId: string, opts: SandboxGateOpts =
         return "A sandbox download is in flight. Run `inflexa sandbox status` to watch it, then try again when it ends.";
     }
     const machine = await opts.readiness(analysisId);
-    const farmFailure = opts.takeFarmFailure(analysisId)?.reason ?? null;
+    const farmFailure = opts.readFarmFailure(analysisId)?.reason ?? null;
     return machineRefusal({ ...machine, farm: { ...machine.farm, failure: farmFailure } }, transfers);
 }
 

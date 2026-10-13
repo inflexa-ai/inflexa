@@ -833,6 +833,36 @@ describe("the inputs of an analysis", () => {
         ).toEqual(["far.csv", "new.csv"]);
     });
 
+    test("PUT tries each removal after a failed one, then answers 500 that names each failed and each removed input", async () => {
+        const dir = tmp();
+        const a = await seedAnalysis(dir);
+        const names = ["one.csv", "two.csv", "three.csv", "four.csv"];
+        for (const path of [...names, "keep.csv"]) {
+            writeFileSync(join(dir, path), "x");
+            insertAnalysisInput({ path, isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
+        }
+        const failing = new Set(["two.csv", "three.csv"]);
+        const opts: AnalysisRouteOpts = {
+            ...IDLE,
+            removeInput: (input) => (failing.has(input.path) ? err({ type: "mutation_failed", op: "delete input", cause: "disk full" }) : removeInput(input)),
+        };
+
+        const res = await appWith(idleBoot(), opts).request(`/api/v1/analyses/${a.id}/inputs`, json("PUT", { paths: [join(dir, "keep.csv")] }));
+
+        expect(res.status).toBe(500);
+        const body = (await res.json()) as ApiError;
+        expect(body.error).toBe("internal_error");
+        expect(body.message).toContain("two.csv, three.csv");
+        expect(body.message).toContain("one.csv, four.csv");
+        expect(body.message).not.toContain("disk full");
+        expect(
+            listAnalysisInputs(a.id)
+                ._unsafeUnwrap()
+                .map((i) => i.path)
+                .toSorted(),
+        ).toEqual(["keep.csv", "three.csv", "two.csv"]);
+    });
+
     test("POST remove tries each input after a failed removal, then answers 500 that names each outcome", async () => {
         const dir = tmp();
         const a = await seedAnalysis(dir);

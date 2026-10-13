@@ -176,8 +176,8 @@ export function removeInput(input: AnalysisInput): Result<AnalysisInput | null, 
     });
 }
 
-/** One failed leg of {@link applyInputsDiff} — which operation failed and the underlying error. */
-export type InputsDiffFailure = { op: "add" | "remove"; error: DbError };
+/** One failed leg of {@link applyInputsDiff} — which operation failed, the input of a failed removal, and the underlying error. */
+export type InputsDiffFailure = { op: "add"; error: DbError } | { op: "remove"; input: AnalysisInput; error: DbError };
 
 /** What {@link applyInputsDiff} changed: the inputs that landed, the inputs that went, and each failed leg. */
 export type InputsDiffOutcome = { added: AnalysisInput[]; removed: AnalysisInput[]; failures: InputsDiffFailure[] };
@@ -191,7 +191,13 @@ export type InputsDiffOutcome = { added: AnalysisInput[]; removed: AnalysisInput
  * are collected rather than short-circuited: each removal is independent, so the
  * survivors should still land. `failures` is empty when the whole diff applied.
  */
-export async function applyInputsDiff(analysisId: string, toAdd: string[], toRemove: AnalysisInput[], cwd: string): Promise<InputsDiffOutcome> {
+export async function applyInputsDiff(
+    analysisId: string,
+    toAdd: string[],
+    toRemove: AnalysisInput[],
+    cwd: string,
+    remove: typeof removeInput = removeInput,
+): Promise<InputsDiffOutcome> {
     const outcome: InputsDiffOutcome = { added: [], removed: [], failures: [] };
     if (toAdd.length > 0) {
         (await addInputs(analysisId, toAdd, cwd)).match(
@@ -201,11 +207,11 @@ export async function applyInputsDiff(analysisId: string, toAdd: string[], toRem
     }
     if (outcome.failures.length > 0) return outcome;
     for (const input of toRemove) {
-        removeInput(input).match(
+        remove(input).match(
             (removed) => {
                 if (removed !== null) outcome.removed.push(removed);
             },
-            (error) => outcome.failures.push({ op: "remove", error }),
+            (error) => outcome.failures.push({ op: "remove", input, error }),
         );
     }
     return outcome;

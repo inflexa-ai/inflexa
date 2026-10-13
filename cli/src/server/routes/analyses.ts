@@ -543,15 +543,22 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
         const missing = await refuseMissing(c, toAdd);
         if (missing !== null) return missing;
 
-        const outcome = await applyInputsDiff(analysisId, toAdd, toRemove, "/");
-        const failure = outcome.failures[0];
-        if (failure !== undefined) {
-            getLogger("server").error({ err: failure.error, op: failure.op }, "an input change failed");
-            return apiError(
-                c,
-                "internal_error",
-                `The input ${failure.op === "add" ? "adds failed, thus nothing changed" : `removals failed after +${outcome.added.length} -${outcome.removed.length}`}.`,
-            );
+        const outcome = await applyInputsDiff(analysisId, toAdd, toRemove, "/", opts.removeInput);
+        if (outcome.failures.length > 0) {
+            const failedRemovals: AnalysisInput[] = [];
+            for (const failure of outcome.failures) {
+                getLogger("server").error({ err: failure.error, op: failure.op }, "an input change failed");
+                if (failure.op === "remove") failedRemovals.push(failure.input);
+            }
+            // The adds are one batch, and the removals run only after it landed, thus a failed add changed nothing.
+            if (failedRemovals.length === 0) return apiError(c, "internal_error", "The input adds failed, thus nothing changed.");
+            // Each change that landed already emitted its provenance event, thus the message names them.
+            const landed = [
+                ...(outcome.added.length > 0 ? [`added: ${outcome.added.map((i) => i.path).join(", ")}`] : []),
+                ...(outcome.removed.length > 0 ? [`removed: ${outcome.removed.map((i) => i.path).join(", ")}`] : []),
+            ];
+            const already = landed.length > 0 ? ` (${landed.join("; ")})` : "";
+            return apiError(c, "internal_error", `Failed to remove ${failedRemovals.map((i) => i.path).join(", ")}${already}.`);
         }
         return c.json({ added: await inputViews(outcome.added), removed: await inputViews(outcome.removed), notInputs: [] } satisfies InputsChange);
     });

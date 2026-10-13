@@ -59,8 +59,17 @@ function askRequest(action: "add" | "remove", analysisId: string, paths: readonl
     };
 }
 
+/** What the `manage_inputs` tool changes. Tests replace each one. */
+export type ManageInputsToolOpts = {
+    /** Remove one input ref and record the removal in the provenance chain. */
+    readonly removeInput: typeof removeInput;
+};
+
+/** The production {@link ManageInputsToolOpts}. */
+export const DEFAULT_MANAGE_INPUTS_TOOL_OPTS: ManageInputsToolOpts = { removeInput };
+
 /** Build the in-process `manage_inputs` conversation tool. */
-export function createManageInputsTool() {
+export function createManageInputsTool(opts: ManageInputsToolOpts = DEFAULT_MANAGE_INPUTS_TOOL_OPTS) {
     return defineTool({
         id: "manage_inputs",
         description:
@@ -164,15 +173,21 @@ export function createManageInputsTool() {
                 ),
             );
             const removed: string[] = [];
+            const failed: string[] = [];
+            const errorTypes = new Set<string>();
+            // Each input is independent, thus a failed removal does not stop the removals after it.
             for (const target of matched) {
-                const r = removeInput(target);
+                const r = opts.removeInput(target);
                 if (r.isErr()) {
-                    // Name what was already removed (and emitted prov.input_removed for) before the fault,
-                    // so the agent sees the remove partially applied instead of reading it as a clean no-op.
-                    const done = removed.length > 0 ? ` (already removed: ${removed.join(", ")})` : "";
-                    return ok({ status: "error" as const, message: `could not remove ${target.path}: ${r.error.type}${done}` });
-                }
-                if (r.value !== null) removed.push(target.path);
+                    failed.push(target.path);
+                    errorTypes.add(r.error.type);
+                } else if (r.value !== null) removed.push(target.path);
+            }
+            if (failed.length > 0) {
+                // Each removal that landed already emitted prov.input_removed, thus the agent must see the
+                // remove partially applied instead of reading it as a clean no-op.
+                const done = removed.length > 0 ? ` (removed: ${removed.join(", ")})` : "";
+                return ok({ status: "error" as const, message: `could not remove ${failed.join(", ")}: ${[...errorTypes].join(", ")}${done}` });
             }
             return ok({ status: "removed" as const, removed, notInputs });
         },
