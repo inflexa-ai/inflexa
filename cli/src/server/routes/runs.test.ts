@@ -478,6 +478,8 @@ describe("GET {A}/run/:runId/synthesis", () => {
             (await writeMarker(home, "A1"))._unsafeUnwrap();
             insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
             insertAnalysis({ id: analysisId, createdAt: 1, updatedAt: 1, name: asStr256("A"), slug: "a", anchorId: "A1", projectId: null })._unsafeUnwrap();
+            // The memo is process state: a test file that ran before this one can hold a root of the same id for a deleted folder.
+            invalidateWorkspaceRoot();
             const root = (await workspaceRootForAnalysisId(analysisId))._unsafeUnwrap();
             mkdirSync(join(root, "runs", "r1"), { recursive: true });
             const { type: _type, id: _id, ...stored } = part;
