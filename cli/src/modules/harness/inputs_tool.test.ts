@@ -10,8 +10,12 @@ import { Bus } from "../../lib/bus.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { str256 } from "../../lib/types.ts";
 import type { BusEvent } from "../../types/events.ts";
+import { err } from "neverthrow";
+
+import { insertAnalysisInput } from "../../db/primary_mutation.ts";
+import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { freshDb } from "../../test_support/db.ts";
-import { createAnalysis } from "../analysis/analysis.ts";
+import { createAnalysis, removeInput } from "../analysis/analysis.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
 
 /** A minimal `ToolContext` carrying the analysis scope the tool reads, plus a stub `ask`. */
@@ -117,6 +121,31 @@ describe("manage_inputs tool", () => {
             expect(result.notInputs).toEqual([]);
         }
         expect(prov.types).toEqual(["prov.input_removed"]);
+    });
+
+    test("remove tries each input after a failed removal, and names each failed and each removed input", async () => {
+        const names = ["one.csv", "two.csv", "three.csv", "four.csv"];
+        const anchorId = (await createAnalysis({ cwd: dir, name: str256("mi2")._unsafeUnwrap() }))._unsafeUnwrap().anchorId;
+        for (const path of names) insertAnalysisInput({ path, isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        const failing = new Set(["two.csv", "three.csv"]);
+        const failingTool = createManageInputsTool({
+            removeInput: (input) => (failing.has(input.path) ? err({ type: "mutation_failed", op: "delete input", cause: "disk full" }) : removeInput(input)),
+        });
+        acquireInstanceLock(analysisId);
+
+        const result = (await failingTool.execute({ action: "remove", paths: names }, ctxFor(analysisId, recordingAsk().fn)))._unsafeUnwrap();
+
+        expect(result.status).toBe("error");
+        if (result.status === "error") {
+            expect(result.message).toContain("two.csv, three.csv");
+            expect(result.message).toContain("one.csv, four.csv");
+        }
+        expect(
+            listAnalysisInputs(analysisId)
+                ._unsafeUnwrap()
+                .map((i) => i.path)
+                .toSorted(),
+        ).toEqual(["three.csv", "two.csv"]);
     });
 
     test("remove reports a path that is not a current input as a no-op", async () => {

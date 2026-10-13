@@ -689,7 +689,7 @@ Before each profile drive, the server MUST ask why a sandbox of the analysis can
 - A container engine that does not answer MUST refuse with the message of the engine.
 - An image that the engine cannot find MUST refuse, and name `inflexa sandbox pull`, or the build of a custom image.
 - An absent or incomplete store MUST refuse, and name `inflexa store download`. A declined or canceled catalog transfer gives the reason.
-- A recorded failure of the farm composition MUST refuse with its reason. The gate clears the record when it reads the machine, thus the next drive composes again.
+- A recorded failure of the farm composition MUST refuse with its reason. The gate of the chat open and of the deliberate re-profile clears the record when it reads the machine, thus the next drive composes again. The gate of the input change MUST NOT clear the record, because no person sees its refusal. Thus the input change waits until a drive of a person names the failure.
 
 The engine and the filesystem decide usability, and a transfer row gives only the reason of a refusal. A refused re-profile MUST give 409 `conflict` with the line. A refused chat open MUST give the outcome `failed` with the line, and start no drive. A refused input change MUST wait, per the coordination requirement.
 
@@ -719,6 +719,12 @@ The read of the sandbox readiness (`GET {A}/sandbox-readiness`) MUST give a reco
 - **GIVEN** a recorded failure of the farm composition of an analysis with inputs
 - **WHEN** a profile drive asks the gate, and the gate refuses with the failure
 - **THEN** the next read of the sandbox readiness gives `farm.failure` as `null`
+
+#### Scenario: An input change leaves the record for a person
+
+- **GIVEN** a recorded failure of the farm composition of an analysis with inputs
+- **WHEN** the input change asks the gate two times, and then a client sends `POST {A}/data-profile/rerun`
+- **THEN** each input-change check refuses with the failure, and the re-profile answers 409 `conflict` with the line that names the failure
 
 ### Requirement: The server gives the home folder and the entries of a folder
 

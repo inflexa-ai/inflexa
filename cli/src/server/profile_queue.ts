@@ -7,7 +7,7 @@ import { reprofileForInputChange, type ProfileParityOutcome } from "../modules/h
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { StampedEvent } from "../types/events.ts";
-import { sandboxRefusal } from "./sandbox_gate.ts";
+import { INPUT_DRIFT_SANDBOX_GATE_OPTS, sandboxRefusal } from "./sandbox_gate.ts";
 
 // The profile work of each analysis runs one drive at a time. The harness ledger CAS serializes only the
 // workflow dispatch, and it runs after the staging. Thus it cannot serialize the two things that race:
@@ -110,7 +110,7 @@ export function defaultInputDriftOpts(runtime: () => HarnessRuntime | null): Inp
                 () => null,
             ),
         reprofile: reprofileForInputChange,
-        sandboxRefusal,
+        sandboxRefusal: (analysisId) => sandboxRefusal(analysisId, INPUT_DRIFT_SANDBOX_GATE_OPTS),
         schedule: (fn, ms) => {
             const handle = setTimeout(fn, ms);
             // A half-elapsed debounce must not keep the process alive at shutdown.
