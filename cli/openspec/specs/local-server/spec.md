@@ -736,7 +736,7 @@ The body of `GET` and `PATCH /api/v1/settings` MUST give two absolute paths on t
 - `dataDir`: the data folder of inflexa, `<data dir>/inflexa`. The database, the logs, and the package store are in it.
 - `serverLogPath`: the log file of a background server of this build channel. `inflexa server logs` reads the same file.
 
-The two paths come from the data home of the platform (`XDG_DATA_HOME`, or `LOCALAPPDATA` on Windows). They are absolute when the data home is absolute or unset. The XDG Base Directory specification does not permit a relative data home.
+The two paths come from the data home of the platform (`XDG_DATA_HOME`, or `LOCALAPPDATA` on Windows). The paths MUST be absolute. A relative data home MUST be ignored, as the XDG Base Directory specification says, and the paths then use the default data home under the home folder.
 
 A `PATCH` body cannot change the two paths. The server MUST ignore them in a `PATCH` body.
 

@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 /**
  * True when this process is a `bun test` run whose sandbox preload never executed — the one condition
@@ -74,15 +74,17 @@ const serverFileVar = "INFLEXA_SERVER_FILE";
  */
 export const EMBEDDING_API_KEY_VAR = "INFLEXA_EMBEDDING_API_KEY";
 
+// The XDG Base Directory specification makes a program ignore a relative value. Each process resolves a
+// relative value against its own cwd, thus a client and the detached server would resolve different folders.
 function dataDir(): string {
     const base = process.env[dataVar];
-    if (base) return base;
+    if (base && isAbsolute(base)) return base;
     return process.platform === "win32" ? join(homedir(), "AppData", "Local") : join(homedir(), ".local", "share");
 }
 
 function configDir(): string {
     const base = process.env[configVar];
-    if (base) return base;
+    if (base && isAbsolute(base)) return base;
     return process.platform === "win32" ? join(homedir(), "AppData", "Roaming") : join(homedir(), ".config");
 }
 
