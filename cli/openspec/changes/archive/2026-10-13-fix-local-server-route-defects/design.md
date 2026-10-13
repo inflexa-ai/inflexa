@@ -6,7 +6,9 @@ Refer to `proposal.md` for the defects. The four fixes are independent, and each
 
 - `src/modules/prov/lineage.ts`: `resolveLineageRef` compares each `inflexa:hash` value as a full string. The kernel copies the stored value, thus a hash has the form `sha256:<hex>`. The harness accepts each `<algorithm>:<hex>` form (`hasValidContentHash` in `harness/src/lib/fs-helpers.ts`). The test fixtures use hashes with no colon.
 - `src/server/sandbox_gate.ts`: `readSandboxReadiness` calls `takeFarmCompositionFailure`, which clears the in-memory record of `src/modules/libs/composition.ts`. The GET route and the gate share that read through `SandboxGateOpts.readiness`.
-- `src/server/routes/analyses.ts`: `POST {A}/inputs/remove` returns at the first failed `removeInput`.
+- `src/server/routes/analyses.ts`: `POST {A}/inputs/remove` returns at the first failed `removeInput`. `PUT {A}/inputs` reports only the first failure of `applyInputsDiff`, and that failure carries no input.
+- `src/modules/harness/inputs_tool.ts`: the `remove` action of `manage_inputs` returns at the first failed `removeInput`.
+- `src/server/profile_queue.ts`: the input-drift watcher asks the same gate as a drive that a person starts, thus it clears a recorded farm failure, and it logs its refusal at debug level only.
 - `src/tui/commands.tsx`: `workspaceBusyReason` calls `fetchAnalysis` with no `touch` value.
 
 ## Goals / Non-Goals
@@ -18,9 +20,6 @@ Refer to `proposal.md` for the defects. The four fixes are independent, and each
 
 **Non-Goals:**
 
-- The agent tool `manage_inputs` (`src/modules/harness/inputs_tool.ts`) also stops at the first failed removal. Its result goes to the agent, and no spec covers its partial failure. This change does not touch it.
-- The background drift watcher (`src/server/profile_queue.ts`) asks the gate, and it logs a refusal at debug level only. Thus it can clear a farm failure that no person sees. This change keeps that behavior.
-- `PUT {A}/inputs` reports only its first failure. This change does not touch it.
 - An input entity is not addressable by hash. This change does not touch that.
 
 ## Decisions
@@ -47,7 +46,7 @@ The path tier runs first, thus a path that contains a colon still resolves as a 
 
 `composition.ts` gets `peekFarmCompositionFailure`, a read that does not clear the record. `readSandboxReadiness` uses it.
 
-`SandboxGateOpts` gets a `takeFarmFailure` member, with the production value `takeFarmCompositionFailure`. `sandboxRefusal` reads the machine, then it takes the record, and it gives the taken reason to `machineRefusal` as `farm.failure`. The gate uses the taken value, not the peeked value. Thus, when the farm check gives the refusal, the gate names each record that it clears.
+`SandboxGateOpts` gets a `readFarmFailure` member, with the production value `takeFarmCompositionFailure`. D5 gives the input change a value that does not clear the record. `sandboxRefusal` reads the machine, then it takes the record, and it gives the taken reason to `machineRefusal` as `farm.failure`. The gate uses the taken value, not the peeked value. Thus, when the farm check gives the refusal, the gate names each record that it clears.
 
 The gate keeps its current semantics: it clears the record each time it reads the machine. If an image refusal or a store refusal comes first, the gate clears the record and does not name it. Then the next drive composes again, as today. A live transfer still refuses before the machine read, thus the record stays for the next drive.
 
@@ -73,7 +72,6 @@ The route keeps its own loop over the matched inputs. A failed removal goes into
 Alternatives:
 
 - Answer 200 with a new failure field in `InputsChange`. Rejected, because `PUT {A}/inputs` reports the same failure class as a 500. The error contract of `local-server` also has no partial-success shape, and `InputsChange` serves three routes.
-- Call `applyInputsDiff` with no adds. Rejected, because its failure carries no input to name, and a test cannot make one removal fail through it.
 
 The TUI and the CLI need no change. Each one shows the message of a 500 already. The input-change watch re-profiles after each removal that emitted `prov.input_removed`.
 
@@ -81,8 +79,21 @@ The TUI and the CLI need no change. Each one shows the message of a 500 already.
 
 `workspaceBusyReason` passes `touch: false` to `fetchAnalysis`. `workingDirFor` and `openTarget` keep the sighting, because each one is an open.
 
+### D5. The gate of the input change reads the record, and it does not clear it
+
+`sandbox_gate.ts` gets `INPUT_DRIFT_SANDBOX_GATE_OPTS`: the default gate options, with `readFarmFailure` set to `peekFarmCompositionFailure`. `defaultInputDriftOpts` (`src/server/profile_queue.ts`) asks the gate with these options. The chat open and the deliberate re-profile keep the default options, which clear the record.
+
+The input-change drive runs in the background, thus no person sees its refusal. While a failure is recorded, that drive refuses at each retry of 30 s. The next drive that a person starts names the failure, and clears it. Then the input change composes again.
+
+### D6. Each removal surface tries each matched input
+
+`applyInputsDiff` (`src/modules/analysis/analysis.ts`) takes the removal as an option, with the production value `removeInput`. A failed removal in its outcome carries its input. `PUT {A}/inputs` gives it `opts.removeInput`. After a removal fails, the route logs each failure, and it answers 500 `internal_error`. The message names each failed input, and each input that the route added or removed. A failed add changes nothing, as before.
+
+`createManageInputsTool` takes `ManageInputsToolOpts`, with a `removeInput` member. Its `remove` action tries each matched input. After a removal fails, it gives `status: "error"`, with a message that names each failed input, the type of each error, and each removed input.
+
 ## Risks / Trade-offs
 
 - [A reference with the scheme and 6 or more hex characters] → It still resolves. The scheme matches, and the digest part is long enough.
 - [The tree output changes its short hash form] → The tree is the output for a person. A script uses `--format json`, which keeps the full hash.
 - [The TUI does not refresh after a 500 for a partial removal] → The workspace poll reads the input count again at its next tick.
+- [The input change does not compose again while a failure is recorded] → A download can repair the cause, but the background re-profile waits for a drive of a person. In exchange, the person always sees the cause.
