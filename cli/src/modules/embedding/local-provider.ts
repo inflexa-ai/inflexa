@@ -956,7 +956,7 @@ async function defaultLaunch(modelPath: string): Promise<Result<SidecarHandle, P
  * sidecar launch — a process that never embeds locally never touches it. (lib/env.ts's
  * sole-reader convention governs config READS; this is a targeted mutation with the
  * invariant documented here.) Assignment only, never delete-then-set: after a
- * `delete process.env.NO_PROXY`, Bun (verified on 1.3.14) stops propagating later
+ * `delete process.env.NO_PROXY`, Bun (verified on 1.4.2) stops propagating later
  * NO_PROXY assignments to fetch's proxy resolution — plain read-append-assign works.
  */
 function ensureLoopbackProxyBypass(): void {

@@ -365,7 +365,7 @@ describe("the base folders of the data and the configuration", () => {
         try {
             const run = Bun.spawnSync(
                 [
-                    "bun",
+                    process.execPath,
                     "-e",
                     `const { env } = await import(${JSON.stringify(join(import.meta.dir, "env.ts"))}); console.log(JSON.stringify({ dataDir: env.dataDir, configPath: env.configPath }));`,
                 ],
