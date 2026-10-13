@@ -1,10 +1,11 @@
 // The wire types of the runs and the data profile of an analysis (draft 2.4). Each harness type below is a
 // type-only import: it is erased at compile time, thus a client that imports this file loads no harness code.
-import type { DataProfileLifecycleStatus, DataProfileResult } from "@inflexa-ai/harness/contracts/index.js";
+import type { DataProfileLifecycleStatus, DataProfileResult, RunSynthesisPart } from "@inflexa-ai/harness/contracts/index.js";
 import type { CancelRunResult as HarnessCancelRunResult } from "@inflexa-ai/harness/execution/run-canceler.js";
 import type {
     RunStatus as HarnessRunStatus,
     StepExecutionStatus as HarnessStepExecutionStatus,
+    SynthesisStatus,
     TerminalRunStatus as HarnessTerminalRunStatus,
 } from "@inflexa-ai/harness/state/schema.js";
 
@@ -44,6 +45,8 @@ export type RunSummary = {
     planTitle?: string;
     /** What the calls of the run consumed. Absent when the ledger holds no call of the run, or its read failed. */
     usage?: UsageTotals;
+    /** The count of the step outputs that the run registered. Absent when the count read failed. */
+    artifactCount?: number;
 };
 
 /**
@@ -189,4 +192,15 @@ export type FarmHealOutcome =
 /** The body of `POST {A}/farm/heal`. */
 export type FarmHealResult = {
     outcome: FarmHealOutcome;
+};
+
+/**
+ * The body of `GET {A}/run/:runId/synthesis`. `status` and `reason` are the synthesis outcome of the run row.
+ * `synthesis` is the flat part that the run stream carries. It is `null` unless `status` is `produced`, and
+ * also when a produced record is gone, unreadable, over 1 MiB, or invalid.
+ */
+export type RunSynthesisView = {
+    status: SynthesisStatus | null;
+    reason: string | null;
+    synthesis: RunSynthesisPart | null;
 };

@@ -7,7 +7,7 @@ import type { ResultAsync } from "neverthrow";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
-import type { ArtifactRow } from "./schema.js";
+import type { ArtifactRole, ArtifactRow } from "./schema.js";
 
 export interface RegisterArtifactInput {
     resourceId: string;
@@ -244,16 +244,121 @@ export function queryAnalysisArtifacts(pool: Querier, analysisId: string): Resul
     });
 }
 
-/** Count step-output artifacts produced by a run — for the run-completed card. */
-export function countArtifactsForRun(pool: Querier, analysisId: string, runId: string): ResultAsync<number, DbError> {
-    return tryQuery("artifacts.countArtifactsForRun", async () => {
-        const result = await pool.query<{ n: string }>({
-            text: `SELECT COUNT(*)::text AS n
-          FROM cortex_artifacts
-          WHERE analysis_id = $1 AND source_run = $2 AND role = 'step_output'`,
-            values: [analysisId, runId],
+/** The sort of {@link queryArtifactPage}: `path` is path order, `recent` is newest registration first. */
+export type ArtifactPageSort = "path" | "recent";
+
+/** The filters, the sort, and the window of {@link queryArtifactPage}. A filter that is absent selects each row. */
+export interface ArtifactPageQuery {
+    runId?: string;
+    stepId?: string;
+    fileType?: string;
+    /** A part of the path, with no regard to case. Each character matches only itself. */
+    q?: string;
+    sort: ArtifactPageSort;
+    limit: number;
+    offset: number;
+}
+
+/** One ledger row of {@link queryArtifactPage}. */
+export interface ArtifactPageEntry {
+    /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
+    path: string;
+    /** Bytes. */
+    size: number;
+    fileType: string | null;
+    role: ArtifactRole;
+    runId: string | null;
+    stepId: string | null;
+    createdAt: string;
+}
+
+/** One page of the ledger, and the count of the rows that the filters select. */
+export interface ArtifactPage {
+    entries: ArtifactPageEntry[];
+    total: number;
+}
+
+/**
+ * One page of the artifact ledger of an analysis, in two statements: the count of the rows that the filters
+ * select, and the page. The count is a separate statement because a page past the end has no row to carry it.
+ *
+ * Every row of the analysis is a member, an `input` row and a row with `unrecoverable_at` included. The cost
+ * grows with the ledger of the one analysis, because the count reads each filtered row.
+ */
+export function queryArtifactPage(pool: Querier, analysisId: string, query: ArtifactPageQuery): ResultAsync<ArtifactPage, DbError> {
+    return tryQuery("artifacts.queryArtifactPage", async () => {
+        const values: unknown[] = [analysisId];
+        const conditions = ["analysis_id = $1"];
+        const bind = (value: unknown): string => {
+            values.push(value);
+            return `$${values.length}`;
+        };
+        if (query.runId !== undefined) conditions.push(`source_run = ${bind(query.runId)}`);
+        if (query.stepId !== undefined) conditions.push(`source_step = ${bind(query.stepId)}`);
+        if (query.fileType !== undefined) conditions.push(`file_type = ${bind(query.fileType)}`);
+        // `LIKE` would turn `%` and `_` of the input into wildcards.
+        if (query.q !== undefined) conditions.push(`strpos(lower(path), lower(${bind(query.q)}::text)) > 0`);
+        const where = conditions.join(" AND ");
+
+        const countResult = await pool.query<{ total: number }>({
+            text: `SELECT COUNT(*)::int AS total FROM cortex_artifacts WHERE ${where}`,
+            values,
         });
-        return Number(result.rows[0]?.n ?? 0);
+        // `path` is unique in one analysis, thus it breaks each tie and two pages never overlap.
+        const order = query.sort === "recent" ? "created_at DESC, path ASC" : "path ASC";
+        const rowsResult = await pool.query<{
+            path: string;
+            size: string | number;
+            file_type: string | null;
+            role: ArtifactRole;
+            source_run: string | null;
+            source_step: string | null;
+            created_at: string;
+        }>({
+            text: `SELECT path, size, file_type, role, source_run, source_step, created_at
+          FROM cortex_artifacts
+          WHERE ${where}
+          ORDER BY ${order}
+          LIMIT ${bind(query.limit)} OFFSET ${bind(query.offset)}`,
+            values,
+        });
+        return {
+            entries: rowsResult.rows.map((r) => ({
+                path: r.path,
+                size: Number(r.size),
+                fileType: r.file_type ?? null,
+                role: r.role,
+                runId: r.source_run ?? null,
+                stepId: r.source_step ?? null,
+                createdAt: r.created_at,
+            })),
+            total: Number(countResult.rows[0]?.total ?? 0),
+        };
+    });
+}
+
+/** The step-output count of one run, from {@link countArtifactsByRuns}. */
+export interface RunArtifactCount {
+    runId: string;
+    count: number;
+}
+
+/**
+ * The step-output count of each run of a list, in one statement. A run with no step output has no entry,
+ * and a caller reads it as 0. An `input` row never counts. The run-completed card and a list of runs use
+ * this one rule.
+ */
+export function countArtifactsByRuns(pool: Querier, analysisId: string, runIds: readonly string[]): ResultAsync<RunArtifactCount[], DbError> {
+    return tryQuery("artifacts.countArtifactsByRuns", async () => {
+        if (runIds.length === 0) return [];
+        const result = await pool.query<{ source_run: string; n: number }>({
+            text: `SELECT source_run, COUNT(*)::int AS n
+          FROM cortex_artifacts
+          WHERE analysis_id = $1 AND source_run = ANY($2::text[]) AND role = 'step_output'
+          GROUP BY source_run`,
+            values: [analysisId, [...runIds]],
+        });
+        return result.rows.map((r) => ({ runId: r.source_run, count: Number(r.n) }));
     });
 }
 

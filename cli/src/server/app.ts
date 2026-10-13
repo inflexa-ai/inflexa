@@ -68,7 +68,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1/analyses", conversationRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId/usage", usageRoutes());
     app.route("/api/v1/analyses/:analysisId/provenance", provenanceRoutes());
-    app.route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes());
+    app.route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId/files", fileRoutes());
     app.route("/api/v1/analyses/:analysisId", runRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId", farmLinkRoutes());

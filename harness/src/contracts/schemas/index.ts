@@ -22,6 +22,7 @@ export {
     StepSummaryPartSchema,
     StepUsagePartSchema,
     StepBlockedPartSchema,
+    FindingReferenceSchema,
     SynthesizedFindingSchema,
     BiologicalThemeSchema,
     RunSynthesisPartSchema,

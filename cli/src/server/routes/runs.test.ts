@@ -1,5 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { errAsync, okAsync } from "neverthrow";
 import {
@@ -9,6 +12,7 @@ import {
     type CortexRunRow,
     type DataProfileStatus,
     type Pool,
+    type RunArtifactCount,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
 
@@ -22,6 +26,7 @@ import type {
     ProfileRerunResult,
     RunDetail,
     RunList,
+    RunSynthesisView,
     SandboxReadiness,
 } from "../../api/runs.ts";
 import type { ServerBootState } from "../../api/server.ts";
@@ -29,13 +34,15 @@ import { insertAnalysis, insertAnalysisInput, insertAnchor, upsertLlmUsage } fro
 import { db } from "../../db/primary.ts";
 import { listAnalysisPage, listSeenRunIds } from "../../db/primary_query.ts";
 import { asStr256 } from "../../lib/types.ts";
+import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
+import { writeMarker } from "../../modules/anchor/marker.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import { freshDb } from "../../test_support/db.ts";
 import type { ServerBoot } from "../boot.ts";
 import type { ServerEnv } from "../http.ts";
 import { __resetProfileQueueForTest, profileWorkInFlight, serializeProfileWork, watchInputDrift } from "../profile_queue.ts";
-import { runRoutes, type RunRoutesOpts } from "./runs.ts";
+import { DEFAULT_RUN_ROUTES_OPTS, runRoutes, type RunRoutesOpts } from "./runs.ts";
 
 // The routes under the mount path of the app, with no bearer check and no analysis guard: `app.test.ts` covers
 // those. Each harness read is a fake, because each needs Postgres or DBOS. Each `as` cast of a body below reads
@@ -64,6 +71,8 @@ const UNEXPECTED: RunRoutesOpts = {
     listThreadRuns: failing("listThreadRuns"),
     listActiveRuns: failing("listActiveRuns"),
     getRun: failing("getRun"),
+    countArtifacts: failing("countArtifacts"),
+    readSynthesis: failing("readSynthesis"),
     listSteps: failing("listSteps"),
     loadPlan: failing("loadPlan"),
     loadProfile: failing("loadProfile"),
@@ -80,7 +89,7 @@ const UNEXPECTED: RunRoutesOpts = {
 function appWith(opts: Partial<RunRoutesOpts>, boot: ServerBoot = readyBoot): Hono<ServerEnv> {
     return new Hono<ServerEnv>().route(
         "/api/v1/analyses/:analysisId",
-        runRoutes(boot, { ...UNEXPECTED, sandboxRefusal: () => Promise.resolve(null), ...opts }),
+        runRoutes(boot, { ...UNEXPECTED, sandboxRefusal: () => Promise.resolve(null), countArtifacts: () => okAsync([]), ...opts }),
     );
 }
 
@@ -200,6 +209,56 @@ describe("GET {A}/runs", () => {
         expect(list.runs[0]).toMatchObject({ workflowId: "r1", status: "running", completedAt: null, threadId: null });
     });
 
+    test("each run carries the artifact count of one grouped read, and a run with no entry gets 0", async () => {
+        const analysisId = seedAnalysis();
+        const reads: string[][] = [];
+        const app = appWith({
+            listRuns: () => okAsync({ rows: [runRow({ runId: "r1", analysisId }), runRow({ runId: "r2", analysisId })], total: 2 }),
+            countArtifacts: (_pool, id, runIds) => {
+                reads.push([id, ...runIds]);
+                return okAsync([{ runId: "r1", count: 3 }]);
+            },
+        });
+        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs`)).json()) as RunList;
+
+        expect(list.runs.map((run) => [run.runId, run.artifactCount])).toEqual([
+            ["r1", 3],
+            ["r2", 0],
+        ]);
+        expect(reads).toEqual([[analysisId, "r1", "r2"]]);
+    });
+
+    test.each([1, 200])("a page of %i runs sends one count read", async (perPage) => {
+        const analysisId = seedAnalysis();
+        const rows = Array.from({ length: perPage }, (_, index) => runRow({ runId: `r${index}`, analysisId }));
+        let reads = 0;
+        const app = appWith({
+            listRuns: (_pool, _id, page) => okAsync({ rows: rows.slice(0, page.limit), total: perPage }),
+            countArtifacts: () => {
+                reads += 1;
+                return okAsync<RunArtifactCount[], never>([]);
+            },
+        });
+        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?perPage=${perPage}`)).json()) as RunList;
+
+        expect(list.runs).toHaveLength(perPage);
+        expect(reads).toBe(1);
+    });
+
+    test("a failed count read costs the count, never the response", async () => {
+        const analysisId = seedAnalysis();
+        const app = appWith({
+            listRuns: () => okAsync({ rows: [runRow({ runId: "r1", analysisId })], total: 1 }),
+            countArtifacts: () => errAsync({ type: "query_failed", op: "test", cause: "down" }),
+        });
+        const response = await app.request(`/api/v1/analyses/${analysisId}/runs`);
+        const list = (await response.json()) as RunList;
+
+        expect(response.status).toBe(200);
+        expect(list.runs).toHaveLength(1);
+        expect(list.runs[0]).not.toHaveProperty("artifactCount");
+    });
+
     test("a plan that cannot be read costs its title, never the row", async () => {
         const analysisId = seedAnalysis();
         const app = appWith({
@@ -278,6 +337,23 @@ describe("GET {A}/run/:runId", () => {
         expect(detail.steps[1]).not.toHaveProperty("usage");
     });
 
+    test("the run carries its artifact count, from a read of the one run", async () => {
+        const analysisId = seedAnalysis();
+        const reads: string[][] = [];
+        const app = appWith({
+            getRun: () => okAsync(runRow({ runId: "r1", analysisId })),
+            listSteps: () => okAsync([]),
+            countArtifacts: (_pool, _id, runIds) => {
+                reads.push([...runIds]);
+                return okAsync([{ runId: "r1", count: 4 }]);
+            },
+        });
+        const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
+
+        expect(detail.artifactCount).toBe(4);
+        expect(reads).toEqual([["r1"]]);
+    });
+
     test("404 `not_found` for a run of a different analysis, and for an unknown run", async () => {
         const foreign = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId: "other" })) });
         const response = await foreign.request("/api/v1/analyses/mine/run/r1");
@@ -286,6 +362,161 @@ describe("GET {A}/run/:runId", () => {
 
         const unknown = appWith({ getRun: () => okAsync(null) });
         expect((await unknown.request("/api/v1/analyses/mine/run/r1")).status).toBe(404);
+    });
+});
+
+describe("GET {A}/run/:runId/synthesis", () => {
+    const part = {
+        type: "data-run-synthesis" as const,
+        id: "synthesis-r1",
+        runId: "r1",
+        overview: "ov",
+        findings: [
+            {
+                stepId: "A",
+                title: "Upregulation of FOXP3",
+                description: "FOXP3 is upregulated.",
+                confidence: "high" as const,
+                noveltyStatus: "confirmed" as const,
+                literatureInterpretation: "Consistent with prior reports.",
+                references: [{ pmid: "12345678", citation: "Smith 2020", relevance: "directly supports", concordance: "supports" as const }],
+            },
+        ],
+        themes: [],
+        keyReferences: [],
+    };
+
+    test("a produced synthesis gives the status and the part with the references", async () => {
+        const analysisId = seedAnalysis();
+        const reads: string[][] = [];
+        const app = appWith({
+            getRun: () => okAsync(runRow({ runId: "r1", analysisId, synthesisStatus: "produced" })),
+            readSynthesis: (id, runId) => {
+                reads.push([id, runId]);
+                return Promise.resolve(part);
+            },
+        });
+        const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/synthesis`);
+        const view = (await response.json()) as RunSynthesisView;
+
+        expect(response.status).toBe(200);
+        expect(view).toEqual({ status: "produced", reason: null, synthesis: part });
+        expect(view.synthesis?.findings[0]?.references).toHaveLength(1);
+        expect(reads).toEqual([[analysisId, "r1"]]);
+    });
+
+    test.each([
+        ["skipped_blocker", "the data is not there"],
+        ["skipped_no_summaries", "no step summaries"],
+        ["failed", "the model refused"],
+        [null, null],
+    ] as const)("the outcome %s gives its reason and no part, and no record is read", async (status, reason) => {
+        const analysisId = seedAnalysis();
+        const app = appWith({
+            getRun: () => okAsync(runRow({ runId: "r1", analysisId, synthesisStatus: status, synthesisReason: reason })),
+            readSynthesis: failing("readSynthesis"),
+        });
+        const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/synthesis`);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ status, reason, synthesis: null });
+    });
+
+    test("a produced outcome whose record is gone gives 200 with a null synthesis", async () => {
+        const analysisId = seedAnalysis();
+        const app = appWith({
+            getRun: () => okAsync(runRow({ runId: "r1", analysisId, synthesisStatus: "produced" })),
+            readSynthesis: () => Promise.resolve(null),
+        });
+        const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/synthesis`);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ status: "produced", reason: null, synthesis: null });
+    });
+
+    test("404 `not_found` for a run of a different analysis, and for an unknown run", async () => {
+        const foreign = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId: "a2" })) });
+        const response = await foreign.request("/api/v1/analyses/a1/run/r1/synthesis");
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: "not_found", message: "This analysis has no run r1." });
+
+        const unknown = appWith({ getRun: () => okAsync(null) });
+        expect((await unknown.request("/api/v1/analyses/a1/run/r1/synthesis")).status).toBe(404);
+    });
+
+    test("500 `internal_error` when the run row cannot be read", async () => {
+        const app = appWith({ getRun: () => errAsync({ type: "query_failed", op: "test", cause: "down" }) });
+        const response = await app.request("/api/v1/analyses/a1/run/r1/synthesis");
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ error: "internal_error" });
+    });
+
+    test("503 `unavailable` while the runtime boots", async () => {
+        const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
+        const app = appWith({}, { state: () => starting, runtime: () => null, start: async () => undefined });
+        const response = await app.request("/api/v1/analyses/x/run/r1/synthesis");
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+    });
+
+    describe("the default record read", () => {
+        const homes: string[] = [];
+
+        afterEach(() => {
+            for (const home of homes) {
+                chmodSync(home, 0o755);
+                rmSync(home, { recursive: true, force: true });
+            }
+            homes.length = 0;
+            invalidateWorkspaceRoot();
+        });
+
+        /** An analysis with a marker in a new folder, and a record under its workspace root. Returns the folder. */
+        async function seedWithRecord(analysisId: string): Promise<string> {
+            const home = mkdtempSync(join(tmpdir(), "inflexa-synthesis-route-"));
+            homes.push(home);
+            (await writeMarker(home, "A1"))._unsafeUnwrap();
+            insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+            insertAnalysis({ id: analysisId, createdAt: 1, updatedAt: 1, name: asStr256("A"), slug: "a", anchorId: "A1", projectId: null })._unsafeUnwrap();
+            const root = (await workspaceRootForAnalysisId(analysisId))._unsafeUnwrap();
+            mkdirSync(join(root, "runs", "r1"), { recursive: true });
+            const { type: _type, id: _id, ...stored } = part;
+            writeFileSync(join(root, "runs", "r1", "synthesis.json"), JSON.stringify({ ...stored, conclusions: "cl", limitations: [] }));
+            invalidateWorkspaceRoot();
+            return home;
+        }
+
+        test("reads the record of the workspace folder", async () => {
+            await seedWithRecord("ana-1");
+
+            const read = await DEFAULT_RUN_ROUTES_OPTS.readSynthesis("ana-1", "r1");
+
+            expect(read).toMatchObject({ type: "data-run-synthesis", id: "synthesis-r1", runId: "r1", conclusions: "cl" });
+            expect(read?.findings[0]?.references).toEqual(part.findings[0]?.references);
+        });
+
+        test.skipIf(process.getuid?.() === 0)("reads the record of a folder that is readable but not writable", async () => {
+            const home = await seedWithRecord("ana-2");
+            chmodSync(home, 0o555);
+            // The premise: the write-oriented locator refuses this folder.
+            expect((await workspaceRootForAnalysisId("ana-2")).isErr()).toBe(true);
+            invalidateWorkspaceRoot();
+
+            const read = await DEFAULT_RUN_ROUTES_OPTS.readSynthesis("ana-2", "r1");
+
+            expect(read).toMatchObject({ id: "synthesis-r1" });
+        });
+
+        test("gives null for an analysis with no row, and for a folder with no workspace", async () => {
+            expect(await DEFAULT_RUN_ROUTES_OPTS.readSynthesis("no-such-analysis", "r1")).toBeNull();
+
+            const home = mkdtempSync(join(tmpdir(), "inflexa-synthesis-route-"));
+            homes.push(home);
+            (await writeMarker(home, "A2"))._unsafeUnwrap();
+            insertAnchor({ id: "A2", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+            insertAnalysis({ id: "ana-3", createdAt: 1, updatedAt: 1, name: asStr256("B"), slug: "b", anchorId: "A2", projectId: null })._unsafeUnwrap();
+            expect(await DEFAULT_RUN_ROUTES_OPTS.readSynthesis("ana-3", "r1")).toBeNull();
+        });
     });
 });
 

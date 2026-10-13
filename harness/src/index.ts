@@ -450,6 +450,7 @@ export type {
     StepUsagePart,
     StepBlockedPart,
     RunSynthesisPart,
+    FindingReference,
     SynthesizedFinding,
     BiologicalTheme,
     SynthesisProgressPart,
@@ -574,6 +575,14 @@ export type { DataProfileStatus } from "./state/data-profile.js";
 // The grouped reads that summarize a page of analyses: one statement for the whole list.
 export { queryLatestRunsByAnalyses, queryDataProfileStatusByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "./state/analyses-metrics.js";
 export type { DataProfileSummary, EndedRunSummary, LatestRunSummary, RunProgressSummary } from "./state/analyses-metrics.js";
+
+// The artifact ledger reads of one analysis: one page with an exact total, and the step-output count of each run of a list in one statement.
+export { queryArtifactPage, countArtifactsByRuns } from "./state/artifacts.js";
+export type { ArtifactPage, ArtifactPageEntry, ArtifactPageQuery, ArtifactPageSort, RunArtifactCount } from "./state/artifacts.js";
+
+// The validated synthesis record of a run as the flat `data-run-synthesis` part of the run stream, or null.
+export { readRunSynthesis } from "./execution/run-synthesis.js";
+export type { ReadSynthesisInput } from "./execution/run-synthesis.js";
 
 // The controlled vocabulary the profiler draws from, as data. A consumer rendering a
 // stored group needs the category's meaning, and the package owns the catalogue — a host

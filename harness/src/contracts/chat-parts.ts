@@ -347,6 +347,13 @@ export interface RunCompletedPart {
 
 // ── Run Synthesis (persistent, once per run) ────────────────────────
 
+export interface FindingReference {
+    pmid: string;
+    citation: string;
+    relevance: string;
+    concordance: "supports" | "contradicts" | "extends" | "contextualizes";
+}
+
 export interface SynthesizedFinding {
     stepId: string;
     title: string;
@@ -354,6 +361,7 @@ export interface SynthesizedFinding {
     confidence: "high" | "medium" | "low";
     noveltyStatus: "novel" | "confirmed" | "partially_confirmed" | "contradicted" | "expected";
     literatureInterpretation: string;
+    references: FindingReference[];
 }
 
 export interface BiologicalTheme {
