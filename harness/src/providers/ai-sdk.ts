@@ -1072,10 +1072,12 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
         callerSignal?.addEventListener("abort", clear, { once: true });
 
         // `timeout: false` is an extension of the fetch init of Bun. Bun cuts a
-        // request that stays idle for 300 seconds, and this key lifts that cut. Node
-        // ignores an unknown member of the init, thus the key is inert there. A
-        // probe on Bun 1.3.14 proved both results. The `RequestInit` type declares
-        // no such member, thus the cast.
+        // request that stays idle past its default of 300 seconds, and this key
+        // lifts that cut. Node ignores an unknown member of the init, thus the key
+        // is inert there. A probe on Bun 1.4.2 proved both results: the cut fired
+        // at 360 seconds, because Bun pads the timer to its minute wheel, and a
+        // request with the key completed after 420 seconds. The `RequestInit` type
+        // declares no such member, thus the cast.
         const forwarded = { ...init, signal, timeout: false } as RequestInit;
         try {
             return await fetchImpl(input, forwarded);
