@@ -38,7 +38,8 @@ See `proposal.md` for the motivation. The harness change of the same name gives 
 - the progress of the live runs: `queryRunProgressByRuns` of the harness
 - the ended runs: `queryRunsEndedSince` of the harness
 - the newest threads: `createThreadStore(pool).listRecentThreads`
-- the seen state: `getRunSeenState`
+- the seen baseline: `getRunSeenBaseline`
+- the seen marks of a list of runs: `listSeenRunIds`
 - the names: `listAnalysisNames`
 - the running turns: `runningTurnsByThread` of the turn registry
 
@@ -77,7 +78,7 @@ INSERT INTO run_seen_baseline (since)
 
 The baseline row is the time of "this change" on this machine. A read of `_migrations.applied_at` was rejected, because a squash of the migrations can lose that row. The run id is the identity of a mark, `seen_at` is its time, and `analysis_id` is its foreign key, in the house order. The cascade removes the marks of a deleted analysis. Its Postgres runs go with the purge of the delete.
 
-`unseenRuns` reads `getRunSeenState()`, then calls `queryRunsEndedSince`. It gives `since` as `new Date(since).toISOString()`, the ids of the marks as the skip list, and a limit of 200. When the baseline row is absent, the route gives an empty `unseenRuns` and logs a warning. A read on a passive request does not write the row again (cli `CLAUDE.md`, "Local state can go out of agreement").
+`unseenRuns` reads `getRunSeenBaseline()`, then calls `queryRunsEndedSince`. It gives `since` as `new Date(since).toISOString()` and a limit of 200. After the ended-run read, `listSeenRunIds` reads the marks of exactly the ids of that page, in one statement. `unseenRuns` is that page minus the seen ids. Thus each poll costs one bounded Postgres read and one bounded SQLite read, whatever the count of marks. A skip list of each mark in the ended-run read was rejected, because the marks only grow and a client polls each 5 to 15 seconds. When the baseline row is absent, the route gives an empty `unseenRuns` and logs a warning. A read on a passive request does not write the row again (cli `CLAUDE.md`, "Local state can go out of agreement").
 
 A list fed by the bus event `prov.run_completed` was rejected. The start failure of `execute_analysis` and the external cancel stamp a terminal status with no such event, thus that list would miss those runs.
 
@@ -87,7 +88,7 @@ A list fed by the bus event `prov.run_completed` was rejected. The start failure
 
 ### The names come from one SQLite read, and an orphan item drops
 
-`listAnalysisNames(ids)` builds an `IN (?,…)` list, as `listUsageTotalsByAnalysis` does. An item whose analysis id has no row drops from its list. The analysis guard gives 404 for such an id, thus the person cannot open it. This keeps `analysisName` a `string`, as the issue gives it.
+`listAnalysisNames(ids)` gives the ids as one JSON array parameter to `json_each`, thus the list can pass the SQLite ceiling of bound parameters. An item whose analysis id has no row drops from its list. The analysis guard gives 404 for such an id, thus the person cannot open it. This keeps `analysisName` a `string`, as the issue gives it.
 
 ### The thread fields come from the registry and one ask read
 
@@ -104,7 +105,7 @@ A list fed by the bus event `prov.run_completed` was rejected. The start failure
 
 ## Risks / Trade-offs
 
-- [The skip list of the ended-run read holds each seen mark. It grows with each run that the person opened] → The cascade removes the marks of a deleted analysis. A local install keeps a small count of runs, and one array parameter carries the list.
+- [`unseenRuns` holds the unseen runs among the newest 200 ended runs since the baseline. An unseen run that is older than that window is absent] → The cost of a poll stays fixed. An unseen run leaves the window only after 200 newer runs end.
 - [An ask is not stale while a newer turn of its thread runs. The turn of the ask can be over] → The ledger records no turn of an ask. The issue defines `stale` by the thread.
 - [`activeRuns` costs two Postgres statements] → The count stays fixed, and each rule keeps one copy.
 - [A failed read hides all four lists] → The route is a read of Postgres. A client reads it again at its next poll.

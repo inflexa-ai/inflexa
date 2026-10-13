@@ -9,7 +9,6 @@ import type { ServerBootState } from "../../api/server.ts";
 import type { DbError } from "../../db/errors.ts";
 import { db } from "../../db/primary.ts";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
-import type { RunSeenState } from "../../db/primary_query.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { freshDb } from "../../test_support/db.ts";
@@ -97,7 +96,7 @@ type Calls = {
     asks: number;
     live: number;
     progress: string[][];
-    ended: { since: string; exceptRunIds: string[]; limit: number }[];
+    ended: { since: string; limit: number }[];
     threads: { limit: number; type?: string }[];
 };
 
@@ -105,7 +104,7 @@ function emptyFixture(): Fixture {
     return { pending: [], live: [], progress: [], ended: [], threads: [] };
 }
 
-/** The route over fakes of the Postgres reads. The fake ledger of ended runs applies `since`, the skip list, and the limit, as the read does. */
+/** The route over fakes of the Postgres reads. The fake ledger of ended runs applies `since` and the limit, as the read does. */
 function appOver(fixture: Fixture, over: Partial<AttentionRouteOpts> = {}, runOpts?: Partial<RunRoutesOpts>): { app: Hono<ServerEnv>; calls: Calls } {
     const calls: Calls = { asks: 0, live: 0, progress: [], ended: [], threads: [] };
     const gateway = gatewayOf(() => {
@@ -126,7 +125,7 @@ function appOver(fixture: Fixture, over: Partial<AttentionRouteOpts> = {}, runOp
         endedRuns: (_pool, input) => {
             calls.ended.push(input);
             const rows = fixture.ended
-                .filter((row) => row.completedAt >= input.since && !input.exceptRunIds.includes(row.runId))
+                .filter((row) => row.completedAt >= input.since)
                 .sort((a, b) => (a.completedAt === b.completedAt ? b.runId.localeCompare(a.runId) : b.completedAt.localeCompare(a.completedAt)));
             return okAsync(rows.slice(0, input.limit));
         },
@@ -234,7 +233,7 @@ describe("GET /api/v1/attention", () => {
         expect(body.asks[2]?.threadId).toBeNull();
     });
 
-    test("a seen run and a run that ended before the baseline are absent from unseenRuns, and the read gets the marks as its skip list", async () => {
+    test("a seen run and a run that ended before the baseline are absent from unseenRuns", async () => {
         const a1 = seedAnalysis("trial");
         db()._unsafeUnwrap().run("INSERT INTO run_seen_marks (run_id, seen_at, analysis_id) VALUES ('r-seen', 1, ?)", [a1]);
         const fixture = emptyFixture();
@@ -248,7 +247,36 @@ describe("GET /api/v1/attention", () => {
         const body = await attentionOf(app);
 
         expect(body.unseenRuns).toEqual([{ runId: "r-new", analysisId: a1, analysisName: "trial", status: "failed", completedAt: "2026-10-06T09:00:00.000Z" }]);
-        expect(calls.ended).toEqual([{ since: BASELINE, exceptRunIds: ["r-seen"], limit: 200 }]);
+        expect(calls.ended).toEqual([{ since: BASELINE, limit: 200 }]);
+    });
+
+    test("the seen marks bound no read: the ended read gets no id list, and the seen lookup gets only the ids of the page", async () => {
+        const a1 = seedAnalysis("trial");
+        const conn = db()._unsafeUnwrap();
+        for (let i = 0; i < 300; i++) conn.run("INSERT INTO run_seen_marks (run_id, seen_at, analysis_id) VALUES (?, 1, ?)", [`r-gone-${i}`, a1]);
+        conn.run("INSERT INTO run_seen_marks (run_id, seen_at, analysis_id) VALUES ('r-old-seen', 1, ?)", [a1]);
+        conn.run("INSERT INTO run_seen_marks (run_id, seen_at, analysis_id) VALUES ('r-page-seen', 1, ?)", [a1]);
+        const fixture = emptyFixture();
+        fixture.ended.push(ended("r-old-seen", a1, "2026-10-06T00:00:00.000Z"));
+        for (let i = 0; i < 199; i++) fixture.ended.push(ended(`r-page-${String(i).padStart(3, "0")}`, a1, "2026-10-07T00:00:00.000Z"));
+        fixture.ended.push(ended("r-page-seen", a1, "2026-10-07T00:00:00.000Z"));
+        const lookups: (readonly string[])[] = [];
+        const { app, calls } = appOver(fixture, {
+            seenRunIds: (runIds) => {
+                lookups.push(runIds);
+                return DEFAULT_ATTENTION_ROUTE_OPTS.seenRunIds(runIds);
+            },
+        });
+
+        const body = await attentionOf(app);
+
+        expect(calls.ended).toEqual([{ since: BASELINE, limit: 200 }]);
+        expect(lookups).toHaveLength(1);
+        expect(lookups[0]).toHaveLength(200);
+        expect(lookups[0]).toContain("r-page-seen");
+        expect(lookups[0]).not.toContain("r-old-seen");
+        expect(body.unseenRuns).toHaveLength(199);
+        expect(body.unseenRuns.map((item) => item.runId)).not.toContain("r-page-seen");
     });
 
     test("an absent baseline row gives an empty unseenRuns and sends no ended-run read", async () => {
@@ -268,7 +296,7 @@ describe("GET /api/v1/attention", () => {
         const a1 = seedAnalysis("trial");
         const fixture = emptyFixture();
         fixture.ended = [ended("r-new", a1, "2026-10-06T09:00:00.000Z")];
-        const { app, calls } = appOver(fixture, { seenState: () => ok<RunSeenState, DbError>({ since: Number.NaN, runIds: [] }) });
+        const { app, calls } = appOver(fixture, { seenBaseline: () => ok<number | null, DbError>(Number.NaN) });
 
         const body = await attentionOf(app);
 
@@ -406,7 +434,8 @@ describe("GET /api/v1/attention", () => {
             { endedRuns: () => errAsync(failure) },
             { recentThreads: () => errAsync(failure) },
             { analysisNames: () => err<Map<string, string>, DbError>({ type: "query_failed", op: "test", cause: "down" }) },
-            { seenState: () => err<RunSeenState, DbError>({ type: "query_failed", op: "test", cause: "down" }) },
+            { seenBaseline: () => err<number | null, DbError>({ type: "query_failed", op: "test", cause: "down" }) },
+            { seenRunIds: () => err<Set<string>, DbError>({ type: "query_failed", op: "test", cause: "down" }) },
         ];
         const a1 = seedAnalysis("trial");
         const fixture = emptyFixture();
@@ -430,15 +459,19 @@ describe("GET /api/v1/attention", () => {
     });
 
     test("the count of each read is the same for 1 analysis and for 20 analyses", async () => {
-        const reads = { names: 0, seen: 0 };
+        const reads = { names: 0, baseline: 0, seenIds: 0 };
         const countedOver: Partial<AttentionRouteOpts> = {
             analysisNames: (ids) => {
                 reads.names += 1;
                 return DEFAULT_ATTENTION_ROUTE_OPTS.analysisNames(ids);
             },
-            seenState: () => {
-                reads.seen += 1;
-                return DEFAULT_ATTENTION_ROUTE_OPTS.seenState();
+            seenBaseline: () => {
+                reads.baseline += 1;
+                return DEFAULT_ATTENTION_ROUTE_OPTS.seenBaseline();
+            },
+            seenRunIds: (runIds) => {
+                reads.seenIds += 1;
+                return DEFAULT_ATTENTION_ROUTE_OPTS.seenRunIds(runIds);
             },
         };
         function fixtureOf(count: number): Fixture {
@@ -465,7 +498,8 @@ describe("GET /api/v1/attention", () => {
         await attentionOf(single.app);
         const singleReads = { ...reads };
         reads.names = 0;
-        reads.seen = 0;
+        reads.baseline = 0;
+        reads.seenIds = 0;
         const many = appOver(fixtureOf(20), countedOver);
         const body = await attentionOf(many.app);
 
@@ -474,6 +508,6 @@ describe("GET /api/v1/attention", () => {
         expect(summarize(many.calls)).toEqual(summarize(single.calls));
         expect(summarize(many.calls)).toEqual({ asks: 1, live: 1, progress: 1, ended: 1, threads: 1 });
         expect(reads).toEqual(singleReads);
-        expect(reads).toEqual({ names: 1, seen: 1 });
+        expect(reads).toEqual({ names: 1, baseline: 1, seenIds: 1 });
     });
 });

@@ -27,7 +27,7 @@ import type {
 import type { ServerBootState } from "../../api/server.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor, upsertLlmUsage } from "../../db/primary_mutation.ts";
 import { db } from "../../db/primary.ts";
-import { getRunSeenState, listAnalysisPage } from "../../db/primary_query.ts";
+import { listAnalysisPage, listSeenRunIds } from "../../db/primary_query.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -365,7 +365,7 @@ describe("POST {A}/run/:runId/seen", () => {
         const second = await app.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
         expect(second.status).toBe(200);
         expect(await second.json()).toEqual({ seen: true });
-        expect(getRunSeenState()._unsafeUnwrap().runIds).toEqual(["r1"]);
+        expect(listSeenRunIds(["r1"])._unsafeUnwrap()).toEqual(new Set(["r1"]));
         expect(seenAtOf("r1")).toBe(seenAt);
         expect(activityOf(analysisId)).toBe(activityBefore);
     });
@@ -376,7 +376,9 @@ describe("POST {A}/run/:runId/seen", () => {
             const app = appWith({ getRun: () => okAsync(runRow({ runId: `r-${status}`, analysisId, status })) });
             expect((await app.request(`/api/v1/analyses/${analysisId}/run/r-${status}/seen`, { method: "POST" })).status).toBe(200);
         }
-        expect(getRunSeenState()._unsafeUnwrap().runIds.sort()).toEqual(["r-canceled", "r-completed", "r-failed", "r-partial"]);
+        expect(listSeenRunIds(["r-canceled", "r-completed", "r-failed", "r-partial"])._unsafeUnwrap()).toEqual(
+            new Set(["r-canceled", "r-completed", "r-failed", "r-partial"]),
+        );
     });
 
     test("a run that is not terminal gives 409 `conflict` and no mark", async () => {
@@ -387,7 +389,7 @@ describe("POST {A}/run/:runId/seen", () => {
             expect(response.status).toBe(409);
             expect(await response.json()).toEqual({ error: "conflict", message: "The run has not ended." });
         }
-        expect(getRunSeenState()._unsafeUnwrap().runIds).toEqual([]);
+        expect(listSeenRunIds(["r1"])._unsafeUnwrap()).toEqual(new Set());
     });
 
     test("a run of a different analysis and an unknown run give 404 `not_found` and no mark", async () => {
@@ -401,7 +403,7 @@ describe("POST {A}/run/:runId/seen", () => {
         const missing = await unknown.request(`/api/v1/analyses/${analysisId}/run/gone/seen`, { method: "POST" });
         expect(missing.status).toBe(404);
         expect(await missing.json()).toMatchObject({ error: "not_found" });
-        expect(getRunSeenState()._unsafeUnwrap().runIds).toEqual([]);
+        expect(listSeenRunIds(["r1", "gone"])._unsafeUnwrap()).toEqual(new Set());
     });
 
     test("a failed ledger read gives 500 `internal_error`", async () => {

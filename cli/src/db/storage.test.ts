@@ -15,7 +15,7 @@ import {
     renameAnalysis,
     updateAnalysisProject,
 } from "./primary_mutation.ts";
-import { findProjectByRef, getAnchor, getProjectWithCount, getRunSeenState, listAnalysisNames, listAnalysisPage } from "./primary_query.ts";
+import { findProjectByRef, getAnchor, getProjectWithCount, getRunSeenBaseline, listAnalysisNames, listAnalysisPage, listSeenRunIds } from "./primary_query.ts";
 import { asStr256 } from "../lib/types.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Analysis } from "../types/analysis.ts";
@@ -247,14 +247,31 @@ describe("the seen state of the runs", () => {
         expect(seenAt).toEqual({ seen_at: 5_000 });
     });
 
-    test("the state holds the baseline and the id of each mark", () => {
+    test("the baseline is the time of the migration", () => {
+        expect(getRunSeenBaseline()._unsafeUnwrap()).toBeGreaterThan(0);
+    });
+
+    test("the seen lookup gives the ids of the list that have a mark", () => {
         recordRunSeen("r1", "a1", 5_000)._unsafeUnwrap();
         recordRunSeen("r2", "a2", 5_000)._unsafeUnwrap();
+        recordRunSeen("r3", "a2", 5_000)._unsafeUnwrap();
 
-        const state = getRunSeenState()._unsafeUnwrap();
+        expect(listSeenRunIds(["r1", "r2", "unseen", "r1"])._unsafeUnwrap()).toEqual(new Set(["r1", "r2"]));
+    });
 
-        expect(state.since).toBeGreaterThan(0);
-        expect([...state.runIds].sort()).toEqual(["r1", "r2"]);
+    test("an empty list gives an empty set and sends no query", () => {
+        const query = spyOn(sharedConn(), "query");
+
+        expect(listSeenRunIds([])._unsafeUnwrap()).toEqual(new Set());
+        expect(query).not.toHaveBeenCalled();
+    });
+
+    test("a list sends one query", () => {
+        const query = spyOn(sharedConn(), "query");
+
+        listSeenRunIds(["r1", "r2", "unseen"])._unsafeUnwrap();
+
+        expect(query).toHaveBeenCalledTimes(1);
     });
 
     test("the delete of an analysis removes its marks and keeps the others", () => {
@@ -264,7 +281,7 @@ describe("the seen state of the runs", () => {
 
         deleteAnalysis("a1")._unsafeUnwrap();
 
-        expect(getRunSeenState()._unsafeUnwrap().runIds).toEqual(["r3"]);
+        expect(listSeenRunIds(["r1", "r2", "r3"])._unsafeUnwrap()).toEqual(new Set(["r3"]));
     });
 
     test("a mark of an analysis with no row is a foreign_key violation", () => {
@@ -279,11 +296,12 @@ describe("the seen state of the runs", () => {
         );
     });
 
-    test("an absent baseline row gives a null since", () => {
+    test("an absent baseline row gives a null baseline and keeps the marks", () => {
         recordRunSeen("r1", "a1", 5_000)._unsafeUnwrap();
         sharedConn().run("DELETE FROM run_seen_baseline");
 
-        expect(getRunSeenState()._unsafeUnwrap()).toEqual({ since: null, runIds: ["r1"] });
+        expect(getRunSeenBaseline()._unsafeUnwrap()).toBeNull();
+        expect(listSeenRunIds(["r1"])._unsafeUnwrap()).toEqual(new Set(["r1"]));
     });
 });
 

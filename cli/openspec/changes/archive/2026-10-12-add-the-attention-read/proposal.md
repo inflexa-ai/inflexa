@@ -17,7 +17,7 @@ A client that shows what waits for the person reads one analysis at a time: the 
 - The read keeps these bounds and limits:
   - `activeRuns` and `unseenRuns` hold at most 200 items each.
   - An item whose analysis has no SQLite row drops, because no `{A}` route can open it.
-  - The skip list of the seen marks has no bound. It grows with each run that the person opened.
+  - `unseenRuns` holds the unseen runs among the newest 200 ended runs since the baseline. The count of the seen marks does not change the size of a read.
   - A thread route that writes reads the asks before its write, thus a failed ask read gives 500.
 
 ## Capabilities

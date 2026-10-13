@@ -1074,7 +1074,7 @@ The lists MUST hold these items:
 
 - `asks`: each pending ask of the ledger, the oldest first. An item carries `askId`, `analysisId`, `analysisName`, `threadId`, `title`, `command`, `createdAt`, and `stale`. `stale` is `true` when no turn of the turn registry runs on the thread of the ask. An ask with no thread is stale.
 - `activeRuns`: each run with a live workflow, by the liveness rule of the busy gate, the newest start first. An item carries `runId`, `analysisId`, `analysisName`, `threadId`, `planTitle`, `doneSteps`, `totalSteps`, and `startedAt`. `planTitle` and `threadId` are `null` when the run has none. A run whose progress read gives a terminal status ended between the two reads, and the list MUST leave it out.
-- `unseenRuns`: each terminal run that ended at or after the seen baseline and that has no seen mark, the newest end first. An item carries `runId`, `analysisId`, `analysisName`, `status`, and `completedAt`.
+- `unseenRuns`: each run that has no seen mark, among the newest 200 terminal runs that ended at or after the seen baseline, the newest end first. An unseen run that is older than these 200 runs is absent. An item carries `runId`, `analysisId`, `analysisName`, `status`, and `completedAt`.
 - `recentThreads`: the newest live conversation threads, the newest update first. An item carries the fields of a thread on the wire and `analysisName`.
 
 `activeRuns` and `unseenRuns` MUST each hold at most 200 items. The `limit` query value sets the count of `recentThreads`. A value that is not a positive integer selects 10. A value above 200 selects 200.
@@ -1086,10 +1086,10 @@ The count of the reads of one request MUST NOT depend on the count of analyses o
 - one `askGateway.pending()` call
 - one read of the live runs
 - one progress read of those runs, and none when no run is live
-- one read of the runs that ended at or after the seen baseline, and none when the seen baseline is absent
+- one read of the newest 200 runs that ended at or after the seen baseline, and none when the seen baseline is absent. The read gets no list of seen marks.
 - one read of the newest threads
 
-The SQLite reads are the read of the seen state and the read of the names of the analyses. Each sends a fixed count of statements. A failed read MUST give 500 `internal_error`, and the failure MUST go to the log.
+The SQLite reads are the read of the seen baseline, the read of the seen marks of the ended runs of that read, and the read of the names of the analyses. Each sends a fixed count of statements. The count of the seen marks MUST NOT change the size of a read. A failed read MUST give 500 `internal_error`, and the failure MUST go to the log.
 
 #### Scenario: An ask and a run of two analyses
 
@@ -1120,6 +1120,12 @@ The SQLite reads are the read of the seen state and the read of the names of the
 - **GIVEN** a terminal run whose `completed_at` is before the seen baseline
 - **WHEN** a client reads the attention lists
 - **THEN** `unseenRuns` does not hold the run
+
+#### Scenario: The seen marks do not change the size of a read
+
+- **GIVEN** seen marks of runs that are not among the newest 200 ended runs, and a seen mark of run `r1` among them
+- **WHEN** a client reads the attention lists
+- **THEN** the ended-run read gets no run ids, the read of the seen marks gets only the ids of the newest 200 ended runs, and `unseenRuns` does not hold `r1`
 
 #### Scenario: The count of the reads is fixed
 

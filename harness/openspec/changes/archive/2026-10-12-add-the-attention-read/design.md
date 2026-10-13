@@ -41,19 +41,18 @@ The plan join stays on `plan_id` AND `analysis_id`. One row mapping serves the t
 
 ### The ended-run read walks a new index
 
-Add `queryRunsEndedSince(pool, { since, exceptRunIds, limit })` to the same file. Its entry type is `EndedRunSummary`: `{ analysisId, runId, status: TerminalRunStatus, completedAt: string }`. `TerminalRunStatus` is `Exclude<RunStatus, "running" | "suspended_insufficient_funds">`, beside `RunStatus` in `src/state/schema.ts`. The statement:
+Add `queryRunsEndedSince(pool, { since, limit })` to the same file. Its entry type is `EndedRunSummary`: `{ analysisId, runId, status: TerminalRunStatus, completedAt: string }`. `TerminalRunStatus` is `Exclude<RunStatus, "running" | "suspended_insufficient_funds">`, beside `RunStatus` in `src/state/schema.ts`. The statement:
 
 ```sql
 SELECT analysis_id, run_id, status, completed_at
   FROM cortex_runs
  WHERE status IN ('completed', 'partial', 'failed', 'canceled')
    AND completed_at >= $1
-   AND run_id <> ALL($2::text[])
  ORDER BY completed_at DESC, run_id DESC
- LIMIT $3
+ LIMIT $2
 ```
 
-`since` compares as text. The caller gives it in the form of `toISOString()`, the form of each stamp, thus the text order is the time order. An empty `exceptRunIds` still sends the query, because the read has no list to be empty.
+`since` compares as text. The caller gives it in the form of `toISOString()`, the form of each stamp, thus the text order is the time order. The read takes no list of run ids to skip. The cli removes the seen runs from the page, thus the size of the read does not grow with the seen marks.
 
 ### The thread store lists the newest threads
 
@@ -91,7 +90,7 @@ The cli attention read needs the runs with a live workflow. The cli holds the on
 
 ## Risks / Trade-offs
 
-- [The skip list of the ended-run read grows with each seen mark of the person] → The cli passes its marks as one array parameter. A local install keeps a small count of runs. The cli design records this bound.
+- [The read gives the newest `limit` ended runs, seen or not. A page of seen runs hides an older unseen run] → The cost of the read stays fixed. The cli design records this window.
 - [The two indexes add a write cost to each run and each thread update] → One more index entry for each write. The reads over each analysis would otherwise sort the history.
 
 ## Migration Plan

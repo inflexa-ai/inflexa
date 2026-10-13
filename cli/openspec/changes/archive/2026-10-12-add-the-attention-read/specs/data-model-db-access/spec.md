@@ -7,7 +7,8 @@
 The system MUST give these functions, each returning `Result<…, DbError>`:
 
 - `recordRunSeen(runId, analysisId, atMs)`: one `INSERT` of a seen mark that keeps an existing mark. It MUST return the rows-changed count: `1` for a new mark, and `0` when the run has a mark. A second call MUST keep the first `seen_at`.
-- `getRunSeenState()`: the `since` of the seen baseline, or `null` when no baseline row exists, and the run id of each seen mark. It sends two statements: one for the baseline and one for the marks.
+- `getRunSeenBaseline()`: the `since` of the seen baseline, or `null` when no baseline row exists, in one statement.
+- `listSeenRunIds(runIds)`: the ids of the list that have a seen mark, as a set, in one statement. An empty list MUST give an empty set and send no query.
 - `listAnalysisNames(ids)`: the name of each analysis of the list that has a row, as a map from the id to the name, in one statement. An id with no row MUST have no entry. An empty list MUST give an empty map and send no query.
 
 #### Scenario: A second mark keeps the first time
@@ -16,11 +17,17 @@ The system MUST give these functions, each returning `Result<…, DbError>`:
 - **WHEN** `recordRunSeen("r1", "a1", T + 1000)` runs
 - **THEN** it returns 0, and the `seen_at` of the mark stays T
 
-#### Scenario: The seen state
+#### Scenario: The seen baseline
 
-- **GIVEN** the baseline row and marks of runs `r1` and `r2`
-- **WHEN** `getRunSeenState()` runs
-- **THEN** it returns the `since` of the baseline and the ids `r1` and `r2`
+- **GIVEN** the baseline row
+- **WHEN** `getRunSeenBaseline()` runs
+- **THEN** it returns the `since` of the baseline
+
+#### Scenario: The seen marks of a list
+
+- **GIVEN** marks of runs `r1` and `r2`
+- **WHEN** `listSeenRunIds(["r1", "r3"])` runs
+- **THEN** it returns `r1` only, from one statement
 
 #### Scenario: The names of a list
 
