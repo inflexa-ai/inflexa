@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
+import { countingQuerier } from "../__tests__/setup/counting-querier.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { upsertAnalysis } from "./analyses.js";
-import { loadPlan, upsertPlan } from "./plans.js";
+import { loadPlan, loadPlanRecord, upsertPlan } from "./plans.js";
 
 async function countPlans(pool: Pool, planId: string): Promise<number> {
     const r = await pool.query<{ n: number }>({
@@ -87,5 +88,111 @@ describe("upsertPlan", () => {
             })
         )._unsafeUnwrap();
         expect(await countPlans(pool, "pln-000000c1")).toBe(1);
+    });
+});
+
+async function seedPlan(pool: Pool, row: { planId: string; analysisId: string; parentPlanId?: string; createdAt: string; plan?: unknown }): Promise<void> {
+    await pool.query({
+        text: "INSERT INTO cortex_plans (plan_id, analysis_id, plan, parent_plan_id, created_at) VALUES ($1, $2, $3, $4, $5)",
+        values: [row.planId, row.analysisId, JSON.stringify(row.plan ?? { steps: [] }), row.parentPlanId ?? null, row.createdAt],
+    });
+}
+
+describe("loadPlanRecord", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("plans_record"));
+        (await upsertAnalysis(pool, "a1", null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, "a2", null))._unsafeUnwrap();
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("names the newer plan on a revised plan, and the parent on the revision", async () => {
+        const plan = { title: "first", steps: [{ id: "s1" }] };
+        await seedPlan(pool, { planId: "pln-0000000a", analysisId: "a1", createdAt: "2026-10-01T00:00:00.000Z", plan });
+        await seedPlan(pool, { planId: "pln-0000000b", analysisId: "a1", parentPlanId: "pln-0000000a", createdAt: "2026-10-02T00:00:00.000Z" });
+
+        const first = (await loadPlanRecord(pool, "pln-0000000a", { analysisId: "a1" }))._unsafeUnwrap();
+        expect(first).toEqual({
+            planId: "pln-0000000a",
+            plan,
+            parentPlanId: null,
+            supersededBy: "pln-0000000b",
+            createdAt: "2026-10-01T00:00:00.000Z",
+        });
+
+        const revision = (await loadPlanRecord(pool, "pln-0000000b", { analysisId: "a1" }))._unsafeUnwrap();
+        expect(revision?.parentPlanId).toBe("pln-0000000a");
+        expect(revision?.supersededBy).toBeNull();
+    });
+
+    it("names the revision with the later creation time when two plans name the parent", async () => {
+        await seedPlan(pool, { planId: "pln-000000c0", analysisId: "a1", createdAt: "2026-10-01T00:00:00.000Z" });
+        await seedPlan(pool, { planId: "pln-000000c2", analysisId: "a1", parentPlanId: "pln-000000c0", createdAt: "2026-10-03T00:00:00.000Z" });
+        await seedPlan(pool, { planId: "pln-000000c1", analysisId: "a1", parentPlanId: "pln-000000c0", createdAt: "2026-10-02T00:00:00.000Z" });
+
+        const record = (await loadPlanRecord(pool, "pln-000000c0", { analysisId: "a1" }))._unsafeUnwrap();
+        expect(record?.supersededBy).toBe("pln-000000c2");
+    });
+
+    it("breaks a tie of creation times with the highest plan id", async () => {
+        const at = "2026-10-04T00:00:00.000Z";
+        await seedPlan(pool, { planId: "pln-000000d0", analysisId: "a1", createdAt: "2026-10-01T00:00:00.000Z" });
+        await seedPlan(pool, { planId: "pln-000000d1", analysisId: "a1", parentPlanId: "pln-000000d0", createdAt: at });
+        await seedPlan(pool, { planId: "pln-000000d2", analysisId: "a1", parentPlanId: "pln-000000d0", createdAt: at });
+
+        const record = (await loadPlanRecord(pool, "pln-000000d0", { analysisId: "a1" }))._unsafeUnwrap();
+        expect(record?.supersededBy).toBe("pln-000000d2");
+    });
+
+    it("gives null for an unknown plan and for a plan of a different analysis", async () => {
+        await seedPlan(pool, { planId: "pln-000000e0", analysisId: "a2", createdAt: "2026-10-01T00:00:00.000Z" });
+
+        expect((await loadPlanRecord(pool, "pln-000000e0", { analysisId: "a1" }))._unsafeUnwrap()).toBeNull();
+        expect((await loadPlanRecord(pool, "pln-ffffffff", { analysisId: "a1" }))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("sends one statement for a found plan and for an absent plan", async () => {
+        const found = countingQuerier(pool);
+        (await loadPlanRecord(found.querier, "pln-0000000a", { analysisId: "a1" }))._unsafeUnwrap();
+        expect(found.calls()).toBe(1);
+
+        const absent = countingQuerier(pool);
+        (await loadPlanRecord(absent.querier, "pln-ffffffff", { analysisId: "a1" }))._unsafeUnwrap();
+        expect(absent.calls()).toBe(1);
+    });
+});
+
+describe("the plan and run indexes", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("plans_indexes"));
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    async function indexDefinition(name: string): Promise<string | undefined> {
+        const { rows } = await pool.query<{ indexdef: string }>({
+            text: "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1",
+            values: [name],
+        });
+        return rows[0]?.indexdef;
+    }
+
+    it("indexes the plans by their parent", async () => {
+        expect(await indexDefinition("idx_cortex_plans_parent")).toMatch(/ON \S*cortex_plans USING btree \(parent_plan_id\)$/);
+    });
+
+    it("indexes the runs by analysis, plan, start time, and run id", async () => {
+        expect(await indexDefinition("idx_cortex_runs_plan")).toMatch(/ON \S*cortex_runs USING btree \(analysis_id, plan_id, started_at DESC, run_id DESC\)$/);
     });
 });

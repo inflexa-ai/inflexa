@@ -142,3 +142,39 @@ export function loadPlan(pool: Querier, planId: string, opts: { analysisId: stri
         return result.rows[0]?.plan ?? null;
     });
 }
+
+/** A stored plan with its lineage, as {@link loadPlanRecord} reads it. */
+export interface PlanRecord {
+    planId: string;
+    /** The stored document, as the store holds it. A reader parses it. */
+    plan: unknown;
+    parentPlanId: string | null;
+    /** The newest plan of the same analysis that names this plan as its parent. */
+    supersededBy: string | null;
+    createdAt: string;
+}
+
+/**
+ * Analysis-scoped read of one plan with its parent and the newest plan that
+ * replaced it, in one statement. Returns `ok(null)` for an unknown planId OR a
+ * planId of a different analysis, as {@link loadPlan} does.
+ *
+ * `created_at` is ISO 8601 text, thus the text order is the time order; the plan
+ * id breaks a tie so that the answer is stable.
+ */
+export function loadPlanRecord(pool: Querier, planId: string, opts: { analysisId: string }): ResultAsync<PlanRecord | null, DbError> {
+    return tryQuery("plans.loadPlanRecord", async () => {
+        const result = await pool.query<{ plan: unknown; parent_plan_id: string | null; created_at: string; superseded_by: string | null }>({
+            text: `SELECT p.plan, p.parent_plan_id, p.created_at,
+                     (SELECT c.plan_id FROM cortex_plans c
+                       WHERE c.parent_plan_id = p.plan_id AND c.analysis_id = p.analysis_id
+                       ORDER BY c.created_at DESC, c.plan_id DESC LIMIT 1) AS superseded_by
+                FROM cortex_plans p
+               WHERE p.plan_id = $1 AND p.analysis_id = $2`,
+            values: [planId, opts.analysisId],
+        });
+        const row = result.rows[0];
+        if (!row) return null;
+        return { planId, plan: row.plan, parentPlanId: row.parent_plan_id, supersededBy: row.superseded_by, createdAt: row.created_at };
+    });
+}

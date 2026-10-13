@@ -15,6 +15,7 @@ export type {
     RunStartedPart,
     StepStatus,
     DagStepState,
+    PlanGraphStep,
     DagStatePart,
     StepPhase,
     StepActivityPart,

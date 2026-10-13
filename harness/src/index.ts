@@ -436,6 +436,7 @@ export type {
     RunStartedPart,
     DagStatePart,
     DagStepState,
+    PlanGraphStep,
     StepStatus,
     StepActivityPart,
     ActivityEntryPart,
@@ -749,6 +750,8 @@ export type { SandboxAgentDeps, SandboxStepCoords, AgentMeta } from "./agents/sa
 export { AnalysisPlanSchema } from "./schemas/workflow-state.js";
 export type { AnalysisPlan, AnalysisStep } from "./schemas/workflow-state.js";
 export type { PlanStep } from "./workflows/execute-analysis-scheduler.js";
+export { planGraphOf } from "./workflows/plan/graph.js";
+export { planPartOf } from "./memory/card-builders.js";
 export { validatePlan } from "./schemas/validate-plan.js";
 export type { ValidatePlanOptions } from "./schemas/validate-plan.js";
 export type { ValidationResult } from "./schemas/validate-plan.js";
@@ -756,8 +759,8 @@ export type { ValidationResult } from "./schemas/validate-plan.js";
 // Plan + run + step ledgers around a trigger. `upsertPlan` takes a
 // caller-derived id and inserts-if-absent (the deterministic-id intake path);
 // the run-state calls mirror the chat trigger's reserve → dedup → status flow.
-export { upsertPlan, loadPlan } from "./state/plans.js";
-export type { UpsertPlanInput } from "./state/plans.js";
+export { upsertPlan, loadPlan, loadPlanRecord } from "./state/plans.js";
+export type { UpsertPlanInput, PlanRecord } from "./state/plans.js";
 export {
     insertRun,
     reserveRunById,
@@ -767,6 +770,7 @@ export {
     markRunCanceledIfActive,
     queryRun,
     queryRunsByAnalysis,
+    queryRunIdsByPlan,
     RunDedupCollisionError,
     RunIdentityCollisionError,
 } from "./state/runs.js";

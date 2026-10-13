@@ -13,9 +13,13 @@ import {
     FARM_LOCK_FILE,
     loadDataProfileStatus,
     loadPlan,
+    loadPlanRecord,
     makeLocalAuth,
+    planGraphOf,
+    planPartOf,
     queryActiveRunsByAnalysis,
     queryRun,
+    queryRunIdsByPlan,
     queryRunsByAnalysis,
     queryStepsByRun,
     readRunSynthesis,
@@ -25,6 +29,7 @@ import {
     type DataProfileStatus,
     type DbError,
     type Pool,
+    type PlanRecord,
     type RunCanceler,
     type RunArtifactCount,
     type RunEventSubscribeOptions,
@@ -41,9 +46,11 @@ import type {
     DataProfileView,
     FarmHealOutcome,
     FarmHealResult,
+    PlanView,
     ProfileOutcome,
     ProfileRerunResult,
     RunDetail,
+    RunPlan,
     RunSeenResponse,
     RunStatus,
     RunStepSummary,
@@ -83,6 +90,9 @@ import { workspaceRoot } from "./conversation.ts";
  */
 const PLAN_LOAD_CONCURRENCY = 4;
 
+/** The most run ids that `GET {A}/plans/:planId` gives. The route reads one more, to tell if the plan has more. */
+const PLAN_RUN_IDS_LIMIT = 100;
+
 /** The harness reads and the machine probes that the routes call. Tests replace each one, because each needs Postgres, DBOS, or the container engine. */
 export type RunRoutesOpts = {
     /** One page of the runs of an analysis, newest first, and the count of all its runs. */
@@ -108,6 +118,10 @@ export type RunRoutesOpts = {
     readonly listSteps: (pool: Pool, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
     /** The stored plan document, or `null` when it is gone. */
     readonly loadPlan: (pool: Pool, planId: string, analysisId: string) => ResultAsync<unknown, DbError>;
+    /** The stored plan with its parent and the plan that replaced it, or `null` when the plan is gone or belongs to another analysis. */
+    readonly loadPlanRecord: (pool: Pool, planId: string, analysisId: string) => ResultAsync<PlanRecord | null, DbError>;
+    /** The ids of the runs of one plan, newest first, at most `limit`. */
+    readonly listPlanRunIds: (pool: Pool, analysisId: string, planId: string, limit: number) => ResultAsync<string[], DbError>;
     readonly loadProfile: (pool: Pool, analysisId: string) => ResultAsync<DataProfileStatus | null, DbError>;
     /** Deliver each part of the run, and of its children, until the run is terminal or the signal aborts. */
     readonly subscribeRun: (pool: Pool, options: RunEventSubscribeOptions) => Promise<void>;
@@ -144,6 +158,8 @@ export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     readSynthesis: readSynthesisOf,
     listSteps: queryStepsByRun,
     loadPlan: (pool, planId, analysisId) => loadPlan(pool, planId, { analysisId }),
+    loadPlanRecord: (pool, planId, analysisId) => loadPlanRecord(pool, planId, { analysisId }),
+    listPlanRunIds: (pool, analysisId, planId, limit) => queryRunIdsByPlan(pool, { analysisId, planId, limit }),
     loadProfile: loadDataProfileStatus,
     subscribeRun: (pool, options) => createRunEventStream({ pool }).subscribe(options),
     cancelRun: (pool, runId, session) => {
@@ -202,10 +218,36 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
         const detail: RunDetail = {
             ...toRunSummary(run, planTitleOf(planDoc), runUsage, artifactCountOf(artifactCounts, runId)),
             steps: steps.value.map((step) => toStepSummary(step, stepNames.get(step.stepId), usageByStep.get(step.stepId))),
+            plan: planOf(run.planId, planDoc),
             // SQLite groups the NULL step ids as one group: the calls of the run outside each step.
             unattributedUsage: stepUsage.find((group) => group.stepId === null)?.totals ?? null,
         };
         return c.json(detail);
+    });
+
+    routes.get("/plans/:planId", runtimeGate, async (c) => {
+        const analysisId = analysisParam(c);
+        const planId = c.req.param("planId");
+        const pool = c.get("runtime").pool;
+        // Both reads start before either is awaited, thus the route costs one round trip of latency.
+        const read = await ResultAsync.combine([
+            opts.loadPlanRecord(pool, planId, analysisId),
+            opts.listPlanRunIds(pool, analysisId, planId, PLAN_RUN_IDS_LIMIT + 1),
+        ]);
+        if (read.isErr()) return internalError(c, read.error, "read the plan");
+        const [record, runIds] = read.value;
+        if (record === null) return apiError(c, "not_found", `This analysis has no plan ${planId}.`);
+
+        // The plan row exists, thus a document that gives no part degrades the body and never the status.
+        const plan = planPartOf(record);
+        if (plan === null) getLogger("server").warn({ analysisId, planId }, "the stored plan does not give a data-plan part");
+        return c.json<PlanView>({
+            plan,
+            parentPlanId: record.parentPlanId,
+            supersededBy: record.supersededBy,
+            runIds: runIds.slice(0, PLAN_RUN_IDS_LIMIT),
+            hasMoreRuns: runIds.length > PLAN_RUN_IDS_LIMIT,
+        });
     });
 
     routes.get("/run/:runId/synthesis", runtimeGate, async (c) => {
@@ -520,6 +562,7 @@ function toRunSummary(row: CortexRunRow, planTitle: string | null, usage: UsageT
     return {
         runId: row.runId,
         threadId: row.threadId,
+        planId: row.planId,
         workflowName: row.workflowName,
         // The launch contract: `execute_analysis` starts the workflow with `workflowId: runId`.
         workflowId: row.runId,
@@ -548,6 +591,13 @@ function toStepSummary(step: StepExecutionRow, name: string | undefined, usage: 
         blockedReason: step.blockedReason,
         ...(usage === undefined ? {} : { usage }),
     };
+}
+
+/** The plan graph of a run, or `null` when the run has no plan, the document is gone, or it gives no valid graph. */
+function planOf(planId: string | null, document: unknown): RunPlan | null {
+    if (planId === null || document === null) return null;
+    const steps = planGraphOf(document);
+    return steps === null ? null : { planId, steps };
 }
 
 /**

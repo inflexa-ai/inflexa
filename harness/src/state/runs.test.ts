@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
+import { countingQuerier } from "../__tests__/setup/counting-querier.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { upsertAnalysis } from "./analyses.js";
 import { insertPlan } from "./plans.js";
@@ -11,6 +12,7 @@ import {
     queryActiveRunsByAnalysis,
     queryNonTerminalRunsByAnalysis,
     queryRun,
+    queryRunIdsByPlan,
     queryRunsForInspection,
     reserveRunById,
     RunDedupCollisionError,
@@ -336,5 +338,76 @@ describe("runs: a suspended run is terminal", () => {
         await expect(
             (async () => (await insertRun(pool, { runId: "run-b", analysisId: "a-plan", planId: plan, workflowName: "executeAnalysis" }))._unsafeUnwrap())(),
         ).rejects.toBeInstanceOf(RunDedupCollisionError);
+    });
+});
+
+describe("queryRunIdsByPlan", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("runs_ids_by_plan"));
+        (await upsertAnalysis(pool, "a-ids", null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, "a-other", null))._unsafeUnwrap();
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    async function seedRun(runId: string, analysisId: string, planId: string | null, startedAt: string): Promise<void> {
+        await pool.query({
+            text: `INSERT INTO cortex_runs (run_id, analysis_id, workflow_name, status, started_at, plan_id)
+                   VALUES ($1, $2, 'executeAnalysis', 'completed', $3, $4)`,
+            values: [runId, analysisId, startedAt, planId],
+        });
+    }
+
+    async function seedPlan(analysisId: string): Promise<string> {
+        return (await insertPlan(pool, { analysisId, plan: { steps: [] } }))._unsafeUnwrap();
+    }
+
+    it("gives the run ids of the plan, newest first, and not the runs of another plan", async () => {
+        const p1 = await seedPlan("a-ids");
+        const p2 = await seedPlan("a-ids");
+        await seedRun("r1", "a-ids", p1, "2026-10-01T00:00:00.000Z");
+        await seedRun("r2", "a-ids", p1, "2026-10-02T00:00:00.000Z");
+        await seedRun("r3", "a-ids", p2, "2026-10-03T00:00:00.000Z");
+
+        expect((await queryRunIdsByPlan(pool, { analysisId: "a-ids", planId: p1, limit: 10 }))._unsafeUnwrap()).toEqual(["r2", "r1"]);
+    });
+
+    it("breaks a tie of start times with the highest run id", async () => {
+        const p = await seedPlan("a-ids");
+        const at = "2026-10-05T00:00:00.000Z";
+        await seedRun("tie-a", "a-ids", p, at);
+        await seedRun("tie-b", "a-ids", p, at);
+
+        expect((await queryRunIdsByPlan(pool, { analysisId: "a-ids", planId: p, limit: 10 }))._unsafeUnwrap()).toEqual(["tie-b", "tie-a"]);
+    });
+
+    it("bounds the ids by the limit, and keeps the newest", async () => {
+        const p = await seedPlan("a-ids");
+        await seedRun("l1", "a-ids", p, "2026-10-01T00:00:00.000Z");
+        await seedRun("l2", "a-ids", p, "2026-10-02T00:00:00.000Z");
+        await seedRun("l3", "a-ids", p, "2026-10-03T00:00:00.000Z");
+
+        expect((await queryRunIdsByPlan(pool, { analysisId: "a-ids", planId: p, limit: 2 }))._unsafeUnwrap()).toEqual(["l3", "l2"]);
+    });
+
+    it("gives an empty list for a plan with no run, and for a plan of another analysis", async () => {
+        const p = await seedPlan("a-ids");
+        const q = await seedPlan("a-other");
+        await seedRun("o1", "a-other", q, "2026-10-01T00:00:00.000Z");
+
+        expect((await queryRunIdsByPlan(pool, { analysisId: "a-ids", planId: p, limit: 10 }))._unsafeUnwrap()).toEqual([]);
+        expect((await queryRunIdsByPlan(pool, { analysisId: "a-ids", planId: q, limit: 10 }))._unsafeUnwrap()).toEqual([]);
+    });
+
+    it("sends one statement", async () => {
+        const p = await seedPlan("a-ids");
+        const counted = countingQuerier(pool);
+        (await queryRunIdsByPlan(counted.querier, { analysisId: "a-ids", planId: p, limit: 5 }))._unsafeUnwrap();
+        expect(counted.calls()).toBe(1);
     });
 });

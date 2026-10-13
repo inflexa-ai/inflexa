@@ -1,6 +1,79 @@
 import { describe, expect, it } from "bun:test";
 
-import { buildPresentationCardData } from "./card-builders.js";
+import type { PlanRecord } from "../state/index.js";
+import { buildPresentationCardData, planCardOf, planPartOf } from "./card-builders.js";
+
+function planDocument(title?: string) {
+    return {
+        ...(title !== undefined ? { title } : {}),
+        analytical_narrative: "why",
+        created_at: "2026-10-01T00:00:00.000Z",
+        steps: [
+            {
+                id: "T1S1",
+                name: "Normalize",
+                track: "1",
+                step_type: "analysis",
+                question: "Which genes change?",
+                acceptance_criteria: ["A counts table exists"],
+                depends_on: [],
+                status: "pending",
+                maxSteps: 10,
+                agent: "rna-seq",
+            },
+        ],
+    };
+}
+
+function recordOf(overrides: Partial<PlanRecord> = {}): PlanRecord {
+    return {
+        planId: "pln-0000000b",
+        plan: planDocument("Differential expression"),
+        parentPlanId: null,
+        supersededBy: null,
+        createdAt: "2026-10-02T00:00:00.000Z",
+        ...overrides,
+    };
+}
+
+describe("planCardOf", () => {
+    it("sets parentPlanId on the card of a revision", () => {
+        expect(planCardOf(recordOf({ parentPlanId: "pln-0000000a" }))?.parentPlanId).toBe("pln-0000000a");
+    });
+
+    it("omits the parentPlanId key on the card of a first plan", () => {
+        expect(planCardOf(recordOf())).not.toHaveProperty("parentPlanId");
+    });
+
+    it("lets a title override the plan title", () => {
+        expect(planCardOf(recordOf(), "Shown")?.title).toBe("Shown");
+        expect(planCardOf(recordOf())?.title).toBe("Differential expression");
+    });
+
+    it("gives null for a document that does not parse", () => {
+        expect(planCardOf(recordOf({ plan: { steps: "no" } }))).toBeNull();
+    });
+});
+
+describe("planPartOf", () => {
+    it("gives the data-plan part of a stored revision", () => {
+        const part = planPartOf(recordOf({ parentPlanId: "pln-0000000a" }));
+
+        expect(part?.type).toBe("data-plan");
+        expect(part?.planId).toBe("pln-0000000b");
+        expect(part?.parentPlanId).toBe("pln-0000000a");
+        expect(part?.title).toBe("Differential expression");
+        expect(part?.steps?.map((step) => step.id)).toEqual(["T1S1"]);
+    });
+
+    it("gives null for a document that does not parse", () => {
+        expect(planPartOf(recordOf({ plan: { steps: "no" } }))).toBeNull();
+    });
+
+    it("gives null when the part schema refuses the part", () => {
+        expect(planPartOf(recordOf({ planId: "not-a-plan-id" }))).toBeNull();
+    });
+});
 
 describe("buildPresentationCardData", () => {
     // The builder is the single construction site of a PresentationContent — the live `show_user`

@@ -14,6 +14,7 @@ import { dropActiveExecTracking } from "./20261005120000_drop_the_active_exec_tr
 import { indexTheRunsByStart } from "./20261012120000_index_the_runs_by_start.js";
 import { indexTheEndedRunsAndTheRecentThreads } from "./20261013120000_index_the_ended_runs_and_the_recent_threads.js";
 import { narrowTheActiveRunIndex } from "./20261013180000_narrow_the_active_run_index.js";
+import { indexThePlansByParentAndTheRunsByPlan } from "./20261014120000_index_the_plans_by_parent_and_the_runs_by_plan.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
@@ -23,5 +24,6 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20261012120000_index_the_runs_by_start": indexTheRunsByStart,
         "20261013120000_index_the_ended_runs_and_the_recent_threads": indexTheEndedRunsAndTheRecentThreads,
         "20261013180000_narrow_the_active_run_index": narrowTheActiveRunIndex,
+        "20261014120000_index_the_plans_by_parent_and_the_runs_by_plan": indexThePlansByParentAndTheRunsByPlan,
     };
 }

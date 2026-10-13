@@ -386,6 +386,7 @@ export const mockCortexRuns: RunSummary[] = [
     {
         runId: "mock-run-9a3f4c21",
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: "mock-run-9a3f4c21",
         status: "running",
@@ -398,6 +399,7 @@ export const mockCortexRuns: RunSummary[] = [
     {
         runId: "mock-run-71bd0e55",
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: "mock-run-71bd0e55",
         status: "completed",
@@ -410,6 +412,7 @@ export const mockCortexRuns: RunSummary[] = [
     {
         runId: "mock-run-2c07af90",
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: "mock-run-2c07af90",
         status: "failed",
@@ -645,6 +648,7 @@ export const mockRunDetail: RunDetail = {
         }),
         mockStep({ stepId: "synthesis", agentId: "synthesis", status: "pending", usage: { calls: 3 } }),
     ],
+    plan: null,
     unattributedUsage: { calls: 15, inputTokens: 284_900, outputTokens: 15_500 },
 };
 

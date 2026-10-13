@@ -35,6 +35,7 @@ import {
 function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: over.runId,
         status: "running",
@@ -62,6 +63,7 @@ function runDetail(run: RunSummary): RunDetail {
                 blockedReason: null,
             },
         ],
+        plan: null,
         unattributedUsage: null,
     };
 }

@@ -173,6 +173,40 @@ describe("createShowPlanTool (dependency-bearing factory)", () => {
         if (!result.shown) expect(result.reason).toBe("plan_not_found");
         expect(emitted).toHaveLength(0);
     });
+
+    const storedPlan = {
+        title: "Revision",
+        analytical_narrative: "why",
+        created_at: "2026-10-01T00:00:00.000Z",
+        steps: [],
+    };
+
+    function poolWithPlanRow(parentPlanId: string | null): Pool {
+        return {
+            query: async () => ({
+                rows: [{ plan: storedPlan, parent_plan_id: parentPlanId, created_at: "2026-10-02T00:00:00.000Z", superseded_by: null }],
+            }),
+        } as unknown as Pool;
+    }
+
+    it("emits the parentPlanId of a revision", async () => {
+        const tool = createShowPlanTool(poolWithPlanRow("pln-0000000a"));
+        const { ctx, emitted } = makeToolContext();
+        (await tool.execute({ planId: "pln-0000000b" }, ctx))._unsafeUnwrap();
+
+        const event = emitted[0] as { type: string; data: Record<string, unknown> };
+        expect(event.type).toBe("data-plan");
+        expect(event.data.parentPlanId).toBe("pln-0000000a");
+    });
+
+    it("emits no parentPlanId key for a first plan", async () => {
+        const tool = createShowPlanTool(poolWithPlanRow(null));
+        const { ctx, emitted } = makeToolContext();
+        (await tool.execute({ planId: "pln-0000000a" }, ctx))._unsafeUnwrap();
+
+        const event = emitted[0] as { data: Record<string, unknown> };
+        expect(event.data).not.toHaveProperty("parentPlanId");
+    });
 });
 
 describe("showUser — structure", () => {

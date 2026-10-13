@@ -44,6 +44,7 @@ const analysis: Analysis = {
 function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: over.runId,
         status: "running",
@@ -78,6 +79,7 @@ function optsFor(runs: RunSummary[]): RefreshOpts {
                         blockedReason: null,
                     },
                 ],
+                plan: null,
                 unattributedUsage: null,
             };
             return okAsync(detail);

@@ -3,10 +3,36 @@ import { describe, expect, it } from "bun:test";
 import { envelopeMessage, summaryMarkerMessage, syntheticRecordMessage } from "./ai-sdk-message-storage.js";
 import { storedMessagesToChat } from "./conversation-display-replay.js";
 import { createConversationDisplayRecorder } from "./conversation-display-recorder.js";
-import { envelopeDisplayMessages, type ConversationUIMessage } from "./conversation-display-storage.js";
+import { envelopeDisplayMessages, parseStoredDisplayEnvelope, type ConversationUIMessage } from "./conversation-display-storage.js";
+import { planCardOf } from "./card-builders.js";
 import type { StoredMessage, StoredTurnRecord } from "./thread-history.js";
 
 const SOURCE = { agentId: "conversation", callPath: ["conversation"] };
+
+describe("the stored card of a revised plan", () => {
+    it("keeps parentPlanId through the recorder, the stored envelope, and its parse", async () => {
+        const card = planCardOf({
+            planId: "pln-0000000b",
+            plan: { title: "Revision", analytical_narrative: "why", created_at: "2026-10-01T00:00:00.000Z", steps: [] },
+            parentPlanId: "pln-0000000a",
+            supersededBy: null,
+            createdAt: "2026-10-02T00:00:00.000Z",
+        })!;
+        const recorder = createConversationDisplayRecorder({
+            userText: "show the plan",
+            agentId: SOURCE.agentId,
+            sink: () => {},
+            userMessageId: "u",
+            assistantMessageId: "a",
+        });
+        await recorder.emit({ type: "data-plan", source: SOURCE, data: card });
+
+        const stored = await parseStoredDisplayEnvelope(envelopeDisplayMessages(recorder.finish()), "test");
+
+        const part = stored.messages[1]!.parts.find((candidate) => candidate.type === "data-plan");
+        expect(part).toMatchObject({ type: "data-plan", data: { planId: "pln-0000000b", parentPlanId: "pln-0000000a" } });
+    });
+});
 
 describe("recorded conversation display replay", () => {
     it("preserves mixed ordering and every durable conversation data family", async () => {

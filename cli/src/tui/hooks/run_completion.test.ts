@@ -10,6 +10,7 @@ import { __resetRunCompletionsForTest, completionNoticeText, watchRunCompletions
 function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
         threadId: "thread-1",
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: over.runId,
         status: "running",
@@ -37,6 +38,7 @@ function runDetail(run: RunSummary): RunDetail {
                 blockedReason: null,
             },
         ],
+        plan: null,
         unattributedUsage: null,
     };
 }

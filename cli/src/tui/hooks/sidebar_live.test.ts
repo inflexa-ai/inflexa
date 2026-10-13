@@ -76,6 +76,7 @@ function runRow(over: Partial<RunSummary> = {}): RunSummary {
     return {
         runId,
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: runId,
         status: "completed",
@@ -93,7 +94,7 @@ function stepRow(stepId: string, status: StepExecutionStatus, over: Partial<RunS
 
 /** The `GET {A}/run/:runId` body of `run`, with its steps. */
 function detailOf(run: RunSummary, steps: RunStepSummary[], unattributedUsage: UsageTotals | null = null): RunDetail {
-    return { ...run, steps, unattributedUsage };
+    return { ...run, steps, plan: null, unattributedUsage };
 }
 
 /** The `GET {A}/data-profile` body of a row, or of a never-profiled analysis. */

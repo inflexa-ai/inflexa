@@ -51,6 +51,7 @@ export {
     queryRunsForInspection,
     queryRunsByAnalysis,
     queryRunsByThread,
+    queryRunIdsByPlan,
 } from "./runs.js";
 export type { InsertRunInput, RunPage, RunReservation } from "./runs.js";
 
@@ -59,8 +60,8 @@ export type { InsertStepExecutionInput, SeedStepExecutionRow, UpdateStepExecutio
 
 export { setSandboxRef, clearSandboxRef, reconcileReapedSandbox } from "./active-sandboxes.js";
 
-export { insertPlan, upsertPlan, loadPlan } from "./plans.js";
-export type { InsertPlanInput, UpsertPlanInput } from "./plans.js";
+export { insertPlan, upsertPlan, loadPlan, loadPlanRecord } from "./plans.js";
+export type { InsertPlanInput, UpsertPlanInput, PlanRecord } from "./plans.js";
 
 export {
     tryStartDataProfile,

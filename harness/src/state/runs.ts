@@ -290,6 +290,24 @@ export function queryRunsByAnalysis(
 }
 
 /**
+ * The run ids of one plan of one analysis, newest start first, at most `limit`.
+ * The run id breaks a tie of start times, highest first. A plan with no run gives
+ * an empty list.
+ */
+export function queryRunIdsByPlan(pool: Querier, opts: { analysisId: string; planId: string; limit: number }): ResultAsync<string[], DbError> {
+    return tryQuery("runs.queryRunIdsByPlan", async () => {
+        const result = await pool.query<{ run_id: string }>({
+            text: `SELECT run_id FROM cortex_runs
+            WHERE analysis_id = $1 AND plan_id = $2
+            ORDER BY started_at DESC, run_id DESC
+            LIMIT $3`,
+            values: [opts.analysisId, opts.planId, opts.limit],
+        });
+        return result.rows.map((row) => row.run_id);
+    });
+}
+
+/**
  * Read the analysis's non-terminal run activity without coupling it to a
  * conversation thread. The total is counted before the detail limit so a
  * bounded prompt projection can disclose omitted rows.
