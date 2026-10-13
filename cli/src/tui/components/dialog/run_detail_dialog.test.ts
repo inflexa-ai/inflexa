@@ -13,6 +13,7 @@ function run(overrides: Partial<RunSummary> = {}): RunSummary {
     return {
         runId: "11111111-2222-3333-4444-5555aabbccdd",
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: "11111111-2222-3333-4444-5555aabbccdd",
         status: "completed",

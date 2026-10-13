@@ -45,6 +45,7 @@ function run(overrides: Partial<RunSummary> = {}): RunSummary {
     return {
         runId: "11111111-2222-3333-4444-5555aabbccdd",
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: "11111111-2222-3333-4444-5555aabbccdd",
         status: "completed",
@@ -72,7 +73,7 @@ function step(stepId: string, status: RunStepSummary["status"], usage?: UsageTot
 
 /** A detail fetch that answers with `steps` and the run's step-less calls. */
 function detailOf(steps: RunStepSummary[], unattributedUsage: UsageTotals | null = null): RunDetailDialogProps["loadDetail"] {
-    return () => okAsync<RunDetail, ClientError>({ ...run(), steps, unattributedUsage });
+    return () => okAsync<RunDetail, ClientError>({ ...run(), steps, plan: null, unattributedUsage });
 }
 
 describe("RunDetailDialog", () => {

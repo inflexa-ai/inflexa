@@ -12,6 +12,7 @@ import {
     type CortexRunRow,
     type DataProfileStatus,
     type Pool,
+    type PlanRecord,
     type RunArtifactCount,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
@@ -23,6 +24,7 @@ import type {
     ChatContext,
     DataProfileView,
     FarmHealResult,
+    PlanView,
     ProfileRerunResult,
     RunDetail,
     RunList,
@@ -75,6 +77,8 @@ const UNEXPECTED: RunRoutesOpts = {
     readSynthesis: failing("readSynthesis"),
     listSteps: failing("listSteps"),
     loadPlan: failing("loadPlan"),
+    loadPlanRecord: failing("loadPlanRecord"),
+    listPlanRunIds: failing("listPlanRunIds"),
     loadProfile: failing("loadProfile"),
     subscribeRun: failing("subscribeRun"),
     cancelRun: failing("cancelRun"),
@@ -131,6 +135,37 @@ function stepRow(overrides: Partial<StepExecutionRow> & Pick<StepExecutionRow, "
         blockedReason: null,
         sandboxRef: null,
         childWorkflowId: null,
+        ...overrides,
+    };
+}
+
+/** A stored plan document that the harness plan schema accepts. `steps` is `[id, dependsOn]` for each step. */
+function planDocument(steps: ReadonlyArray<readonly [string, readonly string[]]>, title = "Liver DE"): unknown {
+    return {
+        title,
+        analytical_narrative: "why",
+        created_at: "2026-10-01T00:00:00.000Z",
+        steps: steps.map(([id, dependsOn]) => ({
+            id,
+            name: `Name of ${id}`,
+            track: "1",
+            step_type: "analysis",
+            question: "Which genes change?",
+            acceptance_criteria: [],
+            depends_on: dependsOn,
+            maxSteps: 10,
+            agent: "rna-seq",
+        })),
+    };
+}
+
+function planRecord(overrides: Partial<PlanRecord> = {}): PlanRecord {
+    return {
+        planId: "pln-0000000a",
+        plan: planDocument([["T1S1", []]]),
+        parentPlanId: null,
+        supersededBy: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
         ...overrides,
     };
 }
@@ -207,6 +242,18 @@ describe("GET {A}/runs", () => {
             ["r3", undefined, undefined],
         ]);
         expect(list.runs[0]).toMatchObject({ workflowId: "r1", status: "running", completedAt: null, threadId: null });
+    });
+
+    test("each run carries its plan id, or null, and the list reads no plan record and no run ids", async () => {
+        const analysisId = seedAnalysis();
+        const rows = [runRow({ runId: "r1", analysisId, planId: "p1" }), runRow({ runId: "r2", analysisId })];
+        const app = appWith({ listRuns: () => okAsync({ rows, total: 2 }), loadPlan: () => okAsync(null) });
+        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs`)).json()) as RunList;
+
+        expect(list.runs.map((run) => [run.runId, run.planId])).toEqual([
+            ["r1", "p1"],
+            ["r2", null],
+        ]);
     });
 
     test("each run carries the artifact count of one grouped read, and a run with no entry gets 0", async () => {
@@ -354,6 +401,93 @@ describe("GET {A}/run/:runId", () => {
         expect(reads).toEqual([["r1"]]);
     });
 
+    describe("the plan graph", () => {
+        function detailApp(analysisId: string, plan: () => ReturnType<RunRoutesOpts["loadPlan"]>, planLoads: string[] = []): Hono<ServerEnv> {
+            return appWith({
+                getRun: () => okAsync(runRow({ runId: "r1", analysisId, planId: "p1" })),
+                listSteps: () => okAsync([stepRow({ runId: "r1", stepId: "T1S1" }), stepRow({ runId: "r1", stepId: "T1S2" })]),
+                loadPlan: (_pool, planId) => {
+                    planLoads.push(planId);
+                    return plan();
+                },
+            });
+        }
+
+        test("gives each plan step with its agent, its dependencies, and its level, and a step that did not start", async () => {
+            const analysisId = seedAnalysis();
+            const planLoads: string[] = [];
+            const document = planDocument([
+                ["T1S1", []],
+                ["T1S2", ["T1S1"]],
+                ["T1S3", ["T1S2"]],
+            ]);
+            const app = detailApp(analysisId, () => okAsync(document), planLoads);
+            const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
+
+            expect(detail.planId).toBe("p1");
+            expect(detail.plan).toEqual({
+                planId: "p1",
+                steps: [
+                    { id: "T1S1", name: "Name of T1S1", agent: "rna-seq", dependsOn: [], level: 0 },
+                    { id: "T1S2", name: "Name of T1S2", agent: "rna-seq", dependsOn: ["T1S1"], level: 1 },
+                    { id: "T1S3", name: "Name of T1S3", agent: "rna-seq", dependsOn: ["T1S2"], level: 2 },
+                ],
+            });
+            expect(detail.steps.map((step) => step.stepId)).toEqual(["T1S1", "T1S2"]);
+            expect(planLoads).toEqual(["p1"]);
+        });
+
+        test("is null for a run with no plan, and the plan is not read", async () => {
+            const analysisId = seedAnalysis();
+            const planLoads: string[] = [];
+            const app = appWith({
+                getRun: () => okAsync(runRow({ runId: "r1", analysisId })),
+                listSteps: () => okAsync([]),
+                loadPlan: (_pool, planId) => {
+                    planLoads.push(planId);
+                    return okAsync(null);
+                },
+            });
+            const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
+
+            expect(detail.planId).toBeNull();
+            expect(detail.plan).toBeNull();
+            expect(planLoads).toEqual([]);
+        });
+
+        test("is null with a 200 when the plan is gone", async () => {
+            const analysisId = seedAnalysis();
+            const response = await detailApp(analysisId, () => okAsync(null)).request(`/api/v1/analyses/${analysisId}/run/r1`);
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toMatchObject({ planId: "p1", plan: null });
+        });
+
+        test("is null with a 200 when the plan read fails", async () => {
+            const analysisId = seedAnalysis();
+            const response = await detailApp(analysisId, () => errAsync({ type: "query_failed", cause: new Error("down") } as never)).request(
+                `/api/v1/analyses/${analysisId}/run/r1`,
+            );
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toMatchObject({ planId: "p1", plan: null });
+        });
+
+        test("is null for a plan with a cycle, and for a document that is not a plan", async () => {
+            const analysisId = seedAnalysis();
+            const cycle = planDocument([
+                ["T1S1", ["T1S2"]],
+                ["T1S2", ["T1S1"]],
+            ]);
+            for (const document of [cycle, { title: "no steps" }]) {
+                const detail = (await (
+                    await detailApp(analysisId, () => okAsync(document)).request(`/api/v1/analyses/${analysisId}/run/r1`)
+                ).json()) as RunDetail;
+                expect(detail.plan).toBeNull();
+            }
+        });
+    });
+
     test("404 `not_found` for a run of a different analysis, and for an unknown run", async () => {
         const foreign = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId: "other" })) });
         const response = await foreign.request("/api/v1/analyses/mine/run/r1");
@@ -362,6 +496,102 @@ describe("GET {A}/run/:runId", () => {
 
         const unknown = appWith({ getRun: () => okAsync(null) });
         expect((await unknown.request("/api/v1/analyses/mine/run/r1")).status).toBe(404);
+    });
+});
+
+describe("GET {A}/plans/:planId", () => {
+    type Reads = { record: Array<[string, string]>; runIds: Array<[string, string, number]> };
+
+    function planApp(record: PlanRecord | null, runIds: string[], boot: ServerBoot = readyBoot): { app: Hono<ServerEnv>; reads: Reads } {
+        const reads: Reads = { record: [], runIds: [] };
+        const app = appWith(
+            {
+                loadPlanRecord: (_pool, planId, analysisId) => {
+                    reads.record.push([planId, analysisId]);
+                    return okAsync(record);
+                },
+                listPlanRunIds: (_pool, analysisId, planId, limit) => {
+                    reads.runIds.push([analysisId, planId, limit]);
+                    return okAsync(runIds.slice(0, limit));
+                },
+            },
+            boot,
+        );
+        return { app, reads };
+    }
+
+    async function planOf(app: Hono<ServerEnv>, planId = "pln-0000000a"): Promise<PlanView> {
+        return (await (await app.request(`/api/v1/analyses/a1/plans/${planId}`)).json()) as PlanView;
+    }
+
+    test("a revised plan names the newer plan, with the card and the runs, in two reads", async () => {
+        const { app, reads } = planApp(planRecord({ supersededBy: "pln-0000000b" }), ["r2", "r1"]);
+        const view = await planOf(app);
+
+        expect(view).toMatchObject({ parentPlanId: null, supersededBy: "pln-0000000b", runIds: ["r2", "r1"], hasMoreRuns: false });
+        expect(view.plan).toMatchObject({ type: "data-plan", planId: "pln-0000000a", title: "Liver DE" });
+        expect(view.plan).not.toHaveProperty("parentPlanId");
+        expect(reads.record).toEqual([["pln-0000000a", "a1"]]);
+        expect(reads.runIds).toEqual([["a1", "pln-0000000a", 101]]);
+    });
+
+    test("a revision names its parent at the top level and in the part", async () => {
+        const { app } = planApp(planRecord({ planId: "pln-0000000b", parentPlanId: "pln-0000000a" }), []);
+        const view = await planOf(app, "pln-0000000b");
+
+        expect(view.parentPlanId).toBe("pln-0000000a");
+        expect(view.plan?.parentPlanId).toBe("pln-0000000a");
+        expect(view).toMatchObject({ supersededBy: null, runIds: [], hasMoreRuns: false });
+    });
+
+    test("100 runs give no more, and 101 runs give the newest 100 and a flag", async () => {
+        const ids = Array.from({ length: 101 }, (_, i) => `r${i}`);
+
+        const exact = await planOf(planApp(planRecord(), ids.slice(0, 100)).app);
+        expect(exact.runIds).toHaveLength(100);
+        expect(exact.hasMoreRuns).toBe(false);
+
+        const over = await planOf(planApp(planRecord(), ids).app);
+        expect(over.runIds).toEqual(ids.slice(0, 100));
+        expect(over.hasMoreRuns).toBe(true);
+    });
+
+    test("a plan whose document does not parse gives 200 with its lineage and its runs, and no part", async () => {
+        const { app } = planApp(planRecord({ plan: { steps: "no" }, parentPlanId: "pln-0000000z", supersededBy: "pln-0000000b" }), ["r1"]);
+        const response = await app.request("/api/v1/analyses/a1/plans/pln-0000000a");
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ plan: null, parentPlanId: "pln-0000000z", supersededBy: "pln-0000000b", runIds: ["r1"], hasMoreRuns: false });
+    });
+
+    test("404 `not_found` for an unknown plan and for a plan of a different analysis", async () => {
+        const { app } = planApp(null, []);
+        const response = await app.request("/api/v1/analyses/a1/plans/pln-0000000a");
+
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: "not_found", message: "This analysis has no plan pln-0000000a." });
+    });
+
+    test("500 `internal_error` when either read fails", async () => {
+        const down = errAsync({ type: "query_failed", cause: new Error("down") } as never);
+        const recordFails = appWith({ loadPlanRecord: () => down, listPlanRunIds: () => okAsync([]) });
+        const runsFail = appWith({ loadPlanRecord: () => okAsync(planRecord()), listPlanRunIds: () => down });
+
+        for (const app of [recordFails, runsFail]) {
+            const response = await app.request("/api/v1/analyses/a1/plans/pln-0000000a");
+            expect(response.status).toBe(500);
+            expect(await response.json()).toMatchObject({ error: "internal_error" });
+        }
+    });
+
+    test("503 `unavailable` while the runtime boots, with no read", async () => {
+        const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
+        const { app, reads } = planApp(planRecord(), [], { state: () => starting, runtime: () => null, start: async () => undefined });
+        const response = await app.request("/api/v1/analyses/a1/plans/pln-0000000a");
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+        expect(reads).toEqual({ record: [], runIds: [] });
     });
 });
 

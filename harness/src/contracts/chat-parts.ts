@@ -61,6 +61,8 @@ export interface PlanPart {
     type: "data-plan";
     id: string;
     planId: string;
+    /** The plan that this plan revised. Absent for a first plan. */
+    parentPlanId?: string;
     title?: string;
     steps?: PlanStep[];
     analytical_narrative?: string;
@@ -154,6 +156,9 @@ export interface DagStepState {
     /** Error message (set on failure). */
     error?: string;
 }
+
+/** One step of the stored plan graph: the fields of {@link DagStepState} that the plan alone fixes. */
+export type PlanGraphStep = Pick<DagStepState, "id" | "name" | "agent" | "dependsOn" | "level">;
 
 export interface DagStatePart {
     type: "data-dag-state";

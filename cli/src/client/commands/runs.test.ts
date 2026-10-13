@@ -35,6 +35,7 @@ function serverOf(routes: Record<string, unknown | unknown[]>): { opts: ClientOp
 function run(overrides: Partial<RunSummary> & Pick<RunSummary, "runId">): RunSummary {
     return {
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: overrides.runId,
         status: "completed",
@@ -115,6 +116,7 @@ describe("inflexa run --status", () => {
                     blockedReason: null,
                 },
             ],
+            plan: null,
             unattributedUsage: null,
         };
         const { opts, requests } = serverOf({

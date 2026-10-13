@@ -47,6 +47,7 @@ async function frameWith(node: Parameters<typeof testRender>[0], needle: string,
 function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
         threadId: "thread-1",
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: over.runId,
         status: "running",
@@ -70,7 +71,7 @@ function runDetail(runId: string): RunDetail {
         attempts: 1,
         blockedReason: null,
     });
-    return { ...runRow({ runId }), steps: [step("T1S1", "completed"), step("T1S2", "running")], unattributedUsage: null };
+    return { ...runRow({ runId }), steps: [step("T1S1", "completed"), step("T1S2", "running")], plan: null, unattributedUsage: null };
 }
 
 function optsFor(runs: RunSummary[], opts: { runsFail?: boolean } = {}): RefreshOpts {

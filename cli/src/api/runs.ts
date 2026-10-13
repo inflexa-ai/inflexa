@@ -1,6 +1,6 @@
 // The wire types of the runs and the data profile of an analysis (draft 2.4). Each harness type below is a
 // type-only import: it is erased at compile time, thus a client that imports this file loads no harness code.
-import type { DataProfileLifecycleStatus, DataProfileResult, RunSynthesisPart } from "@inflexa-ai/harness/contracts/index.js";
+import type { DataProfileLifecycleStatus, DataProfileResult, PlanGraphStep, PlanPart, RunSynthesisPart } from "@inflexa-ai/harness/contracts/index.js";
 import type { CancelRunResult as HarnessCancelRunResult } from "@inflexa-ai/harness/execution/run-canceler.js";
 import type {
     RunStatus as HarnessRunStatus,
@@ -34,6 +34,8 @@ export type RunSummary = {
     runId: string;
     /** The conversation thread whose turn launched the run, or `null` for a run with no thread. */
     threadId: string | null;
+    /** The plan that the run executes, or `null` for a run with no plan. */
+    planId: string | null;
     workflowName: string;
     /** The DBOS workflow id of the run. It is equal to `runId`. */
     workflowId: string;
@@ -75,16 +77,38 @@ export type RunStepSummary = {
     usage?: UsageTotals;
 };
 
+/** The graph of the plan of a run, as the stored plan fixes it: one entry for each plan step, started or not. */
+export type RunPlan = {
+    planId: string;
+    steps: PlanGraphStep[];
+};
+
 /** The body of `GET {A}/run/:runId`: one run with its steps and the usage of each step. */
 export type RunDetail = RunSummary & {
     /** The step rows of the run, in the order of the ledger. */
     steps: RunStepSummary[];
+    /** The plan graph of the run, or `null` when the run has no plan, or the plan is gone or unreadable. */
+    plan: RunPlan | null;
     /**
      * What the calls of the run that belong to no step consumed (the plan and the synthesis frames), or
      * `null` when each call has a step or the usage read failed. The run `usage` counts these calls, and no
      * step shows them.
      */
     unattributedUsage: UsageTotals | null;
+};
+
+/** The body of `GET {A}/plans/:planId`: a plan with its lineage and the ids of its runs. */
+export type PlanView = {
+    /** The `data-plan` part of the stored plan, or `null` when the plan document gives no part. */
+    plan: PlanPart | null;
+    /** The plan that this plan revised, or `null` for a first plan. */
+    parentPlanId: string | null;
+    /** The newest plan of the analysis that revised this plan, or `null`. */
+    supersededBy: string | null;
+    /** The ids of the runs of the plan, newest first, at most 100. */
+    runIds: string[];
+    /** True when the plan has runs beyond `runIds`. */
+    hasMoreRuns: boolean;
 };
 
 /** The ledger row of the data profile of an analysis, when one exists. Timestamps are ISO 8601. */

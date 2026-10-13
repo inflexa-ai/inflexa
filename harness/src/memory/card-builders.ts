@@ -20,8 +20,10 @@ import { okAsync, type ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { tryQuery, type DbError } from "../lib/db-result.js";
+import type { PlanPart } from "../contracts/chat-parts.js";
+import { PlanPartSchema } from "../contracts/schemas/chat-parts.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
-import { loadPlan } from "../state/index.js";
+import { loadPlan, loadPlanRecord, type PlanRecord } from "../state/index.js";
 import { parseStructureUrl } from "../contracts/structure-source.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { validatePath } from "../tools/lib/path-validation.js";
@@ -33,6 +35,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export interface PlanCardData {
     id: string;
     planId: string;
+    parentPlanId?: string;
     title?: string;
     steps: unknown;
     analytical_narrative: unknown;
@@ -63,29 +66,44 @@ function presentationId(input: Record<string, unknown>): string {
     return `pres-${hash}`;
 }
 
+/** Build the `data-plan` payload of a stored plan record. `null` when the
+ *  document no longer parses. An explicit `title` overrides the plan title. */
+export function planCardOf(record: PlanRecord, title?: string): PlanCardData | null {
+    const parsed = AnalysisPlanSchema.safeParse(record.plan);
+    if (!parsed.success) return null;
+
+    const id = `pres-${createHash("sha256").update(record.planId).digest("hex").slice(0, 16)}`;
+    // Explicit `show_plan({ title })` overrides; otherwise default to the
+    // planner-set plan title so both cards share one source.
+    const heading = title ?? parsed.data.title;
+    return {
+        id,
+        planId: record.planId,
+        ...(record.parentPlanId !== null ? { parentPlanId: record.parentPlanId } : {}),
+        ...(heading !== undefined ? { title: heading } : {}),
+        steps: parsed.data.steps,
+        analytical_narrative: parsed.data.analytical_narrative,
+        omicsType: parsed.data.omicsType,
+        omicsSubtype: parsed.data.omicsSubtype,
+    };
+}
+
+/** The `data-plan` part of a stored plan record, with the title of the plan. The
+ *  part schema drops each key that it does not name, thus the part equals the
+ *  stored card of a transcript. `null` when the document does not parse or the
+ *  schema refuses the part. */
+export function planPartOf(record: PlanRecord): PlanPart | null {
+    const card = planCardOf(record);
+    if (!card) return null;
+    const part = PlanPartSchema.safeParse({ type: "data-plan", ...card });
+    return part.success ? part.data : null;
+}
+
 /** Build the `data-plan` payload by loading the stored plan. `ok(null)` when
  *  the plan is missing or no longer parses (absence is NOT an error) — the
  *  caller falls back to a chip. */
 export function buildPlanCardData(pool: Pool, planId: string, analysisId: string, title?: string): ResultAsync<PlanCardData | null, DbError> {
-    return loadPlan(pool, planId, { analysisId }).map((plan) => {
-        if (!plan) return null;
-        const parsed = AnalysisPlanSchema.safeParse(plan);
-        if (!parsed.success) return null;
-
-        const id = `pres-${createHash("sha256").update(planId).digest("hex").slice(0, 16)}`;
-        // Explicit `show_plan({ title })` overrides; otherwise default to the
-        // planner-set plan title so both cards share one source.
-        const heading = title ?? parsed.data.title;
-        return {
-            id,
-            planId,
-            ...(heading !== undefined ? { title: heading } : {}),
-            steps: parsed.data.steps,
-            analytical_narrative: parsed.data.analytical_narrative,
-            omicsType: parsed.data.omicsType,
-            omicsSubtype: parsed.data.omicsSubtype,
-        };
-    });
+    return loadPlanRecord(pool, planId, { analysisId }).map((record) => (record ? planCardOf(record, title) : null));
 }
 
 /** Build the `data-run-card` payload for a started analysis run. Loads the

@@ -74,6 +74,10 @@ export const PlanPartSchema = z.object({
     type: z.literal("data-plan"),
     id: z.string(),
     planId: z.string().regex(/^pln-[a-f0-9]{8}$/),
+    parentPlanId: z
+        .string()
+        .regex(/^pln-[a-f0-9]{8}$/)
+        .optional(),
     title: z.string().optional(),
     steps: z.array(PlanStepSchema).optional(),
     analytical_narrative: z.string().optional(),

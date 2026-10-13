@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
+import { countingQuerier } from "../__tests__/setup/counting-querier.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { countArtifactsByRuns, queryArtifactPage, type ArtifactPageQuery } from "./artifacts.js";
 import type { Querier } from "./db.js";
@@ -33,19 +34,6 @@ async function seed(pool: Pool, row: SeedRow): Promise<void> {
             row.unrecoverableAt ?? null,
         ],
     });
-}
-
-/** Counts the calls to `query`, thus a test sees how many statements a read sends. */
-function countingQuerier(pool: Pool): { querier: Querier; calls: () => number } {
-    let calls = 0;
-    // The wrapper forwards every `query` call to the pool that it wraps, and the reads under test only call `query`.
-    const querier = {
-        query: (...args: unknown[]) => {
-            calls += 1;
-            return (pool.query as (...forwarded: unknown[]) => unknown)(...args);
-        },
-    } as unknown as Querier;
-    return { querier, calls: () => calls };
 }
 
 const PATH_SORT: Pick<ArtifactPageQuery, "sort" | "limit" | "offset"> = { sort: "path", limit: 50, offset: 0 };

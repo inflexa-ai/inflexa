@@ -167,7 +167,7 @@ describe("Sidebar input count follows the workspace store", () => {
 
 /** The run detail of `run`, as `GET {A}/run/:runId` gives it: the row, its steps, and no step-less calls. */
 function detailOf(run: RunSummary, steps: RunStepSummary[]): RunDetail {
-    return { ...run, steps, unattributedUsage: null };
+    return { ...run, steps, plan: null, unattributedUsage: null };
 }
 
 function refreshOpts(profile: DataProfileView | null, runs: RunSummary[], steps: RunStepSummary[] = [], over: Partial<RefreshOpts> = {}): RefreshOpts {
@@ -216,6 +216,7 @@ function runRow(over: Partial<RunSummary>): RunSummary {
     return {
         runId,
         threadId: null,
+        planId: null,
         workflowName: "executeAnalysis",
         workflowId: runId,
         status: "running",

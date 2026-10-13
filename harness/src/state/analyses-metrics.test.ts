@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
+import { countingQuerier } from "../__tests__/setup/counting-querier.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { queryDataProfileStatusByAnalyses, queryLatestRunsByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "./analyses-metrics.js";
-import type { Querier } from "./db.js";
 
 async function seedAnalysis(pool: Pool, analysisId: string, dataProfileStatus: string | null = "pending"): Promise<void> {
     const now = new Date().toISOString();
@@ -48,19 +48,6 @@ async function seedSteps(pool: Pool, runId: string, analysisId: string, statuses
             values: [runId, `s${index}`, analysisId, status],
         });
     }
-}
-
-/** Counts the calls to `query`, thus a test sees how many statements a read sends. */
-function countingQuerier(pool: Pool): { querier: Querier; calls: () => number } {
-    let calls = 0;
-    // The wrapper forwards every `query` call to the pool that it wraps, and the reads under test only call `query`.
-    const querier = {
-        query: (...args: unknown[]) => {
-            calls += 1;
-            return (pool.query as (...forwarded: unknown[]) => unknown)(...args);
-        },
-    } as unknown as Querier;
-    return { querier, calls: () => calls };
 }
 
 describe("the indexes on the runs", () => {
