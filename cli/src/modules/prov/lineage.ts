@@ -165,31 +165,50 @@ function pathedInfos(model: LineageModel): LineageFileInfo[] {
 }
 
 /**
+ * Split a hash at its first colon into its scheme and digest. A hash with no colon has no scheme
+ * and is all digest.
+ */
+function splitHash(hash: string): { scheme: string | null; digest: string } {
+    const colon = hash.indexOf(":");
+    return colon === -1 ? { scheme: null, digest: hash } : { scheme: hash.slice(0, colon), digest: hash.slice(colon + 1) };
+}
+
+/**
  * Resolve a lineage ref through five tiers: exact `path` (ALL entities carrying it — the same
  * path re-written across runs is several genuinely distinct entities, surfaced, not hidden),
- * exact `hash`, an unambiguous hash prefix of ≥ {@link MIN_HASH_PREFIX} chars, a case-sensitive
- * substring search over recorded paths, command lines, and tool names, and — when even the search
- * finds nothing — an exact-identifier match against entity and activity QNames, accepting the
- * full prefixed form (`inflexa:input-…`) or the bare localpart (`input-…`): the token a user
- * copies straight out of the exported PROV. Hashes are deliberately never substring-searched —
- * hash addressing stays exact-or-prefix, git-style; a substring hit inside a digest is noise,
- * never intent — and identifier matching is exact only, placed last so it can never shadow an
- * attribute tier. A single search match resolves (an activity match roots the walk there);
- * matches that are all entities of ONE path collapse to that path's entity set — the same
- * multiplicity the exact-path tier surfaces; any other mix fails with kind-tagged candidates
- * rather than walking a surprise forest. No match at any tier fails with a sample of the paths
- * the document does know. Directory-style refs carry no special semantics: they land in the
- * candidate or not-found failure like any string.
+ * exact `hash`, an unambiguous hash prefix of ≥ {@link MIN_HASH_PREFIX} digest chars (both hash
+ * tiers compare digests, so the `<scheme>:` of a stored hash is optional in the ref, and the scheme
+ * alone matches nothing), a case-sensitive substring search over recorded paths, command lines, and
+ * tool names, and — when even the search finds nothing — an exact-identifier match against
+ * entity and activity QNames, accepting the full prefixed form (`inflexa:input-…`) or the bare
+ * localpart (`input-…`): the token a user copies straight out of the exported PROV. Hashes are
+ * deliberately never substring-searched — hash addressing stays exact-or-prefix, git-style; a
+ * substring hit inside a digest is noise, never intent — and identifier matching is exact only,
+ * placed last so it can never shadow an attribute tier. A single search match resolves (an
+ * activity match roots the walk there); matches that are all entities of ONE path collapse to
+ * that path's entity set — the same multiplicity the exact-path tier surfaces; any other mix
+ * fails with kind-tagged candidates rather than walking a surprise forest. No match at any tier
+ * fails with a sample of the paths the document does know. Directory-style refs carry no special
+ * semantics: they land in the candidate or not-found failure like any string.
  */
 export function resolveLineageRef(model: LineageModel, ref: string): Result<LineageRoots, LineageRefError> {
     const byPath = model.nodes.filter((n) => (n.kind === "file" || n.kind === "input") && n.path === ref);
     if (byPath.length > 0) return ok({ kind: "files", infos: byPath.map(toFileInfo) });
 
-    const byHash = model.nodes.filter((n) => n.kind === "file" && n.hash === ref);
+    const refHash = splitHash(ref);
+    // A ref that names a scheme matches only a stored hash of the same scheme.
+    const hashesMatching = (matchDigest: (digest: string) => boolean): LineageNode[] =>
+        model.nodes.filter((n) => {
+            if (n.kind !== "file" || n.hash === undefined) return false;
+            const stored = splitHash(n.hash);
+            return (refHash.scheme === null || refHash.scheme === stored.scheme) && matchDigest(stored.digest);
+        });
+
+    const byHash = hashesMatching((digest) => digest === refHash.digest);
     if (byHash.length > 0) return ok({ kind: "files", infos: byHash.map(toFileInfo) });
 
-    if (ref.length >= MIN_HASH_PREFIX) {
-        const byPrefix = model.nodes.filter((n) => n.kind === "file" && n.hash !== undefined && n.hash.startsWith(ref));
+    if (refHash.digest.length >= MIN_HASH_PREFIX) {
+        const byPrefix = hashesMatching((digest) => digest.startsWith(refHash.digest));
         if (byPrefix.length === 1) return ok({ kind: "files", infos: [toFileInfo(byPrefix[0]!)] });
         if (byPrefix.length > 1) {
             return err({
@@ -381,9 +400,12 @@ function buildRootTree(
     return { kind: "file", file: step(rootQn, budget) };
 }
 
-/** `hash` shortened for tree display — full hashes are for `--format json` and exact addressing. */
+/**
+ * The first 12 digest chars of `hash`, with no scheme, for display — a copied label resolves as a
+ * prefix. Full hashes are for `--format json` and exact addressing.
+ */
 function shortHash(hash: string | null): string {
-    return hash === null ? "?" : hash.slice(0, 12);
+    return hash === null ? "?" : splitHash(hash).digest.slice(0, 12);
 }
 
 /** One human line for a file node: path (hash), plus its source classification and any marker. */

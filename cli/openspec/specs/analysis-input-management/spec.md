@@ -79,6 +79,24 @@ Removing an input SHALL identify the target by matching the supplied reference a
 - **WHEN** a remove targets a path that matches no current `analysis_inputs` row
 - **THEN** nothing is deleted and the surface reports that the path is not a current input
 
+### Requirement: The removal route tries each matched input
+
+`POST {A}/inputs/remove` MUST call the shared `removeInput` operation one time for each matched input. A failed removal MUST NOT stop the removals that follow it, because each input is independent.
+
+If each removal succeeds, the route MUST answer 200 with the removed inputs and the paths that match no input. If one or more removals fail, the route MUST answer 500 `internal_error` after it tries each matched input. The message MUST name each input that failed and each input that the route removed. The cause of each failure MUST go only to the log.
+
+#### Scenario: One failed removal keeps the others
+
+- **GIVEN** three matched inputs, and the removal of the second input fails
+- **WHEN** a client sends `POST {A}/inputs/remove` with the three paths
+- **THEN** the first input and the third input are removed, and each of the two removals emits `prov.input_removed`
+- **AND** the server answers 500 `internal_error`, and the message names the second input as failed and the first and third inputs as removed
+
+#### Scenario: Each removal succeeds
+
+- **WHEN** a client sends `POST {A}/inputs/remove`, and each matched input is removed
+- **THEN** the server answers 200 with `removed` and `notInputs`
+
 ### Requirement: The agent can enumerate the analysis's current inputs
 
 The system SHALL provide the conversation agent a read-only way to list the analysis's currently registered inputs (their stored references), so the agent can choose what to remove and can report the current input set. This complements the launch-dir listing (candidate files on disk) with the registered set (which may include inputs outside the anchor folder).

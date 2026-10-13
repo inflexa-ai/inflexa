@@ -16,8 +16,7 @@ import { notify } from "./notice.ts";
 //
 // The hold decides nothing about the machine. The server refuses a profile that cannot start a
 // sandbox (`server/sandbox_gate.ts`), and the drive shows that refusal. The hold never reads
-// `GET {A}/sandbox-readiness`, because that read consumes a recorded farm failure that the server
-// gate must see.
+// `GET {A}/sandbox-readiness`, because the server gate is the one place that decides.
 //
 // The hold STARTS NO TRANSFER and OPENS NO CONSENT (the package-store-transfers spec). `inflexa
 // setup`, `inflexa sandbox pull`, and `inflexa store download` start the children, and each owns its

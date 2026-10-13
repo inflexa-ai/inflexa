@@ -342,6 +342,14 @@ export type FarmCompositionFailure = {
 };
 
 /**
+ * Read the composition failure of the analysis that nothing reported yet. The read leaves the record in
+ * place, thus a status read can report the failure and the gate still names it at the next action.
+ */
+export function peekFarmCompositionFailure(analysisId: string): FarmCompositionFailure | null {
+    return pendingFailures.get(analysisId) ?? null;
+}
+
+/**
  * Read the composition failure of the analysis that nothing reported yet, and clear it.
  *
  * The read CONSUMES, deliberately. A gate that held the record would refuse every
@@ -350,7 +358,7 @@ export type FarmCompositionFailure = {
  * stops that composition from running.
  */
 export function takeFarmCompositionFailure(analysisId: string): FarmCompositionFailure | null {
-    const failure = pendingFailures.get(analysisId) ?? null;
+    const failure = peekFarmCompositionFailure(analysisId);
     pendingFailures.delete(analysisId);
     return failure;
 }

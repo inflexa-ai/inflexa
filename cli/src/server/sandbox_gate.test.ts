@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { randomUUIDv7 } from "bun";
 import { ok } from "neverthrow";
 
 import type { SandboxReadiness } from "../api/runs.ts";
+import { composeFullFarm, takeFarmCompositionFailure } from "../modules/libs/composition.ts";
 import type { TransferReport } from "../modules/libs/transfers.ts";
 import type { TransferKind, TransferStatus } from "../types/store.ts";
-import { sandboxRefusal, type SandboxGateOpts } from "./sandbox_gate.ts";
+import { readSandboxReadiness, sandboxRefusal, type SandboxGateOpts, type SandboxReadinessOpts } from "./sandbox_gate.ts";
 
 /** One transfer report as `readTransferReports` gives it, with everything else quiet. */
 function report(kind: TransferKind, state: TransferStatus | null, live: boolean, message: string | null = null): TransferReport {
@@ -44,6 +50,7 @@ function opts(over: Partial<SandboxGateOpts> = {}): SandboxGateOpts {
         inputCount: () => ok(1),
         transfers: () => [],
         readiness: () => Promise.resolve(machine()),
+        takeFarmFailure: takeFarmCompositionFailure,
         ...over,
     };
 }
@@ -91,11 +98,55 @@ describe("sandboxRefusal", () => {
 
     test("a recorded farm failure refuses with its reason", async () => {
         const gate = opts({
-            readiness: (analysisId) => {
+            takeFarmFailure: (analysisId) => {
                 expect(analysisId).toBe("a1");
-                return Promise.resolve(machine({ farm: { present: true, catalogPresent: true, failure: "the catalog farm is absent" } }));
+                return { analysisId, reason: "the catalog farm is absent" };
             },
         });
         expect(await sandboxRefusal("a1", gate)).toContain("could not be composed: the catalog farm is absent");
+    });
+
+    test("the gate takes the record when it reads the machine, also when an image refusal comes first", async () => {
+        const taken: string[] = [];
+        const gate = opts({
+            readiness: () => Promise.resolve(machine({ image: { state: "absent", image: "ghcr.io/inflexa-ai/sandbox-base:latest" } })),
+            takeFarmFailure: (analysisId) => {
+                taken.push(analysisId);
+                return null;
+            },
+        });
+        expect(await sandboxRefusal("a1", gate)).toContain("`inflexa sandbox pull`");
+        expect(taken).toEqual(["a1"]);
+    });
+
+    test("a refusal for a live transfer does not take the record", async () => {
+        const gate = opts({ transfers: () => [report("catalog", "running", true)], takeFarmFailure: unexpected("takeFarmFailure") });
+        expect(await sandboxRefusal("a1", gate)).toContain("`inflexa sandbox status`");
+    });
+});
+
+describe("a readiness read leaves the farm failure for the gate", () => {
+    test("two reads report the failure, the gate names it, and the next read reports none", async () => {
+        const storeRoot = mkdtempSync(join(tmpdir(), "inflexa-gate-"));
+        try {
+            const analysisId = randomUUIDv7();
+            // No catalog farm in an empty store, thus the composition fails and records the reason.
+            expect((await composeFullFarm({ storeRoot, analysisId })).isErr()).toBe(true);
+            const readOpts: SandboxReadinessOpts = {
+                imageReadiness: (image) => Promise.resolve({ state: "present", image }),
+                inspectStoreContent: () => Promise.resolve("installed"),
+            };
+            const read = () => readSandboxReadiness(analysisId, readOpts);
+
+            const first = (await read()).farm.failure;
+            expect(first).toContain("the catalog farm is absent");
+            expect((await read()).farm.failure).toBe(first);
+
+            const gate = opts({ readiness: read, takeFarmFailure: takeFarmCompositionFailure });
+            expect(await sandboxRefusal(analysisId, gate)).toContain(`could not be composed: ${first}`);
+            expect((await read()).farm.failure).toBeNull();
+        } finally {
+            rmSync(storeRoot, { recursive: true, force: true });
+        }
     });
 });

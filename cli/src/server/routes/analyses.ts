@@ -102,6 +102,8 @@ export type AnalysisRouteOpts = {
     readonly deleteAnalysis: typeof deleteAnalysis;
     /** Remove the package farm of the analysis. A failure is swallowed: the orphan-farm reaper of `store reclaim` takes a farm that this misses. */
     readonly removeFarm: (analysisId: string) => Promise<void>;
+    /** Remove one input ref and record the removal in the provenance chain. */
+    readonly removeInput: typeof removeInput;
 };
 
 /** The production {@link AnalysisRouteOpts}. */
@@ -133,6 +135,7 @@ export const DEFAULT_ANALYSIS_ROUTE_OPTS: AnalysisRouteOpts = {
             (e) => getLogger("server").warn({ err: e, analysisId }, "could not remove the farm of a deleted analysis"),
         );
     },
+    removeInput,
 };
 
 /**
@@ -562,15 +565,21 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
         // A relative path matches a stored `path` only: no folder of the client is known here.
         const { matched, notInputs } = await matchInputRefs(current.value, body.value.paths, "/");
         const removed: AnalysisInput[] = [];
+        const failed: AnalysisInput[] = [];
+        // Each input is independent, thus a failed removal does not stop the removals after it.
         for (const target of matched) {
-            const result = removeInput(target);
+            const result = opts.removeInput(target);
             if (result.isErr()) {
-                // Each earlier removal already emitted its provenance event, thus the message names them.
-                getLogger("server").error({ err: result.error }, "an input removal failed");
-                const already = removed.length > 0 ? ` (already removed: ${removed.map((i) => i.path).join(", ")})` : "";
-                return apiError(c, "internal_error", `Failed to remove ${target.path}${already}.`);
+                getLogger("server").error({ err: result.error, path: target.path }, "an input removal failed");
+                failed.push(target);
+            } else if (result.value !== null) {
+                removed.push(result.value);
             }
-            if (result.value !== null) removed.push(result.value);
+        }
+        if (failed.length > 0) {
+            // Each removal that landed already emitted its provenance event, thus the message names them.
+            const already = removed.length > 0 ? ` (removed: ${removed.map((i) => i.path).join(", ")})` : "";
+            return apiError(c, "internal_error", `Failed to remove ${failed.map((i) => i.path).join(", ")}${already}.`);
         }
         return c.json({ added: [], removed: await inputViews(removed), notInputs } satisfies InputsChange);
     });

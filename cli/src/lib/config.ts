@@ -349,30 +349,24 @@ function discardedRuntimeValue(): string | null {
     }
 }
 
+/** What {@link resolveRuntime} found: the usable runtime, and whether it was detected because none was selected. */
+type ResolvedRuntime = { runtime: ContainerRuntime; detected: boolean };
+
 /**
- * The runtime gate for every command that needs containers: resolve the runtime
- * AND verify it is usable, in one step.
+ * Resolve the container runtime AND verify it is usable, with no write to config: a read for a passive
+ * inspection, for example the sandbox readiness. {@link ensureRuntime} adds the pin.
  *
  * - An explicit selection is a hard gate: it is probed alone and never silently
  *   switched — only `inflexa setup` (a deliberate re-provisioning act) may move
  *   away from a dead selection.
- * - No selection: probe the supported runtimes in registry order and PIN the
- *   first ready one to config, telling the user. Pinning (rather than floating
- *   per-invocation) makes the choice sticky exactly when the first runtime-bound
- *   state gets created — if Docker reappeared later, a floating resolution would
- *   abandon a Podman-provisioned stack and re-provision a colliding one under
- *   Docker. A failed pin write aborts for the same reason: downstream steps
- *   re-read config, so an unpersisted detection would split one run across two
- *   runtimes.
- *
- * Read-only diagnostics that must not write config (e.g. `sandbox status`)
- * compose {@link selectedRuntime} + `firstReadyRuntime` themselves instead.
+ * - No selection: probe the supported runtimes in registry order and give the
+ *   first ready one, with `detected` set.
  *
  * `probe` is injectable for tests only — the real check spawns runtime binaries.
  */
-export async function ensureRuntime(
+export async function resolveRuntime(
     probe: (rt: ContainerRuntime) => Promise<Result<void, ContainerRuntimeError>> = ensureReady,
-): Promise<Result<ContainerRuntime, ContainerRuntimeError>> {
+): Promise<Result<ResolvedRuntime, ContainerRuntimeError>> {
     const selected = selectedRuntime();
     if (selected) {
         // Hard gate: an explicit selection is probed alone and never switched. Only
@@ -380,16 +374,42 @@ export async function ensureRuntime(
         // appended HERE and not in `container.ts`'s hint (shared by setup's own
         // fallback, which must not tell you to run setup) nor in setup itself.
         return (await probe(selected))
-            .map(() => selected)
+            .map((): ResolvedRuntime => ({ runtime: selected, detected: false }))
             .mapErr((e) => new ContainerRuntimeError(`${e.message}\n  To switch container runtimes, run \`inflexa setup\`.`));
     }
 
-    const detected = await firstReadyRuntime(
-        runtimeIds.map((id) => runtimes[id]),
-        probe,
-    );
-    if (detected.isErr()) return detected;
-    const rt = detected.value;
+    return (
+        await firstReadyRuntime(
+            runtimeIds.map((id) => runtimes[id]),
+            probe,
+        )
+    ).map((runtime): ResolvedRuntime => ({ runtime, detected: true }));
+}
+
+/**
+ * The runtime gate for every command that needs containers: resolve the runtime
+ * AND verify it is usable, in one step ({@link resolveRuntime}).
+ *
+ * - No selection: PIN the first ready runtime to config, telling the user. Pinning
+ *   (rather than floating per-invocation) makes the choice sticky exactly when the
+ *   first runtime-bound state gets created — if Docker reappeared later, a floating
+ *   resolution would abandon a Podman-provisioned stack and re-provision a colliding
+ *   one under Docker. A failed pin write aborts for the same reason: downstream steps
+ *   re-read config, so an unpersisted detection would split one run across two
+ *   runtimes.
+ *
+ * Read-only diagnostics that must not write config (e.g. `sandbox status`, the
+ * sandbox readiness) use {@link resolveRuntime} or `firstReadyRuntime` instead.
+ *
+ * `probe` is injectable for tests only — the real check spawns runtime binaries.
+ */
+export async function ensureRuntime(
+    probe: (rt: ContainerRuntime) => Promise<Result<void, ContainerRuntimeError>> = ensureReady,
+): Promise<Result<ContainerRuntime, ContainerRuntimeError>> {
+    const resolved = await resolveRuntime(probe);
+    if (resolved.isErr()) return err(resolved.error);
+    if (!resolved.value.detected) return ok(resolved.value.runtime);
+    const rt = resolved.value.runtime;
 
     // Capture any discarded selection BEFORE the write rewrites the file with a valid
     // id — afterward the raw peek would find nothing to name.
