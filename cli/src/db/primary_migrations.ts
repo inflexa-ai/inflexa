@@ -477,6 +477,29 @@ export const migrations: Migration[] = [
             CREATE INDEX idx_analyses_activity ON analyses(last_activity_at, id);
         `,
     },
+    {
+        // Which terminal runs the person saw on this machine (epoch milliseconds, as the other timestamps).
+        // A run lives in Postgres, thus `run_id` references no table here. A mark of a run that left no
+        // trace in the ledger is harmless, and the cascade removes the marks of a deleted analysis.
+        //
+        // The baseline row is the time of this migration. A terminal run that ended before it counts as
+        // seen with no mark, thus the first read after an upgrade does not list the whole history. The
+        // time is read here, not from `_migrations.applied_at`, because a later squash of the migrations
+        // into one baseline can lose that row. `julianday('now')` has sub-millisecond precision, which
+        // `strftime('%s')` lacks.
+        version: 12,
+        up: `
+            CREATE TABLE run_seen_marks (
+                run_id TEXT PRIMARY KEY,
+                seen_at INTEGER NOT NULL,
+                analysis_id TEXT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_run_seen_marks_analysis ON run_seen_marks(analysis_id);
+            CREATE TABLE run_seen_baseline (since INTEGER NOT NULL);
+            INSERT INTO run_seen_baseline (since)
+                VALUES (CAST(ROUND((julianday('now') - 2440587.5) * 86400000) AS INTEGER));
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

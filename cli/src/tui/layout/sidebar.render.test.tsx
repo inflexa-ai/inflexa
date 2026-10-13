@@ -315,6 +315,8 @@ describe("Sidebar SESSION section", () => {
             threadType: "conversation",
             createdAt: CREATED_AT.toISOString(),
             updatedAt: CREATED_AT.toISOString(),
+            runningTurnId: null,
+            pendingAsks: 0,
             ...over,
         };
     }

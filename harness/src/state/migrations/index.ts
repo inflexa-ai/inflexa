@@ -12,6 +12,7 @@ import { baseline } from "./20260927120000_baseline.js";
 import { threadTitleSetByUser } from "./20260927180000_thread_title_set_by_user.js";
 import { dropActiveExecTracking } from "./20261005120000_drop_the_active_exec_tracking.js";
 import { indexTheRunsByStart } from "./20261012120000_index_the_runs_by_start.js";
+import { indexTheEndedRunsAndTheRecentThreads } from "./20261013120000_index_the_ended_runs_and_the_recent_threads.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
@@ -19,5 +20,6 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20260927180000_thread_title_set_by_user": threadTitleSetByUser,
         "20261005120000_drop_the_active_exec_tracking": dropActiveExecTracking,
         "20261012120000_index_the_runs_by_start": indexTheRunsByStart,
+        "20261013120000_index_the_ended_runs_and_the_recent_threads": indexTheEndedRunsAndTheRecentThreads,
     };
 }

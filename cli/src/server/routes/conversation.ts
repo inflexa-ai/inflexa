@@ -12,7 +12,9 @@ import {
     storedMessagesToChat,
     toChatFrame,
     type ChatFrame,
+    type AskGateway,
     type DbError,
+    type PendingAsk,
     type Pool,
     type StoredMessage,
     type Thread,
@@ -60,7 +62,7 @@ import {
     type ServerEnv,
     type SseOpts,
 } from "../http.ts";
-import { abortTurn, endTurn, findTurn, forgetTurn, listThreadTurns, newTurnsRefused, startTurn, type TurnEnding } from "../turns.ts";
+import { abortTurn, endTurn, findTurn, forgetTurn, listThreadTurns, newTurnsRefused, runningTurnsByThread, startTurn, type TurnEnding } from "../turns.ts";
 
 /**
  * Where the page files of an analysis live, or why the server cannot name them. An analysis whose workspace
@@ -153,7 +155,9 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         }
         const parentThreadId = c.req.query("parentThreadId");
         const page = parsePage(c.req.query("page"), c.req.query("perPage"));
-        const listed = await opts.threads(c.get("runtime").pool).listThreads({
+        // The two reads start together.
+        const askRead = readPendingAsks(c.get("runtime").askGateway);
+        const threadRead = opts.threads(c.get("runtime").pool).listThreads({
             analysisId,
             page: page.page,
             perPage: page.perPage,
@@ -161,16 +165,30 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
             ...(type === undefined ? {} : { type }),
             ...(parentThreadId === undefined ? {} : { parentThreadId }),
         });
-        return listed.match(
-            (result) => c.json<ThreadList>(listEnvelope("threads", result.threads.map(toThreadSummary), result.total, page)),
+        return Result.combine(await Promise.all([askRead, threadRead])).match(
+            ([pending, result]) => {
+                const activity = threadActivityOf(pending, runningTurnsByThread());
+                return c.json<ThreadList>(
+                    listEnvelope(
+                        "threads",
+                        result.threads.map((thread) => toThreadSummary(thread, activity(thread.threadId))),
+                        result.total,
+                        page,
+                    ),
+                );
+            },
             (e) => internalError(c, e, "list the threads"),
         );
     });
 
     routes.get("/:analysisId/threads/:threadId", runtime, async (c) => {
         const { analysisId, threadId } = c.req.param();
-        return (await liveThreadOf(opts.threads(c.get("runtime").pool), analysisId, threadId)).match(
-            (thread) => (thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread))),
+        // The two reads start together.
+        const askRead = readPendingAsks(c.get("runtime").askGateway);
+        const threadRead = liveThreadOf(opts.threads(c.get("runtime").pool), analysisId, threadId);
+        return Result.combine(await Promise.all([askRead, threadRead])).match(
+            ([pending, thread]) =>
+                thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread, threadActivityOf(pending, runningTurnsByThread())(thread.threadId))),
             (e) => internalError(c, e, "read a thread"),
         );
     });
@@ -182,11 +200,15 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         const title = body.value.title.trim();
         if (title === "") return apiError(c, "validation_error", "The title must not be blank.", { fieldErrors: { title: ["must not be blank"] } });
         const store = opts.threads(c.get("runtime").pool);
+        // The ask read comes first: a failed read gives 500 before the write, and the title stays.
+        const asks = await readPendingAsks(c.get("runtime").askGateway);
+        if (asks.isErr()) return internalError(c, asks.error, "rename a thread");
         const renamed = await liveThreadOf(store, analysisId, threadId).andThen((thread) =>
             thread === null ? ResultAsync.fromSafePromise<Thread | null, DbError>(Promise.resolve(null)) : store.updateTitle(threadId, title),
         );
         return renamed.match(
-            (thread) => (thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread))),
+            (thread) =>
+                thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread, threadActivityOf(asks.value, runningTurnsByThread())(thread.threadId))),
             (e) => internalError(c, e, "rename a thread"),
         );
     });
@@ -207,6 +229,9 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         const { analysisId, threadId } = c.req.param();
         const pool = c.get("runtime").pool;
         const store = opts.threads(pool);
+        // The ask read comes first: a failed read gives 500 before the write, and the thread stays archived.
+        const asks = await readPendingAsks(c.get("runtime").askGateway);
+        if (asks.isErr()) return internalError(c, asks.error, "restore a thread");
         // The live read cannot see an archived row, thus the scope comes from a read that can.
         const restored = await opts
             .threadAnalysisId(pool, threadId)
@@ -216,7 +241,8 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
                     : store.unarchiveThread(threadId).andThen(() => store.getThread(threadId)),
             );
         return restored.match(
-            (thread) => (thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread))),
+            (thread) =>
+                thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread, threadActivityOf(asks.value, runningTurnsByThread())(thread.threadId))),
             (e) => internalError(c, e, "restore a thread"),
         );
     });
@@ -302,7 +328,7 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
     routes.get("/:analysisId/asks", runtime, async (c) => {
         const analysisId = c.req.param("analysisId");
         const page = parsePage(c.req.query("page"), c.req.query("perPage"));
-        const pending = await ResultAsync.fromPromise(c.get("runtime").askGateway.pending(), (cause) => cause);
+        const pending = await readPendingAsks(c.get("runtime").askGateway);
         return pending.match(
             (asks) => {
                 // The gateway gives each pending ask of the ledger. The set is small, because each pending ask
@@ -659,8 +685,29 @@ function turnNotFound(c: Context<ServerEnv>): Response {
     return apiError(c, "not_found", "Turn not found. The server keeps the newest ended turns only.");
 }
 
+/** The pending asks of the ledger, in one gateway call. The gateway rejects when the read fails. */
+function readPendingAsks(gateway: AskGateway): ResultAsync<PendingAsk[], unknown> {
+    return ResultAsync.fromPromise(gateway.pending(), (cause) => cause);
+}
+
+/** The turn and ask fields that a thread on the wire carries. */
+export type ThreadActivity = Pick<ThreadSummary, "runningTurnId" | "pendingAsks">;
+
+/**
+ * The reader of the {@link ThreadActivity} of any thread, from the running turns of the registry
+ * (`runningTurnsByThread`) and the pending asks of the ledger. It counts `pending` one time, thus a response
+ * over many threads costs one ask read and no read for each thread.
+ */
+export function threadActivityOf(pending: readonly PendingAsk[], runningTurns: ReadonlyMap<string, string>): (threadId: string) => ThreadActivity {
+    const asksByThread = new Map<string, number>();
+    for (const ask of pending) {
+        if (ask.threadId !== null) asksByThread.set(ask.threadId, (asksByThread.get(ask.threadId) ?? 0) + 1);
+    }
+    return (threadId) => ({ runningTurnId: runningTurns.get(threadId) ?? null, pendingAsks: asksByThread.get(threadId) ?? 0 });
+}
+
 /** A thread on the wire. An absent value omits its key, as the Cortex `ThreadPayload` does. */
-export function toThreadSummary(thread: Thread): ThreadSummary {
+export function toThreadSummary(thread: Thread, activity: ThreadActivity): ThreadSummary {
     return {
         id: thread.threadId,
         ...(thread.title === null ? {} : { title: thread.title }),
@@ -671,6 +718,7 @@ export function toThreadSummary(thread: Thread): ThreadSummary {
         createdAt: thread.createdAt.toISOString(),
         updatedAt: thread.updatedAt.toISOString(),
         ...(thread.deletedAt === null ? {} : { archivedAt: thread.deletedAt.toISOString() }),
+        ...activity,
     };
 }
 

@@ -1,16 +1,21 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+
+import type { Database } from "bun:sqlite";
 
 import { freshDb } from "../test_support/db.ts";
+import { db } from "./primary.ts";
 import {
     createProject,
+    deleteAnalysis,
     deleteProject,
     insertAnalysis,
     insertAnchor,
     recordAnalysisActivity,
+    recordRunSeen,
     renameAnalysis,
     updateAnalysisProject,
 } from "./primary_mutation.ts";
-import { findProjectByRef, getAnchor, getProjectWithCount, listAnalysisPage } from "./primary_query.ts";
+import { findProjectByRef, getAnchor, getProjectWithCount, getRunSeenState, listAnalysisNames, listAnalysisPage } from "./primary_query.ts";
 import { asStr256 } from "../lib/types.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Analysis } from "../types/analysis.ts";
@@ -21,6 +26,11 @@ import type { Analysis } from "../types/analysis.ts";
 beforeEach(() => {
     freshDb();
 });
+
+/** The shared connection that the db functions drive, without a reset. */
+function sharedConn(): Database {
+    return db()._unsafeUnwrap();
+}
 
 function anchor(id: string, overrides: Partial<Anchor> = {}): Anchor {
     return { id, createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1, ...overrides };
@@ -219,5 +229,108 @@ describe("getProjectWithCount", () => {
         expect(getProjectWithCount(project.id)._unsafeUnwrap()).toEqual({ project, analysisCount: 2 });
         expect(getProjectWithCount("nope")._unsafeUnwrap()).toBeNull();
         expect(getProjectWithCount("trial-42")._unsafeUnwrap()).toBeNull();
+    });
+});
+
+describe("the seen state of the runs", () => {
+    beforeEach(() => {
+        insertAnchor(anchor("anc"))._unsafeUnwrap();
+        insertAnalysis(analysis("a1", 1_000))._unsafeUnwrap();
+        insertAnalysis(analysis("a2", 1_000))._unsafeUnwrap();
+    });
+
+    test("a second mark of a run changes 0 rows and keeps the first time", () => {
+        expect(recordRunSeen("r1", "a1", 5_000)._unsafeUnwrap()).toBe(1);
+        expect(recordRunSeen("r1", "a1", 6_000)._unsafeUnwrap()).toBe(0);
+
+        const seenAt = sharedConn().query("SELECT seen_at FROM run_seen_marks WHERE run_id = 'r1'").get();
+        expect(seenAt).toEqual({ seen_at: 5_000 });
+    });
+
+    test("the state holds the baseline and the id of each mark", () => {
+        recordRunSeen("r1", "a1", 5_000)._unsafeUnwrap();
+        recordRunSeen("r2", "a2", 5_000)._unsafeUnwrap();
+
+        const state = getRunSeenState()._unsafeUnwrap();
+
+        expect(state.since).toBeGreaterThan(0);
+        expect([...state.runIds].sort()).toEqual(["r1", "r2"]);
+    });
+
+    test("the delete of an analysis removes its marks and keeps the others", () => {
+        recordRunSeen("r1", "a1", 5_000)._unsafeUnwrap();
+        recordRunSeen("r2", "a1", 5_000)._unsafeUnwrap();
+        recordRunSeen("r3", "a2", 5_000)._unsafeUnwrap();
+
+        deleteAnalysis("a1")._unsafeUnwrap();
+
+        expect(getRunSeenState()._unsafeUnwrap().runIds).toEqual(["r3"]);
+    });
+
+    test("a mark of an analysis with no row is a foreign_key violation", () => {
+        recordRunSeen("r1", "ghost", 5_000).match(
+            () => {
+                throw new Error("expected a foreign_key violation");
+            },
+            (e) => {
+                expect(e.type).toBe("constraint_violation");
+                if (e.type === "constraint_violation") expect(e.constraint).toBe("foreign_key");
+            },
+        );
+    });
+
+    test("an absent baseline row gives a null since", () => {
+        recordRunSeen("r1", "a1", 5_000)._unsafeUnwrap();
+        sharedConn().run("DELETE FROM run_seen_baseline");
+
+        expect(getRunSeenState()._unsafeUnwrap()).toEqual({ since: null, runIds: ["r1"] });
+    });
+});
+
+describe("the names of a list of analyses", () => {
+    beforeEach(() => {
+        insertAnchor(anchor("anc"))._unsafeUnwrap();
+        insertAnalysis(analysis("a1", 1_000, { name: asStr256("trial"), slug: "trial" }))._unsafeUnwrap();
+        insertAnalysis(analysis("a2", 1_000, { name: asStr256("bulk"), slug: "bulk" }))._unsafeUnwrap();
+    });
+
+    test("an id with no row has no entry", () => {
+        const names = listAnalysisNames(["a1", "a2", "gone", "a1"])._unsafeUnwrap();
+
+        expect(names).toEqual(
+            new Map([
+                ["a1", "trial"],
+                ["a2", "bulk"],
+            ]),
+        );
+    });
+
+    test("an empty list gives an empty map and sends no query", () => {
+        const conn = sharedConn();
+        const query = spyOn(conn, "query");
+
+        expect(listAnalysisNames([])._unsafeUnwrap()).toEqual(new Map());
+        expect(query).not.toHaveBeenCalled();
+    });
+
+    test("a list past the ceiling of bound parameters gives the known names with no error", () => {
+        const unknown = Array.from({ length: 40_000 }, (_, i) => `ghost-${i}`);
+
+        const names = listAnalysisNames(["a1", ...unknown, "a2"])._unsafeUnwrap();
+
+        expect(names).toEqual(
+            new Map([
+                ["a1", "trial"],
+                ["a2", "bulk"],
+            ]),
+        );
+    });
+
+    test("a list sends one query", () => {
+        const query = spyOn(sharedConn(), "query");
+
+        listAnalysisNames(["a1", "a2", "gone"])._unsafeUnwrap();
+
+        expect(query).toHaveBeenCalledTimes(1);
     });
 });

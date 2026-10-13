@@ -80,6 +80,8 @@ export function conversationSummary(over: Partial<ThreadSummary> = {}): ThreadSu
         threadType: "conversation",
         createdAt: "2026-07-08T00:00:00.000Z",
         updatedAt: "2026-07-08T01:00:00.000Z",
+        runningTurnId: null,
+        pendingAsks: 0,
         ...over,
     };
 }
@@ -99,6 +101,8 @@ export function reportSummary(over: Partial<ThreadSummary> = {}): ThreadSummary 
         parentSeq: 2,
         createdAt: "2026-07-08T02:00:00.000Z",
         updatedAt: "2026-07-08T03:00:00.000Z",
+        runningTurnId: null,
+        pendingAsks: 0,
         ...over,
     };
 }

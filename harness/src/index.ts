@@ -343,7 +343,16 @@ export { createThreadStore } from "./memory/thread-store.js";
 // `Thread.threadType` and `CreateThreadInput.type` are unwritable by an embedder
 // that cannot name the union, and `createThread`'s error channel is unmatchable
 // without the variants it can return beside `DbError`.
-export type { ThreadStore, Thread, ThreadType, ThreadInputError, CreateThreadInput, ListThreadsInput, ThreadPage } from "./memory/thread-store.js";
+export type {
+    ThreadStore,
+    Thread,
+    ThreadType,
+    ThreadInputError,
+    CreateThreadInput,
+    ListThreadsInput,
+    ListRecentThreadsInput,
+    ThreadPage,
+} from "./memory/thread-store.js";
 export { createThreadHistory, conversationRecordTurn } from "./memory/thread-history.js";
 export type {
     ThreadHistory,
@@ -563,8 +572,8 @@ export type {
 } from "./contracts/data-profile.js";
 export type { DataProfileStatus } from "./state/data-profile.js";
 // The grouped reads that summarize a page of analyses: one statement for the whole list.
-export { queryLatestRunsByAnalyses, queryDataProfileStatusByAnalyses } from "./state/analyses-metrics.js";
-export type { DataProfileSummary, LatestRunSummary } from "./state/analyses-metrics.js";
+export { queryLatestRunsByAnalyses, queryDataProfileStatusByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "./state/analyses-metrics.js";
+export type { DataProfileSummary, EndedRunSummary, LatestRunSummary, RunProgressSummary } from "./state/analyses-metrics.js";
 
 // The controlled vocabulary the profiler draws from, as data. A consumer rendering a
 // stored group needs the category's meaning, and the package owns the catalogue — a host
@@ -754,7 +763,7 @@ export {
 } from "./state/runs.js";
 export type { InsertRunInput, RunReservation } from "./state/runs.js";
 export { queryStepsByRun } from "./state/step-executions.js";
-export type { CortexRunRow, StepExecutionRow, RunStatus } from "./state/schema.js";
+export type { CortexRunRow, StepExecutionRow, RunStatus, TerminalRunStatus } from "./state/schema.js";
 // The storage-layer error every `state/` Result fails with. Embedders that
 // surface a trigger or ledger failure need it by name to map the `cause`;
 // without it they must re-derive it from a function signature.

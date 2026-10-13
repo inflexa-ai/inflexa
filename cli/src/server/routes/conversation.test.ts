@@ -25,7 +25,7 @@ import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { conversationThread, FIXTURE_ANALYSIS_ID, reportThread } from "../../test_support/threads.ts";
 import { idleBoot } from "../../test_support/server.ts";
 import type { ServerBoot } from "../boot.ts";
-import { __resetTurnsForTest, hasRunningTurn, refuseNewTurns } from "../turns.ts";
+import { __resetTurnsForTest, hasRunningTurn, refuseNewTurns, startTurn } from "../turns.ts";
 import { conversationRoutes, DEFAULT_CONVERSATION_ROUTE_OPTS, type ConversationRouteOpts } from "./conversation.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. No cli test reaches Postgres
@@ -74,6 +74,7 @@ function memoryStore(rows: Thread[]): ThreadStore & { listed: unknown[]; purged:
             const page: ThreadPage = { threads, total: threads.length, page: input.page ?? 0, perPage: input.perPage ?? 100, hasMore: false };
             return okAsync(page);
         },
+        listRecentThreads: () => errAsync(UNUSED),
     };
     return Object.assign(store, { listed, purged });
 }
@@ -178,6 +179,8 @@ describe("the thread routes", () => {
             threadType: "conversation",
             createdAt: "2026-07-08T00:00:00.000Z",
             updatedAt: "2026-07-08T01:00:00.000Z",
+            runningTurnId: null,
+            pendingAsks: 0,
         });
         expect(report).toMatchObject({ id: "thread-report", parentThreadId: T, parentSeq: 2, archivedAt: "2026-07-09T00:00:00.000Z" });
         expect(store.listed).toEqual([{ analysisId: A, page: 0, perPage: 5, includeArchived: true, type: "conversation", parentThreadId: "p1" }]);
@@ -210,6 +213,90 @@ describe("the thread routes", () => {
         expect(await blank.json()).toMatchObject({ error: "validation_error" });
 
         expect((await routes.request(`/${A}/threads/missing`, json("PATCH", { title: "x" }))).status).toBe(404);
+    });
+
+    describe("the turn and ask fields of a thread", () => {
+        const openAsk = (id: string, threadId: string | null): PendingAsk => ({
+            id,
+            analysisId: A,
+            userId: "local",
+            threadId,
+            title: "Run a command",
+            command: "ls",
+            detail: null,
+            createdAt: "2026-10-02T10:00:00.000Z",
+        });
+        const ledgerDown = (): AskGateway => ({ ...fakeGateway([]), pending: () => Promise.reject(new Error("ledger down")) });
+
+        test("a thread with a running turn and open asks carries the turn id and the count, and an idle thread carries none", async () => {
+            startTurn({ turnId: "turn-old", threadId: T, analysisId: A }, new Date("2026-10-02T10:00:00.000Z"));
+            startTurn({ turnId: "turn-new", threadId: T, analysisId: A }, new Date("2026-10-02T10:05:00.000Z"));
+            const store = memoryStore([conversationThread(), conversationThread({ threadId: "thread-idle" })]);
+            const asks = [openAsk("k1", T), openAsk("k2", T), openAsk("k3", "thread-idle-other"), openAsk("k4", null)];
+            const routes = routesWith({ store, boot: readyBoot(fakeGateway(asks)) });
+
+            const list = (await (await routes.request(`/${A}/threads`)).json()) as ThreadList;
+            const byId = new Map(list.threads.map((thread) => [thread.id, thread]));
+            expect(byId.get(T)).toMatchObject({ runningTurnId: "turn-new", pendingAsks: 2 });
+            expect(byId.get("thread-idle")).toMatchObject({ runningTurnId: null, pendingAsks: 0 });
+
+            const single = (await (await routes.request(`/${A}/threads/${T}`)).json()) as ThreadSummary;
+            expect(single).toMatchObject({ runningTurnId: "turn-new", pendingAsks: 2 });
+        });
+
+        test("PATCH {T} and POST {T}/restore carry the fields too", async () => {
+            startTurn({ turnId: "turn-1", threadId: T, analysisId: A }, new Date("2026-10-02T10:00:00.000Z"));
+            const store = memoryStore([conversationThread()]);
+            const routes = routesWith({ store, boot: readyBoot(fakeGateway([openAsk("k1", T)])) });
+
+            const renamed = (await (await routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "New" }))).json()) as ThreadSummary;
+            expect(renamed).toMatchObject({ title: "New", runningTurnId: "turn-1", pendingAsks: 1 });
+
+            await routes.request(`/${A}/threads/${T}`, { method: "DELETE" });
+            const restored = (await (await routes.request(`/${A}/threads/${T}/restore`, { method: "POST" })).json()) as ThreadSummary;
+            expect(restored).toMatchObject({ id: T, runningTurnId: "turn-1", pendingAsks: 1 });
+        });
+
+        test("the list reads the asks one time, whatever the count of threads", async () => {
+            const rows = Array.from({ length: 20 }, (_, i) => conversationThread({ threadId: `thread-${i}` }));
+            let reads = 0;
+            const gateway: AskGateway = {
+                ...fakeGateway([]),
+                pending: () => {
+                    reads += 1;
+                    return Promise.resolve([]);
+                },
+            };
+
+            const response = await routesWith({ store: memoryStore(rows), boot: readyBoot(gateway) }).request(`/${A}/threads`);
+
+            expect(((await response.json()) as ThreadList).threads).toHaveLength(20);
+            expect(reads).toBe(1);
+        });
+
+        test("a rejected ask read gives 500 on each route that gives a thread, and PATCH changes no title", async () => {
+            const store = memoryStore([conversationThread()]);
+            const routes = routesWith({ store, boot: readyBoot(ledgerDown()) });
+
+            for (const response of [await routes.request(`/${A}/threads`), await routes.request(`/${A}/threads/${T}`)]) {
+                expect(response.status).toBe(500);
+                expect(await response.json()).toMatchObject({ error: "internal_error" });
+            }
+
+            const patched = await routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "Changed" }));
+            expect(patched.status).toBe(500);
+            expect(await patched.json()).toMatchObject({ error: "internal_error" });
+            expect((await store.getThread(T))._unsafeUnwrap()?.title).toBe("Cohort survival questions");
+        });
+
+        test("a rejected ask read leaves an archived thread archived on POST {T}/restore", async () => {
+            const store = memoryStore([conversationThread({ deletedAt: new Date("2026-07-09T00:00:00.000Z") })]);
+
+            const response = await routesWith({ store, boot: readyBoot(ledgerDown()) }).request(`/${A}/threads/${T}/restore`, { method: "POST" });
+
+            expect(response.status).toBe(500);
+            expect((await store.getThread(T))._unsafeUnwrap()).toBeNull();
+        });
     });
 
     test("DELETE {T} archives the thread; it then reads as absent until POST {T}/restore brings it back", async () => {

@@ -56,14 +56,22 @@ export async function readBody<T>(c: Context, schema: ZodType<T>): Promise<Resul
 }
 
 /**
+ * A count from a query value: a positive integer, at most {@link MAX_PER_PAGE}. A value that is absent, or that
+ * is not a positive integer, gives `fallback`.
+ */
+export function parseCount(value: string | undefined, fallback: number): number {
+    const count = value !== undefined && /^\d+$/.test(value) && Number(value) > 0 ? Number(value) : fallback;
+    return Math.min(count, MAX_PER_PAGE);
+}
+
+/**
  * The page that the `page` and `perPage` query values ask for. A value that is not a non-negative integer
  * (`page`) or a positive integer (`perPage`) falls back to the default and never gives a 400. A `perPage`
  * above {@link MAX_PER_PAGE} gives that cap.
  */
 export function parsePage(page: string | undefined, perPage: string | undefined): PageQuery {
     const pageNumber = page !== undefined && /^\d+$/.test(page) ? Number(page) : 0;
-    const perPageNumber = perPage !== undefined && /^\d+$/.test(perPage) && Number(perPage) > 0 ? Number(perPage) : DEFAULT_PER_PAGE;
-    return { page: pageNumber, perPage: Math.min(perPageNumber, MAX_PER_PAGE) };
+    return { page: pageNumber, perPage: parseCount(perPage, DEFAULT_PER_PAGE) };
 }
 
 /** A list response: `items` (one page) under `key`, with the paging fields over `total` items. */

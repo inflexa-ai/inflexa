@@ -40,9 +40,12 @@ import type {
     ProfileOutcome,
     ProfileRerunResult,
     RunDetail,
+    RunSeenResponse,
+    RunStatus,
     RunStepSummary,
     RunSummary,
     SandboxReadiness,
+    TerminalRunStatus,
 } from "../../api/runs.ts";
 import type { UsageTotals } from "../../api/usage.ts";
 // The SQLite error of the cli, aliased: `DbError` above is the Postgres error of the harness ledger.
@@ -55,6 +58,7 @@ import {
     listAnalysisUsageByRun,
     listRunUsageByStep,
 } from "../../db/primary_query.ts";
+import { recordRunSeen } from "../../db/primary_mutation.ts";
 import { env } from "../../lib/env.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
 import { ensureProfileAtParity, forceReprofile, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
@@ -230,6 +234,20 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
         );
     });
 
+    routes.post("/run/:runId/seen", runtimeGate, async (c) => {
+        const analysisId = analysisParam(c);
+        const runId = c.req.param("runId");
+        const row = await opts.getRun(c.get("runtime").pool, runId);
+        if (row.isErr()) return internalError(c, row.error, "read the run");
+        if (row.value === null || row.value.analysisId !== analysisId) return runNotFound(c, runId);
+        if (!isTerminalRunStatus(row.value.status)) return apiError(c, "conflict", "The run has not ended.");
+        // A mark is not an activity, thus the activity time of the analysis stays as it is.
+        return recordRunSeen(runId, analysisId, Date.now()).match(
+            () => c.json<RunSeenResponse>({ seen: true }),
+            (e) => internalError(c, e, "mark the run as seen"),
+        );
+    });
+
     routes.get("/chat-context", runtimeGate, async (c) => {
         holdConnection(c);
         const analysisId = analysisParam(c);
@@ -293,6 +311,25 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
     });
 
     return routes;
+}
+
+/** True for a status that a run keeps once it ended. A run that is suspended for funds has not ended. */
+export function isTerminalRunStatus(status: RunStatus): status is TerminalRunStatus {
+    // The switch lists each status, so the predicate holds for exactly the members of `TerminalRunStatus`.
+    switch (status) {
+        case "completed":
+        case "partial":
+        case "failed":
+        case "canceled":
+            return true;
+        case "running":
+        case "suspended_insufficient_funds":
+            return false;
+        default: {
+            const exhaustive: never = status;
+            throw new Error(`unhandled run status: ${JSON.stringify(exhaustive)}`);
+        }
+    }
 }
 
 /** The `analysisId` of the mount path. A route outside that mount reads an empty id, which matches no row. */

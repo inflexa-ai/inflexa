@@ -26,6 +26,8 @@ import type {
 } from "../../api/runs.ts";
 import type { ServerBootState } from "../../api/server.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor, upsertLlmUsage } from "../../db/primary_mutation.ts";
+import { db } from "../../db/primary.ts";
+import { getRunSeenState, listAnalysisPage } from "../../db/primary_query.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -337,6 +339,88 @@ describe("GET {A}/run/:runId/stream", () => {
         const response = await app.request("/api/v1/analyses/mine/run/r1/stream");
         expect(response.status).toBe(404);
         expect(await response.json()).toMatchObject({ error: "not_found" });
+    });
+});
+
+describe("POST {A}/run/:runId/seen", () => {
+    function activityOf(analysisId: string): number | undefined {
+        const page = listAnalysisPage({ projectId: null, sort: "created", limit: 100, offset: 0 })._unsafeUnwrap();
+        return page.items.find((item) => item.analysis.id === analysisId)?.lastActivityAt;
+    }
+
+    function seenAtOf(runId: string): number | undefined {
+        return db()._unsafeUnwrap().query<{ seen_at: number }, [string]>("SELECT seen_at FROM run_seen_marks WHERE run_id = ?").get(runId)?.seen_at;
+    }
+
+    test("a terminal run gives 200 and a mark, and a second mark gives 200 with the first time kept", async () => {
+        const analysisId = seedAnalysis();
+        const activityBefore = activityOf(analysisId);
+        const app = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId, status: "failed" })) });
+
+        const first = await app.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
+        expect(first.status).toBe(200);
+        expect(await first.json()).toEqual({ seen: true });
+        const seenAt = seenAtOf("r1");
+
+        const second = await app.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
+        expect(second.status).toBe(200);
+        expect(await second.json()).toEqual({ seen: true });
+        expect(getRunSeenState()._unsafeUnwrap().runIds).toEqual(["r1"]);
+        expect(seenAtOf("r1")).toBe(seenAt);
+        expect(activityOf(analysisId)).toBe(activityBefore);
+    });
+
+    test("each terminal status gives 200", async () => {
+        const analysisId = seedAnalysis();
+        for (const status of ["completed", "partial", "failed", "canceled"] as const) {
+            const app = appWith({ getRun: () => okAsync(runRow({ runId: `r-${status}`, analysisId, status })) });
+            expect((await app.request(`/api/v1/analyses/${analysisId}/run/r-${status}/seen`, { method: "POST" })).status).toBe(200);
+        }
+        expect(getRunSeenState()._unsafeUnwrap().runIds.sort()).toEqual(["r-canceled", "r-completed", "r-failed", "r-partial"]);
+    });
+
+    test("a run that is not terminal gives 409 `conflict` and no mark", async () => {
+        const analysisId = seedAnalysis();
+        for (const status of ["running", "suspended_insufficient_funds"] as const) {
+            const app = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId, status, completedAt: null })) });
+            const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
+            expect(response.status).toBe(409);
+            expect(await response.json()).toEqual({ error: "conflict", message: "The run has not ended." });
+        }
+        expect(getRunSeenState()._unsafeUnwrap().runIds).toEqual([]);
+    });
+
+    test("a run of a different analysis and an unknown run give 404 `not_found` and no mark", async () => {
+        const analysisId = seedAnalysis();
+        const other = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId: "elsewhere" })) });
+        const foreign = await other.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
+        expect(foreign.status).toBe(404);
+        expect(await foreign.json()).toMatchObject({ error: "not_found" });
+
+        const unknown = appWith({ getRun: () => okAsync(null) });
+        const missing = await unknown.request(`/api/v1/analyses/${analysisId}/run/gone/seen`, { method: "POST" });
+        expect(missing.status).toBe(404);
+        expect(await missing.json()).toMatchObject({ error: "not_found" });
+        expect(getRunSeenState()._unsafeUnwrap().runIds).toEqual([]);
+    });
+
+    test("a failed ledger read gives 500 `internal_error`", async () => {
+        const app = appWith({ getRun: () => errAsync({ type: "query_failed", op: "test", cause: "down" }) });
+        const response = await app.request("/api/v1/analyses/a/run/r1/seen", { method: "POST" });
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ error: "internal_error" });
+    });
+
+    test("the route waits for the runtime: 503 `unavailable` while the server boots", async () => {
+        const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
+        const response = await appWith({}, { state: () => starting, runtime: () => null, start: async () => undefined }).request(
+            "/api/v1/analyses/a/run/r1/seen",
+            {
+                method: "POST",
+            },
+        );
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ error: "unavailable" });
     });
 });
 

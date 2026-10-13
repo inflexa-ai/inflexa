@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { BootStepRunning, ServerBootState } from "../api/server.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { ServerBoot } from "./boot.ts";
-import { apiError, listEnvelope, parsePage, requireRuntime, sseResponse, type ServerEnv } from "./http.ts";
+import { apiError, listEnvelope, parseCount, parsePage, requireRuntime, sseResponse, type ServerEnv } from "./http.ts";
 
 describe("apiError", () => {
     test("each code gets its status, and `details` only when given", async () => {
@@ -41,6 +41,14 @@ describe("parsePage", () => {
 
     test("a perPage above the cap gives the cap", () => {
         expect(parsePage("0", "5000")).toEqual({ page: 0, perPage: 200 });
+    });
+});
+
+describe("parseCount", () => {
+    test("a positive integer passes, a larger value than the cap gives the cap, and any other value gives the fallback", () => {
+        expect(parseCount("5", 10)).toBe(5);
+        expect(parseCount("1000", 10)).toBe(200);
+        for (const value of [undefined, "", "0", "-1", "2.5", "abc"]) expect(parseCount(value, 10)).toBe(10);
     });
 });
 

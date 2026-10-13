@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Pool } from "@inflexa-ai/harness";
 
-import { countLiveDurableWork, countLiveDurableWorkByAnalysis } from "./durable_work.ts";
+import { countLiveDurableWork, countLiveDurableWorkByAnalysis, listLiveRunIds } from "./durable_work.ts";
 
 // No cli test reaches Postgres. The pool below records the query and answers with one row, thus the tests
 // pin the scope, the live status set, and the mapping of the counts.
@@ -108,5 +108,31 @@ describe("countLiveDurableWorkByAnalysis", () => {
         const { pool } = groupedPool({ failure });
 
         expect((await countLiveDurableWorkByAnalysis(pool, ["a1"]))._unsafeUnwrapErr()).toBe(failure);
+    });
+});
+
+describe("listLiveRunIds", () => {
+    test("sends one query with the liveness rule of the counts, the limit as $1, and the live statuses as $2", async () => {
+        const counted = recordingPool({ row: { runs: "0", profiles: "0" } });
+        (await countLiveDurableWork(counted.pool, "a1"))._unsafeUnwrap();
+        const { pool, queries } = recordingPool({ row: { run_id: "r2" } });
+
+        const ids = (await listLiveRunIds(pool, 200))._unsafeUnwrap();
+
+        expect(ids).toEqual(["r2"]);
+        expect(queries).toHaveLength(1);
+        const rule = "r.status IN ('running', 'suspended_insufficient_funds')";
+        expect(queries[0]?.text).toContain(rule);
+        expect(counted.queries[0]?.text).toContain(rule);
+        expect(queries[0]?.text).toContain("dbos.workflow_status");
+        expect(queries[0]?.text).toContain("LIMIT $1");
+        expect(queries[0]?.values).toEqual([200, ["PENDING", "ENQUEUED", "DELAYED"]]);
+    });
+
+    test("a failed read is the error, with its cause", async () => {
+        const failure = new Error("relation dbos.workflow_status does not exist");
+        const { pool } = recordingPool({ failure });
+
+        expect((await listLiveRunIds(pool, 200))._unsafeUnwrapErr()).toBe(failure);
     });
 });

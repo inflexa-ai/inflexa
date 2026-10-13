@@ -13,6 +13,8 @@ function thread(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
         threadType: "conversation",
         createdAt: new Date(0).toISOString(),
         updatedAt: new Date(0).toISOString(),
+        runningTurnId: null,
+        pendingAsks: 0,
         ...overrides,
     };
 }

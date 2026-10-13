@@ -2,7 +2,11 @@
 // type-only import: it is erased at compile time, thus a client that imports this file loads no harness code.
 import type { DataProfileLifecycleStatus, DataProfileResult } from "@inflexa-ai/harness/contracts/index.js";
 import type { CancelRunResult as HarnessCancelRunResult } from "@inflexa-ai/harness/execution/run-canceler.js";
-import type { RunStatus as HarnessRunStatus, StepExecutionStatus as HarnessStepExecutionStatus } from "@inflexa-ai/harness/state/schema.js";
+import type {
+    RunStatus as HarnessRunStatus,
+    StepExecutionStatus as HarnessStepExecutionStatus,
+    TerminalRunStatus as HarnessTerminalRunStatus,
+} from "@inflexa-ai/harness/state/schema.js";
 
 import type { ListEnvelope } from "./common.ts";
 import type { UsageTotals } from "./usage.ts";
@@ -12,6 +16,14 @@ export type RunStatus = HarnessRunStatus;
 
 /** The status of one step row of a run. The harness enum, for the same reason as {@link RunStatus}. */
 export type StepExecutionStatus = HarnessStepExecutionStatus;
+
+/** The status of a run that ended: every status but `running` and `suspended_insufficient_funds`. */
+export type TerminalRunStatus = HarnessTerminalRunStatus;
+
+/** The body of `POST {A}/run/:runId/seen`. A second mark of the same run gives the same body. */
+export type RunSeenResponse = {
+    seen: true;
+};
 
 /** The body of `POST {A}/run/:runId/cancel`: what the cancel did, and which ledgers converged. */
 export type CancelRunResult = HarnessCancelRunResult;

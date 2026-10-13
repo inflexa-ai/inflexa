@@ -85,7 +85,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -122,6 +122,7 @@ describe("runMigrations", () => {
             "idx_analysis_inputs_analysis",
             "idx_llm_usage_scope",
             "idx_ps_flight_subs_flight",
+            "idx_run_seen_marks_analysis",
             "uq_analysis_inputs_anchored",
             "uq_analysis_inputs_unanchored",
             "uq_ps_flight_subs_analysis",
@@ -201,7 +202,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {
@@ -390,5 +391,38 @@ describe("migration 11 — the activity time of an analysis", () => {
             .all();
         const last = columns[columns.length - 1];
         expect(last).toMatchObject({ name: "last_activity_at", type: "INTEGER", notnull: 1, dflt_value: "0" });
+    });
+});
+
+describe("migration 12 — the seen marks of the runs", () => {
+    test("the baseline row holds the time of the migration to the millisecond", () => {
+        const db = new Database(":memory:");
+        runMigrations(
+            db,
+            migrations.filter((m) => m.version <= 11),
+        )._unsafeUnwrap();
+
+        const before = Date.now();
+        runMigrations(db, migrations)._unsafeUnwrap();
+        const after = Date.now();
+
+        const rows = db.query<{ since: number }, []>("SELECT since FROM run_seen_baseline").all();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.since).toBeGreaterThanOrEqual(before - 1);
+        expect(rows[0]!.since).toBeLessThanOrEqual(after + 1);
+        expect(Number.isInteger(rows[0]!.since)).toBe(true);
+    });
+
+    test("the marks table has the run id as its key and a cascading foreign key to the analyses", () => {
+        const db = migratedMemoryDb();
+
+        const columns = db.query<{ name: string; pk: number }, []>("PRAGMA table_info(run_seen_marks)").all();
+        expect(columns.map((c) => [c.name, c.pk])).toEqual([
+            ["run_id", 1],
+            ["seen_at", 0],
+            ["analysis_id", 0],
+        ]);
+        const fks = db.query<{ table: string; to: string; on_delete: string }, []>("PRAGMA foreign_key_list(run_seen_marks)").all();
+        expect(fks).toEqual([expect.objectContaining({ table: "analyses", to: "id", on_delete: "CASCADE" })]);
     });
 });

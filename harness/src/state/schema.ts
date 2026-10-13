@@ -46,6 +46,9 @@ export type ArtifactRow = z.infer<typeof ArtifactRowSchema>;
 export const RunStatus = z.enum(["running", "completed", "partial", "failed", "canceled", "suspended_insufficient_funds"]);
 export type RunStatus = z.infer<typeof RunStatus>;
 
+/** A status that a run keeps once it ended: every status but `running` and `suspended_insufficient_funds`. */
+export type TerminalRunStatus = Exclude<RunStatus, "running" | "suspended_insufficient_funds">;
+
 export const StepExecutionStatus = z.enum(["pending", "running", "completed", "failed", "skipped", "canceled", "blocked"]);
 export type StepExecutionStatus = z.infer<typeof StepExecutionStatus>;
 
