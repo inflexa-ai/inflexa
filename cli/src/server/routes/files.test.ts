@@ -41,6 +41,8 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+    // The memo outlives this file: a root of a deleted folder must not reach the next test file.
+    invalidateWorkspaceRoot();
     rmSync(home, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
 });
