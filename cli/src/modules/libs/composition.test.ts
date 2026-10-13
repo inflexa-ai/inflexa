@@ -15,10 +15,12 @@ import {
     extendFarm,
     linkPackagesIntoFarm,
     makeEmptyFarm,
+    peekFarmCompositionFailure,
     readDepsGraph,
     removeAnalysisFarm,
     resolveAnalysisFarm,
     resolvePackageRequest,
+    takeFarmCompositionFailure,
 } from "./composition.ts";
 
 // The golden fixture pool, checked in beside this file. It is the ONE input that
@@ -729,6 +731,23 @@ describe("composeFullFarm heals a farm-less analysis from the catalog", () => {
 
         expect(result._unsafeUnwrapErr().type).toBe("template_unusable");
         expect(existsSync(join(root, "farms", analysisId))).toBe(false);
+    });
+});
+
+describe("the record of a composition failure", () => {
+    test("a peek gives the record each time, and a take gives it once and clears it", async () => {
+        const root = tempStore();
+        rmSync(join(root, "farms", "catalog"), { recursive: true });
+        const analysisId = randomUUIDv7();
+        (await composeFullFarm({ storeRoot: root, analysisId }))._unsafeUnwrapErr();
+
+        const first = peekFarmCompositionFailure(analysisId);
+        expect(first?.reason).toContain("the catalog farm is absent");
+        expect(peekFarmCompositionFailure(analysisId)).toEqual(first);
+
+        expect(takeFarmCompositionFailure(analysisId)).toEqual(first);
+        expect(peekFarmCompositionFailure(analysisId)).toBeNull();
+        expect(takeFarmCompositionFailure(analysisId)).toBeNull();
     });
 });
 

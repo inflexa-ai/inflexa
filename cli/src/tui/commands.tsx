@@ -122,10 +122,10 @@ async function workingDirFor(a: Analysis): Promise<string | null> {
  * Why the workspace folder of the analysis must not move or be retired now, phrased to finish "Cannot X
  * while …", from `GET {A}`. `null` when it may. It runs before a dialog opens, thus the user does not spend
  * a confirmation on a refusal. The server checks again at the change itself (409 `busy`), because nothing
- * is modal across clients.
+ * is modal across clients. The read is not an open of the analysis, thus it records no sighting of the folder.
  */
 async function workspaceBusyReason(analysisId: string): Promise<string | null> {
-    return (await fetchAnalysis(analysisId, { cwd: process.cwd() })).match(
+    return (await fetchAnalysis(analysisId, { cwd: process.cwd(), touch: false })).match(
         (detail) => (detail.busy[0] === undefined ? null : describeBusyReason(detail.busy[0])),
         (e) => `the analysis cannot be read (${clientErrorText(e)})`,
     );

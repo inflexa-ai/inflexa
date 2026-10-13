@@ -4,13 +4,19 @@ import { join } from "node:path";
 import { FARM_LOCK_FILE } from "@inflexa-ai/harness";
 import { ResultAsync, type Result } from "neverthrow";
 
-import type { SandboxImageReadiness, SandboxReadiness } from "../api/runs.ts";
+import type { SandboxImageReadiness, SandboxReadiness, StoreContentState } from "../api/runs.ts";
 import { countAnalysisInputs } from "../db/primary_query.ts";
 import { describeCause } from "../lib/cause.ts";
-import { ensureRuntime } from "../lib/config.ts";
+import { resolveRuntime } from "../lib/config.ts";
 import { capture } from "../lib/container.ts";
 import { env } from "../lib/env.ts";
-import { analysisFarmPath, catalogFarmPath, takeFarmCompositionFailure } from "../modules/libs/composition.ts";
+import {
+    analysisFarmPath,
+    catalogFarmPath,
+    peekFarmCompositionFailure,
+    takeFarmCompositionFailure,
+    type FarmCompositionFailure,
+} from "../modules/libs/composition.ts";
 import { isPublishedSandboxImage } from "../modules/libs/images.ts";
 import { configuredSandboxImage } from "../modules/libs/pull.ts";
 import { inspectStoreContent } from "../modules/libs/store_download.ts";
@@ -24,29 +30,45 @@ function firstLine(text: string): string {
 
 /** The state of the configured sandbox image in the container engine, with no pull. */
 async function imageReadiness(image: string): Promise<SandboxImageReadiness> {
-    const engine = await ensureRuntime();
+    // A readiness read changes no state, thus the runtime is resolved and never pinned to the configuration.
+    const engine = await resolveRuntime();
     if (engine.isErr()) return { state: "engine_error", image, message: firstLine(engine.error.message) };
-    const inspected = await ResultAsync.fromPromise(capture(engine.value, ["image", "inspect", image]), (cause) => cause);
+    const inspected = await ResultAsync.fromPromise(capture(engine.value.runtime, ["image", "inspect", image]), (cause) => cause);
     if (inspected.isErr()) return { state: "engine_error", image, message: `The container engine is not reachable (${describeCause(inspected.error)}).` };
     if (inspected.value.code === 0) return { state: "present", image };
     return isPublishedSandboxImage(image) ? { state: "absent", image } : { state: "custom", image };
 }
 
+/** What {@link readSandboxReadiness} reads from the machine. Tests replace each one. */
+export type SandboxReadinessOpts = {
+    readonly imageReadiness: (image: string) => Promise<SandboxImageReadiness>;
+    readonly inspectStoreContent: (storeRoot: string) => Promise<StoreContentState>;
+};
+
+/** The production {@link SandboxReadinessOpts}. */
+export const DEFAULT_SANDBOX_READINESS_OPTS: SandboxReadinessOpts = {
+    imageReadiness,
+    inspectStoreContent,
+};
+
 /**
  * The verdict of the machine for a sandbox of the analysis: the engine inspect of the image, the store content,
- * and the farm. The read consumes a recorded farm-composition failure, thus the next sandbox action composes
- * again.
+ * and the farm. The read changes no state: it reports a recorded farm-composition failure and leaves the record
+ * for the gate.
  */
-export async function readSandboxReadiness(analysisId: string): Promise<Omit<SandboxReadiness, "inputCount">> {
+export async function readSandboxReadiness(
+    analysisId: string,
+    opts: SandboxReadinessOpts = DEFAULT_SANDBOX_READINESS_OPTS,
+): Promise<Omit<SandboxReadiness, "inputCount">> {
     const storeRoot = env.packageStoreDir;
-    const [image, store] = await Promise.all([imageReadiness(configuredSandboxImage()), inspectStoreContent(storeRoot)]);
+    const [image, store] = await Promise.all([opts.imageReadiness(configuredSandboxImage()), opts.inspectStoreContent(storeRoot)]);
     return {
         image,
         store,
         farm: {
             present: existsSync(join(analysisFarmPath(storeRoot, analysisId), FARM_LOCK_FILE)),
             catalogPresent: existsSync(join(catalogFarmPath(storeRoot), FARM_LOCK_FILE)),
-            failure: takeFarmCompositionFailure(analysisId)?.reason ?? null,
+            failure: peekFarmCompositionFailure(analysisId)?.reason ?? null,
         },
     };
 }
@@ -56,6 +78,7 @@ export type SandboxGateOpts = {
     readonly inputCount: (analysisId: string) => Result<number, unknown>;
     readonly transfers: () => readonly TransferReport[];
     readonly readiness: (analysisId: string) => Promise<Omit<SandboxReadiness, "inputCount">>;
+    readonly takeFarmFailure: (analysisId: string) => FarmCompositionFailure | null;
 };
 
 /** The production {@link SandboxGateOpts}. */
@@ -63,6 +86,7 @@ export const DEFAULT_SANDBOX_GATE_OPTS: SandboxGateOpts = {
     inputCount: countAnalysisInputs,
     transfers: readTransferReports,
     readiness: readSandboxReadiness,
+    takeFarmFailure: takeFarmCompositionFailure,
 };
 
 /**
@@ -71,7 +95,9 @@ export const DEFAULT_SANDBOX_GATE_OPTS: SandboxGateOpts = {
  * The refusal is one line for a person, with the command that repairs the machine.
  *
  * A live transfer refuses before the machine is read: an image pull or a catalog merge changes what a sandbox
- * mounts, and the read of the machine consumes a recorded farm failure that the next check must still see.
+ * mounts, and the gate clears a recorded farm failure each time it reads the machine, thus the next check must
+ * still see it. The gate clears the record also when an image refusal or a store refusal comes first, and then
+ * it does not name the failure. The next drive composes again.
  */
 export async function sandboxRefusal(analysisId: string, opts: SandboxGateOpts = DEFAULT_SANDBOX_GATE_OPTS): Promise<string | null> {
     // An analysis with no inputs profiles nothing, thus it needs no image and no store. A failed count falls
@@ -81,7 +107,9 @@ export async function sandboxRefusal(analysisId: string, opts: SandboxGateOpts =
     if (transfers.some((report) => report.live)) {
         return "A sandbox download is in flight. Run `inflexa sandbox status` to watch it, then try again when it ends.";
     }
-    return machineRefusal(await opts.readiness(analysisId), transfers);
+    const machine = await opts.readiness(analysisId);
+    const farmFailure = opts.takeFarmFailure(analysisId)?.reason ?? null;
+    return machineRefusal({ ...machine, farm: { ...machine.farm, failure: farmFailure } }, transfers);
 }
 
 /**

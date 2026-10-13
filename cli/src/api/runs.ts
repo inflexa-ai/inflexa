@@ -169,8 +169,9 @@ export type SandboxReadiness = {
         /** True when the catalog farm exists, from which a missing farm of an analysis can be composed. */
         catalogPresent: boolean;
         /**
-         * Why the last composition of the farm of this analysis failed, or `null`. The read consumes the
-         * record, thus the next sandbox action composes again.
+         * Why the last composition of the farm of this analysis failed, or `null`. The read leaves the
+         * record, thus the next profile refusal can name the cause. The gate clears it when it reads the
+         * machine.
          */
         failure: string | null;
     };

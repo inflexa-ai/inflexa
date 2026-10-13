@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
 
-import { ensureRuntime, readConfig, writeConfig, type Config } from "./config.ts";
+import { ensureRuntime, readConfig, resolveRuntime, writeConfig, type Config } from "./config.ts";
 import { ContainerRuntimeError, runtimes, type ContainerRuntime } from "./container.ts";
 import { DEFAULT_THEME_ID } from "./design_system.ts";
 import { env } from "./env.ts";
@@ -203,6 +203,27 @@ describe("readConfig — embedding block", () => {
     test("an absent embedding block still defaults to off", () => {
         writeRawConfig(JSON.stringify({ telemetry: false }));
         expect(readConfig().embedding.mode).toBe("off");
+    });
+});
+
+describe("resolveRuntime", () => {
+    function probeReady(readyIds: readonly string[]) {
+        return (rt: ContainerRuntime): Promise<Result<void, ContainerRuntimeError>> =>
+            Promise.resolve(readyIds.includes(rt.id) ? ok(undefined) : err(new ContainerRuntimeError(rt.notReadyHint)));
+    }
+
+    test("unset: gives the first ready runtime and writes no `runtime` key to config", async () => {
+        writeRawConfig(JSON.stringify({ telemetry: false }));
+        const result = await resolveRuntime(probeReady(["podman"]));
+        expect(result._unsafeUnwrap()).toEqual({ runtime: runtimes.podman, detected: true });
+        expect(JSON.parse(readFileSync(env.configPath, "utf8"))).not.toHaveProperty("runtime");
+    });
+
+    test("an explicit selection is probed alone, and its failure names `inflexa setup`", async () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, runtime: "docker" }));
+        const error = (await resolveRuntime(probeReady(["podman"])))._unsafeUnwrapErr();
+        expect(error.message).toContain(runtimes.docker.notReadyHint);
+        expect(error.message).toContain("inflexa setup");
     });
 });
 

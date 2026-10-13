@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { err, errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { AnalysisPurgeOutcome, DataProfileSummary, DbError as PgError, LatestRunSummary, Pool } from "@inflexa-ai/harness";
 
 import type {
@@ -22,12 +22,15 @@ import type { ApiError } from "../../api/common.ts";
 import type { ServerBootState } from "../../api/server.ts";
 import { createProject, insertAnalysis, insertAnalysisInput, insertAnchor, recordAnalysisActivity, upsertLlmUsage } from "../../db/primary_mutation.ts";
 import { getAnalysis, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
+import { Bus } from "../../lib/bus.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { defaultOutputSubdir, disposeWorkspace, type WorkspaceDisposal, type WorkspaceError } from "../../modules/analysis/output.ts";
+import { removeInput } from "../../modules/analysis/analysis.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import type { BusEvent } from "../../types/events.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { idleBoot, idleLifecycle } from "../../test_support/server.ts";
 import { buildApp } from "../app.ts";
@@ -626,6 +629,7 @@ describe("DELETE {A} — the ordered delete", () => {
             removeFarm: async () => {
                 steps.push("remove-farm");
             },
+            removeInput: DEFAULT_ANALYSIS_ROUTE_OPTS.removeInput,
         };
         return { opts, steps };
     }
@@ -827,6 +831,41 @@ describe("the inputs of an analysis", () => {
                 .map((i) => i.path)
                 .toSorted(),
         ).toEqual(["far.csv", "new.csv"]);
+    });
+
+    test("POST remove tries each input after a failed removal, then answers 500 that names each outcome", async () => {
+        const dir = tmp();
+        const a = await seedAnalysis(dir);
+        const names = ["one.csv", "two.csv", "three.csv", "four.csv"];
+        for (const path of names) insertAnalysisInput({ path, isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
+        const failing = new Set(["two.csv", "three.csv"]);
+        const opts: AnalysisRouteOpts = {
+            ...IDLE,
+            removeInput: (input) => (failing.has(input.path) ? err({ type: "mutation_failed", op: "delete input", cause: "disk full" }) : removeInput(input)),
+        };
+        const removedEvents: string[] = [];
+        const onEvent = (event: BusEvent): void => {
+            if (event.type === "prov.input_removed") removedEvents.push(event.input.path);
+        };
+        Bus.on("inflexa", onEvent);
+
+        const res = await appWith(idleBoot(), opts).request(`/api/v1/analyses/${a.id}/inputs/remove`, json("POST", { paths: names }));
+        Bus.off("inflexa", onEvent);
+
+        expect(res.status).toBe(500);
+        const body = (await res.json()) as ApiError;
+        expect(body.error).toBe("internal_error");
+        for (const name of names) expect(body.message).toContain(name);
+        expect(body.message).toContain("two.csv, three.csv");
+        expect(body.message).toContain("one.csv, four.csv");
+        expect(body.message).not.toContain("disk full");
+        expect(
+            listAnalysisInputs(a.id)
+                ._unsafeUnwrap()
+                .map((i) => i.path)
+                .toSorted(),
+        ).toEqual(["three.csv", "two.csv"]);
+        expect(removedEvents).toEqual(["one.csv", "four.csv"]);
     });
 
     test("POST remove matches the absolute path or the stored path, and names the paths that match nothing", async () => {

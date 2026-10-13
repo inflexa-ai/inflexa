@@ -512,6 +512,68 @@ describe("forward lineage", () => {
     });
 });
 
+describe("resolveLineageRef with scheme-prefixed hashes", () => {
+    const digestA = "ab12cd34ef56".padEnd(64, "0");
+    const digestB = "ab12cd34ef99".padEnd(64, "1");
+    const digestC = "9f8e7d6c5b4a".padEnd(64, "2");
+    const fileA = { path: "output/a.csv", hash: `sha256:${digestA}` };
+    const fileB = { path: "output/b.csv", hash: `sha256:${digestB}` };
+    const fileC = { path: "output/c.csv", hash: `sha256:${digestC}` };
+
+    function schemeGraph(): LineageModel {
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
+        for (const key of [fileA, fileB, fileC]) appendFileWritten(doc, "a1", system, fileRefOf(key), stepRef, "step");
+        return lineageModelOf(doc);
+    }
+
+    test("a bare hex prefix resolves, with or without the scheme", () => {
+        const g = schemeGraph();
+        const bare = fileInfos(resolveLineageRef(g, digestC.slice(0, 8))._unsafeUnwrap());
+        expect(bare.map((i) => i.hash)).toEqual([fileC.hash]);
+        const schemed = fileInfos(resolveLineageRef(g, `sha256:${digestC.slice(0, 8)}`)._unsafeUnwrap());
+        expect(schemed.map((i) => i.hash)).toEqual([fileC.hash]);
+    });
+
+    test("the bare full digest resolves", () => {
+        const infos = fileInfos(resolveLineageRef(schemeGraph(), digestC)._unsafeUnwrap());
+        expect(infos.map((i) => i.hash)).toEqual([fileC.hash]);
+    });
+
+    test("the scheme alone matches no file by hash", () => {
+        const g = schemeGraph();
+        for (const ref of ["sha256", "sha256:", `sha256:${digestA.slice(0, 5)}`]) {
+            const err = resolveLineageRef(g, ref)._unsafeUnwrapErr();
+            expect(err.type).toBe("not_found");
+        }
+    });
+
+    test("a bare hex prefix that two digests share is ambiguous", () => {
+        const err = resolveLineageRef(schemeGraph(), "ab12cd34")._unsafeUnwrapErr();
+        expect(err.type).toBe("ambiguous_hash");
+        if (err.type === "ambiguous_hash") expect(err.candidates.map((c) => c.hash).sort()).toEqual([fileA.hash, fileB.hash]);
+    });
+
+    test("a reference with another scheme does not match a sha256 hash", () => {
+        expect(resolveLineageRef(schemeGraph(), `md5:${digestC.slice(0, 8)}`)._unsafeUnwrapErr().type).toBe("not_found");
+    });
+
+    test("the tree label shows 12 digest characters, and that short hash resolves", () => {
+        const g = schemeGraph();
+        const { tree } = lineageOf(g, fileC.path, { forward: false });
+        const short = digestC.slice(0, 12);
+        expect(tree).toContain(`(hash ${short}`);
+        expect(tree).not.toContain("(hash sha256");
+        const roots = resolveLineageRef(g, fileC.path)._unsafeUnwrap();
+        const walk = computeLineage(g, roots, { forward: false });
+        for (const rendered of [formatDot(walk), formatMermaid(walk)]) {
+            expect(rendered).toContain(`(hash ${short})`);
+            expect(rendered).not.toContain("sha256:");
+        }
+        expect(fileInfos(resolveLineageRef(g, short)._unsafeUnwrap()).map((i) => i.hash)).toEqual([fileC.hash]);
+    });
+});
+
 describe("formatTree", () => {
     test("renders the chain with activities and inputs indented beneath their files", () => {
         const { tree } = lineageOf(graph, heatmapKey.path, { forward: false });

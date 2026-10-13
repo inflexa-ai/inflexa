@@ -1469,3 +1469,44 @@ describe("view.status", () => {
         expect(dialogs).toBe(1);
     });
 });
+
+// The busy read before a rename or a delete dialog is not an open of the analysis, thus it must record no
+// sighting of the anchor folder.
+describe("the busy read before a rename or a delete", () => {
+    for (const id of ["analysis.rename", "analysis.delete"]) {
+        test(`${id} reads GET {A} with touch=false`, async () => {
+            const urls: string[] = [];
+            const discover = spyOn(DEFAULT_CLIENT_OPTS, "discover").mockImplementation(() => ok({ baseUrl: "http://server.test", token: "t" }));
+            const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation(async (url) => {
+                urls.push(String(url));
+                return new Response(JSON.stringify({ error: "internal_error", message: "down" }), {
+                    status: 500,
+                    headers: { "Content-Type": "application/json" },
+                });
+            });
+            __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
+            __resetNoticesForTest();
+            let dialogs = 0;
+            const ws = {
+                analysis: { id: "a1", name: "Alpha" },
+                openDialog: () => {
+                    dialogs += 1;
+                },
+            } as unknown as Workspace;
+
+            try {
+                await commands.find((c) => c.id === id)!.run(ws);
+            } finally {
+                discover.mockRestore();
+                fetch.mockRestore();
+                __setBootStateForTest({ phase: "idle" });
+            }
+
+            expect(urls).toHaveLength(1);
+            expect(urls[0]).toContain("/analyses/a1?");
+            expect(urls[0]).toContain("&touch=false");
+            expect(dialogs).toBe(0);
+            __resetNoticesForTest();
+        });
+    }
+});
