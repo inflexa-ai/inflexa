@@ -70,8 +70,10 @@ export function parseCount(value: string | undefined, fallback: number): number 
  * above {@link MAX_PER_PAGE} gives that cap.
  */
 export function parsePage(page: string | undefined, perPage: string | undefined): PageQuery {
-    const pageNumber = page !== undefined && /^\d+$/.test(page) ? Number(page) : 0;
-    return { page: pageNumber, perPage: parseCount(perPage, DEFAULT_PER_PAGE) };
+    const count = parseCount(perPage, DEFAULT_PER_PAGE);
+    // A route multiplies the page by the count into an offset, thus a page whose offset is not a safe integer is a bad value.
+    const pageNumber = page !== undefined && /^\d+$/.test(page) && Number.isSafeInteger(Number(page) * count) ? Number(page) : 0;
+    return { page: pageNumber, perPage: count };
 }
 
 /** A list response: `items` (one page) under `key`, with the paging fields over `total` items. */

@@ -117,9 +117,28 @@ async function writableOutputDir(analysis: Analysis, path: string): Promise<Resu
  * create it. `workspace_unavailable` is reserved for a folder that cannot be found.
  */
 export function locateExistingOutputDir(analysis: Analysis): ResultAsync<string | null, WorkspaceError> {
-    return locateAnchorPath(analysis).map(async (path) => {
-        const dir = join(path, defaultOutputSubdir(analysis.slug));
-        return (await pathExistsAsync(dir)) ? dir : null;
+    return locateOutputDir(analysis).map(async (dir) => ((await pathExistsAsync(dir)) ? dir : null));
+}
+
+/**
+ * The workspace root of an analysis for a READ, whether or not the tree exists yet. Unlike {@link resolveOutputDir}
+ * it does not require a writable home folder, thus a tree whose folder went read-only stays readable.
+ */
+function locateOutputDir(analysis: Analysis): ResultAsync<string, WorkspaceError> {
+    return locateAnchorPath(analysis).map((path) => join(path, defaultOutputSubdir(analysis.slug)));
+}
+
+/**
+ * {@link locateOutputDir} from a bare analysis id. It reads no memo and writes nothing, because a read of a file
+ * must not require a write permission. A deleted row is a `workspace_unavailable`, as in {@link workspaceRootForAnalysisId}.
+ */
+export function readableWorkspaceRootForAnalysisId(analysisId: string): ResultAsync<string, WorkspaceError> {
+    return findAnalysesByRef(analysisId).asyncAndThen((rows) => {
+        const analysis = rows[0] ?? null;
+        if (analysis === null) {
+            return errAsync<string, WorkspaceError>({ type: "workspace_unavailable", message: `analysis ${analysisId} no longer exists` });
+        }
+        return locateOutputDir(analysis);
     });
 }
 

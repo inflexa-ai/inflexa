@@ -6,7 +6,7 @@ import type { DbError } from "../../db/errors.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { errnoCode, type FsError } from "../../lib/fs.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
-import { ensureOutputDir, workspaceRootForAnalysisId, type WorkspaceError } from "./output.ts";
+import { ensureOutputDir, readableWorkspaceRootForAnalysisId, type WorkspaceError } from "./output.ts";
 import { inputAbsolutePaths, resolveInputPath } from "./input.ts";
 
 /** The structural read/write roots for an analysis's agent. */
@@ -109,12 +109,12 @@ export function classifyRealPath(roots: readonly ReadRoot[], absPath: string): R
 }
 
 /**
- * The root of a read of a relative path: the workspace root of the analysis. It makes no folder and records no
- * sighting, because it reads the memoized root of `workspaceRootForAnalysisId`. The error is a
- * `workspace_unavailable` with its message, or a `DbError`.
+ * The root of a read of a relative path: the workspace root of the analysis. It makes no folder, records no
+ * sighting, and does not require a writable folder. The error is a `workspace_unavailable` with its message, or a
+ * `DbError`.
  */
 export function workspaceReadRoot(analysisId: string): ResultAsync<ReadRoot, WorkspaceError> {
-    return workspaceRootForAnalysisId(analysisId).andThen((text) =>
+    return readableWorkspaceRootForAnalysisId(analysisId).andThen((text) =>
         ResultAsync.fromSafePromise(canonicalPathAsync(text)).map((canonical): ReadRoot => ({ text, canonical })),
     );
 }

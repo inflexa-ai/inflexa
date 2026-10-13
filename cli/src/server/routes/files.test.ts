@@ -167,6 +167,20 @@ describe("the errors of a bad request", () => {
         expect(body.message).toContain("no longer exists");
     });
 
+    test.skipIf(process.getuid?.() === 0)("a workspace file of an analysis whose folder became read-only gives its bytes", async () => {
+        workspaceFile("runs/R/A/figures/volcano.png", "png");
+        chmodSync(home, 0o555);
+        // The memo holds the root from the setup, while the folder was writable.
+        invalidateWorkspaceRoot();
+        try {
+            const response = await get("runs/R/A/figures/volcano.png");
+            expect(response.status).toBe(200);
+            expect(await response.text()).toBe("png");
+        } finally {
+            chmodSync(home, 0o755);
+        }
+    });
+
     test("an absent path inside the workspace gives 404", async () => {
         await expectError(await get("runs/R/A/figures/absent.png"), 404, "not_found");
         await expectError(await get("runs/R/A/figures/../../../../runs/R/gone.png"), 404, "not_found");
