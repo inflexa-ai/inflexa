@@ -8,8 +8,11 @@ import {
     type AgentName,
     type AgentView,
     type EmbeddingModelList,
+    type MachineSandboxReadiness,
     type MeView,
     type ModelList,
+    type OpenFolderBody,
+    type OpenFolderResult,
     type PutAgentResponse,
     type ServerSettings,
     type SettingsPatch,
@@ -17,6 +20,10 @@ import {
 import { AGENT_EFFORTS, readConfig, resolvePostgresConfig, writeConfig, type Config, type ConfigError } from "../../lib/config.ts";
 import { runtimeIds } from "../../lib/container.ts";
 import { env, isReservedPostgresPort } from "../../lib/env.ts";
+import { getLogger } from "../../lib/log.ts";
+import { openExternal, type OpenExternalError } from "../../lib/open_external.ts";
+import { findAnalysis } from "../../modules/analysis/analysis.ts";
+import { locateOrEnsureOutputDir } from "../../modules/analysis/output.ts";
 import { describeAuthError, loadAuth } from "../../modules/auth/auth.ts";
 import { decodeIdTokenClaims } from "../../modules/auth/whoami.ts";
 import { listEmbeddingModels, type EmbeddingModelListError } from "../../modules/embedding/api_models.ts";
@@ -34,6 +41,7 @@ import {
 import { explicitPostgresFields } from "../../modules/infra/setup.ts";
 import type { ModelAccess } from "../../modules/proxy/models.ts";
 import { apiError, holdConnection, internalError, readBody, type ServerEnv } from "../http.ts";
+import { readMachineSandboxReadiness } from "../sandbox_gate.ts";
 
 /** The upper bound of the model probe of an embedding endpoint. A hung endpoint must not hold the request. */
 const EMBEDDING_MODELS_TIMEOUT_MS = 10_000;
@@ -43,6 +51,8 @@ export type MachineRouteOpts = {
     readonly listModels: () => Promise<Result<ListedModel[], ListModelsError>>;
     readonly validateModel: (model: string) => Promise<ModelAccess>;
     readonly listEmbeddingModels: (baseUrl: string, apiKey: string, signal: AbortSignal) => Promise<Result<string[], EmbeddingModelListError>>;
+    readonly sandboxReadiness: () => Promise<MachineSandboxReadiness>;
+    readonly openExternal: (target: string) => Result<void, OpenExternalError>;
 };
 
 /** The production {@link MachineRouteOpts}. */
@@ -50,6 +60,8 @@ export const DEFAULT_MACHINE_ROUTE_OPTS: MachineRouteOpts = {
     listModels: () => listConnectionModels(),
     validateModel: (model) => validateModelSelection(model),
     listEmbeddingModels,
+    sandboxReadiness: () => readMachineSandboxReadiness(),
+    openExternal,
 };
 
 const putAgentBody = z.object({
@@ -93,10 +105,17 @@ const patchSettingsBody = z
     })
     .partial();
 
+/** The known folders of `POST /open`. The body names a target, never a path, thus a page cannot open a file of its choice. */
+const openFolderBody = z.discriminatedUnion("target", [
+    z.object({ target: z.literal("data_dir") }),
+    z.object({ target: z.literal("output_dir"), analysisId: z.string().min(1) }),
+]) satisfies z.ZodType<OpenFolderBody>;
+
 /**
  * The routes of the machine (draft 2.1 and 2.6) that are not the package store: the signed-in account, the
- * models and the efforts of the agents, the models of the connection, and the server keys of the config. None
- * of them needs the runtime: a model switch with no runtime applies at the next boot.
+ * models and the efforts of the agents, the models of the connection, the server keys of the config, the sandbox
+ * readiness of the machine (`GET /sandbox`), and the open of a known folder in the file manager (`POST /open`).
+ * None of them needs the runtime: a model switch with no runtime applies at the next boot.
  */
 export function machineRoutes(opts: MachineRouteOpts = DEFAULT_MACHINE_ROUTE_OPTS): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
@@ -192,6 +211,36 @@ export function machineRoutes(opts: MachineRouteOpts = DEFAULT_MACHINE_ROUTE_OPT
         return c.json(body);
     });
 
+    routes.get("/sandbox", async (c) => {
+        holdConnection(c);
+        return c.json(await opts.sandboxReadiness());
+    });
+
+    routes.post("/open", async (c) => {
+        const body = await readBody(c, openFolderBody);
+        if (body.isErr()) return body.error;
+        // The data folder exists while the server runs, because the database and the server log are in it.
+        let folder = env.dataDir;
+        if (body.value.target === "output_dir") {
+            const analysisId = body.value.analysisId;
+            const analysis = findAnalysis(analysisId);
+            if (analysis.isErr()) return internalError(c, analysis.error, "read the analysis");
+            // `findAnalysis` also matches a name, and the body field is an id.
+            if (analysis.value === null || analysis.value.id !== analysisId) return apiError(c, "not_found", `No analysis ${analysisId}.`);
+            // The same folder as `POST {A}/output-dir`: an existing one as it is, else the server makes it.
+            const output = await locateOrEnsureOutputDir(analysis.value);
+            if (output.isErr()) {
+                return output.error.type === "workspace_unavailable"
+                    ? apiError(c, "conflict", output.error.message)
+                    : internalError(c, output.error, "make the workspace folder");
+            }
+            folder = output.value;
+        }
+        const opened = opts.openExternal(folder);
+        if (opened.isErr()) getLogger("server").warn({ code: opened.error.code, path: folder }, "could not open a folder in the file manager");
+        return c.json({ opened: opened.isOk() } satisfies OpenFolderResult);
+    });
+
     return routes;
 }
 
@@ -226,6 +275,8 @@ function serverSettings(): ServerSettings {
             localDimensions: LOCAL_EMBEDDING_DIMENSIONS,
             builtinModelPath: env.embeddingModelPath,
         },
+        dataDir: env.dataDir,
+        serverLogPath: env.serverLogPath,
     };
 }
 

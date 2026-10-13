@@ -121,6 +121,15 @@ export function locateExistingOutputDir(analysis: Analysis): ResultAsync<string 
 }
 
 /**
+ * The output folder for an open: an existing folder as it is, else the folder made. An existing folder is given
+ * even when its home folder went read-only, because results that the person already has must stay reachable.
+ * Only an absent folder is made, which needs a writable home folder.
+ */
+export function locateOrEnsureOutputDir(analysis: Analysis): ResultAsync<string, WorkspaceError> {
+    return locateExistingOutputDir(analysis).andThen((existing) => (existing !== null ? okAsync(existing) : ensureOutputDir(analysis)));
+}
+
+/**
  * The workspace root of an analysis for a READ, whether or not the tree exists yet. Unlike {@link resolveOutputDir}
  * it does not require a writable home folder, thus a tree whose folder went read-only stays readable.
  */

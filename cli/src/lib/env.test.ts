@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
     EMBEDDING_API_KEY_VAR,
@@ -347,6 +347,8 @@ describe("reference-data paths", () => {
         const dataHome = process.platform === "win32" ? Bun.env.LOCALAPPDATA : Bun.env.XDG_DATA_HOME;
         if (dataHome === undefined) throw new Error("test preload must provide the platform data home");
         expect(env.refsDir).toBe(join(dataHome, "inflexa", "refs"));
+        expect(env.dataDir).toBe(join(dataHome, "inflexa"));
+        expect(dirname(env.dbPath)).toBe(env.dataDir);
         expect(envDoc.refsDir).toMatchObject({ kind: "path", label: "references" });
         // Reference artifacts are fetched from the upstream that publishes them, so there is
         // no distribution endpoint to configure and no env var that could point one elsewhere.

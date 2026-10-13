@@ -1,18 +1,29 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { randomUUIDv7 } from "bun";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { err, ok } from "neverthrow";
 
 import {
     EMBEDDING_API_KEY_HEADER,
     type AgentList,
     type EmbeddingModelList,
+    type MachineSandboxReadiness,
     type MeView,
     type ModelList,
+    type OpenFolderResult,
     type PutAgentResponse,
     type ServerSettings,
 } from "../../api/machine.ts";
+import type { ApiError } from "../../api/common.ts";
+import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { env } from "../../lib/env.ts";
+import { asStr256 } from "../../lib/types.ts";
+import { defaultOutputSubdir } from "../../modules/analysis/output.ts";
+import type { OpenExternalError } from "../../lib/open_external.ts";
+import { writeMarker } from "../../modules/anchor/marker.ts";
+import { freshDb } from "../../test_support/db.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { DEFAULT_MACHINE_ROUTE_OPTS, machineRoutes, type MachineRouteOpts } from "./machine.ts";
 
@@ -190,6 +201,26 @@ describe("the settings", () => {
         });
     });
 
+    test("GET gives the data folder and the server log as absolute paths", async () => {
+        const settings = (await (await routesWith().request("/settings")).json()) as ServerSettings;
+        // The database file sits directly in the data folder, and the server log sits in the log folder.
+        expect(settings.dataDir).toBe(dirname(env.dbPath));
+        expect(settings.serverLogPath).toBe(env.serverLogPath);
+        expect(dirname(settings.serverLogPath)).toBe(env.logDir);
+        expect(basename(settings.serverLogPath)).toMatch(/^server(\.dev)?\.log$/);
+        expect(isAbsolute(settings.dataDir)).toBe(true);
+        expect(isAbsolute(settings.serverLogPath)).toBe(true);
+    });
+
+    test("PATCH with a `dataDir` key saves the other keys and keeps the same `dataDir`", async () => {
+        const response = await routesWith().request("/settings", json("PATCH", { telemetry: true, dataDir: "/tmp/x", serverLogPath: "/tmp/x/log" }));
+        expect(response.status).toBe(200);
+        const settings = (await response.json()) as ServerSettings;
+        expect(settings).toMatchObject({ telemetry: true, dataDir: env.dataDir, serverLogPath: env.serverLogPath });
+        expect(persistedConfig()).toMatchObject({ telemetry: true });
+        expect(persistedConfig()).not.toHaveProperty("dataDir");
+    });
+
     test("PATCH writes the keys it names, drops the Postgres fields at their defaults, and keeps the client keys", async () => {
         writeFileSync(env.configPath, JSON.stringify({ telemetry: false, theme: "github-light" }));
         const response = await routesWith().request(
@@ -285,5 +316,173 @@ describe("GET /api/v1/embedding-models", () => {
         const failed = await routes.request("/embedding-models", { headers: { [EMBEDDING_API_KEY_HEADER]: "sk-1" } });
         expect(await failed.json()).toEqual({ models: null, reason: "http_error" });
         expect((await routes.request("/embedding-models")).status).toBe(400);
+    });
+});
+
+describe("GET /api/v1/sandbox", () => {
+    test("gives the replaced read of the machine as it is", async () => {
+        const machine: MachineSandboxReadiness = {
+            image: { state: "absent", image: "ghcr.io/inflexa-ai/sandbox-base:latest" },
+            store: "installed",
+            catalogFarmPresent: false,
+        };
+        const response = await routesWith({ sandboxReadiness: () => Promise.resolve(machine) }).request("/sandbox");
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual(machine);
+    });
+
+    test("an engine that does not answer is a 200 body with `image.state` `engine_error`", async () => {
+        const machine: MachineSandboxReadiness = {
+            image: { state: "engine_error", image: "sandbox:dev", message: "The container engine is not reachable (boom)." },
+            store: "missing",
+            catalogFarmPresent: false,
+        };
+        const response = await routesWith({ sandboxReadiness: () => Promise.resolve(machine) }).request("/sandbox");
+        expect(response.status).toBe(200);
+        expect(((await response.json()) as MachineSandboxReadiness).image).toEqual(machine.image);
+    });
+});
+
+describe("POST /api/v1/open", () => {
+    const homes: string[] = [];
+
+    /** The routes with an opener that records each target, so no test starts a real opener. */
+    function opener(failure: OpenExternalError | null = null): { routes: ReturnType<typeof machineRoutes>; opened: string[] } {
+        const opened: string[] = [];
+        const routes = routesWith({
+            openExternal: (target) => {
+                opened.push(target);
+                return failure === null ? ok(undefined) : err(failure);
+            },
+        });
+        return { routes, opened };
+    }
+
+    async function seedAnalysis(): Promise<{ id: string; home: string }> {
+        const home = mkdtempSync(join(tmpdir(), "inflexa-open-"));
+        homes.push(home);
+        const anchorId = randomUUIDv7();
+        (await writeMarker(home, anchorId))._unsafeUnwrap();
+        insertAnchor({ id: anchorId, createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        const analysis = insertAnalysis({
+            id: randomUUIDv7(),
+            createdAt: 1,
+            updatedAt: 1,
+            name: asStr256("Alpha"),
+            slug: "alpha",
+            anchorId,
+            projectId: null,
+        })._unsafeUnwrap();
+        return { id: analysis.id, home };
+    }
+
+    beforeEach(() => {
+        freshDb();
+    });
+
+    afterEach(() => {
+        for (const home of homes) rmSync(home, { recursive: true, force: true });
+        homes.length = 0;
+    });
+
+    test("`data_dir` opens the data folder and answers `opened: true`", async () => {
+        const { routes, opened } = opener();
+        const response = await routes.request("/open", json("POST", { target: "data_dir" }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(opened).toEqual([env.dataDir]);
+    });
+
+    test("`output_dir` for an analysis with no output folder makes the folder, opens it, and answers `opened: true`", async () => {
+        const { id, home } = await seedAnalysis();
+        const folder = join(home, defaultOutputSubdir("alpha"));
+        expect(existsSync(folder)).toBe(false);
+
+        const { routes, opened } = opener();
+        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: id }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(existsSync(folder)).toBe(true);
+        expect(opened).toEqual([folder]);
+    });
+
+    test("`output_dir` with no `analysisId` is 400 `validation_error`, and opens nothing", async () => {
+        const { routes, opened } = opener();
+        const response = await routes.request("/open", json("POST", { target: "output_dir" }));
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+        expect(opened).toEqual([]);
+    });
+
+    test("a path in place of a target is 400 `validation_error`, and opens nothing", async () => {
+        const { routes, opened } = opener();
+        const response = await routes.request("/open", json("POST", { target: "/etc" }));
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+        expect(opened).toEqual([]);
+    });
+
+    test("an unknown `analysisId` is 404 `not_found`, and opens nothing", async () => {
+        await seedAnalysis();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: "nope" }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
+    test("a name of an analysis in place of its id is 404 `not_found`, and opens nothing", async () => {
+        await seedAnalysis();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: "Alpha" }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
+    test("an analysis whose anchor folder was deleted is 409 `conflict`, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        rmSync(home, { recursive: true, force: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: id }));
+        expect(response.status).toBe(409);
+        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(opened).toEqual([]);
+    });
+
+    test("a make of the output folder that fails is 500 `internal_error`, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        // A file where the `analyses` folder belongs makes the `mkdir -p` of the output folder fail.
+        writeFileSync(join(home, ".inflexa", "analyses"), "not a folder");
+        const { routes, opened } = opener();
+        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: id }));
+        expect(response.status).toBe(500);
+        expect(((await response.json()) as ApiError).error).toBe("internal_error");
+        expect(opened).toEqual([]);
+    });
+
+    test("a path or a URL in the body is never read: the opener gets only the data folder", async () => {
+        const { routes, opened } = opener();
+        for (const extra of [{ path: "/etc" }, { url: "https://example.com" }]) {
+            const response = await routes.request("/open", json("POST", { target: "data_dir", ...extra }));
+            expect(response.status).toBe(200);
+        }
+        expect(opened).toEqual([env.dataDir, env.dataDir]);
+    });
+
+    test("an opener that fails is 200 `opened: false`", async () => {
+        const { routes, opened } = opener({ type: "open_failed", code: "ENOENT", cause: new Error("no opener") });
+        const response = await routes.request("/open", json("POST", { target: "data_dir" }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: false });
+        expect(opened).toEqual([env.dataDir]);
+    });
+
+    test("a body that is not JSON is 400 `invalid_json`, and opens nothing", async () => {
+        const { routes, opened } = opener();
+        const response = await routes.request("/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{" });
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as ApiError).error).toBe("invalid_json");
+        expect(opened).toEqual([]);
     });
 });

@@ -11,7 +11,7 @@ import {
 } from "@inflexa-ai/harness";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import { Hono, type Context } from "hono";
-import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
+import { err, ok, ResultAsync, type Result } from "neverthrow";
 import PQueue from "p-queue";
 import { z } from "zod";
 
@@ -53,7 +53,7 @@ import { str256, type Str256 } from "../../lib/types.ts";
 import { addInputs, applyInputsDiff, createAnalysis, removeInput, renameAnalysisAndMoveWorkspace } from "../../modules/analysis/analysis.ts";
 import { describeContext, resolveContext, type ResolvedContext } from "../../modules/analysis/context.ts";
 import { inputAbsolutePaths, matchInputRefs } from "../../modules/analysis/input.ts";
-import { defaultOutputSubdir, disposeWorkspace, ensureOutputDir, locateExistingOutputDir, resolveOutputDir } from "../../modules/analysis/output.ts";
+import { defaultOutputSubdir, disposeWorkspace, locateExistingOutputDir, locateOrEnsureOutputDir, resolveOutputDir } from "../../modules/analysis/output.ts";
 import { recoverAnchors, resolveAnchor } from "../../modules/anchor/anchor.ts";
 import { analysisPurgeFor } from "../../modules/harness/purge.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -492,14 +492,10 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
     routes.post("/output-dir", async (c) => {
         const analysis = loadAnalysis(c);
         if (analysis.isErr()) return analysis.error;
-        // An existing folder is given as it is: a folder that later went read-only must not block access to
-        // the results that the user already has. Only an absent folder is made, which needs a writable anchor.
-        return await locateExistingOutputDir(analysis.value)
-            .andThen((existing) => (existing !== null ? okAsync(existing) : ensureOutputDir(analysis.value)))
-            .match(
-                (path) => c.json({ path } satisfies OutputDirView),
-                (e) => (e.type === "workspace_unavailable" ? apiError(c, "conflict", e.message) : internalError(c, e, "make the workspace folder")),
-            );
+        return await locateOrEnsureOutputDir(analysis.value).match(
+            (path) => c.json({ path } satisfies OutputDirView),
+            (e) => (e.type === "workspace_unavailable" ? apiError(c, "conflict", e.message) : internalError(c, e, "make the workspace folder")),
+        );
     });
 
     routes.get("/inputs", async (c) => {

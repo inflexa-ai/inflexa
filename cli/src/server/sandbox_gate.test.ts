@@ -1,16 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { randomUUIDv7 } from "bun";
+import { FARM_LOCK_FILE } from "@inflexa-ai/harness";
 import { ok } from "neverthrow";
 
 import type { SandboxReadiness } from "../api/runs.ts";
-import { composeFullFarm, takeFarmCompositionFailure } from "../modules/libs/composition.ts";
+import { env } from "../lib/env.ts";
+import { catalogFarmPath, composeFullFarm, takeFarmCompositionFailure } from "../modules/libs/composition.ts";
+import { assertTestSandbox } from "../test_support/sandbox.ts";
 import type { TransferReport } from "../modules/libs/transfers.ts";
 import type { TransferKind, TransferStatus } from "../types/store.ts";
-import { INPUT_DRIFT_SANDBOX_GATE_OPTS, readSandboxReadiness, sandboxRefusal, type SandboxGateOpts, type SandboxReadinessOpts } from "./sandbox_gate.ts";
+import {
+    INPUT_DRIFT_SANDBOX_GATE_OPTS,
+    readMachineSandboxReadiness,
+    readSandboxReadiness,
+    sandboxRefusal,
+    type SandboxGateOpts,
+    type SandboxReadinessOpts,
+} from "./sandbox_gate.ts";
 
 /** One transfer report as `readTransferReports` gives it, with everything else quiet. */
 function report(kind: TransferKind, state: TransferStatus | null, live: boolean, message: string | null = null): TransferReport {
@@ -145,6 +155,46 @@ describe("a readiness read leaves the farm failure for the gate", () => {
             const gate = opts({ readiness: read, readFarmFailure: takeFarmCompositionFailure });
             expect(await sandboxRefusal(analysisId, gate)).toContain(`could not be composed: ${first}`);
             expect((await read()).farm.failure).toBeNull();
+        } finally {
+            rmSync(storeRoot, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("readMachineSandboxReadiness", () => {
+    const readOpts: SandboxReadinessOpts = {
+        imageReadiness: (image) => Promise.resolve({ state: "absent", image }),
+        inspectStoreContent: () => Promise.resolve("incomplete"),
+    };
+
+    test("gives the image, the store, and the catalog farm of the machine from the replaced reads", async () => {
+        const machineRead = await readMachineSandboxReadiness(readOpts);
+        expect(machineRead).toEqual({
+            image: { state: "absent", image: expect.any(String) },
+            store: "incomplete",
+            catalogFarmPresent: false,
+        });
+    });
+
+    test("reports a catalog farm that holds its lock file", async () => {
+        assertTestSandbox(env.packageStoreDir);
+        const farm = catalogFarmPath(env.packageStoreDir);
+        mkdirSync(farm, { recursive: true });
+        writeFileSync(join(farm, FARM_LOCK_FILE), "{}");
+        try {
+            expect((await readMachineSandboxReadiness(readOpts)).catalogFarmPresent).toBe(true);
+        } finally {
+            rmSync(farm, { recursive: true, force: true });
+        }
+    });
+
+    test("leaves a recorded farm failure for readSandboxReadiness", async () => {
+        const storeRoot = mkdtempSync(join(tmpdir(), "inflexa-gate-"));
+        try {
+            const analysisId = randomUUIDv7();
+            expect((await composeFullFarm({ storeRoot, analysisId })).isErr()).toBe(true);
+            await readMachineSandboxReadiness(readOpts);
+            expect((await readSandboxReadiness(analysisId, readOpts)).farm.failure).toContain("the catalog farm is absent");
         } finally {
             rmSync(storeRoot, { recursive: true, force: true });
         }
