@@ -524,6 +524,8 @@ describe("config screen over the dialog host (the swallowed-keystroke regression
         postgres: { host: "localhost", port: 5432, database: "inflexa", user: "inflexa", passwordSet: false },
         embedding: { mode: "off", apiKeySet: false },
         embeddingDefaults: { apiBaseUrl: "https://api.openai.com/v1", apiDimensions: 1536, localDimensions: 384, builtinModelPath: "/models/bge-small.gguf" },
+        dataDir: "/data/inflexa",
+        serverLogPath: "/data/inflexa/logs/server.log",
     };
 
     test("typing s/q/space into the postgres-field prompt inserts characters and fires no form action", async () => {

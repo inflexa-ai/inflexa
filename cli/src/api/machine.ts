@@ -1,5 +1,6 @@
 import type { AGENT_EFFORTS, Config } from "../lib/config.ts";
 import type { ContainerRuntimeId } from "../lib/container.ts";
+import type { SandboxImageReadiness, StoreContentState } from "./runs.ts";
 
 /** One agent role of the runtime. The same closed set as `models.agents` of the config. */
 export type AgentName = "conversation" | "sandbox" | "utility";
@@ -119,6 +120,10 @@ export type EmbeddingDefaults = {
 /** The body of `GET` and `PATCH /api/v1/settings`. A change applies at the next boot of the runtime. */
 export type ServerSettings = ServerSettingsValues & {
     embeddingDefaults: EmbeddingDefaults;
+    /** The absolute path of the data folder of Inflexa on the server machine (`<data dir>/inflexa`). A `PATCH` cannot change it. */
+    dataDir: string;
+    /** The absolute path of the log file of a background server of this build channel. A `PATCH` cannot change it. */
+    serverLogPath: string;
 };
 
 /** The body of `PATCH /api/v1/settings`: the keys to replace. An `embedding` value replaces the block whole. */
@@ -131,3 +136,17 @@ export const EMBEDDING_API_KEY_HEADER = "Inflexa-Embedding-Api-Key";
 
 /** The body of `GET /api/v1/embedding-models`: the ids of the endpoint, or why the listing failed. */
 export type EmbeddingModelList = { models: string[] } | { models: null; reason: string };
+
+/** The body of `GET /api/v1/sandbox`: the parts of the sandbox readiness that do not depend on an analysis. */
+export type MachineSandboxReadiness = {
+    image: SandboxImageReadiness;
+    store: StoreContentState;
+    /** True when the catalog farm exists. It equals `farm.catalogPresent` of `GET {A}/sandbox-readiness`. */
+    catalogFarmPresent: boolean;
+};
+
+/** The body of `POST /api/v1/open`. It names a known folder, never a path or a URL. */
+export type OpenFolderBody = { target: "data_dir" } | { target: "output_dir"; analysisId: string };
+
+/** The answer of `POST /api/v1/open`. `opened` is true when the server started the opener of the OS. */
+export type OpenFolderResult = { opened: boolean };

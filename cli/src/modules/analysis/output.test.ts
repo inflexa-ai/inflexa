@@ -11,6 +11,7 @@ import {
     ensureOutputDir,
     invalidateWorkspaceRoot,
     locateExistingOutputDir,
+    locateOrEnsureOutputDir,
     resolveOutputDir,
     workspaceDataDir,
     workspaceRootForAnalysisId,
@@ -116,6 +117,34 @@ describe("locateExistingOutputDir", () => {
         insertAnchorAt("A1", gone);
         rmSync(gone, { recursive: true, force: true });
         expect((await locateExistingOutputDir(analysis()))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+    });
+});
+
+describe("locateOrEnsureOutputDir", () => {
+    test("an existing tree under a read-only home folder is given as it is", async () => {
+        const home = await anchoredHome();
+        const tree = join(home, ".inflexa", "analyses", "myslug");
+        (await ensureOutputDir(analysis()))._unsafeUnwrap();
+        chmodSync(home, 0o555);
+
+        expect((await locateOrEnsureOutputDir(analysis()))._unsafeUnwrap()).toBe(tree);
+    });
+
+    test("an absent tree under a writable home folder is made", async () => {
+        const home = await anchoredHome();
+        const tree = join(home, ".inflexa", "analyses", "myslug");
+        expect(existsSync(tree)).toBe(false);
+
+        expect((await locateOrEnsureOutputDir(analysis()))._unsafeUnwrap()).toBe(tree);
+        expect(existsSync(tree)).toBe(true);
+    });
+
+    test("an absent tree under a read-only home folder is workspace_unavailable, and nothing is made", async () => {
+        const home = await anchoredHome();
+        chmodSync(home, 0o555);
+
+        expect((await locateOrEnsureOutputDir(analysis()))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        expect(existsSync(join(home, ".inflexa", "analyses"))).toBe(false);
     });
 });
 

@@ -291,6 +291,8 @@ const stack = stackPorts(bakedEnv.buildChannel);
 const stackDirs = stackPaths(dataDir(), bakedEnv.buildChannel);
 
 export const env = Object.freeze({
+    /** The data folder of Inflexa: the database, the logs, the package store, and the server files are in it. */
+    dataDir: join(dataDir(), "inflexa"),
     dbPath: join(dataDir(), "inflexa", "agent.db"),
     logDir: join(dataDir(), "inflexa", "logs"),
     /**
@@ -565,6 +567,7 @@ export const envDoc: Readonly<
             | "isDevelopment"
             | "contentHash"
             | "dockerHost"
+            | "dataDir"
         >,
         EnvDocEntry
     >

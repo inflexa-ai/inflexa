@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { FARM_LOCK_FILE } from "@inflexa-ai/harness";
 import { ResultAsync, type Result } from "neverthrow";
 
+import type { MachineSandboxReadiness } from "../api/machine.ts";
 import type { SandboxImageReadiness, SandboxReadiness, StoreContentState } from "../api/runs.ts";
 import { countAnalysisInputs } from "../db/primary_query.ts";
 import { describeCause } from "../lib/cause.ts";
@@ -39,7 +40,7 @@ async function imageReadiness(image: string): Promise<SandboxImageReadiness> {
     return isPublishedSandboxImage(image) ? { state: "absent", image } : { state: "custom", image };
 }
 
-/** What {@link readSandboxReadiness} reads from the machine. Tests replace each one. */
+/** What {@link readMachineSandboxReadiness} reads from the machine. Tests replace each one. */
 export type SandboxReadinessOpts = {
     readonly imageReadiness: (image: string) => Promise<SandboxImageReadiness>;
     readonly inspectStoreContent: (storeRoot: string) => Promise<StoreContentState>;
@@ -52,22 +53,31 @@ export const DEFAULT_SANDBOX_READINESS_OPTS: SandboxReadinessOpts = {
 };
 
 /**
- * The verdict of the machine for a sandbox of the analysis: the engine inspect of the image, the store content,
- * and the farm. The read changes no state: it reports a recorded farm-composition failure and leaves the record
+ * The parts of the sandbox readiness that do not depend on an analysis: the engine inspect of the image, the
+ * store content, and the catalog farm. It reads no farm failure record, thus it cannot clear one.
+ */
+export async function readMachineSandboxReadiness(opts: SandboxReadinessOpts = DEFAULT_SANDBOX_READINESS_OPTS): Promise<MachineSandboxReadiness> {
+    const storeRoot = env.packageStoreDir;
+    const [image, store] = await Promise.all([opts.imageReadiness(configuredSandboxImage()), opts.inspectStoreContent(storeRoot)]);
+    return { image, store, catalogFarmPresent: existsSync(join(catalogFarmPath(storeRoot), FARM_LOCK_FILE)) };
+}
+
+/**
+ * The verdict of the machine for a sandbox of the analysis: {@link readMachineSandboxReadiness} and the farm of
+ * the analysis. The read changes no state: it reports a recorded farm-composition failure and leaves the record
  * for the gate.
  */
 export async function readSandboxReadiness(
     analysisId: string,
     opts: SandboxReadinessOpts = DEFAULT_SANDBOX_READINESS_OPTS,
 ): Promise<Omit<SandboxReadiness, "inputCount">> {
-    const storeRoot = env.packageStoreDir;
-    const [image, store] = await Promise.all([opts.imageReadiness(configuredSandboxImage()), opts.inspectStoreContent(storeRoot)]);
+    const { image, store, catalogFarmPresent } = await readMachineSandboxReadiness(opts);
     return {
         image,
         store,
         farm: {
-            present: existsSync(join(analysisFarmPath(storeRoot, analysisId), FARM_LOCK_FILE)),
-            catalogPresent: existsSync(join(catalogFarmPath(storeRoot), FARM_LOCK_FILE)),
+            present: existsSync(join(analysisFarmPath(env.packageStoreDir, analysisId), FARM_LOCK_FILE)),
+            catalogPresent: catalogFarmPresent,
             failure: peekFarmCompositionFailure(analysisId)?.reason ?? null,
         },
     };
