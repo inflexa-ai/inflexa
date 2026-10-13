@@ -349,7 +349,7 @@ Each error response MUST have the body `{error, message, details?}`, and each co
 
 A `validation_error` MUST carry the zod flatten output in `details`. A 500 MUST carry a generic message, and the cause MUST go only to the log. An unknown path MUST get 404 `not_found`.
 
-Each list MUST take the query values `page` (zero-based, default 0) and `perPage` (default 100, cap 200). A bad value MUST fall back to the default, and it MUST NOT give a 400. The response MUST be `{<resource>: T[], total, page, perPage, hasMore}`, where the key names the resource. A list MUST add a different field to this shape only when its own requirement names that field, for example `folder` of the folder list.
+Each list MUST take the query values `page` (zero-based, default 0) and `perPage` (default 100, cap 200). A bad value MUST fall back to the default, and it MUST NOT give a 400. A `page` whose offset, the page times `perPage`, is not a safe integer is a bad value. The response MUST be `{<resource>: T[], total, page, perPage, hasMore}`, where the key names the resource. A list MUST add a different field to this shape only when its own requirement names that field, for example `folder` of the folder list.
 
 #### Scenario: A body that is not JSON
 
@@ -360,6 +360,11 @@ Each list MUST take the query values `page` (zero-based, default 0) and `perPage
 
 - **WHEN** a client sends `GET /api/v1/projects?perPage=abc`
 - **THEN** the server answers with `perPage` 100
+
+#### Scenario: A page past the safe integers falls back
+
+- **WHEN** a client sends `GET /api/v1/projects?page=99999999999999999999`
+- **THEN** the server answers 200 with `page` 0
 
 ### Requirement: The routes group by domain and keep the Cortex path tail
 
@@ -935,7 +940,7 @@ The file route MUST give these errors before it sends a status of success:
 
 - 400 `validation_error` when `path` is absent or empty, or holds a NUL byte
 - 400 `validation_error` when `download` is present and is not `1`
-- 409 `conflict` with the message of the workspace error, when the path is relative and the server cannot locate the workspace root
+- 409 `conflict` with the message of the workspace error, when the path is relative and the server cannot locate the workspace root. A folder that the server can read but not write is located. The read MUST NOT require a write permission.
 - 403 `forbidden` when the real path is outside each root of the form of the path
 - 404 `not_found` when the path does not exist, and the path is inside a root of its form as text. "As text" means with each `.` and `..` resolved, and no symbolic link resolved. A symbolic link to a path that does not exist, and a loop of symbolic links, also get 404.
 - 403 `forbidden` when the path does not exist, and the path is outside each root of its form as text

@@ -39,6 +39,11 @@ describe("parsePage", () => {
         expect(parsePage("1.5", "0")).toEqual({ page: 0, perPage: 100 });
     });
 
+    test("a page whose offset is past the safe integers falls back to page 0", () => {
+        expect(parsePage("99999999999999999999", "200")).toEqual({ page: 0, perPage: 200 });
+        expect(parsePage(String(Math.floor(Number.MAX_SAFE_INTEGER / 200)), "200")).toEqual({ page: Math.floor(Number.MAX_SAFE_INTEGER / 200), perPage: 200 });
+    });
+
     test("a perPage above the cap gives the cap", () => {
         expect(parsePage("0", "5000")).toEqual({ page: 0, perPage: 200 });
     });
