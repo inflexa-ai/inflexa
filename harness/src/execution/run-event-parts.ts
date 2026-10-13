@@ -23,11 +23,12 @@ import { PART_REGISTRY } from "../contracts/part-registry.js";
  * newer than the reader.
  *
  * The registry is keyed by the discriminant alone, so this validates `type` and
- * trusts the producer for the payload. There is no per-part schema to validate
- * against: `contracts/chat-parts.ts` declares interfaces, not Zod objects. Both
- * ends of this stream are typed against that same union inside this package, so
- * the discriminant is the boundary that can actually drift (a producer emitting
- * something else entirely) and the one worth checking.
+ * trusts the producer for the payload. The part schemas in `contracts/schemas/`
+ * are for a consumer at the edge of the package, which parses what it receives.
+ * Both ends of this stream are typed against the same union inside this package,
+ * so the discriminant is the boundary that can drift (a producer that emits
+ * something else entirely), and a part that fails its schema still reaches the
+ * consumer for its own check.
  */
 export function parseRunEventPart(value: unknown): ChatPart | null {
     if (typeof value !== "object" || value === null) return null;
@@ -75,11 +76,7 @@ export function foldRunEventParts(parts: readonly ChatPart[]): ChatPart[] {
  * registry does not know, goes to `emit` at once, thus it can overtake a held
  * entry. The held entries go to `emit` when the stream ends.
  */
-export async function pipeFoldedRunEvents<T>(
-    entries: AsyncIterable<T>,
-    emit: (entry: T) => Promise<void>,
-    flushMs: number,
-): Promise<void> {
+export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (entry: T) => Promise<void>, flushMs: number): Promise<void> {
     const latestByKey = new Map<string, T>();
     const pendingKeys = new Set<string>();
     let flushTimer: ReturnType<typeof setTimeout> | null = null;

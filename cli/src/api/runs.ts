@@ -17,7 +17,7 @@ export type RunStatus = HarnessRunStatus;
 /** The status of one step row of a run. The harness enum, for the same reason as {@link RunStatus}. */
 export type StepExecutionStatus = HarnessStepExecutionStatus;
 
-/** The status of a run that ended: every status but `running` and `suspended_insufficient_funds`. */
+/** The status of a run that ended: every status but `running`. */
 export type TerminalRunStatus = HarnessTerminalRunStatus;
 
 /** The body of `POST {A}/run/:runId/seen`. A second mark of the same run gives the same body. */

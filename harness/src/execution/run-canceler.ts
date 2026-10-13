@@ -85,7 +85,7 @@ export interface RunCanceler {
     cancel(runId: string, session: AgentSession): Promise<CancelRunResult>;
 }
 
-const TERMINAL: ReadonlySet<RunStatus> = new Set(["completed", "partial", "failed", "canceled"]);
+const TERMINAL: ReadonlySet<RunStatus> = new Set(["completed", "partial", "failed", "canceled", "suspended_insufficient_funds"]);
 
 export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
     const { pool, runCharge, runAuthorizer } = deps;

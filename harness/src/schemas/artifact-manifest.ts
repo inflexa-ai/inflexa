@@ -30,11 +30,17 @@ export const ArtifactManifestEntrySchema = z.object({
 
 export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>;
 
-/** Infer artifact type from a file path based on its parent subdirectory. */
+const FOLDER_TYPES = [
+    ["figures", "figure"],
+    ["scripts", "script"],
+    ["logs", "log"],
+    ["notebooks", "notebook"],
+] as const satisfies ReadonlyArray<readonly [string, ArtifactType]>;
+
+/** Infer artifact type from a file path. A folder segment at the start of the path or after a `/` gives its type. */
 export function inferArtifactType(filePath: string): ArtifactType {
-    if (filePath.includes("/figures/")) return "figure";
-    if (filePath.includes("/scripts/")) return "script";
-    if (filePath.includes("/logs/")) return "log";
-    if (filePath.includes("/notebooks/")) return "notebook";
+    for (const [folder, type] of FOLDER_TYPES) {
+        if (filePath.startsWith(`${folder}/`) || filePath.includes(`/${folder}/`)) return type;
+    }
     return "output";
 }

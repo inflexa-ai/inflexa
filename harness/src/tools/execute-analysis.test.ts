@@ -408,7 +408,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
         const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("no_funds"), retryable: false });
-        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("canceled") && q.values.includes("no_funds"))).toBe(true);
+        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("suspended_insufficient_funds") && q.values.includes("no_funds"))).toBe(
+            true,
+        );
         expect(queries.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(true);
     });
 

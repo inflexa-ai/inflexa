@@ -213,7 +213,7 @@ describe("GET {A}/runs", () => {
 
     test("`active=true` pages the runs that are not terminal", async () => {
         const analysisId = seedAnalysis();
-        const active = [runRow({ runId: "a1", analysisId, status: "running" }), runRow({ runId: "a2", analysisId, status: "suspended_insufficient_funds" })];
+        const active = [runRow({ runId: "a1", analysisId, status: "running" }), runRow({ runId: "a2", analysisId, status: "running" })];
         const app = appWith({ listActiveRuns: () => okAsync(active), loadPlan: () => okAsync(null) });
         const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?active=true&perPage=1&page=1`)).json()) as RunList;
         expect(list.runs.map((run) => run.runId)).toEqual(["a2"]);
@@ -297,7 +297,7 @@ describe("GET {A}/run/:runId/stream", () => {
             // The harness reader itself. With no DBOS in this process its stream read fails and is contained,
             // thus the parent stream drains with no terminal part, and the row read decides the end.
             subscribeRun: (p, options) =>
-                createRunEventStream({ pool: p, readRunStatus: () => okAsync("canceled"), sleep: async () => undefined }).subscribe(options),
+                createRunEventStream({ pool: p, readRun: () => okAsync({ status: "canceled", error: null }), sleep: async () => undefined }).subscribe(options),
         });
         const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/stream`);
         expect(response.status).toBe(200);
@@ -372,23 +372,20 @@ describe("POST {A}/run/:runId/seen", () => {
 
     test("each terminal status gives 200", async () => {
         const analysisId = seedAnalysis();
-        for (const status of ["completed", "partial", "failed", "canceled"] as const) {
+        for (const status of ["completed", "partial", "failed", "canceled", "suspended_insufficient_funds"] as const) {
             const app = appWith({ getRun: () => okAsync(runRow({ runId: `r-${status}`, analysisId, status })) });
             expect((await app.request(`/api/v1/analyses/${analysisId}/run/r-${status}/seen`, { method: "POST" })).status).toBe(200);
         }
-        expect(listSeenRunIds(["r-canceled", "r-completed", "r-failed", "r-partial"])._unsafeUnwrap()).toEqual(
-            new Set(["r-canceled", "r-completed", "r-failed", "r-partial"]),
-        );
+        const ids = ["r-canceled", "r-completed", "r-failed", "r-partial", "r-suspended_insufficient_funds"];
+        expect(listSeenRunIds(ids)._unsafeUnwrap()).toEqual(new Set(ids));
     });
 
     test("a run that is not terminal gives 409 `conflict` and no mark", async () => {
         const analysisId = seedAnalysis();
-        for (const status of ["running", "suspended_insufficient_funds"] as const) {
-            const app = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId, status, completedAt: null })) });
-            const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
-            expect(response.status).toBe(409);
-            expect(await response.json()).toEqual({ error: "conflict", message: "The run has not ended." });
-        }
+        const app = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId, status: "running", completedAt: null })) });
+        const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: "conflict", message: "The run has not ended." });
         expect(listSeenRunIds(["r1"])._unsafeUnwrap()).toEqual(new Set());
     });
 

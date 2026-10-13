@@ -250,13 +250,24 @@ describe("inspectRun (dependency-bearing factory)", () => {
         expect(result.steps[0]).not.toHaveProperty("summaryPath");
     });
 
-    it("reports suspended and missing runs as explicit success states", async () => {
+    it("reports a suspended run at once, with a message about a new run and the paths of its completed steps", async () => {
         const { ctx } = makeToolContext();
         const suspended = (
-            await createInspectRunTool(poolForRunDetail(runRow({ status: "suspended_insufficient_funds" }), [])).execute({ runId: "run-1" }, ctx)
+            await createInspectRunTool(
+                poolForRunDetail(runRow({ status: "suspended_insufficient_funds", synthesis_status: "produced" }), [
+                    stepRow({ step_id: "T1S1", status: "completed" }),
+                ]),
+            ).execute({ runId: "run-1" }, ctx)
         )._unsafeUnwrap();
-        expect(suspended).toMatchObject({ inspectionState: "suspended" });
+        if (!("steps" in suspended)) throw new Error("expected the suspended inspection variant");
 
+        expect(suspended.inspectionState).toBe("suspended");
+        expect(suspended.message).toBe("The host suspended this run. The run does not progress. A new run of the plan can start.");
+        expect(suspended.steps[0]?.summaryPath).toBe("runs/run-1/T1S1/output/summary.md");
+    });
+
+    it("reports a missing run as an explicit success state", async () => {
+        const { ctx } = makeToolContext();
         const missingPool = { query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Pool;
         const missing = (await createInspectRunTool(missingPool).execute({ runId: "missing" }, ctx))._unsafeUnwrap();
         expect(missing).toMatchObject({ inspectionState: "not_found" });

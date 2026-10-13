@@ -479,7 +479,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
                 // reserved row must not stay `running`.
                 const { kind, reason } = authorized.error;
                 if (kind === "suspended") {
-                    await updateRunStatus(deps.pool, runId, "canceled", reason).match(
+                    await updateRunStatus(deps.pool, runId, "suspended_insufficient_funds", reason).match(
                         () => {},
                         () => {},
                     );

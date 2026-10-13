@@ -117,7 +117,7 @@ describe("prepareChatTurn", () => {
         expect(result.history.map((m) => contentText(m.content))).toEqual(["earlier question about PCA", "earlier answer"]);
         const records = result.contextRecords.map((m) => contentText(m.content)).join("\n");
         expect(records).toContain("[Run Activity]");
-        expect(records).toContain("No runs are currently running or suspended.");
+        expect(records).toContain("No runs are currently running.");
         expect(contentText(result.userMessage.content)).not.toContain("[Run Activity]");
         expect(result.contextRecords.map((record) => contextRecordOf(record)?.kind)).toEqual(["run-activity", "working-memory"]);
     });
@@ -157,7 +157,7 @@ describe("prepareChatTurn", () => {
         expect((await store.getThread("t-cleared"))._unsafeUnwrap()!.title).toBe("");
     });
 
-    it("injects analysis-wide running and suspended runs regardless of launching thread", async () => {
+    it("injects the analysis-wide running runs, and not a suspended run, regardless of launching thread", async () => {
         (
             await insertRun(pool, { runId: "run-other-thread", analysisId: ANALYSIS_A, threadId: "other-thread", workflowName: "executeAnalysis" })
         )._unsafeUnwrap();
@@ -179,8 +179,8 @@ describe("prepareChatTurn", () => {
         const joined = result.contextRecords.map((message) => contentText(message.content)).join("\n");
         expect(joined).toContain("Running:");
         expect(joined).toContain("runId: run-other-thread");
-        expect(joined).toContain("Suspended:");
-        expect(joined).toContain("runId: run-suspended");
+        expect(joined).not.toContain("Suspended:");
+        expect(joined).not.toContain("run-suspended");
         expect(joined).toContain("planId: none");
         expect(joined).not.toContain("run-other-analysis");
     });
@@ -189,7 +189,7 @@ describe("prepareChatTurn", () => {
         const activityFailingPool = {
             query: (query: string | { text: string; values?: unknown[] }, values?: unknown[]) => {
                 const text = typeof query === "string" ? query : query.text;
-                if (text.includes("status IN ('running','suspended_insufficient_funds')")) {
+                if (text.includes("status = 'running'")) {
                     return Promise.reject(new Error("activity unavailable"));
                 }
                 return pool.query(query as never, values as never);
@@ -202,7 +202,7 @@ describe("prepareChatTurn", () => {
 
         const joined = result.contextRecords.map((message) => contentText(message.content)).join("\n");
         expect(joined).toContain("Run status is temporarily unavailable.");
-        expect(joined).not.toContain("No runs are currently running or suspended.");
+        expect(joined).not.toContain("No runs are currently running.");
     });
 
     it("carries the stored conversation type on an existing thread", async () => {

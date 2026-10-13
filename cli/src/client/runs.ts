@@ -36,7 +36,8 @@ export function fetchRun(analysisId: string, runId: string, opts: ClientOpts = D
 
 /**
  * `GET {A}/run/:runId/stream`: the parts of the run and of its children, from the start, until the run is
- * terminal. A canceled run ends with a `data-run-failed` part with `reason: "canceled"`. The id can also be
+ * terminal. A run with a run row ends with a terminal part, except in the cases that the harness `run-event-stream`
+ * capability lists. A canceled run ends with a `data-run-failed` part with `reason: "canceled"`. The id can also be
  * the workflow id of the data profile. Aborting `signal` closes the stream.
  */
 export function streamRun(

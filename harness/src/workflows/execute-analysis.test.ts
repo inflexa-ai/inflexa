@@ -26,18 +26,20 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
-import { ChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
+import { ChatPartSchema, RunSynthesisPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import type { RunSession } from "../auth/types.js";
 import type { RunChargeOutcome } from "../billing/run-charge.js";
 
-import { runExecuteAnalysisBody, synthesisRowUpdate } from "./execute-analysis.js";
+import { runExecuteAnalysisBody, synthesisRowUpdate, synthesizeFindings } from "./execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation } from "./execute-analysis.js";
 import type { RunProvenanceEvent } from "../provenance/seam.js";
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
@@ -46,6 +48,7 @@ import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 import { captureMetrics } from "../__tests__/setup/metrics.js";
+import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 
 // ── Fake DBOS surface ────────────────────────────────────────────────
 
@@ -930,7 +933,7 @@ describe("executeAnalysis body", () => {
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
         expect(suspendWrites(pool).length).toBe(1);
         const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
-        expect(statusWrite?.values).toContain("canceled");
+        expect(statusWrite?.values).toContain("suspended_insufficient_funds");
         expect(statusWrite?.values).toContain("payment_required");
         // The terminal failed part carries the reason of the host, unread.
         const failedPart = [...record.emittedParts].reverse().find((p) => p.type === "data-run-failed");
@@ -1029,7 +1032,7 @@ describe("executeAnalysis body", () => {
         expect(suspendWrites(pool).length).toBe(1);
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "no_funds" } }]);
         const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
-        expect(statusWrite?.values).toContain("canceled");
+        expect(statusWrite?.values).toContain("suspended_insufficient_funds");
         expect(statusWrite?.values).toContain("no_funds");
     });
 
@@ -1341,7 +1344,7 @@ describe("executeAnalysis body", () => {
         expect(suspendWrites(pool).length).toBe(1);
         const runWrites = runStatusWrites(pool);
         expect(runWrites.length).toBe(1);
-        expect(runWrites[0]!.values).toContain("canceled");
+        expect(runWrites[0]!.values).toContain("suspended_insufficient_funds");
         expect(runWrites[0]!.values).toContain("payment_required");
         const updates = synthesisStepUpdates(pool);
         expect(updates.length).toBe(1);
@@ -1938,6 +1941,62 @@ describe("run and step outcome metrics", () => {
             expect(await capture.histograms("cortex.step.duration")).toEqual([]);
         } finally {
             await capture.dispose();
+        }
+    });
+});
+
+describe("synthesizeFindings run stream", () => {
+    it("writes data-run-synthesis flat, and the part passes RunSynthesisPartSchema", async () => {
+        const base = await mkdtemp(join(tmpdir(), "cortex-synthesis-stream-"));
+        try {
+            const outDir = join(base, "a1", "runs", "run-test", "A", "output");
+            await mkdir(outDir, { recursive: true });
+            await writeFile(join(outDir, "summary.md"), "## results\n\nFOXP3 up.");
+            const synthesis = {
+                runId: "run-test",
+                overview: "A test run analyzed gene expression.",
+                conclusions: "The analysis establishes a signature.",
+                findings: [
+                    {
+                        stepId: "A",
+                        title: "Upregulation of FOXP3",
+                        description: "FOXP3 is upregulated.",
+                        confidence: "high",
+                        noveltyStatus: "confirmed",
+                        literatureInterpretation: "Consistent with prior reports.",
+                        references: [{ pmid: "12345678", citation: "Smith 2020", relevance: "directly supports", concordance: "supports" }],
+                    },
+                ],
+                themes: [{ name: "Regulatory program", findings: [{ stepId: "A", title: "Upregulation of FOXP3" }], narrative: "FOXP3 marks the program." }],
+                limitations: ["Single cohort."],
+                keyReferences: [{ pmid: "12345678", citation: "Smith 2020", description: "Established FOXP3." }],
+            };
+            const provider = scriptedProvider((i) =>
+                i === 0 ? makeMessage([toolUseBlock("tu-1", "submit_synthesis", { synthesis })], "tool_use") : makeMessage([textBlock("done")], "end_turn"),
+            );
+            const { deps } = makeDeps({ pool: makeFakePool(), childResults: new Map() });
+
+            const result = await synthesizeFindings({
+                analysisId: "a1",
+                runId: "run-test",
+                completedSteps: ["A"],
+                session: input([{ id: "A" }]).runSession,
+                deps: {
+                    ...deps,
+                    provider,
+                    embedding: { dimensions: 4, embed: (texts) => okAsync(texts.map(() => [0, 0, 0, 0])) },
+                    resolveWorkspaceRoot: async (id) => join(base, id),
+                },
+            });
+
+            expect(result.synthesisStatus).toBe("produced");
+            const part = dbosState.emittedParts.find((p) => p.type === "data-run-synthesis");
+            expect(part).toBeDefined();
+            expect(part).not.toHaveProperty("data");
+            expect(part).toMatchObject({ id: "synthesis-run-test", runId: "run-test", overview: synthesis.overview });
+            expect(RunSynthesisPartSchema.safeParse(part).success).toBe(true);
+        } finally {
+            await rm(base, { recursive: true, force: true });
         }
     });
 });

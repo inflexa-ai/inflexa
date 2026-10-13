@@ -36,6 +36,15 @@ describe("countLiveDurableWork", () => {
         expect(queries[0]?.values[0]).toBeNull();
     });
 
+    test("a suspended run never counts: the run predicate names the running status only", async () => {
+        const { pool, queries } = recordingPool({ row: { runs: "0", profiles: "0" } });
+
+        (await countLiveDurableWork(pool, "a1"))._unsafeUnwrap();
+
+        expect(queries[0]?.text).toContain("r.status = 'running'");
+        expect(queries[0]?.text).not.toContain("suspended_insufficient_funds");
+    });
+
     test("a failed read is the error, with its cause", async () => {
         const failure = new Error("relation dbos.workflow_status does not exist");
         const { pool } = recordingPool({ failure });
@@ -87,7 +96,7 @@ describe("countLiveDurableWorkByAnalysis", () => {
 
         const rule = (text: string | undefined): string[] =>
             [
-                "r.status IN ('running', 'suspended_insufficient_funds')",
+                "r.status = 'running'",
                 "ws.workflow_uuid = r.run_id OR ws.workflow_uuid LIKE r.run_id || '-%'",
                 "s.data_profile_status = 'running'",
                 "ws.workflow_uuid = s.data_profile_workflow_id",
@@ -121,7 +130,7 @@ describe("listLiveRunIds", () => {
 
         expect(ids).toEqual(["r2"]);
         expect(queries).toHaveLength(1);
-        const rule = "r.status IN ('running', 'suspended_insufficient_funds')";
+        const rule = "r.status = 'running'";
         expect(queries[0]?.text).toContain(rule);
         expect(counted.queries[0]?.text).toContain(rule);
         expect(queries[0]?.text).toContain("dbos.workflow_status");

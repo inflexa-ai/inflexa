@@ -721,7 +721,7 @@ export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgent
 // Nothing in the signature belongs to the durability engine, so an embedder
 // consumes run events without depending on it.
 export { createRunEventStream } from "./execution/run-event-stream.js";
-export type { RunEventStream, RunEventStreamDeps, RunEventSubscribeOptions, RunEventPartHandler } from "./execution/run-event-stream.js";
+export type { RunEventStream, RunEventStreamDeps, RunEventRunRead, RunEventSubscribeOptions, RunEventPartHandler } from "./execution/run-event-stream.js";
 export { pipeFoldedRunEvents } from "./execution/run-event-parts.js";
 
 // Sandbox-agent catalog. `buildAgent` maps a `SandboxAgentBuildContext` onto
