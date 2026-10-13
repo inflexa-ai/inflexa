@@ -1052,24 +1052,29 @@ export function listPendingStoreAdds(): Result<PendingStoreAdd[], DbError> {
     });
 }
 
-/** What the person saw on this machine: the baseline time and the run id of each seen mark. */
-export type RunSeenState = {
-    /** The time of the migration that added the marks, in epoch milliseconds, or `null` when the baseline row is gone. */
-    readonly since: number | null;
-    /** The id of each run with a seen mark. */
-    readonly runIds: string[];
-};
+/**
+ * The time of the migration that added the seen marks, in epoch milliseconds, or `null` when the baseline row is
+ * gone: the table is on the machine of the user, who may have edited it.
+ */
+export function getRunSeenBaseline(): Result<number | null, DbError> {
+    return tryQuery("getRunSeenBaseline", (conn) => {
+        // The statement selects `since` by name, so the row shape below holds.
+        const baseline = conn.query("SELECT since FROM run_seen_baseline LIMIT 1").get() as { since: number } | null;
+        return baseline?.since ?? null;
+    });
+}
 
 /**
- * The seen baseline and each seen mark, in two statements whatever the count of marks. A baseline row that is
- * gone gives `since` `null`: the table is on the machine of the user, who may have edited it.
+ * The ids of the list that have a seen mark, in one statement. An empty list sends no query. The ids ride as one
+ * JSON array parameter, thus the list can pass SQLite's ceiling of 32766 bound parameters.
  */
-export function getRunSeenState(): Result<RunSeenState, DbError> {
-    return tryQuery("getRunSeenState", (conn) => {
-        // Both statements select their columns by name, so the row shapes below hold.
-        const baseline = conn.query("SELECT since FROM run_seen_baseline LIMIT 1").get() as { since: number } | null;
-        const marks = conn.query("SELECT run_id FROM run_seen_marks").all() as { run_id: string }[];
-        return { since: baseline?.since ?? null, runIds: marks.map((mark) => mark.run_id) };
+export function listSeenRunIds(runIds: readonly string[]): Result<Set<string>, DbError> {
+    return tryQuery("listSeenRunIds", (conn) => {
+        const param = jsonIdsParam(runIds);
+        if (param === null) return new Set<string>();
+        // The statement selects `run_id` by name, so the row shape below holds.
+        const rows = conn.query("SELECT m.run_id FROM run_seen_marks m JOIN json_each(?) j ON j.value = m.run_id").all(param) as { run_id: string }[];
+        return new Set(rows.map((row) => row.run_id));
     });
 }
 
@@ -1080,13 +1085,19 @@ export function getRunSeenState(): Result<RunSeenState, DbError> {
  */
 export function listAnalysisNames(ids: readonly string[]): Result<Map<string, string>, DbError> {
     return tryQuery("listAnalysisNames", (conn) => {
-        const distinct = [...new Set(ids)];
-        if (distinct.length === 0) return new Map<string, string>();
+        const param = jsonIdsParam(ids);
+        if (param === null) return new Map<string, string>();
         // The statement selects `id` and `name` by name, so the row shape below holds.
-        const rows = conn.query("SELECT a.id, a.name FROM analyses a JOIN json_each(?) j ON j.value = a.id").all(JSON.stringify(distinct)) as {
+        const rows = conn.query("SELECT a.id, a.name FROM analyses a JOIN json_each(?) j ON j.value = a.id").all(param) as {
             id: string;
             name: string;
         }[];
         return new Map(rows.map((row) => [row.id, row.name]));
     });
+}
+
+/** The distinct ids of the list as one JSON array, the parameter of a `json_each(?)` join, or `null` for an empty list. */
+function jsonIdsParam(ids: readonly string[]): string | null {
+    const distinct = [...new Set(ids)];
+    return distinct.length === 0 ? null : JSON.stringify(distinct);
 }

@@ -200,24 +200,22 @@ export function queryRunProgressByRuns(pool: Querier, runIds: string[]): ResultA
 }
 
 /**
- * The terminal runs of every analysis that ended at or after `since`, newest
- * completion first, with `run_id` breaking a tie in descending order. A run in
- * `exceptRunIds` is absent. `since` is in the form of `toISOString()`, the form
- * of each `completed_at` stamp, thus the text comparison is the time
- * comparison. The statement walks `idx_cortex_runs_completed`, and it sends
- * even when `exceptRunIds` is empty.
+ * The newest `limit` terminal runs of every analysis that ended at or after
+ * `since`, newest completion first, with `run_id` breaking a tie in descending
+ * order. `since` is in the form of `toISOString()`, the form of each
+ * `completed_at` stamp, thus the text comparison is the time comparison. The
+ * statement walks `idx_cortex_runs_completed`.
  */
-export function queryRunsEndedSince(pool: Querier, input: { since: string; exceptRunIds: string[]; limit: number }): ResultAsync<EndedRunSummary[], DbError> {
+export function queryRunsEndedSince(pool: Querier, input: { since: string; limit: number }): ResultAsync<EndedRunSummary[], DbError> {
     return tryQuery("analysesMetrics.queryRunsEndedSince", async () => {
         const result = await pool.query<{ analysis_id: string; run_id: string; status: TerminalRunStatus; completed_at: string }>({
             text: `SELECT analysis_id, run_id, status, completed_at
              FROM cortex_runs
              WHERE status IN ('completed', 'partial', 'failed', 'canceled')
                AND completed_at >= $1
-               AND run_id <> ALL($2::text[])
              ORDER BY completed_at DESC, run_id DESC
-             LIMIT $3`,
-            values: [input.since, input.exceptRunIds, input.limit],
+             LIMIT $2`,
+            values: [input.since, input.limit],
         });
         return result.rows.map((row) => ({
             analysisId: row.analysis_id,

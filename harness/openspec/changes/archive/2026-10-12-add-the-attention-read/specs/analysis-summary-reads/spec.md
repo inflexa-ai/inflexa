@@ -29,7 +29,7 @@ The plan title rule and the step count rule MUST have one SQL text in the packag
 
 ### Requirement: One read gives the runs that ended since a time
 
-The state module MUST give a read over each analysis. The read takes a `Querier`, a time, a list of run ids to skip, and a limit. The time is an ISO 8601 string in the form of `Date.prototype.toISOString`: UTC with milliseconds, the form of each `completed_at`. The read MUST give each terminal run whose `completed_at` is at or after the time. It MUST NOT give a run whose id is in the skip list. The terminal statuses are `completed`, `partial`, `failed`, and `canceled`. The entries MUST come newest first by `completed_at`, and `run_id` breaks a tie in descending order. The read MUST give at most `limit` entries.
+The state module MUST give a read over each analysis. The read takes a `Querier`, a time, and a limit. The time is an ISO 8601 string in the form of `Date.prototype.toISOString`: UTC with milliseconds, the form of each `completed_at`. The read MUST give each terminal run whose `completed_at` is at or after the time. The terminal statuses are `completed`, `partial`, `failed`, and `canceled`. The entries MUST come newest first by `completed_at`, and `run_id` breaks a tie in descending order. The read MUST give at most `limit` entries.
 
 Each entry MUST carry these fields:
 
@@ -42,14 +42,8 @@ The read MUST run as one SQL statement. It MUST walk the runs through an index o
 #### Scenario: The runs that ended since a time
 
 - **GIVEN** run `r1` that completed before the time, runs `r2` and `r3` that ended after it in that order, and run `r4` that still runs
-- **WHEN** the read runs with that time, an empty skip list, and a limit of 10
+- **WHEN** the read runs with that time and a limit of 10
 - **THEN** it gives `r3` and `r2`, the newest completion first
-
-#### Scenario: A skipped run is absent
-
-- **GIVEN** runs `r2` and `r3` that ended after the time
-- **WHEN** the read runs with `r3` in the skip list
-- **THEN** it gives `r2` only
 
 #### Scenario: The limit bounds the result
 

@@ -367,7 +367,7 @@ describe("queryRunsEndedSince", () => {
             completedAt: "2026-10-05T02:00:00.000Z",
         });
 
-        const entries = (await queryRunsEndedSince(pool, { since, exceptRunIds: [], limit: 10 }))._unsafeUnwrap();
+        const entries = (await queryRunsEndedSince(pool, { since, limit: 10 }))._unsafeUnwrap();
 
         expect(entries).toEqual([
             { analysisId: "since-a2", runId: "since-new", status: "failed", completedAt: "2026-10-05T02:00:00.000Z" },
@@ -388,31 +388,9 @@ describe("queryRunsEndedSince", () => {
             });
         }
 
-        const entries = (await queryRunsEndedSince(pool, { since: "2026-10-06T00:00:00.000Z", exceptRunIds: [], limit: 10 }))._unsafeUnwrap();
+        const entries = (await queryRunsEndedSince(pool, { since: "2026-10-06T00:00:00.000Z", limit: 10 }))._unsafeUnwrap();
 
         expect(entries.map((entry) => entry.status)).toEqual(["canceled", "failed", "partial", "completed"]);
-    });
-
-    it("skips the runs of the skip list", async () => {
-        await seedAnalysis(pool, "skip-a");
-        await seedRun(pool, {
-            runId: "skip-r2",
-            analysisId: "skip-a",
-            startedAt: "2026-10-07T00:00:00.000Z",
-            status: "completed",
-            completedAt: "2026-10-07T01:00:00.000Z",
-        });
-        await seedRun(pool, {
-            runId: "skip-r3",
-            analysisId: "skip-a",
-            startedAt: "2026-10-07T00:00:00.000Z",
-            status: "completed",
-            completedAt: "2026-10-07T02:00:00.000Z",
-        });
-
-        const entries = (await queryRunsEndedSince(pool, { since: "2026-10-07T00:00:00.000Z", exceptRunIds: ["skip-r3"], limit: 10 }))._unsafeUnwrap();
-
-        expect(entries.map((entry) => entry.runId)).toEqual(["skip-r2"]);
     });
 
     it("bounds the result with the limit, and breaks a tie of the completion time with the run id, descending", async () => {
@@ -427,19 +405,16 @@ describe("queryRunsEndedSince", () => {
             });
         }
 
-        const entries = (await queryRunsEndedSince(pool, { since: "2026-10-08T00:00:00.000Z", exceptRunIds: [], limit: 2 }))._unsafeUnwrap();
+        const entries = (await queryRunsEndedSince(pool, { since: "2026-10-08T00:00:00.000Z", limit: 2 }))._unsafeUnwrap();
 
         expect(entries.map((entry) => entry.runId)).toEqual(["limit-r5", "limit-r4"]);
     });
 
-    it("sends one query, with an empty skip list too", async () => {
+    it("sends one query", async () => {
         const counted = countingQuerier(pool);
 
-        (await queryRunsEndedSince(counted.querier, { since, exceptRunIds: [], limit: 5 }))._unsafeUnwrap();
+        (await queryRunsEndedSince(counted.querier, { since, limit: 5 }))._unsafeUnwrap();
         expect(counted.calls()).toBe(1);
-
-        (await queryRunsEndedSince(counted.querier, { since, exceptRunIds: ["a", "b"], limit: 5 }))._unsafeUnwrap();
-        expect(counted.calls()).toBe(2);
     });
 });
 

@@ -51,7 +51,7 @@ export type Attention = {
     asks: AttentionAsk[];
     /** The runs with a live workflow, the newest start first. At most 200. */
     activeRuns: AttentionActiveRun[];
-    /** The runs that ended and that the person did not see, the newest end first. At most 200. */
+    /** The runs that the person did not see, among the newest 200 runs that ended since the seen baseline, the newest end first. */
     unseenRuns: AttentionUnseenRun[];
     /** The conversation threads that changed last, the newest first. */
     recentThreads: AttentionThread[];
