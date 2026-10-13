@@ -162,7 +162,7 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
             FROM cortex_runs
             WHERE analysis_id = $1
               AND plan_id IS NOT DISTINCT FROM $2
-              AND status IN ('running','suspended_insufficient_funds')`,
+              AND status = 'running'`,
             values: [analysisId, planId],
         });
         const row = result.rows[0];
@@ -183,9 +183,9 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
  * analysis's live concurrency, not by its history, and a run leaves the set permanently when it
  * finishes.
  *
- * The status set is the one {@link queryActiveRun} uses — non-terminal means still running, or
- * suspended awaiting funds. Keep the two in step: a new non-terminal status added to one and not the
- * other makes a live run invisible to exactly one of its readers.
+ * The status set is the one {@link queryActiveRun} uses — non-terminal means `running`. Keep the two
+ * in step: a new non-terminal status added to one and not the other makes a live run invisible to
+ * exactly one of its readers.
  */
 export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string): ResultAsync<CortexRunRow[], DbError> {
     return tryQuery("runs.queryActiveRunsByAnalysis", async () => {
@@ -195,7 +195,7 @@ export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string): Re
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
-              AND status IN ('running','suspended_insufficient_funds')
+              AND status = 'running'
             ORDER BY started_at DESC`,
             values: [analysisId],
         });
@@ -210,7 +210,8 @@ export function updateRunStatus(
     error?: string | null,
 ): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
-    const isTerminal = status === "completed" || status === "partial" || status === "failed" || status === "canceled";
+    const isTerminal =
+        status === "completed" || status === "partial" || status === "failed" || status === "canceled" || status === "suspended_insufficient_funds";
     return tryMutation("runs.updateRunStatus", async () => {
         await pool.query({
             text: `UPDATE cortex_runs
@@ -236,7 +237,7 @@ export function markRunCanceledIfActive(pool: Querier, runId: string, reason: st
         const result = await pool.query({
             text: `UPDATE cortex_runs
             SET status = 'canceled', completed_at = $2, error = $3
-            WHERE run_id = $1 AND status IN ('running','suspended_insufficient_funds')`,
+            WHERE run_id = $1 AND status = 'running'`,
             values: [runId, now, reason],
         });
         return (result.rowCount ?? 0) > 0;
@@ -299,7 +300,7 @@ export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string
             text: `SELECT COUNT(*)::int AS total
             FROM cortex_runs
             WHERE analysis_id = $1
-              AND status IN ('running','suspended_insufficient_funds')`,
+              AND status = 'running'`,
             values: [analysisId],
         });
         const rowsResult = await pool.query({
@@ -308,13 +309,8 @@ export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string
                    mandate_jti, mandate_expires_at, plan_id
             FROM cortex_runs
             WHERE analysis_id = $1
-              AND status IN ('running','suspended_insufficient_funds')
-            ORDER BY CASE status
-                         WHEN 'running' THEN 0
-                         WHEN 'suspended_insufficient_funds' THEN 1
-                         ELSE 2
-                     END,
-                     started_at DESC,
+              AND status = 'running'
+            ORDER BY started_at DESC,
                      run_id DESC
             LIMIT $2`,
             values: [analysisId, limit],
@@ -327,8 +323,7 @@ export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string
 }
 
 /**
- * Read one stable inspection page: running first, then suspended, then
- * terminal history. This is deliberately separate from
+ * Read one stable inspection page: running first, then each other run. This is deliberately separate from
  * {@link queryRunsByAnalysis}, whose chronological order is an embedder/UI
  * contract.
  */
@@ -350,8 +345,7 @@ export function queryRunsForInspection(
             WHERE analysis_id = $1
             ORDER BY CASE status
                          WHEN 'running' THEN 0
-                         WHEN 'suspended_insufficient_funds' THEN 1
-                         ELSE 2
+                         ELSE 1
                      END,
                      started_at DESC,
                      run_id DESC

@@ -28,6 +28,18 @@ function toSource(source: EmitEvent["source"]): EventSource {
 }
 
 /**
+ * The wire shape of a data part, `{ ...data, type }`, which is the flat shape of the part contracts. The chat stream
+ * and the run streams use this one rule.
+ */
+export function flattenDataPart(part: Pick<ChatDataPart, "type" | "data">): { type: `data-${string}` } & Record<string, unknown> {
+    // The payload is `unknown`, and the spread is not checked here. The chat stream checks each frame with `checkChatPart`.
+    // On the run stream the producer builds the payload with the fields of its part contract, and the synthesis-sink test
+    // parses the result with `RunSynthesisPartSchema`.
+    const data = (part.data ?? {}) as Record<string, unknown>;
+    return { ...data, type: part.type };
+}
+
+/**
  * The frame of one emitted event, or `null` for `done` and for an `iteration` of the root agent. A frame of a sub-agent
  * keeps its source, thus a consumer can filter it. A `text-delta` has no source, thus its frame gets `fallbackSource`,
  * the source of the root agent. A part frame is not checked here: {@link checkChatPart} checks it where it arrives.
@@ -66,10 +78,9 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
             return { type: "text-delta", text: event.text, source: toSource(fallbackSource) };
 
         default: {
-            // A `ChatDataPart`, whose payload the emitter types as `unknown`. The wire part is flat: `{ type, ...data }`.
             // The cast names the frame that the type claims. `checkChatPart` is the check.
-            const data = (event.data ?? {}) as Record<string, unknown>;
-            return { ...data, type: event.type, ...(event.source === undefined ? {} : { source: toSource(event.source) }) } as ChatPartFrame;
+            const part = flattenDataPart(event);
+            return { ...part, ...(event.source === undefined ? {} : { source: toSource(event.source) }) } as ChatPartFrame;
         }
     }
 }

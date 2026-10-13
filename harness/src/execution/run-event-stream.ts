@@ -45,6 +45,30 @@ import type { RunStatus } from "../state/schema.js";
 import { queryStepsByRun } from "../state/step-executions.js";
 import { foldRunEventParts, parseRunEventPart } from "./run-event-parts.js";
 
+const canceledPart = (runId: string): RunFailedPart => ({ type: "data-run-failed", runId, error: "Run canceled", reason: "canceled" });
+
+/** The terminal part that a settled run row gives, or `null` when the body of the run writes the part. */
+function partOfRow(runId: string, row: RunEventRunRead): RunFailedPart | null {
+    switch (row.status) {
+        case "canceled":
+            return canceledPart(runId);
+        case "suspended_insufficient_funds":
+            return row.error === null
+                ? { type: "data-run-failed", runId, error: "Run suspended" }
+                : { type: "data-run-failed", runId, error: row.error, reason: row.error };
+        case "failed":
+            return { type: "data-run-failed", runId, error: row.error ?? "Run failed" };
+        case "completed":
+        case "partial":
+        case "running":
+            return null;
+        default: {
+            const _exhaustive: never = row.status;
+            throw new Error(`unhandled run status: ${String(_exhaustive)}`);
+        }
+    }
+}
+
 /** Durable stream key every run producer writes its parts under. */
 const RUN_EVENT_STREAM_KEY = "events";
 
@@ -68,8 +92,14 @@ const CHILD_DISCOVERY_INTERVAL_MS = 1_000;
  * the stream can end before the row changes, and the later reads wait out that
  * window.
  */
-const CANCELED_ROW_READ_ATTEMPTS = 4;
-const CANCELED_ROW_READ_INTERVAL_MS = 500;
+const TERMINAL_ROW_READ_ATTEMPTS = 4;
+const TERMINAL_ROW_READ_INTERVAL_MS = 500;
+
+/** The part of a run row that the terminal part is made from. */
+export interface RunEventRunRead {
+    readonly status: RunStatus;
+    readonly error: string | null;
+}
 
 /**
  * Construction-time dependencies. The pool is the application pool the run
@@ -80,8 +110,13 @@ const CANCELED_ROW_READ_INTERVAL_MS = 500;
 export interface RunEventStreamDeps {
     readonly pool: Pool;
     readonly logger?: Logger;
-    /** Reads the status of the run row, `null` when no row exists. Defaults to `queryRun` on `pool`. */
-    readonly readRunStatus?: (runId: string) => ResultAsync<RunStatus | null, DbError>;
+    /** Reads the status and the error of the run row, `null` when no row exists. Defaults to `queryRun` on `pool`. */
+    readonly readRun?: (runId: string) => ResultAsync<RunEventRunRead | null, DbError>;
+    /**
+     * Reads the status of the parent workflow in the durability engine, `null` when no workflow exists. Defaults to
+     * `DBOS.getWorkflowStatus`.
+     */
+    readonly readWorkflowStatus?: (runId: string) => Promise<string | null>;
     /** The wait between two reads of the run row. Defaults to a timer. */
     readonly sleep?: (ms: number) => Promise<void>;
 }
@@ -116,10 +151,12 @@ export interface RunEventStream {
      * aborts.
      *
      * A canceled workflow runs no more steps, thus it never writes its own
-     * terminal part, and the canceler cannot write a stream. When the parent
-     * stream ends with no `data-run-completed` or `data-run-failed` part and
-     * the run row reads `canceled`, the last part delivered is a
-     * `data-run-failed` part with `reason: "canceled"`.
+     * terminal part, and the canceler cannot write a stream. When every stream
+     * ends with no `data-run-completed` or `data-run-failed` part, the last
+     * part delivered is a `data-run-failed` part that the run row gives, or the
+     * status of the parent workflow when the row still reads `running`. A row
+     * that does not exist, a `completed` or `partial` row, an active workflow,
+     * and no workflow give no part.
      *
      * Parts from one workflow arrive in the order that workflow wrote them. No
      * order is promised ACROSS the parent and its children: those workflows
@@ -143,7 +180,9 @@ export interface RunEventStream {
  */
 export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
     const baseLogger = (deps.logger ?? createNoopLogger()).named("run-event-stream");
-    const readRunStatus = deps.readRunStatus ?? ((runId: string) => queryRun(deps.pool, runId).map((row) => row?.status ?? null));
+    const readRun =
+        deps.readRun ?? ((runId: string) => queryRun(deps.pool, runId).map((row) => (row === null ? null : { status: row.status, error: row.error })));
+    const readWorkflowStatus = deps.readWorkflowStatus ?? (async (runId: string) => (await DBOS.getWorkflowStatus(runId))?.status ?? null);
     const waitForRowRead = deps.sleep ?? sleep;
 
     return {
@@ -284,24 +323,51 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                 }
             })();
 
-            const canceledTerminalPart = async (): Promise<RunFailedPart | null> => {
-                for (let attempt = 1; attempt <= CANCELED_ROW_READ_ATTEMPTS; attempt++) {
-                    const read = await readRunStatus(runId);
+            const workflowTerminalPart = async (): Promise<RunFailedPart | null> => {
+                let workflowStatus: string | null;
+                try {
+                    workflowStatus = await readWorkflowStatus(runId);
+                } catch (err) {
+                    logger.warn("workflow status read failed", logger.errorFields(err));
+                    return null;
+                }
+                switch (workflowStatus) {
+                    case "CANCELLED":
+                        return canceledPart(runId);
+                    case "ERROR":
+                    case "MAX_RECOVERY_ATTEMPTS_EXCEEDED":
+                    case "SUCCESS":
+                        return { type: "data-run-failed", runId, error: "Run ended without a terminal status" };
+                    case "PENDING":
+                    case "ENQUEUED":
+                    case "DELAYED":
+                        logger.warn("run streams ended while the workflow is active", { workflowStatus });
+                        return null;
+                    default:
+                        // No workflow: the launch did not start it, or it never started. An unknown status gives no part too.
+                        if (workflowStatus !== null) logger.warn("unknown workflow status", { workflowStatus });
+                        return null;
+                }
+            };
+
+            const missingTerminalPart = async (): Promise<RunFailedPart | null> => {
+                let rowReadsRunning = false;
+                for (let attempt = 1; attempt <= TERMINAL_ROW_READ_ATTEMPTS; attempt++) {
+                    const read = await readRun(runId);
+                    rowReadsRunning = false;
                     if (read.isErr()) {
                         logger.warn("run row read failed", { err: describeDbError(read.error) });
                     } else {
-                        const status = read.value;
-                        if (status === "canceled") return { type: "data-run-failed", runId, error: "Run canceled", reason: "canceled" };
                         // The launch writes the row before the workflow starts, thus
                         // no row means that the id is not an analysis run.
-                        if (status === null) return null;
-                        // Only an active row can still become `canceled`.
-                        if (status !== "running" && status !== "suspended_insufficient_funds") return null;
+                        if (read.value === null) return null;
+                        if (read.value.status !== "running") return partOfRow(runId, read.value);
+                        rowReadsRunning = true;
                     }
-                    if (attempt < CANCELED_ROW_READ_ATTEMPTS) await Promise.race([waitForRowRead(CANCELED_ROW_READ_INTERVAL_MS), aborted]);
+                    if (attempt < TERMINAL_ROW_READ_ATTEMPTS) await Promise.race([waitForRowRead(TERMINAL_ROW_READ_INTERVAL_MS), aborted]);
                     if (signal.aborted) return null;
                 }
-                return null;
+                return rowReadsRunning ? workflowTerminalPart() : null;
             };
 
             const settled = (async (): Promise<void> => {
@@ -309,7 +375,7 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                 await parentRead;
                 await Promise.all(childReads);
                 if (!sawTerminal && !signal.aborted) {
-                    const terminal = await canceledTerminalPart();
+                    const terminal = await missingTerminalPart();
                     if (terminal !== null) pending.push(terminal);
                 }
                 await deliver();

@@ -147,6 +147,7 @@ describe("initCortexState and an open transaction on cortex_analysis_threads", (
             "20261005120000_drop_the_active_exec_tracking",
             "20261012120000_index_the_runs_by_start",
             "20261013120000_index_the_ended_runs_and_the_recent_threads",
+            "20261013180000_narrow_the_active_run_index",
         ]);
     }, 20_000);
 });

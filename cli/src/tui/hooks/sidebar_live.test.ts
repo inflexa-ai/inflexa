@@ -726,7 +726,13 @@ describe("hasActiveWork — poll arming predicate", () => {
 
     test("a non-terminal run arms; all-terminal runs do not", () => {
         expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", runs: [runRow({ status: "running" })] })).toBe(true);
-        const terminal = [runRow({ status: "completed" }), runRow({ status: "failed" }), runRow({ status: "canceled" }), runRow({ status: "partial" })];
+        const terminal = [
+            runRow({ status: "completed" }),
+            runRow({ status: "failed" }),
+            runRow({ status: "canceled" }),
+            runRow({ status: "partial" }),
+            runRow({ status: "suspended_insufficient_funds" }),
+        ];
         expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", runs: terminal })).toBe(false);
     });
 

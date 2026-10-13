@@ -118,7 +118,7 @@ The plan title rule and the step count rule MUST have one SQL text in the packag
 
 ### Requirement: One read gives the runs that ended since a time
 
-The state module MUST give a read over each analysis. The read takes a `Querier`, a time, and a limit. The time is an ISO 8601 string in the form of `Date.prototype.toISOString`: UTC with milliseconds, the form of each `completed_at`. The read MUST give each terminal run whose `completed_at` is at or after the time. The terminal statuses are `completed`, `partial`, `failed`, and `canceled`. The entries MUST come newest first by `completed_at`, and `run_id` breaks a tie in descending order. The read MUST give at most `limit` entries.
+The state module MUST give a read over each analysis. The read takes a `Querier`, a time, and a limit. The time is an ISO 8601 string in the form of `Date.prototype.toISOString`: UTC with milliseconds, the form of each `completed_at`. The read MUST give each terminal run whose `completed_at` is at or after the time. The terminal statuses are `completed`, `partial`, `failed`, `canceled`, and `suspended_insufficient_funds`. The entries MUST come newest first by `completed_at`, and `run_id` breaks a tie in descending order. The read MUST give at most `limit` entries.
 
 Each entry MUST carry these fields:
 

@@ -12,15 +12,16 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 
 import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import type { ChatPart, StepActivityPart } from "../contracts/chat-parts.js";
+import type { DbError } from "../lib/db-result.js";
 import { insertRun, markRunCanceledIfActive } from "../state/runs.js";
 import type { RunStatus } from "../state/schema.js";
 import { insertStepExecution, queryStepsByRun } from "../state/step-executions.js";
-import { createRunEventStream, type RunEventStreamDeps } from "./run-event-stream.js";
+import { createRunEventStream, type RunEventRunRead, type RunEventStreamDeps } from "./run-event-stream.js";
 
 if (DBOS.isInitialized()) {
     await DBOS.shutdown();
@@ -442,19 +443,46 @@ describe("run-event stream — lifecycle", () => {
     });
 });
 
-// ── Canceled runs ────────────────────────────────────────────────────
+// ── Runs that end with no terminal part ──────────────────────────────
 
-/** A row read that answers each status in turn, and then the last one again. */
-function rowReads(statuses: readonly (RunStatus | null)[]): NonNullable<RunEventStreamDeps["readRunStatus"]> {
+const row = (status: RunStatus, error: string | null = null): RunEventRunRead => ({ status, error });
+
+/** A row read that answers each value in turn, and then the last one again. */
+function rowReads(reads: readonly (RunEventRunRead | null)[]): NonNullable<RunEventStreamDeps["readRun"]> & { readonly count: () => number } {
     let index = 0;
-    return () => okAsync(statuses[Math.min(index++, statuses.length - 1)] ?? null);
+    const read = () => okAsync(reads[Math.min(index++, reads.length - 1)] ?? null);
+    return Object.assign(read, { count: () => index });
 }
 
 const noWait = async (): Promise<void> => {};
 
 const canceledPart = (runId: string): ChatPart => ({ type: "data-run-failed", runId, error: "Run canceled", reason: "canceled" });
 
-describe("run-event stream — a canceled run", () => {
+/** Subscribe to a run whose streams carry no terminal part, and return what the subscriber held. */
+async function subscribeToEndedRun(
+    runId: string,
+    deps: Pick<RunEventStreamDeps, "readRun" | "readWorkflowStatus">,
+    logger = createCapturingLogger(),
+): Promise<ChatPart[]> {
+    const seen: ChatPart[] = [];
+    const stream = createRunEventStream({ pool: rig.pool, logger, sleep: noWait, ...deps });
+    await settlesWithin(
+        stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
+        20_000,
+        "subscription on a run that ended with no terminal part",
+    );
+    return seen;
+}
+
+/** Start an emitter that writes one non-terminal part and ends. */
+async function endedRunWithNoTerminalPart(prefix: string): Promise<string> {
+    const runId = rig.nextWorkflowId(prefix);
+    const handle = await startEmitter(runId, { before: [dagState(runId, ["running"])], after: [], gate: false });
+    await handle.getResult();
+    return runId;
+}
+
+describe("run-event stream — a run with a run row", () => {
     it("ends an externally canceled run with a terminal part from the run row", async () => {
         const runId = rig.nextWorkflowId("run-cancel-");
         (await insertRun(rig.pool, { runId, analysisId: `analysis-${runId}`, workflowName: "executeAnalysis" }))._unsafeUnwrap();
@@ -475,63 +503,161 @@ describe("run-event stream — a canceled run", () => {
         expect(seen.at(-1)).toEqual(canceledPart(runId));
     });
 
-    it("adds no part to a run that wrote its own terminal part", async () => {
+    it("reads no run row and adds no part to a run that wrote its own terminal part", async () => {
         const runId = rig.nextWorkflowId("run-normal-");
         const handle = await startEmitter(runId, { before: [summary(runId, "T1S1", "only"), runCompleted(runId)], after: [], gate: false });
         await handle.getResult();
 
-        const seen: ChatPart[] = [];
-        // A row that reads `canceled` proves that the written terminal part, not the row, decides.
-        const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger(), readRunStatus: rowReads(["canceled"]), sleep: noWait });
-        await settlesWithin(
-            stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
-            20_000,
-            "subscription on a completed run",
-        );
+        const readRun = rowReads([row("canceled")]);
+        const seen = await subscribeToEndedRun(runId, { readRun });
 
         expect(typesOf(seen)).toEqual(["data-step-summary", "data-run-completed"]);
+        expect(readRun.count()).toBe(0);
     });
 
     it("ends the stream when the row becomes canceled only on a later read", async () => {
-        const runId = rig.nextWorkflowId("run-late-cancel-");
-        const handle = await startEmitter(runId, { before: [dagState(runId, ["running"])], after: [], gate: false });
-        await handle.getResult();
+        const runId = await endedRunWithNoTerminalPart("run-late-cancel-");
 
-        const seen: ChatPart[] = [];
-        const stream = createRunEventStream({
-            pool: rig.pool,
-            logger: createCapturingLogger(),
-            readRunStatus: rowReads(["running", "running", "canceled"]),
-            sleep: noWait,
-        });
-        await settlesWithin(
-            stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
-            20_000,
-            "subscription on a run whose row converges late",
-        );
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running"), row("running"), row("canceled")]) });
 
         expect(seen.at(-1)).toEqual(canceledPart(runId));
     });
 
-    it("adds no part when the row stays active past the last read", async () => {
-        const runId = rig.nextWorkflowId("run-never-cancel-");
-        const handle = await startEmitter(runId, { before: [dagState(runId, ["running"])], after: [], gate: false });
-        await handle.getResult();
+    it("reads the row again after a failed read, and logs a warning", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-row-read-fails-");
+        const logger = createCapturingLogger();
+        let reads = 0;
+        const failure: DbError = { type: "query_failed", op: "runs.queryRun", cause: new Error("db down") };
+        const readRun: NonNullable<RunEventStreamDeps["readRun"]> = () => {
+            reads += 1;
+            return reads === 1 ? errAsync(failure) : okAsync(row("canceled"));
+        };
 
-        const seen: ChatPart[] = [];
-        const stream = createRunEventStream({
-            pool: rig.pool,
-            logger: createCapturingLogger(),
-            readRunStatus: rowReads(["running", "running", "running", "running", "canceled"]),
-            sleep: noWait,
-        });
-        await settlesWithin(
-            stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
-            20_000,
-            "subscription on a run whose row stays active",
-        );
+        const seen = await subscribeToEndedRun(runId, { readRun }, logger);
+
+        expect(reads).toBe(2);
+        expect(seen.at(-1)).toEqual(canceledPart(runId));
+        expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("run row read failed"))).toBe(true);
+    });
+
+    it("gives a suspended run the reason of the host, with no workflow read", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-suspended-");
+        const readWorkflowStatus = async (): Promise<string | null> => {
+            throw new Error("a settled row must not read the workflow");
+        };
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("suspended_insufficient_funds", "budget_exceeded")]), readWorkflowStatus });
+
+        expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "budget_exceeded", reason: "budget_exceeded" });
+    });
+
+    it("gives a suspended row with no error a generic error and no reason", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-suspended-bare-");
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("suspended_insufficient_funds")]) });
+
+        expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "Run suspended" });
+    });
+
+    it("gives a failed row its error and no reason", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-failed-");
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("failed", "workflow start failed")]) });
+
+        expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "workflow start failed" });
+    });
+
+    it("gives a failed row with no error a generic error", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-failed-bare-");
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("failed")]) });
+
+        expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "Run failed" });
+    });
+
+    it("adds no part for a completed or partial row", async () => {
+        for (const status of ["completed", "partial"] as const) {
+            const runId = await endedRunWithNoTerminalPart(`run-${status}-no-part-`);
+
+            const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row(status)]) });
+
+            expect(typesOf(seen)).toEqual(["data-dag-state"]);
+        }
+    });
+
+    it("adds no part when no run row exists", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-no-row-");
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([null]) });
 
         expect(typesOf(seen)).toEqual(["data-dag-state"]);
+    });
+
+    it("gives a wedged run a failed part when the workflow ended in ERROR", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-wedged-");
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => "ERROR" });
+
+        expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "Run ended without a terminal status" });
+    });
+
+    it("gives a failed part for a row that stays running under a finished or exhausted workflow", async () => {
+        for (const workflowStatus of ["SUCCESS", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"]) {
+            const runId = await endedRunWithNoTerminalPart("run-wedged-other-");
+
+            const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => workflowStatus });
+
+            expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "Run ended without a terminal status" });
+        }
+    });
+
+    it("gives a canceled part when the row never leaves running and the workflow is CANCELLED", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-late-canceler-");
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => "CANCELLED" });
+
+        expect(seen.at(-1)).toEqual(canceledPart(runId));
+    });
+
+    it("reads the row at most four times, then asks for the workflow status", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-read-count-");
+        const readRun = rowReads([row("running"), row("running"), row("running"), row("running"), row("canceled")]);
+
+        const seen = await subscribeToEndedRun(runId, { readRun, readWorkflowStatus: async () => null });
+
+        expect(readRun.count()).toBe(4);
+        expect(typesOf(seen)).toEqual(["data-dag-state"]);
+    });
+
+    it("adds no part and logs a warning when the workflow is still active", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-active-");
+        const logger = createCapturingLogger();
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => "PENDING" }, logger);
+
+        expect(typesOf(seen)).toEqual(["data-dag-state"]);
+        expect(logger.records.some((r) => r.level === "warn" && r.fields.workflowStatus === "PENDING")).toBe(true);
+    });
+
+    it("adds no part when the row stays running and no workflow exists", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-no-workflow-");
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => null });
+
+        expect(typesOf(seen)).toEqual(["data-dag-state"]);
+    });
+
+    it("adds no part and logs when the workflow status read fails", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-status-read-fails-");
+        const logger = createCapturingLogger();
+        const readWorkflowStatus = async (): Promise<string | null> => {
+            throw new Error("engine unreachable");
+        };
+
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus }, logger);
+
+        expect(typesOf(seen)).toEqual(["data-dag-state"]);
+        expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("workflow status read failed"))).toBe(true);
     });
 });
 

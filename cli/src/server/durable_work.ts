@@ -12,7 +12,7 @@ const LIVE_WORKFLOW_STATUSES: readonly string[] = [StatusString.PENDING, StatusS
  * {@link LIVE_WORKFLOW_STATUSES}. The one-analysis count, the grouped count, and the list of live run ids share
  * the text, thus the busy gate and the lists cannot disagree on what is live.
  */
-const RUN_IS_LIVE = `r.status IN ('running', 'suspended_insufficient_funds')
+const RUN_IS_LIVE = `r.status = 'running'
                           AND EXISTS (SELECT 1 FROM dbos.workflow_status ws
                                        WHERE ws.status = ANY($2::text[])
                                          AND (ws.workflow_uuid = r.run_id OR ws.workflow_uuid LIKE r.run_id || '-%'))`;

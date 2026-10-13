@@ -50,8 +50,9 @@
  *       the run before any step starts
  *     - a `suspend` error of a synthesis model request suspends the run in
  *       place of the synthesis failure
- *     - the analysis flips to `suspended_insufficient_funds` in
- *       `collectAndComplete`. The paused parent lands in `CANCELLED`, a
+ *     - the run row and the analysis flip to `suspended_insufficient_funds` in
+ *       `collectAndComplete`. The run status is terminal and does not block a
+ *       new run of the plan. The paused parent lands in `CANCELLED`, a
  *       durably reschedulable state; re-driving it is a future enhancement,
  *       not yet wired here. The reason of the host rides to the run row, the
  *       charge close, the metric, and the terminal part, unread.
@@ -104,6 +105,7 @@ import {
 } from "../state/index.js";
 import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
+import { flattenDataPart } from "../contracts/chat-frame.js";
 import type { SynthesisPhase } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
@@ -201,7 +203,7 @@ export interface ExecuteAnalysisInput {
  * path returns — the caller joined an in-flight run, no new workflow was
  * started. Every other variant is a terminal status the parent reached.
  */
-export type ExecuteAnalysisFinalStatus = "running" | "completed" | "partial" | "failed" | "canceled";
+export type ExecuteAnalysisFinalStatus = "running" | "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
 
 export interface ExecuteAnalysisResult {
     readonly runId: string;
@@ -675,7 +677,7 @@ export function synthesizeFindings(args: {
     };
     const emit: EmitFn = (event) => {
         const part = isChatDataPart(event)
-            ? event
+            ? flattenDataPart(event)
             : {
                   type: "data-loop-event" as const,
                   data: { stepId: "synthesis", event },
@@ -1550,12 +1552,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     );
 
     await ledgerStep(logger.with({ status }), "persist-final-status", async () => {
-        const written = await updateRunStatus(
-            deps.pool,
-            runId,
-            status,
-            failureReason ?? (status === "canceled" && suspended === null ? "external_cancel" : null),
-        );
+        const written = await updateRunStatus(deps.pool, runId, status, failureReason ?? (status === "canceled" ? "external_cancel" : null));
         if (written.isErr()) return written;
         // The outcome metrics ride inside the step that persists the terminal status: DBOS
         // caches the step, so a recovered body records nothing again. A step's own terminal
@@ -1587,10 +1584,9 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     }
 
     // Sweep never-started steps to `skipped` — but ONLY on genuinely-terminal
-    // paths. The gate is the BRANCH, not the written run status: the resumable
-    // suspension below also writes "canceled", yet its pending rows must survive
-    // for the resumed workflow to execute. Log-don't-rollback, like every other
-    // finalisation step here.
+    // paths. The gate is the BRANCH, not the written run status: the pending rows
+    // of a suspended run must survive for a later resume. Log-don't-rollback, like
+    // every other finalisation step here.
     if (suspended === null) {
         await ledgerStep(logger, "sweep-pending-steps", () => sweepPendingStepExecutions(deps.pool, runId));
     }
@@ -1683,7 +1679,7 @@ function deriveFinalStatus(args: {
     suspended: boolean;
 }): Exclude<ExecuteAnalysisFinalStatus, "running"> {
     const { totalSteps, completed, failed, canceled, suspended } = args;
-    if (suspended) return "canceled";
+    if (suspended) return "suspended_insufficient_funds";
     if (failed.size > 0) {
         return completed.size > 0 ? "partial" : "failed";
     }

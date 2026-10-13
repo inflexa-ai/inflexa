@@ -67,10 +67,8 @@ export type RunProvenanceEvent =
           analysisId: string;
           runId: string;
           /**
-           * The body's terminal status. Both boundary sites resolve it through `deriveFinalStatus`,
-           * which records a suspension as `"canceled"` — so `"suspended_insufficient_funds"` (a
-           * `RunStatus` member) is never emitted here and is deliberately absent from this narrower
-           * `ExecuteAnalysisFinalStatus`-minus-`"running"` set.
+           * The body's terminal status, resolved through `deriveFinalStatus`. A suspension is
+           * `"suspended_insufficient_funds"`.
            */
           status: Exclude<ExecuteAnalysisFinalStatus, "running">;
           atMs: number;

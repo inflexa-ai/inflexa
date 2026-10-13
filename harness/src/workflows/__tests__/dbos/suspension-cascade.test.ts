@@ -33,7 +33,7 @@ import { okAsync } from "neverthrow";
 import type { ChatProvider, EmbeddingProvider } from "../../../providers/types.js";
 import { unusedCitationResolver } from "../../../citations/__fixtures__/resolver.js";
 import { createWorkingMemory } from "../../../memory/working-memory.js";
-import { upsertAnalysis } from "../../../state/index.js";
+import { insertRun, queryRun, upsertAnalysis } from "../../../state/index.js";
 
 /** Writable sessions root the in-body `init-run-filesystem` mkdir targets. */
 const SUSPENSION_TEST_SESSIONS_DIR = join(tmpdir(), "cortex-suspension-cascade-test");
@@ -312,6 +312,7 @@ describe("the suspension cascade — parent self-cancel", () => {
 
         testDDepsRef.value = deps;
         const parentId = rig.nextWorkflowId("test-d-parent-");
+        (await insertRun(rig.pool, { runId: parentId, analysisId, planId, workflowName: "executeAnalysis" }))._unsafeUnwrap();
         const parentHandle = await DBOS.startWorkflow(testDParent, {
             workflowID: parentId,
         })({ analysisId, planId, threadId: null });
@@ -339,6 +340,10 @@ describe("the suspension cascade — parent self-cancel", () => {
         const suspendedD = (await rig.pool.query<{ status: string }>(`SELECT status FROM cortex_analysis_state WHERE analysis_id = $1`, [analysisId])).rows[0]
             ?.status;
         expect(suspendedD).toBe("suspended_insufficient_funds");
+        const runRow = (await queryRun(rig.pool, parentId))._unsafeUnwrap();
+        expect(runRow?.status).toBe("suspended_insufficient_funds");
+        expect(runRow?.error).toBe("payment_required");
+        expect(runRow?.completedAt).not.toBeNull();
         expect(order).toContain("closeRunningCharge:suspended:payment_required");
         expect(order).toContain("revokeMandate:workflow-suspended");
         expect(order.indexOf("closeRunningCharge:suspended:payment_required")).toBeLessThan(order.indexOf("revokeMandate:workflow-suspended"));

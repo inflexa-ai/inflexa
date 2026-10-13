@@ -81,7 +81,7 @@ function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails
         query: async ({ text, values }: { text: string; values?: unknown[] }) => {
             if (text.includes("FROM cortex_runs")) return { rows: state.run === null ? [] : [state.run], rowCount: state.run === null ? 0 : 1 };
             if (text.includes("SET status = 'canceled'")) {
-                const active = state.run !== null && (state.run.status === "running" || state.run.status === "suspended_insufficient_funds");
+                const active = state.run !== null && state.run.status === "running";
                 if (!active || state.run === null) return { rowCount: 0 };
                 state.run = { ...state.run, status: "canceled", completed_at: values?.[1], error: values?.[2] };
                 return { rowCount: 1 };
@@ -169,6 +169,27 @@ describe("createRunCanceler", () => {
         expect(closes).toEqual([]);
         expect(revoked).toEqual([]);
         expect(db.state.swept).toBe(0);
+    });
+
+    it("short-circuits a suspended run as already terminal", async () => {
+        const db = fakeDb(runRow({ status: "suspended_insufficient_funds", completed_at: "2026-08-12T01:00:00.000Z", error: "budget_exceeded" }));
+        const { charge, closes } = recordingCharge();
+        const { authorizer, revoked } = recordingAuthorizer();
+        const { cancelWorkflows, cancelled } = recordingCancel();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result).toEqual({
+            runId: "run-1",
+            workflowId: "run-1",
+            outcome: "already_terminal",
+            finalStatus: "suspended_insufficient_funds",
+            converged: { steps: false, charge: false, mandate: false },
+        });
+        expect(cancelled).toEqual([]);
+        expect(closes).toEqual([]);
+        expect(revoked).toEqual([]);
     });
 
     it("converges a running run: engine cancel with children, conditional row write, sweep, charge close, revoke", async () => {

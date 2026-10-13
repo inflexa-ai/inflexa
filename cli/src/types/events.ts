@@ -30,7 +30,7 @@ import type {
 export type RunObservedSnapshot = {
     runId: string;
     /** `running` mid-flight; the run's terminal status on the last snapshot. */
-    status: "running" | "completed" | "partial" | "failed" | "canceled";
+    status: "running" | "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
     /** Every plan step, including ones not yet started — never a delta. */
     steps: readonly {
         id: string;

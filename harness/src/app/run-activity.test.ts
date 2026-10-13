@@ -27,7 +27,7 @@ describe("renderRunActivity", () => {
         setSystemTime();
     });
 
-    it("separates running and suspended rows with full identifiers and absolute start times", () => {
+    it("lists the running rows with full identifiers and absolute start times, and no suspended row", () => {
         const rendered = renderRunActivity({
             runs: [
                 run("run-running-full-id", "running", "2026-07-30T09:58:00.000Z", "pln-1234abcd"),
@@ -38,11 +38,11 @@ describe("renderRunActivity", () => {
 
         expect(rendered).toContain("[Run Activity]");
         expect(rendered).toContain("Running:");
-        expect(rendered).toContain("Suspended:");
+        expect(rendered).not.toContain("Suspended:");
+        expect(rendered).not.toContain("run-suspended-full-id");
         expect(rendered).toContain("runId: run-running-full-id");
         expect(rendered).toContain("planId: pln-1234abcd");
         expect(rendered).toContain("startedAt: 2026-07-30T09:58:00.000Z");
-        expect(rendered).toContain("startedAt: 2026-07-29T10:00:00.000Z");
         expect(rendered).not.toContain("ago");
         expect(rendered).not.toContain("started:");
     });
@@ -59,7 +59,7 @@ describe("renderRunActivity", () => {
     });
 
     it("renders explicit empty and unavailable states", () => {
-        expect(renderRunActivity({ runs: [], total: 0 })).toContain("No runs are currently running or suspended.");
+        expect(renderRunActivity({ runs: [], total: 0 })).toContain("No runs are currently running.");
         expect(renderRunActivityUnavailable()).toContain("temporarily unavailable");
         expect(renderRunActivityUnavailable()).toContain("Do not infer");
     });

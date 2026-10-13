@@ -8,13 +8,13 @@ Keep conversation agents accurately informed about asynchronous analysis work wi
 
 ### Requirement: Empty, unavailable, and truncated activity are explicit
 
-The Run Activity renderer SHALL explicitly state when the analysis has no non-terminal runs. If the activity read fails while the rest of turn preparation can continue, it SHALL render that run activity is temporarily unavailable and SHALL NOT imply that no run exists. The renderer SHALL include at most 20 detailed non-terminal rows and SHALL state the true total and omitted count when more rows exist.
+The Run Activity renderer SHALL explicitly state when the analysis has no non-terminal runs. A non-terminal run is a run whose status is `running`. If the activity read fails while the rest of turn preparation can continue, it SHALL render that run activity is temporarily unavailable and SHALL NOT imply that no run exists. The renderer SHALL include at most 20 detailed non-terminal rows and SHALL state the true total and omitted count when more rows exist.
 
 #### Scenario: No non-terminal runs
 
 - **GIVEN** an analysis has only terminal runs or no runs
 - **WHEN** a chat turn is prepared
-- **THEN** Run Activity explicitly states that no runs are currently running or suspended
+- **THEN** Run Activity explicitly states that no runs are currently running
 
 #### Scenario: Activity read is unavailable
 
@@ -25,7 +25,7 @@ The Run Activity renderer SHALL explicitly state when the analysis has no non-te
 
 #### Scenario: More than twenty non-terminal runs
 
-- **GIVEN** an analysis has more than 20 running or suspended runs
+- **GIVEN** an analysis has more than 20 running runs
 - **WHEN** Run Activity is rendered
 - **THEN** it includes at most 20 detailed rows
 - **AND** it reports the true non-terminal total and how many rows were omitted
@@ -62,9 +62,9 @@ Completing a workflow SHALL update the harness run ledger and run-event stream b
 - **THEN** its ledger and stream expose the terminal state
 - **AND** no conversation-agent invocation or thread-history write is created by completion
 
-### Requirement: Conversation turns store fresh analysis-wide run activity after the user message
+### Requirement: Conversation turns store the fresh run activity of the running runs after the user message
 
-The harness MUST derive the Run Activity afresh from `cortex_runs` for the whole analysis on each chat turn. The render MUST separate `running` from `suspended_insufficient_funds`. It MUST give the full `runId`, the nullable `planId`, and the absolute `startedAt` of each run that it lists.
+The harness MUST derive the Run Activity afresh from `cortex_runs` for the whole analysis on each chat turn. The render MUST list the `running` runs only. A `suspended_insufficient_funds` run is terminal, thus the render MUST NOT list it. It MUST give the full `runId`, the nullable `planId`, and the absolute `startedAt` of each run that it lists.
 
 The render MUST NOT give the age of a run. An age changes each minute, and the record of the turn would then change on each turn.
 
@@ -75,11 +75,11 @@ The render is a context record of the kind `run-activity` (see the chat-turn cap
 
 The harness MUST NOT write the render to the working memory.
 
-#### Scenario: Running and suspended runs are listed
+#### Scenario: Running runs are listed and a suspended run is not
 
-- **GIVEN** an analysis with one running run and one suspended run, and one of the two runs started from a different conversation thread
+- **GIVEN** an analysis with two running runs and one suspended run, and one of the running runs started from a different conversation thread
 - **WHEN** a chat turn is prepared
-- **THEN** the run-activity record lists both full run ids in separate Running and Suspended sections
+- **THEN** the run-activity record lists the full run id of each running run, and it does not list the suspended run
 - **AND** each entry carries its plan id when present and its absolute start time, and no entry carries an age
 
 #### Scenario: An unchanged activity adds no record

@@ -2,7 +2,7 @@
  * inspectRun — inspect workflow runs for the current analysis.
  *
  * Results are pull-only: workflows never append completion messages to a
- * conversation. List mode is active-first and paged. Targeted mode makes
+ * conversation. List mode puts the running runs first and is paged. Targeted mode makes
  * readiness explicit and can perform one bounded, abort-aware wait.
  */
 
@@ -67,7 +67,7 @@ const systemClock: InspectRunClock = {
 };
 
 function isTerminal(status: CortexRunRow["status"]): boolean {
-    return status === "completed" || status === "partial" || status === "failed" || status === "canceled";
+    return status === "completed" || status === "partial" || status === "failed" || status === "canceled" || status === "suspended_insufficient_funds";
 }
 
 function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r.status)) {
@@ -152,10 +152,10 @@ export function createInspectRunTool(pool: Pool, clock: InspectRunClock = system
         id: "inspect_run",
         description:
             "Inspect workflow runs for this analysis. A run never posts its completion into the conversation; this tool is how you read it. " +
-            "Without a runId, returns an active-first paged list (running, suspended, then terminal history) with total and hasMore. " +
-            "With a runId, returns the run, its steps, and an inspectionState: not_found; in_progress; suspended (the run does not progress until it is resumed); " +
+            "Without a runId, returns a paged list (running runs first, then each other run) with total and hasMore. " +
+            "With a runId, returns the run, its steps, and an inspectionState: not_found; in_progress; suspended (the host suspended the run, it does not progress, and a new run of the plan can start); " +
             "or terminal (run.status completed, partial, failed, or canceled). " +
-            "Output paths appear only on a terminal run: run.synthesisPath when synthesisStatus is produced, and the summaryPath of each step that ran. " +
+            "Output paths appear only on a suspended or terminal run: run.synthesisPath when synthesisStatus is produced, and the summaryPath of each step that ran. " +
             "For a user-directed check, waitForTerminalSeconds can wait once for 1-30 seconds; if the cutoff returns in_progress, stop polling for that turn. " +
             "A wait on the run that the caller itself runs inside returns at once with selfWaitPrevented. " +
             "Default response is lightweight — pass includeDiagnostics:true to add error/duration/retry telemetry.",
@@ -239,8 +239,8 @@ export function createInspectRunTool(pool: Pool, clock: InspectRunClock = system
             if (run.status === "suspended_insufficient_funds") {
                 return ok({
                     inspectionState: "suspended",
-                    message: "This run is suspended and will not progress until it is resumed.",
-                    run: formatRun(run, verbose, false),
+                    message: "The host suspended this run. The run does not progress. A new run of the plan can start.",
+                    run: formatRun(run, verbose, true),
                     steps,
                     ...wait,
                 });

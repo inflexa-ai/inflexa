@@ -139,9 +139,7 @@ function fileExtension(displayPath: string): string {
  * composed from facts already on disk so search still finds the file.
  */
 function fallbackEntry(artifact: ArtifactForMetadata, extra: Record<string, unknown> | undefined): FileMetadataEntry {
-    // Leading slash so `inferArtifactType` matches the `/figures/` etc. segment
-    // on a working-directory-relative display path.
-    const fileType = inferArtifactType(`/${artifact.displayPath}`);
+    const fileType = inferArtifactType(artifact.displayPath);
     const format = fileExtension(artifact.displayPath);
     const sizePart = artifact.sizeBytes != null ? `, ${artifact.sizeBytes} bytes` : "";
     const description = `${artifact.displayPath} — ${fileType} file (${format}${sizePart}); automated description unavailable.`;

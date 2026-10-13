@@ -424,9 +424,9 @@ export function runMark(status: RunStatus): { glyph: string; role: keyof ThemeCo
         case "canceled":
             return { glyph: GLYPHS.cross, role: "error" };
         case "suspended_insufficient_funds":
-            // Actionable, not just terminal: the run is paused awaiting funds/resume, so it warrants
-            // the "needs attention" warn tone rather than the muted grey of `partial` (which is simply
-            // a finished-with-gaps end state the user cannot act on).
+            // Actionable, not just terminal: the host suspended the run, so it warrants the "needs
+            // attention" warn tone rather than the muted grey of `partial` (which is simply a
+            // finished-with-gaps end state the user cannot act on).
             return { glyph: GLYPHS.circle, role: "warning" };
         case "partial":
             return { glyph: GLYPHS.circle, role: "fgMuted" };
@@ -548,10 +548,10 @@ const REFRESH_BOUND_MS = POLL_INTERVAL_MS * 3;
 
 /**
  * Terminal run statuses — a run that reached a final state polling cannot advance. A NON-terminal run
- * (`running`, or a fund-suspended run awaiting a resume) can still change its ledger row under us,
- * which is exactly what arms the poll. Declared exhaustively over {@link RunStatus} (a full record,
- * not a set literal) so adding a status to the harness enum is a compile error here until it is
- * classified — the arming rule must never silently mis-treat a new status as terminal.
+ * (`running`) can still change its ledger row under us, which is exactly what arms the poll.
+ * Declared exhaustively over {@link RunStatus} (a full record, not a set literal) so adding a status
+ * to the harness enum is a compile error here until it is classified — the arming rule must never
+ * silently mis-treat a new status as terminal.
  *
  * Trade-off: a genuinely wedged non-terminal run keeps the poll at the 5s cadence. Accepted
  * — it is bounded, cheap (≤10 rows), and visible; the alternative (guessing wedged-ness) is worse.
@@ -563,7 +563,7 @@ export const RUN_STATUS_TERMINAL: Record<RunStatus, boolean> = {
     failed: true,
     partial: true,
     canceled: true,
-    suspended_insufficient_funds: false,
+    suspended_insufficient_funds: true,
 };
 
 /**

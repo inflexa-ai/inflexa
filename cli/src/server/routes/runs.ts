@@ -313,7 +313,7 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
     return routes;
 }
 
-/** True for a status that a run keeps once it ended. A run that is suspended for funds has not ended. */
+/** True for a status that a run keeps once it ended. */
 export function isTerminalRunStatus(status: RunStatus): status is TerminalRunStatus {
     // The switch lists each status, so the predicate holds for exactly the members of `TerminalRunStatus`.
     switch (status) {
@@ -321,9 +321,9 @@ export function isTerminalRunStatus(status: RunStatus): status is TerminalRunSta
         case "partial":
         case "failed":
         case "canceled":
+        case "suspended_insufficient_funds":
             return true;
         case "running":
-        case "suspended_insufficient_funds":
             return false;
         default: {
             const exhaustive: never = status;

@@ -8,22 +8,20 @@ import type { RunPage } from "../state/runs.js";
 /** Maximum detailed run rows paid into every conversation turn. */
 export const RUN_ACTIVITY_DETAIL_LIMIT = 20;
 
-function renderRows(label: string, rows: RunPage["runs"]): string[] {
+function renderRows(rows: RunPage["runs"]): string[] {
     if (rows.length === 0) return [];
-    return [`${label}:`, ...rows.map((run) => `- runId: ${run.runId} | planId: ${run.planId ?? "none"} | startedAt: ${run.startedAt}`)];
+    return ["Running:", ...rows.map((run) => `- runId: ${run.runId} | planId: ${run.planId ?? "none"} | startedAt: ${run.startedAt}`)];
 }
 
 /** Render the bounded run-activity snapshot of a conversation turn. */
 export function renderRunActivity(activity: RunPage): string {
     const lines = ["[Run Activity]"];
     if (activity.total === 0) {
-        lines.push("No runs are currently running or suspended.");
+        lines.push("No runs are currently running.");
         return lines.join("\n");
     }
 
-    const running = activity.runs.filter((run) => run.status === "running");
-    const suspended = activity.runs.filter((run) => run.status === "suspended_insufficient_funds");
-    lines.push(...renderRows("Running", running), ...renderRows("Suspended", suspended));
+    lines.push(...renderRows(activity.runs.filter((run) => run.status === "running")));
 
     const omitted = activity.total - activity.runs.length;
     if (omitted > 0) {

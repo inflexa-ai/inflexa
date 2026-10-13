@@ -94,11 +94,8 @@ export type ProvRunRef = {
 export type ProvRunOutcome = {
     /** Identifies the run whose activity this completion closes — matches the run-start `runId`. */
     runId: string;
-    /**
-     * The host's terminal run status. A budget pause records as `"canceled"` — so
-     * `"suspended_insufficient_funds"` is never emitted and is deliberately absent here.
-     */
-    status: "completed" | "partial" | "failed" | "canceled";
+    /** The host's terminal run status. A host suspension is `"suspended_insufficient_funds"`. */
+    status: "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
     /** Epoch-ms the host observed the run terminate, from a replay-stable clock. */
     completedAtMs: number;
     /** Host-observed run duration (terminal minus start replay-stable clock reads). */
