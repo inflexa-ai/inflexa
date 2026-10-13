@@ -21,9 +21,19 @@ export {
     queryUnsyncedStepArtifacts,
     updateArtifactId,
     updateFileIds,
-    countArtifactsForRun,
+    queryArtifactPage,
+    countArtifactsByRuns,
 } from "./artifacts.js";
-export type { RegisterArtifactInput, InputArtifactMeta, StepArtifactRef } from "./artifacts.js";
+export type {
+    RegisterArtifactInput,
+    InputArtifactMeta,
+    StepArtifactRef,
+    ArtifactPage,
+    ArtifactPageEntry,
+    ArtifactPageQuery,
+    ArtifactPageSort,
+    RunArtifactCount,
+} from "./artifacts.js";
 
 export {
     insertRun,

@@ -18,14 +18,12 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
-import { open } from "node:fs/promises";
-import { join } from "node:path";
 
-import { tryFs } from "../lib/fs-result.js";
+import { readSynthesisText } from "../execution/run-synthesis.js";
 import { queryAnalysisArtifacts } from "../state/artifacts.js";
 import type { Querier } from "../state/db.js";
 import { queryRunsByAnalysis } from "../state/runs.js";
-import { isSafeId, runDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactSnapshot, CitationRecord, ReportSnapshot } from "./reference-resolver.js";
 
 /**
@@ -48,54 +46,8 @@ export interface PinReportSnapshotOptions {
     readonly resolveWorkspaceRoot?: ResolveWorkspaceRoot;
 }
 
-/** The file name of the synthesis record inside the run directory. */
-const SYNTHESIS_FILE = "synthesis.json";
-
-/**
- * The cap of one synthesis read. A synthesis record is small by construction, and the cap bounds the
- * cost of a file that is not. A file over the cap gives no key, because a cut JSON text cannot parse.
- */
-const SYNTHESIS_CAP_BYTES = 1024 * 1024;
-
 /** The page size of the run listing. The listing walks the pages until a short page ends the walk. */
 const RUN_PAGE_SIZE = 200;
-
-/**
- * Read a synthesis record under the cap, or give `undefined` when the bytes do not come back.
- *
- * The read takes a bounded byte window, thus a file of any size costs the cap. An absent file, a genuine
- * read fault, and a file over the cap each give `undefined`, because the collection reports no error for
- * one record.
- */
-async function readSynthesisText(absolute: string): Promise<string | undefined> {
-    return tryFs<string | undefined>(
-        "pinReportSnapshot.readSynthesis",
-        async () => {
-            const handle = await open(absolute, "r");
-            try {
-                // The window takes one byte more than the cap. A read that fills it states that the file
-                // holds more bytes than the cap admits, thus the two conditions stay apart.
-                const buffer = Buffer.alloc(SYNTHESIS_CAP_BYTES + 1);
-                // One read of a network-backed file can give fewer bytes than the window holds. Such a
-                // short read cuts the text in the middle of the JSON, and the record then parses to no
-                // key at all. Thus the loop reads again from the offset that the last read reached, and
-                // it stops when the window fills or when a read gives no byte.
-                let filled = 0;
-                while (filled < buffer.length) {
-                    const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
-                    if (bytesRead === 0) {
-                        break;
-                    }
-                    filled += bytesRead;
-                }
-                return filled > SYNTHESIS_CAP_BYTES ? undefined : buffer.subarray(0, filled).toString("utf8");
-            } finally {
-                await handle.close();
-            }
-        },
-        { path: absolute, onAbsent: () => undefined },
-    ).unwrapOr(undefined);
-}
 
 /** One citation of a synthesis record: the key, and the bibliography record when the entry carries one. */
 interface CitationEntry {
@@ -232,12 +184,7 @@ async function collectCitations(
             return err({ kind: "run-listing-failed", cause: page.error.cause });
         }
         for (const run of page.value) {
-            // The path builder refuses an id that can escape the run tree. A refusal is a throw, thus
-            // the guard keeps the collection on the value channel.
-            if (!isSafeId(run.runId)) {
-                continue;
-            }
-            const text = await readSynthesisText(join(root, runDir(run.runId), SYNTHESIS_FILE));
+            const text = await readSynthesisText({ workspaceRoot: root, runId: run.runId });
             if (text === undefined) {
                 continue;
             }

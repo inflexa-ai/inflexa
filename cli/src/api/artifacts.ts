@@ -1,4 +1,8 @@
+// Type-only: erased at compile time, thus a client that imports this file loads no harness code.
+import type { ArtifactRole } from "@inflexa-ai/harness/state/schema.js";
+
 import type { OpenTarget } from "../types/session.ts";
+import type { ListEnvelope } from "./common.ts";
 
 /**
  * The body of `POST {A}/artifacts/resolve`: the semantic references of the openable entries of one card.
@@ -37,3 +41,23 @@ export type ResolvedArtifact = {
 export type ResolvedArtifacts = {
     entries: ResolvedArtifact[];
 };
+
+/** The order of `GET {A}/artifacts`: `path` is path order, and `recent` is the newest first registration. */
+export type ArtifactSort = "path" | "recent";
+
+/** One row of the artifact ledger, as `GET {A}/artifacts` gives it. */
+export type ArtifactEntry = {
+    /** Relative to the workspace folder of the analysis. `GET {A}/files?path=` takes the same form. */
+    path: string;
+    /** Bytes. */
+    size: number;
+    fileType: string | null;
+    role: ArtifactRole;
+    runId: string | null;
+    stepId: string | null;
+    /** ISO 8601. The time of the first registration of the path. */
+    createdAt: string;
+};
+
+/** The body of `GET {A}/artifacts`: one page of the ledger. `total` counts the rows that the filters select. */
+export type ArtifactList = ListEnvelope<"artifacts", ArtifactEntry>;

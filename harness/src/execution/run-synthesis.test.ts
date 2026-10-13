@@ -32,7 +32,11 @@ import {
     generateRunSynthesis,
     loadStepSummariesFromDisk,
     persistSynthesis,
+    readRunSynthesis,
 } from "./run-synthesis.js";
+import { flattenDataPart } from "../contracts/chat-frame.js";
+import { RunSynthesisPartSchema } from "../contracts/schemas/chat-parts.js";
+import type { RunSynthesis } from "../schemas/run-synthesis.js";
 import type { ToolContext } from "../tools/define-tool.js";
 import type { ChatRequest } from "../providers/types.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
@@ -818,5 +822,81 @@ describe("buildRunSynthesisPart + formatSynthesisEmbeddingText", () => {
         expect(text).toContain("# Limitations");
         expect(text).toContain("# Key References");
         expect(text).toContain("PMID:1");
+    });
+});
+
+describe("readRunSynthesis", () => {
+    let root: string;
+
+    beforeAll(async () => {
+        root = await mkdtemp(join(tmpdir(), "cortex-read-synthesis-"));
+    });
+    afterAll(async () => {
+        await rm(root, { recursive: true, force: true });
+    });
+
+    const synthesis: RunSynthesis = {
+        runId: RUN_ID,
+        overview: "ov",
+        conclusions: "cl",
+        findings: [
+            {
+                stepId: "A",
+                title: "Upregulation of FOXP3",
+                description: "FOXP3 is upregulated.",
+                confidence: "high",
+                noveltyStatus: "confirmed",
+                literatureInterpretation: "Consistent with prior reports.",
+                references: [{ pmid: "12345678", citation: "Smith 2020", relevance: "directly supports", concordance: "supports" }],
+                translationalRelevance: { stage: "discovery", rationale: "No clinical path yet." },
+            },
+        ],
+        themes: [],
+        limitations: ["Single cohort."],
+        keyReferences: [{ pmid: "12345678", citation: "Smith 2020", description: "Established FOXP3." }],
+    };
+
+    async function writeRecord(runId: string, text: string): Promise<void> {
+        const dir = join(root, "runs", runId);
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "synthesis.json"), text, "utf8");
+    }
+
+    it("gives the part that the synthesis sink writes for the same record, and the part passes RunSynthesisPartSchema", async () => {
+        await persistSynthesis({ workspaceRoot: root, runId: RUN_ID, synthesis });
+
+        const part = await readRunSynthesis({ workspaceRoot: root, runId: RUN_ID });
+
+        expect(part).toEqual(flattenDataPart(buildRunSynthesisPart(RUN_ID, synthesis)) as never);
+        expect(part).toMatchObject({ type: "data-run-synthesis", id: `synthesis-${RUN_ID}` });
+        expect(RunSynthesisPartSchema.safeParse(part).success).toBe(true);
+        expect(part?.findings[0]?.references).toEqual(synthesis.findings[0]!.references);
+    });
+
+    it("gives null when no record is on disk", async () => {
+        expect(await readRunSynthesis({ workspaceRoot: root, runId: "run-absent" })).toBeNull();
+    });
+
+    it("gives null for a record whose findings have no references", async () => {
+        const finding = { ...synthesis.findings[0]!, references: undefined };
+        await writeRecord("run-no-refs", JSON.stringify({ ...synthesis, runId: "run-no-refs", findings: [finding] }));
+
+        expect(await readRunSynthesis({ workspaceRoot: root, runId: "run-no-refs" })).toBeNull();
+    });
+
+    it("gives null for a record over the cap", async () => {
+        await writeRecord("run-huge", JSON.stringify({ ...synthesis, runId: "run-huge", overview: "x".repeat(1024 * 1024 + 64) }));
+
+        expect(await readRunSynthesis({ workspaceRoot: root, runId: "run-huge" })).toBeNull();
+    });
+
+    it("gives null for text that is not JSON", async () => {
+        await writeRecord("run-garbage", "{ not json");
+
+        expect(await readRunSynthesis({ workspaceRoot: root, runId: "run-garbage" })).toBeNull();
+    });
+
+    it("gives null for a run id that can escape the run tree", async () => {
+        expect(await readRunSynthesis({ workspaceRoot: root, runId: "../run-001" })).toBeNull();
     });
 });

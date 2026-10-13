@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { PART_REGISTRY } from "./part-registry.js";
-import { CompactionPartSchema, ChatPartSchema, PresentationContentSchema, PresentationPartSchema } from "./schemas/chat-parts.js";
+import { CompactionPartSchema, ChatPartSchema, PresentationContentSchema, PresentationPartSchema, RunSynthesisPartSchema } from "./schemas/chat-parts.js";
 
 describe("PresentationContentSchema — echart dataPath", () => {
     test("accepts an echart content carrying dataPath and round-trips it (does not strip it)", () => {
@@ -169,5 +169,40 @@ describe("the activity history parts", () => {
     test("the registry marks the two parts", () => {
         expect(PART_REGISTRY["data-subagent-activity"]).toEqual({ emitter: "conversation", consumer: "conversation", transient: false, reconciling: true });
         expect(PART_REGISTRY["data-activity-entry"]).toEqual({ emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false });
+    });
+});
+
+describe("the finding of the run synthesis part", () => {
+    const finding = {
+        stepId: "A",
+        title: "Upregulation of FOXP3",
+        description: "FOXP3 is upregulated.",
+        confidence: "high" as const,
+        noveltyStatus: "confirmed" as const,
+        literatureInterpretation: "Consistent with prior reports.",
+        references: [{ pmid: "12345678", citation: "Smith 2020", relevance: "directly supports", concordance: "supports" as const }],
+    };
+    const part = {
+        type: "data-run-synthesis" as const,
+        id: "synthesis-r1",
+        runId: "r1",
+        overview: "ov",
+        findings: [finding],
+        themes: [],
+        keyReferences: [],
+    };
+
+    test("a parse keeps the references of each finding", () => {
+        expect(RunSynthesisPartSchema.parse(part).findings[0]!.references).toEqual(finding.references);
+    });
+
+    test("a finding with no references fails the parse", () => {
+        const { references: _references, ...bare } = finding;
+        expect(RunSynthesisPartSchema.safeParse({ ...part, findings: [bare] }).success).toBe(false);
+    });
+
+    test("a concordance outside the four values fails the parse", () => {
+        const odd = { ...finding, references: [{ ...finding.references[0]!, concordance: "agrees" }] };
+        expect(RunSynthesisPartSchema.safeParse({ ...part, findings: [odd] }).success).toBe(false);
     });
 });

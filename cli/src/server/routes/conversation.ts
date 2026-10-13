@@ -731,7 +731,7 @@ function threadAnalysisId(pool: Pool, threadId: string): ResultAsync<string | nu
 }
 
 /** The workspace root of the analysis on disk. A missing analysis row or a failed read cannot name the tree. */
-async function workspaceRoot(analysisId: string): Promise<WorkspaceRootLookup> {
+export async function workspaceRoot(analysisId: string): Promise<WorkspaceRootLookup> {
     const analysis = findAnalysesByRef(analysisId)
         .map((found) => found.find((candidate) => candidate.id === analysisId) ?? null)
         .unwrapOr(null);

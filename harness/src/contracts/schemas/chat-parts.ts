@@ -297,6 +297,13 @@ export const RunCompletedPartSchema = z.object({
 
 // ── Run Synthesis ──────────────────────────────────────────────────
 
+export const FindingReferenceSchema = z.object({
+    pmid: z.string(),
+    citation: z.string(),
+    relevance: z.string(),
+    concordance: z.enum(["supports", "contradicts", "extends", "contextualizes"]),
+});
+
 export const SynthesizedFindingSchema = z.object({
     stepId: z.string(),
     title: z.string(),
@@ -304,6 +311,7 @@ export const SynthesizedFindingSchema = z.object({
     confidence: z.enum(["high", "medium", "low"]),
     noveltyStatus: z.enum(["novel", "confirmed", "partially_confirmed", "contradicted", "expected"]),
     literatureInterpretation: z.string(),
+    references: z.array(FindingReferenceSchema),
 });
 
 export const BiologicalThemeSchema = z.object({

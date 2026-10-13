@@ -90,7 +90,7 @@ import type { CitationResolver } from "../citations/types.js";
 import { describeDbError, type DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import {
-    countArtifactsForRun,
+    countArtifactsByRuns,
     insertStepExecution,
     loadDataProfileStatus,
     queryActiveRun,
@@ -1625,9 +1625,13 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // beat the CLI's poll-and-shutdown). These branches only fan out the UI stream part, whose
     // completed/failed shapes genuinely differ — the provenance record does not.
     if (status === "completed" || status === "partial") {
-        const artifactCount = await DBOS.runStep(async () => await countArtifactsForRun(deps.pool, input.analysisId, runId).unwrapOr(0), {
-            name: "count-run-artifacts",
-        });
+        const artifactCount = await DBOS.runStep(
+            async () =>
+                await countArtifactsByRuns(deps.pool, input.analysisId, [runId])
+                    .map((counts) => counts[0]?.count ?? 0)
+                    .unwrapOr(0),
+            { name: "count-run-artifacts" },
+        );
         await emitStreamPart({
             type: "data-run-completed",
             runId,

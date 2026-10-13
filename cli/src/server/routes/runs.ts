@@ -8,6 +8,7 @@ import {
     createLocalRunAuthorizer,
     createNoopRunCharge,
     createRunCanceler,
+    countArtifactsByRuns,
     createRunEventStream,
     FARM_LOCK_FILE,
     loadDataProfileStatus,
@@ -17,6 +18,7 @@ import {
     queryRun,
     queryRunsByAnalysis,
     queryStepsByRun,
+    readRunSynthesis,
     UnknownRunError,
     type AgentSession,
     type CortexRunRow,
@@ -24,9 +26,11 @@ import {
     type DbError,
     type Pool,
     type RunCanceler,
+    type RunArtifactCount,
     type RunEventSubscribeOptions,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
+import type { RunSynthesisPart } from "@inflexa-ai/harness/contracts/index.js";
 import { CONVERSATION_AGENT_ID } from "@inflexa-ai/harness/agents/conversation-agent.js";
 import { queryRunsByThread, queryRunsForInspection } from "@inflexa-ai/harness/state/runs.js";
 
@@ -44,6 +48,7 @@ import type {
     RunStatus,
     RunStepSummary,
     RunSummary,
+    RunSynthesisView,
     SandboxReadiness,
     TerminalRunStatus,
 } from "../../api/runs.ts";
@@ -60,6 +65,7 @@ import {
 } from "../../db/primary_query.ts";
 import { recordRunSeen } from "../../db/primary_mutation.ts";
 import { env } from "../../lib/env.ts";
+import { getLogger } from "../../lib/log.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
 import { ensureProfileAtParity, forceReprofile, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -69,6 +75,7 @@ import type { ServerBoot } from "../boot.ts";
 import { apiError, holdConnection, internalError, listEnvelope, parsePage, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
 import { profileWorkPending, serializeProfileWork } from "../profile_queue.ts";
 import { readSandboxReadiness, sandboxRefusal } from "../sandbox_gate.ts";
+import { workspaceRoot } from "./conversation.ts";
 
 /**
  * How many plans one runs page loads at the same time. A page holds up to 200 runs, and each distinct plan is
@@ -94,6 +101,10 @@ export type RunRoutesOpts = {
     /** Each run of the analysis that is not terminal. The set is bounded by the live concurrency, not by the history. */
     readonly listActiveRuns: (pool: Pool, analysisId: string) => ResultAsync<CortexRunRow[], DbError>;
     readonly getRun: (pool: Pool, runId: string) => ResultAsync<CortexRunRow | null, DbError>;
+    /** The step-output count of each run of the list, in one read. A run with no step output has no entry. */
+    readonly countArtifacts: (pool: Pool, analysisId: string, runIds: readonly string[]) => ResultAsync<RunArtifactCount[], DbError>;
+    /** The flat synthesis part of the record on disk, or `null` when the record cannot be read. The route asks only for a run whose outcome is `produced`. */
+    readonly readSynthesis: (analysisId: string, runId: string) => Promise<RunSynthesisPart | null>;
     readonly listSteps: (pool: Pool, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
     /** The stored plan document, or `null` when it is gone. */
     readonly loadPlan: (pool: Pool, planId: string, analysisId: string) => ResultAsync<unknown, DbError>;
@@ -129,6 +140,8 @@ export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     listThreadRuns: queryRunsByThread,
     listActiveRuns: queryActiveRunsByAnalysis,
     getRun: queryRun,
+    countArtifacts: countArtifactsByRuns,
+    readSynthesis: readSynthesisOf,
     listSteps: queryStepsByRun,
     loadPlan: (pool, planId, analysisId) => loadPlan(pool, planId, { analysisId }),
     loadProfile: loadDataProfileStatus,
@@ -181,17 +194,37 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
         if (steps.isErr()) return internalError(c, steps.error, "read the steps of the run");
         const stepNames = planStepNames(planDoc);
 
+        const artifactCounts = await readArtifactCounts(pool, analysisId, [runId], opts);
         const stepUsage = listRunUsageByStep(analysisId, runId).unwrapOr([]);
         const usageByStep = new Map(stepUsage.flatMap((group) => (group.stepId === null ? [] : [[group.stepId, group.totals] as const])));
         const runUsage = getRunUsageTotals(analysisId, runId).unwrapOr(null);
 
         const detail: RunDetail = {
-            ...toRunSummary(run, planTitleOf(planDoc), runUsage),
+            ...toRunSummary(run, planTitleOf(planDoc), runUsage, artifactCountOf(artifactCounts, runId)),
             steps: steps.value.map((step) => toStepSummary(step, stepNames.get(step.stepId), usageByStep.get(step.stepId))),
             // SQLite groups the NULL step ids as one group: the calls of the run outside each step.
             unattributedUsage: stepUsage.find((group) => group.stepId === null)?.totals ?? null,
         };
         return c.json(detail);
+    });
+
+    routes.get("/run/:runId/synthesis", runtimeGate, async (c) => {
+        // A folder on a hung mount can stop the record read for more than 10 s.
+        holdConnection(c);
+        const analysisId = analysisParam(c);
+        const runId = c.req.param("runId");
+        const row = await opts.getRun(c.get("runtime").pool, runId);
+        if (row.isErr()) return internalError(c, row.error, "read the run");
+        if (row.value === null || row.value.analysisId !== analysisId) return runNotFound(c, runId);
+
+        // The run row is the authority on whether a synthesis exists. A record on disk from a synthesis that
+        // later failed, or from a run with no recorded outcome, must not show as one.
+        const { synthesisStatus: status, synthesisReason: reason } = row.value;
+        const synthesis = status === "produced" ? await opts.readSynthesis(analysisId, runId) : null;
+        if (status === "produced" && synthesis === null) {
+            getLogger("server").warn({ analysisId, runId }, "the run recorded a produced synthesis, but its record could not be read");
+        }
+        return c.json<RunSynthesisView>({ status, reason, synthesis });
     });
 
     routes.get("/run/:runId/stream", runtimeGate, async (c) => {
@@ -448,10 +481,42 @@ async function summarizeRuns(pool: Pool, analysisId: string, rows: readonly Cort
             .unwrapOr([])
             .map((group) => [group.runId, group.totals] as const),
     );
-    return rows.map((row) => toRunSummary(row, row.planId === null ? null : (titles.get(row.planId) ?? null), usageByRun.get(row.runId) ?? null));
+    const artifactCounts = await readArtifactCounts(
+        pool,
+        analysisId,
+        rows.map((row) => row.runId),
+        opts,
+    );
+    return rows.map((row) =>
+        toRunSummary(
+            row,
+            row.planId === null ? null : (titles.get(row.planId) ?? null),
+            usageByRun.get(row.runId) ?? null,
+            artifactCountOf(artifactCounts, row.runId),
+        ),
+    );
 }
 
-function toRunSummary(row: CortexRunRow, planTitle: string | null, usage: UsageTotals | null): RunSummary {
+/**
+ * The step-output count of each run of the list, from one grouped read. A failed read gives `null` and a log
+ * line: the runs then carry no count, because a false 0 would state that a run has no files.
+ */
+async function readArtifactCounts(pool: Pool, analysisId: string, runIds: readonly string[], opts: RunRoutesOpts): Promise<ReadonlyMap<string, number> | null> {
+    return opts.countArtifacts(pool, analysisId, runIds).match(
+        (counts) => new Map(counts.map((entry) => [entry.runId, entry.count] as const)),
+        (error) => {
+            getLogger("server").warn({ err: error, analysisId }, "could not count the artifacts of the runs");
+            return null;
+        },
+    );
+}
+
+/** The count of one run, 0 for a run with no entry, and `null` when the read failed. */
+function artifactCountOf(counts: ReadonlyMap<string, number> | null, runId: string): number | null {
+    return counts === null ? null : (counts.get(runId) ?? 0);
+}
+
+function toRunSummary(row: CortexRunRow, planTitle: string | null, usage: UsageTotals | null, artifactCount: number | null): RunSummary {
     return {
         runId: row.runId,
         threadId: row.threadId,
@@ -465,6 +530,7 @@ function toRunSummary(row: CortexRunRow, planTitle: string | null, usage: UsageT
         ...(planTitle === null ? {} : { planTitle }),
         // A run with no ledger call has a zero count: no figure, the same as a run with no ledger row.
         ...(usage === null || usage.calls === 0 ? {} : { usage }),
+        ...(artifactCount === null ? {} : { artifactCount }),
     };
 }
 
@@ -510,6 +576,12 @@ export function planStepNames(plan: unknown): ReadonlyMap<string, string> {
         if (typeof id === "string" && typeof name === "string" && name.trim().length > 0) names.set(id, name.trim());
     }
     return names;
+}
+
+/** The synthesis record of a run on disk. The folder is located for a read, thus a folder that became read-only still gives its record. */
+async function readSynthesisOf(analysisId: string, runId: string): Promise<RunSynthesisPart | null> {
+    const lookup = await workspaceRoot(analysisId);
+    return lookup.kind === "root" ? readRunSynthesis({ workspaceRoot: lookup.root, runId }) : null;
 }
 
 /** The production heal: compose the full farm from the catalog closure, when the farm is missing and the catalog is present. */

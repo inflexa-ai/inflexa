@@ -28,6 +28,7 @@ export type {
     StepSummaryPart,
     StepUsagePart,
     StepBlockedPart,
+    FindingReference,
     SynthesizedFinding,
     BiologicalTheme,
     RunSynthesisPart,

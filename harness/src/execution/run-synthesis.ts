@@ -24,12 +24,13 @@
  * `failed` part. We do not throw here for routine submitter rejections.
  */
 
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
+import { tryFs } from "../lib/fs-result.js";
 import { hintForZodIssue } from "../lib/zod-issues.js";
 
 import {
@@ -44,8 +45,10 @@ import {
 } from "../schemas/run-synthesis.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import { composeSystemPrompt } from "../agents/system-prompt.js";
+import { flattenDataPart } from "../contracts/chat-frame.js";
+import type { RunSynthesisPart } from "../contracts/chat-parts.js";
 import type { StepSummary } from "../schemas/step-summary.js";
-import { runDir } from "../workspace/paths.js";
+import { isSafeId, runDir } from "../workspace/paths.js";
 import { decodeObjectString } from "../lib/zod-issues.js";
 
 import { runToTerminal } from "../loop/run-to-terminal.js";
@@ -570,6 +573,15 @@ export async function loadStepSummariesFromDisk(args: LoadStepSummariesInput): P
     return out;
 }
 
+/** The file name of the synthesis record inside the run directory. */
+const SYNTHESIS_FILE = "synthesis.json";
+
+/**
+ * The cap of one synthesis read. A synthesis record is small by construction, and the cap bounds the
+ * cost of a file that is not. A file over the cap gives no text, because a cut JSON text cannot parse.
+ */
+const SYNTHESIS_CAP_BYTES = 1024 * 1024;
+
 export interface PersistSynthesisInput {
     /** Absolute host root of the analysis's workspace tree. */
     readonly workspaceRoot: string;
@@ -582,9 +594,84 @@ export async function persistSynthesis(args: PersistSynthesisInput): Promise<str
     // at runs/{runId}/, above any step's RW mount and never in the hard-linked
     // `data/` inputs.
     const runRoot = join(args.workspaceRoot, runDir(args.runId));
-    const path = join(runRoot, "synthesis.json");
+    const path = join(runRoot, SYNTHESIS_FILE);
     await writeFileWithinRoot(runRoot, path, JSON.stringify(args.synthesis, null, 2));
     return path;
+}
+
+export interface ReadSynthesisInput {
+    /** Absolute host root of the analysis's workspace tree. */
+    readonly workspaceRoot: string;
+    readonly runId: string;
+}
+
+/**
+ * Read the text of a synthesis record under the cap, or give `undefined` when the bytes do not come back.
+ *
+ * The read takes a bounded byte window, thus a file of any size costs the cap. A run id that can escape
+ * the run tree, an absent file, a genuine read fault, and a file over the cap each give `undefined`,
+ * because a collection reports no error for one record.
+ */
+export async function readSynthesisText(args: ReadSynthesisInput): Promise<string | undefined> {
+    // The path builder refuses an id that can escape the run tree with a throw. The guard keeps the read on
+    // the value channel.
+    if (!isSafeId(args.runId)) {
+        return undefined;
+    }
+    const absolute = join(args.workspaceRoot, runDir(args.runId), SYNTHESIS_FILE);
+    return tryFs<string | undefined>(
+        "runSynthesis.readText",
+        async () => {
+            const handle = await open(absolute, "r");
+            try {
+                // The window takes one byte more than the cap. A read that fills it states that the file
+                // holds more bytes than the cap admits, thus the two conditions stay apart.
+                const buffer = Buffer.alloc(SYNTHESIS_CAP_BYTES + 1);
+                // One read of a network-backed file can give fewer bytes than the window holds. Such a
+                // short read cuts the text in the middle of the JSON, and the record then parses to no
+                // key at all. Thus the loop reads again from the offset that the last read reached, and
+                // it stops when the window fills or when a read gives no byte.
+                let filled = 0;
+                while (filled < buffer.length) {
+                    const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+                    if (bytesRead === 0) {
+                        break;
+                    }
+                    filled += bytesRead;
+                }
+                return filled > SYNTHESIS_CAP_BYTES ? undefined : buffer.subarray(0, filled).toString("utf8");
+            } finally {
+                await handle.close();
+            }
+        },
+        { path: absolute, onAbsent: () => undefined },
+    ).unwrapOr(undefined);
+}
+
+/**
+ * The validated synthesis record of a run as the flat `data-run-synthesis` part, the shape that the run
+ * stream carries for the same record. It gives `null` for each fault of {@link readSynthesisText}, for text
+ * that is not JSON, and for JSON that fails {@link RunSynthesisSchema}. The run row stays the authority on
+ * whether a synthesis exists, thus the read does not consult it.
+ */
+export async function readRunSynthesis(args: ReadSynthesisInput): Promise<RunSynthesisPart | null> {
+    const text = await readSynthesisText(args);
+    if (text === undefined) {
+        return null;
+    }
+    let json: unknown;
+    try {
+        json = JSON.parse(text);
+    } catch {
+        return null;
+    }
+    const parsed = RunSynthesisSchema.safeParse(json);
+    if (!parsed.success) {
+        return null;
+    }
+    // The payload comes from a validated `RunSynthesis`, and the builder sets each field of the part contract.
+    // The tests parse the result with `RunSynthesisPartSchema`.
+    return flattenDataPart(buildRunSynthesisPart(args.runId, parsed.data)) as unknown as RunSynthesisPart;
 }
 
 // ── Embedding text ──────────────────────────────────────────────────

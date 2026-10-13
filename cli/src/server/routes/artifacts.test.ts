@@ -2,22 +2,51 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ArtifactPage, ArtifactPageQuery, Pool } from "@inflexa-ai/harness";
 import { Hono } from "hono";
+import { errAsync, okAsync } from "neverthrow";
 
-import type { ResolvedArtifacts } from "../../api/artifacts.ts";
+import type { ArtifactList, ResolvedArtifacts } from "../../api/artifacts.ts";
+import type { ServerBootState } from "../../api/server.ts";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
 import { freshDb } from "../../test_support/db.ts";
+import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import type { ServerBoot } from "../boot.ts";
 import type { OpenTarget } from "../../types/session.ts";
 import type { ServerEnv } from "../http.ts";
-import { artifactRoutes } from "./artifacts.ts";
+import { artifactRoutes, type ArtifactRoutesOpts } from "./artifacts.ts";
 
 // The route alone, mounted at its path with no bearer check and no analysis guard: `app.test.ts` covers
 // those. Each `as` cast of a body below reads JSON that the route under test builds from the same
 // `src/api/` type.
-const app = new Hono<ServerEnv>().route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes());
+const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
+// The routes only pass the pool to the injected read, thus a stand-in object is enough.
+const runtime = { pool: {} as Pool } as unknown as HarnessRuntime;
+
+const readyBoot: ServerBoot = {
+    state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
+    runtime: () => runtime,
+    start: async () => undefined,
+};
+
+const startingState: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
+const startingBoot: ServerBoot = { state: () => startingState, runtime: () => null, start: async () => undefined };
+
+function appWith(opts: ArtifactRoutesOpts, boot: ServerBoot = readyBoot): Hono<ServerEnv> {
+    return new Hono<ServerEnv>().route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes(boot, opts));
+}
+
+const UNEXPECTED: ArtifactRoutesOpts = {
+    listArtifacts: () => {
+        throw new Error("the test did not expect a call of listArtifacts");
+    },
+};
+
+// The resolve route needs no runtime and no harness read, thus a boot that never gets ready serves it.
+const app = appWith(UNEXPECTED, startingBoot);
 
 const created: string[] = [];
 
@@ -178,5 +207,82 @@ describe("POST {A}/artifacts/resolve", () => {
         expect(response.status).toBe(400);
         expect(await response.json()).toMatchObject({ error: "validation_error" });
         expect(existsSync(join(root, "presentations"))).toBe(false);
+    });
+});
+
+describe("GET {A}/artifacts", () => {
+    const entry = {
+        path: "runs/r1/s1/figures/Volcano.png",
+        size: 2048,
+        fileType: "figure",
+        role: "step_output",
+        runId: "r1",
+        stepId: "s1",
+        createdAt: "2026-10-01T00:00:00.000Z",
+    } as const;
+
+    /** The routes over a read that records its queries and gives `page`. */
+    function listing(page: ArtifactPage = { entries: [entry], total: 1 }): { app: Hono<ServerEnv>; reads: { analysisId: string; query: ArtifactPageQuery }[] } {
+        const reads: { analysisId: string; query: ArtifactPageQuery }[] = [];
+        const routes = appWith({
+            listArtifacts: (_pool, analysisId, query) => {
+                reads.push({ analysisId, query });
+                return okAsync(page);
+            },
+        });
+        return { app: routes, reads };
+    }
+
+    test("gives the page in the list shape, and sends the filters with the default sort", async () => {
+        const { app: routes, reads } = listing({ entries: [entry], total: 2 });
+
+        const response = await routes.request("/api/v1/analyses/a1/artifacts?fileType=figure&q=volcano&runId=r1&stepId=s1");
+        const list = (await response.json()) as ArtifactList;
+
+        expect(response.status).toBe(200);
+        expect(list).toEqual({ artifacts: [entry], total: 2, page: 0, perPage: 100, hasMore: false });
+        expect(reads).toEqual([
+            { analysisId: "a1", query: { fileType: "figure", q: "volcano", runId: "r1", stepId: "s1", sort: "path", limit: 100, offset: 0 } },
+        ]);
+    });
+
+    test("sends one read with the limit and the offset of the page", async () => {
+        const { app: routes, reads } = listing();
+
+        await routes.request("/api/v1/analyses/a1/artifacts?page=2&perPage=50&sort=recent");
+
+        expect(reads).toEqual([{ analysisId: "a1", query: { sort: "recent", limit: 50, offset: 100 } }]);
+    });
+
+    test("an empty filter value and an empty sort are no filter and the default sort", async () => {
+        const { app: routes, reads } = listing();
+
+        const response = await routes.request("/api/v1/analyses/a1/artifacts?runId=&stepId=&fileType=&q=&sort=");
+
+        expect(response.status).toBe(200);
+        expect(reads).toEqual([{ analysisId: "a1", query: { sort: "path", limit: 100, offset: 0 } }]);
+    });
+
+    test("400 `validation_error` for a sort value that is not path or recent, with no read", async () => {
+        const response = await appWith(UNEXPECTED).request("/api/v1/analyses/a1/artifacts?sort=size");
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { sort: expect.any(Array) } } });
+    });
+
+    test("503 `unavailable` before the runtime is ready", async () => {
+        const response = await appWith(UNEXPECTED, startingBoot).request("/api/v1/analyses/a1/artifacts");
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+    });
+
+    test("500 `internal_error` when the ledger read fails", async () => {
+        const failed = appWith({ listArtifacts: () => errAsync({ type: "query_failed", op: "test", cause: "down" }) });
+
+        const response = await failed.request("/api/v1/analyses/a1/artifacts");
+
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ error: "internal_error" });
     });
 });
