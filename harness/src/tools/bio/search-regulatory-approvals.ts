@@ -15,6 +15,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { guaranteed } from "../../lib/invariants.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 import {
     describeAmassError,
@@ -37,6 +38,7 @@ import { getAmassHeaders } from "../lib/amass-config.js";
 /** The largest `limit` that still costs one search price (5 credits for each 20 records). */
 const MAX_LIMIT = 20;
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const IDENTIFIER_FIELDS = ["amassId", "fdaApplicationNumber", "emaProductNumber", "ndc", "splSetId"] as const;
@@ -150,16 +152,16 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
             if (input.action === "search") {
                 const rows = await searchRegulatoryRecords(
                     {
-                        query: input.query!,
+                        query: guaranteed(input.query, "query"),
                         limit: input.limit,
-                        ...(input.agency ? { agency: input.agency } : {}),
-                        ...(input.authorizationStatus ? { authorizationStatus: input.authorizationStatus } : {}),
-                        ...(input.moleculeType ? { moleculeType: input.moleculeType } : {}),
-                        ...(input.hasDesignation ? { hasDesignation: input.hasDesignation } : {}),
-                        ...(input.isOrphan === undefined ? {} : { isOrphan: input.isOrphan }),
-                        ...(input.minAuthorizationDate ? { minAuthorizationDate: input.minAuthorizationDate } : {}),
-                        ...(input.maxAuthorizationDate ? { maxAuthorizationDate: input.maxAuthorizationDate } : {}),
-                        ...(input.amassId ? { amassId: input.amassId } : {}),
+                        agency: input.agency ? input.agency : undefined,
+                        authorizationStatus: input.authorizationStatus ? input.authorizationStatus : undefined,
+                        moleculeType: input.moleculeType ? input.moleculeType : undefined,
+                        hasDesignation: input.hasDesignation ? input.hasDesignation : undefined,
+                        isOrphan: !(input.isOrphan === undefined) ? input.isOrphan : undefined,
+                        minAuthorizationDate: input.minAuthorizationDate ? input.minAuthorizationDate : undefined,
+                        maxAuthorizationDate: input.maxAuthorizationDate ? input.maxAuthorizationDate : undefined,
+                        amassId: input.amassId ? input.amassId : undefined,
                     },
                     headers,
                 );
@@ -168,7 +170,7 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
             }
 
             if (input.action === "section") {
-                const section = await getRegulatorySection(input.amassId!, input.documentSectionId!, headers);
+                const section = await getRegulatorySection(guaranteed(input.amassId, "amassId"), guaranteed(input.documentSectionId, "documentSectionId"), headers);
                 if (section.isErr()) return failure(section.error);
                 return ok(section.value ? { status: "found" as const, section: section.value } : { status: "not_found" as const });
             }
@@ -177,17 +179,17 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
             if (amassId === undefined) {
                 const ids = await lookupRegulatoryIds(
                     {
-                        ...(input.fdaApplicationNumber === undefined ? {} : { fdaApplicationNumber: input.fdaApplicationNumber }),
-                        ...(input.emaProductNumber === undefined ? {} : { emaProductNumber: input.emaProductNumber }),
-                        ...(input.ndc === undefined ? {} : { ndc: input.ndc }),
-                        ...(input.splSetId === undefined ? {} : { splSetId: input.splSetId }),
+                        fdaApplicationNumber: !(input.fdaApplicationNumber === undefined) ? input.fdaApplicationNumber : undefined,
+                        emaProductNumber: !(input.emaProductNumber === undefined) ? input.emaProductNumber : undefined,
+                        ndc: !(input.ndc === undefined) ? input.ndc : undefined,
+                        splSetId: !(input.splSetId === undefined) ? input.splSetId : undefined,
                     },
                     headers,
                 );
                 if (ids.isErr()) return failure(ids.error);
                 if (ids.value.length === 0) return ok({ status: "not_found" as const });
                 if (ids.value.length > 1) return ok({ status: "ambiguous" as const, candidates: ids.value });
-                amassId = ids.value[0]!;
+                amassId = ids.value[0];
             }
 
             const record = await getRegulatoryRecord(amassId, headers);

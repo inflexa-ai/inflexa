@@ -42,7 +42,7 @@ import type { PostStepArtifacts, PostStepContext, StepFileEntry, StepOutputs } f
  * The subset of `SandboxStepDeps` the post-step stages consume. The sandbox-step
  * body passes its own `deps` straight through (it is a structural superset).
  */
-export interface PostStepPipelineDeps {
+export type PostStepPipelineDeps = {
     readonly pool: Pool;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
@@ -57,10 +57,10 @@ export interface PostStepPipelineDeps {
     readonly artifactRegistry: ArtifactRegistry;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
-}
+};
 
 /** The product of the file-metadata stage, as its `DBOS.runStep` checkpoints it. */
-export interface StepFileMetadata {
+export type StepFileMetadata = {
     /** One entry per manifest file, described or fallback. */
     readonly entries: readonly FileMetadataEntry[];
     /**
@@ -68,7 +68,7 @@ export interface StepFileMetadata {
      * `DBOS.runStep`, so a replay must give the summary the same prefix.
      */
     readonly messages: readonly LoopMessage[];
-}
+};
 
 /** Describes each manifest file; a file the model cannot describe gets a deterministic fallback, never a dropped entry. */
 export async function generateStepFileMetadata(
@@ -189,7 +189,7 @@ export async function reconcileAndRegisterStepArtifacts(
         agentId: input.agentId,
         manifest: [...manifest],
         collector: lineageCollector,
-        ...(deps.logger ? { logger: deps.logger } : {}),
+        logger: deps.logger ? deps.logger : undefined,
     });
 
     if (reconciled.manifest.length === 0) return ok(reconciled.manifest);
@@ -277,7 +277,7 @@ export async function vectorIndexStepOutputs(deps: PostStepPipelineDeps, postCtx
     }
 
     const embedOne = async (text: string): Promise<number[]> => {
-        const [vec] = unwrapOrThrow(await deps.embedding.embed([text], postCtx.session));
+        const vec = unwrapOrThrow(await deps.embedding.embed([text], postCtx.session)).at(0);
         if (!vec) throw new Error("vectorIndexStepOutputs: empty embedding response");
         return vec;
     };

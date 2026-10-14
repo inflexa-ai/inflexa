@@ -62,6 +62,7 @@ import { isSqlIdentifier } from "./vector-store.js";
  * Empty is outside the shape too: it derives the bare table prefix, which is a
  * perfectly legal identifier and belongs to no analysis.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const PURGEABLE_ANALYSIS_ID = /^[a-z0-9_-]+$/;
 
 /**
@@ -99,7 +100,7 @@ const ANALYSIS_KEYED_DELETES: readonly { readonly op: string; readonly sql: stri
  * behind, and rows written under a workflow the purge already deleted, which trip
  * their foreign key.
  */
-export interface AnalysisPurgeOutcome {
+export type AnalysisPurgeOutcome = {
     readonly threads: number;
     readonly messages: number;
     /**
@@ -110,16 +111,16 @@ export interface AnalysisPurgeOutcome {
      */
     readonly workflows: number;
     readonly vectorIndexDropped: boolean;
-}
+};
 
-export interface AnalysisPurgeDeps {
+export type AnalysisPurgeDeps = {
     readonly pool: Pool;
     /** The workflow-ledger seam. Cancellation and deletion by id, engine-agnostic. */
     readonly workflows: WorkflowPurger;
     readonly logger?: Logger;
-}
+};
 
-export interface AnalysisPurge {
+export type AnalysisPurge = {
     /**
      * Remove the analysis's entire persisted Postgres footprint. Absence is a
      * normal outcome: an unknown or already-purged analysis succeeds with zeroes.
@@ -127,7 +128,7 @@ export interface AnalysisPurge {
      * it did not achieve. The caller quiesces the analysis first (module note).
      */
     purgeAnalysis(analysisId: string): ResultAsync<AnalysisPurgeOutcome, DbError>;
-}
+};
 
 /**
  * A refusal raised before any stage runs, so nothing is cancelled, no workflow row

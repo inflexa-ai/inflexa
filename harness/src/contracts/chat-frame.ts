@@ -3,7 +3,6 @@
 import type { ChatDataPart, EmitEvent } from "../loop/types.js";
 import type { ChatStreamEvent } from "../providers/types.js";
 import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent, IterationEvent } from "./chat-events.js";
-import type { ChatPart } from "./chat-parts.js";
 import type { ChatMessage, MessagePart, TextPart, ToolCallPart } from "./message.js";
 import { isReconciling, PART_REGISTRY } from "./part-registry.js";
 import { EventSourceSchema } from "./schemas/chat-events.js";
@@ -12,10 +11,10 @@ import type { TokenUsageRollup } from "./usage.js";
 
 export type TurnTerminal = null | "finish" | { error: ChatErrorEvent };
 
-export interface ApplyFrameResult {
+export type ApplyFrameResult = {
     messages: ChatMessage[];
     terminal: TurnTerminal;
-}
+};
 
 export type ChatPartCheck = { readonly ok: true; readonly frame: ChatPartFrame } | { readonly ok: false; readonly error: string };
 
@@ -59,7 +58,7 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
                 type: "tool-started",
                 toolUseId: event.toolUseId,
                 name: event.name,
-                ...(event.detail === undefined ? {} : { detail: event.detail }),
+                detail: !(event.detail === undefined) ? event.detail : undefined,
                 source: toSource(event.source),
             };
 
@@ -69,8 +68,8 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
                 toolUseId: event.toolUseId,
                 name: event.name,
                 outcome: event.outcome,
-                ...(event.detail === undefined ? {} : { detail: event.detail }),
-                ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+                detail: !(event.detail === undefined) ? event.detail : undefined,
+                durationMs: !(event.durationMs === undefined) ? event.durationMs : undefined,
                 source: toSource(event.source),
             };
 
@@ -80,7 +79,7 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
         default: {
             // The cast names the frame that the type claims. `checkChatPart` is the check.
             const part = flattenDataPart(event);
-            return { ...part, ...(event.source === undefined ? {} : { source: toSource(event.source) }) } as ChatPartFrame;
+            return { ...part, source: !(event.source === undefined) ? toSource(event.source) : undefined } as ChatPartFrame;
         }
     }
 }
@@ -157,7 +156,7 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
                     type: "tool-call",
                     toolCallId: frame.toolUseId,
                     toolName: frame.name,
-                    ...(frame.detail === undefined ? {} : { detail: frame.detail }),
+                    detail: !(frame.detail === undefined) ? frame.detail : undefined,
                 } satisfies ToolCallPart,
             ];
         case "tool-finished": {
@@ -166,13 +165,12 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
                 toolCallId: frame.toolUseId,
                 toolName: frame.name,
                 outcome: frame.outcome,
-                ...(frame.detail === undefined ? {} : { detail: frame.detail }),
-                ...(frame.durationMs === undefined ? {} : { durationMs: frame.durationMs }),
+                detail: !(frame.detail === undefined) ? frame.detail : undefined,
+                durationMs: !(frame.durationMs === undefined) ? frame.durationMs : undefined,
             } satisfies ToolCallPart;
-            let started = false;
+            const started = parts.some((p) => p.type === "tool-call" && p.toolCallId === frame.toolUseId);
             const next = parts.map((p) => {
                 if (p.type !== "tool-call" || p.toolCallId !== frame.toolUseId) return p;
-                started = true;
                 return { ...p, ...finished };
             });
             // The stored transcript keeps a call whose start never arrived, thus a live view keeps it too.
@@ -182,13 +180,13 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
             // The source routes the frame, and it is not a field of the part. A rest type does not distribute over the
             // union of the part frames, thus the cast names the part that remains.
             const { source: _source, ...part } = frame;
-            return upsertPart(parts, part as ChatPart);
+            return upsertPart(parts, part);
         }
     }
 }
 
 function mergeTextDelta(parts: MessagePart[], delta: string): MessagePart[] {
-    const last = parts[parts.length - 1];
+    const last = parts.at(-1);
     if (last && last.type === "text") {
         const merged: TextPart = { type: "text", text: last.text + delta };
         return [...parts.slice(0, -1), merged];
@@ -198,7 +196,7 @@ function mergeTextDelta(parts: MessagePart[], delta: string): MessagePart[] {
 
 function stampUsage(messages: ChatMessage[], assistantId: string, usage: TokenUsageRollup): ChatMessage[] {
     const idx = messages.findIndex((m) => m.id === assistantId);
-    const message = messages[idx];
+    const message = messages.at(idx);
     if (message === undefined) return messages;
     const next = messages.slice();
     next[idx] = { ...message, usage };
@@ -207,7 +205,7 @@ function stampUsage(messages: ChatMessage[], assistantId: string, usage: TokenUs
 
 function updateAssistant(messages: ChatMessage[], assistantId: string, updater: (parts: MessagePart[]) => MessagePart[]): ChatMessage[] {
     const idx = messages.findIndex((m) => m.id === assistantId);
-    const existing = messages[idx];
+    const existing = messages.at(idx);
     if (existing === undefined) return [...messages, { id: assistantId, role: "assistant", parts: updater([]) }];
     const next = messages.slice();
     next[idx] = { ...existing, parts: updater(existing.parts) };

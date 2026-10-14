@@ -11,6 +11,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { guaranteed } from "../../lib/invariants.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 import {
     describeAmassError,
@@ -26,6 +27,7 @@ import { getAmassHeaders } from "../lib/amass-config.js";
 /** The largest `limit` that still costs one search price (5 credits for each 20 records). */
 const MAX_LIMIT = 20;
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const IDENTIFIER_FIELDS = ["amassId", "publicationNumber", "applicationNumber"] as const;
@@ -116,20 +118,20 @@ export function createSearchPatentsTool(deps: { apiKey: string }) {
             if (input.action === "search") {
                 const patents = await searchPatentRecords(
                     {
-                        query: input.query!,
+                        query: guaranteed(input.query, "query"),
                         limit: input.limit,
-                        ...(input.assignee ? { assignee: input.assignee } : {}),
-                        ...(input.inventor ? { inventor: input.inventor } : {}),
-                        ...(input.cpcCodes ? { cpcCodes: input.cpcCodes } : {}),
-                        ...(input.countryCode ? { countryCode: input.countryCode } : {}),
-                        ...(input.minPublicationDate ? { minPublicationDate: input.minPublicationDate } : {}),
-                        ...(input.maxPublicationDate ? { maxPublicationDate: input.maxPublicationDate } : {}),
-                        ...(input.minFilingDate ? { minFilingDate: input.minFilingDate } : {}),
-                        ...(input.maxFilingDate ? { maxFilingDate: input.maxFilingDate } : {}),
-                        ...(input.minPriorityDate ? { minPriorityDate: input.minPriorityDate } : {}),
-                        ...(input.maxPriorityDate ? { maxPriorityDate: input.maxPriorityDate } : {}),
-                        ...(input.minGrantDate ? { minGrantDate: input.minGrantDate } : {}),
-                        ...(input.maxGrantDate ? { maxGrantDate: input.maxGrantDate } : {}),
+                        assignee: input.assignee ? input.assignee : undefined,
+                        inventor: input.inventor ? input.inventor : undefined,
+                        cpcCodes: input.cpcCodes ? input.cpcCodes : undefined,
+                        countryCode: input.countryCode ? input.countryCode : undefined,
+                        minPublicationDate: input.minPublicationDate ? input.minPublicationDate : undefined,
+                        maxPublicationDate: input.maxPublicationDate ? input.maxPublicationDate : undefined,
+                        minFilingDate: input.minFilingDate ? input.minFilingDate : undefined,
+                        maxFilingDate: input.maxFilingDate ? input.maxFilingDate : undefined,
+                        minPriorityDate: input.minPriorityDate ? input.minPriorityDate : undefined,
+                        maxPriorityDate: input.maxPriorityDate ? input.maxPriorityDate : undefined,
+                        minGrantDate: input.minGrantDate ? input.minGrantDate : undefined,
+                        maxGrantDate: input.maxGrantDate ? input.maxGrantDate : undefined,
                     },
                     headers,
                 );
@@ -141,15 +143,15 @@ export function createSearchPatentsTool(deps: { apiKey: string }) {
             if (amassId === undefined) {
                 const ids = await lookupPatentIds(
                     {
-                        ...(input.publicationNumber === undefined ? {} : { publicationNumber: input.publicationNumber }),
-                        ...(input.applicationNumber === undefined ? {} : { applicationNumber: input.applicationNumber }),
+                        publicationNumber: !(input.publicationNumber === undefined) ? input.publicationNumber : undefined,
+                        applicationNumber: !(input.applicationNumber === undefined) ? input.applicationNumber : undefined,
                     },
                     headers,
                 );
                 if (ids.isErr()) return failure(ids.error);
                 if (ids.value.length === 0) return ok({ status: "not_found" as const });
                 if (ids.value.length > 1) return ok({ status: "ambiguous" as const, candidates: ids.value });
-                amassId = ids.value[0]!;
+                amassId = ids.value[0];
             }
 
             const patent = await getPatentRecord(amassId, { claims: input.includeClaims, description: input.includeDescription }, headers);

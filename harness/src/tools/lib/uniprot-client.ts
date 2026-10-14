@@ -12,14 +12,14 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { UNIPROT_BASE, UNIPROT_HEADERS } from "./uniprot-config.js";
 
-export interface UniProtRecord {
+export type UniProtRecord = {
     primaryAccession: string;
     uniProtkbId: string | null;
     geneNames: string[];
     chemblIds: string[];
     reactomePathwayIds: string[];
     proteinFamilyText: string | null;
-}
+};
 
 const RawCommentSchema = z.object({
     commentType: z.string().optional(),
@@ -112,7 +112,7 @@ export async function getReactomePathwaysByUniProt(accession: string): Promise<s
 }
 
 /** One protein of a UniProtKB search. */
-export interface UniProtProtein {
+export type UniProtProtein = {
     accession: string;
     /** The UniProtKB ID, for example `BRCA1_HUMAN`. */
     uniProtkbId: string | null;
@@ -125,7 +125,7 @@ export interface UniProtProtein {
     subcellularLocations: string[];
     /** True for a Swiss-Prot entry, false for a TrEMBL entry. */
     reviewed: boolean;
-}
+};
 
 /**
  * The field list of the search. It is separate from `FIELDS` on purpose:
@@ -258,6 +258,7 @@ function toProtein(raw: UniProtSearchResult): UniProtProtein {
  * that match this form. Thus the match decides only whether the `accession:`
  * clause is SAFE to send, never which space the query names.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const ACCESSION_RE = /^(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})(?:-\d+)?$/i;
 
 /**
@@ -301,20 +302,20 @@ function buildSearchQuery(query: string, organismId: number | undefined, reviewe
     return `((accession:${query} AND active:true) OR (${symbolQuery}))`;
 }
 
-export interface SearchProteinsOptions {
+export type SearchProteinsOptions = {
     /** NCBI taxonomy id; omit to search every organism. */
     organismId?: number;
     /** Swiss-Prot only when true (the default), Swiss-Prot and TrEMBL when false. */
     reviewedOnly?: boolean;
     /** Max rows returned. */
     limit?: number;
-}
+};
 
-export interface SearchProteinsResult {
+export type SearchProteinsResult = {
     proteins: UniProtProtein[];
     /** True when UniProt held at least one row beyond `limit`. */
     hasMore: boolean;
-}
+};
 
 /**
  * Search UniProtKB for a protein by gene symbol or by accession.

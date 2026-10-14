@@ -41,6 +41,7 @@
  */
 
 import { Err, Ok, type Result } from "neverthrow";
+import { isError } from "./thrown.js";
 
 /**
  * The shape every per-subsystem error union shares: a string `type`
@@ -49,10 +50,10 @@ import { Err, Ok, type Result } from "neverthrow";
  * `SandboxError`), and ship a `describe*Error` formatter that turns one into
  * a user-facing line. A step body's error channel is some `DomainError`.
  */
-export interface DomainError {
+export type DomainError = {
     readonly type: string;
     readonly cause?: unknown;
-}
+};
 
 /**
  * A thrown wrapper for a structured error value that is not already an
@@ -69,7 +70,7 @@ export class ResultError extends Error {
 }
 
 function describe(value: unknown): string {
-    if (value instanceof Error) return value.message;
+    if (isError(value)) return value.message;
     if (value && typeof value === "object" && "type" in value) {
         // Prefer a human `message` field when the structured error carries one
         // (e.g. a `ProviderError`) so the wrapped `Error.message` names the
@@ -88,7 +89,7 @@ function describe(value: unknown): string {
  * in `ResultError` with the structured value on `.cause`.
  */
 export function toThrowable(value: unknown): Error {
-    return value instanceof Error ? value : new ResultError(value);
+    return isError(value) ? value : new ResultError(value);
 }
 
 /**
@@ -111,9 +112,9 @@ export function toThrowable(value: unknown): Error {
  * `.andThen`/`.map`/`.mapErr`, or `.match` both branches. Never reach for
  * this to dodge error handling in composable domain logic.
  *
- * The `must-use-result` lint rule recognizes `unwrapOrThrow(...)` as
- * consuming its Result (see the plugin patch in `eslint.config.js`) — do not
- * rewrite call sites into inline `.match`+throw forms to appease lint.
+ * The `must-use-result` rule of the type check command recognizes
+ * `unwrapOrThrow(...)` as consuming its Result — do not rewrite call sites
+ * into inline `.match`+throw forms to appease the rule.
  */
 export function unwrapOrThrow<T, E>(result: Result<T, E>): T {
     if (result.isErr()) throw toThrowable(result.error);

@@ -4,14 +4,14 @@ import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, Citat
 import { encodeDoiPath, firstNonEmpty, parseYear, sourceOutcome } from "./common.js";
 import { requestJson, type SourceHttpOptions } from "../../literature/sources/http.js";
 
-const HandleResponseSchema = z.object({ responseCode: z.number() }).passthrough();
-const RegistrationAgencySchema = z.array(z.object({ DOI: z.string().optional(), RA: z.string().optional() }).passthrough());
+const HandleResponseSchema = z.object({ responseCode: z.number() }).loose();
+const RegistrationAgencySchema = z.array(z.object({ DOI: z.string().optional(), RA: z.string().optional() }).loose());
 const CslMetadataSchema = z
     .object({
         DOI: z.string().optional(),
         id: z.string().optional(),
         title: z.union([z.string(), z.array(z.string())]).optional(),
-        author: z.array(z.object({ given: z.string().optional(), family: z.string().optional(), literal: z.string().optional() }).passthrough()).optional(),
+        author: z.array(z.object({ given: z.string().optional(), family: z.string().optional(), literal: z.string().optional() }).loose()).optional(),
         issued: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
         published: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
         "container-title": z.union([z.string(), z.array(z.string())]).optional(),
@@ -19,7 +19,7 @@ const CslMetadataSchema = z
         page: z.string().optional(),
         URL: z.string().optional(),
     })
-    .passthrough();
+    .loose();
 
 function scalar(value: string | string[] | undefined): string | undefined {
     return Array.isArray(value) ? firstNonEmpty(value) : firstNonEmpty([value]);
@@ -36,14 +36,15 @@ function cslRecord(doi: string, registrationAgency: string | undefined, metadata
         source: "doi_registry",
         sourceRecordId: doi,
         identifiers: { doi },
-        ...(title === undefined ? {} : { title }),
-        ...(authors === undefined || authors.length === 0 ? {} : { authors }),
-        ...(dateParts?.[0] === undefined ? {} : { year: parseYear(dateParts[0])! }),
-        ...(venue === undefined ? {} : { venue }),
-        ...(metadata?.volume === undefined ? {} : { volume: metadata.volume }),
-        ...(metadata?.page === undefined ? {} : { firstPage: metadata.page.split(/[-–]/)[0] }),
-        ...(registrationAgency === undefined ? {} : { registrationAgency }),
-        ...(metadata?.URL === undefined ? {} : { url: metadata.URL }),
+        title: !(title === undefined) ? title : undefined,
+        authors: !(authors === undefined || authors.length === 0) ? authors : undefined,
+        year: !(dateParts?.[0] === undefined) ? parseYear(dateParts[0]) : undefined,
+        venue: !(venue === undefined) ? venue : undefined,
+        volume: !(metadata?.volume === undefined) ? metadata.volume : undefined,
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        firstPage: !(metadata?.page === undefined) ? metadata.page.split(/[-–]/)[0] : undefined,
+        registrationAgency: !(registrationAgency === undefined) ? registrationAgency : undefined,
+        url: !(metadata?.URL === undefined) ? metadata.URL : undefined,
     };
 }
 
@@ -102,7 +103,7 @@ export function createDoiRegistryClient(options: SourceHttpOptions = {}): Citati
                     type: "doi",
                     identifier: doi,
                     exists: true,
-                    ...(registrationAgency === undefined ? {} : { registrationAgency }),
+                    registrationAgency: !(registrationAgency === undefined) ? registrationAgency : undefined,
                     metadataAvailable: metadata !== undefined,
                 },
             };

@@ -34,10 +34,10 @@ import type { ColumnMeaning } from "../contracts/report-reference.js";
 export type NumberKind = "scientific" | "compact" | "compact-scientific" | "identifier" | "below-resolution";
 
 /** One formatted cell. `full` holds the full digits, and it is present only when `text` hides one. */
-export interface FormattedNumber {
+export type FormattedNumber = {
     readonly text: string;
     readonly full?: string;
-}
+};
 
 /** The significant digits of the scientific coefficient, for example the two digits of `4.3e-5`. */
 const SCIENTIFIC_DIGITS = 2;
@@ -78,18 +78,23 @@ const P_VALUE_TOKENS = new Set(["p", "pval", "pvalue", "padj", "fdr", "q", "qval
 const IDENTIFIER_TOKENS = new Set(["id", "pmid", "doi", "entrez", "taxid", "year", "accession"]);
 
 /** The boundary between a lowercase or numeric character and an uppercase character. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
 const CASE_BOUNDARY = /([a-z0-9])([A-Z])/g;
 
 /** The separators of a column name: whitespace, an underscore, a point, and a hyphen. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
 const SEPARATORS = /[\s_.-]+/;
 
 /** A text that holds decimal digits alone. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
 const DIGIT_RUN = /^[0-9]+$/;
 
 /** Each group comma of a compact form. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
 const GROUP_COMMAS = /,/g;
 
 /** The exponent of one written or shown form, for example the `-05` of `4.3e-05`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
 const EXPONENT_PART = /[eE]([+-]?\d+)$/;
 
 /**
@@ -111,6 +116,7 @@ const NAME_DELIMITER = "%";
 const NAME_SEGMENTS = 3;
 
 /** One whitespace character. A segment of an encoded name holds none. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
 const WHITESPACE = /\s/;
 
 /**
@@ -365,6 +371,7 @@ export function holdsADriftedExponent(text: string): boolean {
  * One scientific form inside a text: a coefficient with its sign, and an exponent. The coefficient stands
  * alone, thus a name such as `rs1e5` holds no scientific form.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
 const SCIENTIFIC_IN_TEXT = /(?<![\w.])([−-]?\d+(?:\.\d+)?)e([+-]?\d+)(?![\w.])/g;
 
 /** The superscript form of each decimal digit, in digit order. */
@@ -384,7 +391,7 @@ const SUPERSCRIPT_MINUS = "⁻";
 export function typographicExponent(text: string): string {
     return text.replace(SCIENTIFIC_IN_TEXT, (_form, coefficient: string, exponent: string) => {
         const power = Number(exponent);
-        const digits = [...String(Math.abs(power))].map((digit) => SUPERSCRIPT_DIGITS[Number(digit)]).join("");
+        const digits = Array.from(String(Math.abs(power))).map((digit) => SUPERSCRIPT_DIGITS[Number(digit)]).join("");
         return `${shownMinus(coefficient)} × 10${power < 0 ? SUPERSCRIPT_MINUS : ""}${digits}`;
     });
 }

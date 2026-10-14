@@ -43,6 +43,8 @@ import { ZodError } from "zod";
 import { unwrapOrThrow, type DomainError } from "../lib/result.js";
 import type { FarmLockError } from "./farm.js";
 import type { SandboxRef } from "./types.js";
+import { isError } from "../lib/thrown.js";
+import { maybeRecord } from "../lib/shape.js";
 
 /**
  * A sandbox backend failure. Absence / idempotent "already gone" is NOT
@@ -150,13 +152,15 @@ const _assertDomainError: _AssertDomainError = true;
  * `typeof === "number"` to avoid returning it as a status.
  */
 export function sandboxStatusOf(cause: unknown): number | undefined {
-    const e = cause as {
-        code?: unknown;
-        statusCode?: number;
-        response?: { statusCode?: number };
-    };
-    if (typeof e.code === "number") return e.code;
-    return e.statusCode ?? e.response?.statusCode;
+    const e = maybeRecord(cause);
+    if (e === undefined) return undefined;
+    const code = e.code;
+    if (typeof code === "number") return code;
+    const statusCode = e.statusCode;
+    if (typeof statusCode === "number") return statusCode;
+    const response = maybeRecord(e.response);
+    const responseStatus = response?.statusCode;
+    return typeof responseStatus === "number" ? responseStatus : undefined;
 }
 
 /**
@@ -179,18 +183,18 @@ const CAUSE_LINE_MAX = 200;
 function causeLine(cause: unknown): string | undefined {
     let text: string;
     if (cause instanceof ZodError) {
-        const issue = cause.issues[0];
+        const issue = cause.issues.at(0);
         if (!issue) return undefined;
         const path = issue.path.join(".");
         text = path.length > 0 ? `${path}: ${issue.message}` : issue.message;
-    } else if (cause instanceof Error) {
+    } else if (isError(cause)) {
         text = cause.message;
     } else if (typeof cause === "string") {
         text = cause;
     } else {
         return undefined;
     }
-    const first = text.split("\n", 1)[0]!.trim();
+    const first = text.split("\n", 1)[0].trim();
     if (first.length === 0) return undefined;
     return first.length > CAUSE_LINE_MAX ? `${first.slice(0, CAUSE_LINE_MAX - 1)}…` : first;
 }

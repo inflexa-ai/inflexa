@@ -16,7 +16,7 @@
 
 export type StructureFormat = "pdb" | "mmcif";
 
-export interface StructureSource {
+export type StructureSource = {
     readonly provider: "alphafold";
     /** The UniProt accession the model is keyed by, isoform suffix included (`P38398-2`). */
     readonly accession: string;
@@ -25,11 +25,12 @@ export interface StructureSource {
     readonly format: StructureFormat;
     /** The normalized file URL — what a host fetches and what the transcript attests to. */
     readonly url: string;
-}
+};
 
 const ALPHAFOLD_ORIGIN = "https://alphafold.ebi.ac.uk";
 
 /** `/files/AF-{accession}-F{fragment}-model_v{version}.{pdb|cif}` — the AlphaFold DB file path shape. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const ALPHAFOLD_FILE_PATH = /^\/files\/AF-([A-Z0-9]+(?:-\d+)?)-F\d+-model_v(\d+)\.(pdb|cif)$/;
 
 /**
@@ -57,7 +58,7 @@ export function parseStructureUrl(url: string): StructureSource | null {
 
     return {
         provider: "alphafold",
-        accession: match[1]!,
+        accession: match[1],
         version,
         format: match[3] === "pdb" ? "pdb" : "mmcif",
         url: parsed.href,

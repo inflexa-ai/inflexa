@@ -80,7 +80,7 @@ const REPORT_SESSION_COMPACTION: CompactionRules = { budget: 250_000 };
  * gateway. The resolver factory is optional, because a resolver realization can be
  * absent, and the preview tool and the record tool degrade as data when it is.
  */
-export interface ReportSessionAgentDeps {
+export type ReportSessionAgentDeps = {
     /** Model id -- the provenance and metric label. The provider owns the wire model. */
     readonly model: string;
     /** Postgres pool -- workspace index, run inspection, and data-profile inspection. */
@@ -156,7 +156,7 @@ export interface ReportSessionAgentDeps {
     readonly logger?: Logger;
     /** Adds `read_tool_output`. The loop of a report turn must keep its texts in the same store. */
     readonly toolOutputStore?: ToolOutputStore;
-}
+};
 
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
@@ -165,7 +165,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
     // The seam rides into each tool that lands an act of the session, thus the composition binds it one
     // time and no tool reads a second source.
     const observation = provenance ? { provenance } : {};
-    const authoring = createReportAuthoringTools(gateway, { ...observation, ...(logger ? { logger } : {}) });
+    const authoring = createReportAuthoringTools(gateway, { ...observation, logger: logger ? logger : undefined });
 
     const tools: Tool[] = [
         // The read surface toward the analysis. It roams the tree read-only.
@@ -192,7 +192,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         createListPinnedArtifactsTool({
             gateway,
             resolveWorkspaceRoot,
-            ...(logger ? { logger } : {}),
+            logger: logger ? logger : undefined,
         }),
         // The derivation tool. It reshapes the pinned evidence into one table under the
         // session directory, on the sandbox rails of the value tier.
@@ -200,32 +200,32 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             gateway,
             resolveWorkspaceRoot,
             derivations,
-            ...(runDerivation ? { runDerivation } : {}),
-            ...(runAuthorizer ? { runAuthorizer } : {}),
+            runDerivation: runDerivation ? runDerivation : undefined,
+            runAuthorizer: runAuthorizer ? runAuthorizer : undefined,
             ...observation,
-            ...(logger ? { logger } : {}),
+            logger: logger ? logger : undefined,
         }),
         // The render-and-preview tool. It resolves the page root per call.
         createPreviewReportTool({
             gateway,
             resolveWorkspaceRoot,
             threads,
-            ...(makeResolver ? { makeResolver } : {}),
-            ...(resolvePageAsset ? { resolvePageAsset } : {}),
-            ...(makeSessionPages ? { makeSessionPages } : {}),
+            makeResolver: makeResolver ? makeResolver : undefined,
+            resolvePageAsset: resolvePageAsset ? resolvePageAsset : undefined,
+            makeSessionPages: makeSessionPages ? makeSessionPages : undefined,
             // The preview is the one site that carries the document into the page, thus the read member
             // reaches this tool alone.
             ...observation,
-            ...(logger ? { logger } : {}),
+            logger: logger ? logger : undefined,
         }),
         // The eyes tool. It opens the rendered page in headless Chrome.
         createExaminePageTool({
             gateway,
             resolveWorkspaceRoot,
             chrome,
-            ...(eyes ? { eyes } : {}),
-            ...(resolvePageUrl ? { resolvePageUrl } : {}),
-            ...(logger ? { logger } : {}),
+            eyes: eyes ? eyes : undefined,
+            resolvePageUrl: resolvePageUrl ? resolvePageUrl : undefined,
+            logger: logger ? logger : undefined,
         }),
         // The record tool. It gates the whole document, records one version, then prunes each
         // derived table that the recorded document does not bind.
@@ -234,9 +234,9 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             store,
             threads,
             resolveWorkspaceRoot,
-            ...(makeResolver ? { makeResolver } : {}),
+            makeResolver: makeResolver ? makeResolver : undefined,
             ...observation,
-            ...(logger ? { logger } : {}),
+            logger: logger ? logger : undefined,
         }),
     ];
 

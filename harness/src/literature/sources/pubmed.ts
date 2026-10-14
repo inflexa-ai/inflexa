@@ -1,7 +1,10 @@
 import { XMLParser } from "fast-xml-parser";
 import { z } from "zod";
 
+import { maybeRecord, recordMember } from "../../lib/shape.js";
+
 import { requestJson, requestText, type SourceHttpOptions, type SourceHttpResult } from "./http.js";
+import { splitLines } from "../../lib/text.js";
 
 export const NCBI_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 export const NCBI_IDCONV = "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0";
@@ -13,34 +16,34 @@ const IdConvResponseSchema = z.object({
     records: z.array(z.object({ pmid: z.string().optional(), pmcid: z.string().optional() })).optional(),
 });
 
-export interface PubmedSourceOptions extends SourceHttpOptions {
+export type PubmedSourceOptions = SourceHttpOptions & {
     readonly apiKey?: string;
-}
+};
 
-export interface PubmedSearchOptions {
+export type PubmedSearchOptions = {
     readonly maxResults?: number;
     readonly sort?: "relevance" | "date";
     readonly dateRange?: { readonly from: string; readonly to: string };
-}
+};
 
-export interface PubmedCitationFields {
+export type PubmedCitationFields = {
     readonly venue?: string;
     readonly year?: string | number;
     readonly volume?: string;
     readonly firstPage?: string;
     readonly firstAuthor?: string;
     readonly key: string;
-}
+};
 
-export interface PubMedSummary {
+export type PubMedSummary = {
     pmid: string;
     title: string;
     journal: string;
     year: string;
     authors: string;
-}
+};
 
-export interface ArticleDetail {
+export type ArticleDetail = {
     pmid: string;
     title: string;
     abstract: string;
@@ -50,26 +53,26 @@ export interface ArticleDetail {
     doi: string;
     meshTerms: string[];
     pmcId: string | null;
-}
+};
 
-export interface ArticleSection {
+export type ArticleSection = {
     heading: string;
     text: string;
-}
+};
 
-export interface FullTextResult {
+export type FullTextResult = {
     fullText: string;
     sections: ArticleSection[];
-}
+};
 
-export interface PubmedSource {
+export type PubmedSource = {
     search(query: string, options?: PubmedSearchOptions, signal?: AbortSignal): Promise<SourceHttpResult<{ totalFound: number; results: PubMedSummary[] }>>;
     searchIds(query: string, maxResults: number, signal?: AbortSignal): Promise<SourceHttpResult<string[]>>;
     matchCitation(fields: PubmedCitationFields, signal?: AbortSignal): Promise<SourceHttpResult<string[]>>;
     fetchArticles(pmids: readonly string[], signal?: AbortSignal): Promise<SourceHttpResult<ArticleDetail[]>>;
     articleDetails(pmids: readonly string[], signal?: AbortSignal): Promise<SourceHttpResult<{ articles: ArticleDetail[]; notFound: string[] }>>;
     fetchFullText(pmcId: string, signal?: AbortSignal): Promise<SourceHttpResult<FullTextResult | null>>;
-}
+};
 
 export function ncbiUrl(apiKey: string | undefined, base: string, params: Record<string, string | number | undefined>): string {
     const url = new URL(base);
@@ -90,16 +93,16 @@ const xmlParser = new XMLParser({
     parseTagValue: false,
 });
 
-interface DocSumItem {
+type DocSumItem = {
     "@_Name"?: string;
     "#text"?: string;
     Item?: DocSumItem | DocSumItem[];
-}
+};
 
-interface DocSum {
+type DocSum = {
     Id?: string;
     Item?: DocSumItem | DocSumItem[];
-}
+};
 
 function getItemValue(items: DocSumItem | DocSumItem[] | undefined, name: string): string {
     if (items === undefined) return "";
@@ -133,17 +136,6 @@ export function parseEsummary(xml: string): PubMedSummary[] {
     });
 }
 
-interface MedlineAuthor {
-    LastName?: string;
-    ForeName?: string;
-    Initials?: string;
-    CollectiveName?: string;
-}
-
-interface MeshHeadingItem {
-    DescriptorName?: { "#text"?: string } | string;
-}
-
 export function parseEfetch(xml: string): ArticleDetail[] {
     const articleSet = xmlParser.parse(xml)?.PubmedArticleSet;
     if (articleSet === undefined) return [];
@@ -154,42 +146,46 @@ export function parseEfetch(xml: string): ArticleDetail[] {
           : [articleSet.PubmedArticle];
 
     return entries.map((entry) => {
-        const article = entry as Record<string, unknown>;
-        const citation = article.MedlineCitation as Record<string, unknown> | undefined;
-        const articleData = citation?.Article as Record<string, unknown> | undefined;
+        const article = maybeRecord(entry);
+        const citation = recordMember(article, "MedlineCitation");
+        const articleData = recordMember(citation, "Article");
         const pmidValue = citation?.PMID;
-        const pmid =
-            typeof pmidValue === "object" && pmidValue !== null ? String((pmidValue as Record<string, unknown>)["#text"] ?? "") : String(pmidValue ?? "");
-        const abstractValue = (articleData?.Abstract as Record<string, unknown> | undefined)?.AbstractText;
+        const pmidRecord = maybeRecord(pmidValue);
+        const pmid = pmidRecord !== undefined ? String(pmidRecord["#text"] ?? "") : String(pmidValue ?? "");
+        const abstractValue = recordMember(articleData, "Abstract")?.AbstractText;
         const abstract = (abstractValue === undefined ? [] : Array.isArray(abstractValue) ? abstractValue : [abstractValue])
             .map((value) => {
                 if (typeof value === "string") return value;
-                if (typeof value !== "object" || value === null) return String(value);
-                const object = value as Record<string, unknown>;
+                const object = maybeRecord(value);
+                if (object === undefined) return String(value);
                 const text = String(object["#text"] ?? "");
                 return object["@_Label"] === undefined ? text : `${String(object["@_Label"])}: ${text}`;
             })
             .join("\n\n");
-        const authorValue = (articleData?.AuthorList as Record<string, unknown> | undefined)?.Author;
-        const authors = (authorValue === undefined ? [] : Array.isArray(authorValue) ? authorValue : [authorValue as MedlineAuthor]).map(
-            (author: MedlineAuthor) => author.CollectiveName ?? [author.ForeName ?? author.Initials, author.LastName].filter(Boolean).join(" "),
-        );
-        const journalData = articleData?.Journal as Record<string, unknown> | undefined;
-        const publicationDate = (journalData?.JournalIssue as Record<string, unknown> | undefined)?.PubDate as Record<string, unknown> | undefined;
+        const authorValue = recordMember(articleData, "AuthorList")?.Author;
+        const authorName = (author: unknown): string => {
+            const object = maybeRecord(author);
+            if (object === undefined) return "";
+            if (object.CollectiveName !== undefined) return String(object.CollectiveName);
+            return [object.ForeName ?? object.Initials, object.LastName].filter(Boolean).map(String).join(" ");
+        };
+        const authors = (authorValue === undefined ? [] : Array.isArray(authorValue) ? authorValue : [authorValue]).map(authorName);
+        const journalData = recordMember(articleData, "Journal");
+        const publicationDate = recordMember(recordMember(journalData, "JournalIssue"), "PubDate");
         let doi = "";
-        const articleIds = ((article.PubmedData as Record<string, unknown> | undefined)?.ArticleIdList as Record<string, unknown> | undefined)?.ArticleId;
+        const articleIds = recordMember(recordMember(article, "PubmedData"), "ArticleIdList")?.ArticleId;
         for (const id of articleIds === undefined ? [] : Array.isArray(articleIds) ? articleIds : [articleIds]) {
-            if (typeof id === "object" && id !== null && (id as Record<string, unknown>)["@_IdType"] === "doi") {
-                doi = String((id as Record<string, unknown>)["#text"] ?? "");
+            const idRecord = maybeRecord(id);
+            if (idRecord !== undefined && idRecord["@_IdType"] === "doi") {
+                doi = String(idRecord["#text"] ?? "");
             }
         }
-        const meshValue = (citation?.MeshHeadingList as Record<string, unknown> | undefined)?.MeshHeading;
-        const meshTerms = (meshValue === undefined ? [] : Array.isArray(meshValue) ? meshValue : [meshValue as MeshHeadingItem])
-            .map((heading: MeshHeadingItem) => {
-                const descriptor = heading.DescriptorName;
-                return typeof descriptor === "string" ? descriptor : (descriptor?.["#text"] ?? "");
-            })
-            .filter(Boolean);
+        const meshValue = recordMember(citation, "MeshHeadingList")?.MeshHeading;
+        const meshTerm = (heading: unknown): string => {
+            const descriptor = maybeRecord(heading)?.DescriptorName;
+            return typeof descriptor === "string" ? descriptor : String(maybeRecord(descriptor)?.["#text"] ?? "");
+        };
+        const meshTerms = (meshValue === undefined ? [] : Array.isArray(meshValue) ? meshValue : [meshValue]).map(meshTerm).filter(Boolean);
         return {
             pmid,
             title: String(articleData?.ArticleTitle ?? ""),
@@ -206,15 +202,17 @@ export function parseEfetch(xml: string): ArticleDetail[] {
 
 export function parseIdConvResponse(data: unknown): Map<string, string> {
     const result = new Map<string, string>();
-    const records = (data as { records?: Array<{ pmid?: string; pmcid?: string }> } | undefined)?.records ?? [];
+    const IdConvRecord = z.object({ records: z.array(z.object({ pmid: z.string().optional(), pmcid: z.string().optional() })).optional() });
+    const records = IdConvRecord.parse(data ?? {}).records ?? [];
     for (const record of records) if (record.pmid !== undefined && record.pmcid !== undefined) result.set(record.pmid, record.pmcid);
     return result;
 }
 
 function flattenTextContent(node: unknown): string {
     if (typeof node === "string" || typeof node === "number") return String(node);
-    if (node === null || typeof node !== "object") return "";
-    return Object.entries(node as Record<string, unknown>)
+    const object = maybeRecord(node);
+    if (object === undefined) return "";
+    return Object.entries(object)
         .flatMap(([key, value]) => {
             if (key.startsWith("@_") || key === "fig" || key === "table-wrap" || key === "supplementary-material") return [];
             if (key === "#text") return [String(value)];
@@ -234,8 +232,8 @@ function extractParagraphs(container: Record<string, unknown>): string {
 }
 
 function extractSection(section: unknown, output: ArticleSection[]): void {
-    if (section === null || typeof section !== "object") return;
-    const object = section as Record<string, unknown>;
+    const object = maybeRecord(section);
+    if (object === undefined) return;
     const text = extractParagraphs(object);
     if (text) output.push({ heading: typeof object.title === "string" ? object.title : "", text });
     const nested = object.sec;
@@ -296,6 +294,7 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
             signal,
         );
         if (result.status !== "ok") return result;
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubMed grammar: its markup has no builtin parser.
         if (!/<PubmedArticleSet\b/.test(result.value)) return { status: "unavailable", detail: "response schema mismatch: missing PubmedArticleSet" };
         return { status: "ok", value: parseEfetch(result.value) };
     }
@@ -323,11 +322,9 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
             );
             const result = await requestText(url(`${NCBI_BASE}/ecitmatch.cgi`, { db: "pubmed", rettype: "xml", bdata }), options, signal);
             if (result.status !== "ok") return result;
-            const pmids = result.value
-                .trim()
-                .split(/\r?\n/)
-                .flatMap((line) => {
+            const pmids = splitLines(result.value.trim()).flatMap((line) => {
                     const value = line.split("|").at(-1)?.trim();
+                    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubMed grammar: its markup has no builtin parser.
                     return value !== undefined && /^\d+$/.test(value) ? [value] : [];
                 });
             return { status: "ok", value: pmids };
@@ -348,6 +345,7 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
         },
         async fetchFullText(pmcId, signal) {
             const result = await requestText(
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubMed grammar: its markup has no builtin parser.
                 url(`${NCBI_BASE}/efetch.fcgi`, { db: "pmc", id: pmcId.replace(/^PMC/i, ""), rettype: "xml", retmode: "xml" }),
                 options,
                 signal,

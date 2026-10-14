@@ -53,14 +53,14 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic
 /** The SDK's own default when neither the host nor the environment says otherwise. */
 export const DEFAULT_METRIC_EXPORT_INTERVAL_MS = 60_000;
 
-export interface InitOtelOptions {
+export type InitOtelOptions = {
     /** Diagnostics sink; omitted falls back to no-op. */
     readonly logger?: Logger;
     /** `service.name` when `OTEL_SERVICE_NAME` is unset. Default `cortex`. */
     readonly serviceName?: string;
     /** `service.version` — the host's package version. Omitted leaves the attribute unset. */
     readonly serviceVersion?: string;
-}
+};
 
 let initialized = false;
 let registeredTracerProvider: HarnessTracerProvider | undefined;
@@ -126,6 +126,7 @@ export function initOtel(options: InitOtelOptions = {}): void {
         const spanProcessors: SpanProcessor[] = [];
 
         if (endpoint) {
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             const base = endpoint.replace(/\/+$/, "");
             spanProcessors.push(new DbosSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter({ url: `${base}/v1/traces` }))));
         }
@@ -161,6 +162,7 @@ export function initOtel(options: InitOtelOptions = {}): void {
     // With no MeterProvider registered the API's global no-op provider serves
     // every instrument, so the record sites stay valid when export is off.
     if (endpoint && !metricsExportDisabled()) {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         const base = endpoint.replace(/\/+$/, "");
         const metricExporter = new OTLPMetricExporter({
             url: `${base}/v1/metrics`,

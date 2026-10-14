@@ -9,8 +9,9 @@ import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js
 import type { EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, type CompactionMarker } from "./ai-sdk-message-storage.js";
 import { conversationDisplayPart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
+import { jsonClone } from "../lib/json.js";
 
-export interface ConversationDisplayRecorder {
+export type ConversationDisplayRecorder = {
     readonly emit: EmitFn;
     /** The user message of the turn. */
     takeOpening(): ConversationUIMessage[];
@@ -18,9 +19,9 @@ export interface ConversationDisplayRecorder {
     takeRound(messages: readonly ModelMessage[]): ConversationUIMessage[];
     /** The whole turn in one projection. `runChatTurn` stores each round with `takeOpening` and `takeRound` instead. */
     finish(options?: { readonly fallbackText?: string; readonly interrupted?: boolean }): ConversationUIMessage[];
-}
+};
 
-export interface ConversationDisplayRecorderOptions {
+export type ConversationDisplayRecorderOptions = {
     readonly userText: string;
     /** The root agent of the turn. Its call path is `[agentId]`, and an event with a longer path is from a sub-agent. */
     readonly agentId: string;
@@ -29,12 +30,12 @@ export interface ConversationDisplayRecorderOptions {
     readonly assistantMessageId?: string;
     /** The clock for the times of the sub-agent activity, in milliseconds. The default is the wall clock. */
     readonly now?: () => number;
-}
+};
 
 type DisplayPart = UIMessagePart<ConversationUIData, Record<string, never>>;
 
 function jsonCopy<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value)) as T;
+    return jsonClone(value);
 }
 
 function durableConversationType(type: string): type is ChatPartType {
@@ -85,7 +86,7 @@ function compactionDivider(marker: CompactionMarker): ConversationUIMessage {
         status: marker.kind === "summary" ? "done" : "failed",
         tokensBefore: marker.tokensBefore,
         durationMs: marker.durationMs,
-        ...(marker.trigger === undefined ? {} : { trigger: marker.trigger }),
+        trigger: !(marker.trigger === undefined) ? marker.trigger : undefined,
     });
     return { id: marker.id, role: "system", parts: [part] };
 }
@@ -172,7 +173,7 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
             messages.push({
                 id: assistantMessageId,
                 role: "assistant",
-                ...(finishOptions?.interrupted ? { metadata: { interrupted: true } } : {}),
+                metadata: finishOptions?.interrupted ? { interrupted: true } : undefined,
                 parts: jsonCopy(parts),
             });
         }

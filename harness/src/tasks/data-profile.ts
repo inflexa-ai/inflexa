@@ -88,6 +88,7 @@ import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.j
 // The run literal is declared in `contracts/` — a consumer reads it back off recorded usage, and this
 // module is unimportable to one that only wants the string (see the constant's own doc).
 import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
+import { errorMessage } from "../lib/thrown.js";
 
 const DATA_PROFILE_STEP_LITERAL = "profile" as const;
 const DATA_PROFILE_AGENT_ID = "data-profiler" as const;
@@ -127,7 +128,7 @@ export interface DataProfileSettlement {
 export type NotifyDataProfileSettled = (settlement: DataProfileSettlement) => ResultAsync<void, NoticeFailure>;
 
 /** The body's construction-time deps — closed over at registration. */
-export interface DataProfileDeps extends EnvironmentStorePaths {
+export type DataProfileDeps = EnvironmentStorePaths & {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly provider: ChatProvider;
@@ -166,14 +167,14 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
      * body calls nothing. It is not a provenance hook.
      */
     readonly notifyDataProfileSettled?: NotifyDataProfileSettled;
-}
+};
 
 /**
  * Workflow input. JSON-serialisable — DBOS persists it as the workflow's
  * input row. The `RunSession` carries the run authorization; the body reads it
  * and never mints.
  */
-export interface DataProfileWorkflowInput {
+export type DataProfileWorkflowInput = {
     readonly analysisId: string;
     readonly runSession: RunSession;
     /**
@@ -195,7 +196,7 @@ export interface DataProfileWorkflowInput {
      * absent → true, matching the prior Cortex-owned behavior.
      */
     readonly ownsMandate?: boolean; // oss-core-managed-ok
-}
+};
 
 /** Build the canonical artifact path for a staged input file. */
 function inputArtifactPath(f: StagedInput): string {
@@ -274,7 +275,8 @@ async function readSetHeaders(args: {
             sandbox,
             mountRoot: `/${analysisId}`,
             deadlineMs,
-            emit: async () => {},
+            emit:  () => {    return Promise.resolve();
+},
         });
     } catch (err) {
         if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
@@ -438,11 +440,11 @@ export function profilerSandboxAgentDeps(deps: DataProfileDeps, step: SandboxAge
         embedding: deps.embedding,
         model: deps.model,
         skillsDir: deps.skillsDir,
-        ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
-        ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
-        ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
-        ...(deps.extendAnalysisFarm ? { extendAnalysisFarm: deps.extendAnalysisFarm } : {}),
-        ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
+        farmLockFile: deps.farmLockFile ? deps.farmLockFile : undefined,
+        imagePackagesFile: deps.imagePackagesFile ? deps.imagePackagesFile : undefined,
+        refStorePath: deps.refStorePath ? deps.refStorePath : undefined,
+        extendAnalysisFarm: deps.extendAnalysisFarm ? deps.extendAnalysisFarm : undefined,
+        toolOutputStore: deps.toolOutputStore ? deps.toolOutputStore : undefined,
         bioKeys: deps.bioKeys,
         step,
     };
@@ -657,7 +659,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
             ),
         );
-        if (spawned.isErr()) return await suspendProfile(suspensionOfSpawnRefusal(spawned.error));
+        if (spawned.isErr()) {
+            await suspendProfile(suspensionOfSpawnRefusal(spawned.error));
+            return;
+        }
         const sandbox = spawned.value;
 
         try {
@@ -735,7 +740,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     "the errors; the repair is a FULL resubmit of the whole operation list.",
                 inputSchema: ProfileSubmissionSchema,
                 describeCall: "none",
-                execute: async (input): Promise<Result<SubmitOutcome, ToolError>> => {
+                execute:  (input): Promise<Result<SubmitOutcome, ToolError>> => {
                     rounds++;
                     // The last round resolves as final: nothing that follows can repair an
                     // overlap, so a contested file sweeps rather than being awarded to whichever
@@ -743,16 +748,16 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     const finalRound = rounds >= MAX_SUBMIT_ROUNDS;
                     const resolution = resolveProfileSubmission(input, detected, briefingMenu, { finalRound });
                     if (!finalRound && (resolution.errors.length > 0 || resolution.unclaimed.length > 0)) {
-                        return ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) });
+                        return Promise.resolve(ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) }));
                     }
                     accepted = { submission: input, resolution };
-                    return ok({
+                    return Promise.resolve(ok({
                         status: "accepted",
                         groups: resolution.groups.length,
                         keptFiles: resolution.partition.keptFiles,
                         unclassifiedFiles: resolution.partition.unclassifiedFiles,
                         unresolvedOperations: resolution.errors.length,
-                    });
+                    }));
                 },
             });
 
@@ -803,10 +808,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 },
             );
 
-            if (!accepted) {
+            // The value lands in the tool callback of another turn; the closure reads it at call time.
+            const readAccepted = (): { submission: ProfileSubmission; resolution: ProfileResolution } | null => accepted;
+            const outcome = readAccepted();
+            if (outcome === null) {
                 throw new Error("Data profiling failed: agent did not call submit_profile");
             }
-            const { submission, resolution } = accepted as { submission: ProfileSubmission; resolution: ProfileResolution };
+            const { submission, resolution } = outcome;
 
             // 5. Index into vector store — one entry per group, one per dimension, one per annotated member.
             //
@@ -850,9 +858,14 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
         }
     } catch (err) {
-        if (selfCancelled || err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+        // The flag flips in the suspension path of another task; the closure reads it at call time.
+        const wasSelfCancelled = (): boolean => selfCancelled;
+        if (wasSelfCancelled() || err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
         const suspension = suspensionOfFailure(err);
-        if (suspension !== undefined) return await suspendProfile(suspension);
+        if (suspension !== undefined) {
+            await suspendProfile(suspension);
+            return;
+        }
         logger.error("profile failed", logger.errorFields(err));
         const reason = profileFailureReason(err);
         await settleTerminalWrite(
@@ -942,13 +955,13 @@ export function describeDataProfileStartError(e: DataProfileStartError): string 
  * construction-time deps are closed over at registration
  * (`registerDataProfileWorkflow`); the route never holds them.
  */
-export interface DataProfileTriggerDeps {
+export type DataProfileTriggerDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly pool: Pool;
     readonly runAuthorizer: RunAuthorizer;
     readonly workflow: (input: DataProfileWorkflowInput) => Promise<void>;
-}
+};
 
 /**
  * Identity + staged inputs for a profile run. The caller (the managed route /
@@ -956,11 +969,11 @@ export interface DataProfileTriggerDeps {
  * resulting manifest here; this trigger never stages — it forwards the manifest
  * into the workflow input.
  */
-export interface DataProfileTriggerParams {
+export type DataProfileTriggerParams = {
     readonly auth: AuthContext;
     readonly analysisId: string;
     readonly stagedInputs: readonly StagedInput[];
-}
+};
 
 /**
  * Resolve the `RunSession` the workflow runs under. Whether the authorization
@@ -1199,7 +1212,8 @@ export function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfile
  */
 const PROFILE_ERROR_MAX_LEN = 200;
 function profileFailureReason(err: unknown): string {
-    const raw = err instanceof Error ? err.message : String(err);
-    const firstLine = raw.split("\n", 1)[0]!.replace(/\s+/g, " ").trim();
+    const raw = errorMessage(err);
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    const firstLine = raw.split("\n", 1)[0].replace(/\s+/g, " ").trim();
     return firstLine.length > PROFILE_ERROR_MAX_LEN ? firstLine.slice(0, PROFILE_ERROR_MAX_LEN - 1) + "…" : firstLine || "Data profiling failed";
 }

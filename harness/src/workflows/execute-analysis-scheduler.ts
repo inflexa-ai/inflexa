@@ -24,20 +24,20 @@ import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
  * The minimum shape the scheduler needs from a plan step. Larger workflow-state
  * schemas are a superset of this, keeping the scheduler decoupled.
  */
-export interface PlanStep {
+export type PlanStep = {
     readonly id: string;
     readonly depends_on: readonly string[];
-}
+};
 
 /** Budget-admission inputs — the snapshotted machine budget from the workflow
  *  input plus each step's plan-declared resources. */
-export interface BudgetAdmission {
+export type BudgetAdmission = {
     readonly budget: MachineBudget;
     readonly resourcesByStepId: Readonly<Record<string, ResourceSpec>>;
-}
+};
 
 /** Partition of the dependency-satisfied steps under budget admission. */
-export interface ScheduledSteps {
+export type ScheduledSteps = {
     /** Steps to start now — they fit the remaining budget capacity. */
     readonly admit: readonly string[];
     /** Dependency-satisfied steps held until in-flight steps free capacity. */
@@ -45,7 +45,7 @@ export interface ScheduledSteps {
     /** Steps whose declared resources exceed the budget outright — they could
      *  never be admitted even against an empty budget. */
     readonly neverFits: readonly string[];
-}
+};
 
 // ── Errors ───────────────────────────────────────────────────────────
 
@@ -107,20 +107,25 @@ export function validatePlanDag<S extends PlanStep>(steps: readonly S[]): Map<st
  * Iterative DFS cycle detection — Kahn-style would also work, but DFS lets
  * us surface the participating step ids directly when a cycle is found.
  */
-function detectCycle<S extends PlanStep>(steps: readonly S[]): void {
+function detectCycle(steps: readonly PlanStep[]): void {
     const VISITING = 1;
     const DONE = 2;
     const state = new Map<string, number>();
     const stepById = new Map(steps.map((s) => [s.id, s] as const));
+    const dependsOn = (id: string): readonly string[] => {
+        const step = stepById.get(id);
+        if (step === undefined) throw new Error(`scheduler cycle check read unknown step ${id}`);
+        return step.depends_on;
+    };
 
     for (const start of steps) {
         if (state.get(start.id) === DONE) continue;
         // Iterative DFS — preserves the in-progress chain so we can report it.
-        const stack: Array<{ id: string; iter: Iterator<string> }> = [{ id: start.id, iter: stepById.get(start.id)!.depends_on[Symbol.iterator]() }];
+        const stack: Array<{ id: string; iter: Iterator<string> }> = [{ id: start.id, iter: dependsOn(start.id)[Symbol.iterator]() }];
         state.set(start.id, VISITING);
 
         while (stack.length > 0) {
-            const frame = stack[stack.length - 1]!;
+            const frame = stack[stack.length - 1];
             const next = frame.iter.next();
             if (next.done) {
                 state.set(frame.id, DONE);
@@ -138,7 +143,7 @@ function detectCycle<S extends PlanStep>(steps: readonly S[]): void {
             state.set(childId, VISITING);
             stack.push({
                 id: childId,
-                iter: stepById.get(childId)!.depends_on[Symbol.iterator](),
+                iter: dependsOn(childId)[Symbol.iterator](),
             });
         }
     }
@@ -163,9 +168,9 @@ function detectCycle<S extends PlanStep>(steps: readonly S[]): void {
  * not fit never blocks a later, smaller one. Determinism holds because every
  * input derives from the workflow input and checkpointed completion state.
  */
-export function scheduleReady<S extends PlanStep>(steps: readonly S[], completedSet: ReadonlySet<string>, startedSet?: ReadonlySet<string>): string[];
-export function scheduleReady<S extends PlanStep>(
-    steps: readonly S[],
+export function scheduleReady(steps: readonly PlanStep[], completedSet: ReadonlySet<string>, startedSet?: ReadonlySet<string>): string[];
+export function scheduleReady(
+    steps: readonly PlanStep[],
     completedSet: ReadonlySet<string>,
     startedSet: ReadonlySet<string>,
     admission: BudgetAdmission,
@@ -227,7 +232,7 @@ export function scheduleReady<S extends PlanStep>(
  * Pre-condition: `validatePlanDag` has been called (no cycles, no missing
  * deps). Behaviour is undefined on an invalid DAG.
  */
-export function computeTopologicalLevels<S extends PlanStep>(steps: readonly S[]): Map<string, number> {
+export function computeTopologicalLevels(steps: readonly PlanStep[]): Map<string, number> {
     const stepById = new Map(steps.map((s) => [s.id, s] as const));
     const levels = new Map<string, number>();
 

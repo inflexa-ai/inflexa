@@ -22,14 +22,14 @@ export const SUBMIT_FILE_METADATA_TOOL_ID = "submit_file_metadata";
  * The per-step cell of the file-metadata continuation. The step body makes it
  * beside the blocker cell, and the agent factory binds the output tool to it.
  */
-export interface FileMetadataCell {
+export type FileMetadataCell = {
     /** The paths that the continuation describes, or `null` before the first `expect`. */
     readonly knownPaths: ReadonlySet<string> | null;
     /** The accepted description of each described path, keyed by the path. The tool writes only a known path. */
     readonly descriptions: Map<string, SubmittedFileDescription>;
     /** Arm the cell for one continuation: set the known paths, and drop each accepted description. */
     expect(paths: readonly string[]): void;
-}
+};
 
 export function createFileMetadataCell(): FileMetadataCell {
     let knownPaths: ReadonlySet<string> | null = null;
@@ -47,12 +47,12 @@ export function createFileMetadataCell(): FileMetadataCell {
 }
 
 /** What one call of the tool tells the model about the coverage of the files. */
-interface SubmitFileMetadataOutcome {
+type SubmitFileMetadataOutcome = {
     /** True when the call named no unknown path and each known path has a description. */
     readonly accepted: boolean;
     readonly unknownPaths: readonly string[];
     readonly remaining: readonly string[];
-}
+};
 
 /** Build the `submit_file_metadata` tool bound to the cell of one step. */
 export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
@@ -67,13 +67,13 @@ export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
             "the unknownPaths and describe the remaining files.",
         inputSchema: SubmitFileMetadataInputSchema,
         describeCall: "none",
-        execute: async (input): Promise<Result<SubmitFileMetadataOutcome, ToolError>> => {
+        execute:  (input): Promise<Result<SubmitFileMetadataOutcome, ToolError>> => {
             const knownPaths = cell.knownPaths;
             if (knownPaths === null) {
-                return err({
+                return Promise.resolve(err({
                     error: "No list of files is known yet. The harness asks for the file metadata after the task, with the list of the files.",
                     retryable: false,
-                });
+                }));
             }
             const unknownPaths: string[] = [];
             for (const entry of input.files) {
@@ -84,11 +84,11 @@ export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
                 cell.descriptions.set(entry.path, entry);
             }
             const remaining = [...knownPaths].filter((path) => !cell.descriptions.has(path));
-            return ok({
+            return Promise.resolve(ok({
                 accepted: unknownPaths.length === 0 && remaining.length === 0,
                 unknownPaths,
                 remaining,
-            });
+            }));
         },
     });
 }

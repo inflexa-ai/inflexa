@@ -1,4 +1,8 @@
-export interface RateLimitConfig {
+import { abortReason } from "./thrown.js";
+import { sleepWithSignal } from "./async-utils.js";
+
+export { sleepWithSignal } from "./async-utils.js";
+export type RateLimitConfig = {
     readonly maxConcurrency: number;
     readonly requestsPerSecond: number;
     /**
@@ -8,32 +12,12 @@ export interface RateLimitConfig {
      */
     readonly maxRetries: number;
     readonly maxRetryDelayMs: number;
-}
+};
 
-export interface RateLimitRuntime {
+export type RateLimitRuntime = {
     readonly now?: () => number;
     readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
-}
-
-function abortReason(signal: AbortSignal): Error {
-    return signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
-}
-
-export function sleepWithSignal(milliseconds: number, signal?: AbortSignal): Promise<void> {
-    if (milliseconds <= 0) return Promise.resolve();
-    if (signal?.aborted) return Promise.reject(abortReason(signal));
-    return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-            signal?.removeEventListener("abort", onAbort);
-            resolve();
-        }, milliseconds);
-        const onAbort = (): void => {
-            clearTimeout(timeout);
-            reject(abortReason(signal!));
-        };
-        signal?.addEventListener("abort", onAbort, { once: true });
-    });
-}
+};
 
 class Semaphore {
     private active = 0;
@@ -58,7 +42,7 @@ class Semaphore {
                 reject: (error: Error) => void;
                 signal?: AbortSignal;
                 onAbort?: () => void;
-            } = { resolve, reject, ...(signal === undefined ? {} : { signal }) };
+            } = { resolve, reject, signal: !(signal === undefined) ? signal : undefined };
             if (signal !== undefined) {
                 waiter.onAbort = () => {
                     const index = this.waiters.indexOf(waiter);

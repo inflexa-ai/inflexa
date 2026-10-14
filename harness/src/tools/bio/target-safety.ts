@@ -22,6 +22,7 @@ import panelData from "../../data/safety-panel.json" with { type: "json" };
 import { defineTool } from "../define-tool.js";
 import { resolveSymbolToEnsemblId } from "../lib/ensembl-client.js";
 import { getTargetSafetyLiabilities, type SafetyLiability } from "../lib/opentargets-client.js";
+import { errorMessage } from "../../lib/thrown.js";
 
 const PANEL = SafetyPanelFileSchema.parse(panelData);
 
@@ -29,6 +30,7 @@ const BY_CHEMBL: Map<string, SafetyTarget> = new Map(PANEL.targets.map((t) => [t
 const BY_GENE: Map<string, SafetyTarget> = new Map(PANEL.targets.map((t) => [t.gene_symbol, t]));
 const BY_UNIPROT: Map<string, SafetyTarget> = new Map(PANEL.targets.map((t) => [t.uniprot, t]));
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const ENSG_RE = /^ENSG\d{11}$/;
 
 /** Ordered weakest → strongest so `minSeverity` can be a numeric floor. */
@@ -64,7 +66,7 @@ function panelLookup(id: string, type: ConcreteType): SafetyTarget | null {
     }
 }
 
-interface TargetRow {
+type TargetRow = {
     input: string;
     identifierType: ConcreteType;
     /** The Ensembl id Open Targets was queried with, when one could be obtained. */
@@ -75,15 +77,15 @@ interface TargetRow {
     liabilityCount?: number;
     /** Why the Open Targets half is absent for this identifier, when it is. */
     opentargetsNote?: string;
-}
+};
 
-interface SourceOutcome {
+type SourceOutcome = {
     source: Source;
     status: "ok" | "no_data" | "unavailable";
     /** Identifiers this source returned something for. */
     matched: number;
     detail?: string;
-}
+};
 
 const inputSchema = z
     .object({
@@ -122,7 +124,7 @@ const inputSchema = z
             .optional()
             .describe(`'opentargets' only. Max liabilities per target (default ${DEFAULT_LIABILITY_LIMIT}, max 100); \`liabilityCount\` gives the true total.`),
     })
-    .refine((d) => (d.sources ?? [...SOURCES]).includes("opentargets") === false || d.identifiers.length <= MAX_OPENTARGETS_IDENTIFIERS, {
+    .refine((d) => !(d.sources ?? Array.from(SOURCES)).includes("opentargets") || d.identifiers.length <= MAX_OPENTARGETS_IDENTIFIERS, {
         message:
             `identifiers is capped at ${MAX_OPENTARGETS_IDENTIFIERS} when source 'opentargets' is included (one request per target). ` +
             `Either narrow the list, or pass sources: ['panel'] to sweep up to ${MAX_PANEL_IDENTIFIERS} against the local panel first and follow up on the hits.`,
@@ -197,7 +199,7 @@ export const targetSafetyTool = defineTool({
                         row.liabilityCount = result.safetyLiabilities.length;
                         row.liabilities = result.safetyLiabilities.slice(0, limit);
                     } catch (error) {
-                        opentargetsError = error instanceof Error ? error.message : String(error);
+                        opentargetsError = errorMessage(error);
                         row.opentargetsNote = "Open Targets could not be reached";
                     }
                 }),
@@ -224,7 +226,7 @@ export const targetSafetyTool = defineTool({
                 source: "opentargets",
                 status: opentargetsError ? "unavailable" : withLiabilities > 0 ? "ok" : "no_data",
                 matched: withLiabilities,
-                ...(opentargetsError ? { detail: opentargetsError } : {}),
+                detail: opentargetsError ? opentargetsError : undefined,
             });
         }
 
@@ -234,7 +236,7 @@ export const targetSafetyTool = defineTool({
                 totalInput: identifiers.length,
                 panelMatched,
                 bySeverity,
-                byOrgan: byOrgan as Record<string, number>,
+                byOrgan: byOrgan,
                 openTargetsWithLiabilities: withLiabilities,
             },
             targets: rows,

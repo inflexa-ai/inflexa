@@ -16,6 +16,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaCenter, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
 import { fetchIchListing, fetchAndExtractIchDoc, type IchStub } from "../lib/regulatory-corpus/fetch-ich.js";
 import { chunkText, upsertChunks, type ChunkRow } from "../lib/regulatory-corpus.js";
+import { errorMessage } from "../lib/thrown.js";
 
 export type RegulatoryCorpusSource = "FDA-CDER" | "FDA-CBER" | "ICH";
 export const REGULATORY_CORPUS_SOURCES: RegulatoryCorpusSource[] = ["FDA-CDER", "FDA-CBER", "ICH"];
@@ -25,12 +26,12 @@ export const REGULATORY_CORPUS_SOURCES: RegulatoryCorpusSource[] = ["FDA-CDER", 
 // chunks, so we batch.
 const EMBED_CONCURRENCY = 20;
 
-export interface RefreshResult {
+export type RefreshResult = {
     ok: number;
     fail: number;
-}
+};
 
-export interface RefreshOptions {
+export type RefreshOptions = {
     pool: Pool;
     sources?: RegulatoryCorpusSource[];
     /**
@@ -44,7 +45,7 @@ export interface RefreshOptions {
     embedder: (text: string) => Promise<number[]>;
     /** Logger used for per-doc progress. Defaults to `console`. */
     log?: Pick<Console, "log" | "error">;
-}
+};
 
 /**
  * Build an embedder that talks directly to api.openai.com using the given
@@ -86,7 +87,7 @@ export function buildMaintenanceEmbedder(opts: { apiKey?: string; embeddingModel
             throw new Error(`buildMaintenanceEmbedder: openai /embeddings ${res.status}: ${body}`);
         }
         const data = (await res.json()) as { data: Array<{ embedding: number[] }> };
-        const embedding = data.data?.[0]?.embedding;
+        const embedding = data.data.at(0)?.embedding;
         if (!embedding) throw new Error("buildMaintenanceEmbedder: empty response");
         return embedding;
     };
@@ -141,21 +142,21 @@ async function indexSource(
                 const batchResults = await Promise.all(batch.map((c) => embedder(c.text)));
                 embeddings.push(...batchResults);
             }
-            const chunks = rawChunks.map((c, i) => ({ ...c, embedding: embeddings[i]! }));
+            const chunks = rawChunks.map((c, i) => ({ ...c, embedding: embeddings[i] }));
             const row: ChunkRow = {
                 source,
                 doc_id: doc.doc_id,
                 doc_title: doc.doc_title,
                 doc_url: doc.doc_url,
                 chunks,
-                metadata: doc.metadata as Record<string, unknown>,
+                metadata: doc.metadata,
             };
             unwrapOrThrow(await upsertChunks(pool, row));
             ok++;
             log.log(`  ok ${doc.doc_id} (${chunks.length} chunks)`);
         } catch (err) {
             fail++;
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = errorMessage(err);
             log.error(`  FAIL ${stub.doc_id}: ${msg}`);
         }
     }

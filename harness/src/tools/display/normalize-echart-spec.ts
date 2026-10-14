@@ -27,13 +27,13 @@ const MAX_FILENAME_LEN = 64;
 /** Fallback download filename when no heading is available to derive one from. */
 const DEFAULT_FILENAME = "chart";
 
-export interface NormalizeEchartSpecOptions {
+export type NormalizeEchartSpecOptions = {
     /**
      * The `show_user` `title` param — the card heading rendered above the chart canvas. Seeds the
      * `saveAsImage` download filename when the author supplied none.
      */
     title?: string;
-}
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -52,10 +52,13 @@ function axisEntries(axis: unknown): Record<string, unknown>[] {
 export function kebabFilename(source: string | undefined): string {
     const slug = (source ?? "")
         .normalize("NFKD")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .replace(/[^a-z0-9]+/g, "-")
         .slice(0, MAX_FILENAME_LEN)
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .replace(/^-+|-+$/g, "");
     return slug.length > 0 ? slug : DEFAULT_FILENAME;
 }
@@ -193,13 +196,14 @@ export function normalizeEchartSpec(spec: Record<string, unknown>, opts: Normali
         cartesian && !Array.isArray(grid) && (grid === undefined || (isRecord(grid) && grid.width === undefined && grid.height === undefined));
     if (gridNormalizable) {
         const authored = isRecord(grid) ? grid : {};
-        out.grid = {
-            ...authored,
-            ...(authored.top === undefined ? { top: out.graphic !== undefined ? "12%" : "8%" } : {}),
-            ...(authored.bottom === undefined ? { bottom: rotated ? (bottomLegend ? "30%" : "25%") : "20%" } : {}),
-            ...(authored.left === undefined ? { left: "10%" } : {}),
-            ...(authored.right === undefined ? { right: "5%" } : {}),
-        };
+        const normalized: Record<string, unknown> = { ...authored };
+        if (authored.top === undefined) normalized.top = out.graphic !== undefined ? "12%" : "8%";
+        // `rotated` flips inside the axis loop; the closure reads it at call time.
+        const isRotated = (): boolean => rotated;
+        if (authored.bottom === undefined) normalized.bottom = isRotated() ? (bottomLegend ? "30%" : "25%") : "20%";
+        if (authored.left === undefined) normalized.left = "10%";
+        if (authored.right === undefined) normalized.right = "5%";
+        out.grid = normalized;
     }
 
     // ── Toolbox ─────────────────────────────────────────────────────────
@@ -211,18 +215,21 @@ export function normalizeEchartSpec(spec: Record<string, unknown>, opts: Normali
         // a better filename seed than the generic fallback when no card title was given.
         const specTitleText = isRecord(specTitle) && typeof specTitle.text === "string" ? specTitle.text : undefined;
 
-        out.toolbox = {
+        const saveAsImageDefaults: Record<string, unknown> = { ...saveAsImage };
+        if (saveAsImage.type === undefined) saveAsImageDefaults.type = "png";
+        if (saveAsImage.name === undefined) saveAsImageDefaults.name = kebabFilename(opts.title ?? specTitleText);
+        const toolbox: Record<string, unknown> = {
             ...authored,
-            ...(hasPlacement(authored) ? {} : { right: 0, top: 0 }),
             feature: {
                 ...feature,
-                saveAsImage: {
-                    ...saveAsImage,
-                    ...(saveAsImage.type === undefined ? { type: "png" } : {}),
-                    ...(saveAsImage.name === undefined ? { name: kebabFilename(opts.title ?? specTitleText) } : {}),
-                },
+                saveAsImage: saveAsImageDefaults,
             },
         };
+        if (!hasPlacement(authored)) {
+            toolbox.right = 0;
+            toolbox.top = 0;
+        }
+        out.toolbox = toolbox;
     }
 
     return out;

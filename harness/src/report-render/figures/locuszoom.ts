@@ -49,13 +49,14 @@ import {
 } from "./dense.js";
 import type { FigureContext, FigureMember, FigureModule, FigureTrack } from "./index.js";
 import { COLUMN_PLOT_FRAME, textWidthPx } from "./label-room.js";
+import { typedMember } from "../../lib/shape.js";
 
 /** One LD bin: the r² range, lower end included, and its color. The highest bin includes 1. */
-export interface LdBin {
+export type LdBin = {
     readonly low: number;
     readonly high: number;
     readonly color: string;
-}
+};
 
 /** The five r² bins of LocusZoom, in ascending order, with its colors: navy, sky blue, green, orange, and red. */
 export const LD_BINS: readonly LdBin[] = [
@@ -160,26 +161,27 @@ const GENE_CHARACTER_SHARE = 0.6;
 const GENE_GAP_CHARACTERS = 1;
 
 /** The trailing unit of a declared position label, which the megabase axis replaces. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const POSITION_UNIT = /\s*\((bp|base pairs|kb|Mb)\)\s*$/i;
 
 /** The columns of one locuszoom block. */
-interface LocusColumns {
+type LocusColumns = {
     readonly position: string;
     readonly p: string;
     readonly r2: string;
     readonly label?: string;
     readonly rate?: string;
     readonly chromosome?: string;
-}
+};
 
 /** One gene of the window: its clipped span, its name, the center of its name, and its lane. */
-interface Gene {
+type Gene = {
     readonly start: number;
     readonly end: number;
     readonly name: string;
     readonly center: number;
     readonly lane: number;
-}
+};
 
 function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
     const columns = locusColumns(block, rows, context);
@@ -231,7 +233,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
 
     const composition: ChartComposition = {
         series: [
-            { form: "scatter", encoding: { x: position, y: { column: p, transform: "neg_log10" }, color: r2, ...(label !== undefined ? { label } : {}) } },
+            { form: "scatter", encoding: { x: position, y: { column: p, transform: "neg_log10" }, color: r2, label: label !== undefined ? label : undefined } },
             ...(rate !== undefined ? [{ form: "line" as const, name: RECOMBINATION_NAME, encoding: { x: position, y: rate } }] : []),
         ],
         annotations: [{ kind: "reference-line", axis: "y", value: line }],
@@ -240,15 +242,17 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
     const composed = context.compose(composition, { preset: { x: xTitle, y: NEG_LOG10_P_TITLE }, colorOnTop: true });
     if (composed.isErr()) return err(composed.error);
     const option = composed.value;
-    const [points, recombination] = seriesOf(option);
+    const seriesList = seriesOf(option);
+    const points = seriesList.at(0) ?? {};
+    const recombination = seriesList.at(1);
 
     const nameOf = (index: number): string | undefined => {
-        const cell = label === undefined ? undefined : rows[index][label];
-        return cell === undefined || cell === null || String(cell).trim() === "" ? undefined : String(cell);
+        const cell = label === undefined ? undefined : typedMember(rows[index], label);
+        return cell === undefined || String(cell).trim() === "" ? undefined : String(cell);
     };
     const item = (index: number, y: number): EchartOption => {
         const name = nameOf(index);
-        return { ...(name !== undefined ? { name } : {}), value: [xs[index] ?? 0, y] };
+        return { name: name !== undefined ? name : undefined, value: [xs[index] ?? 0, y] };
     };
     const missing: EchartOption[] = [];
     for (let index = 0; index < rows.length; index += 1) {
@@ -332,15 +336,15 @@ function locusColumns(block: ChartBlock, rows: readonly ChartRow[], context: Fig
             );
         }
     }
-    const found: LocusColumns = {
+    const found: { -readonly [K in keyof LocusColumns]: LocusColumns[K] } = {
         position: channelColumn(x.value),
         // The figure applies the transform of the p column itself, as the Manhattan figure does.
         p: channelColumn(y.value),
         r2: channelColumn(encoding.color),
-        ...(encoding.label !== undefined ? { label: encoding.label } : {}),
-        ...(encoding.metric !== undefined ? { rate: channelColumn(encoding.metric) } : {}),
-        ...(encoding.group !== undefined ? { chromosome: channelColumn(encoding.group) } : {}),
     };
+    if (encoding.label !== undefined) found.label = encoding.label;
+    if (encoding.metric !== undefined) found.rate = channelColumn(encoding.metric);
+    if (encoding.group !== undefined) found.chromosome = channelColumn(encoding.group);
     for (const column of Object.values(found)) {
         if (rows.length > 0 && !columnPresent(column, rows, context.columns)) {
             return err(chartProblem(context.blockId, `The column "${column}" is absent from every row.`));
@@ -353,8 +357,8 @@ function locusColumns(block: ChartBlock, rows: readonly ChartRow[], context: Fig
 function distinctNames(rows: readonly ChartRow[], column: string): string[] {
     const names: string[] = [];
     for (const row of rows) {
-        const cell = row[column];
-        if (cell === undefined || cell === null || String(cell).trim() === "") continue;
+        const cell = typedMember(row, column);
+        if (cell === undefined || String(cell).trim() === "") continue;
         const name = categoryName(cell);
         if (!names.includes(name)) names.push(name);
         if (names.length > 1) break;
@@ -397,7 +401,7 @@ function ratesInOrder(rows: readonly ChartRow[], xs: readonly (number | null)[],
 }
 
 /** The marks that the name of the genome-wide line keeps clear of, and the frame of the plot. */
-interface GuideRoom {
+type GuideRoom = {
     readonly xs: readonly (number | null)[];
     readonly ys: readonly (number | null)[];
     readonly rated: ReadonlyArray<readonly [number, number]>;
@@ -405,7 +409,7 @@ interface GuideRoom {
     readonly rateTop: number;
     readonly window: PositionWindow;
     readonly layout: BandLayout;
-}
+};
 
 /**
  * The position where the name of the genome-wide line starts: the first spot from the left end where the box
@@ -467,7 +471,7 @@ function union(intervals: Array<[number, number]>): Array<[number, number]> {
     const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
     const merged: Array<[number, number]> = [];
     for (const [start, end] of sorted) {
-        const last = merged[merged.length - 1];
+        const last = merged.at(-1);
         if (last !== undefined && start <= last[1]) last[1] = Math.max(last[1], end);
         else merged.push([start, end]);
     }
@@ -524,11 +528,11 @@ function guideSeries(text: string, line: number, room: GuideRoom): EchartOption 
 }
 
 /** The window of the position axis: the ends of the rows, and the round tick step. */
-interface PositionWindow {
+type PositionWindow = {
     readonly min: number;
     readonly max: number;
     readonly step: number;
-}
+};
 
 /**
  * The window of the positions: the smallest and the largest position, and the smallest round step that draws
@@ -558,6 +562,7 @@ function positionTitle(context: FigureContext, column: string, chromosome: strin
     const declared = declaredForColumn(context.labels, column);
     if (declared !== undefined) return `${declared.replace(POSITION_UNIT, "")} (Mb)`;
     if (chromosome === undefined) return "Position (Mb)";
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const name = chromosome.replace(/^chr/i, "");
     return `Position on chr${name} (Mb)`;
 }
@@ -611,12 +616,15 @@ function binColor(r2: number | null): string {
  * selects no bin, because the gray entry would hide nothing.
  */
 function ldLegend(): EchartOption {
-    const bins = [...LD_BINS].reverse().map((bin, place) => ({
-        gte: bin.low,
-        ...(place === 0 ? { lte: bin.high } : { lt: bin.high }),
-        label: `${bin.low}–${bin.high}`,
-        color: bin.color,
-    }));
+    const bins = [...LD_BINS].reverse().map((bin, place) => {
+        const bound = place === 0 ? { lte: bin.high } : { lt: bin.high };
+        return {
+            gte: bin.low,
+            ...bound,
+            label: `${bin.low}–${bin.high}`,
+            color: bin.color,
+        };
+    });
     return {
         type: "piecewise",
         seriesIndex: [0],
@@ -745,14 +753,14 @@ function geneSeries(genes: readonly Gene[], yAxisIndex: number): EchartOption {
 }
 
 /** The bands of the chart in percent of its body, and the body in pixels. */
-interface BandLayout {
+type BandLayout = {
     readonly top: number;
     readonly plotBottom: number;
     readonly trackBottom: number;
     readonly band: number;
     readonly right: number;
     readonly bodyPx: number;
-}
+};
 
 /**
  * The bands of one chart. A band past `LANES_IN_BODY` lanes grows the body by one lane of the default body for

@@ -29,7 +29,7 @@ import { clampResources, type ResourceLimits } from "../config/resource-limits.j
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { tryMutation } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import { clearSandboxRef, setSandboxRef } from "../state/index.js";
+import { setSandboxRef } from "../state/index.js";
 import { capExecStreams, EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import type { SandboxClient } from "./client.js";
 import { createDockerSandboxOps } from "./docker-client.js";
@@ -45,12 +45,12 @@ import type { FarmSource, ResolveSandboxLabels, SandboxLabels, SandboxRef, Sandb
  * default and the K8s namespace fallback. Composition roots map their
  * validated `Env` onto this.
  */
-export interface SandboxBackendConfig {
+export type SandboxBackendConfig = {
     readonly backend: "docker" | "k8s";
     readonly namespace: string;
-}
+};
 
-export interface CreateSandboxClientConfig {
+export type CreateSandboxClientConfig = {
     /** App pool — used for registry writes inside the create/teardown steps. */
     pool: Pool;
     /** Backend default + namespace fallback source. */
@@ -170,7 +170,7 @@ export interface CreateSandboxClientConfig {
      * An `isAlive` here wins over the backend inspect that the client wires.
      */
     execDeps?: ExecDeps;
-}
+};
 
 /**
  * Backend-agnostic pre-creation of the writable tree under the analysis's
@@ -244,8 +244,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
      * variant as the message, and the variant itself on `cause`. The `mapErr`
      * happens before the bridge because `toThrowable` passes an `Error`
      * through untouched — thus `unwrapOrThrow` stays the single sanctioned
-     * Result→throw bridge, no second bridge is introduced, and the
-     * `must-use-result` lint patch keeps recognizing every site. The registry
+     * Result→throw bridge, no second bridge is introduced, and the type check
+     * command keeps recognizing every site. The registry
      * unwraps below stay on the plain bridge: they carry a `DbError`.
      */
     const failing = (e: SandboxError): SandboxFailure => new SandboxFailure(e);
@@ -344,18 +344,6 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                 sandboxId: identity.sandboxId,
                 cause,
             });
-        // Every caller must declare resources — a sandbox with no cpu/memory
-        // request is a semantic error, not something to paper over with a
-        // default.
-        if (!spec.resources) {
-            return err(
-                createFailed("createSandbox")(
-                    new Error(
-                        `createSandbox: ${session.scope.analysisId}/${session.runFrame.runId}/${session.runFrame.stepId} has no resources — every caller must declare cpu/memoryGb`,
-                    ),
-                ),
-            );
-        }
         // The config states an engine fact (binds preserve host ownership);
         // which remediation that fact demands — today, a world-writable step
         // write tree — is harness-owned and chosen here, not by the embedder.
@@ -419,4 +407,4 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
 }
 
 /** Re-exports so consumers import once from this module. */
-export { clearSandboxRef };
+export { clearSandboxRef } from "../state/index.js";

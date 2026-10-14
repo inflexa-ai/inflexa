@@ -77,18 +77,18 @@ function annotationOf(group: DataProfileGroup, kept: ReadonlySet<string>): Group
         description: group.description,
         role: group.role as GroupRole,
         category: group.category as GroupCategory,
-        ...(group.categoryLabel ? { categoryLabel: group.categoryLabel } : {}),
-        ...(group.subtype ? { subtype: group.subtype } : {}),
-        ...(group.categoryReason ? { categoryReason: group.categoryReason } : {}),
-        ...(annotations.length > 0 ? { memberAnnotations: annotations.map((entry) => ({ path: entry.path, note: entry.note })) } : {}),
+        categoryLabel: group.categoryLabel ? group.categoryLabel : undefined,
+        subtype: group.subtype ? group.subtype : undefined,
+        categoryReason: group.categoryReason ? group.categoryReason : undefined,
+        memberAnnotations: annotations.length > 0 ? annotations.map((entry) => ({ path: entry.path, note: entry.note })) : undefined,
     };
 }
 
-interface ReplayContext {
+type ReplayContext = {
     readonly setsByTemplate: ReadonlyMap<string, DetectedSet>;
     readonly groupsById: ReadonlyMap<string, DataProfileGroup>;
     readonly kept: ReadonlySet<string>;
-}
+};
 
 class StrandedRecipe extends Error {}
 
@@ -164,27 +164,25 @@ function replayDimension(ctx: ReplayContext, dimension: DataProfileDimension): P
         }
         const set = ctx.setsByTemplate.get(binding.template);
         if (!set) throw new StrandedRecipe(`dimension "${dimension.label}": the template "${binding.template}" is not on the fresh menu`);
-        const slot = set.slots[binding.slotIndex];
+        const slot = set.slots.at(binding.slotIndex);
         if (!slot) {
             throw new StrandedRecipe(
                 `dimension "${dimension.label}": the template "${binding.template}" no longer carries a slot at position ${binding.slotIndex}`,
             );
         }
-        return { kind: "slot", setId: set.id, slotId: slot.id, ...(observation.note ? { note: observation.note } : {}) };
+        return { kind: "slot", setId: set.id, slotId: slot.id, note: observation.note ? observation.note : undefined };
     });
 
     return {
         label: dimension.label,
         category: dimension.category as DimensionCategory,
-        ...(dimension.categoryLabel ? { categoryLabel: dimension.categoryLabel } : {}),
-        ...(dimension.scope ? { scope: dimension.scope } : {}),
-        ...(dimension.description ? { description: dimension.description } : {}),
+        categoryLabel: dimension.categoryLabel ? dimension.categoryLabel : undefined,
+        scope: dimension.scope,
+        description: dimension.description ? dimension.description : undefined,
         observations,
-        ...(dimension.reconciliations && dimension.reconciliations.length > 0
-            ? { reconciliations: dimension.reconciliations.map((entry) => ({ ...entry })) }
-            : {}),
-        ...(dimension.nestsUnder ? { nestsUnder: { ...dimension.nestsUnder } } : {}),
-        ...(dimension.treatmentReason ? { treatmentReason: dimension.treatmentReason } : {}),
+        reconciliations: dimension.reconciliations && dimension.reconciliations.length > 0 ? dimension.reconciliations.map((entry) => ({ ...entry })) : undefined,
+        nestsUnder: dimension.nestsUnder ? { ...dimension.nestsUnder } : undefined,
+        treatmentReason: dimension.treatmentReason ? dimension.treatmentReason : undefined,
     };
 }
 
@@ -239,7 +237,7 @@ export function absorbRecipe(prior: DataProfileResult | null | undefined, detect
 
     const submission: ProfileSubmission = {
         operations,
-        ...(dimensions.length > 0 ? { dimensions } : {}),
+        dimensions: dimensions.length > 0 ? dimensions : undefined,
         analysisSummary: prior.summary,
         domain: prior.domain ?? "",
         organism: prior.organism ?? null,

@@ -90,16 +90,16 @@ const LEGEND_GAP_PX = 8;
 export const SANKEY_FIGURE: FigureModule = { reads: new Set(["x", "y", "value", "group"]), derive: deriveSankey };
 
 /** One flow of the table: its two nodes. */
-export interface SankeyEdge {
+export type SankeyEdge = {
     readonly source: string;
     readonly target: string;
-}
+};
 
 /** One flow of the table: its two nodes, its value, and its group. */
-interface SankeyFlow extends SankeyEdge {
+type SankeyFlow = SankeyEdge & {
     readonly value: number;
     readonly group?: string;
-}
+};
 
 /** The text of one node cell, or `undefined` for an empty cell. */
 function nodeName(cell: Cell | undefined): string | undefined {
@@ -209,17 +209,17 @@ function readFlows(rows: readonly ChartRow[], source: string, target: string, va
         const key = JSON.stringify([from, to, groupName ?? null]);
         if (seen.has(key)) return err(`The table holds two flows from "${from}" to "${to}". It holds one row for each flow.`);
         seen.add(key);
-        flows.push({ source: from, target: to, value: amount, ...(groupName !== undefined ? { group: groupName } : {}) });
+        flows.push({ source: from, target: to, value: amount, group: groupName !== undefined ? groupName : undefined });
     }
     return ok(flows);
 }
 
 /** The size of one chart box and its text: the page, or one export. */
-interface ChartBox {
+type ChartBox = {
     readonly widthPx: number;
     readonly heightPx: number;
     readonly textPx: number;
-}
+};
 
 const PAGE_BOX: ChartBox = { widthPx: CHART_PAGE_WIDTH_PX, heightPx: CHART_BODY_PX, textPx: CHART_PAGE_TEXT_PX };
 const EXPORT_SIZES = [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide] as const;
@@ -295,7 +295,7 @@ function legendBandPct(names: readonly string[]): number {
 }
 
 function deriveSankey(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
-    const source = { blockId: context.blockId, rows, ...(context.columns !== undefined ? { columns: context.columns } : {}) };
+    const source = { blockId: context.blockId, rows, columns: context.columns !== undefined ? context.columns : undefined };
     const encoding = block.encoding ?? {};
     const from = demandedColumn("sankey", encoding, "x", source);
     if (from.isErr()) return err(from.error);
@@ -354,7 +354,7 @@ function deriveSankey(block: ChartBlock, rows: readonly ChartRow[], context: Fig
                 source: entry.source,
                 target: entry.target,
                 value: entry.value,
-                ...(grouped ? { lineStyle: { color: groupColors.get(entry.group ?? "") } } : {}),
+                lineStyle: grouped ? { color: groupColors.get(entry.group ?? "") } : undefined,
             })),
         },
     ];

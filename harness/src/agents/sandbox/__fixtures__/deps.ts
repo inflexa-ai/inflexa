@@ -13,6 +13,7 @@ import type { ExecResult, SandboxRef } from "../../../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../../../workspace/filesystem.js";
 
 import type { SandboxAgentDeps } from "../shared.js";
+import { poolDouble } from "../../../lib/test/doubles.js";
 
 export function makeFakeSandboxClient(): SandboxClient {
     const ref: SandboxRef = {
@@ -26,26 +27,26 @@ export function makeFakeSandboxClient(): SandboxClient {
         createSandbox() {
             return okAsync(ref);
         },
-        async exec(): Promise<ExecResult> {
-            return {
+        exec(): Promise<ExecResult> {
+            return Promise.resolve({
                 execId: "wf-001:1",
                 exitCode: 0,
                 stdout: "",
                 stderr: "",
                 durationMs: 1,
                 timedOut: false,
-            };
+            });
         },
-        async isAlive() {
-            return { alive: true, oomKilled: false };
+        isAlive() {
+            return Promise.resolve({ alive: true, oomKilled: false });
         },
-        async isAliveById() {
-            return { alive: true, oomKilled: false };
+        isAliveById() {
+            return Promise.resolve({ alive: true, oomKilled: false });
         },
         async teardown() {},
         async teardownById() {},
-        async listManagedSandboxes() {
-            return [];
+        listManagedSandboxes() {
+            return Promise.resolve([]);
         },
     };
 }
@@ -80,14 +81,15 @@ export function makeFakeChatProvider(): ChatProvider {
 }
 
 export function makeFakePool(): Pool {
-    return {} as Pool;
+    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+    return poolDouble();
 }
 
-export interface MakeDepsOverrides {
+export type MakeDepsOverrides = {
     readonly model?: string;
     readonly analysisId?: string;
     readonly allowedWritePrefix?: string;
-}
+};
 
 export function makeFakeSandboxAgentDeps(over: MakeDepsOverrides = {}): SandboxAgentDeps {
     return {

@@ -24,7 +24,7 @@ import { errRecipe, okRecipe } from "./result-serialization.js";
  * Narrow config slice the DBOS bootstrap reads. Composition roots map their
  * validated `Env` onto this and pass the executor id in (the harness reads no env).
  */
-export interface DbosConfig {
+export type DbosConfig = {
     readonly dbHost: string;
     readonly dbPort: string;
     readonly dbName: string;
@@ -71,13 +71,13 @@ export interface DbosConfig {
      * new root trace, with no link to the trace of the original execution.
      */
     readonly tracingEnabled?: boolean;
-}
+};
 
 /** DBOS lifecycle facts a host's readiness probe reports on. */
-export interface DbosState {
+export type DbosState = {
     launched: boolean;
     recoveryStarted: boolean;
-}
+};
 
 const state: DbosState = {
     launched: false,
@@ -136,13 +136,13 @@ const SDK_DEFAULT_LOG_LEVEL = "info";
  */
 export function dbosSdkLogger(logger: Logger, logLevel: string | undefined): DLogger {
     const sink = logger.named("sdk");
-    const threshold = SDK_LOG_LEVEL_RANK[logLevel ?? SDK_DEFAULT_LOG_LEVEL] ?? SDK_LOG_LEVEL_RANK[SDK_DEFAULT_LOG_LEVEL]!;
-    const passes = (level: keyof typeof SDK_LOG_LEVEL_RANK): boolean => SDK_LOG_LEVEL_RANK[level]! <= threshold;
+    const threshold = SDK_LOG_LEVEL_RANK[logLevel ?? SDK_DEFAULT_LOG_LEVEL] ?? SDK_LOG_LEVEL_RANK[SDK_DEFAULT_LOG_LEVEL];
+    const passes = (level: keyof typeof SDK_LOG_LEVEL_RANK): boolean => SDK_LOG_LEVEL_RANK[level] <= threshold;
     const fields = (metadata: Parameters<DLogger["error"]>[1]): LogFields | undefined => {
         const attributes = metadata?.span?.attributes;
         const stack = metadata?.stack;
         if (attributes === undefined && stack === undefined) return undefined;
-        return { ...attributes, ...(stack !== undefined ? { stack } : {}) };
+        return { ...attributes, stack: stack !== undefined ? stack : undefined };
     };
     const message = (entry: unknown): string => (typeof entry === "string" ? entry : String(entry));
     return {

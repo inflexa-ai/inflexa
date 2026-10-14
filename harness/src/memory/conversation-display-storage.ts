@@ -48,6 +48,7 @@ import { ToolCallOutcomeSchema } from "../contracts/schemas/chat-events.js";
 import type { ToolCallOutcome } from "../contracts/chat-events.js";
 import type { ChatMessage, MessagePart, ToolCallPart } from "../contracts/message.js";
 import type { Logger } from "../lib/logger.js";
+import { errorMessage } from "../lib/thrown.js";
 
 export const SUPPORTED_DISPLAY_SCHEMA_VERSION = 1;
 
@@ -76,9 +77,9 @@ export type ConversationUIData = {
     };
 };
 
-export interface ConversationDisplayMetadata {
+export type ConversationDisplayMetadata = {
     interrupted?: boolean;
-}
+};
 
 export type ConversationUIMessage = UIMessage<ConversationDisplayMetadata, ConversationUIData>;
 
@@ -141,12 +142,12 @@ const dataSchemas = {
     }),
 };
 
-export interface StoredDisplayEnvelope {
+export type StoredDisplayEnvelope = {
     readonly kind: "ai-sdk-ui-messages";
     readonly aiSdkMajor: 7;
     readonly schemaVersion: typeof SUPPORTED_DISPLAY_SCHEMA_VERSION;
     readonly messages: ConversationUIMessage[];
-}
+};
 
 export function envelopeDisplayMessages(messages: readonly ConversationUIMessage[]): StoredDisplayEnvelope {
     if (messages.length === 0) throw new Error("A conversation display envelope must contain at least one UI message");
@@ -195,7 +196,7 @@ function dropUnrenderableDataParts(messages: readonly unknown[], identity: strin
                 unknownKey.push(part.type);
                 return false;
             }
-            if (!(dataSchemas as Record<string, z.ZodType>)[key]!.safeParse(part.data).success) {
+            if (!(dataSchemas as Record<string, z.ZodType>)[key].safeParse(part.data).success) {
                 schemaMismatch.push(part.type);
                 return false;
             }
@@ -207,8 +208,8 @@ function dropUnrenderableDataParts(messages: readonly unknown[], identity: strin
     if (unknownKey.length > 0 || schemaMismatch.length > 0) {
         logger?.warn("dropped unrenderable stored display parts", {
             identity,
-            ...(unknownKey.length > 0 ? { unknownKey: [...new Set(unknownKey)] } : {}),
-            ...(schemaMismatch.length > 0 ? { schemaMismatch: [...new Set(schemaMismatch)] } : {}),
+            unknownKey: unknownKey.length > 0 ? [...new Set(unknownKey)] : undefined,
+            schemaMismatch: schemaMismatch.length > 0 ? [...new Set(schemaMismatch)] : undefined,
         });
     }
     return filtered;
@@ -228,14 +229,14 @@ export async function parseStoredDisplayEnvelope(value: unknown, identity: strin
         });
         return { ...header.data, messages };
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         throw new Error(`Invalid stored conversation display envelope at ${identity}: ${message}`, { cause: error });
     }
 }
 
 /** The data-part key a message part is stored under — its `type` minus the `data-` prefix. */
-function displayPartType(part: Exclude<MessagePart, { type: "text" }>): `data-${keyof ConversationUIData & string}` {
-    return (part.type === "tool-call" ? "data-tool-call" : part.type) as `data-${keyof ConversationUIData & string}`;
+function displayPartType(part: Exclude<MessagePart, { type: "text" }>): `data-${keyof ConversationUIData}` {
+    return (part.type === "tool-call" ? "data-tool-call" : part.type) as `data-${keyof ConversationUIData}`;
 }
 
 function closedEntry(entry: SubAgentActivityEntry): ConversationUIData["subagent-activity"]["entries"][number] {
@@ -302,7 +303,7 @@ export function conversationUIToChatMessages(messages: readonly ConversationUIMe
             id: message.id,
             role: message.role,
             parts,
-            ...(message.metadata?.interrupted ? { interrupted: true } : {}),
+            interrupted: message.metadata?.interrupted ? true : undefined,
         });
     }
     return out;

@@ -25,6 +25,7 @@ import type { Querier } from "../state/db.js";
 import { queryRunsByAnalysis } from "../state/runs.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactSnapshot, CitationRecord, ReportSnapshot } from "./reference-resolver.js";
+import { parseJsonOrUndefined } from "../lib/json.js";
 
 /**
  * The reason that the pin gave no snapshot. The ledger read and the run listing are the two operations
@@ -38,22 +39,22 @@ export type PinSnapshotError = {
 };
 
 /** The construction options of the pin. */
-export interface PinReportSnapshotOptions {
+export type PinReportSnapshotOptions = {
     /**
      * The workspace-root seam of the caller. The citation evidence sits on disk, thus a composition
      * that binds no seam pins the artifact map alone.
      */
     readonly resolveWorkspaceRoot?: ResolveWorkspaceRoot;
-}
+};
 
 /** The page size of the run listing. The listing walks the pages until a short page ends the walk. */
 const RUN_PAGE_SIZE = 200;
 
 /** One citation of a synthesis record: the key, and the bibliography record when the entry carries one. */
-interface CitationEntry {
+type CitationEntry = {
     readonly key: string;
     readonly record?: CitationRecord;
-}
+};
 
 /** The trimmed text of a field, or `undefined` when the field is not a non-empty string. */
 function trimmedText(value: unknown): string | undefined {
@@ -94,13 +95,13 @@ function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
         if (typeof reference !== "object" || reference === null) {
             continue;
         }
-        const pmid = (reference as { pmid?: unknown }).pmid;
+        const pmid = (reference).pmid;
         if (typeof pmid !== "string") {
             continue;
         }
         const id = pmid.trim();
         if (id.length > 0) {
-            const record = recordOf(reference as { citation?: unknown; description?: unknown });
+            const record = recordOf(reference);
             entries.push(record === undefined ? { key: `pmid:${id}` } : { key: `pmid:${id}`, record });
         }
     }
@@ -119,10 +120,8 @@ function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
  * description sits there.
  */
 function citationsOf(text: string): CitationEntry[] {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(text);
-    } catch {
+    const parsed = parseJsonOrUndefined(text);
+    if (parsed === undefined) {
         return [];
     }
     if (typeof parsed !== "object" || parsed === null) {
@@ -136,17 +135,17 @@ function citationsOf(text: string): CitationEntry[] {
             if (typeof finding !== "object" || finding === null) {
                 continue;
             }
-            pushPmidCitations((finding as { references?: unknown }).references, entries);
+            pushPmidCitations((finding).references, entries);
         }
     }
     return entries;
 }
 
 /** The citation evidence of one analysis: the sorted key list, and the record of each key that carries one. */
-interface CollectedCitations {
+type CollectedCitations = {
     readonly keys: string[];
     readonly records: Map<string, CitationRecord>;
-}
+};
 
 /**
  * Collect the citation evidence of one analysis from the synthesis record of each of its runs.

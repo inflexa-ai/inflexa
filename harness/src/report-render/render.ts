@@ -20,6 +20,7 @@ import { err, ok, type Result } from "neverthrow";
 import type { Block, ReportDocument } from "../contracts/report-blocks.js";
 import { serializeReference, type ArtifactTableReference } from "../contracts/report-reference.js";
 import { citationRecordOf, type CitationRecords } from "../report-model/reference-resolver.js";
+import { typedMember } from "../lib/shape.js";
 import { renderChart } from "./views/chart-view.js";
 import { DEFAULT_CHART_OPTS, deriveChartRender, type ChartOpts } from "./chart.js";
 import { chartSvgAssets, loadChartRuntime, type ChartRuntime } from "./chart-export.js";
@@ -40,12 +41,12 @@ import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTab
  * three optional inputs made a caller of the last one pad the two before it, thus the inputs ride one bag.
  * An absent `chart` member derives each chart with the registered figure modules.
  */
-export interface RenderOptions {
+export type RenderOptions = {
     readonly records?: CitationRecords;
     readonly derivations?: readonly DerivationChain[];
     readonly provenance?: ProvenanceExport;
     readonly chart?: ChartOpts;
-}
+};
 
 /**
  * Render a report document, its value map, and the pinned citation records to one page and its data assets.
@@ -122,10 +123,10 @@ export async function renderReportPage(
  * A table block and a chart block over one artifact read one payload, thus the page holds one copy of the
  * rows and each block finds it under its own id.
  */
-interface PayloadRegistration {
+type PayloadRegistration = {
     readonly ids: string[];
     readonly payload: TablePayload;
-}
+};
 
 /**
  * The page-level state of one walk: the payload of each bound artifact, the count of the grid mounts, and
@@ -143,14 +144,14 @@ interface PayloadRegistration {
  * each block of one page decides it alike. `chart` holds the options of the chart derivation, constant in
  * the same way. `chartRuntime` draws the SVG files of each chart.
  */
-interface PageData {
+type PageData = {
     readonly payloads: Map<string, PayloadRegistration>;
     mounts: number;
     readonly svgs: DataAsset[];
     readonly view: ViewOptions;
     readonly chart: ChartOpts;
     readonly chartRuntime: ChartRuntime;
-}
+};
 
 /**
  * Register the payload of one bound artifact, and name this block as a reader of it.
@@ -190,7 +191,7 @@ function renderBlock(
         case "citation":
             return renderCitation(block, ledger, citationRecordOf(records, citationKeyOf(block.binding)), data.view);
         case "metric": {
-            const entry = values[block.id];
+            const entry = typedMember(values, block.id);
             if (entry === undefined) {
                 problems.push(missingValue(block.id, "scalar"));
                 return "";
@@ -202,7 +203,7 @@ function renderBlock(
             return renderMetric(block, ledger, entry, data.view);
         }
         case "table": {
-            const entry = values[block.id];
+            const entry = typedMember(values, block.id);
             if (entry === undefined) {
                 problems.push(missingValue(block.id, "table"));
                 return "";
@@ -220,7 +221,7 @@ function renderBlock(
             return renderTable(block, ledger, entry.rows.length, entry.total, data.view);
         }
         case "figure": {
-            const entry = values[block.id];
+            const entry = typedMember(values, block.id);
             if (entry === undefined) {
                 problems.push(missingValue(block.id, "figure"));
                 return "";
@@ -232,7 +233,7 @@ function renderBlock(
             return renderFigure(block, ledger, entry, data.view);
         }
         case "chart": {
-            const entry = values[block.id];
+            const entry = typedMember(values, block.id);
             if (entry === undefined) {
                 problems.push(missingValue(block.id, "table"));
                 return "";
@@ -252,9 +253,9 @@ function renderBlock(
                 entry.columns,
                 { key: block.id, columns },
                 {
-                    ...(entry.statistics !== undefined ? { statistics: entry.statistics } : {}),
-                    ...(entry.track !== undefined ? { track: entry.track } : {}),
-                    ...(entry.trees !== undefined ? { trees: entry.trees } : {}),
+                    statistics: entry.statistics !== undefined ? entry.statistics : undefined,
+                    track: entry.track !== undefined ? entry.track : undefined,
+                    trees: entry.trees !== undefined ? entry.trees : undefined,
                 },
                 data.chart,
             );
@@ -276,8 +277,8 @@ function renderBlock(
             }
             return renderChart(block, ledger, derived.value.option, data.view, {
                 bodyPx: derived.value.bodyPx,
-                ...(derived.value.widthPx !== undefined ? { widthPx: derived.value.widthPx } : {}),
-                ...(svgs.value !== undefined ? { svg: { single: svgs.value.single.name, double: svgs.value.double.name } } : {}),
+                widthPx: derived.value.widthPx !== undefined ? derived.value.widthPx : undefined,
+                svg: svgs.value !== undefined ? { single: svgs.value.single.name, double: svgs.value.double.name } : undefined,
             });
         }
         case "section":

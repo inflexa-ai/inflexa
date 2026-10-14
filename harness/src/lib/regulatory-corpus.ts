@@ -19,16 +19,16 @@ import type { Pool } from "pg";
 
 import { tryMutation, tryQuery, withTransaction, type DbError } from "./db-result.js";
 
-export interface ChunkOptions {
+export type ChunkOptions = {
     maxTokens?: number; // default 1000
     overlapTokens?: number; // default 200
-}
+};
 
-export interface RawChunk {
+export type RawChunk = {
     section: string | null;
     index: number;
     text: string;
-}
+};
 
 /**
  * Split `text` into overlapping chunks bounded by `maxTokens` (word-count
@@ -53,6 +53,7 @@ export function chunkText(text: string, opts: ChunkOptions = {}): RawChunk[] {
     // This ensures a heading at position 0 (no preceding newline) is caught
     // the same way as headings mid-document.
     const normalised = text.startsWith("##") ? `\n${text}` : text;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const parts = normalised.split(/\n##\s+/);
 
     // parts[0] is always the lead-in text before the first heading (may be
@@ -71,6 +72,7 @@ export function chunkText(text: string, opts: ChunkOptions = {}): RawChunk[] {
     let globalIdx = 0;
 
     for (const sec of sections) {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         const tokens = sec.body.split(/\s+/).filter(Boolean);
         if (tokens.length === 0) continue;
 
@@ -89,14 +91,14 @@ export function chunkText(text: string, opts: ChunkOptions = {}): RawChunk[] {
     return out;
 }
 
-export interface ChunkRow {
+export type ChunkRow = {
     source: "FDA-CDER" | "FDA-CBER" | "ICH";
     doc_id: string;
     doc_title: string;
     doc_url: string;
     chunks: Array<RawChunk & { embedding: number[] }>;
     metadata: Record<string, unknown>;
-}
+};
 
 /**
  * Replace-by-(source, doc_id): delete all existing chunks for the document
@@ -129,12 +131,12 @@ export function upsertChunks(pool: Pool, row: ChunkRow): ResultAsync<void, DbErr
     );
 }
 
-export interface SearchFilters {
+export type SearchFilters = {
     source?: "FDA-CDER" | "FDA-CBER" | "ICH";
     topK?: number;
-}
+};
 
-export interface SearchHit {
+export type SearchHit = {
     source: string;
     doc_id: string;
     doc_title: string;
@@ -142,7 +144,7 @@ export interface SearchHit {
     section: string | null;
     excerpt: string;
     score: number;
-}
+};
 
 /**
  * Top-K cosine similarity search over cortex_regulatory_chunks.

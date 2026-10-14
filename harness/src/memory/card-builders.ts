@@ -32,7 +32,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export interface PlanCardData {
+export type PlanCardData = {
     id: string;
     planId: string;
     parentPlanId?: string;
@@ -41,21 +41,21 @@ export interface PlanCardData {
     analytical_narrative: unknown;
     omicsType: unknown;
     omicsSubtype: unknown;
-}
+};
 
-export interface PresentationCardData {
+export type PresentationCardData = {
     id: string;
     title?: string;
     content: Record<string, unknown>;
-}
+};
 
-export interface RunCardData {
+export type RunCardData = {
     id: string;
     runId: string;
     planId: string;
     title: string;
     stepCount: number;
-}
+};
 
 /** Deterministic presentation id — must match `show_user`'s. */
 function presentationId(input: Record<string, unknown>): string {
@@ -79,8 +79,8 @@ export function planCardOf(record: PlanRecord, title?: string): PlanCardData | n
     return {
         id,
         planId: record.planId,
-        ...(record.parentPlanId !== null ? { parentPlanId: record.parentPlanId } : {}),
-        ...(heading !== undefined ? { title: heading } : {}),
+        parentPlanId: record.parentPlanId !== null ? record.parentPlanId : undefined,
+        title: heading !== undefined ? heading : undefined,
         steps: parsed.data.steps,
         analytical_narrative: parsed.data.analytical_narrative,
         omicsType: parsed.data.omicsType,
@@ -180,7 +180,7 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
     }
     return {
         id: presentationId(input),
-        ...(cardTitle !== undefined ? { title: cardTitle } : {}),
+        title: cardTitle !== undefined ? cardTitle : undefined,
         content,
     };
 }
@@ -189,23 +189,23 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
 export const MAX_FILES = 10;
 
 /** One referenced file in a `data-file-reference` card. */
-export interface FileReferenceEntryData {
+export type FileReferenceEntryData = {
     path: string;
     runId?: string;
     caption?: string;
-}
+};
 
 /** The `data-file-reference` payload: a group of referenced analysis artifacts. */
-export interface FileReferenceCardData {
+export type FileReferenceCardData = {
     id: string;
     title?: string;
     files: FileReferenceEntryData[];
-}
+};
 
 /** Extracts `runId` from paths shaped `runs/{runId}/...`; undefined otherwise. */
 export function deriveRunId(path: string): string | undefined {
     const segments = path.split("/");
-    if (segments.length >= 2 && segments[0] === "runs" && segments[1]!.length > 0) {
+    if (segments.length >= 2 && segments[0] === "runs" && segments[1].length > 0) {
         return segments[1];
     }
     return undefined;
@@ -234,15 +234,15 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
 
     const files: FileReferenceEntryData[] = [];
     for (const raw of rawFiles) {
-        const file = (raw ?? {}) as Record<string, unknown>;
+        const file : Record<string, unknown> = (raw ?? {});
         const path = typeof file.path === "string" ? file.path : "";
         if (validatePath(path) !== null) return null;
         const runId = deriveRunId(path);
         const caption = typeof file.caption === "string" ? file.caption : undefined;
         files.push({
             path,
-            ...(runId !== undefined ? { runId } : {}),
-            ...(caption !== undefined ? { caption } : {}),
+            runId: runId !== undefined ? runId : undefined,
+            caption: caption !== undefined ? caption : undefined,
         });
     }
 
@@ -250,5 +250,5 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
         files.map((f) => f.path),
         title,
     )}`;
-    return { id, ...(title !== undefined ? { title } : {}), files };
+    return { id, title: title !== undefined ? title : undefined, files };
 }

@@ -28,8 +28,10 @@ export function stripHtmlAndCollapseWs(s: string): string {
     let prev: string;
     do {
         prev = out;
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
         out = out.replace(/<[^>]+>/g, "");
     } while (out !== prev);
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
     return out.replace(/\s+/g, " ").trim();
 }
 
@@ -45,7 +47,7 @@ const ORGANISM_MAP: Record<string, string> = {
 
 export type PathwaySource = "kegg" | "reactome";
 
-export interface Pathway {
+export type Pathway = {
     id: string;
     name: string;
     source: PathwaySource;
@@ -53,7 +55,7 @@ export interface Pathway {
     genes?: string[];
     entity_uniprots?: string[]; // Reactome only — UniProt accessions of physical entities in the pathway
     url?: string;
-}
+};
 
 // Reactome ContentService raw wire shapes, validated at the fetch boundary.
 // Every field is optional because the API omits absent values.
@@ -86,12 +88,12 @@ export const ReactomeParticipantEntitiesSchema = z.array(
     }),
 );
 
-export interface PathwaySearchOptions {
+export type PathwaySearchOptions = {
     source?: "kegg" | "reactome" | "both";
     organism?: string;
     includeGenes?: boolean;
     maxResults?: number;
-}
+};
 
 export async function searchKegg(query: string, organism: string, maxResults: number, includeGenes: boolean): Promise<Pathway[]> {
     const searchRes = await apiFetch<string>(`${KEGG_BASE}/find/pathway/${encodeURIComponent(query)}`, { parseAs: "text" });
@@ -256,13 +258,16 @@ export async function searchPathways(query: string, options: PathwaySearchOption
 }
 
 /** A Reactome stable identifier, for example `R-HSA-109581`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
 const REACTOME_ID_RE = /^R-[A-Z]{3}-\d+(\.\d+)?$/;
 
 /** A KEGG pathway identifier, for example `hsa04010` or `map04010`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
 const KEGG_ID_RE = /^[a-z]{3,4}\d{5}$/;
 
 /** Read one field out of a KEGG flat-file record. */
 function keggField(record: string, field: string): string | null {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
     const match = new RegExp(`^${field}\\s+(.*)$`, "m").exec(record);
     return match?.[1]?.trim() || null;
 }
@@ -278,7 +283,7 @@ async function getKeggPathway(id: string): Promise<Pathway | null> {
         id,
         name,
         source: "kegg",
-        ...(description ? { description } : {}),
+        description: description ? description : undefined,
         url: `https://www.kegg.jp/pathway/${id}`,
     };
 }
@@ -295,7 +300,7 @@ async function getReactomePathway(id: string): Promise<Pathway | null> {
         id: stId,
         name: stripHtmlAndCollapseWs(entry.displayName ?? ""),
         source: "reactome",
-        ...(description ? { description: stripHtmlAndCollapseWs(description) } : {}),
+        description: description ? stripHtmlAndCollapseWs(description) : undefined,
         url: `https://reactome.org/content/detail/${stId}`,
     };
 }

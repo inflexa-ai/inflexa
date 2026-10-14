@@ -39,14 +39,14 @@
         "format": "prettier --write src/",
         "format:file": "prettier --write",
         "gallery:data": "bash scripts/gallery-data.sh",
-        "lint": "eslint .",
+        "lint": "bun --bun oxlint",
         "lint:python": "ruff check src/input-scan/decoder && ruff format --check src/input-scan/decoder",
         "prepare": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
         "prepublishOnly": "bun run build && bun run smoke",
         "smoke": "node scripts/smoke.mjs",
         "test:full": "bash scripts/test-full.sh",
         "test:python": "python3 -m pytest src/input-scan/decoder -q",
-        "typecheck": "tsc -p tsconfig.json --noEmit"
+        "typecheck": "inflexa-typecheck"
     },
     "dependencies": {
         "@ai-sdk/anthropic": "^4.0.62",
@@ -101,25 +101,22 @@
     },
     "devDependencies": {
         "@ai-sdk/amazon-bedrock": "^5.0.93",
-        "@eslint/js": "^10.0.1",
+        "@inflexa-ai/oxlint-plugin": "0.7.0",
+        "@inflexa-ai/typecheck": "0.7.0",
         "@types/bun": "latest",
         "@types/node": "^24.13.3",
         "@types/pdf-parse": "^1.1.5",
+        "@typescript/native": "npm:typescript@7.0.2",
         "csstree-validator": "^4.0.1",
-        "eslint": "^10.7.0",
-        "eslint-plugin-neverthrow": "^1.1.4",
-        "globals": "^17.7.0",
         "html-validate": "^11.6.2",
+        "oxlint": "1.85.0",
+        "oxlint-tsgolint": "7.0.2003",
         "prettier": "^3.9.5",
         "testcontainers": "^10.28.0",
-        "typescript": "^6.0.3",
-        "typescript-eslint": "^8.64.0"
+        "typescript": "^6.0.3"
     },
     "publishConfig": {
         "access": "public",
         "registry": "https://registry.npmjs.org"
-    },
-    "patchedDependencies": {
-        "eslint-plugin-neverthrow@1.1.4": "patches/eslint-plugin-neverthrow@1.1.4.patch"
     }
 }

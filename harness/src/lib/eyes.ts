@@ -28,10 +28,10 @@ import { hasBrowserUrl, type ChromeConfig } from "./chrome.js";
  * page navigation reads a `file://` URL of the host tree. The caller resolves the root already, thus the
  * scope hands it over and a realization holds no second resolver.
  */
-export interface EyesScope {
+export type EyesScope = {
     readonly analysisId: string;
     readonly workspaceRoot: string;
-}
+};
 
 /**
  * One acquired browser, and the end of the lease.
@@ -39,10 +39,10 @@ export interface EyesScope {
  * `browserUrl` is the endpoint that a capture connects to. `release` ends the lease of the caller. The shape
  * binds no duration, thus one look and a longer interactive hold read the same.
  */
-export interface EyesLease {
+export type EyesLease = {
     readonly browserUrl: string;
     release(): Promise<void>;
-}
+};
 
 /**
  * The eyes seam. One call gives one lease over one scope.
@@ -70,10 +70,11 @@ export function createStaticEyes(chrome: ChromeConfig): AcquireEyes {
     }
     const browserUrl = chrome.browserUrl;
 
-    return async (_scope: EyesScope): Promise<EyesLease> => ({
+    return (_scope: EyesScope): Promise<EyesLease> => Promise.resolve(({
         browserUrl,
-        release: async () => {
+        release:  () => {
             // The standing sidecar outlives every look, thus nothing ends here.
-        },
-    });
+            return Promise.resolve();
+},
+    }));
 }

@@ -106,11 +106,11 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
  * of one type takes no fault at the build when a caller swaps the two. Thus the group rides one bag, and
  * each member of it carries its own name.
  */
-export interface PageAssets {
+export type PageAssets = {
     readonly dataAssets: readonly DataAsset[];
     readonly grids: boolean;
     readonly provenanceAssets: readonly DataAsset[];
-}
+};
 
 /**
  * Assemble the page from the title, the navigation, the main content, the reference frame, and the data

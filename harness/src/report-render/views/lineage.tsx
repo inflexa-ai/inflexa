@@ -21,6 +21,7 @@
  */
 
 import type { Reference } from "../../contracts/report-reference.js";
+import type { FC } from "hono/jsx";
 
 /**
  * The page-wide truths of one render.
@@ -32,9 +33,9 @@ import type { Reference } from "../../contracts/report-reference.js";
  * `lineage` states that the page carries a provenance document. Each grounded block then stamps its keys
  * and shows its control, and a page with no document carries neither.
  */
-export interface ViewOptions {
+export type ViewOptions = {
     readonly lineage: boolean;
-}
+};
 
 /**
  * The options that a view takes when the caller gives none. Each truth is off, thus the view renders its
@@ -71,7 +72,7 @@ const LINEAGE_GLYPH_CLASS = "report-lineage-glyph";
  * both reach the drawing and the sheet holds one color for the two states. The glyph is decoration, thus
  * it hides from a reader who hears the page and the label of the button answers instead.
  */
-function LineageGlyph() {
+const LineageGlyph: FC = () => {
     return (
         <svg class={LINEAGE_GLYPH_CLASS} width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
             <circle cx="4" cy="4" r="2" />
@@ -85,16 +86,16 @@ function LineageGlyph() {
 }
 
 /** The pin of one artifact: the analysis-relative path, and the content hash of the bytes. */
-export interface LineagePin {
+export type LineagePin = {
     readonly path: string;
     readonly hash: string;
-}
+};
 
 /** The identity of one external record: the identifier space, and the identifier inside it. */
-export interface LineageRecord {
+export type LineageRecord = {
     readonly idKind: string;
     readonly id: string;
-}
+};
 
 /** One key of a stamp. A reference that pins no single file gives `null` in place of a key. */
 export type LineageKey = LineagePin | LineageRecord;
@@ -153,7 +154,7 @@ export function lineagePlace(on: boolean, reference: Reference, index = 0): numb
  * The control names its place and never its key. The stamp of the block holds the keys, thus one page
  * carries one copy of each key and a claim of several bindings repeats none of them.
  */
-export function LineageControl({ place }: { place: number }) {
+export const LineageControl: FC<{ place: number }> = ({ place }) => {
     return (
         <button
             type="button"

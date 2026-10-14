@@ -74,11 +74,11 @@ function asEngineLogger(logger: Logger): DLogger {
     };
 }
 
-export interface DbosWorkflowPurgerDeps {
+export type DbosWorkflowPurgerDeps = {
     /** Pool onto the engine's system database — the same database the application pool holds. */
     readonly pool: Pool;
     readonly logger?: Logger;
-}
+};
 
 export function createDbosWorkflowPurger({ pool, logger: injected }: DbosWorkflowPurgerDeps): WorkflowPurger {
     const logger = (injected ?? createNoopLogger()).named("workflow-purger");
@@ -195,6 +195,7 @@ export function createDbosWorkflowPurger({ pool, logger: injected }: DbosWorkflo
                 .map(() => {
                     logger.debug("cancelled workflows", { requested: workflowIds.length });
                 })
+                // oxlint-disable-next-line typescript/no-invalid-void-type -- neverthrow's ok<void, E> / ResultAsync<void, E> is the idiom of the seam contracts; re-typing the contracts to undefined changes the published surface beyond this change
                 .orElse(whenLedgerAbsent<void>(undefined));
         },
 

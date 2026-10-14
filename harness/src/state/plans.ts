@@ -16,13 +16,14 @@ import type { Querier } from "./db.js";
  * its tool input; `upsertPlan` re-asserts it because it accepts a caller-derived
  * id rather than minting one.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const PLAN_ID_PATTERN = /^pln-[a-f0-9]{8}$/;
 
-export interface InsertPlanInput {
+export type InsertPlanInput = {
     analysisId: string;
     plan: unknown;
     parentPlanId?: string | null;
-}
+};
 
 /**
  * Enforce tenant scope for a `parentPlanId`: the parent row must exist AND belong
@@ -80,13 +81,13 @@ export function insertPlan(pool: Querier, input: InsertPlanInput): ResultAsync<s
     return checkParentScope(pool, input.parentPlanId, input.analysisId, "plans.insertPlan.parentScope").andThen(insert);
 }
 
-export interface UpsertPlanInput {
+export type UpsertPlanInput = {
     /** Caller-derived id — must match the `pln-<8hex>` contract. */
     planId: string;
     analysisId: string;
     plan: unknown;
     parentPlanId?: string | null;
-}
+};
 
 /**
  * Insert a plan under a caller-supplied id, or no-op if that id already exists
@@ -132,7 +133,7 @@ export function upsertPlan(pool: Querier, input: UpsertPlanInput): ResultAsync<v
  * to the caller, which is the multi-tenancy invariant. Absence is NOT an
  * error.
  */
-export function loadPlan(pool: Querier, planId: string, opts: { analysisId: string }): ResultAsync<unknown | null, DbError> {
+export function loadPlan(pool: Querier, planId: string, opts: { analysisId: string }): ResultAsync<unknown, DbError> {
     return tryQuery("plans.loadPlan", async () => {
         const result = await pool.query<{ plan: unknown }>({
             text: `SELECT plan FROM cortex_plans

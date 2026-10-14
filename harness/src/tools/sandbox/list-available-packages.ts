@@ -39,6 +39,7 @@ import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.
 import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
 import { IMAGE_PACKAGES_FILE, readImagePackagesFile, type ImagePackages } from "../../sandbox/image-packages.js";
+import { errorMessage } from "../../lib/thrown.js";
 
 /**
  * Where the lock lives when the host mounts the farm at the same path the
@@ -113,7 +114,7 @@ export function lockSections(lock: FarmLock): Section[] {
         .filter(([, packages]) => packages.length > 0)
         .map(([subtree, packages]) => {
             const track = trackOfLockSubtree(subtree);
-            return { title: TRACK_TITLES[subtree] ?? subtree, packages, ...(track === undefined ? {} : { track }) };
+            return { title: TRACK_TITLES[subtree] ?? subtree, packages, track: !(track === undefined) ? track : undefined };
         });
 }
 
@@ -175,7 +176,7 @@ function foldSections(sections: readonly Section[]): Section[] {
             open.packages.push(pkg);
         }
     }
-    return [...byTitle.values()].map(({ title, track, packages }) => ({ title, packages, ...(track === undefined ? {} : { track }) }));
+    return [...byTitle.values()].map(({ title, track, packages }) => ({ title, packages, track: !(track === undefined) ? track : undefined }));
 }
 
 /**
@@ -260,7 +261,9 @@ export type PackagesResult =
  */
 const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
     // `CLI_TITLE` — the conda-installed bioinformatics executables.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     cli: (t) => /system tools|\bcli\b/i.test(t),
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     node: (t) => /^node\b/i.test(t),
 };
 
@@ -268,7 +271,7 @@ const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
 function matchesLanguage(section: Section, language: PackagesQuery["language"]): boolean {
     if (language === undefined) return true;
     if (language === "r" || language === "python") return section.track === language;
-    return LANGUAGE_MATCHERS[language]!(section.title);
+    return LANGUAGE_MATCHERS[language](section.title);
 }
 
 /**
@@ -360,19 +363,19 @@ function presentEntry(requested: string, row: { entry: SectionPackage; section: 
         present: true,
         name: row.entry.name,
         section: row.section,
-        ...(row.entry.version === undefined ? {} : { version: row.entry.version }),
-        ...(row.entry.storeDir === undefined ? {} : { storeDir: row.entry.storeDir }),
-        ...(row.entry.hash === undefined ? {} : { hash: row.entry.hash }),
+        version: !(row.entry.version === undefined) ? row.entry.version : undefined,
+        storeDir: !(row.entry.storeDir === undefined) ? row.entry.storeDir : undefined,
+        hash: !(row.entry.hash === undefined) ? row.entry.hash : undefined,
     };
 }
 
 /** The tool's input, as parsed from `inputSchema`. */
-export interface PackagesQuery {
+export type PackagesQuery = {
     readonly names?: readonly string[];
     readonly query?: string;
     readonly language?: "r" | "python" | "cli" | "node";
     readonly limit?: number;
-}
+};
 
 /**
  * Answer a packages query against a parsed catalog. Pure — the tool's `execute`
@@ -436,7 +439,7 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
             }
             if (hits.length > 0) return hits;
             const suggestion = resolution.kind === "unknown" ? resolution.suggestion : undefined;
-            return [{ requested, present: false, ...(suggestion === undefined ? {} : { suggestion: suggestion.name }) }];
+            return [{ requested, present: false, suggestion: !(suggestion === undefined) ? suggestion.name : undefined }];
         });
         return { available: true, checked };
     }
@@ -451,7 +454,7 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
         .map((s) => ({
             title: s.title,
             packages: needle ? s.packages.filter((p) => p.name.toLowerCase().includes(needle)) : s.packages,
-            ...(s.track === undefined ? {} : { track: s.track }),
+            track: !(s.track === undefined) ? s.track : undefined,
         }))
         .filter((s) => s.packages.length > 0);
 
@@ -513,9 +516,9 @@ export async function readInventorySections(deps: ListAvailablePackagesDeps, ana
         .map(imageSections)
         .unwrapOr([]);
     if (deps.readPoolInventory) {
-        const pool = await deps.readPoolInventory().catch((cause): PoolInventoryRead => ({
+        const pool = await deps.readPoolInventory().catch((cause: unknown): PoolInventoryRead => ({
             kind: "unavailable",
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
         }));
         if (pool.kind === "unavailable") return { kind: "unavailable", reason: pool.reason };
         return { kind: "sections", sections: [...pool.sections, ...recordSections] };

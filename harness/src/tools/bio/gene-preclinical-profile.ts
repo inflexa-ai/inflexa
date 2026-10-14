@@ -32,7 +32,7 @@ const DEFAULT_SPECIES: readonly SupportedSpecies[] = ["homo_sapiens", "mus_muscu
 
 const DEFAULTS = { tissueLimit: 15, phenotypeLimit: 20, minRank: "low" } as const;
 
-interface BoundedSpeciesEntry {
+type BoundedSpeciesEntry = {
     species: SupportedSpecies;
     taxonId: number;
     ensemblId: string;
@@ -41,13 +41,13 @@ interface BoundedSpeciesEntry {
     tissueCount: number;
     /** Tissues that passed `minRank`, before `tissueLimit`. */
     tissuesAboveMinRank: number;
-}
+};
 
-interface ExpressionHalf {
+type ExpressionHalf = {
     humanEnsemblId: string | null;
     bySpecies: BoundedSpeciesEntry[];
     notFound: string[];
-}
+};
 
 /**
  * One curated human phenotype. The HPO ancestor closure of the source record
@@ -56,7 +56,7 @@ interface ExpressionHalf {
  */
 type HumanPhenotypeTerm = Omit<MonarchPhenotypeAssociation, "ancestorIds">;
 
-interface HumanPhenotypeHalf {
+type HumanPhenotypeHalf = {
     /** The curie Monarch was queried by, e.g. `HGNC:1100`; null when the symbol did not anchor on HGNC. */
     geneCurie: string | null;
     hpoTerms: HumanPhenotypeTerm[];
@@ -64,9 +64,9 @@ interface HumanPhenotypeHalf {
     phenotypeCount: number;
     /** True when `phenotypeLimit` trimmed `hpoTerms`; `phenotypeCount` is the real total. */
     phenotypesTrimmed: boolean;
-}
+};
 
-interface KnockoutHalf {
+type KnockoutHalf = {
     mouseMarkerSymbol: string | null;
     mgiAccessionId: string | null;
     viability: ViabilityCategory;
@@ -77,7 +77,7 @@ interface KnockoutHalf {
     phenotypeCount: number;
     /** True when `phenotypeLimit` trimmed `mpTerms`; `phenotypeCount` is the real total. */
     phenotypesTrimmed: boolean;
-}
+};
 
 const inputSchema = z.object({
     geneSymbol: z

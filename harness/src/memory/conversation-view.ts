@@ -47,33 +47,33 @@ export function groupTurns<T>(rows: readonly T[], isStart: (row: T) => boolean):
         if (turns.length === 0 || isStart(row)) {
             turns.push([row]);
         } else {
-            turns[turns.length - 1]!.push(row);
+            turns[turns.length - 1].push(row);
         }
     }
     return turns;
 }
 
-export interface ConversationViewOptions {
+export type ConversationViewOptions = {
     /** Keep the first turn in front of the view: the seed of a report thread. */
     readonly keepFirstTurn?: boolean;
-}
+};
 
-export interface ConversationView {
+export type ConversationView = {
     readonly messages: ModelMessage[];
     /** `sources[i]` is the index of the input message that gives `messages[i]`. */
     readonly sources: number[];
-}
+};
 
-interface ViewEntry {
+type ViewEntry = {
     readonly message: ModelMessage;
     readonly source: number;
-}
+};
 
-interface ViewParts {
+type ViewParts = {
     readonly head: readonly ViewEntry[];
     readonly front: ViewEntry | undefined;
     readonly body: readonly ViewEntry[];
-}
+};
 
 function isCompactionMessage(message: ModelMessage): boolean {
     return compactionMarkerOf(message) !== undefined || compactionExchangeOf(message) !== undefined;
@@ -96,7 +96,7 @@ function viewParts(messages: readonly ModelMessage[], options: ConversationViewO
     let headEnd = 0;
     if (options.keepFirstTurn === true) {
         while (headEnd < messages.length) {
-            const message = messages[headEnd]!;
+            const message = messages[headEnd];
             if (isCompactionMessage(message) || (headEnd > 0 && isGenuineUserStart(message))) break;
             headEnd++;
         }
@@ -105,7 +105,7 @@ function viewParts(messages: readonly ModelMessage[], options: ConversationViewO
     let front: ViewEntry | undefined;
     let body: ViewEntry[] = [];
     for (let source = headEnd; source < messages.length; source++) {
-        const message = messages[source]!;
+        const message = messages[source];
         if (compactionExchangeOf(message) !== undefined) continue;
         const marker = compactionMarkerOf(message);
         if (marker?.kind === "summary") {
@@ -142,7 +142,7 @@ export function withoutReasoning(message: ModelMessage): ModelMessage | undefine
  */
 export function lastRequestInputTokens(messages: readonly ModelMessage[]): number | undefined {
     for (let at = messages.length - 1; at >= 0; at--) {
-        const message = messages[at]!;
+        const message = messages[at];
         if (compactionMarkerOf(message) !== undefined) return undefined;
         const tokens = requestInputTokensOf(message);
         if (tokens !== undefined) return tokens;

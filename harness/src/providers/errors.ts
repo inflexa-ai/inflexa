@@ -19,6 +19,7 @@
  */
 
 import { redactSecrets } from "../input-sanitization.js";
+import { errorMessage } from "../lib/thrown.js";
 
 /**
  * The sentinel that the request-timeout guard uses as an abort reason. The guard
@@ -145,7 +146,7 @@ export function toProviderError(e: unknown, workload: string, suspendOn: Suspend
         };
     }
     const classified = classifyProviderError(e, suspendOn);
-    const detail = e instanceof Error ? e.message : String(e);
+    const detail = errorMessage(e);
     if (classified.kind === "auth") {
         return {
             type: "auth",
@@ -213,10 +214,11 @@ const PROVIDER_BODY_EXCERPT_MAX_LEN = 120;
  * strings) and is safe on biological data, so a legitimate error body passes through intact.
  */
 function excerptResponseBody(body: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const singleLine = redactSecrets(body).replace(/\s+/g, " ").trim();
     // Slice by CODE POINT, not UTF-16 unit: a raw byte body can carry astral characters, and a plain
     // `.slice` could bisect a surrogate pair into a lone half that renders as U+FFFD.
-    const chars = [...singleLine];
+    const chars = Array.from(singleLine);
     return chars.length > PROVIDER_BODY_EXCERPT_MAX_LEN ? chars.slice(0, PROVIDER_BODY_EXCERPT_MAX_LEN - 1).join("") + "…" : singleLine;
 }
 
@@ -248,9 +250,10 @@ const CONNECTION_ERROR_CODES = new Set([
 ]);
 
 const CONNECTION_ERROR_PATTERN =
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     /fetch failed|socket hang up|network error|connection (?:refused|reset|error|closed)|econnrefused|enotfound|etimedout|terminated/i;
 
-interface MaybeErrorChain {
+type MaybeErrorChain = {
     status?: unknown;
     statusCode?: unknown;
     code?: unknown;
@@ -259,7 +262,7 @@ interface MaybeErrorChain {
     /** The AI SDK's `APICallError` carries the raw response body under this name. */
     responseBody?: unknown;
     cause?: unknown;
-}
+};
 
 /**
  * Walk the `cause` chain up to {@link MAX_CAUSE_HOPS} links, and return the first
@@ -354,6 +357,7 @@ function looksLikeConnectionError(err: unknown): boolean {
         findInCauseChain(err, (link) => {
             const e = link as MaybeErrorChain;
             if (typeof e.code === "string" && CONNECTION_ERROR_CODES.has(e.code)) return true;
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             if (typeof e.name === "string" && /^APIConnection/.test(e.name)) return true;
             if (typeof e.message === "string" && CONNECTION_ERROR_PATTERN.test(e.message)) return true;
             return undefined;
@@ -382,7 +386,7 @@ export function classifyProviderError(e: unknown, suspendOn: SuspendOn = DEFAULT
     const status = extractStatus(e);
 
     if (status !== undefined && Object.hasOwn(suspendOn, status)) {
-        return { kind: "suspend", retryable: false, reason: suspendOn[status]!, status };
+        return { kind: "suspend", retryable: false, reason: suspendOn[status], status };
     }
 
     // `auth` is its own kind rather than a plain non-retryable 4xx because the

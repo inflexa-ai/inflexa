@@ -116,11 +116,13 @@ function clamp(text: string, max: number): string {
  * keeps one record on one line.
  */
 function clip(text: string, max: number): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return clamp(text.replace(/\s+/g, " ").trim(), max);
 }
 
 /** Non-empty, whitespace-collapsed value, or `undefined` — nulls and blanks read the same. */
 function present(value: string | null | undefined): string | undefined {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const flat = value?.replace(/\s+/g, " ").trim();
     return flat ? flat : undefined;
 }
@@ -196,7 +198,7 @@ function byId<T extends { id: string }>(records: readonly T[] | undefined): Map<
 function formatCensus(view: ProfileGroupView, group: DataProfileGroup | undefined): string | undefined {
     const formats = (group?.formats ?? []).filter((entry) => present(entry.format) !== undefined);
     if (formats.length === 0) return present(view.format);
-    if (formats.length === 1) return present(formats[0]!.format);
+    if (formats.length === 1) return present(formats[0].format);
     const shown = formats.slice(0, MAX_GROUP_FORMATS).map((entry) => `${entry.format} ${entry.count}`);
     return `${shown.join(", ")}${formats.length > shown.length ? `, +${formats.length - shown.length}` : ""}`;
 }
@@ -304,14 +306,14 @@ function caveatsSection(caveats: readonly string[], budget: number): string | un
         if (line.length <= budget) return line;
     }
     const room = budget - render([""]).length;
-    return room >= MIN_PROSE_CHARS ? render([clamp(capped[0]!, room)]) : undefined;
+    return room >= MIN_PROSE_CHARS ? render([clamp(capped[0], room)]) : undefined;
 }
 
 /** The body's lines, and whether the budget — rather than a per-section cap — cost anything. */
-interface BodyDraft {
+type BodyDraft = {
     readonly lines: readonly string[];
     readonly elided: boolean;
-}
+};
 
 /**
  * Fit the body sections into `budget`, in order, each one whole or absent.

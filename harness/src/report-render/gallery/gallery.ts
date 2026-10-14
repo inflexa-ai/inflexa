@@ -48,10 +48,10 @@ export function hasGalleryData(dir: string = GALLERY_DIR): boolean {
 }
 
 /** The declarations of one binding: the display name and the meaning of each column that the page shows. */
-interface Declarations {
+type Declarations = {
     readonly labels?: Record<string, string>;
     readonly meanings?: Record<string, ColumnMeaning>;
-}
+};
 
 /**
  * The pinned tables of the gallery, keyed by the path under the gallery directory. The hash is the SHA-256 of
@@ -105,9 +105,9 @@ function table(path: PinnedPath, declarations: Declarations = {}, rowBound?: Art
         kind: "artifact-table",
         path,
         hash: PINS[path],
-        ...(rowBound !== undefined ? { rowBound } : {}),
-        ...(declarations.labels !== undefined ? { columnLabels: declarations.labels } : {}),
-        ...(declarations.meanings !== undefined ? { columnMeanings: declarations.meanings } : {}),
+        rowBound: rowBound !== undefined ? rowBound : undefined,
+        columnLabels: declarations.labels !== undefined ? declarations.labels : undefined,
+        columnMeanings: declarations.meanings !== undefined ? declarations.meanings : undefined,
     };
 }
 
@@ -802,10 +802,10 @@ export type GalleryFault =
     { kind: "unreadable"; path: string; detail: string } | { kind: "unresolved"; failure: ResolutionFailure } | { kind: "mismatch"; mismatch: BridgeMismatch };
 
 /** The pinned evidence of the gallery and the render values that it resolves to. */
-export interface GalleryLoad {
+export type GalleryLoad = {
     readonly snapshot: ReportSnapshot;
     readonly values: RenderValues;
-}
+};
 
 /**
  * Read each table that the document binds, and build the snapshot that the resolver reads.

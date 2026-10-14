@@ -2,9 +2,9 @@ import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, Citat
 import { createSemanticScholarSource, type SemanticScholarPaper, type SemanticScholarSourceOptions } from "../../literature/sources/semantic-scholar.js";
 import { firstNonEmpty, sourceOutcome } from "./common.js";
 
-export interface SemanticScholarCitationClientOptions extends SemanticScholarSourceOptions {
+export type SemanticScholarCitationClientOptions = SemanticScholarSourceOptions & {
     readonly maxCandidates?: number;
-}
+};
 
 function externalId(value: Record<string, string> | undefined, key: string): string | undefined {
     const found = value?.[key];
@@ -20,16 +20,16 @@ function semanticRecord(paper: SemanticScholarPaper): CitationRecord {
         source: "semantic_scholar",
         sourceRecordId: paper.id,
         identifiers: {
-            ...(doi === undefined ? {} : { doi }),
-            ...(pmid === undefined ? {} : { pmid }),
-            ...(arxiv === undefined ? {} : { arxiv }),
-            ...(corpusId === undefined ? {} : { corpusId }),
+            doi: !(doi === undefined) ? doi : undefined,
+            pmid: !(pmid === undefined) ? pmid : undefined,
+            arxiv: !(arxiv === undefined) ? arxiv : undefined,
+            corpusId: !(corpusId === undefined) ? corpusId : undefined,
         },
-        ...(paper.title === undefined ? {} : { title: paper.title }),
-        ...(paper.authors.length === 0 ? {} : { authors: paper.authors }),
-        ...(paper.year === undefined ? {} : { year: paper.year }),
-        ...(paper.venue === undefined ? {} : { venue: paper.venue }),
-        ...(paper.url === undefined ? {} : { url: paper.url }),
+        title: !(paper.title === undefined) ? paper.title : undefined,
+        authors: !(paper.authors.length === 0) ? paper.authors : undefined,
+        year: !(paper.year === undefined) ? paper.year : undefined,
+        venue: !(paper.venue === undefined) ? paper.venue : undefined,
+        url: !(paper.url === undefined) ? paper.url : undefined,
     };
 }
 

@@ -89,28 +89,28 @@ const LITERATURE_REVIEWER_BUDGET = 3;
 
 // ── Types ────────────────────────────────────────────────────────────
 
-interface ValidationIssue {
+type ValidationIssue = {
     readonly path: string;
     readonly code: "schema" | "semantic";
     readonly message: string;
     readonly hint?: string;
-}
+};
 
 type SubmitSynthesisOutput = { accepted: true } | { accepted: false; issues: ValidationIssue[] };
 
 type SynthesizerOutcome = { kind: "submitted"; synthesis: RunSynthesis } | { kind: "blocker"; reason: string };
 
 /** Internal state passed to the inner tools through closure capture. */
-interface InnerToolContext {
+type InnerToolContext = {
     /** stepIds present in the input summaries — used for reference checks. */
     readonly knownStepIds: ReadonlySet<string>;
     /** runId from the workflow — enforced on the submitted payload. */
     readonly runId: string;
-}
+};
 
-interface OutcomeHolder {
+type OutcomeHolder = {
     outcome: SynthesizerOutcome | null;
-}
+};
 
 // ── Validation ──────────────────────────────────────────────────────
 
@@ -123,6 +123,7 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
     }));
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const PMID_PATTERN = /^\d+$/;
 
 // ── Semantic checks ─────────────────────────────────────────────────
@@ -241,12 +242,12 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
  * did not. A field is `undefined` when it is absent or does not satisfy its own
  * sub-schema — never a guess or a stand-in.
  */
-interface SalvagedInputs {
+type SalvagedInputs = {
     readonly runId?: string;
     readonly findings?: readonly SynthesizedFinding[];
     readonly themes?: readonly BiologicalTheme[];
     readonly keyReferences?: readonly KeyReference[];
-}
+};
 
 function salvageInputs(candidate: unknown): SalvagedInputs {
     const record: Record<string, unknown> = typeof candidate === "object" && candidate !== null ? (candidate as Record<string, unknown>) : {};
@@ -363,9 +364,9 @@ function buildValidateTool(ctx: InnerToolContext): Tool {
             synthesis: z.unknown().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
         }),
         describeCall: "none",
-        execute: async (input) => {
+        execute:  (input) => {
             const result = fullyValidate(decodeObjectString(input.synthesis), ctx);
-            return ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues });
+            return Promise.resolve(ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues }));
         },
     });
 }
@@ -385,16 +386,16 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
             "supersedes an earlier one.",
         inputSchema: z.object({ synthesis: RunSynthesisSchema }),
         describeCall: "none",
-        execute: async (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
+        execute:  (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
             const result = fullyValidate(input.synthesis, ctx);
             if (!result.valid) {
                 // A rejection is not terminal — submission is last-valid-wins, so this
                 // leaves any already-recorded outcome intact and the model may fix the
                 // cited paths and submit again.
-                return ok({ accepted: false as const, issues: result.issues });
+                return Promise.resolve(ok({ accepted: false as const, issues: result.issues }));
             }
             holder.outcome = { kind: "submitted", synthesis: result.synthesis };
-            return ok({ accepted: true as const });
+            return Promise.resolve(ok({ accepted: true as const }));
         },
     });
 }
@@ -439,7 +440,7 @@ export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<strin
 
 // ── Public API ──────────────────────────────────────────────────────
 
-export interface GenerateRunSynthesisInput {
+export type GenerateRunSynthesisInput = {
     readonly provider: ChatProvider;
     readonly session: RunSession;
     readonly model: string;
@@ -461,7 +462,7 @@ export interface GenerateRunSynthesisInput {
     readonly signal?: AbortSignal;
     /** Optional UI event sink (chat data parts forwarded to the parent stream). */
     readonly emit?: EmitFn;
-}
+};
 
 export type GenerateRunSynthesisResult = { kind: "synthesis"; synthesis: RunSynthesis } | { kind: "skipped"; reason: string };
 
@@ -484,7 +485,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         bioKeys: input.bioKeys,
         citationResolver: input.citationResolver,
         usageRecorder: input.usageRecorder,
-        ...(input.toolOutputStore ? { toolOutputStore: input.toolOutputStore } : {}),
+        toolOutputStore: input.toolOutputStore ? input.toolOutputStore : undefined,
     });
 
     const validateTool = buildValidateTool(innerCtx);
@@ -540,13 +541,13 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 
 // ── Disk I/O — load summaries + persist synthesis ───────────────────
 
-export interface LoadStepSummariesInput {
+export type LoadStepSummariesInput = {
     /** Absolute host root of the analysis's workspace tree. */
     readonly workspaceRoot: string;
     readonly runId: string;
     readonly completedSteps: readonly string[];
     readonly agentByStepId?: Readonly<Record<string, string>>;
-}
+};
 
 /**
  * Read each completed step's `output/summary.md`. Steps with missing or empty
@@ -582,12 +583,12 @@ const SYNTHESIS_FILE = "synthesis.json";
  */
 const SYNTHESIS_CAP_BYTES = 1024 * 1024;
 
-export interface PersistSynthesisInput {
+export type PersistSynthesisInput = {
     /** Absolute host root of the analysis's workspace tree. */
     readonly workspaceRoot: string;
     readonly runId: string;
     readonly synthesis: RunSynthesis;
-}
+};
 
 export async function persistSynthesis(args: PersistSynthesisInput): Promise<string> {
     // Confine to the run directory, not the whole workspace: synthesis.json sits

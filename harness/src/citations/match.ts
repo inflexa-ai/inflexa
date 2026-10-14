@@ -3,12 +3,12 @@ import { createHash } from "node:crypto";
 import { authorNamesMatch, normalizeAuthor, normalizeComparable } from "./normalize.js";
 import type { CitationCandidateCluster, CitationIdentifiers, CitationInput, CitationRecord, NormalizedCitation } from "./types.js";
 
-export interface CitationMatchConfig {
+export type CitationMatchConfig = {
     readonly minimumScore: number;
     readonly separationMargin: number;
     readonly clusterSimilarity: number;
     readonly relatedVersionSimilarity: number;
-}
+};
 
 export const DEFAULT_MATCH_CONFIG: CitationMatchConfig = {
     minimumScore: 0.72,
@@ -49,7 +49,7 @@ function authorSimilarity(left: readonly string[] | undefined, right: readonly s
 }
 
 function identifierEntries(identifiers: CitationIdentifiers): string[] {
-    return Object.entries(identifiers).flatMap(([kind, value]) => (value === undefined ? [] : [`${kind}:${value.toLocaleLowerCase("en-US")}`]));
+    return Object.entries(identifiers).flatMap(([kind, value]) => (value ? [`${kind}:${value.toLocaleLowerCase("en-US")}`] : []));
 }
 
 function sharesStrongIdentifier(left: CitationRecord, right: CitationRecord): boolean {
@@ -87,7 +87,7 @@ class UnionFind {
     }
 
     find(index: number): number {
-        const parent = this.parent[index]!;
+        const parent = this.parent[index];
         if (parent === index) return index;
         const root = this.find(parent);
         this.parent[index] = root;
@@ -128,8 +128,8 @@ function containsId(cluster: CitationCandidateCluster, key: keyof CitationIdenti
 function addRelatedVersions(clusters: CitationCandidateCluster[], config: CitationMatchConfig): void {
     for (let left = 0; left < clusters.length; left += 1) {
         for (let right = left + 1; right < clusters.length; right += 1) {
-            const a = clusters[left]!;
-            const b = clusters[right]!;
+            const a = clusters[left];
+            const b = clusters[right];
             const similarity = Math.max(...a.records.flatMap((one) => b.records.map((two) => recordSimilarity(one, two))));
             if (similarity < config.relatedVersionSimilarity) continue;
             const aArxiv = containsId(a, "arxiv");
@@ -159,8 +159,8 @@ export function clusterCitationRecords(
     const union = new UnionFind(records.length);
     for (let left = 0; left < records.length; left += 1) {
         for (let right = left + 1; right < records.length; right += 1) {
-            const a = records[left]!;
-            const b = records[right]!;
+            const a = records[left];
+            const b = records[right];
             if (sharesStrongIdentifier(a, b)) union.union(left, right);
             else if ((!hasStrongIdentifier(a) || !hasStrongIdentifier(b)) && recordSimilarity(a, b) >= config.clusterSimilarity) union.union(left, right);
         }
@@ -169,7 +169,7 @@ export function clusterCitationRecords(
     const grouped = new Map<number, CitationRecord[]>();
     for (let index = 0; index < records.length; index += 1) {
         const root = union.find(index);
-        grouped.set(root, [...(grouped.get(root) ?? []), records[index]!]);
+        grouped.set(root, [...(grouped.get(root) ?? []), records[index]]);
     }
     const clusters = [...grouped.values()].map((members) => ({
         id: stableClusterId(members),
@@ -186,9 +186,9 @@ export function selectCitationCluster(
     clusters: readonly CitationCandidateCluster[],
     config: CitationMatchConfig = DEFAULT_MATCH_CONFIG,
 ): CitationCandidateCluster | undefined {
-    const first = clusters[0];
+    const first = clusters.at(0);
     if (first === undefined || first.score < config.minimumScore) return undefined;
-    const second = clusters[1];
+    const second = clusters.at(1);
     if (second !== undefined && first.score - second.score < config.separationMargin) return undefined;
     return first;
 }

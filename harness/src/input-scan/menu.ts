@@ -57,13 +57,13 @@ const MAX_POSSIBLE_COMBINATIONS = 1_000_000;
  * a full 24-member crossing or 8 members each at one timepoint, and the two are different
  * experimental designs. The margins alone cannot tell them apart.
  */
-export interface SetCrossing {
+export type SetCrossing = {
     readonly setId: string;
     readonly slotIds: readonly string[];
     readonly observedCombinations: number;
     /** The full cross product, or `null` when it is past counting. */
     readonly possibleCombinations: number | null;
-}
+};
 
 /**
  * Measured overlap between two sets' slots, with its gaps.
@@ -72,7 +72,7 @@ export interface SetCrossing {
  * dimension plausible; the values present in one and absent from the other are what make
  * it checkable.
  */
-export interface SlotCorrespondence {
+export type SlotCorrespondence = {
     readonly sets: readonly [string, string];
     readonly slots: readonly [string, string];
     readonly shared: number;
@@ -81,17 +81,17 @@ export interface SlotCorrespondence {
     readonly sharedSample: readonly string[];
     readonly onlyInFirstSample: readonly string[];
     readonly onlyInSecondSample: readonly string[];
-}
+};
 
 /** The tail the menu did not list, in aggregate. */
-export interface UnlistedSets {
+export type UnlistedSets = {
     readonly sets: number;
     readonly members: number;
     readonly files: number;
     readonly totalBytes: number;
-}
+};
 
-export interface SetMenu {
+export type SetMenu = {
     readonly fileCount: number;
     readonly keptFileCount: number;
     /** The addressable entries. An operation may name one of these ids and no other. */
@@ -112,7 +112,7 @@ export interface SetMenu {
     readonly truncated: boolean;
     /** Leftovers whose header readout was elided by the readout budget. */
     readonly readoutsElided: number;
-}
+};
 
 function sample(values: Iterable<string>, limit: number): string[] {
     const picked: string[] = [];
@@ -163,8 +163,8 @@ export function buildCorrespondences(detected: DetectedSets, sets: readonly Dete
     const found: SlotCorrespondence[] = [];
     for (let i = 0; i < candidates.length; i++) {
         for (let j = i + 1; j < candidates.length; j++) {
-            const first = candidates[i]!;
-            const second = candidates[j]!;
+            const first = candidates[i];
+            const second = candidates[j];
             if (first.set.id === second.set.id) continue;
             const overlap = correspond(first, second);
             if (overlap) found.push(overlap);
@@ -202,12 +202,12 @@ export function buildCrossings(detected: DetectedSets, sets: readonly DetectedSe
     return crossings;
 }
 
-export interface BuildSetMenuOptions {
+export type BuildSetMenuOptions = {
     readonly headers?: ReadonlyMap<string, HeaderReadout>;
     /** The walk stopped at its ceiling; see {@link SetMenu.truncated}. */
     readonly truncated?: boolean;
     readonly readoutsElided?: number;
-}
+};
 
 /** Project a scan into the bounded menu the agent authors against. */
 export function buildSetMenu(detected: DetectedSets, options: BuildSetMenuOptions = {}): SetMenu {
@@ -354,7 +354,7 @@ export function renderSetMenu(menu: SetMenu, root: string): string {
             if (overlap.onlyInSecond > 0) gaps.push(`${overlap.onlyInSecond} only in ${overlap.slots[1]} (${overlap.onlyInSecondSample.join(", ")})`);
             lines.push(
                 `- ${overlap.slots[0]} vs ${overlap.slots[1]}: ${overlap.shared} shared values (${overlap.sharedSample.join(", ")})` +
-                    `${gaps.length > 0 ? `; ${gaps.join("; ")}` : "; no gaps"}`,
+                    (gaps.length > 0 ? `; ${gaps.join("; ")}` : "; no gaps"),
             );
         }
     }

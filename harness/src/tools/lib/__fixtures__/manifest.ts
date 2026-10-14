@@ -13,10 +13,11 @@
 import { z } from "zod";
 
 /** `YYYY-MM-DD`. The manifest records the date of the capture, not a timestamp. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const CAPTURED_AT_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The capture record of one fixture file. */
-export interface FixtureManifestEntry {
+export type FixtureManifestEntry = {
     /** The request URL, with no query string when `params` carries the query. */
     url: string;
     /**
@@ -64,7 +65,7 @@ export interface FixtureManifestEntry {
      * YAML or XSD and a JSON diff does not apply to it.
      */
     oracle?: true;
-}
+};
 
 /** The `manifest.json` of one fixture directory: a file name maps to its capture record. */
 export type FixtureManifest = Record<string, FixtureManifestEntry>;

@@ -36,7 +36,7 @@ import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { ChatPart, RunFailedPart } from "../contracts/chat-parts.js";
-import { sleep } from "../lib/async-utils.js";
+import { isAborted, sleep } from "../lib/async-utils.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { describeDbError, type DbError } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
@@ -107,7 +107,7 @@ export interface RunEventRunRead {
  * defaults to silence so an embedder that wired none sees nothing rather than
  * having console forced on it.
  */
-export interface RunEventStreamDeps {
+export type RunEventStreamDeps = {
     readonly pool: Pool;
     readonly logger?: Logger;
     /** Reads the status and the error of the run row, `null` when no row exists. Defaults to `queryRun` on `pool`. */
@@ -119,7 +119,7 @@ export interface RunEventStreamDeps {
     readonly readWorkflowStatus?: (runId: string) => Promise<string | null>;
     /** The wait between two reads of the run row. Defaults to a timer. */
     readonly sleep?: (ms: number) => Promise<void>;
-}
+};
 
 /**
  * Receives one part. May be async — the subscription awaits it, so a handler is
@@ -129,21 +129,21 @@ export interface RunEventStreamDeps {
 export type RunEventPartHandler = (part: ChatPart) => void | Promise<void>;
 
 /** Call-time parameters of one subscription. */
-export interface RunEventSubscribeOptions {
+export type RunEventSubscribeOptions = {
     /** The run to observe. Also the parent workflow's id. */
     readonly runId: string;
     /** Where each delivered part goes. */
     readonly onPart: RunEventPartHandler;
     /** Aborting stops delivery and settles the returned promise. */
     readonly signal: AbortSignal;
-}
+};
 
 /**
  * The run-event read seam. One method, because a run-scoped subscription is the
  * whole capability: a general-purpose stream reader would leak the engine's model
  * back into the surface this exists to quarantine.
  */
-export interface RunEventStream {
+export type RunEventStream = {
     /**
      * Deliver every part the run produces — parent and children alike — to
      * `onPart`, resolving when the run is terminal, every stream opened has
@@ -166,7 +166,7 @@ export interface RunEventStream {
      * `runId`/`stepId` and the reconciling fold is per id.
      */
     subscribe(options: RunEventSubscribeOptions): Promise<void>;
-}
+};
 
 /**
  * Build the DBOS-backed realization of {@link RunEventStream}.
@@ -228,7 +228,7 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                     while (pending.length > 0 && !signal.aborted) {
                         const batch = pending.splice(0, pending.length);
                         for (const part of foldRunEventParts(batch)) {
-                            if (signal.aborted) return;
+                            if (isAborted(signal)) return;
                             try {
                                 await onPart(part);
                             } catch (err) {
@@ -249,6 +249,9 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
             };
 
             let sawTerminal = false;
+            // The flag flips inside the stream reader of another task; the closure
+            // reads it at call time.
+            const sawTerminalFlag = (): boolean => sawTerminal;
 
             const readWorkflowStream = async (workflowId: string): Promise<void> => {
                 const streamLogger = logger.with({ workflowId });
@@ -306,6 +309,9 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
             };
 
             let parentDrained = false;
+            // The flag flips in the `finally` of another task; the closure gives each
+            // read the value at call time, not a narrowed start value.
+            const parentIsDrained = (): boolean => parentDrained;
             const parentRead = readWorkflowStream(runId).finally(() => {
                 parentDrained = true;
             });
@@ -318,7 +324,7 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                 for (;;) {
                     if (signal.aborted) return;
                     await discoverChildren();
-                    if (signal.aborted || parentDrained) return;
+                    if (isAborted(signal) || parentIsDrained()) return;
                     await Promise.race([sleep(CHILD_DISCOVERY_INTERVAL_MS), aborted, parentRead]);
                 }
             })();
@@ -374,7 +380,7 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                 await discovery;
                 await parentRead;
                 await Promise.all(childReads);
-                if (!sawTerminal && !signal.aborted) {
+                if (!sawTerminalFlag() && !isAborted(signal)) {
                     const terminal = await missingTerminalPart();
                     if (terminal !== null) pending.push(terminal);
                 }

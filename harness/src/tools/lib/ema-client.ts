@@ -18,7 +18,7 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { EMA_REFERRALS_URL } from "./ema-config.js";
 
-export interface EmaReferral {
+export type EmaReferral = {
     category: string;
     referralName: string;
     inn: string;
@@ -38,7 +38,7 @@ export interface EmaReferral {
     firstPublishedDate: string;
     lastUpdatedDate: string;
     referralUrl: string;
-}
+};
 
 /**
  * Split one medicine column into names.

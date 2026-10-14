@@ -14,7 +14,7 @@
  * work is done by then.
  */
 
-import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, ok, type Result } from "neverthrow";
 
 import { forStep } from "../auth/types.js";
@@ -38,7 +38,7 @@ import {
 const noopEmit: ExecEmit = () => {};
 
 /** The construction-time deps of the body. The registration closes over them, thus the trigger holds none. */
-export interface DeriveTableExecDeps {
+export type DeriveTableExecDeps = {
     readonly sandboxClient: SandboxClient;
     /**
      * The checkpointed clock of the deadline. It defaults to `DBOS.now()`, which a replay reads again from
@@ -46,7 +46,7 @@ export interface DeriveTableExecDeps {
      */
     readonly now?: () => Promise<number>;
     readonly logger?: Logger;
-}
+};
 
 /**
  * The body, exported so a test drives it without a registered workflow.
@@ -118,6 +118,6 @@ export async function triggerDeriveTableExec(
 ): Promise<Result<ExecResult, Suspension>> {
     const handle = (await DBOS.startWorkflow(workflow, {
         workflowID: deriveTableExecWorkflowId(input.executionId),
-    })(input)) as WorkflowHandle<Result<ExecResult, Suspension>>;
+    })(input));
     return handle.getResult();
 }

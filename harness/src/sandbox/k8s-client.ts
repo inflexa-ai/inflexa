@@ -50,6 +50,7 @@ import type {
 } from "./types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { sleep as defaultSleep } from "../lib/async-utils.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -85,7 +86,7 @@ function readOwnerWorkflowId(metadata: V1ObjectMeta | undefined): string | null 
     return metadata?.annotations?.[OWNER_WORKFLOW_ANNOTATION] ?? null;
 }
 
-export interface K8sClientConfig {
+export type K8sClientConfig = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     image: string;
@@ -144,7 +145,7 @@ export interface K8sClientConfig {
     batchApi?: BatchV1Api;
     coreApi?: CoreV1Api;
     registerSandbox: (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => Promise<void>;
-}
+};
 
 function deleteJobIgnoreMissing(batchApi: BatchV1Api, namespace: string, name: string): ResultAsync<void, SandboxError> {
     return trySandbox(
@@ -243,7 +244,7 @@ async function buildJobSpec(
     const env = Object.entries({
         ...threadLimitEnv(spec),
         ...plan.env,
-        ...(sandboxSpec.extraEnv ?? {}),
+        ...(sandboxSpec.extraEnv),
     }).map(([name, value]) => ({ name, value }));
 
     // requests == limits → Guaranteed QoS and a predictable OOM bound; also
@@ -292,7 +293,7 @@ async function buildJobSpec(
             // Volume-level readOnly only when nothing writes through the claim:
             // the cache mount needs write access, and the per-mount flags keep
             // the store and the farm read-only either way.
-            persistentVolumeClaim: { claimName: config.libStorePvc, ...(cacheSubPath === undefined ? { readOnly: true } : {}) },
+            persistentVolumeClaim: { claimName: config.libStorePvc, readOnly: cacheSubPath === undefined ? true : undefined },
         });
         volumeMounts.push({
             name: LIBS_VOLUME_NAME,
@@ -395,13 +396,13 @@ async function buildJobSpec(
     };
 }
 
-interface PodStatusSnapshot {
+type PodStatusSnapshot = {
     phase?: string;
     podIP?: string;
     podName?: string;
     /** Why the pod is not there yet — `Unschedulable`, `ContainersNotReady`, and the rest. */
     reason?: string;
-}
+};
 
 /**
  * The reason of the first condition the pod does not meet. `PodScheduled` and
@@ -413,11 +414,11 @@ function pendingConditionReason(pod: V1Pod | undefined): string | undefined {
 }
 
 /** Clock and sleep seams, so a test can drive the slow-pod warning without waiting a minute. */
-export interface WaitForPodReadyDeps {
+export type WaitForPodReadyDeps = {
     readonly logger?: Logger;
     readonly now?: () => number;
     readonly sleep?: (ms: number) => Promise<void>;
-}
+};
 
 export function waitForPodReady(
     coreApi: CoreV1Api,
@@ -433,7 +434,7 @@ export function waitForPodReady(
         cause,
     });
     const now = deps.now ?? (() => Date.now());
-    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const sleepFor = deps.sleep ?? defaultSleep;
     const logger = (deps.logger ?? createNoopLogger()).named("k8s-client");
     return new ResultAsync(
         (async () => {
@@ -451,17 +452,21 @@ export function waitForPodReady(
                     createFailed,
                 );
                 if (listed.isErr()) return err(listed.error);
-                const pod = listed.value.items[0];
+                const pod = listed.value.items.at(0);
+                if (pod === undefined) {
+                    await sleepFor(POD_POLL_INTERVAL_MS);
+                    continue;
+                }
                 lastSnapshot = {
-                    phase: pod?.status?.phase,
-                    podIP: pod?.status?.podIP,
-                    podName: pod?.metadata?.name,
+                    phase: pod.status?.phase,
+                    podIP: pod.status?.podIP,
+                    podName: pod.metadata?.name,
                     reason: pendingConditionReason(pod),
                 };
-                if (pod && pod.status?.phase === "Running" && typeof pod.status.podIP === "string" && pod.metadata?.name) {
+                if (pod.status?.phase === "Running" && typeof pod.status.podIP === "string" && pod.metadata?.name) {
                     return ok({ podIP: pod.status.podIP, podName: pod.metadata.name });
                 }
-                if (pod?.status?.phase === "Failed") {
+                if (pod.status?.phase === "Failed") {
                     return err(createFailed(undefined, new Error(`K8sSandbox ${sandboxId}: pod phase=Failed before becoming ready`)));
                 }
                 // One warning for one wait: the pod is still pending a minute in, and
@@ -478,7 +483,7 @@ export function waitForPodReady(
                         conditionReason: lastSnapshot.reason ?? null,
                     });
                 }
-                await sleep(POD_POLL_INTERVAL_MS);
+                await sleepFor(POD_POLL_INTERVAL_MS);
             }
             return err(
                 createFailed(
@@ -534,7 +539,7 @@ function waitForJobGone(batchApi: BatchV1Api, namespace: string, name: string): 
                     if (statusOf(read.error) === 404) return ok(undefined);
                     return err(read.error);
                 }
-                await new Promise((r) => setTimeout(r, 500));
+                await defaultSleep(500);
             }
             return err(createFailed(undefined, new Error(`K8sSandbox ${name}: prior Job did not delete within 60s`)));
         })(),
@@ -580,7 +585,7 @@ function createOrAdoptJob(
             if (existingRead.isErr()) return err(existingRead.error);
             const owner = readOwnerWorkflowId(existingRead.value.metadata);
             if (owner !== ownerWorkflowId) {
-                return err({
+                return err<never, SandboxError>({
                     type: "name_conflict",
                     op: "k8s.createSandbox",
                     sandboxId,
@@ -679,7 +684,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                     // finishes) — the Job controller retries pod creation forever. Delete
                     // the Job on any startup failure so a failed create can't leak a
                     // zombie that floods k8s events indefinitely.
-                    const ready = await waitForPodReady(coreApi, config.namespace, sandboxId, { ...(config.logger ? { logger: config.logger } : {}) });
+                    const ready = await waitForPodReady(coreApi, config.namespace, sandboxId, { logger: config.logger ? config.logger : undefined });
                     if (ready.isOk()) {
                         const ref: SandboxRef = {
                             sandboxId,
@@ -736,7 +741,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                         const labels = j.metadata?.labels ?? {};
                         const ts = j.metadata?.creationTimestamp;
                         return {
-                            sandboxId: labels[SANDBOX_ID_LABEL] ?? j.metadata?.name ?? "",
+                            sandboxId: labels[SANDBOX_ID_LABEL] ?? j.metadata?.name,
                             ownerWorkflowId: readOwnerWorkflowId(j.metadata),
                             createdAtMs: ts ? new Date(ts).getTime() : null,
                         };
@@ -768,7 +773,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
             }),
         )
             .map((pods) => {
-                const pod = pods.items[0];
+                const pod = pods.items.at(0);
                 if (!pod) return { alive: false, oomKilled: false };
                 const phase = pod.status?.phase;
                 // `Pending` and `Running` are alive; `Succeeded`, `Failed`,

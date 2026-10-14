@@ -50,7 +50,7 @@ const DRUG_INTERACTIONS_QUERY = `query($drugs: [String!]!) {
   }
 }`;
 
-export interface DgidbInteraction {
+export type DgidbInteraction = {
     geneName: string;
     drugName: string;
     drugConceptId?: string;
@@ -61,15 +61,15 @@ export interface DgidbInteraction {
     publicationCount: number;
     pmids: string[];
     attributes?: { name: string; value: string }[];
-}
+};
 
-export interface DgidbResult {
+export type DgidbResult = {
     input: string;
     found: boolean;
     interactions: DgidbInteraction[];
     /** Interactions this input had before `limit` trimmed them. */
     totalInteractions: number;
-}
+};
 
 // Shape of the DGIdb GraphQL payload as it arrives on the wire. Validated at
 // the fetch boundary; `mapInteraction` normalizes each record. GraphQL always
@@ -113,13 +113,13 @@ const MAX_PMIDS = 5;
 const MAX_ATTRIBUTES = 10;
 const MAX_ATTRIBUTE_CHARS = 160;
 
-export interface DgidbFilters {
+export type DgidbFilters = {
     interactionTypes?: string[];
     sourceDbs?: string[];
     minSources?: number;
     includeAttributes?: boolean;
     limit?: number;
-}
+};
 
 function mapInteraction(
     raw: RawInteraction,
@@ -131,7 +131,7 @@ function mapInteraction(
     const pmids = (raw.publications ?? []).map((p) => (p.pmid != null ? String(p.pmid) : "")).filter(Boolean);
     const types = (raw.interactionTypes ?? []).map((t) => ({
         type: t.type ?? "",
-        ...(t.directionality ? { directionality: t.directionality } : {}),
+        directionality: t.directionality ? t.directionality : undefined,
     }));
 
     const geneName = perspective === "gene" ? (inputSide.geneName ?? "") : (raw.gene?.name ?? "");
@@ -141,21 +141,17 @@ function mapInteraction(
     return {
         geneName,
         drugName,
-        ...(drugConceptId ? { drugConceptId } : {}),
+        drugConceptId: drugConceptId ? drugConceptId : undefined,
         interactionTypes: types,
-        ...(raw.interactionScore != null ? { interactionScore: raw.interactionScore } : {}),
+        interactionScore: raw.interactionScore != null ? raw.interactionScore : undefined,
         sourceCount: sources.length,
         sources,
         publicationCount: pmids.length,
         pmids: pmids.slice(0, MAX_PMIDS),
-        ...(includeAttributes
-            ? {
-                  attributes: (raw.interactionAttributes ?? []).slice(0, MAX_ATTRIBUTES).map((a) => ({
+        attributes: includeAttributes ? (raw.interactionAttributes ?? []).slice(0, MAX_ATTRIBUTES).map((a) => ({
                       name: a.name ?? "",
                       value: (a.value ?? "").slice(0, MAX_ATTRIBUTE_CHARS),
-                  })),
-              }
-            : {}),
+                  })) : undefined,
     };
 }
 
@@ -201,7 +197,7 @@ export async function searchDgidb(
     if (res.isErr()) throw new Error(describeApiError(res.error));
 
     const body = res.value;
-    if (!body || !body.data) throw new Error("DGIdb returned no data");
+    if (!body.data) throw new Error("DGIdb returned no data");
     if (body.errors?.length) onPartialErrors?.(body.errors.slice(0, 3));
 
     const nodes = (isGene ? body.data.genes?.nodes : body.data.drugs?.nodes) ?? [];

@@ -11,7 +11,7 @@
  * C0/C1 control characters and DEL, excluding `\t` (U+0009) and `\n`
  * (U+000A) which are legitimate whitespace in user prose.
  */
-// eslint-disable-next-line no-control-regex -- matching control characters is the intent: this pattern strips invisible C0/C1 bytes and DEL from untrusted user input (see `normalizeUnicode` below).
+// oxlint-disable-next-line no-control-regex, eslint-js/no-restricted-syntax -- matching control characters is the intent: this pattern strips invisible C0/C1 bytes and DEL from untrusted user input (see `normalizeUnicode` below), and no builtin classifier knows the byte ranges.
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
 
 /**
@@ -34,7 +34,7 @@ export function normalizeUnicode(text: string): string {
  * arrives through no fault of the model: tool results carry raw command output
  * and file bytes, which is why they are otherwise left unsanitized.
  */
-// eslint-disable-next-line no-control-regex -- matching NUL is the intent; see above.
+// oxlint-disable-next-line no-control-regex, eslint-js/no-restricted-syntax -- matching NUL is the intent; see above. No builtin classifier knows the NUL byte.
 const NUL = /\u0000/g;
 
 /**
@@ -63,17 +63,24 @@ export function stripNulCharacters(text: string): string {
  * Anthropic label wins; `sk-(?!ant-)` additionally excludes it by lookahead.
  */
 const SECRET_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
     { name: "AWS Access Key", pattern: /\bAKIA[0-9A-Z]{16}\b/g },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
     { name: "Anthropic API Key", pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
     { name: "OpenAI API Key", pattern: /\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b/g },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
     { name: "GitHub Token", pattern: /\bgh[psoru]_[A-Za-z0-9_]{36,}\b/g },
     {
         name: "JWT Token",
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
         pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
     },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
     { name: "Bearer Token", pattern: /\bBearer\s+[A-Za-z0-9_\-.~+/]+=*/gi },
     {
         name: "Connection String",
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
         pattern: /\b(?:postgres|postgresql|mysql|mongodb|redis|amqp|mssql):\/\/[^\s"'`]+/gi,
     },
 ];

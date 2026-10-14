@@ -17,11 +17,12 @@
 
 import type { Pool, PoolClient } from "pg";
 import { buildMaintenanceEmbedder, refreshRegulatoryCorpus, type RefreshOptions } from "./refresh-regulatory-corpus.js";
+import { errorMessage } from "../lib/thrown.js";
 
 export const REFRESH_INTERVAL_DAYS = 90;
 const ADVISORY_LOCK_KEY = "cortex_regulatory_corpus_refresh";
 
-export interface BootRefreshDeps {
+export type BootRefreshDeps = {
     /** Shared `pg.Pool`. */
     pool: Pool;
     /** Forwarded to `refreshRegulatoryCorpus()` when the refresh fires. */
@@ -43,12 +44,12 @@ export interface BootRefreshDeps {
     embeddingModel?: string;
     /** Direct OpenAI key for the maintenance embedder (NOT a billing-gateway VK). */
     openaiApiKey?: string;
-}
+};
 
-interface FreshnessRow {
+type FreshnessRow = {
     last_indexed_at: Date | null;
     age_days: number | null;
-}
+};
 
 async function checkFreshness(pool: Pool, intervalDays: number): Promise<{ stale: boolean; lastIndexedAt: Date | null; ageDays: number | null }> {
     const { rows } = await pool.query<FreshnessRow>(
@@ -57,8 +58,8 @@ async function checkFreshness(pool: Pool, intervalDays: number): Promise<{ stale
      FROM cortex_regulatory_chunks`,
     );
     const row = rows[0];
-    const lastIndexedAt = row?.last_indexed_at ?? null;
-    const ageDays = row?.age_days != null ? Number(row.age_days) : null;
+    const lastIndexedAt = row.last_indexed_at ?? null;
+    const ageDays = row.age_days != null ? Number(row.age_days) : null;
     const stale = lastIndexedAt === null || (ageDays ?? Infinity) >= intervalDays;
     return { stale, lastIndexedAt, ageDays };
 }
@@ -69,7 +70,7 @@ async function checkFreshness(pool: Pool, intervalDays: number): Promise<{ stale
  */
 async function tryAcquireLock(client: PoolClient): Promise<boolean> {
     const { rows } = await client.query<{ acquired: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)) AS acquired", [ADVISORY_LOCK_KEY]);
-    return rows[0]?.acquired === true;
+    return rows[0]?.acquired ?? false;
 }
 
 async function releaseLock(client: PoolClient): Promise<void> {
@@ -110,7 +111,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
     try {
         freshness = await checkFreshness(pool, intervalDays);
     } catch (err) {
-        log.warn("[boot] Regulatory corpus freshness check failed; skipping auto-refresh:", err instanceof Error ? err.message : err);
+        log.warn("[boot] Regulatory corpus freshness check failed; skipping auto-refresh:", errorMessage(err));
         return "error";
     }
 
@@ -132,7 +133,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
                 embeddingModel: deps.embeddingModel ?? "",
             });
         } catch (err) {
-            log.warn("[boot] Could not load env for regulatory corpus refresh; skipping:", err instanceof Error ? err.message : err);
+            log.warn("[boot] Could not load env for regulatory corpus refresh; skipping:", errorMessage(err));
             return "skipped-unconfigured";
         }
     }
@@ -158,7 +159,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
         acquired = await tryAcquireLock(client);
     } catch (err) {
         client.release();
-        log.warn("[boot] Regulatory corpus advisory-lock attempt failed; skipping auto-refresh:", err instanceof Error ? err.message : err);
+        log.warn("[boot] Regulatory corpus advisory-lock attempt failed; skipping auto-refresh:", errorMessage(err));
         return "error";
     }
 
@@ -176,13 +177,13 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
     void (async () => {
         try {
             const result = await refresh({
-                ...(deps.refreshOptions ?? {}),
+                ...(deps.refreshOptions),
                 pool,
                 embedder: dispatchEmbedder,
             });
             log.log(`[boot] Regulatory corpus refresh complete: ok=${result.ok} fail=${result.fail}`);
         } catch (err) {
-            log.error("[boot] Regulatory corpus refresh threw:", err instanceof Error ? err.message : err);
+            log.error("[boot] Regulatory corpus refresh threw:", errorMessage(err));
         } finally {
             await releaseLock(client);
             client.release();

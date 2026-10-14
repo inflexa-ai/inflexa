@@ -26,6 +26,7 @@ import { readFileSync } from "node:fs";
 
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
+import { jsonParse } from "../lib/json.js";
 
 /**
  * The file name of the record, at the root of the package store. Exported,
@@ -41,7 +42,7 @@ export const ImageIdentitySchema = z
         version: z.string(),
         arch: z.enum(["amd64", "arm64"]),
     })
-    .passthrough();
+    .loose();
 
 /** The interpreter versions of the image, so a reader can compare them against the lock. */
 export const ImageRuntimesSchema = z
@@ -50,7 +51,7 @@ export const ImageRuntimesSchema = z
         r: z.string(),
         node: z.string(),
     })
-    .passthrough();
+    .loose();
 
 /**
  * One conda tool of the image. `executable` carries the binary name when it
@@ -63,7 +64,7 @@ export const ImageSystemToolSchema = z
         version: z.string(),
         executable: z.string().optional(),
     })
-    .passthrough();
+    .loose();
 
 /** One Node package of the image. */
 export const ImageNodePackageSchema = z
@@ -71,7 +72,7 @@ export const ImageNodePackageSchema = z
         name: z.string(),
         version: z.string(),
     })
-    .passthrough();
+    .loose();
 
 /** One R package that ships with the R runtime of the image: a base package or a recommended package. */
 export const ImageRBasePackageSchema = z
@@ -99,7 +100,7 @@ export const ImagePackagesSchema = z
         node: z.array(ImageNodePackageSchema),
         r_base: z.array(ImageRBasePackageSchema).optional(),
     })
-    .passthrough();
+    .loose();
 export type ImagePackages = z.infer<typeof ImagePackagesSchema>;
 
 export type ImagePackagesError =
@@ -122,7 +123,7 @@ export function readImagePackagesFile(recordPath: string): Result<ImagePackages,
     }
     let parsed: unknown;
     try {
-        parsed = JSON.parse(raw);
+        parsed = jsonParse(raw, z.unknown());
     } catch (cause) {
         return err({ type: "record_invalid", recordPath, cause });
     }

@@ -18,26 +18,26 @@ import type { MemberFile } from "./set-types.js";
 import { DATE_SYMBOL, DIGIT_SYMBOL, ID_SYMBOL, maskSegment, skeletonOf, tokenizeName } from "./tokens.js";
 import { COARSE_SIMILARITY, CONTAINMENT_SIMILARITY, FINE_SIMILARITY, MAX_SIGNATURE_KEYS } from "./tuning.js";
 
-export interface DirectoryNode {
+export type DirectoryNode = {
     readonly name: string;
     readonly children: Map<string, DirectoryNode>;
     readonly files: MemberFile[];
     readonly fineSignature: Set<string>;
     readonly coarseSignature: Set<string>;
     readonly childNames: Set<string>;
-}
+};
 
 /** One concrete directory, carrying the values of the template positions above it. */
-export interface DirectoryEntry {
+export type DirectoryEntry = {
     readonly node: DirectoryNode;
     readonly varValues: readonly string[];
-}
+};
 
 /** What a content-schema comparison would be given to judge two candidate clusters by. */
-export interface ClusterEvidence {
+export type ClusterEvidence = {
     readonly names: readonly string[];
     readonly files: readonly MemberFile[];
-}
+};
 
 /**
  * Similarity from file contents — header fields, delimiters, column names.
@@ -58,7 +58,7 @@ export function buildTree(files: readonly MemberFile[]): DirectoryNode {
         const segments = file.path.split("/");
         let node = root;
         for (let i = 0; i < segments.length - 1; i++) {
-            const name = segments[i]!;
+            const name = segments[i];
             let child = node.children.get(name);
             if (!child) {
                 child = newNode(name);
@@ -124,18 +124,20 @@ function hasMask(skeleton: string): boolean {
  */
 function skeletonKin(a: string, b: string): boolean {
     if (a === b && hasMask(a)) return true;
-    const head = a.split(/[_\-.]/)[0]!;
-    return head === b.split(/[_\-.]/)[0]! && hasMask(head);
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the layout grammar of the scanner: no builtin tokenizes these clusters.
+    const head = a.split(/[_\-.]/)[0];
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the layout grammar of the scanner: no builtin tokenizes these clusters.
+    return head === b.split(/[_\-.]/)[0] && hasMask(head);
 }
 
-interface Candidate {
+type Candidate = {
     readonly names: string[];
     readonly entries: DirectoryEntry[];
     skeleton: string;
     readonly fine: Set<string>;
     readonly coarse: Set<string>;
     readonly subdirs: Set<string>;
-}
+};
 
 function filesUnder(node: DirectoryNode, out: MemberFile[] = []): MemberFile[] {
     out.push(...node.files);
@@ -222,8 +224,8 @@ export function clusterChildren(entries: readonly DirectoryEntry[], contentSimil
         let merged = false;
         for (let i = 0; i < clusters.length && !merged; i++) {
             for (let j = i + 1; j < clusters.length; j++) {
-                if (!agrees(clusters[i]!, clusters[j]!, contentSimilarity)) continue;
-                absorb(clusters[i]!, clusters[j]!);
+                if (!agrees(clusters[i], clusters[j], contentSimilarity)) continue;
+                absorb(clusters[i], clusters[j]);
                 clusters.splice(j, 1);
                 merged = true;
                 break;

@@ -44,6 +44,7 @@
  */
 
 import type { z } from "zod";
+import { parseJsonOrUndefined } from "./json.js";
 
 /**
  * Strings longer than this are neither parsed nor repaired. A real argument
@@ -56,6 +57,7 @@ const MAX_REPAIRABLE_STRING_LENGTH = 1_000_000;
 const HINT_SNIPPET_LENGTH = 40;
 
 /** A trailing `</parameter>`, optionally followed by `</invoke>`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the zod issue-path grammar: no builtin extracts a field name from an issue path.
 const TRAILING_CALL_TAGS = /<\/parameter>\s*(?:<\/invoke>\s*)?$/;
 
 /**
@@ -117,7 +119,7 @@ export function hintForZodIssue(issue: z.core.$ZodIssue, input: unknown): string
  * untouched branch and clones only along the paths it patches. Repaired content
  * is not re-examined — one pass, no recursion — and no input causes a throw.
  */
-export function repairToolInput(input: unknown, error: z.ZodError): unknown | undefined {
+export function repairToolInput(input: unknown, error: z.ZodError): unknown {
     try {
         let repaired: unknown = input;
         let didRepair = false;
@@ -194,12 +196,8 @@ function repairableExpectation(issue: z.core.$ZodIssue): "object" | "array" | un
  * matches either expectation, but the cell keeps the caller's checks honest.
  */
 function parseAs(raw: string, expected: "object" | "array"): { readonly value: unknown } | undefined {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return undefined;
-    }
+    const parsed = parseJsonOrUndefined(raw);
+    if (parsed === undefined) return undefined;
     if (expected === "array") return Array.isArray(parsed) ? { value: parsed } : undefined;
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? { value: parsed } : undefined;
 }
@@ -224,11 +222,13 @@ function stripWrappers(raw: string): { readonly text: string; readonly removed: 
     }
 
     if (text.startsWith("```")) {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the zod issue-path grammar: no builtin extracts a field name from an issue path.
         const open = /^```(?:json)?\s*\n/i.exec(text);
         if (open !== null) {
             removed.push(open[0].trim());
             text = text.slice(open[0].length);
         }
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the zod issue-path grammar: no builtin extracts a field name from an issue path.
         const close = /\n```\s*$/.exec(text);
         if (close !== null) {
             removed.push("```");
@@ -273,11 +273,11 @@ function setAtPath(root: unknown, path: readonly PropertyKey[], value: unknown):
     if (root === null || typeof root !== "object") return root;
 
     const container = root as Record<PropertyKey, unknown>;
-    const child = setAtPath(container[key!], rest, value);
+    const child = setAtPath(container[key], rest, value);
     if (Array.isArray(root)) {
         const copy = [...root];
         copy[key as number] = child;
         return copy;
     }
-    return { ...container, [key!]: child };
+    return { ...container, [key]: child };
 }

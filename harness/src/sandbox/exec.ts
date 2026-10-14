@@ -19,6 +19,9 @@ import { untracedFetch } from "../lib/otel-spans.js";
 import { EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import { createEscalationPolicy, probeLiveness, syntheticFailureReason, syntheticFailureResult } from "./liveness.js";
 import { PollResponseSchema, type ExecEmit, type ExecRequest, type ExecResult, type SandboxLiveness, type SandboxRef, type SubmitExecBody } from "./types.js";
+import { errorMessage } from "../lib/thrown.js";
+import { abortAfter, sleep as defaultSleep } from "../lib/async-utils.js";
+import { jsonParse } from "../lib/json.js";
 
 const SUBMIT_HTTP_TIMEOUT_MS = 30_000;
 const POLL_HTTP_TIMEOUT_MS = 10_000;
@@ -48,7 +51,7 @@ export class ExecTimeoutError extends Error {
 }
 
 /** The effects of one exec. Each member has a default, and a test replaces it. */
-export interface ExecDeps {
+export type ExecDeps = {
     /** Defaults to `globalThis.fetch`. */
     readonly fetch?: typeof fetch;
     /** The clock of the deadline and of the cancel reads. Defaults to `Date.now`. */
@@ -71,7 +74,7 @@ export interface ExecDeps {
     readonly isCancelled?: () => Promise<boolean>;
     /** Per-stream retention budget sent with the submit. Defaults to `EXEC_STREAM_BYTE_CAP`. */
     readonly execStreamByteCap?: number;
-}
+};
 
 /**
  * The id of the exec that runs in the current durable step: the workflow id
@@ -107,9 +110,9 @@ export async function runExec(
     await submitExec(fetchImpl, ref, {
         command: [...request.command],
         execId,
-        ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-        ...(request.env === undefined ? {} : { env: { ...request.env } }),
-        ...(request.timeoutSeconds === undefined ? {} : { timeoutSeconds: request.timeoutSeconds }),
+        cwd: !(request.cwd === undefined) ? request.cwd : undefined,
+        env: !(request.env === undefined) ? { ...request.env } : undefined,
+        timeoutSeconds: !(request.timeoutSeconds === undefined) ? request.timeoutSeconds : undefined,
         stdoutByteCap: cap,
         stderrByteCap: cap,
     });
@@ -122,24 +125,19 @@ export async function runExec(
  * returns 202 with the stored status and runs nothing.
  */
 async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: SubmitExecBody): Promise<void> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SUBMIT_HTTP_TIMEOUT_MS);
-    try {
-        const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-            signal: controller.signal,
-        });
-        if (res.status !== 202) {
-            const text = await res.text().catch(() => "");
-            throw Object.assign(new Error(`submitExec: sandbox-server returned ${res.status} for execId=${body.execId}: ${text}`), { statusCode: res.status });
-        }
-        // Read and discard the ack, so the socket is released.
-        await res.text().catch(() => "");
-    } finally {
-        clearTimeout(timer);
+    const signal = abortAfter(SUBMIT_HTTP_TIMEOUT_MS);
+    const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+    });
+    if (res.status !== 202) {
+        const text = await res.text().catch(() => "");
+        throw Object.assign(new Error(`submitExec: sandbox-server returned ${res.status} for execId=${body.execId}: ${text}`), { statusCode: res.status });
     }
+    // Read and discard the ack, so the socket is released.
+    await res.text().catch(() => "");
 }
 
 /**
@@ -151,12 +149,11 @@ async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: Submit
 type PolledSnapshot = { readonly kind: "ok"; readonly raw: string } | { readonly kind: "unavailable"; readonly detail: string };
 
 async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string, cursor: number): Promise<PolledSnapshot> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), POLL_HTTP_TIMEOUT_MS);
+    const signal = abortAfter(POLL_HTTP_TIMEOUT_MS);
     try {
         const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}?since=${cursor}`, {
             method: "GET",
-            signal: controller.signal,
+            signal,
         });
         if (!res.ok) {
             await res.text().catch(() => "");
@@ -164,9 +161,7 @@ async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string
         }
         return { kind: "ok", raw: await res.text() };
     } catch (cause) {
-        return { kind: "unavailable", detail: cause instanceof Error ? cause.message : String(cause) };
-    } finally {
-        clearTimeout(timer);
+        return { kind: "unavailable", detail: errorMessage(cause) };
     }
 }
 
@@ -182,7 +177,7 @@ async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string
 async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlineMs: number, deps: ExecDeps): Promise<ExecResult> {
     const fetchImpl = deps.fetch ?? fetch;
     const now = deps.now ?? Date.now;
-    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const sleep = deps.sleep ?? defaultSleep;
     const warn = deps.warn ?? ((message: string) => DBOS.logger.warn(message));
     const isCancelled = deps.isCancelled ?? workflowCancelled;
 
@@ -191,18 +186,18 @@ async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlin
     let lastCancelCheckMs = now();
     const escalation = createEscalationPolicy();
 
-    while (true) {
+    for (;;) {
         pollAttempt += 1;
         const polled = await pollOnce(fetchImpl, ref, execId, cursor);
 
         if (polled.kind === "ok") {
-            const resp = PollResponseSchema.parse(JSON.parse(polled.raw));
+            const resp = jsonParse(polled.raw, PollResponseSchema);
             // Each event is emitted at most once, whatever `since` the server applied.
             const newEvents = resp.events.filter((ev) => ev.seq > cursor);
             // Sequence numbers are contiguous per exec, thus a hole between the local
             // cursor and the next delivered (or high-water) seq proves that the ring
             // shed events before the host saw them.
-            const nextSeq = newEvents.length > 0 ? newEvents[0]!.seq : resp.cursor > cursor ? resp.cursor + 1 : cursor + 1;
+            const nextSeq = newEvents.length > 0 ? newEvents[0].seq : resp.cursor > cursor ? resp.cursor + 1 : cursor + 1;
             const lost = nextSeq - cursor - 1;
             if (lost > 0) {
                 warn(

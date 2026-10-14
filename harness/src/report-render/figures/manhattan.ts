@@ -61,6 +61,8 @@ import {
 } from "./dense.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
 import { placeLeaderNames, textWidthPx, type Box, type NamedPoint, type NameFrame } from "./label-room.js";
+import { optionRecord, optionRecords } from "../option-lens.js";
+import { typedMember } from "../../lib/shape.js";
 
 /** The two colors that alternate between the chromosomes: the blue of the palette and the muted gray. */
 export const MANHATTAN_COLORS = [CHART_PALETTE[0], MUTED_CHART_COLOR] as const;
@@ -194,17 +196,18 @@ function genomeAxis(found: readonly Chromosome[]): GenomeAxis {
 const LEAD_NAME_SIDES = ["top", "right", "left"] as const;
 
 /** One chromosome of the table: its key, the extent of its drawn positions, and its lead row. */
-interface Chromosome {
+type Chromosome = {
     readonly name: Cell;
     low: number;
     high: number;
     lead?: number;
-}
+};
 
 /** The place of the three named chromosomes after the numbered ones, in genome order. */
 const NAMED_CHROMOSOMES: Readonly<Record<string, number>> = { X: 0, Y: 1, MT: 2, M: 2 };
 
 /** The text prefix of a chromosome name that some tables carry, for example `chr1`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const CHROMOSOME_PREFIX = /^chr/i;
 
 /**
@@ -214,8 +217,9 @@ const CHROMOSOME_PREFIX = /^chr/i;
 export function compareChromosomes(a: Cell, b: Cell): number {
     const rank = (cell: Cell): [number, number, string] => {
         const name = String(cell).trim().replace(CHROMOSOME_PREFIX, "");
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         if (/^\d+$/.test(name)) return [0, Number(name), name];
-        const named = NAMED_CHROMOSOMES[name.toUpperCase()];
+        const named = typedMember(NAMED_CHROMOSOMES, name.toUpperCase());
         return named !== undefined ? [1, named, name] : [2, 0, name];
     };
     const [left, right] = [rank(a), rank(b)];
@@ -241,7 +245,7 @@ function chromosomes(
     const byKey = new Map<string, Chromosome>();
     const order: Chromosome[] = [];
     for (let index = 0; index < rows.length; index += 1) {
-        const value = rows[index][groupColumn];
+        const value = typedMember(rows[index], groupColumn);
         const x = xs[index];
         const y = ys[index];
         if (value === undefined || x === null || y === null) continue;
@@ -274,12 +278,12 @@ function leads(index: number, other: number, xs: readonly (number | null)[], ys:
 
 /** The guide lines of a mark member, with the label of the genome-wide line over the line. */
 function guideOverLine(markLine: EchartOption, line: number): EchartOption {
-    const data = Array.isArray(markLine.data) ? (markLine.data as EchartOption[]) : [];
+    const data = Array.isArray(markLine.data) ? (optionRecords(markLine.data)) : [];
     return {
         ...markLine,
         data: data.map((entry) =>
             entry.yAxis === line && typeof entry.label === "object" && entry.label !== null
-                ? { ...entry, label: { ...(entry.label as EchartOption), position: GUIDE_OVER_LINE } }
+                ? { ...entry, label: { ...(optionRecord(entry.label)), position: GUIDE_OVER_LINE } }
                 : entry,
         ),
     };
@@ -321,7 +325,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
                     x: x.value,
                     y: { column: pColumn, transform: "neg_log10" },
                     group: group.value,
-                    ...(encoding.label !== undefined ? { label: encoding.label } : {}),
+                    label: encoding.label !== undefined ? encoding.label : undefined,
                 },
             },
         ],
@@ -364,7 +368,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
         legend: { show: false },
         xAxis: {
             ...axisOf(option, "xAxis"),
-            ...(low !== undefined && high !== undefined ? { min: low, max: high } : {}),
+            min: low !== undefined && high !== undefined ? low : undefined, max: low !== undefined && high !== undefined ? high : undefined,
             axisLabel: { show: false, formatter: GENOME_POSITION_FUNCTION },
             axisTick: { show: false },
             [GENOME_MEMBER]: genomeAxis(found),
@@ -374,7 +378,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
             ...seriesOf(option).map((series) => ({
                 ...series,
                 ...pointLayer(colorOf(series.name), DENSE_NULL_SYMBOL_PX, DENSE_SIGNAL_OPACITY),
-                ...(series.markLine !== undefined ? { markLine: guideOverLine(series.markLine as EchartOption, line) } : {}),
+                markLine: series.markLine !== undefined ? guideOverLine(optionRecord(series.markLine), line) : undefined,
             })),
             ...(zeroRows.length > 0
                 ? [
@@ -386,7 +390,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
                           itemStyle: { opacity: DENSE_SIGNAL_OPACITY },
                           tooltip: BELOW_RESOLUTION_TOOLTIP,
                           data: zeroRows.map((index) => ({
-                              ...(labelColumn !== undefined ? { name: String(rows[index][labelColumn]) } : {}),
+                              name: labelColumn !== undefined ? String(rows[index][labelColumn]) : undefined,
                               value: [xs[index] ?? 0, zeroY],
                               itemStyle: { color: colorOf(categoryName(rows[index][groupColumn])) },
                           })),

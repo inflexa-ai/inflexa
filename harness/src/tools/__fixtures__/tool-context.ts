@@ -8,11 +8,11 @@ import { UnavailableAsk } from "../approval/contract.js";
 import type { ToolContext } from "../define-tool.js";
 
 /** A `ToolContext` plus the list of events its `emit` recorded. */
-export interface TestToolContext {
+export type TestToolContext = {
     readonly ctx: ToolContext;
     /** Every event passed to `ctx.emit`, in call order. */
     readonly emitted: unknown[];
-}
+};
 
 /** Build a `ToolContext` for tests; `emit` records into `emitted`. */
 export function makeToolContext(signal?: AbortSignal): TestToolContext {

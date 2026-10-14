@@ -11,13 +11,15 @@
  */
 
 import type { ResultAsync } from "neverthrow";
+import { z } from "zod";
 
 import type { DbError } from "../lib/db-result.js";
 import { tryMutation, tryQuery } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
-import type { CortexRunRow, SynthesisStatus } from "./schema.js";
+import { RunStatus, SynthesisStatus, type CortexRunRow } from "./schema.js";
+import { parseJsonOrUndefined } from "../lib/json.js";
 
-export interface InsertRunInput {
+export type InsertRunInput = {
     runId: string;
     analysisId: string;
     threadId?: string | null;
@@ -25,18 +27,18 @@ export interface InsertRunInput {
     planId?: string | null;
     mandateJti?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     mandateExpiresAt?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-}
+};
 
-export interface RunReservation {
+export type RunReservation = {
     readonly row: CortexRunRow;
     readonly inserted: boolean;
-}
+};
 
 /** Bounded run rows paired with the true count before limit/offset. */
-export interface RunPage {
+export type RunPage = {
     readonly runs: CortexRunRow[];
     readonly total: number;
-}
+};
 
 export class RunIdentityCollisionError extends Error {
     constructor(readonly runId: string) {
@@ -475,33 +477,55 @@ export function setRunSynthesisOutcome(
     });
 }
 
-function mapRunRow(row: Record<string, unknown>): CortexRunRow {
-    // JSONB is parsed by `pg` into native arrays/objects. Treat legacy TEXT
-    // rows (if anything slipped through) as strings and parse them.
-    let parts: unknown[] | null = null;
-    if (Array.isArray(row.parts)) {
-        parts = row.parts as unknown[];
-    } else if (typeof row.parts === "string") {
-        try {
-            parts = JSON.parse(row.parts);
-        } catch {
-            /* malformed — treat as null */
-        }
+/**
+ * The `cortex_runs` row as the driver hands it over, parsed into the row type.
+ * The SQL column nullabilities ARE the schema: a row that misses them is a
+ * defect this parse names instead of an `as` that lets it through.
+ */
+const RunRowDb = z
+    .object({
+        run_id: z.string(),
+        analysis_id: z.string(),
+        thread_id: z.string().nullable(),
+        workflow_name: z.string(),
+        status: RunStatus,
+        started_at: z.string(),
+        completed_at: z.string().nullable(),
+        error: z.string().nullable(),
+        synthesis_status: SynthesisStatus.nullable(),
+        synthesis_reason: z.string().nullable(),
+        parts: z.unknown().nullable(),
+        mandate_jti: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+        mandate_expires_at: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+        plan_id: z.string().nullable(),
+    })
+    .transform((row): CortexRunRow => ({
+        runId: row.run_id,
+        analysisId: row.analysis_id,
+        threadId: row.thread_id,
+        workflowName: row.workflow_name,
+        status: row.status,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        error: row.error,
+        synthesisStatus: row.synthesis_status,
+        synthesisReason: row.synthesis_reason,
+        parts: rowParts(row.parts),
+        mandateJti: row.mandate_jti,
+        mandateExpiresAt: row.mandate_expires_at,
+        planId: row.plan_id,
+    }));
+
+/** JSONB is parsed by `pg` into native arrays. A legacy TEXT row is parsed here; malformed text counts as null. */
+function rowParts(value: unknown): unknown[] | null {
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string") {
+        const parsed = parseJsonOrUndefined(value);
+        return Array.isArray(parsed) ? parsed : null;
     }
-    return {
-        runId: row.run_id as string,
-        analysisId: row.analysis_id as string,
-        threadId: (row.thread_id as string) ?? null,
-        workflowName: row.workflow_name as string,
-        status: row.status as CortexRunRow["status"],
-        startedAt: row.started_at as string,
-        completedAt: (row.completed_at as string) ?? null,
-        error: (row.error as string) ?? null,
-        synthesisStatus: (row.synthesis_status as CortexRunRow["synthesisStatus"]) ?? null,
-        synthesisReason: (row.synthesis_reason as string) ?? null,
-        parts,
-        mandateJti: (row.mandate_jti as string) ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-        mandateExpiresAt: (row.mandate_expires_at as string) ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-        planId: (row.plan_id as string) ?? null,
-    };
+    return null;
+}
+
+function mapRunRow(row: Record<string, unknown>): CortexRunRow {
+    return RunRowDb.parse(row);
 }

@@ -40,6 +40,7 @@ import {
 import { formatNumberCell, selectNumberKind, typographicExponent } from "../number-format.js";
 import { STEM_RENDERER } from "../chart-renderers.js";
 import type { RenderProblem } from "../types.js";
+import { optionRecord } from "../option-lens.js";
 
 /** The display labels that a bound table declares, keyed by the raw column name. */
 export type ColumnLabels = ArtifactTableReference["columnLabels"];
@@ -225,11 +226,11 @@ export function orderQuickCategories(
 export type ColumnChannel = Exclude<keyof ChartEncoding, "label" | "tracks">;
 
 /** The table that a figure reads a channel from: the block, the rows, and the declared column order. */
-export interface ChannelSource {
+export type ChannelSource = {
     readonly blockId: string;
     readonly rows: readonly ChartRow[];
     readonly columns?: readonly string[];
-}
+};
 
 /**
  * The column of one channel that a figure reads as a plain column, or `undefined` where the block names no
@@ -412,9 +413,9 @@ export function categoryAxisTitle(labels: ColumnLabels, column: string, declared
 export function valueAxis(axis: "x" | "y", title: string, fields: { scale?: boolean; log?: boolean; min?: number; max?: number } = {}): EchartOption {
     return {
         type: fields.log === true ? "log" : "value",
-        ...(fields.scale === true ? { scale: true } : {}),
-        ...(fields.min !== undefined ? { min: fields.min } : {}),
-        ...(fields.max !== undefined ? { max: fields.max } : {}),
+        scale: fields.scale === true ? true : undefined,
+        min: fields.min !== undefined ? fields.min : undefined,
+        max: fields.max !== undefined ? fields.max : undefined,
         ...axisNameFields(axis, title),
     };
 }
@@ -428,7 +429,7 @@ export function valueAxis(axis: "x" | "y", title: string, fields: { scale?: bool
 export function categoryAxis(axis: "x" | "y", categories: readonly Cell[], fields: { title?: string; topDown?: boolean } = {}): EchartOption {
     return {
         type: "category",
-        ...(axis === "y" && fields.topDown === true ? { inverse: true } : {}),
+        inverse: axis === "y" && fields.topDown === true ? true : undefined,
         data: [...categories],
         ...axisNameFields(axis, fields.title),
     };
@@ -471,11 +472,11 @@ export function guideMarkLine(lines: readonly EchartOption[]): EchartOption {
  * One statistic that a figure prints: the label of the block, the resolved value, and the shown text of the
  * value.
  */
-export interface FigureStatistic {
+export type FigureStatistic = {
     readonly label: string;
     readonly value: string | number;
     readonly text: string;
-}
+};
 
 /**
  * The shown text of one statistic, in the number format of its column, with the power of ten of a figure, and
@@ -578,11 +579,11 @@ export function statisticsSeries(statistics: readonly FigureStatistic[], point: 
 // ── The continuous color ────────────────────────────────────────────────────
 
 /** The range and the ramp of one continuous color. */
-export interface ContinuousScale {
+export type ContinuousScale = {
     readonly min: number;
     readonly max: number;
     readonly ramp: readonly string[];
-}
+};
 
 /**
  * The scale of one continuous color over its values.
@@ -787,17 +788,17 @@ function iconsByName(option: EchartOption): Map<string, string> {
 function iconLegend(option: EchartOption): EchartOption | undefined {
     const legend = option.legend;
     if (typeof legend !== "object" || legend === null || Array.isArray(legend)) return undefined;
-    const fields = legend as EchartOption;
+    const fields = optionRecord(legend);
     if (fields.show === false) return undefined;
     const icons = iconsByName(option);
     if (icons.size === 0) return undefined;
     const declared = Array.isArray(fields.data) ? (fields.data as unknown[]) : [...icons.keys()];
     const data = declared.map((entry) => {
-        if (typeof entry === "object" && entry !== null && typeof (entry as EchartOption).icon === "string") return entry;
-        const name = typeof entry === "string" ? entry : typeof entry === "object" && entry !== null ? (entry as EchartOption).name : undefined;
+        if (typeof entry === "object" && entry !== null && typeof (optionRecord(entry)).icon === "string") return entry;
+        const name = typeof entry === "string" ? entry : typeof entry === "object" && entry !== null ? (optionRecord(entry)).name : undefined;
         const icon = typeof name === "string" ? icons.get(name) : undefined;
         if (icon === undefined || typeof name !== "string") return entry;
-        return typeof entry === "object" && entry !== null ? { ...(entry as EchartOption), icon } : { name, icon };
+        return typeof entry === "object" && entry !== null ? { ...(optionRecord(entry)), icon } : { name, icon };
     });
     return { ...fields, data };
 }
@@ -831,14 +832,14 @@ function paletteSlots(option: EchartOption): number {
  */
 function movedTitle(axis: unknown): unknown {
     if (typeof axis !== "object" || axis === null) return axis;
-    const fields = axis as EchartOption;
+    const fields = optionRecord(axis);
     return typeof fields.name === "string" && fields.name !== "" ? { ...fields, nameMoveOverlap: true } : axis;
 }
 
 /** True when a grid, or one grid of a list, contains its labels. */
 function containsLabels(grid: unknown): boolean {
     const grids = Array.isArray(grid) ? grid : [grid];
-    return grids.some((entry) => typeof entry === "object" && entry !== null && (entry as EchartOption).containLabel === true);
+    return grids.some((entry) => typeof entry === "object" && entry !== null && (optionRecord(entry)).containLabel === true);
 }
 
 /** Each axis of one axis member with its title moved off its labels. */

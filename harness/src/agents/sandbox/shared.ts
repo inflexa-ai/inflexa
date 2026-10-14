@@ -107,7 +107,7 @@ export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = [
 ];
 
 /** Per-step coordinates the composition root threads through every mutate tool. */
-export interface SandboxStepCoords {
+export type SandboxStepCoords = {
     readonly sandbox: SandboxRef;
     /** Absolute host root of this analysis's workspace tree (resolved at the workflow body). */
     readonly workspaceRoot: string;
@@ -122,10 +122,10 @@ export interface SandboxStepCoords {
      * grounds on no template, or when the host bound nothing.
      */
     readonly templateBinding?: TemplateBinding;
-}
+};
 
 /** The shared dependency graph every sandbox agent draws from. */
-export interface SandboxAgentDeps extends EnvironmentStorePaths {
+export type SandboxAgentDeps = EnvironmentStorePaths & {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly provider: ChatProvider;
@@ -177,10 +177,10 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
      * of the open-source host and never an error.
      */
     readonly knowledge?: KnowledgeClient;
-}
+};
 
 /** Per-agent override for the prompt composition and tool surface. */
-export interface SandboxAgentPromptOptions {
+export type SandboxAgentPromptOptions = {
     /** Append `sandboxAnalysisStepStandardsPrompt`. Defaults to true. */
     readonly appendAnalysisStepStandards?: boolean;
     /**
@@ -190,7 +190,7 @@ export interface SandboxAgentPromptOptions {
      * exists outside container-local `/tmp`. Defaults to false.
      */
     readonly readOnly?: boolean;
-}
+};
 
 /**
  * Resolve `meta.tools` into the bio/research tools record. The workspace
@@ -199,20 +199,20 @@ export interface SandboxAgentPromptOptions {
  */
 function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[], mutator: WorkspaceMutator | undefined): Tool[] {
     const ncbi = createNcbiTools(deps.bioKeys);
-    const chemDb = createChemDbTools(deps.bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
+    const chemDb = createChemDbTools(deps.bioKeys, { logger: deps.logger ? deps.logger : undefined });
     const amass = createAmassTools(deps.bioKeys);
     if (tools.includes("resolve_citation") && deps.citationResolver === undefined) {
         throw new Error('createSandboxAgent: SandboxToolName "resolve_citation" requires a CitationResolver dependency.');
     }
     const registry: Record<SandboxToolName, Tool | undefined> = {
         listAvailablePackages: createListAvailablePackagesTool({
-            ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
-            ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
+            farmLockFile: deps.farmLockFile ? deps.farmLockFile : undefined,
+            imagePackagesFile: deps.imagePackagesFile ? deps.imagePackagesFile : undefined,
             // The bound seam adds `link_packages` below, and the description of
             // the listing must then stop at "absent", not at "missing".
             linkToolPresent: deps.extendAnalysisFarm !== undefined,
         }),
-        listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
+        listAvailableRefs: createListAvailableRefsTool({ refStorePath: deps.refStorePath ? deps.refStorePath : undefined }),
         scanInputs: createScanInputsTool({
             workspaceFs: deps.workspaceFs,
             analysisId: deps.step.analysisId,
@@ -291,7 +291,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
               workspaceRoot: step.workspaceRoot,
               analysisId: step.analysisId,
               workingDir: hostWorkingDir,
-              ...(lineageCollector ? { lineageCollector } : {}),
+              lineageCollector: lineageCollector ? lineageCollector : undefined,
           });
     const mutateTools = mutator
         ? [createWriteFileTool({ mutator }), createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir })]
@@ -303,8 +303,10 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
             sandbox: step.sandbox,
             deadlineMs: step.deadlineMs,
             defaultCwd: sandboxWorkingDir,
-            ...(lineageCollector ? { lineageCollector, mountRoot: `/${step.analysisId}` } : {}),
-            ...(mutator ? { workspaceFilesystem: workspaceFs, mutator } : {}),
+            lineageCollector: lineageCollector ? lineageCollector : undefined,
+            mountRoot: lineageCollector ? `/${step.analysisId}` : undefined,
+            workspaceFilesystem: mutator ? workspaceFs : undefined,
+            mutator: mutator ? mutator : undefined,
         }),
         ...mutateTools,
         createReadFileTool(workspaceFs, hostWorkingDir),

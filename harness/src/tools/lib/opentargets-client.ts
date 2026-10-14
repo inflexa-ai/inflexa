@@ -13,7 +13,7 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { OT_GRAPHQL, OT_HEADERS } from "./opentargets-config.js";
 
-export interface Association {
+export type Association = {
     diseaseId: string;
     diseaseName: string;
     targetId?: string;
@@ -26,33 +26,33 @@ export interface Association {
     animalModelScore: number | null;
     somaticMutationScore: number | null;
     literaturePmids: string[];
-}
+};
 
 /**
  * The positive tractability buckets of each modality, by their Open Targets label
  * ('Approved Drug', 'Structure with Ligand', 'UniProt loc high conf', …). An empty
  * list means no positive bucket. `null` means Open Targets gives no row for the modality.
  */
-export interface TargetTractability {
+export type TargetTractability = {
     smallMolecule: string[] | null;
     antibody: string[] | null;
     otherModalities: string[] | null;
-}
+};
 
-export interface TargetInfo {
+export type TargetInfo = {
     ensemblId: string;
     approvedSymbol: string;
     approvedName: string;
     tractability: TargetTractability | null;
     associations: Association[];
-}
+};
 
-export interface SafetyLiability {
+export type SafetyLiability = {
     event: string;
     biosamples: string[];
     effects: string | null;
     source: string;
-}
+};
 
 /**
  * One disease or trait that Open Targets holds, as the free-text resolver
@@ -60,13 +60,13 @@ export interface SafetyLiability {
  * accepts. Open Targets keys a disease on the EFO ontology, which imports
  * MONDO, Orphanet and HP, thus an id can read `EFO_…`, `MONDO_…` or `HP_…`.
  */
-export interface DiseaseCandidate {
+export type DiseaseCandidate = {
     id: string;
     name: string;
     description: string | null;
-}
+};
 
-export interface BaselineExpressionEntry {
+export type BaselineExpressionEntry = {
     tissueId: string;
     tissueLabel: string;
     organSystem: string | null;
@@ -79,7 +79,7 @@ export interface BaselineExpressionEntry {
     datasourceId: string;
     rna: { value: number; unit: string } | null;
     protein: { level: number | null } | null;
-}
+};
 
 const TARGET_QUERY = `
   query TargetAssociations($ensemblId: String!, $size: Int!) {

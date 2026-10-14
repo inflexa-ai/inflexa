@@ -77,7 +77,7 @@ export const resolveLibraryIdTool = defineTool({
 
         if (result.isErr()) throw new Error(`Context7 search failed: ${describeApiError(result.error)}`);
 
-        const best = (result.value.results ?? [])[0];
+        const best = (result.value.results ?? []).at(0);
         // No match is an expected outcome — a `found: false` data variant.
         if (!best) return ok({ found: false as const });
 

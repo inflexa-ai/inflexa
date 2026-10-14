@@ -20,6 +20,7 @@ import { defineTool, type ToolError } from "../define-tool.js";
 
 type ShowPlanOutput = { shown: false; reason: "plan_not_found" } | { shown: true; id: string };
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const PLAN_ID_REGEX = /^pln-[a-f0-9]{8}$/;
 
 export function createShowPlanTool(pool: Pool) {

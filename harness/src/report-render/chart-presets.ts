@@ -45,16 +45,16 @@ const LOG2_EFFECT_TITLE = "log2 fold change";
 const NEG_LOG10_P_TITLE = "−log10(p)";
 
 /** The semantic axis titles of one preset. A preset whose axis carries no fixed quantity states none. */
-export interface PresetAxisTitles {
+export type PresetAxisTitles = {
     readonly x?: string;
     readonly y?: string;
-}
+};
 
 /** One category of a preset classification: the name that a legend reads, and whether it states no finding. */
-export interface PresetCategory {
+export type PresetCategory = {
     readonly name: string;
     readonly muted: boolean;
-}
+};
 
 /**
  * The classification rule as plain data: the kind of the split, and the two cuts that it reads.
@@ -82,17 +82,17 @@ export type PresetRule =
  * guide lines carry. The color split then lands on the drawn lines. A row that gives no pair belongs to no
  * category, and its point drops.
  */
-export interface PresetClassification {
+export type PresetClassification = {
     readonly categories: readonly PresetCategory[];
     readonly categoryOf: (x: number | null, y: number | null, index: number) => string | undefined;
     readonly rule: PresetRule;
-}
+};
 
 /** The expansion of the volcano: the composition of its points and its guides, and its classification. */
-export interface PresetExpansion {
+export type PresetExpansion = {
     readonly composition: ChartComposition;
     readonly classification: PresetClassification;
-}
+};
 
 /**
  * The three category names of a volcano.
@@ -188,13 +188,13 @@ function volcanoClassification(significance: number, effect: number): PresetClas
  * `axes` field, where an agent title sits and where they would outrank the label.
  */
 export function volcanoAxisTitles(x: ChartChannel): PresetAxisTitles {
-    return { ...(channelTransform(x) === undefined ? { x: LOG2_EFFECT_TITLE } : {}), y: NEG_LOG10_P_TITLE };
+    return { x: channelTransform(x) === undefined ? LOG2_EFFECT_TITLE : undefined, y: NEG_LOG10_P_TITLE };
 }
 
 /** The two optional channels that the volcano carries through from the quick-path encoding. */
 function optionalChannels(encoding: ChartEncoding): { group?: ChartChannel; label?: string } {
     return {
-        ...(encoding.group !== undefined ? { group: encoding.group } : {}),
-        ...(encoding.label !== undefined ? { label: encoding.label } : {}),
+        group: encoding.group !== undefined ? encoding.group : undefined,
+        label: encoding.label !== undefined ? encoding.label : undefined,
     };
 }

@@ -30,7 +30,9 @@ function isUndefinedTable(cause: unknown): boolean {
 }
 
 function indexName(analysisId: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const name = `search_${analysisId.replace(/-/g, "_")}`;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
         throw new Error(`workspaceSearch: unusable analysis id "${analysisId}"`);
     }
@@ -53,6 +55,7 @@ export function fileTargetOf(id: string, metadata: unknown): string | undefined 
     if (type !== undefined && PATTERN_TYPES.has(type)) return undefined;
     if (type === "input" && meta.entity !== undefined) return undefined;
     if (typeof meta.path === "string") return meta.path;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return id.replace(/^\/[^/]+\//, "");
 }
 
@@ -86,7 +89,7 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
         }),
         describeCall: ({ query, type }) => (type === undefined ? query : `${query} (${type})`),
         execute: async ({ query, type, limit }, ctx) => {
-            const [vector] = unwrapOrThrow(await embedding.embed([query], ctx.session));
+            const vector = unwrapOrThrow(await embedding.embed([query], ctx.session)).at(0);
             if (!vector) return ok({ results: [] });
 
             const table = indexName(scopeResource(ctx.session.scope).resourceId);
@@ -127,7 +130,7 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
                     return {
                         id: r.id,
                         score: r.score,
-                        ...(path !== undefined ? { path } : {}),
+                        path: path !== undefined ? path : undefined,
                         metadata: r.metadata,
                     };
                 }),

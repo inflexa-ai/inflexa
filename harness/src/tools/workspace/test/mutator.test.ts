@@ -1,0 +1,370 @@
+/**
+ * `WorkspaceMutator` provenance-recording contract — a successful confined
+ * write gives back its record, `recordWrite` records it as a file-tool
+ * provenance record, and every non-ok outcome gives back no record.
+ *
+ * These assertions are about the in-process collector; the write itself lands
+ * on the host filesystem under a per-test temp tree.
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdir, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { makeSession } from "../../../providers/__fixtures__/session.js";
+import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { readToolCallRecord } from "../../define-tool.js";
+import { createSessionWorkspaceMutator, createWorkspaceMutator, type WorkspaceMutator } from "../mutator.js";
+import { createEditFileTool } from "../edit-file.js";
+import { createWriteFileTool } from "../write-file.js";
+import { ProvenanceCollector } from "../../../provenance/collector.js";
+import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
+import { computeSha256 } from "../../../lib/fs-helpers.js";
+import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
+import { stepWritePrefix } from "../../../workspace/paths.js";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+
+const ANALYSIS = "analysis-001";
+const RUN = "run-abc";
+const STEP = "step-1";
+
+/** Write, then record the write the way the fold of a tool does. */
+async function writeAndRecord(mutator: WorkspaceMutator, args: Parameters<WorkspaceMutator["writeFile"]>[0]) {
+    const result = await mutator.writeFile(args);
+    if (result.status === "ok") mutator.recordWrite(result.record);
+    return result;
+}
+
+const session = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS } });
+
+describe("WorkspaceMutator provenance recording", () => {
+    let basePath: string;
+
+    beforeEach(() => {
+        basePath = mkdtempSync(join(tmpdir(), "mutator-test-"));
+    });
+    afterEach(() => {
+        rmSync(basePath, { recursive: true, force: true });
+    });
+
+    function buildMutator(opts: { collector?: ProvenanceCollector } = {}) {
+        const workspaceRoot = join(basePath, ANALYSIS);
+        const workingDir = stepWritePrefix({ workspaceRoot, runId: RUN, stepId: STEP });
+        return createWorkspaceMutator({
+            workspaceRoot,
+            analysisId: ANALYSIS,
+            workingDir,
+            lineageCollector: opts.collector ? opts.collector : undefined,
+        });
+    }
+
+    test("a successful write records a file-tool producer with in-process hash + size and no inputs", async () => {
+        const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
+        const mutator = buildMutator({ collector });
+
+        const content = "id,value\n1,42\n";
+        const contentBytes = Buffer.from(content, "utf8");
+        const result = await writeAndRecord(mutator, { path: "output/x.csv", content, toolName: "write_file", invocationId: "inv-1", session });
+        expect(result.status).toBe("ok");
+
+        const records = collector.getRecords();
+        expect(records).toHaveLength(1);
+        const rec = records[0];
+        expect(rec.producer.type).toBe("file_tool");
+        if (rec.producer.type === "file_tool") {
+            expect(rec.producer.tool).toBe("write_file");
+            expect(rec.producer.invocationId).toBe("inv-1");
+        }
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        expect(rec.outputHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+        expect(rec.outputHash).toBe(computeSha256(contentBytes));
+        expect(rec.outputSize).toBe(contentBytes.length);
+        expect(rec.inputs).toEqual([]);
+        expect(rec.outputPath).toBe("output/x.csv");
+    });
+
+    test("out_of_scope and out_of_prefix writes record nothing", async () => {
+        // Escapes the analysis tree entirely.
+        const scopeCollector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
+        const scoped = await writeAndRecord(buildMutator({ collector: scopeCollector }), {
+            path: "../../../../other/x.csv",
+            content: "x",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            session,
+        });
+        expect(scoped.status).toBe("out_of_scope");
+        expect(scopeCollector.getRecords()).toHaveLength(0);
+
+        // In-tree but outside the step's writable working directory.
+        const prefixCollector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
+        const prefixed = await writeAndRecord(buildMutator({ collector: prefixCollector }), {
+            path: `/${ANALYSIS}/data/inputs/x.csv`,
+            content: "x",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            session,
+        });
+        expect(prefixed.status).toBe("out_of_prefix");
+        expect(prefixCollector.getRecords()).toHaveLength(0);
+    });
+
+    test("a collector-less mutator writes successfully and records nothing (result unchanged)", async () => {
+        const mutator = buildMutator();
+        const content = "id,value\n1,42\n";
+        const result = await mutator.writeFile({ path: "output/x.csv", content, toolName: "write_file", invocationId: "inv-1", session });
+        expect(result.status).toBe("ok");
+        if (result.status === "ok") {
+            expect(result.bytesWritten).toBe(Buffer.byteLength(content, "utf8"));
+            expect(result.path).toBe(`/${ANALYSIS}/runs/${RUN}/${STEP}/output/x.csv`);
+        }
+    });
+
+    test("write_file through the real tool path records under the step-relative manifest key", async () => {
+        const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
+        const mutator = buildMutator({ collector });
+        const tool = createWriteFileTool({ mutator });
+        const { ctx } = makeToolContext();
+
+        const out = (await tool.execute({ path: "output/notes.md", content: "# notes\n" }, ctx))._unsafeUnwrap();
+        expect(out.status).toBe("ok");
+        must(must(tool, "tool").foldCallRecord, "must(tool, \"tool\").foldCallRecord")(readToolCallRecord(out));
+
+        // The key a manifest entry would use — `output/notes.md`, not a record-less leaf.
+        const records = collector.getRecords();
+        expect(records).toHaveLength(1);
+        const rec = records[0];
+        expect(rec.outputPath).toBe("output/notes.md");
+        expect(rec.producer.type).toBe("file_tool");
+        if (rec.producer.type === "file_tool") {
+            expect(rec.producer.tool).toBe("write_file");
+            // The tool forwards its context's invocationId into the record.
+            expect(rec.producer.invocationId).toBe("test-tool-call");
+        }
+    });
+
+    test("a confined write mints no command record — the file-tool record is the sole attestation", async () => {
+        const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
+        const mutator = buildMutator({ collector });
+
+        await writeAndRecord(mutator, {
+            path: "output/notes.md",
+            content: "# notes\n",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            session,
+        });
+
+        const records = collector.getRecords();
+        expect(records).toHaveLength(1);
+        expect(records.every((r) => r.producer.type !== "command")).toBe(true);
+        expect(records[0].producer.type).toBe("file_tool");
+    });
+});
+
+// The conversation agent's write path: coordinates resolve per call from the
+// session's analysis scope, the write prefix is the analysis root, and each
+// successful write emits one `write-file` provenance session event.
+describe("createSessionWorkspaceMutator (chat context)", () => {
+    let basePath: string;
+
+    beforeEach(() => {
+        basePath = mkdtempSync(join(tmpdir(), "session-mutator-test-"));
+    });
+    afterEach(() => {
+        rmSync(basePath, { recursive: true, force: true });
+    });
+
+    function buildSessionMutator() {
+        const events: SessionProvenanceEvent[] = [];
+        const mutator = createSessionWorkspaceMutator({
+            resolveWorkspaceRoot: async (id) => join(basePath, id),
+            provenance: { emitSessionEvent: (event) => events.push(event) },
+        });
+        return { mutator, events };
+    }
+
+    const chatSession = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS, threadId: "thread-1" } });
+
+    test("a write lands anywhere inside the analysis tree and emits a write-file event with hash, size, and attribution", async () => {
+        const { mutator, events } = buildSessionMutator();
+        const content = "# notes\n";
+        const contentBytes = Buffer.from(content, "utf8");
+
+        const result = await writeAndRecord(mutator, {
+            path: "notes/summary.md",
+            content,
+            toolName: "write_file",
+            invocationId: "inv-1",
+            session: chatSession,
+        });
+        expect(result.status).toBe("ok");
+        if (result.status === "ok") {
+            expect(result.path).toBe(`/${ANALYSIS}/notes/summary.md`);
+            expect(result.bytesWritten).toBe(contentBytes.length);
+        }
+        expect(readFileSync(join(basePath, ANALYSIS, "notes", "summary.md"), "utf8")).toBe(content);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toEqual({
+            type: "write-file",
+            analysisId: ANALYSIS,
+            threadId: "thread-1",
+            path: "notes/summary.md",
+            hash: computeSha256(contentBytes),
+            size: contentBytes.length,
+            tool: "write_file",
+            invocationId: "inv-1",
+        });
+    });
+
+    test("a scope with no thread emits the event with no threadId key", async () => {
+        const { mutator, events } = buildSessionMutator();
+        const bare = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS } });
+
+        const result = await writeAndRecord(mutator, {
+            path: "notes/a.md",
+            content: "a",
+            toolName: "edit_file",
+            invocationId: "inv-1",
+            session: bare,
+        });
+        expect(result.status).toBe("ok");
+        expect(events).toHaveLength(1);
+        expect(events[0]).not.toHaveProperty("threadId");
+        expect(events[0]).toMatchObject({ type: "write-file", tool: "edit_file" });
+    });
+
+    test("a traversal escape and a foreign analysis are out_of_scope, land nothing, and emit nothing", async () => {
+        const { mutator, events } = buildSessionMutator();
+
+        const escaped = await writeAndRecord(mutator, {
+            path: "../outside/x.csv",
+            content: "x",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            session: chatSession,
+        });
+        expect(escaped.status).toBe("out_of_scope");
+
+        const foreign = await writeAndRecord(mutator, {
+            path: "/other-analysis/x.csv",
+            content: "x",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            session: chatSession,
+        });
+        expect(foreign.status).toBe("out_of_scope");
+
+        expect(existsSync(join(basePath, "outside"))).toBe(false);
+        expect(existsSync(join(basePath, "other-analysis"))).toBe(false);
+        expect(events).toHaveLength(0);
+    });
+
+    test("a symlinked ancestor that escapes the analysis root is refused and emits nothing", async () => {
+        const { mutator, events } = buildSessionMutator();
+        const outside = join(basePath, "outside-tree");
+        await mkdir(outside, { recursive: true });
+        await mkdir(join(basePath, ANALYSIS), { recursive: true });
+        await symlink(outside, join(basePath, ANALYSIS, "leak"));
+
+        const result = await writeAndRecord(mutator, {
+            path: "leak/x.csv",
+            content: "x",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            session: chatSession,
+        });
+        expect(result.status).toBe("out_of_prefix");
+        expect(existsSync(join(outside, "x.csv"))).toBe(false);
+        expect(events).toHaveLength(0);
+    });
+
+    // The TOCTOU window: a symlink planted at a missing intermediate segment
+    // after the ancestor walk cleared it, but before the recursive mkdir runs.
+    // The planter jitters across event-loop turns so that, over the attempts,
+    // the plant lands before the walk, inside the window, and after the mkdir.
+    // The invariant under every interleaving: no byte ever lands outside the
+    // analysis root.
+    test("a symlink raced into a missing intermediate segment cannot re-aim the write", async () => {
+        const { mutator } = buildSessionMutator();
+        const outside = join(basePath, "outside-tree");
+        await mkdir(outside, { recursive: true });
+        await mkdir(join(basePath, ANALYSIS), { recursive: true });
+
+        for (let attempt = 0; attempt < 200; attempt++) {
+            const segment = `nested-${attempt}`;
+            const planted = join(basePath, ANALYSIS, segment);
+            const write = mutator.writeFile({
+                path: `${segment}/x.csv`,
+                content: "x",
+                toolName: "write_file",
+                invocationId: `inv-${attempt}`,
+                session: chatSession,
+            });
+            const plant = (async () => {
+                for (let turn = 0; turn < attempt % 7; turn++) {
+                    await new Promise((resolve) => setImmediate(resolve));
+                }
+                try {
+                    symlinkSync(outside, planted);
+                } catch {
+                    // The write created the real directory first; the plant lost.
+                }
+            })();
+            const [result] = await Promise.all([write, plant]);
+
+            expect(existsSync(join(outside, "x.csv"))).toBe(false);
+            if (result.status === "ok") {
+                expect(lstatSync(planted).isSymbolicLink()).toBe(false);
+                expect(existsSync(join(planted, "x.csv"))).toBe(true);
+            }
+            rmSync(planted, { recursive: true, force: true });
+        }
+    });
+
+    test("an unbound provenance seam records nothing and the write proceeds unchanged", async () => {
+        const mutator = createSessionWorkspaceMutator({ resolveWorkspaceRoot: async (id) => join(basePath, id) });
+        const result = await writeAndRecord(mutator, {
+            path: "notes/b.md",
+            content: "b",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            session: chatSession,
+        });
+        expect(result.status).toBe("ok");
+        expect(readFileSync(join(basePath, ANALYSIS, "notes", "b.md"), "utf8")).toBe("b");
+    });
+
+    test("write_file and edit_file through the real tool path land and emit in a chat ToolContext", async () => {
+        const { mutator, events } = buildSessionMutator();
+        const writeTool = createWriteFileTool({ mutator });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(basePath, id) });
+        // No workingDir: the read seam defaults to the analysis root, matching
+        // the session-scoped mutator's write prefix.
+        const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs });
+        const { ctx } = makeToolContext();
+
+        const written = (await writeTool.execute({ path: "notes/draft.md", content: "alpha beta\n" }, ctx))._unsafeUnwrap();
+        expect(written.status).toBe("ok");
+        must(must(writeTool, "writeTool").foldCallRecord, "must(writeTool, \"writeTool\").foldCallRecord")(readToolCallRecord(written));
+
+        const edited = (
+            await editTool.execute({ path: "notes/draft.md", old_string: "beta", new_string: "gamma", replace_all: false, regex: false }, ctx)
+        )._unsafeUnwrap();
+        expect(edited.status).toBe("ok");
+        must(must(editTool, "editTool").foldCallRecord, "must(editTool, \"editTool\").foldCallRecord")(readToolCallRecord(edited));
+        expect(readFileSync(join(basePath, "analysis-001", "notes", "draft.md"), "utf8")).toBe("alpha gamma\n");
+
+        expect(events.map((event) => (event.type === "write-file" ? event.tool : event.type))).toEqual(["write_file", "edit_file"]);
+        const editEvent = events[1];
+        if (editEvent.type === "write-file") {
+            expect(editEvent.hash).toBe(computeSha256(Buffer.from("alpha gamma\n", "utf8")));
+            expect(editEvent.size).toBe(Buffer.byteLength("alpha gamma\n", "utf8"));
+            // The tools forward their context's invocationId into the session event.
+            expect(editEvent.invocationId).toBe("test-tool-call");
+        }
+    });
+});

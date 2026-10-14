@@ -109,7 +109,7 @@ export type StartReportSessionResult =
  * a page. A composition that binds a capture seam straight to the spawn still
  * opens the gate of that spawn.
  */
-export interface StartReportSessionToolDeps {
+export type StartReportSessionToolDeps = {
     readonly pool: Pool;
     readonly chrome: ChromeConfig;
     /**
@@ -131,7 +131,7 @@ export interface StartReportSessionToolDeps {
      */
     readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
-}
+};
 
 /** The line that a call reads when the scope names no conversation thread. */
 const NO_THREAD_SCOPE_DETAIL = "the scope of the call names no conversation thread, thus the tool cannot start a child session";
@@ -182,10 +182,10 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
     const spawnDeps: ReportSessionSpawnDeps = {
         pool: deps.pool,
         chrome: deps.chrome,
-        ...(deps.eyes ? { eyes: deps.eyes } : {}),
-        ...(deps.anchorSession ? { anchorSession: deps.anchorSession } : {}),
-        ...(deps.provenance ? { provenance: deps.provenance } : {}),
-        ...(deps.logger ? { logger: deps.logger } : {}),
+        eyes: deps.eyes ? deps.eyes : undefined,
+        anchorSession: deps.anchorSession ? deps.anchorSession : undefined,
+        provenance: deps.provenance ? deps.provenance : undefined,
+        logger: deps.logger ? deps.logger : undefined,
     };
     const spawn = createReportSessionSpawn(spawnDeps);
     // The gate reads the routes of the very spawn below, thus the two answers
@@ -221,7 +221,7 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
             };
 
             const { scope } = ctx.session;
-            if (scope.kind !== "analysis" || scope.threadId === undefined || scope.threadId.length === 0) {
+            if (scope.threadId === undefined || scope.threadId.length === 0) {
                 return ok({ outcome: "refused", detail: NO_THREAD_SCOPE_DETAIL });
             }
             const parentThreadId = scope.threadId;

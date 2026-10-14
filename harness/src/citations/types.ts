@@ -150,14 +150,14 @@ export const CitationResolutionResultSchema = z.object({
 });
 export type CitationResolutionResult = z.infer<typeof CitationResolutionResultSchema>;
 
-export interface CitationResolveOptions {
+export type CitationResolveOptions = {
     readonly signal?: AbortSignal;
-}
+};
 
-export interface CitationResolver {
+export type CitationResolver = {
     resolveOne(input: CitationInput, options?: CitationResolveOptions): Promise<CitationResolutionResult>;
     resolveMany(inputs: readonly CitationInput[], options?: CitationResolveOptions): Promise<CitationResolutionResult[]>;
-}
+};
 
 export const CitationSourceOperationSchema = z.enum([
     "doi_exact",
@@ -197,15 +197,15 @@ export type CitationSourcePlanItem = z.infer<typeof CitationSourcePlanItemSchema
 export type RegistrationAgencyEvidence =
     { readonly status: "determined"; readonly agency: string } | { readonly status: "absent" } | { readonly status: "undetermined"; readonly detail: string };
 
-export interface CitationSourceRequest {
+export type CitationSourceRequest = {
     readonly input: CitationInput;
     readonly normalized: NormalizedCitation;
     readonly plan: CitationSourcePlanItem;
     readonly registrationAgency: RegistrationAgencyEvidence;
-}
+};
 
-export interface CitationSourceClient {
+export type CitationSourceClient = {
     readonly source: CitationSource;
     resolve(request: CitationSourceRequest, signal?: AbortSignal): Promise<CitationSourceOutcome>;
     resolveMany?(requests: readonly CitationSourceRequest[], signal?: AbortSignal): Promise<CitationSourceOutcome[]>;
-}
+};

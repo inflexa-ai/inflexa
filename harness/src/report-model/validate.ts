@@ -14,7 +14,7 @@ import { allWithConcurrency } from "../lib/async-utils.js";
 import { walkBlocks, type AnyBlock, type ChartSlot, type CollectedReference, type ReportWarning } from "./block-walk.js";
 import { columnsHeldByNoRow, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
 
-export type { ReportWarning };
+export type { ReportWarning } from "./block-walk.js";
 
 /**
  * The cap on how many references resolve at the same time.
@@ -25,20 +25,20 @@ export type { ReportWarning };
 export const RESOLUTION_CONCURRENCY = 8;
 
 /** One schema conformance problem, reduced to a path and a message. */
-export interface SchemaIssue {
+export type SchemaIssue = {
     path: string;
     message: string;
-}
+};
 
 /**
  * One reference that did not resolve, tied to the block that carries it. `slot` names the place of the
  * reference inside a chart block, thus a reviewer tells a failed track or statistic from a failed binding.
  */
-export interface ResolutionFailure {
+export type ResolutionFailure = {
     blockId: string;
     slot?: ChartSlot;
     failure: UnresolvedReference;
-}
+};
 
 /**
  * The result of validation. `valid` is false when the schema failed, a block id repeats, or a reference
@@ -89,7 +89,7 @@ export function checkChartEncoding(entry: CollectedReference, value: ResolvedVal
 }
 
 /** The resolved values and the failures of one resolution pass over the references of a block tree. */
-export interface ReferenceResolution {
+export type ReferenceResolution = {
     /** The resolved value of the binding of each block whose binding resolved, keyed by its block id. */
     resolvedByBlock: Map<string, ResolvedValue>;
     /**
@@ -99,7 +99,7 @@ export interface ReferenceResolution {
     resolvedBySlot: Map<string, Map<ChartSlot, ResolvedValue>>;
     /** Each reference that did not resolve, or whose chart encoding named an absent column. */
     failures: ResolutionFailure[];
-}
+};
 
 /**
  * Resolve each reference of a block tree under the concurrency bound, and run the chart-encoding match.
@@ -174,8 +174,8 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
     if (repeatedIds.length > 0 || resolutionFailures.length > 0) {
         return {
             valid: false,
-            ...(repeatedIds.length > 0 ? { duplicateIds: repeatedIds } : {}),
-            ...(resolutionFailures.length > 0 ? { resolutionFailures } : {}),
+            duplicateIds: repeatedIds.length > 0 ? repeatedIds : undefined,
+            resolutionFailures: resolutionFailures.length > 0 ? resolutionFailures : undefined,
             warnings,
         };
     }

@@ -17,11 +17,11 @@ import { searchProteins, type UniProtProtein } from "../lib/uniprot-client.js";
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 
-export interface SearchProteinOutput {
+export type SearchProteinOutput = {
     readonly proteins: UniProtProtein[];
     /** True when UniProt held at least one row beyond `limit`. */
     readonly hasMore: boolean;
-}
+};
 
 export const searchProteinTool = defineTool({
     id: "search_protein",
@@ -65,7 +65,7 @@ export const searchProteinTool = defineTool({
     describeCall: ({ query }) => query,
     execute: async ({ query, organismId, reviewedOnly, limit }): Promise<Result<SearchProteinOutput, ToolError>> => {
         const result = await searchProteins(query, {
-            ...(organismId === null ? {} : { organismId }),
+            organismId: !(organismId === null) ? organismId : undefined,
             reviewedOnly,
             limit,
         });

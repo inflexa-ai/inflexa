@@ -24,6 +24,7 @@ function mapFinishReason(
         default:
             // `unknown` rides through untyped on purpose: this fixture drives a finish
             // the provider types do not model, and the loop must settle whatever arrives.
+            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
             return finishReason as ChatResponse["finishReason"];
     }
 }
@@ -37,7 +38,7 @@ export function makeMessage(
     return {
         message: { role: "assistant", content },
         finishReason: mapped,
-        ...(mapped === finishReason ? {} : { rawFinishReason: finishReason }),
+        rawFinishReason: !(mapped === finishReason) ? finishReason : undefined,
         usage,
     };
 }
@@ -70,10 +71,10 @@ function textDeltas(response: ChatResponse): string[] {
     return content.filter((part) => part.type === "text").map((part) => part.text);
 }
 
-export interface ScriptedProvider extends ChatProvider {
+export type ScriptedProvider = ChatProvider & {
     readonly calls: ChatRequest[];
     readonly sessions: Session[];
-}
+};
 
 export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, request: ChatRequest) => ChatResponse)): ScriptedProvider {
     const calls: ChatRequest[] = [];
@@ -82,7 +83,7 @@ export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, r
         typeof script === "function"
             ? script
             : (i: number): ChatResponse => {
-                  const r = script[i];
+                  const r = script.at(i);
                   if (r === undefined) {
                       throw new Error(`scriptedProvider: no scripted reply for call ${i}`);
                   }

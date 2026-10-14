@@ -102,10 +102,10 @@ export function emptyWorkingMemory(): WorkingMemory {
  * written for the model and says what to do next (shorten this, retire that).
  * The tool surfaces it as an `is_error` tool result; the row is untouched.
  */
-export interface WorkingMemoryRejection {
+export type WorkingMemoryRejection = {
     readonly type: "working_memory_rejected";
     readonly message: string;
-}
+};
 
 /** `updateSection`'s error channel: a storage failure, or a refused write. */
 export type WorkingMemoryError = DbError | WorkingMemoryRejection;
@@ -142,12 +142,12 @@ export type FindingOp =
     | { readonly op: "retire"; readonly id: string };
 
 /** The `value` argument of `updateSection`, keyed by the `section` name. */
-export interface SectionValue {
+export type SectionValue = {
     readonly goal: { readonly text: string };
     readonly constraint: ConstraintOp;
     readonly hypothesis: ListOp;
     readonly finding: FindingOp;
-}
+};
 export type Section = keyof SectionValue;
 
 /**
@@ -155,7 +155,7 @@ export type Section = keyof SectionValue;
  * shape, `updateSection` amends one section, `render` serializes to the
  * Markdown the chat route injects.
  */
-export interface WorkingMemoryStore {
+export type WorkingMemoryStore = {
     /** Read the row; return the empty shape if absent (no lazy insert). */
     load(analysisId: string): ResultAsync<WorkingMemory, DbError>;
     /**
@@ -167,7 +167,7 @@ export interface WorkingMemoryStore {
     updateSection<S extends Section>(analysisId: string, section: S, value: SectionValue[S]): ResultAsync<void, WorkingMemoryError>;
     /** Serialize working memory to a Markdown document for injection. */
     render(analysisId: string): ResultAsync<string, DbError>;
-}
+};
 
 /** A short, render-friendly entry id. */
 function newId(): string {
@@ -240,7 +240,7 @@ function countFindings(findings: Findings): number {
 
 /** The run a finding id hangs under, or `undefined` if no run holds it. */
 function runOfFinding(findings: Findings, id: string): string | undefined {
-    return Object.keys(findings).find((runId) => findings[runId]!.some((f) => f.id === id));
+    return Object.keys(findings).find((runId) => findings[runId].some((f) => f.id === id));
 }
 
 function applyFindingOp(findings: Findings, op: FindingOp): Result<Findings, WorkingMemoryRejection> {
@@ -259,18 +259,17 @@ function applyFindingOp(findings: Findings, op: FindingOp): Result<Findings, Wor
             if (runId === undefined) return rejectUnknownId("finding", op.id);
             return checkEntryText("finding", op.text).map((text) => ({
                 ...findings,
-                [runId]: findings[runId]!.map((f) => (f.id === op.id ? { ...f, text } : f)),
+                [runId]: findings[runId].map((f) => (f.id === op.id ? { ...f, text } : f)),
             }));
         }
         case "retire": {
             const runId = runOfFinding(findings, op.id);
             if (runId === undefined) return rejectUnknownId("finding", op.id);
-            const kept = findings[runId]!.filter((f) => f.id !== op.id);
-            const next = { ...findings };
+            const kept = findings[runId].filter((f) => f.id !== op.id);
+            const { [runId]: _retired, ...rest } = findings;
             // An emptied run bucket is dropped whole: memory references a run only
             // for as long as it holds a finding from it.
-            if (kept.length === 0) delete next[runId];
-            else next[runId] = kept;
+            const next = kept.length > 0 ? { ...rest, [runId]: kept } : rest;
             return ok(next);
         }
     }
@@ -315,9 +314,9 @@ function applySectionUpdate<S extends Section>(wm: WorkingMemory, section: S, va
 }
 
 /** A finding lifted out of its run bucket, carrying the run it references. */
-interface FlatFinding extends Finding {
+type FlatFinding = Finding & {
     readonly runId: string;
-}
+};
 
 /** Every finding, in insertion order, each carrying its run reference. */
 function flattenFindings(findings: Findings): FlatFinding[] {
@@ -398,7 +397,7 @@ export function createWorkingMemory(pool: Pool): WorkingMemoryStore {
         // than being miscaptured as a `DbError`.
         return tryQuery("working-memory.load", () =>
             pool.query<{ data: unknown }>("SELECT data FROM cortex_working_memory WHERE analysis_id = $1", [analysisId]),
-        ).map(({ rows }) => (rows.length === 0 ? emptyWorkingMemory() : workingMemorySchema.parse(rows[0]!.data)));
+        ).map(({ rows }) => (rows.length === 0 ? emptyWorkingMemory() : workingMemorySchema.parse(rows[0].data)));
     }
 
     function updateSection<S extends Section>(analysisId: string, section: S, value: SectionValue[S]): ResultAsync<void, WorkingMemoryError> {
@@ -417,7 +416,7 @@ export function createWorkingMemory(pool: Pool): WorkingMemoryStore {
                 .map(({ rows }) => {
                     // Schema parse stays outside the driver wrapper — a validation throw
                     // propagates verbatim (and `withTransaction` still rolls back).
-                    const current = rows.length === 0 ? emptyWorkingMemory() : workingMemorySchema.parse(rows[0]!.data);
+                    const current = rows.length === 0 ? emptyWorkingMemory() : workingMemorySchema.parse(rows[0].data);
                     return applySectionUpdate(current, section, value);
                 })
                 .andThen((amended) =>
@@ -434,6 +433,7 @@ export function createWorkingMemory(pool: Pool): WorkingMemoryStore {
                DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
                                   [analysisId, JSON.stringify(amended.value)],
                               ),
+                          // oxlint-disable-next-line typescript/no-invalid-void-type -- neverthrow's ok<void, E> / ResultAsync<void, E> is the idiom of the seam contracts; re-typing the contracts to undefined changes the published surface beyond this change
                           ).map(() => ok<void, WorkingMemoryRejection>(undefined)),
                 ),
         ).andThen((written) => written);

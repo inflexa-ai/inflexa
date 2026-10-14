@@ -36,10 +36,10 @@ import { snapshotEntry, type ReportSnapshot } from "./reference-resolver.js";
 const PINNED_KINDS: ReadonlySet<string> = new Set(["artifact-value", "artifact-table", "artifact-file"] satisfies readonly Reference["kind"][]);
 
 /** One path-only reference whose path the snapshot does not hold, with the object that the author wrote. */
-interface MissingPin {
+type MissingPin = {
     readonly path: string;
     readonly record: Record<string, unknown>;
-}
+};
 
 /** Give `true` when an object carries an artifact pin. Such an object takes a stamp, and a read removes its hash. */
 function holdsPin(record: Record<string, unknown>): boolean {

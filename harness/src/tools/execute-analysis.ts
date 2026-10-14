@@ -33,7 +33,9 @@ import { adHocPlanId, adHocRunId } from "./analysis-invocation.js";
 import { defineTool, type ToolContext } from "./define-tool.js";
 import { queryPackages, readInventorySections, type ListAvailablePackagesDeps } from "./sandbox/list-available-packages.js";
 import { callExtendAnalysisFarm } from "./sandbox/link-packages.js";
+import { errorName } from "../lib/thrown.js";
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const planIdSchema = z.string().regex(/^pln-[a-f0-9]{8}$/, "planId must be a pln-<8hex> value");
 const inputSchema = z
     .object({
@@ -60,7 +62,14 @@ const inputSchema = z
 
 type ExecuteAnalysisWorkflow = (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
 
-export interface ExecuteAnalysisToolDeps extends Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory"> {
+// The `superRefine` of the input schema rejects a mode whose companion field is
+// missing before `execute` sees the input; this helper hands the body that value.
+function guaranteed<T>(value: T | undefined, field: string): T {
+    if (value === undefined) throw new Error(`the input schema must supply ${field}`);
+    return value;
+}
+
+export type ExecuteAnalysisToolDeps = Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory"> & {
     readonly pool: Pool;
     readonly executeAnalysisWorkflow: ExecuteAnalysisWorkflow;
     readonly runAuthorizer: RunAuthorizer;
@@ -77,7 +86,7 @@ export interface ExecuteAnalysisToolDeps extends Pick<EnvironmentStorePaths, "fa
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
     /** Falls back to the no-op recorder when omitted. */
     readonly usageRecorder?: UsageRecorder;
-}
+};
 
 export class PlanNotFoundError extends Error {
     constructor(planId: string) {
@@ -104,7 +113,7 @@ export class PlanValidationError extends Error {
 }
 
 function isDedupCollision(err: unknown): boolean {
-    return err instanceof RunDedupCollisionError || (err instanceof Error && err.name === "RunDedupCollisionError");
+    return err instanceof RunDedupCollisionError || errorName(err) === "RunDedupCollisionError";
 }
 
 /**
@@ -232,7 +241,7 @@ async function linkPlanPackages(
         .map(
             (o) =>
                 `${o.spelling} — two store directories claim it, ${o.storeDirs[0]} and ${o.storeDirs[1]}` +
-                `${o.detail === undefined ? "" : ` (${o.detail})`}` +
+                (o.detail === undefined ? "" : ` (${o.detail})`) +
                 `; when the two directories are one spelling in two tracks, name the track in the plan, as ` +
                 `${formatQuery({ spelling: o.spelling, track: "python" })} or ${formatQuery({ spelling: o.spelling, track: "r" })}`,
         );
@@ -284,7 +293,7 @@ function workflowInput(
         planId,
         planSummary: planSummary(plan),
         threadId: args.threadId,
-        steps: plan.steps.map((step) => ({ id: step.id, depends_on: step.depends_on ?? [] })),
+        steps: plan.steps.map((step) => ({ id: step.id, depends_on: step.depends_on })),
         planStepById: Object.fromEntries(plan.steps.map((step) => [step.id, step])),
         agentByStepId: Object.fromEntries(plan.steps.map((step) => [step.id, step.agent ?? "unknown"])),
         resourcesByStepId: args.resourcesByStepId,
@@ -312,6 +321,7 @@ function validateStoredPlan(raw: unknown, planId: string): AnalysisPlan {
 }
 
 function adHocTitle(request: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const compact = request.trim().replace(/\s+/g, " ");
     return compact.length <= 80 ? compact : `${compact.slice(0, 77)}…`;
 }
@@ -372,7 +382,7 @@ export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = n
                 status: "pending",
                 resources: route.resources,
                 agent: route.agentId,
-                maxSteps: meta?.defaultMaxSteps ?? DEFAULT_SANDBOX_MAX_STEPS,
+                maxSteps: meta.defaultMaxSteps ?? DEFAULT_SANDBOX_MAX_STEPS,
             },
         ],
     };
@@ -391,9 +401,9 @@ export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = n
 function adHocPackageResolver(deps: ExecuteAnalysisToolDeps, analysisId: string): AdHocRouterDeps["resolvePackages"] {
     if (!deps.farmLockFile && !deps.imagePackagesFile && !deps.readPoolInventory) return undefined;
     const inventory: ListAvailablePackagesDeps = {
-        ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-        ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-        ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+        farmLockFile: !(deps.farmLockFile === undefined) ? deps.farmLockFile : undefined,
+        imagePackagesFile: !(deps.imagePackagesFile === undefined) ? deps.imagePackagesFile : undefined,
+        readPoolInventory: !(deps.readPoolInventory === undefined) ? deps.readPoolInventory : undefined,
     };
     return async (names) => {
         const read = await readInventorySections(inventory, analysisId);
@@ -420,15 +430,15 @@ async function persistedAdHocPlan(
             pool: deps.pool,
             resourcePolicy: deps.resourcePolicy,
             logger: deps.logger,
-            ...(resolvePackages ? { resolvePackages } : {}),
-            ...(deps.usageRecorder ? { usageRecorder: deps.usageRecorder } : {}),
+            resolvePackages: resolvePackages ? resolvePackages : undefined,
+            usageRecorder: deps.usageRecorder ? deps.usageRecorder : undefined,
         },
         {
             analysisId: args.analysisId,
             request: args.request,
             session: args.ctx.session,
             signal: args.ctx.signal,
-            ...(args.ctx.turnUsage ? { turnUsage: args.ctx.turnUsage } : {}),
+            turnUsage: args.ctx.turnUsage ? args.ctx.turnUsage : undefined,
             invocationId: args.ctx.invocationId,
         },
     );
@@ -652,10 +662,8 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
         // running is a different event from an ad hoc request being routed.
         describeCall: (input) => (input.mode === "plan" ? `plan ${input.planId ?? ""}` : `ad hoc: ${input.request ?? ""}`),
         execute: async (input, ctx) => {
-            if (ctx.session.scope.kind !== "analysis") throw new Error("execute_analysis requires an analysis-scoped session");
-            if (!ctx.session.auth) throw new Error("execute_analysis: session is missing its auth capability");
             const analysisId = ctx.session.scope.analysisId;
-            const planId = input.mode === "plan" ? input.planId! : adHocPlanId(analysisId, ctx.invocationId);
+            const planId = input.mode === "plan" ? guaranteed(input.planId, "planId") : adHocPlanId(analysisId, ctx.invocationId);
             const emitRunCard = async (runId: string) => {
                 const card = await buildRunCardData(deps.pool, { planId, analysisId, runId }).unwrapOr(null);
                 if (card) await ctx.emit({ type: "data-run-card", source: ctx.session.provenance, data: card });
@@ -663,7 +671,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
 
             const launch = async (): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> => {
                 if (input.mode === "plan") return launchPlanRun(deps, { session: ctx.session, planId });
-                const plan = await persistedAdHocPlan(deps, { analysisId, request: input.request!, ctx, planId });
+                const plan = await persistedAdHocPlan(deps, { analysisId, request: guaranteed(input.request, "request"), ctx, planId });
                 const runId = adHocRunId(analysisId, ctx.invocationId);
                 return launchReservedRun(deps, {
                     session: ctx.session,

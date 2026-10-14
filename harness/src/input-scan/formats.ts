@@ -145,7 +145,7 @@ function startsWithText(buf: Buffer, text: string): boolean {
  */
 function gzipWrapper(buf: Buffer): string {
     if (buf.length < 12) return "gzip";
-    const flags = buf[3]!;
+    const flags = buf[3];
     const hasExtra = (flags & 0x04) !== 0;
     if (!hasExtra) return "gzip";
     return buf[12] === 0x42 && buf[13] === 0x43 ? "bgzip" : "gzip";
@@ -191,6 +191,7 @@ function textFormat(buf: Buffer): string | undefined {
     if (head.startsWith("data_")) return "mmcif";
     if (head.startsWith("[CEL]")) return "cel";
     if (head.startsWith("track ") || head.startsWith("fixedStep") || head.startsWith("variableStep")) return "wig";
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the format grammar of the scanner: no builtin recognizes these file formats.
     if (/^<\?xml/.test(head)) {
         if (head.includes("<indexedmzML") || head.includes("<mzML")) return "mzml";
         if (head.includes("<mzXML")) return "mzxml";
@@ -217,14 +218,14 @@ export function extensionChain(fileName: string): string[] {
 /** The extension chain with any compression wrappers stripped from the tail. */
 export function innerExtensions(extensions: readonly string[]): string[] {
     const inner = [...extensions];
-    while (inner.length > 0 && WRAPPER_EXTENSIONS.has(inner[inner.length - 1]!)) inner.pop();
+    while (inner.length > 0 && WRAPPER_EXTENSIONS.has(inner[inner.length - 1])) inner.pop();
     return inner;
 }
 
-export interface DetectedFormat {
+export type DetectedFormat = {
     readonly format: string;
     readonly wrapper?: string;
-}
+};
 
 /**
  * Identify a file's format from a bounded prefix of its bytes, falling back to the

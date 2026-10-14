@@ -11,22 +11,22 @@
 import type { DataAsset } from "./table-data.js";
 
 /** One statistic of a chart: the label of the block, and the value of the cell that the statistic binds. */
-export interface RenderStatistic {
+export type RenderStatistic = {
     label: string;
     value: string | number;
-}
+};
 
 /** The second table of a chart: the rows of the track binding, and the optional column order. */
-export interface RenderTrack {
+export type RenderTrack = {
     rows: Array<Record<string, string | number>>;
     columns?: string[];
-}
+};
 
 /** The trees of the category axes of a chart: the rows of the tree binding of each axis, with its optional column order. */
-export interface RenderTrees {
+export type RenderTrees = {
     x?: RenderTrack;
     y?: RenderTrack;
-}
+};
 
 /**
  * The value that one block resolves to, as a closed union. A `scalar` gives one number or one string. A
@@ -57,11 +57,11 @@ export type RenderValue =
  * One typed fault of a render. `blockId` names the block. `kind` names the class of the fault. `detail`
  * names what the block expected. The render collects every problem, and it returns them at once.
  */
-export interface RenderProblem {
+export type RenderProblem = {
     blockId: string;
     kind: "missing-value" | "wrong-shape" | "invalid-chart-input";
     detail: string;
-}
+};
 
 /** The value map that the renderer takes, keyed by block id. */
 export type RenderValues = Record<string, RenderValue>;
@@ -75,7 +75,7 @@ export type RenderValues = Record<string, RenderValue>;
  * The list holds the provenance assets of the render beside the table payloads and the SVG files of each
  * chart, thus one stage writes each file that the page loads or links, and the caller sorts nothing.
  */
-export interface RenderedPage {
+export type RenderedPage = {
     html: string;
     dataAssets: DataAsset[];
-}
+};

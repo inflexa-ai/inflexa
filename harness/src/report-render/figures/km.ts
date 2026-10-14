@@ -114,7 +114,7 @@ const GRID_LEFT_PAD = 7;
 const NAME_CHARACTER_PCT = 1.6;
 
 /** The columns that the channels of one km block name. */
-interface KmColumns {
+type KmColumns = {
     readonly time: string;
     readonly survival: string;
     readonly group?: string;
@@ -122,23 +122,23 @@ interface KmColumns {
     readonly high?: string;
     readonly censor?: string;
     readonly risk?: string;
-}
+};
 
 /** One row of one curve, with its cells read as numbers. */
-interface KmPoint {
+type KmPoint = {
     readonly time: number;
     readonly survival: number;
     readonly low: number | null;
     readonly high: number | null;
     readonly censor: number | null;
     readonly risk: number | null;
-}
+};
 
 /** One group of the table: its name, and its rows in time order. */
-interface KmCurve {
+type KmCurve = {
     readonly name: string;
     readonly points: KmPoint[];
-}
+};
 
 /** Derive the figure of one km block. */
 function deriveKm(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
@@ -171,7 +171,7 @@ function deriveKm(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     const timeAxis = {
         ...valueAxis("x", valueAxisTitle(context.labels, columns.value.time), { min: 0, max: end }),
         interval: step,
-        ...(onTick(end, step) ? {} : { axisLabel: { showMaxLabel: false } }),
+        axisLabel: !(onTick(end, step)) ? { showMaxLabel: false } : undefined,
     };
     const survivalAxis = valueAxis("y", valueAxisTitle(context.labels, columns.value.survival), { min: 0, max: 1 });
     const plotGrid = { top: pct(layout.top), bottom: pct(layout.plotBottom), left: pct(left), right: pct(GRID_RIGHT) };
@@ -184,7 +184,7 @@ function deriveKm(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
         xAxis: table ? [timeAxis, tableTimeAxis(end, step)] : timeAxis,
         yAxis: table ? [survivalAxis, tableGroupAxis(curves.value, colorOf)] : survivalAxis,
         series,
-        ...(graphic.length > 0 ? { graphic } : {}),
+        graphic: graphic.length > 0 ? graphic : undefined,
     };
     return ok(layout.bodyPx > CHART_BODY_PX ? withFigureBody(option, layout.bodyPx) : option);
 }
@@ -195,14 +195,14 @@ function pct(value: number): string {
 }
 
 /** The bands of one chart in percent of its body, and the body in pixels. */
-interface KmLayout {
+type KmLayout = {
     readonly top: number;
     readonly plotBottom: number;
     readonly tableBottom: number;
     readonly rows: number;
     readonly header: number;
     readonly bodyPx: number;
-}
+};
 
 /**
  * The bands of a chart whose table holds some rows. A table past `RISK_ROWS_IN_BODY` rows grows the body by one
@@ -248,11 +248,11 @@ function kmColumns(block: ChartBlock, rows: readonly ChartRow[], context: Figure
     return ok({
         time: time.value,
         survival: survival.value,
-        ...(optional.group !== undefined ? { group: optional.group } : {}),
-        ...(optional.low !== undefined ? { low: optional.low } : {}),
-        ...(optional.high !== undefined ? { high: optional.high } : {}),
-        ...(optional.censor !== undefined ? { censor: optional.censor } : {}),
-        ...(optional.risk !== undefined ? { risk: optional.risk } : {}),
+        group: optional.group !== undefined ? optional.group : undefined,
+        low: optional.low !== undefined ? optional.low : undefined,
+        high: optional.high !== undefined ? optional.high : undefined,
+        censor: optional.censor !== undefined ? optional.censor : undefined,
+        risk: optional.risk !== undefined ? optional.risk : undefined,
     });
 }
 

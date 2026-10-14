@@ -16,7 +16,7 @@ export const FileMetadataSchema = z
         tags: z.array(z.string()).optional(),
         warnings: z.array(z.string()).optional(),
     })
-    .passthrough();
+    .loose();
 export type FileMetadata = z.infer<typeof FileMetadataSchema>;
 
 /**

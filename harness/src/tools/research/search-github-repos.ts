@@ -20,14 +20,14 @@ const BASE_URL = "https://api.github.com/search/repositories";
 
 type SearchGithubReposOutput = { success: false; error: string; repos: GithubRepo[] } | { success: true; repos: GithubRepo[] };
 
-export interface GithubRepo {
+export type GithubRepo = {
     url: string;
     fullName: string;
     description?: string;
     stars: number;
     language?: string;
     lastUpdated?: string;
-}
+};
 
 // Raw GitHub search wire shape, validated at the fetch boundary. Every field is
 // optional — `parseGithubReposResponse` already filters out items missing the

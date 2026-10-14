@@ -66,6 +66,7 @@ const ExecuteCommandInputSchema = z.object({
 });
 
 /** Extensions that mark an argv token as the thing being run, not a flag or a data path. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const SCRIPT_EXTENSIONS = /\.(py|R|r|sh|js|ts|ipynb)$/;
 
 /** The first script-like token in an argv, or `undefined` when none looks like one. */
@@ -74,18 +75,18 @@ function scriptToken(command: readonly string[]): string | undefined {
 }
 
 /** What one exec leaves for the lineage collector of the step. */
-interface ExecCallRecord {
+type ExecCallRecord = {
     readonly command: readonly string[];
     readonly exitCode: number | null;
     readonly durationMs: number | null;
     readonly provenance?: ProvenanceFrame;
     /** The decision-record writes of the script check before the exec, for the mutator. */
     readonly recordWrites?: readonly WriteRecord[];
-}
+};
 
 type ExecuteCommandResult = { readonly status: "ok" } & BoundedExecResult;
 
-export interface ExecuteCommandDeps {
+export type ExecuteCommandDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly sandboxClient: SandboxClient;
@@ -115,7 +116,7 @@ export interface ExecuteCommandDeps {
      */
     readonly workspaceFilesystem?: WorkspaceFilesystem;
     readonly mutator?: WorkspaceMutator;
-}
+};
 
 export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
     const { sandboxClient, sandbox, deadlineMs, defaultCwd, lineageCollector, mountRoot } = deps;
@@ -182,8 +183,8 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
                 sandbox,
                 command,
                 cwd: effectiveCwd,
-                ...(env === undefined ? {} : { env }),
-                ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
+                env: !(env === undefined) ? env : undefined,
+                timeoutSeconds: !(timeoutSeconds === undefined) ? timeoutSeconds : undefined,
                 deadlineMs: deadlineMs(),
                 emit: ctx.emit,
             });
@@ -194,8 +195,8 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
                 command,
                 exitCode: result.exitCode,
                 durationMs: result.durationMs,
-                ...(result.provenance ? { provenance: result.provenance } : {}),
-                ...(recordWrites.length > 0 ? { recordWrites } : {}),
+                provenance: result.provenance ? result.provenance : undefined,
+                recordWrites: recordWrites.length > 0 ? recordWrites : undefined,
             };
             return ok(withToolCallRecord(bounded, record));
         },
@@ -210,8 +211,8 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
                     command: record.command,
                     exitCode: record.exitCode,
                     durationMs: record.durationMs,
-                    ...(deps.logger ? { logger: deps.logger } : {}),
-                    ...(record.provenance ? { provenance: record.provenance } : {}),
+                    logger: deps.logger ? deps.logger : undefined,
+                    provenance: record.provenance ? record.provenance : undefined,
                 });
             } catch (err) {
                 const logger = (deps.logger ?? createNoopLogger()).named("execute_command");

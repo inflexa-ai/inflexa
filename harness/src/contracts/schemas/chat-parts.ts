@@ -92,6 +92,7 @@ export const PresentationPartSchema = z.object({
 export const PlanPartSchema = z.object({
     type: z.literal("data-plan"),
     id: z.string(),
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     planId: z.string().regex(/^pln-[a-f0-9]{8}$/),
     parentPlanId: z
         .string()

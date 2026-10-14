@@ -97,6 +97,7 @@ import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { SystemModelMessage } from "ai";
 
 import type { ModelMessage, PromptCachePolicy, ProviderOptions } from "./types.js";
+import { typedMember } from "../lib/shape.js";
 
 /**
  * The default policy: cache with the 5-minute TTL.
@@ -130,9 +131,9 @@ export const CONVERSATION_PROMPT_CACHE: PromptCachePolicy = { ttl: "1h" };
  * wrong shape here reaches the wire unchecked, and this declaration is the only
  * guard. Refer to the CachePointBlock page of the Bedrock API reference.
  */
-interface BedrockCacheOptions {
+type BedrockCacheOptions = {
     readonly cachePoint: { readonly type: "default"; readonly ttl?: "5m" | "1h" };
-}
+};
 
 /**
  * Translate a neutral cache policy into provider wire options.
@@ -217,7 +218,7 @@ function canHostBreakpoint(message: ModelMessage): boolean {
 /** The index of the last message that can host the breakpoint, or `-1` when none can. */
 function lastHostIndex(messages: readonly ModelMessage[]): number {
     for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i];
+        const message = messages.at(i);
         if (message !== undefined && canHostBreakpoint(message)) return i;
     }
     return -1;
@@ -232,25 +233,27 @@ function carriesBreakpoint(message: ModelMessage): boolean {
 function withBreakpoint<M extends ModelMessage>(message: M, options: ProviderOptions): M {
     const merged: Record<string, Record<string, unknown>> = { ...message.providerOptions };
     for (const [namespace] of BREAKPOINT_SITES) {
-        const marker = options[namespace];
+        const marker = typedMember(options, namespace);
         if (marker === undefined) continue;
         merged[namespace] = { ...message.providerOptions?.[namespace], ...marker };
     }
-    return { ...message, providerOptions: merged as NonNullable<M["providerOptions"]> };
+    return { ...message, providerOptions: merged };
 }
 
 /** The same message with every marker removed, and each namespace dropped when it held nothing else. */
 function withoutBreakpoint<M extends ModelMessage>(message: M): M {
     if (!carriesBreakpoint(message)) return message;
-    const remaining: Record<string, Record<string, unknown>> = { ...message.providerOptions };
+    let remaining: Record<string, Record<string, unknown>> = { ...message.providerOptions };
     for (const [namespace, key] of BREAKPOINT_SITES) {
         const bag = remaining[namespace];
-        if (bag?.[key] === undefined) continue;
+        if (bag[key] === undefined) continue;
         const { [key]: _dropped, ...rest } = bag;
-        if (Object.keys(rest).length === 0) delete remaining[namespace];
-        else remaining[namespace] = rest;
+        if (Object.keys(rest).length === 0) {
+            const { [namespace]: _droppedNamespace, ...withoutNamespace } = remaining;
+            remaining = withoutNamespace;
+        } else remaining[namespace] = rest;
     }
-    return { ...message, providerOptions: remaining as NonNullable<M["providerOptions"]> };
+    return { ...message, providerOptions: remaining };
 }
 
 /**

@@ -66,28 +66,28 @@ const ImpcSolrResponseSchema = z.object({
 });
 type ImpcSolrResponse = z.infer<typeof ImpcSolrResponseSchema>;
 
-export interface MpTerm {
+export type MpTerm = {
     id: string;
     term: string;
     bestPValue: number | null;
-}
+};
 
-export interface PhenotypeProfile {
+export type PhenotypeProfile = {
     mpTerms: MpTerm[];
     organSystems: string[];
     sexDimorphic: boolean;
     phenotypeCount: number;
-}
+};
 
-export interface ViabilityCall {
+export type ViabilityCall = {
     zygosity: string;
     parameterStableId: string;
     mpTerm: { id: string; name: string } | null;
-}
+};
 
 export type ViabilityCategory = "lethal_pre_weaning" | "subviable" | "viable" | null;
 
-export interface KoPhenotypeProfile {
+export type KoPhenotypeProfile = {
     geneSymbol: string;
     mouseMarkerSymbol: string | null;
     mgiAccessionId: string | null;
@@ -99,9 +99,10 @@ export interface KoPhenotypeProfile {
     phenotypeCount: number;
     phenotypeDocsTotal: number;
     phenotypesTruncated: boolean;
-}
+};
 
 function escapeSolrValue(value: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return value.replace(/([+\-&|!(){}[\]^"~*?:\\/\s])/g, "\\$1");
 }
 
@@ -141,8 +142,12 @@ export function parsePhenotypeResponse(raw: unknown): PhenotypeProfile {
         const sex = typeof doc.sex === "string" ? doc.sex.toLowerCase() : "";
         if (sex) {
             allSexes.add(sex);
-            if (!mpToSexes.has(mpId)) mpToSexes.set(mpId, new Set());
-            mpToSexes.get(mpId)!.add(sex);
+            let sexes = mpToSexes.get(mpId);
+            if (sexes === undefined) {
+                sexes = new Set();
+                mpToSexes.set(mpId, sexes);
+            }
+            sexes.add(sex);
         }
     }
 
@@ -208,7 +213,7 @@ async function resolveImpcGene(humanSymbol: string): Promise<{ mouseMarkerSymbol
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return null;
     }
-    const docs = res.value?.response?.docs ?? [];
+    const docs = res.value.response?.docs ?? [];
     if (!Array.isArray(docs) || docs.length === 0) return null;
     const doc = docs[0];
     if (!doc.marker_symbol || !doc.mgi_accession_id) return null;
@@ -226,7 +231,7 @@ async function fetchPhenotypes(mouseSym: string): Promise<{ raw: unknown; numFou
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return { raw: { response: { docs: [] } }, numFound: 0 };
     }
-    const numFound = Number(res.value?.response?.numFound ?? 0);
+    const numFound = Number(res.value.response?.numFound ?? 0);
     return { raw: res.value, numFound };
 }
 

@@ -22,6 +22,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { guaranteed } from "../../lib/invariants.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { getPathwayById, searchPathways, type Pathway } from "../lib/pathway-client.js";
@@ -40,21 +41,21 @@ const DEFAULT_LIMIT = 10;
  */
 const ANNOTATION_INCLUDE_FIELDS = "goName";
 
-interface GoTerm {
+type GoTerm = {
     id: string;
     name: string;
     definition?: string;
     aspect?: string;
-}
+};
 
-interface GoAnnotation {
+type GoAnnotation = {
     geneProductId: string;
     goId: string;
     goName: string;
     aspect?: string;
     evidenceCode?: string;
     qualifier?: string;
-}
+};
 
 // QuickGO term response, validated at the fetch boundary. The `.transform`
 // carries the (context-free) rename from the raw wire fields to the `GoTerm[]`
@@ -141,6 +142,7 @@ const inputSchema = z
             ),
         goId: z
             .string()
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             .regex(/^GO:\d{7}$/)
             .optional()
             .describe("'go' only. A specific GO term ID, e.g. 'GO:0008150'."),
@@ -218,7 +220,7 @@ export const lookupAnnotationTool = defineTool({
                 const pathway = await getPathwayById(pathwayId);
                 return ok({ pathways: pathway ? [pathway] : [] });
             }
-            const pathways = await searchPathways(query!, {
+            const pathways = await searchPathways(guaranteed(query, "query"), {
                 source: vocabulary === "pathways" ? "both" : vocabulary,
                 organism: organism ?? "hsa",
                 includeGenes: includeGenes ?? false,

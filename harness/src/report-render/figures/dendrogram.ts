@@ -20,11 +20,11 @@ import { chartProblem, toNumber } from "./common.js";
 import type { FigureTree } from "./index.js";
 
 /** One checked tree: the axis categories in leaf order, and the elbow of each edge in table order. */
-export interface CheckedTree {
+export type CheckedTree = {
     readonly order: readonly Cell[];
     readonly height: number;
     readonly elbows: readonly Elbow[];
-}
+};
 
 /**
  * The elbow of one edge, in tree coordinates: the place along the axis and the height of each of its three
@@ -33,11 +33,11 @@ export interface CheckedTree {
 export type Elbow = readonly [readonly [number, number], readonly [number, number], readonly [number, number]];
 
 /** One edge of the table, with its node names as text. */
-interface Edge {
+type Edge = {
     readonly parent: string;
     readonly child: string;
     readonly height: number;
-}
+};
 
 /**
  * Check the tree of one axis against the categories of that axis, and give the leaf order and the elbows.

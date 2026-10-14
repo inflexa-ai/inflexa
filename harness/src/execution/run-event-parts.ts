@@ -92,8 +92,13 @@ export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (e
         }
     };
 
+    // The timer flips in the debounce callback of another task; the closure gives
+    // each read the value at call time, not a narrowed earlier value.
+    const pendingFlushTimer = (): ReturnType<typeof setTimeout> | null => flushTimer;
+
     const scheduleFlush = (): void => {
         if (flushTimer !== null) return;
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the debounce fires the flush after `flushMs` of quiet; the close path flushes the tail and clears it, so it cannot outlive the stream.
         flushTimer = setTimeout(() => {
             // A timed flush has no caller to report to. A lasting emit failure
             // still reaches the caller, through the next direct emit or the
@@ -115,8 +120,9 @@ export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (e
             scheduleFlush();
         }
     } finally {
-        if (flushTimer !== null) {
-            clearTimeout(flushTimer);
+        const timer = pendingFlushTimer();
+        if (timer !== null) {
+            clearTimeout(timer);
             flushTimer = null;
         }
         await flushChain;

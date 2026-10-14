@@ -28,7 +28,7 @@ import type { Pool, PoolClient } from "pg";
 import type { DomainError } from "./result.js";
 
 /** A query/mutation/connection accepted by the data-access layer. */
-type Querier = Pool | PoolClient;
+export type Querier = Pool | PoolClient;
 
 /**
  * A storage-layer failure. Absence is deliberately NOT modelled: single-row
@@ -235,5 +235,3 @@ export function withTransaction<T>(pool: Pool, op: string, fn: (client: PoolClie
         })(),
     );
 }
-
-export type { Querier };

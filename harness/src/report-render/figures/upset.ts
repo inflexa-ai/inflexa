@@ -87,22 +87,22 @@ const BOTTOM_LINES = 3.2;
 export const UPSET_FIGURE: FigureModule = { reads: new Set(["x", "group"]), derive: deriveUpset };
 
 /** One set: its name and the count of its elements. */
-export interface UpsetSet {
+export type UpsetSet = {
     readonly name: string;
     readonly size: number;
-}
+};
 
 /** One exact intersection: the places of its member sets in the set order, and the count of its elements. */
-export interface UpsetIntersection {
+export type UpsetIntersection = {
     readonly members: readonly number[];
     readonly size: number;
-}
+};
 
 /** The computed summary of the figure: the sets in size order, and each intersection in draw order. */
-export interface UpsetSummary {
+export type UpsetSummary = {
     readonly sets: readonly UpsetSet[];
     readonly intersections: readonly UpsetIntersection[];
-}
+};
 
 /** True when a cell holds no text. */
 function emptyCell(cell: Cell | undefined): boolean {
@@ -164,23 +164,23 @@ function compareMembers(a: readonly number[], b: readonly number[]): number {
 }
 
 /** The size of one chart box and its text: the page, or one export. */
-interface ChartBox {
+type ChartBox = {
     readonly widthPx: number;
     readonly heightPx: number;
     readonly textPx: number;
-}
+};
 
 /** The page box and the box of each export size. */
 const PAGE_BOX: ChartBox = { widthPx: CHART_PAGE_WIDTH_PX, heightPx: CHART_BODY_PX, textPx: CHART_PAGE_TEXT_PX };
 const EXPORT_SIZES = [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide] as const;
 
 /** The places of the grids in percent of the chart. */
-interface UpsetLayout {
+type UpsetLayout = {
     readonly matrixLeft: number;
     readonly matrixTop: number;
     readonly matrixBottom: number;
     readonly rowPct: number;
-}
+};
 
 /**
  * The places of the grids for some sets, and set names of some length.
@@ -232,7 +232,7 @@ function pct(value: number): string {
 }
 
 function deriveUpset(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
-    const source = { blockId: context.blockId, rows, ...(context.columns !== undefined ? { columns: context.columns } : {}) };
+    const source = { blockId: context.blockId, rows, columns: context.columns !== undefined ? context.columns : undefined };
     const encoding = block.encoding ?? {};
     const element = demandedColumn("upset", encoding, "x", source);
     if (element.isErr()) return err(element.error);
@@ -273,6 +273,8 @@ function deriveUpset(block: ChartBlock, rows: readonly ChartRow[], context: Figu
     const pageDot = dotPx(layout, drawn.length, PAGE_BOX);
     const matrixGrid = { left: pct(layout.matrixLeft), right: pct(SIDE_PCT), top: pct(layout.matrixTop), bottom: pct(layout.matrixBottom) };
     const hiddenAxis = { axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false } };
+    const intersectionAxisNames =
+        hidden > 0 ? { ...axisNameFields("x", `Intersections: ${drawn.length} of ${intersections.length} shown`), nameGap: NAME_GAP_PX } : {};
     const series: EchartOption[] = [
         {
             id: "intersections",
@@ -345,7 +347,7 @@ function deriveUpset(block: ChartBlock, rows: readonly ChartRow[], context: Figu
                 gridIndex: 1,
                 data: columnNames,
                 ...hiddenAxis,
-                ...(hidden > 0 ? { ...axisNameFields("x", `Intersections: ${drawn.length} of ${intersections.length} shown`), nameGap: NAME_GAP_PX } : {}),
+                ...intersectionAxisNames,
             },
             { ...valueAxis("x", SET_TITLE), gridIndex: 2, inverse: true, splitNumber: 2, minInterval: 1, axisLabel: { rotate: 0 } },
         ],

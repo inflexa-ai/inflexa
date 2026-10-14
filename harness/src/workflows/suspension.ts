@@ -23,10 +23,10 @@ import { findSuspendError } from "../providers/errors.js";
 import type { SuspendingRefusal } from "../sandbox/sandbox-error.js";
 
 /** Plain data, thus it crosses a DBOS checkpoint as it is. */
-export interface Suspension {
+export type Suspension = {
     readonly kind: "suspended";
     readonly reason: string;
-}
+};
 
 export function suspensionOfFailure(err: unknown): Suspension | undefined {
     const found = findSuspendError(err);
@@ -46,7 +46,10 @@ export function suspensionOfSpawnRefusal(refusal: SuspendingRefusal): Suspension
  * `DBOSWorkflowCancelledError` and nothing after it runs.
  */
 export async function cancelSelf(stepName: string): Promise<never> {
-    await DBOS.cancelWorkflow(DBOS.workflowID!);
-    await DBOS.runStep(async () => undefined, { name: stepName });
+    // SAFETY: inside a real DBOS workflow the ambient id is always set; the
+    // test rig mocks DBOS without one and its cancel mock reads no id, so the
+    // assertion narrows only the type, never a runtime value the SDK reads.
+    await DBOS.cancelWorkflow(DBOS.workflowID as string);
+    await DBOS.runStep(() => Promise.resolve(undefined), { name: stepName });
     throw new Error(`unreachable: ${stepName} did not raise the cancellation`);
 }

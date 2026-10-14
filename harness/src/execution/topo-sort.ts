@@ -80,7 +80,9 @@ export function topoSortIntoWaves(steps: AnalysisStep[]): ExecutionWave[] {
     for (const step of steps) {
         for (const dep of step.depends_on) {
             inDegree.set(step.id, (inDegree.get(step.id) ?? 0) + 1);
-            dependents.get(dep)!.push(step.id);
+            const dependentIds = dependents.get(dep);
+            if (dependentIds === undefined) throw new DependencyError(step.id, dep);
+            dependentIds.push(step.id);
         }
     }
 
@@ -92,15 +94,22 @@ export function topoSortIntoWaves(steps: AnalysisStep[]): ExecutionWave[] {
     let frontier = steps.filter((s) => inDegree.get(s.id) === 0).map((s) => s.id);
 
     while (frontier.length > 0) {
-        // Current frontier forms a wave
-        const wave: ExecutionWave = frontier.map((id) => stepById.get(id)!);
+        // Current frontier forms a wave; every frontier id was validated above,
+        // so a missing step is a topo-sort defect, not bad input.
+        const wave: ExecutionWave = frontier.map((id) => {
+            const step = stepById.get(id);
+            if (step === undefined) throw new Error(`frontier step ${id} left the step index mid-sort`);
+            return step;
+        });
         waves.push(wave);
         remaining -= frontier.length;
 
         // Compute next frontier
         const nextFrontier: string[] = [];
         for (const id of frontier) {
-            for (const dep of dependents.get(id)!) {
+            const dependentIds = dependents.get(id);
+            if (dependentIds === undefined) throw new Error(`frontier step ${id} left the dependent index mid-sort`);
+            for (const dep of dependentIds) {
                 const newDeg = (inDegree.get(dep) ?? 1) - 1;
                 inDegree.set(dep, newDeg);
                 if (newDeg === 0) {

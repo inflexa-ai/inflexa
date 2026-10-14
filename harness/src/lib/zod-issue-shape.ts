@@ -93,7 +93,7 @@ function fieldOf(schema: z.core.$ZodType, key: string): z.core.$ZodType | undefi
 function elementOf(schema: z.core.$ZodType, index: number): z.core.$ZodType | undefined {
     const def = (unwrap(schema) as z.core.$ZodTypes)._zod.def;
     if (def.type === "array") return def.element;
-    if (def.type === "tuple") return def.items[index] ?? def.rest ?? undefined;
+    if (def.type === "tuple") return def.items[index] ?? def.rest;
     return undefined;
 }
 

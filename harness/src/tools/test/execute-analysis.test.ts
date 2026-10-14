@@ -1,0 +1,1458 @@
+/**
+ * execute_analysis tool — unit-level coverage for the validation gate and the
+ * dedup recovery contract. The Postgres-testcontainer end-to-end coverage
+ * (task 3.5) is exercised once the full executeAnalysis dep bundle is wired
+ * at boot; here we drive the tool with a fake `Pool` and a fake registered
+ * workflow function to keep the assertion surface focused.
+ */
+
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import type { Pool } from "pg";
+
+import type { RequestSession, RunSession } from "../../auth/types.js";
+import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import type { RunAuthorization, RunAuthorizer } from "../../execution/run-authorizer.js";
+import type { GateFailure } from "../../lib/hooks.js";
+import type { RunLauncher } from "../../execution/run-launcher.js";
+import type { ExtendAnalysisFarm } from "../../sandbox/types.js";
+import type { ChatProvider } from "../../providers/types.js";
+import type { ExecuteAnalysisInput } from "../../workflows/execute-analysis.js";
+import type { AdHocRoute } from "../ad-hoc-router.js";
+import type { ToolContext } from "../define-tool.js";
+import { withSchema } from "../../__tests__/setup/postgres.js";
+import { RunDedupCollisionError, insertRun, upsertAnalysis, upsertPlan } from "../../state/index.js";
+import {
+    PlanMalformedError,
+    PlanNotFoundError,
+    PlanPackagesMissingError,
+    PlanValidationError,
+    buildAdHocPlan,
+    createExecuteAnalysisTool,
+    launchPlanRun,
+    type LaunchPlanRunDeps,
+} from "../execute-analysis.js";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { jsonParse } from "../../lib/json.js";
+import { z } from "zod";
+import { fetchDouble, poolDouble } from "../../lib/test/doubles.js";
+import { optionRecord } from "../../report-render/option-lens.js";
+
+/** Records launches; never reaches the durability engine. */
+function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
+    launcher: RunLauncher;
+    launches: Array<{ workflowId: string }>;
+    inputs: ExecuteAnalysisInput[];
+} {
+    const launches: Array<{ workflowId: string }> = [];
+    const inputs: ExecuteAnalysisInput[] = [];
+    const launcher: RunLauncher = {
+        launch:  (_workflow, o, input) => {
+            if (opts.failLaunch) throw new Error("launch boom");
+            launches.push({ workflowId: o.workflowId });
+            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+            inputs.push(input as ExecuteAnalysisInput);
+            return Promise.resolve();
+},
+    };
+    return { launcher, launches, inputs };
+}
+
+/** Authorizer that succeeds and records revoke reasons. */
+function recordingAuthorizer(): {
+    authorizer: RunAuthorizer;
+    revokes: string[];
+} {
+    const revokes: string[] = [];
+    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+    const authorizer: RunAuthorizer = {
+        authorize: () =>
+            okAsync<RunAuthorization, GateFailure>({
+                runSession: {} as RunSession,
+                ownsMandate: true,
+            }),
+        revoke: (_authorization, reason) => {
+            revokes.push(reason);
+            return okAsync(undefined);
+        },
+        revokeByJti: () => okAsync(undefined),
+    };
+    return { authorizer, revokes };
+}
+
+/** None of these unit tests reach authorization — the validation/dedup paths
+ * all return or throw first, so a throw-on-call authorizer is the assertion. */
+const throwingAuthorizer: RunAuthorizer = {
+    authorize: () => {
+        throw new Error("authorize should not be reached in this test");
+    },
+    revoke: () => okAsync(undefined),
+    revokeByJti: () => okAsync(undefined),
+};
+
+const ANALYSIS_ID = "analysis-test-1";
+const PLAN_ID = "pln-deadbeef";
+
+type Row = Record<string, unknown>;
+
+function fakePool(rowsByPrefix: Record<string, Row[]>): {
+    pool: Pool;
+    queries: Array<{ text: string; values: unknown[] }>;
+} {
+    const queries: Array<{ text: string; values: unknown[] }> = [];
+    const query = (q: { text: string; values?: unknown[] }) => {
+        queries.push({ text: q.text, values: q.values ?? [] });
+        for (const prefix of Object.keys(rowsByPrefix)) {
+            if (q.text.includes(prefix)) {
+                return Promise.resolve({ rows: rowsByPrefix[prefix] });
+            }
+        }
+        return Promise.resolve({ rows: [] });
+    };
+    return { pool: poolDouble(query), queries };
+}
+
+function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): ToolContext {
+    const session: RequestSession = {
+        identity: { user: "user-1" },
+        scope: { kind: "analysis", analysisId: ANALYSIS_ID, threadId: "thread-1" },
+        provenance: { agentId: "conversation-agent", callPath: [] },
+        auth: makeLocalAuth(),
+    };
+    return {
+        session,
+        invocationId,
+        signal: new AbortController().signal,
+        emit:  (part) => {
+            emitted.push(part);
+            return Promise.resolve();
+},
+        ask:  () => Promise.reject(new Error("ask should not be reached")),
+    };
+}
+
+function routeProvider(agentId = "single-cell-agent", packages?: string[]): { provider: ChatProvider; calls: { count: number } } {
+    const calls = { count: 0 };
+    return {
+        calls,
+        provider: {
+            capabilities: { toolCalling: true },
+            chat: () => {
+                calls.count++;
+                return okAsync({
+                    message: {
+                        role: "assistant",
+                        content: [
+                            {
+                                type: "tool-call",
+                                toolCallId: `route-${calls.count}`,
+                                toolName: "submit_route",
+                                input: {
+                                    agentId,
+                                    resources: { cpu: 2, memoryGb: 4 },
+                                    rationale: `route-${calls.count}`,
+                                    packages: !(packages === undefined) ? packages : undefined,
+                                },
+                            },
+                        ],
+                    },
+                    finishReason: "tool-calls",
+                });
+            },
+            chatStream: async function* () {},
+        },
+    };
+}
+
+function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: Map<string, Row> } {
+    const plans = new Map<string, unknown>();
+    const runs = new Map<string, Row>();
+    const query =  (q: { text: string; values?: unknown[] }) => {
+        const values = q.values ?? [];
+        if (q.text.includes("SELECT plan FROM cortex_plans")) {
+            const plan = plans.get(String(values[0]));
+            return { rows: plan === undefined ? [] : [{ plan }], rowCount: plan === undefined ? 0 : 1 };
+        }
+        if (q.text.includes("INSERT INTO cortex_plans")) {
+            const planId = String(values[0]);
+            if (!plans.has(planId)) plans.set(planId, jsonParse(String(values[2]), z.unknown()));
+            return { rows: [], rowCount: 1 };
+        }
+        if (q.text.includes("INSERT INTO cortex_runs") && q.text.includes("ON CONFLICT (run_id)")) {
+            const runId = String(values[0]);
+            if (runs.has(runId)) return { rows: [], rowCount: 0 };
+            const row = {
+                run_id: runId,
+                analysis_id: String(values[1]),
+                thread_id: values[2] ?? null,
+                workflow_name: String(values[3]),
+                status: "running",
+                started_at: String(values[4]),
+                completed_at: null,
+                error: null,
+                synthesis_status: null,
+                synthesis_reason: null,
+                parts: null,
+                mandate_jti: null,
+                mandate_expires_at: null,
+                plan_id: values[5] ?? null,
+            };
+            runs.set(runId, row);
+            return { rows: [{ run_id: runId }], rowCount: 1 };
+        }
+        if (q.text.includes("FROM cortex_runs") && q.text.includes("WHERE run_id = $1")) {
+            const row = runs.get(String(values[0]));
+            return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+        }
+        if (q.text.includes("UPDATE cortex_runs")) return { rows: [], rowCount: 1 };
+        // No persisted data profile.
+        return Promise.resolve({ rows: [], rowCount: 0 });
+    };
+    return { pool: poolDouble(query), plans, runs };
+}
+
+function setEnv(): void {
+    process.env.DB_PG_HOST = "localhost";
+    process.env.DB_PG_NAME = "cortex";
+    process.env.DB_PG_USER = "cortex";
+    process.env.DB_PG_PASSWORD = "dev";
+    process.env.ARTIFACT_STORE_API_URL = "http://artifact-store.test";
+    process.env.DEV_SERVICE_IDENTITY = "test-svc";
+}
+
+function makeStep(id: string, deps: string[] = []) {
+    return {
+        id,
+        name: `Step ${id}`,
+        track: "test",
+        step_type: "analysis",
+        question: `do ${id}`,
+        acceptance_criteria: ["completes"],
+        depends_on: deps,
+        agent: "bulk-transcriptomics-agent",
+        resources: { cpu: 1, memoryGb: 4 },
+        maxSteps: 30,
+    };
+}
+
+const validPlan = {
+    analytical_narrative: "test plan",
+    steps: [makeStep("step-a")],
+    created_at: "2026-01-01T00:00:00Z",
+};
+
+// SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+const utilityDeps = {
+    utilityProvider: {} as never,
+    utilityModel: "utility-model",
+};
+
+describe("createExecuteAnalysisTool plan mode", () => {
+    it("exposes one flat refined schema with only mode, planId, and request", () => {
+        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool: poolDouble(),
+            runLauncher: fakeLauncher().launcher,
+            runAuthorizer: throwingAuthorizer,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+        });
+
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        expect(Object.keys(optionRecord((tool.jsonSchema.properties ?? {}))).sort()).toEqual(["mode", "planId", "request"]);
+        expect(tool.inputSchema.safeParse({ mode: "plan", planId: PLAN_ID }).success).toBe(true);
+        expect(tool.inputSchema.safeParse({ mode: "adhoc", request: "Compute this" }).success).toBe(true);
+        expect(tool.inputSchema.safeParse({ mode: "plan", request: "wrong" }).success).toBe(false);
+        expect(tool.inputSchema.safeParse({ mode: "adhoc", planId: PLAN_ID, request: "wrong" }).success).toBe(false);
+    });
+
+    it("throws PlanNotFoundError when no row matches the (analysis, plan) tuple", async () => {
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [],
+        });
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: fakeLauncher().launcher,
+            runAuthorizer: throwingAuthorizer,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+        });
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanNotFoundError);
+    });
+
+    it("throws PlanValidationError without dispatching the workflow when the DAG has a cycle", async () => {
+        const cyclic = {
+            ...validPlan,
+            steps: [makeStep("a", ["b"]), makeStep("b", ["a"])],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: cyclic }],
+        });
+        let dispatched = false;
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: fakeLauncher().launcher,
+            runAuthorizer: throwingAuthorizer,
+            executeAnalysisWorkflow:  () => {
+                dispatched = true;
+                return Promise.resolve({
+                    runId: "x",
+                    workflowId: "x",
+                    status: "completed",
+                    completedSteps: [],
+                    failedSteps: [],
+                    canceledSteps: [],
+                });
+            },
+        });
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanValidationError);
+        expect(dispatched).toBe(false);
+    });
+
+    it("dedup pre-check returns the existing runId without minting", async () => {
+        setEnv();
+        const { pool, queries } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+            "FROM cortex_runs": [
+                {
+                    run_id: "r-existing",
+                    analysis_id: ANALYSIS_ID,
+                    thread_id: null,
+                    plan_id: PLAN_ID,
+                    workflow_name: "executeAnalysis",
+                    status: "running",
+                    started_at: "2026-05-01T00:00:00Z",
+                    completed_at: null,
+                    error: null,
+                    synthesis_status: null,
+                    synthesis_reason: null,
+                    parts: null,
+                    mandate_jti: "jti-existing",
+                    mandate_expires_at: "2099-01-01T00:00:00Z",
+                },
+            ],
+        });
+        let mintCalls = 0;
+        // Saved and restored below: a stub left in place would answer every
+        // later test file's request from this one's fixture.
+        const realFetch = globalThis.fetch;
+        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+        globalThis.fetch = fetchDouble(() => {
+            mintCalls++;
+            return Promise.resolve(new Response("{}", {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            }));
+        });
+
+        let dispatched = false;
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: fakeLauncher().launcher,
+            runAuthorizer: throwingAuthorizer,
+            executeAnalysisWorkflow:  () => {
+                dispatched = true;
+                return Promise.resolve({
+                    runId: "x",
+                    workflowId: "x",
+                    status: "completed",
+                    completedSteps: [],
+                    failedSteps: [],
+                    canceledSteps: [],
+                });
+            },
+        });
+        try {
+            const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+            expect(result).toMatchObject({ runId: "r-existing", status: "in_progress" });
+            expect(mintCalls).toBe(0);
+            expect(dispatched).toBe(false);
+            // The dedup pre-check is the only query that touched cortex_runs.
+            expect(queries.some((q) => q.text.includes("FROM cortex_runs"))).toBe(true);
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+    });
+
+    it("marks the reserved run failed with the reason of the host when the authorization gate refuses", async () => {
+        setEnv();
+        // No "FROM cortex_runs" key → dedup pre-check misses; the INSERT reserves
+        // the slot; then the authorization gate refuses.
+        const { pool, queries } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+        });
+        const failingAuthorizer: RunAuthorizer = {
+            authorize: () => errAsync({ reason: "mint refused", suspend: false }),
+            revoke: () => okAsync(undefined),
+            revokeByJti: () => okAsync(undefined),
+        };
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: fakeLauncher().launcher,
+            runAuthorizer: failingAuthorizer,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("workflow must not start after a failed authorization")),
+        });
+
+        const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("mint refused"), retryable: false });
+        // The reserved row is released — marked failed with the reason — so the
+        // partial-unique slot frees up and a retry can re-run.
+        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed") && q.values.includes("mint refused"))).toBe(true);
+    });
+
+    it("cancels the reserved run and marks the analysis suspended when the gate refuses with the suspend flag", async () => {
+        setEnv();
+        const { pool, queries } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+        });
+        const suspendingAuthorizer: RunAuthorizer = {
+            authorize: () => errAsync({ reason: "no_funds", suspend: true }),
+            revoke: () => okAsync(undefined),
+            revokeByJti: () => okAsync(undefined),
+        };
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: fakeLauncher().launcher,
+            runAuthorizer: suspendingAuthorizer,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("workflow must not start after a refused authorization")),
+        });
+
+        const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("no_funds"), retryable: false });
+        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("suspended_insufficient_funds") && q.values.includes("no_funds"))).toBe(
+            true,
+        );
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        expect(queries.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(true);
+    });
+
+    it("launches the run through the RunLauncher and returns the reserved runId", async () => {
+        setEnv();
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+        });
+        const { authorizer, revokes } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("the tool launches via the seam, never calls directly")),
+        });
+
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap() as {
+            runId: string;
+            status: string;
+        };
+
+        expect(launches).toHaveLength(1);
+        expect(launches[0].workflowId).toBe(result.runId);
+        expect(result.status).toBe("in_progress");
+        expect(revokes).toHaveLength(0);
+    });
+
+    it("carries each step's plan DATA into the workflow input — the seed is composed later, at dispatch", async () => {
+        setEnv();
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, inputs } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("the tool launches via the seam, never calls directly")),
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        const workflowInput = inputs[0];
+        expect(workflowInput.planStepById["step-a"].question).toBe("do step-a");
+        expect(workflowInput.planStepById["step-a"].acceptance_criteria).toEqual(["completes"]);
+        // No pre-rendered prompt string is frozen into the durable input.
+        expect(workflowInput).not.toHaveProperty("promptByStepId");
+    });
+
+    it("revokes authorization and marks the run failed when the launch fails", async () => {
+        setEnv();
+        const { pool, queries } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+        });
+        const { authorizer, revokes } = recordingAuthorizer();
+        const { launcher } = fakeLauncher({ failLaunch: true });
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+        });
+
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("launch boom");
+
+        expect(revokes).toContain("workflow-start-failed");
+        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed"))).toBe(true);
+    });
+});
+
+describe("createExecuteAnalysisTool ad hoc mode", () => {
+    it("persists one routed step, disables synthesis, and reuses the same terminal-capable reservation on redelivery", async () => {
+        const { pool, plans, runs } = statefulAdHocPool();
+        const routing = routeProvider();
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches, inputs } = fakeLauncher();
+        const emitted: unknown[] = [];
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: authorizer,
+            runLauncher: launcher,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("launch seam should be used")),
+        });
+
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const first = (
+            await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
+        )._unsafeUnwrap() as { runId: string };
+        // Simulate a terminal DBOS outcome. A duplicate tool delivery must still
+        // return this exact run instead of launching it again.
+        must(must(runs, "runs").get(first.runId), "must(runs, \"runs\").get(first.runId)").status = "completed";
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const replay = (
+            await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
+        )._unsafeUnwrap() as { runId: string };
+
+        expect(replay.runId).toBe(first.runId);
+        expect(routing.calls.count).toBe(1);
+        expect(launches).toHaveLength(1);
+        expect(inputs[0].steps).toEqual([{ id: "T1S1", depends_on: [] }]);
+        expect(inputs[0].agentByStepId).toEqual({ T1S1: "single-cell-agent" });
+        expect(inputs[0].synthesisEnabled).toBe(false);
+        expect(plans.size).toBe(1);
+        expect(emitted).toHaveLength(2);
+    });
+
+    it("treats a deliberate identical re-call with a new tool invocation id as a new run", async () => {
+        const { pool } = statefulAdHocPool();
+        const routing = routeProvider("cheminformatics-agent");
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: authorizer,
+            runLauncher: launcher,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("launch seam should be used")),
+        });
+        const request = "Calculate descriptors for the supplied compounds";
+
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const first = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-1")))._unsafeUnwrap() as { runId: string };
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const second = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-2")))._unsafeUnwrap() as { runId: string };
+
+        expect(second.runId).not.toBe(first.runId);
+        expect(launches).toHaveLength(2);
+        expect(routing.calls.count).toBe(2);
+    });
+
+    it("links the packages of the routed step before the launch", async () => {
+        const { pool } = statefulAdHocPool();
+        const routing = routeProvider("single-cell-agent", ["scanpy", "python:igraph"]);
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const seamCalls: Array<{ analysisId: string; queries: Array<{ spelling: string; track?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: authorizer,
+            runLauncher: launcher,
+            extendAnalysisFarm: (analysisId, queries) => {
+                seamCalls.push({ analysisId, queries: [...queries] });
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
+            },
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("launch seam should be used")),
+        });
+
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const result = (
+            await tool.execute({ mode: "adhoc", request: "Cluster these cells and score the markers" }, fakeContext("call-adhoc-packages"))
+        )._unsafeUnwrap() as { status: string };
+
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0].analysisId).toBe(ANALYSIS_ID);
+        expect(seamCalls[0].queries).toEqual([{ spelling: "scanpy" }, { spelling: "igraph", track: "python" }]);
+        expect(launches).toHaveLength(1);
+        expect(result.status).toBe("in_progress");
+    });
+
+    it("a bare both-track name refuses the launch with the two prefixed forms, and no run reserves", async () => {
+        const { pool, runs } = statefulAdHocPool();
+        const routing = routeProvider("statistical-modeling-agent", ["xgboost"]);
+        const { launcher, launches } = fakeLauncher();
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: throwingAuthorizer,
+            runLauncher: launcher,
+            extendAnalysisFarm: (_analysisId, queries) =>
+                okAsync(
+                    queries.map((q) => ({
+                        kind: "collision" as const,
+                        spelling: q.spelling,
+                        storeDirs: ["python-dir", "r-dir"] as [string, string],
+                    })),
+                ),
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+        });
+        const request = "Fit a gradient boosting model on these features";
+
+        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-1"))).rejects.toThrow(PlanPackagesMissingError);
+        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-2"))).rejects.toThrow("python:xgboost");
+        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-3"))).rejects.toThrow("r:xgboost");
+        expect(launches).toHaveLength(0);
+        expect(runs.size).toBe(0);
+    });
+
+    it("stores an empty package list and its caveat when the route names no package", async () => {
+        const { pool, plans } = statefulAdHocPool();
+        const routing = routeProvider();
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        let seamCalled = false;
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: authorizer,
+            runLauncher: launcher,
+            extendAnalysisFarm: () => {
+                seamCalled = true;
+                return okAsync([]);
+            },
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("launch seam should be used")),
+        });
+
+        (await tool.execute({ mode: "adhoc", request: "Summarize the staged table" }, fakeContext("call-adhoc-no-packages")))._unsafeUnwrap();
+
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const stored = [...plans.values()][0] as { steps: Array<{ packages: string[]; caveats?: string[] }> };
+        expect(stored.steps[0].packages).toEqual([]);
+        // The step agent must learn that nothing was linked for it, because the
+        // link pass is silent when a step declares no package.
+        expect(stored.steps[0].caveats).toEqual([expect.stringContaining("declares no packages")]);
+        expect(seamCalled).toBe(false);
+        expect(launches).toHaveLength(1);
+    });
+});
+
+describe("buildAdHocPlan", () => {
+    const route: AdHocRoute = {
+        agentId: "single-cell-agent",
+        resources: { cpu: 2, memoryGb: 4 },
+        rationale: "A targeted comparison.",
+        packages: [],
+        droppedPackages: [],
+    };
+    const CREATED_AT = "2026-01-01T00:00:00Z";
+
+    it("writes the validated packages onto the one step", () => {
+        const plan = buildAdHocPlan("Compare the clusters", { ...route, packages: ["scanpy", "r:Seurat"] }, CREATED_AT);
+
+        expect(plan.steps[0].packages).toEqual(["scanpy", "r:Seurat"]);
+        expect(plan.steps[0].caveats).toBeUndefined();
+    });
+
+    it("names each dropped entry with its reason, after the routing fallback", () => {
+        const plan = buildAdHocPlan(
+            "Compare the clusters",
+            {
+                ...route,
+                packages: ["scanpy"],
+                droppedPackages: [
+                    { entry: "./wheels/mofa.whl", reason: "unparsable" },
+                    { entry: "MOFA2", reason: "absent" },
+                ],
+                fallbackClass: "timeout",
+            },
+            CREATED_AT,
+        );
+
+        const caveats = plan.steps[0].caveats ?? [];
+        expect(caveats[0]).toContain("Automatic routing fallback: timeout");
+        expect(caveats[1]).toContain("./wheels/mofa.whl");
+        expect(caveats[1]).toContain("does not parse");
+        expect(caveats[1]).toContain("MOFA2");
+        expect(caveats[1]).toContain("the pool does not hold it");
+        // The step carries a package, thus the no-packages caveat does not apply.
+        expect(caveats).toHaveLength(2);
+    });
+
+    it("says that a step with no packages was linked nothing", () => {
+        const plan = buildAdHocPlan("Compare the clusters", route, CREATED_AT);
+
+        expect(plan.steps[0].packages).toEqual([]);
+        expect(plan.steps[0].caveats).toEqual([expect.stringContaining("declares no packages")]);
+    });
+});
+
+describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
+    const planWithPackages = {
+        analytical_narrative: "test plan",
+        steps: [
+            { ...makeStep("step-a"), packages: ["scanpy", "numpy==1.26.4"] },
+            { ...makeStep("step-b", ["step-a"]), packages: ["scanpy"] },
+        ],
+        created_at: "2026-01-01T00:00:00Z",
+    };
+
+    it("links the union of the step packages before the launch, and the launch proceeds", async () => {
+        setEnv();
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const seamCalls: Array<{ analysisId: string; queries: unknown[] }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: (analysisId, queries) => {
+                seamCalls.push({ analysisId, queries: [...queries] });
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: q.version ?? "1.0.0" })));
+            },
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("the tool launches via the seam, never calls directly")),
+        });
+
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap() as { status: string };
+
+        // One call, with the union: "scanpy" appears in two steps and links once.
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0].analysisId).toBe(ANALYSIS_ID);
+        expect(seamCalls[0].queries).toEqual([{ spelling: "scanpy" }, { spelling: "numpy", version: "1.26.4" }]);
+        expect(launches).toHaveLength(1);
+        expect(result.status).toBe("in_progress");
+    });
+
+    it("a pool miss refuses the launch with the missing names, and no run reserves", async () => {
+        setEnv();
+        const { pool, queries } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
+        });
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: (_analysisId, queries) =>
+                okAsync(
+                    queries.map((q) =>
+                        q.spelling === "scanpy"
+                            ? { kind: "absent" as const, spelling: q.spelling, acquisitionPossible: true }
+                            : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
+                    ),
+                ),
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+        });
+
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(PlanPackagesMissingError);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("scanpy");
+        // The message names no remedy command — the remedy belongs to the embedder.
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.not.toThrow("inflexa");
+        expect(launches).toHaveLength(0);
+        expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
+    });
+
+    it("an unavailable link pass refuses with the one store reason, never as per-package absence", async () => {
+        setEnv();
+        const { pool, queries } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
+        });
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            // The realization reports a store it cannot read the same way for
+            // every request; the refusal must carry the reason once and must
+            // not name any package as missing.
+            extendAnalysisFarm: (_analysisId, queries) =>
+                okAsync(
+                    queries.map((q) => ({
+                        kind: "unavailable" as const,
+                        spelling: q.spelling,
+                        reason: "the dependency graph names 1 edge(s) that it does not hold",
+                    })),
+                ),
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+        });
+
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("the store cannot answer");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("dependency graph names 1 edge");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.not.toThrow("does not hold: scanpy");
+        expect(launches).toHaveLength(0);
+        expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
+    });
+
+    it("two spellings of one fold send two requests, each with its own spelling", async () => {
+        setEnv();
+        const spelledPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["Seurat"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["seurat"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: spelledPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const seamCalls: Array<{ queries: Array<{ spelling: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
+            },
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        // Two spellings are two identities, thus the union keeps both and the
+        // pool answers each one. An outcome echoes the requested spelling, and
+        // a fold would send a remedy after a package that no repository holds.
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0].queries).toEqual([{ spelling: "Seurat" }, { spelling: "seurat" }]);
+    });
+
+    it("a prefixed entry reaches the seam with its track", async () => {
+        setEnv();
+        const prefixedPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["python:igraph", "r:decoupleR"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["r:igraph", "scanpy"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: prefixedPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
+            },
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        // Two prefixes of one spelling make TWO queries: the plan names two
+        // packages. The union dedupes equal queries, in first-occurrence order.
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0].queries).toEqual([
+            { spelling: "igraph", track: "python" },
+            { spelling: "decoupleR", track: "r" },
+            { spelling: "igraph", track: "r" },
+            { spelling: "scanpy" },
+        ]);
+    });
+
+    it("two spellings of one fold reach the seam as two bare requests", async () => {
+        setEnv();
+        // `decoupler` is a Python distribution and `decoupleR` is an R package.
+        // A fold of the two would drop one, and the R package would never link.
+        const twoIdentityPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["decoupler"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["decoupleR"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: twoIdentityPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
+            },
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0].queries).toEqual([{ spelling: "decoupler" }, { spelling: "decoupleR" }]);
+    });
+
+    it("equal queries make one request", async () => {
+        setEnv();
+        const repeatedPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["scanpy"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["scanpy"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: repeatedPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
+            },
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0].queries).toEqual([{ spelling: "scanpy" }]);
+    });
+
+    it("a bare entry beside a qualified entry keeps its own refusal", async () => {
+        setEnv();
+        // The union absorbs nothing: the bare entry is its own ask, and the
+        // pool answers it as a collision. An absorption would drop that
+        // refusal, and a wrong track would then link in silence.
+        const mixedPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["python:igraph"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["igraph"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: mixedPlan }],
+        });
+        const { launcher, launches } = fakeLauncher();
+        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+                return okAsync(
+                    queries.map((q) =>
+                        q.track === undefined
+                            ? {
+                                  kind: "collision" as const,
+                                  spelling: q.spelling,
+                                  storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
+                              }
+                            : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
+                    ),
+                );
+            },
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+        });
+
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("python:igraph");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("r:igraph");
+        expect(seamCalls[0].queries).toEqual([{ spelling: "igraph", track: "python" }, { spelling: "igraph" }]);
+        expect(launches).toHaveLength(0);
+    });
+
+    it("a collision refusal names the two store directories and the two prefixed forms", async () => {
+        setEnv();
+        const bareBothTrackPlan = {
+            ...planWithPackages,
+            steps: [{ ...makeStep("step-a"), packages: ["igraph"] }],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: bareBothTrackPlan }],
+        });
+        const { launcher, launches } = fakeLauncher();
+        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: (_analysisId, queries) =>
+                okAsync(
+                    queries.map((q) => ({
+                        kind: "collision" as const,
+                        spelling: q.spelling,
+                        storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
+                        detail: "python igraph-0.11.9-aaaaaaaa, r igraph-2.1.4-bbbbbbbb",
+                    })),
+                ),
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+        });
+
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/igraph-0\.11\.9-aaaaaaaa/);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/igraph-2\.1\.4-bbbbbbbb/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.toThrow("python:igraph");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-4"))).rejects.toThrow("r:igraph");
+        expect(launches).toHaveLength(0);
+    });
+
+    it.each<[string, ExtendAnalysisFarm]>([
+        ["an err", () => errAsync({ reason: "the graph file is locked by another process", suspend: false })],
+        ["a rejection", () => new ResultAsync(Promise.reject(new Error("the graph file is locked by another process")))],
+    ])("%s of the realization refuses the launch as the one store reason, not as a raw error", async (_label, extendAnalysisFarm) => {
+        setEnv();
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
+        });
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm,
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+        });
+
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(PlanPackagesMissingError);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("the store cannot answer");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.toThrow("locked by another process");
+        expect(launches).toHaveLength(0);
+    });
+
+    it("a plan with no packages calls the seam not at all", async () => {
+        setEnv();
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        let seamCalled = false;
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: () => {
+                seamCalled = true;
+                return okAsync([]);
+            },
+            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        expect(seamCalled).toBe(false);
+        expect(launches).toHaveLength(1);
+    });
+});
+
+/**
+ * A pool that fails the statements the matcher names and delegates the others. The launch reads the
+ * pool through `query` only, thus a bare object stands for it.
+ */
+function poolFailingOn(pool: Pool, failure: (text: string) => Error | undefined): Pool {
+    return {
+        query: (q: { text: string } | string, ...rest: unknown[]) => {
+            const error = failure(typeof q === "string" ? q : q.text);
+            if (error) return Promise.reject(error);
+            return (pool.query as (...args: unknown[]) => Promise<unknown>)(q, ...rest);
+        },
+    } as unknown as Pool;
+}
+
+/** The dedup collision as the driver reports it: the unique violation of the active-plan index. */
+function activePlanViolation(): Error {
+    return Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505", constraint: "idx_cortex_runs_active_plan" });
+}
+
+describe("the launch of a stored plan, over a real database", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeEach(async () => {
+        ({ pool, drop } = await withSchema("launch_stored_plan"));
+        (await upsertAnalysis(pool, ANALYSIS_ID, null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, "analysis-other", null))._unsafeUnwrap();
+    });
+
+    afterEach(async () => {
+        await drop();
+    });
+
+    const planWithPackages = { ...validPlan, steps: [{ ...makeStep("step-a"), packages: ["scanpy"] }] };
+
+    async function seedPlan(plan: unknown, planId = PLAN_ID, analysisId = ANALYSIS_ID): Promise<void> {
+        (await upsertPlan(pool, { planId, analysisId, plan }))._unsafeUnwrap();
+    }
+
+    async function runRows(): Promise<Array<{ run_id: string; plan_id: string | null; thread_id: string | null; status: string; error: string | null }>> {
+        const { rows } = await pool.query("SELECT run_id, plan_id, thread_id, status, error FROM cortex_runs ORDER BY started_at, run_id");
+        return rows;
+    }
+
+    function deps(over: Partial<LaunchPlanRunDeps> = {}): LaunchPlanRunDeps {
+        return {
+            pool,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("the launcher starts the workflow");
+            },
+            runAuthorizer: recordingAuthorizer().authorizer,
+            runLauncher: fakeLauncher().launcher,
+            ...over,
+        };
+    }
+
+    const session = () => fakeContext().session;
+
+    describe("launchPlanRun", () => {
+        it("starts the run of a valid plan and records the plan id and the thread id on the run row", async () => {
+            await seedPlan(validPlan);
+            const { launcher, launches } = fakeLauncher();
+
+            const launch = (await launchPlanRun(deps({ runLauncher: launcher }), { session: session(), planId: PLAN_ID }))._unsafeUnwrap();
+
+            expect(launch.started).toBe(true);
+            expect(launches).toEqual([{ workflowId: launch.runId }]);
+            expect(await runRows()).toEqual([{ run_id: launch.runId, plan_id: PLAN_ID, thread_id: "thread-1", status: "running", error: null }]);
+        });
+
+        it("gives the active run with started false, and links, reserves, and authorizes nothing", async () => {
+            await seedPlan(planWithPackages);
+            (
+                await insertRun(pool, { runId: "r-active", analysisId: ANALYSIS_ID, threadId: null, workflowName: "executeAnalysis", planId: PLAN_ID })
+            )._unsafeUnwrap();
+            let linked = false;
+            const { launcher, launches } = fakeLauncher();
+
+            const launch = (
+                await launchPlanRun(
+                    deps({
+                        runLauncher: launcher,
+                        runAuthorizer: throwingAuthorizer,
+                        extendAnalysisFarm: () => {
+                            linked = true;
+                            return okAsync([]);
+                        },
+                    }),
+                    { session: session(), planId: PLAN_ID },
+                )
+            )._unsafeUnwrap();
+
+            expect(launch).toEqual({ runId: "r-active", started: false });
+            expect(linked).toBe(false);
+            expect(launches).toHaveLength(0);
+            expect((await runRows()).map((row) => row.run_id)).toEqual(["r-active"]);
+        });
+
+        it("refuses an unknown plan and a plan of another analysis with plan_not_found, and reserves no run", async () => {
+            await seedPlan(validPlan, "pln-0000000a", "analysis-other");
+
+            const unknown = (await launchPlanRun(deps(), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+            const foreign = (await launchPlanRun(deps(), { session: session(), planId: "pln-0000000a" }))._unsafeUnwrapErr();
+
+            expect(unknown).toEqual({ type: "plan_not_found", planId: PLAN_ID });
+            expect(foreign).toEqual({ type: "plan_not_found", planId: "pln-0000000a" });
+            expect(await runRows()).toEqual([]);
+        });
+
+        it("refuses a plan that fails the schema as malformed, and a plan that fails the validation with its errors", async () => {
+            await seedPlan({ steps: "not a list" });
+            await seedPlan({ ...validPlan, steps: [makeStep("a", ["b"]), makeStep("b", ["a"])] }, "pln-0000000b");
+
+            const malformed = (await launchPlanRun(deps(), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+            const invalid = (await launchPlanRun(deps(), { session: session(), planId: "pln-0000000b" }))._unsafeUnwrapErr();
+
+            expect(malformed).toEqual({ type: "plan_invalid", planId: PLAN_ID, malformed: true, errors: [] });
+            expect(invalid).toMatchObject({ type: "plan_invalid", planId: "pln-0000000b", malformed: false });
+            expect((invalid as { errors: string[] }).errors.length).toBeGreaterThan(0);
+            expect(await runRows()).toEqual([]);
+        });
+
+        it("refuses a package miss with the missing entry and leaves no run row", async () => {
+            await seedPlan(planWithPackages);
+
+            const refusal = (
+                await launchPlanRun(
+                    deps({
+                        runAuthorizer: throwingAuthorizer,
+                        extendAnalysisFarm: (_analysisId, queries) =>
+                            okAsync(queries.map((q) => ({ kind: "absent" as const, spelling: q.spelling, acquisitionPossible: true }))),
+                    }),
+                    { session: session(), planId: PLAN_ID },
+                )
+            )._unsafeUnwrapErr();
+
+            expect(refusal).toEqual({ type: "packages_missing", missing: ["scanpy"], collisions: [] });
+            expect(await runRows()).toEqual([]);
+        });
+
+        it("refuses an unavailable link pass with the reason of the store", async () => {
+            await seedPlan(planWithPackages);
+
+            const refusal = (
+                await launchPlanRun(
+                    deps({
+                        runAuthorizer: throwingAuthorizer,
+                        extendAnalysisFarm: (_analysisId, queries) =>
+                            okAsync(queries.map((q) => ({ kind: "unavailable" as const, spelling: q.spelling, reason: "the farm is locked" }))),
+                    }),
+                    { session: session(), planId: PLAN_ID },
+                )
+            )._unsafeUnwrapErr();
+
+            expect(refusal).toEqual({ type: "packages_missing", missing: [], collisions: [], unavailable: "the farm is locked" });
+        });
+
+        it("ends the reserved run as failed when the authorization is refused, and gives not_authorized with the reason", async () => {
+            await seedPlan(validPlan);
+            const refusing: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "mint refused", suspend: false }) };
+
+            const refusal = (await launchPlanRun(deps({ runAuthorizer: refusing }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+            expect(refusal).toEqual({ type: "not_authorized", reason: "mint refused" });
+            expect(await runRows()).toMatchObject([{ status: "failed", error: "mint refused" }]);
+        });
+
+        it("suspends the analysis and the run when the host asks for a suspension, and gives suspended with the reason", async () => {
+            await seedPlan(validPlan);
+            const suspending: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "no_funds", suspend: true }) };
+
+            const refusal = (await launchPlanRun(deps({ runAuthorizer: suspending }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+            expect(refusal).toEqual({ type: "suspended", reason: "no_funds" });
+            expect(await runRows()).toMatchObject([{ status: "suspended_insufficient_funds", error: "no_funds" }]);
+            const state = await pool.query("SELECT status FROM cortex_analysis_state WHERE analysis_id = $1", [ANALYSIS_ID]);
+            expect(state.rows[0]).toEqual({ status: "suspended_insufficient_funds" });
+        });
+
+        it("keeps the refusal of the authorization when the write of the run status fails", async () => {
+            await seedPlan(validPlan);
+            const refusing: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "mint refused", suspend: false }) };
+            const flaky = poolFailingOn(pool, (text) => (text.includes("UPDATE cortex_runs") ? new Error("status write boom") : undefined));
+
+            const refusal = (await launchPlanRun(deps({ pool: flaky, runAuthorizer: refusing }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+            expect(refusal).toEqual({ type: "not_authorized", reason: "mint refused" });
+        });
+
+        it("gives store_failed with the DbError when the suspension of the analysis fails", async () => {
+            await seedPlan(validPlan);
+            const suspending: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "no_funds", suspend: true }) };
+            const flaky = poolFailingOn(pool, (text) => (text.includes("UPDATE cortex_analysis_state") ? new Error("suspend boom") : undefined));
+
+            const refusal = (await launchPlanRun(deps({ pool: flaky, runAuthorizer: suspending }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+            expect(refusal).toMatchObject({ type: "store_failed", cause: { type: "mutation_failed", op: "analyses.suspendAnalysis" } });
+        });
+
+        it("gives the run of a concurrent launch with started false when the reservation collides", async () => {
+            await seedPlan(planWithPackages);
+            const { launcher, launches } = fakeLauncher();
+            // The farm link function runs after the active-run read and before the reservation, which is the window of a concurrent launch.
+            const racing: LaunchPlanRunDeps["extendAnalysisFarm"] = (_analysisId, queries) =>
+                ResultAsync.fromSafePromise(
+                    insertRun(pool, { runId: "r-concurrent", analysisId: ANALYSIS_ID, threadId: null, workflowName: "executeAnalysis", planId: PLAN_ID }).match(
+                        () => {},
+                        () => {},
+                    ),
+                ).map(() => queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
+
+            const launch = (
+                await launchPlanRun(deps({ runLauncher: launcher, runAuthorizer: throwingAuthorizer, extendAnalysisFarm: racing }), {
+                    session: session(),
+                    planId: PLAN_ID,
+                })
+            )._unsafeUnwrap();
+
+            expect(launch).toEqual({ runId: "r-concurrent", started: false });
+            expect(launches).toHaveLength(0);
+            expect((await runRows()).map((row) => row.run_id)).toEqual(["r-concurrent"]);
+        });
+
+        it("gives store_failed with the collision error when the reservation collides and no run holds the slot", async () => {
+            await seedPlan(validPlan);
+            const colliding = poolFailingOn(pool, (text) => (text.includes("INSERT INTO cortex_runs") ? activePlanViolation() : undefined));
+
+            const refusal = (await launchPlanRun(deps({ pool: colliding }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+            expect(refusal.type).toBe("store_failed");
+            expect((refusal as { cause: unknown }).cause).toBeInstanceOf(RunDedupCollisionError);
+        });
+
+        it("gives store_failed when a read of the store fails, and does not reject", async () => {
+            await seedPlan(validPlan);
+            const flaky = poolFailingOn(pool, (text) => (text.includes("SELECT plan FROM cortex_plans") ? new Error("read boom") : undefined));
+
+            const refusal = (await launchPlanRun(deps({ pool: flaky }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+            expect(refusal).toMatchObject({ type: "store_failed", cause: { type: "query_failed", op: "plans.loadPlan" } });
+        });
+
+        it("revokes the authorization, marks the run failed, and gives launch_failed with the cause when the start fails", async () => {
+            await seedPlan(validPlan);
+            const { authorizer, revokes } = recordingAuthorizer();
+
+            const refusal = (
+                await launchPlanRun(deps({ runAuthorizer: authorizer, runLauncher: fakeLauncher({ failLaunch: true }).launcher }), {
+                    session: session(),
+                    planId: PLAN_ID,
+                })
+            )._unsafeUnwrapErr();
+
+            expect(refusal.type).toBe("launch_failed");
+            expect(((refusal as { cause: unknown }).cause as Error).message).toBe("launch boom");
+            expect(revokes).toEqual(["workflow-start-failed"]);
+            expect(await runRows()).toMatchObject([{ status: "failed", error: "workflow start failed" }]);
+        });
+    });
+
+    describe("the plan mode of execute_analysis", () => {
+        function toolFor(over: Partial<LaunchPlanRunDeps> = {}, emitted: unknown[] = []) {
+            const tool = createExecuteAnalysisTool({ ...utilityDeps, ...deps(over) });
+            return { run: () => tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-1", emitted)) };
+        }
+
+        it("fails the call with the plan-not-found error for an unknown plan, and reserves no run", async () => {
+            await expect(toolFor().run()).rejects.toBeInstanceOf(PlanNotFoundError);
+            expect(await runRows()).toEqual([]);
+        });
+
+        it("fails the call with the malformed and the validation errors of a stored plan", async () => {
+            await seedPlan({ steps: "not a list" });
+            await expect(toolFor().run()).rejects.toBeInstanceOf(PlanMalformedError);
+
+            await seedPlan({ ...validPlan, steps: [makeStep("a", ["b"]), makeStep("b", ["a"])] }, "pln-0000000b");
+            const tool = createExecuteAnalysisTool({ ...utilityDeps, ...deps() });
+            const failure = await tool.execute({ mode: "plan", planId: "pln-0000000b" }, fakeContext()).catch((error: unknown) => error);
+
+            expect(failure).toBeInstanceOf(PlanValidationError);
+            expect((failure as PlanValidationError).errors.length).toBeGreaterThan(0);
+        });
+
+        it("fails the call with the package error, and the message names the missing entry", async () => {
+            await seedPlan(planWithPackages);
+            const run = toolFor({
+                runAuthorizer: throwingAuthorizer,
+                extendAnalysisFarm: (_analysisId, queries) =>
+                    okAsync(queries.map((q) => ({ kind: "absent" as const, spelling: q.spelling, acquisitionPossible: true }))),
+            }).run;
+
+            await expect(run()).rejects.toThrow(PlanPackagesMissingError);
+            await expect(run()).rejects.toThrow(/scanpy/);
+            expect(await runRows()).toEqual([]);
+        });
+
+        it("gives the error result of the authorization refusal and of the suspension", async () => {
+            await seedPlan(validPlan);
+            const refusing: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "mint refused", suspend: false }) };
+            const suspending: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "no_funds", suspend: true }) };
+
+            expect((await toolFor({ runAuthorizer: refusing }).run())._unsafeUnwrapErr()).toEqual({
+                error: "The run was not authorized: mint refused",
+                retryable: false,
+            });
+            expect((await toolFor({ runAuthorizer: suspending }).run())._unsafeUnwrapErr()).toEqual({
+                error: "The analysis is suspended: no_funds",
+                retryable: false,
+            });
+        });
+
+        it("fails the call with the class of the collision error when the reservation collides and no run holds the slot", async () => {
+            await seedPlan(validPlan);
+            const colliding = poolFailingOn(pool, (text) => (text.includes("INSERT INTO cortex_runs") ? activePlanViolation() : undefined));
+
+            await expect(toolFor({ pool: colliding }).run()).rejects.toBeInstanceOf(RunDedupCollisionError);
+        });
+
+        it("wraps a failed read of the store as before, with the DbError on the cause", async () => {
+            await seedPlan(validPlan);
+            const flaky = poolFailingOn(pool, (text) => (text.includes("SELECT plan FROM cortex_plans") ? new Error("read boom") : undefined));
+
+            const failure = await toolFor({ pool: flaky })
+                .run()
+                .catch((error: unknown) => error);
+
+            expect(failure).toBeInstanceOf(Error);
+            expect((failure as Error).cause).toMatchObject({ type: "query_failed", op: "plans.loadPlan" });
+        });
+
+        it("fails the call with the error that the launcher threw", async () => {
+            await seedPlan(validPlan);
+            const boom = new Error("launch boom");
+            const launcher: RunLauncher = {
+                launch: async () => {
+                    throw boom;
+                },
+            };
+
+            const failure = await toolFor({ runLauncher: launcher })
+                .run()
+                .catch((error: unknown) => error);
+
+            expect(failure).toBe(boom);
+        });
+
+        it("emits the run card and gives in_progress for a new run and for the active run", async () => {
+            await seedPlan(validPlan);
+            const emitted: unknown[] = [];
+            const run = toolFor({}, emitted).run;
+
+            const first = (await run())._unsafeUnwrap() as { runId: string; status: string };
+            const second = (await run())._unsafeUnwrap() as { runId: string; status: string };
+
+            expect(first.status).toBe("in_progress");
+            expect(second).toEqual({ runId: first.runId, status: "in_progress" });
+            expect(emitted).toMatchObject([
+                { type: "data-run-card", data: { runId: first.runId, planId: PLAN_ID } },
+                { type: "data-run-card", data: { runId: first.runId, planId: PLAN_ID } },
+            ]);
+            expect(await runRows()).toHaveLength(1);
+        });
+    });
+});

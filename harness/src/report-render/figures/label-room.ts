@@ -25,12 +25,12 @@ const LINE_SHARE = 1.3;
 export const NAME_GAP_PX = 4;
 
 /** One box in data units, or in pixels. */
-export interface Box {
+export type Box = {
     readonly left: number;
     readonly right: number;
     readonly bottom: number;
     readonly top: number;
-}
+};
 
 /** True when two boxes share an area. */
 export function overlaps(a: Box, b: Box): boolean {
@@ -38,10 +38,10 @@ export function overlaps(a: Box, b: Box): boolean {
 }
 
 /** The range of the two axes of a plot, in data units. */
-export interface PlotRange {
+export type PlotRange = {
     readonly x: { readonly min: number; readonly max: number };
     readonly y: { readonly min: number; readonly max: number };
-}
+};
 
 /**
  * True when a name on one side of its point stays inside the plot on that side. A name at the left never
@@ -68,11 +68,11 @@ function nameSize(text: string, length: number): { readonly width: number; reado
 }
 
 /** One named point: its place in data units and its name. */
-export interface NamedPoint {
+export type NamedPoint = {
     readonly x: number;
     readonly y: number;
     readonly text: string;
-}
+};
 
 /** The four sides of a point where its name can sit, in the order that the figure tries them. */
 export const NAME_SIDES = ["right", "left", "top", "bottom"] as const;
@@ -195,11 +195,11 @@ function boxGrid(side: number, plot: PlotRange): { readonly add: (box: Box) => v
  * size. A smaller frame puts the names nearer to each other than the drawn plot does, thus a name that clears
  * its neighbors in the frame clears them in the drawn plot.
  */
-export interface NameFrame {
+export type NameFrame = {
     readonly widthPx: number;
     readonly heightPx: number;
     readonly textPx: number;
-}
+};
 
 /** The width of one text in pixels at one text size: the estimate of each figure that places its own text. */
 export function textWidthPx(text: string, textPx: number): number {
@@ -232,18 +232,18 @@ export const EXPORT_PLOT_FRAMES: Readonly<Record<keyof typeof CHART_EXPORT_SIZES
 export type LeaderSide = "right" | "left" | "top";
 
 /** The anchor of one name in data units, and the side of the anchor where the text sits. */
-export interface LeaderName {
+export type LeaderName = {
     readonly x: number;
     readonly y: number;
     readonly side: LeaderSide;
-}
+};
 
 /** The points that no name can cover: the plotted pair of each row, and the diameter of the largest point. */
-export interface NameObstacles {
+export type NameObstacles = {
     readonly xs: readonly (number | null)[];
     readonly ys: readonly (number | null)[];
     readonly pointPx: number;
-}
+};
 
 /** The most lines that a name moves away from its point before the figure gives it up. */
 const LEADER_STEPS = 12;
@@ -354,10 +354,10 @@ export function placeLeaderNames(
 }
 
 /** One place in pixels. */
-interface Point {
+type Point = {
     readonly x: number;
     readonly y: number;
-}
+};
 
 /**
  * True when the segment between two places passes through a box: the clip of Liang and Barsky, which keeps the

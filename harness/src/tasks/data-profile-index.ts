@@ -51,25 +51,27 @@ export const PROFILE_INDEX_TYPES = ["input-group", "input-dimension", "input", "
 /** Group names named in one legacy entity entry's text. */
 const MAX_GROUPS_IN_ENTITY_TEXT = 6;
 
-export interface ProfileIndexEntry {
+export type ProfileIndexEntry = {
     readonly id: string;
     readonly text: string;
     readonly metadata: Record<string, unknown>;
-}
+};
 
-export interface BuildProfileIndexArgs {
+export type BuildProfileIndexArgs = {
     readonly analysisId: string;
     /** The profile as persisted. Whichever era wrote it, the entries are derived from it alone. */
     readonly result: DataProfileResult;
     /** The scan the profile was taken against — the source of a legacy profile's entity value set. */
     readonly scan?: InputScan;
-}
+};
 
 function slug(value: string): string {
     return (
         value
             .toLowerCase()
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             .replace(/[^a-z0-9]+/g, "-")
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             .replace(/^-|-$/g, "")
             .slice(0, 60) || "unnamed"
     );
@@ -91,12 +93,12 @@ function groupEntry(analysisId: string, group: DataProfileGroup): ProfileIndexEn
             name: group.name,
             role: group.role,
             category: group.category,
-            ...(group.categoryLabel ? { categoryLabel: group.categoryLabel } : {}),
+            categoryLabel: group.categoryLabel ? group.categoryLabel : undefined,
             pathPattern: group.displayPattern,
             count: group.count,
             fileCount: group.fileCount,
-            ...(group.slots && group.slots.length > 0 ? { slots: group.slots.map(slotSummary) } : {}),
-            ...(group.unclassified ? { unclassified: true } : {}),
+            slots: group.slots && group.slots.length > 0 ? group.slots.map(slotSummary) : undefined,
+            unclassified: group.unclassified ? true : undefined,
         },
     };
 }
@@ -125,7 +127,7 @@ function dimensionEntry(analysisId: string, dimension: DataProfileDimension): Pr
             type: "input-dimension",
             dimension: dimension.label,
             category: dimension.category,
-            ...(dimension.categoryLabel ? { categoryLabel: dimension.categoryLabel } : {}),
+            categoryLabel: dimension.categoryLabel ? dimension.categoryLabel : undefined,
             scope: dimension.scope,
             cardinalities: dimensionCardinalities(dimension),
             groups: [...new Set(dimension.observations.flatMap((observation) => (observation.kind === "slot" ? observation.groupIds : [])))],
@@ -138,7 +140,7 @@ function dimensionEntry(analysisId: string, dimension: DataProfileDimension): Pr
  * resolves to a file that exists rather than to a synthetic key.
  */
 function memberEntry(analysisId: string, group: DataProfileGroup, annotation: DataProfileMemberAnnotation): ProfileIndexEntry {
-    const format = group.formats.length === 1 ? group.formats[0]!.format : undefined;
+    const format = group.formats.length === 1 ? group.formats[0].format : undefined;
     return {
         id: `/${analysisId}/${annotation.path}`,
         text: `${annotation.path} — ${annotation.note} In ${group.name}, where one member is ${group.memberRepresents}.`,
@@ -148,7 +150,7 @@ function memberEntry(analysisId: string, group: DataProfileGroup, annotation: Da
             group: group.id,
             groupName: group.name,
             category: group.category,
-            ...(format ? { format } : {}),
+            format: format ? format : undefined,
         },
     };
 }
@@ -168,7 +170,7 @@ function entityValues(scan: InputScan | undefined): { values: string[]; distinct
         const positions = scan.positionValues.get(shape.id);
         if (!positions) continue;
         for (const position of shape.variablePositions) {
-            const values = positions[position.index];
+            const values = positions.at(position.index);
             if (values && values.length > best.length) best = values;
         }
     }
@@ -184,8 +186,8 @@ function entityDimensionLabel(dimensions: readonly ProfileDimensionView[], disti
     if (dimensions.length === 0) return "entity";
     const exact = dimensions.find((dimension) => dimension.cardinalities.includes(distinct));
     if (exact) return exact.label;
-    const widest = [...dimensions].sort((a, b) => Math.max(0, ...b.cardinalities) - Math.max(0, ...a.cardinalities))[0];
-    return widest?.label ?? "entity";
+    const widest = [...dimensions].sort((a, b) => Math.max(0, ...b.cardinalities) - Math.max(0, ...a.cardinalities)).at(0);
+    return widest === undefined ? "entity" : widest.label;
 }
 
 function kindEntry(analysisId: string, group: ProfileGroupView): ProfileIndexEntry {
@@ -198,7 +200,7 @@ function kindEntry(analysisId: string, group: ProfileGroupView): ProfileIndexEnt
             kind: group.name,
             pathPattern: group.pattern,
             count: group.count,
-            ...(group.format ? { format: group.format } : {}),
+            format: group.format ? group.format : undefined,
         },
     };
 }
@@ -226,9 +228,9 @@ function fileEntry(analysisId: string, file: DataProfileFile): ProfileIndexEntry
         metadata: {
             type: "input",
             path: file.path,
-            ...(file.dataType ? { dataType: file.dataType } : {}),
-            ...(file.format ? { format: file.format } : {}),
-            ...(file.tags ? { tags: file.tags } : {}),
+            dataType: file.dataType ? file.dataType : undefined,
+            format: file.format ? file.format : undefined,
+            tags: file.tags ? file.tags : undefined,
         },
     };
 }

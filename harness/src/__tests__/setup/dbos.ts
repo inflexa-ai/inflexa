@@ -47,17 +47,17 @@ const DBOS_TEST_APP_NAME = "cortex-test";
 const DBOS_TEST_APPLICATION_VERSION = "test-1";
 const DBOS_TEST_EXECUTOR_ID = "test";
 
-interface SharedDbosState {
+type SharedDbosState = {
     launchPromise: Promise<void> | null;
     shutdownRegistered: boolean;
-}
+};
 
 const shared: SharedDbosState = {
     launchPromise: null,
     shutdownRegistered: false,
 };
 
-export interface DbosTestRig {
+export type DbosTestRig = {
     /** Per-test pool scoped to a fresh cortex schema via `search_path`. */
     pool: Pool;
     /** Per-test cortex schema name. */
@@ -74,7 +74,7 @@ export interface DbosTestRig {
      * process-exit hook handles those.
      */
     drop(): Promise<void>;
-}
+};
 
 /** Parse a libpq-style connection string into individual DB_PG_* fields. */
 function parseConnectionStringToEnv(url: string): {
@@ -92,6 +92,7 @@ function parseConnectionStringToEnv(url: string): {
         port: u.port || "5432",
         user: decodeURIComponent(u.username),
         password: decodeURIComponent(u.password),
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         database: decodeURIComponent(u.pathname.replace(/^\//, "")),
     };
 }
@@ -104,6 +105,7 @@ function poolConnectionEnv(pool: Pool): {
     password: string;
     database: string;
 } {
+    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     const cfg = (pool as unknown as { options?: Record<string, unknown> }).options ?? {};
     if (cfg.connectionString) {
         return parseConnectionStringToEnv(String(cfg.connectionString));
@@ -144,16 +146,16 @@ async function ensureDbosLaunched(basePool: Pool): Promise<void> {
         }
         await launchDbos({
             config: {
-                dbHost: process.env.DB_PG_HOST!,
-                dbPort: process.env.DB_PG_PORT ?? "5432",
-                dbName: process.env.DB_PG_NAME!,
-                dbUser: process.env.DB_PG_USER!,
-                dbPassword: process.env.DB_PG_PASSWORD!,
+                dbHost: process.env.DB_PG_HOST,
+                dbPort: process.env.DB_PG_PORT,
+                dbName: process.env.DB_PG_NAME,
+                dbUser: process.env.DB_PG_USER,
+                dbPassword: process.env.DB_PG_PASSWORD,
                 dbSslMode: "disable",
-                appName: process.env.DBOS_APP_NAME!,
+                appName: process.env.DBOS_APP_NAME,
                 applicationVersion: process.env.DBOS_APPLICATION_VERSION,
-                adminPort: process.env.DBOS_ADMIN_PORT ?? "3001",
-                executorId: process.env.HOSTNAME ?? "local-dev",
+                adminPort: process.env.DBOS_ADMIN_PORT,
+                executorId: process.env.HOSTNAME,
             },
             logger: silentLogger,
         });
@@ -193,6 +195,7 @@ export async function setupDbosForTests(testName: string): Promise<DbosTestRig> 
         pool,
         schemaName,
         nextWorkflowId(prefix?: string): string {
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             const p = (prefix ?? "wf-").replace(/[^a-zA-Z0-9_.-]/g, "-");
             return `${p}${randomUUID()}`;
         },
@@ -225,8 +228,9 @@ export function registerDbosLifecycle(testName: string, onReady: (rig: DbosTestR
         rig = await setupDbosForTests(testName);
         onReady(rig);
     });
-    afterEach(async () => {
+    afterEach( () => {
         // No-op: per-test cleanup is the caller's job. This helper exists
         // for tests that want a single rig for an entire `describe` block.
-    });
+        return Promise.resolve();
+});
 }

@@ -160,8 +160,8 @@ them. These two rules bind the code, and `CONTEXT.md` does not carry them:
    `?? createNoopLogger()` one time for each entry point, thus an internal call
    site never threads `?.`. The fallback is never console, which a host with a UI
    that has stdout would discard. That silent loss is the reason for the ban, and
-   `no-console` in `eslint.config.js` enforces it. It exempts
-   `lib/console-logger.ts` by path, not by an inline disable.
+   `no-console` in `oxlint.config.ts` enforces it. It exempts
+   `lib/console-logger.ts` and its test by path, not by an inline disable.
 2. **Keep a step body self-contained.** Each child workflow runs the sandbox
    agent, generates the file metadata, summarizes, registers the artifacts, and
    indexes. All of that stays inside the same DBOS workflow body. The synthesis,
@@ -601,10 +601,11 @@ sanctioned bridges:
 - `resultStep` (`src/loop/run-step.ts`) — the composed seam that the agent loop
   uses (`runStep` plus `unwrapOrThrow`).
 
-The `must-use-result` lint rule is patched in `eslint.config.js`. It recognizes a
-`Result` that goes directly to `unwrapOrThrow`, `passGate`, `deliverNotice`, or
-`keepSuspendingRefusal` as consumed. Do not rewrite a bridge site into an inline
-`.match` plus throw form. Do not add a per-site lint disable for it.
+The `must-use-result` rule runs in `inflexa-typecheck` (`typecheck.config.ts`).
+It recognizes a `Result` that goes directly to `unwrapOrThrow`, `passGate`,
+`deliverNotice`, or `keepSuspendingRefusal` as consumed. Do not rewrite a bridge
+site into an inline `.match` plus throw form. Do not add a per-site disable for
+it
 
 ## Code Comments
 

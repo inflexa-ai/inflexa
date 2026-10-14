@@ -28,11 +28,11 @@ const WirePaperSchema = z
             .nullable()
             .optional(),
     })
-    .passthrough();
+    .loose();
 export const ExactPaperSchema = WirePaperSchema.extend({ paperId: z.string() });
 export const SearchResponseSchema = z.object({ data: z.array(WirePaperSchema).optional() });
 
-export interface SemanticScholarPaper {
+export type SemanticScholarPaper = {
     id: string;
     title?: string;
     abstract?: string;
@@ -42,20 +42,20 @@ export interface SemanticScholarPaper {
     url?: string;
     authors: string[];
     externalIds?: Record<string, string>;
-}
+};
 
-export interface SemanticScholarSearchPaper extends SemanticScholarPaper {
+export type SemanticScholarSearchPaper = SemanticScholarPaper & {
     title: string;
-}
+};
 
-export interface SemanticScholarSourceOptions extends SourceHttpOptions {
+export type SemanticScholarSourceOptions = SourceHttpOptions & {
     readonly apiKey?: string;
-}
+};
 
-export interface SemanticScholarSource {
+export type SemanticScholarSource = {
     search(query: string, limit: number, signal?: AbortSignal): Promise<SourceHttpResult<SemanticScholarSearchPaper[]>>;
     lookupIdentifier(identifier: string, signal?: AbortSignal): Promise<SourceHttpResult<SemanticScholarPaper>>;
-}
+};
 
 /** Give one text form to each external id, thus a numeric `CorpusId` reaches a caller that keys on a string. */
 function stringExternalIds(value: Record<string, string | number> | null | undefined): Record<string, string> | undefined {
@@ -68,17 +68,18 @@ function mapPaper(raw: z.infer<typeof WirePaperSchema>): SemanticScholarPaper | 
     if (raw.paperId === undefined || raw.paperId.trim() === "") return undefined;
     const authors = raw.authors?.flatMap((author) => (typeof author.name === "string" && author.name.trim() ? [author.name] : [])) ?? [];
     const externalIds = stringExternalIds(raw.externalIds);
-    return {
+    const paper: { -readonly [K in keyof SemanticScholarPaper]: SemanticScholarPaper[K] } = {
         id: raw.paperId,
-        ...(typeof raw.title === "string" ? { title: raw.title } : {}),
-        ...(typeof raw.abstract === "string" ? { abstract: raw.abstract } : {}),
-        ...(typeof raw.year === "number" ? { year: raw.year } : {}),
-        ...(typeof raw.venue === "string" ? { venue: raw.venue } : {}),
-        ...(typeof raw.citationCount === "number" ? { citationCount: raw.citationCount } : {}),
-        ...(typeof raw.url === "string" ? { url: raw.url } : {}),
         authors,
-        ...(externalIds === undefined ? {} : { externalIds }),
     };
+    if (typeof raw.title === "string") paper.title = raw.title;
+    if (typeof raw.abstract === "string") paper.abstract = raw.abstract;
+    if (typeof raw.year === "number") paper.year = raw.year;
+    if (typeof raw.venue === "string") paper.venue = raw.venue;
+    if (typeof raw.citationCount === "number") paper.citationCount = raw.citationCount;
+    if (typeof raw.url === "string") paper.url = raw.url;
+    if (externalIds !== undefined) paper.externalIds = externalIds;
+    return paper;
 }
 
 export function parseSemanticScholarResponse(raw: unknown): SemanticScholarSearchPaper[] {

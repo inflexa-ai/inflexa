@@ -22,14 +22,14 @@ import type { SandboxRef } from "../../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 
-export interface ScanInputsDeps {
+export type ScanInputsDeps = {
     readonly workspaceFs: WorkspaceFilesystem;
     readonly analysisId: string;
     /** Omit to skip the container readouts; the prefix readouts run regardless. */
     readonly sandboxClient?: SandboxClient;
     readonly sandbox?: SandboxRef;
     readonly deadlineMs: () => number;
-}
+};
 
 type ScanInputsOutput = {
     readonly path: string;
@@ -61,6 +61,7 @@ export function createScanInputsTool(deps: ScanInputsDeps) {
             const scan = await scanInputTree({
                 session: ctx.session,
                 fs: deps.workspaceFs,
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
                 root: path.replace(/^\/+/, "").replace(/\/+$/, ""),
                 signal: ctx.signal,
             });
@@ -69,7 +70,7 @@ export function createScanInputsTool(deps: ScanInputsDeps) {
                 shapes: scan.manifest.shapes,
                 session: ctx.session,
                 fs: deps.workspaceFs,
-                ...(deps.sandboxClient && deps.sandbox ? { sandboxClient: deps.sandboxClient, sandbox: deps.sandbox } : {}),
+                sandboxClient: deps.sandboxClient && deps.sandbox ? deps.sandboxClient : undefined, sandbox: deps.sandboxClient && deps.sandbox ? deps.sandbox : undefined,
                 mountRoot: `/${deps.analysisId}`,
                 deadlineMs: deps.deadlineMs(),
                 emit: ctx.emit,

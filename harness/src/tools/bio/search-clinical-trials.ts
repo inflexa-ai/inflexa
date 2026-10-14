@@ -12,6 +12,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
+import { guaranteed } from "../../lib/invariants.js";
 import { getTrialDetails, searchTrials, type ClinicalTrial, type TrialDetails } from "../lib/clinical-trials-client.js";
 
 /** briefSummary preview length when `includeSummaries` is off. */
@@ -95,19 +96,19 @@ export const searchClinicalTrialsTool = defineTool({
         }),
     describeCall: "none",
     execute: async ({
-        action = "search",
+        action,
         query,
         nctId,
         phase,
         status,
-        limit = 10,
-        includeSummaries = false,
+        limit,
+        includeSummaries,
     }): Promise<Result<ClinicalTrialsOutput, ToolError>> => {
         if (action === "details") {
-            return ok({ trial: await getTrialDetails(nctId!) });
+            return ok({ trial: await getTrialDetails(guaranteed(nctId, "nctId")) });
         }
 
-        const result = await searchTrials(query!, { phase, status, limit });
+        const result = await searchTrials(guaranteed(query, "query"), { phase, status, limit });
         const trials = includeSummaries
             ? result.trials
             : result.trials.map(({ detailedDescription: _detailedDescription, ...trial }) => ({

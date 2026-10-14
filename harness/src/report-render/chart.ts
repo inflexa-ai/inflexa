@@ -109,8 +109,10 @@ import {
 import { SHAPED_SCATTER_FIGURE } from "./figures/pca.js";
 import { formatNumberCell, selectNumberKind } from "./number-format.js";
 import type { RenderProblem, RenderStatistic, RenderTrack, RenderTrees } from "./types.js";
+import { optionArray, optionCell, optionCells, optionMemberOrUndefined, optionNullableNumbers, optionRecord, optionStrings } from "./option-lens.js";
+import { typedMember } from "../lib/shape.js";
 
-export { transformColumn };
+export { transformColumn } from "./figures/common.js";
 
 /** One cell of a resolved row. A cell is one string or one number. */
 export type Cell = string | number;
@@ -195,7 +197,7 @@ function isHorizontalBar(series: ChartSeries): boolean {
  * A transform channel derives its own column into the rows under a name that carries the transform. Thus
  * each base rule reads one plain column name, and no base rule knows about a transform.
  */
-interface ResolvedChartBlock {
+type ResolvedChartBlock = {
     id: string;
     chartType: BaseChartType;
     encoding: Partial<Record<Channel, string>>;
@@ -205,7 +207,7 @@ interface ResolvedChartBlock {
     orientation: ChartOrientation;
     focus?: readonly string[];
     facet?: string;
-}
+};
 
 /**
  * The label position of a vertical guide band.
@@ -281,16 +283,16 @@ export function deriveChartOption(
  * the rows of the track, and the rows of the tree of each axis. A block that declares none of them takes no
  * input.
  */
-export interface ChartInputs {
+export type ChartInputs = {
     readonly statistics?: readonly RenderStatistic[];
     readonly track?: RenderTrack;
     readonly trees?: RenderTrees;
-}
+};
 
 /** The options of the chart derivation: the figure modules that the dispatch asks first. */
-export interface ChartOpts {
+export type ChartOpts = {
     readonly figures: FigureRegistry;
-}
+};
 
 /** The options of every render: the registered figure modules. */
 export const DEFAULT_CHART_OPTS: ChartOpts = { figures: FIGURE_MODULES };
@@ -323,7 +325,7 @@ function bodyPxOf(raw: EchartOption, option: EchartOption): number {
     if (typeof stated === "number") return Math.max(CHART_BODY_PX, stated);
     const grids = option.grid;
     if (!Array.isArray(grids)) return CHART_BODY_PX;
-    const panels = grids.filter((grid) => typeof grid === "object" && grid !== null && (grid as EchartOption).outerBoundsMode === FACET_BOUNDS_MODE).length;
+    const panels = grids.filter((grid) => typeof grid === "object" && grid !== null && (optionRecord(grid)).outerBoundsMode === FACET_BOUNDS_MODE).length;
     const rows = panels <= 2 ? 1 : Math.ceil(panels / FACET_COLUMNS);
     return CHART_BODY_PX + (rows - 1) * FACET_ROW_PX;
 }
@@ -342,7 +344,7 @@ function blockWidthOf(option: EchartOption, bodyPx: number): number | undefined 
     if (!Array.isArray(media)) return undefined;
     let width: number | undefined;
     for (const rule of media) {
-        const query = typeof rule === "object" && rule !== null ? ((rule as EchartOption).query as EchartOption | undefined) : undefined;
+        const query = typeof rule === "object" && rule !== null ? optionMemberOrUndefined(optionRecord(rule).query) : undefined;
         if (query === undefined || query.maxWidth !== undefined || typeof query.minWidth !== "number" || typeof query.minHeight !== "number") continue;
         if (query.minHeight <= bodyPx) width = query.minWidth;
     }
@@ -405,7 +407,7 @@ function chartRender(pass: ChartPass): ChartRender {
         readsPayload: pass.readsPayload,
         inline: pass.inline,
         bodyPx: pass.bodyPx,
-        ...(widthPx !== undefined ? { widthPx } : {}),
+        widthPx: widthPx !== undefined ? widthPx : undefined,
     };
 }
 
@@ -413,13 +415,13 @@ function chartRender(pass: ChartPass): ChartRender {
  * One derivation pass: the option, the same option with its rows inline, whether it reads the payload,
  * whether the inline form passed the bound, and the height of the page chart body.
  */
-interface ChartPass {
+type ChartPass = {
     readonly option: EchartOption;
     readonly inline: EchartOption;
     readonly readsPayload: boolean;
     readonly overBound: boolean;
     readonly bodyPx: number;
-}
+};
 
 /**
  * Run one derivation, normalize it, and route it onto the payload where the inline form passes the bound.
@@ -464,7 +466,7 @@ function describesLead(series: readonly unknown[], collector: SourceCollector): 
         composed !== undefined &&
         composed.length === described &&
         described < series.length &&
-        composed.every((name, index) => (series[index] as EchartOption).name === name)
+        composed.every((name, index) => (optionRecord(series[index])).name === name)
     );
 }
 
@@ -498,12 +500,12 @@ function perRowQuickPath(block: ChartBlock, opts: ChartOpts): { chartType: BaseC
 function sourcedOption(option: EchartOption, series: readonly unknown[], collector: SourceCollector, key: string): EchartOption {
     const source: ChartDataSource = {
         payload: key,
-        ...(collector.rule !== undefined ? { rule: collector.rule } : {}),
+        rule: collector.rule !== undefined ? collector.rule : undefined,
         series: collector.series,
     };
     return {
         ...option,
-        series: series.map((entry, index) => (index < collector.series.length ? { ...(entry as EchartOption), data: [] } : entry)),
+        series: series.map((entry, index) => (index < collector.series.length ? { ...(optionRecord(entry)), data: [] } : entry)),
         [CHART_SOURCE_MEMBER]: source,
     };
 }
@@ -596,8 +598,8 @@ function deriveRaw(
         {
             ...quick.value.block,
             meanings,
-            ...(block.focus !== undefined ? { focus: block.focus } : {}),
-            ...(stackedFacet !== undefined ? { facet: channelColumn(stackedFacet) } : {}),
+            focus: block.focus !== undefined ? block.focus : undefined,
+            facet: stackedFacet !== undefined ? channelColumn(stackedFacet) : undefined,
         },
         quick.value.rows,
         columns,
@@ -719,10 +721,10 @@ function deriveFigure(
         blockId: block.id,
         labels,
         meanings,
-        ...(columns !== undefined ? { columns } : {}),
+        columns: columns !== undefined ? columns : undefined,
         statistics: statistics.value,
-        ...(track.value !== undefined ? { track: track.value } : {}),
-        ...(trees.value !== undefined ? { trees: trees.value } : {}),
+        track: track.value !== undefined ? track.value : undefined,
+        trees: trees.value !== undefined ? trees.value : undefined,
         textPx: CHART_PAGE_TEXT_PX,
         compose: (composition, { keepsRowsInline, ...extras } = {}) => {
             // A composition with no collector describes no page build, thus the chart keeps its rows inline.
@@ -731,7 +733,7 @@ function deriveFigure(
             if (described !== undefined && option.isOk()) {
                 // The names of the composition output let the pass tell it apart from a series that the
                 // figure adds after it.
-                described.composed = Array.isArray(option.value.series) ? option.value.series.map((entry) => String((entry as EchartOption).name)) : [];
+                described.composed = Array.isArray(option.value.series) ? option.value.series.map((entry) => String((optionRecord(entry)).name)) : [];
             }
             return option;
         },
@@ -774,11 +776,11 @@ function figureTrack(block: ChartBlock, value: RenderTrack | undefined): Result<
     }
     return ok({
         rows: value.rows,
-        ...(value.columns !== undefined ? { columns: value.columns } : {}),
+        columns: value.columns !== undefined ? value.columns : undefined,
         start: declared.start,
         end: declared.end,
         label: declared.label,
-        ...(declared.length !== undefined ? { length: declared.length } : {}),
+        length: declared.length !== undefined ? declared.length : undefined,
         labels: declared.binding.columnLabels,
         meanings: declared.binding.columnMeanings,
     });
@@ -801,7 +803,7 @@ function figureTrees(block: ChartBlock, values: RenderTrees | undefined): Result
         }
         trees[axis] = {
             rows: value.rows,
-            ...(value.columns !== undefined ? { columns: value.columns } : {}),
+            columns: value.columns !== undefined ? value.columns : undefined,
             parent: tree.parent,
             child: tree.child,
             height: tree.height,
@@ -969,19 +971,19 @@ function deriveAsComposition(
                 encoding: {
                     x: x.value,
                     y: y.value,
-                    ...(encoding.group !== undefined ? { group: encoding.group } : {}),
-                    ...(encoding.label !== undefined ? { label: encoding.label } : {}),
-                    ...(encoding.color !== undefined ? { color: encoding.color } : {}),
-                    ...(encoding.size !== undefined ? { size: encoding.size } : {}),
-                    ...(encoding.low !== undefined ? { low: encoding.low } : {}),
-                    ...(encoding.high !== undefined ? { high: encoding.high } : {}),
+                    group: encoding.group !== undefined ? encoding.group : undefined,
+                    label: encoding.label !== undefined ? encoding.label : undefined,
+                    color: encoding.color !== undefined ? encoding.color : undefined,
+                    size: encoding.size !== undefined ? encoding.size : undefined,
+                    low: encoding.low !== undefined ? encoding.low : undefined,
+                    high: encoding.high !== undefined ? encoding.high : undefined,
                 },
                 // The caller refused an orientation on every type but the bar, thus the form here is a bar
                 // wherever one arrives. The arrangement crosses onto the series, and no name channel loses it.
-                ...(orientation !== undefined ? { orientation } : {}),
+                orientation: orientation !== undefined ? orientation : undefined,
             },
         ],
-        ...(encoding.facet !== undefined ? { facet: encoding.facet } : {}),
+        facet: encoding.facet !== undefined ? encoding.facet : undefined,
     };
     return deriveComposition(blockId, composition, rows, columns, labels, extras);
 }
@@ -1123,7 +1125,7 @@ function deriveBar(
         const focus = focused.value;
         const bars = groupedSeries(rows, group, (groupRows, name) => ({
             type: "bar",
-            ...(name !== undefined ? { name: categoryName(name) } : {}),
+            name: name !== undefined ? categoryName(name) : undefined,
             ...categoryStyle(name, focus),
             barGap: 0,
             barCategoryGap: BAR_CATEGORY_GAP,
@@ -1143,7 +1145,7 @@ function deriveBar(
         if (stacked.isErr()) return err(stacked.error);
         series = stacked.value;
     }
-    const valueAxis = { type: "value", ...(mode === "normalized" ? { min: 0, max: 1 } : {}), ...labelRoom(series, horizontal) };
+    const valueAxis = { type: "value", min: mode === "normalized" ? 0 : undefined, max: mode === "normalized" ? 1 : undefined, ...labelRoom(series, horizontal) };
 
     if (horizontal) {
         return ok({
@@ -1278,7 +1280,7 @@ function deriveStackedFacets(
             let negative = 0;
             for (const entry of panel.value) {
                 // `stackedSeries` gives each series one part or null for each category, in category order.
-                const part = toNumber((entry.data as (number | null)[])[index]);
+                const part = toNumber(optionNullableNumbers(entry.data)[index]);
                 if (part === null) continue;
                 if (part > 0) positive += part;
                 else negative += part;
@@ -1347,13 +1349,16 @@ function derivePointForm(
     const yText = yAxis.value.type === "category";
     const pairOf = (row: ChartRow): Cell[] => [xText ? categoryCell(row[x]) : row[x], yText ? categoryCell(row[y]) : row[y]];
 
-    const series = groupedSeries(rows, group, (groupRows, name) => ({
-        type: form,
-        ...(name !== undefined ? { name: categoryName(name) } : {}),
-        ...categoryStyle(name, focused.value),
-        ...(form === "line" ? { showSymbol: false } : { large: true, largeThreshold: 2000 }),
-        data: form === "line" ? sortByX(groupRows.map(pairOf), places) : groupRows.map(pairOf),
-    }));
+    const series = groupedSeries(rows, group, (groupRows, name) => {
+        const densityFields = form === "line" ? { showSymbol: false } : { large: true, largeThreshold: 2000 };
+        return {
+            type: form,
+            name: name !== undefined ? categoryName(name) : undefined,
+            ...categoryStyle(name, focused.value),
+            ...densityFields,
+            data: form === "line" ? sortByX(groupRows.map(pairOf), places) : groupRows.map(pairOf),
+        };
+    });
     return ok({ xAxis: xAxis.value, yAxis: yAxis.value, series });
 }
 
@@ -1476,9 +1481,9 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
 
         series.push({
             type: "boxplot",
-            ...(group.name !== undefined ? { name: categoryName(group.name) } : {}),
+            name: group.name !== undefined ? categoryName(group.name) : undefined,
             // A box draws its median in the border color, thus a focus colors the border and never the fill.
-            ...(color !== undefined ? { itemStyle: { borderColor: color } } : {}),
+            itemStyle: color !== undefined ? { borderColor: color } : undefined,
             data: boxData,
         });
         // The outlier scatter pairs with its box series, thus it only appears when an outlier exists. A box with
@@ -1487,8 +1492,8 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
             const outlierColor = color ?? (group.name === undefined ? CHART_INK : undefined);
             series.push({
                 type: "scatter",
-                ...(group.name !== undefined ? { name: categoryName(group.name) } : {}),
-                ...(outlierColor !== undefined ? { itemStyle: { color: outlierColor } } : {}),
+                name: group.name !== undefined ? categoryName(group.name) : undefined,
+                itemStyle: outlierColor !== undefined ? { color: outlierColor } : undefined,
                 symbolSize: 4,
                 data: outliers,
             });
@@ -1500,12 +1505,13 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     const pointName = groups[0]?.name;
     if (points.length > 0) series.push(pointSeries(points, pointName === undefined ? undefined : categoryName(pointName)));
     series.push(...slotted);
+    const jitteredAxis = points.length > 0 ? JITTERED_AXIS : {};
 
     const categoryAxis: EchartOption = {
         type: "category",
         data: categories,
         ...axisNameFields("x", categoryAxisTitle(block.labels, x)),
-        ...(points.length > 0 ? JITTERED_AXIS : {}),
+        ...jitteredAxis,
     };
     return ok({
         xAxis: slotted.length > 0 ? [categoryAxis, slotAxis(categories.length)] : categoryAxis,
@@ -1518,10 +1524,10 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
 const BOX_MIN_VALUES = 5;
 
 /** The center and the width of one group slot inside a category band, as fractions of the band. */
-interface Slot {
+type Slot = {
     readonly center: number;
     readonly width: number;
-}
+};
 
 /** The share of each box slot that the chart runtime leaves as the gap between two boxes. */
 const BOX_GAP_SHARE = 0.3;
@@ -1601,19 +1607,15 @@ function slotSeries(
     if (points.length === 0 && medians.length === 0) return undefined;
     return {
         ...pointSeries(points, name),
-        itemStyle: { ...(color !== undefined ? { color } : {}), opacity: DISTRIBUTION_POINT_OPACITY },
+        itemStyle: { color: color !== undefined ? color : undefined, opacity: DISTRIBUTION_POINT_OPACITY },
         xAxisIndex: 1,
-        ...(medians.length > 0
-            ? {
-                  markLine: {
+        markLine: medians.length > 0 ? {
                       silent: true,
                       symbol: "none",
                       label: { show: false },
                       lineStyle: { width: MEDIAN_LINE_WIDTH_PX, type: "solid", opacity: 1 },
                       data: medians.map((line) => [...line]),
-                  },
-              }
-            : {}),
+                  } : undefined,
     };
 }
 
@@ -1647,7 +1649,7 @@ const JITTERED_AXIS: EchartOption = { jitter: 24, jitterOverlap: false, jitterMa
 function pointSeries(points: readonly number[][], name: string | undefined): EchartOption {
     return {
         type: "scatter",
-        ...(name !== undefined ? { name } : {}),
+        name: name !== undefined ? name : undefined,
         silent: true,
         symbolSize: DISTRIBUTION_POINT_SIZE,
         itemStyle: { color: CHART_INK, opacity: DISTRIBUTION_POINT_OPACITY },
@@ -1759,13 +1761,14 @@ function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], colu
         const onSlots = slotSeries(name, slotPointList, medians, grouped ? color : CHART_INK);
         if (onSlots !== undefined) slotted.push(onSlots);
         const halfWidth = VIOLIN_HALF_WIDTH / groups.length;
+        const outlineStyle = color !== undefined ? { itemStyle: { color } } : nullCategoryStyle(group.name);
         series.push({
             type: "custom",
             name,
             renderItem: OUTLINE_RENDERER,
             silent: true,
             encode: { x: 0, y: [1, 2] },
-            ...(color !== undefined ? { itemStyle: { color } } : nullCategoryStyle(group.name)),
+            ...outlineStyle,
             data: shapes[place].map((shape) => [
                 shape.category,
                 shape.grid[0],
@@ -1792,12 +1795,13 @@ function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], colu
     }
     if (points.length > 0) series.push(pointSeries(points, legend[0]));
     series.push(...slotted);
+    const jitteredAxis = points.length > 0 ? JITTERED_AXIS : {};
 
     const categoryAxis: EchartOption = {
         type: "category",
         data: categories,
         ...axisNameFields("x", categoryAxisTitle(block.labels, x)),
-        ...(points.length > 0 ? JITTERED_AXIS : {}),
+        ...jitteredAxis,
     };
     return ok({
         xAxis: slotted.length > 0 ? [categoryAxis, slotAxis(categories.length)] : categoryAxis,
@@ -1965,7 +1969,7 @@ export const POINT_LABEL: EchartOption = { show: true, formatter: "{b}" };
  *
  * `retyped` states that the channel gives the text of a number, which the page build cannot give.
  */
-interface ResolvedChannel {
+type ResolvedChannel = {
     name: string;
     values: readonly (Cell | null)[];
     transformed: boolean;
@@ -1974,13 +1978,13 @@ interface ResolvedChannel {
     order?: ChannelOrder;
     numeric?: true;
     retyped?: true;
-}
+};
 
 /**
  * One resolved series: the declared series, and the channels that it reads. `low` and `high` are both
  * present or both absent, because an interval has two bounds.
  */
-interface ResolvedSeries {
+type ResolvedSeries = {
     declared: ChartSeries;
     x: ResolvedChannel;
     y: ResolvedChannel;
@@ -1991,7 +1995,7 @@ interface ResolvedSeries {
     size?: ResolvedChannel;
     low?: ResolvedChannel;
     high?: ResolvedChannel;
-}
+};
 
 /**
  * One split of one declared series: the category name, the rows that it holds, and the muted flag.
@@ -2005,22 +2009,22 @@ interface ResolvedSeries {
  * `category` is the place of the category in the classification, and it is present under the same
  * condition. A page-side build reads the place and never the name, thus the two sides compare numbers.
  */
-interface SeriesSplit {
+type SeriesSplit = {
     name: Cell | undefined;
     indices: readonly number[];
     muted?: boolean;
     category?: number;
-}
+};
 
 /**
  * One column that a page-side series build reads: the place of the column in the payload, the per-row
  * transform of the channel, and whether the page reads each cell as its number.
  */
-export interface ChartColumnSource {
+export type ChartColumnSource = {
     readonly column: number;
     readonly transform?: ChartTransform;
     readonly numeric?: true;
-}
+};
 
 /**
  * One runtime series, as the page builds it from the columnar payload.
@@ -2038,7 +2042,7 @@ export interface ChartColumnSource {
  * `color` and `size` name the columns of a continuous color and of a symbol size. Each one adds one member
  * to the item after the pair, in that order, and a row whose cell is not numeric draws no point.
  */
-export interface ChartSeriesSource {
+export type ChartSeriesSource = {
     readonly x: ChartColumnSource;
     readonly y: ChartColumnSource;
     readonly color?: ChartColumnSource;
@@ -2051,17 +2055,17 @@ export interface ChartSeriesSource {
     readonly sort?: boolean;
     readonly rise?: boolean;
     readonly swap?: boolean;
-}
+};
 
 /**
  * The data source of one chart: the payload that it reads, the classification rule where a preset splits
  * the rows, and one descriptor for each runtime series in series order.
  */
-export interface ChartDataSource {
+export type ChartDataSource = {
     readonly payload: string;
     readonly rule?: PresetRule;
     readonly series: readonly ChartSeriesSource[];
-}
+};
 
 /**
  * The member of the option that carries the data source.
@@ -2078,19 +2082,19 @@ export const CHART_SOURCE_MEMBER = "__reportData";
  * describes no page-side build, for example a band that draws two series from one row set. A collector
  * whose entries do not match the series of the option describes nothing, thus the chart stays inline.
  */
-interface SourceCollector {
+type SourceCollector = {
     readonly columns: readonly string[];
     readonly series: ChartSeriesSource[];
     rule?: PresetRule;
     failed: boolean;
     composed?: readonly string[];
-}
+};
 
 /** The payload that a dense chart reads: the key of the registry, and the columns of the payload. */
-export interface ChartPayloadTarget {
+export type ChartPayloadTarget = {
     readonly key: string;
     readonly columns: readonly string[];
-}
+};
 
 /**
  * The option of one chart, whether it reads the registered payload of its artifact, the same chart with
@@ -2101,19 +2105,19 @@ export interface ChartPayloadTarget {
  * own. `widthPx` is the width of a figure that draws a block of a fixed size, for example the square of a PCA.
  * The card narrows the body to that width and centers it, and a chart with no such width fills the card.
  */
-export interface ChartRender {
+export type ChartRender = {
     readonly option: EchartOption;
     readonly readsPayload: boolean;
     readonly inline: EchartOption;
     readonly bodyPx: number;
     readonly widthPx?: number;
-}
+};
 
 /**
  * One plotted point. `index` names the row that it came from, thus a rank rule can find it again. The
  * members of the wide channels are numbers, because a row whose cell is not numeric draws no point.
  */
-interface Point {
+type Point = {
     index: number;
     x: Cell;
     y: Cell;
@@ -2122,7 +2126,7 @@ interface Point {
     size?: number;
     low?: number;
     high?: number;
-}
+};
 
 /**
  * One runtime series, whether it can carry the mark members of the annotations, whether it draws in the
@@ -2135,14 +2139,14 @@ interface Point {
  * and no legend entry. `entry` names the declared series of a drawn series, thus the visual maps and the
  * value labels find the channels that it reads.
  */
-interface EmittedSeries {
+type EmittedSeries = {
     option: EchartOption;
     carriesMarks: boolean;
     muted: boolean;
     empty: boolean;
     auxiliary: boolean;
     entry?: ResolvedSeries;
-}
+};
 
 /**
  * Derive one option from a composition.
@@ -2161,21 +2165,21 @@ interface EmittedSeries {
  * `collector` is present when the caller can send the rows to the page as a payload. Each series then
  * states its own page-side build beside its option.
  */
-interface CompositionExtras {
+type CompositionExtras = {
     readonly preset?: PresetAxisTitles;
     readonly classification?: PresetClassification;
     readonly collector?: SourceCollector;
     readonly focus?: readonly string[];
     readonly meanings?: ColumnMeanings;
     readonly colorOnTop?: boolean;
-}
+};
 
 /**
  * What each series of one composition reads beside its own channels: the rows, the declarations of the
  * bound table, the preset parts, the collector, the checked focus, the rows that carry a point label, the
  * density tier, the annotations, and whether the shared x axis sorts its categories.
  */
-interface CompositionContext {
+type CompositionContext = {
     readonly blockId: string;
     readonly rows: readonly ChartRow[];
     readonly labels: ColumnLabels;
@@ -2189,13 +2193,13 @@ interface CompositionContext {
     readonly annotations: readonly ChartAnnotation[];
     readonly orderedX: boolean;
     readonly colorOnTop: boolean;
-}
+};
 
 /** The two axes of one grid. */
-interface AxisPair {
+type AxisPair = {
     readonly xAxis: EchartOption;
     readonly yAxis: EchartOption;
-}
+};
 
 function deriveComposition(
     blockId: string,
@@ -2281,20 +2285,18 @@ function deriveComposition(
     const series = labeledSeries(context, emitted.value, horizontal);
     const room = first.declared.form === "bar" ? labelRoom(series, horizontal) : {};
     const colored = emitted.value.some((entry) => entry.entry?.color !== undefined);
-    const grid = {
-        // A horizontal bar draws its category names as y labels, thus the grid must hold them.
-        ...(isHorizontalBar(first.declared) ? LABEL_CONTAINING_GRID : {}),
-        // A continuous color draws its scale at the right edge, thus the grid leaves that band free.
-        ...(colored ? { right: COLOR_SCALE_GRID_RIGHT } : {}),
-    };
+    const barRoom = isHorizontalBar(first.declared) ? LABEL_CONTAINING_GRID : {};
+    const grid: EchartOption = { ...barRoom };
+    // A continuous color draws its scale at the right edge, thus the grid leaves that band free.
+    if (colored) grid.right = COLOR_SCALE_GRID_RIGHT;
     return ok({
         tooltip: named ? { ...NAMED_TOOLTIP } : { ...PLAIN_TOOLTIP },
         xAxis: horizontal ? { ...axes.value.xAxis, ...room } : axes.value.xAxis,
         yAxis: horizontal ? axes.value.yAxis : { ...axes.value.yAxis, ...room },
         series,
-        ...(maps.length > 0 ? { visualMap: maps } : {}),
-        ...(emitted.value.some((entry) => entry.auxiliary) ? { legend: legendOf(drawnNames(emitted.value)) } : {}),
-        ...(Object.keys(grid).length > 0 ? { grid } : {}),
+        visualMap: maps.length > 0 ? maps : undefined,
+        legend: emitted.value.some((entry) => entry.auxiliary) ? legendOf(drawnNames(emitted.value)) : undefined,
+        grid: Object.keys(grid).length > 0 ? grid : undefined,
     });
 }
 
@@ -2363,7 +2365,7 @@ function compositionFault(composition: ChartComposition, focus: readonly string[
         if (channelTransform(facet) !== undefined) {
             return FACET_TRANSFORM;
         }
-        const lead = composition.series[0]?.form;
+        const lead = composition.series.at(0)?.form;
         if (lead !== undefined && lead !== "scatter" && lead !== "line" && lead !== "bar") {
             return `A facet is legal on a scatter, a line, and a bar, thus the first series of a faceted composition takes one of those forms, and not the ${lead}.`;
         }
@@ -2522,8 +2524,8 @@ function drawnMembers(emitted: readonly EmittedSeries[], seriesIndex: readonly n
         const data = emitted[index].option.data;
         if (!Array.isArray(data)) continue;
         for (const item of data) {
-            const value = Array.isArray(item) ? item : typeof item === "object" && item !== null ? (item as EchartOption).value : undefined;
-            const member = Array.isArray(value) ? toNumber(value[dimension] as Cell | undefined) : null;
+            const value = Array.isArray(item) ? item : typeof item === "object" && item !== null ? (optionRecord(item)).value : undefined;
+            const member = Array.isArray(value) ? toNumber(optionCell(value[dimension])) : null;
             if (member !== null) members.push(member);
         }
     }
@@ -2560,7 +2562,7 @@ function intervalAlongX(entry: ResolvedSeries, axes: AxisPair): boolean {
 /** The place of each category of one axis, keyed by the text of the category, or `undefined` for a value axis. */
 function categoryPlaces(axis: EchartOption): Map<string, number> | undefined {
     if (axis.type !== "category" || !Array.isArray(axis.data)) return undefined;
-    return new Map((axis.data as Cell[]).map((category, place) => [String(category), place]));
+    return new Map((axis.data as unknown[]).map((category: unknown, place) => [String(category), place]));
 }
 
 /**
@@ -2686,19 +2688,19 @@ function deriveFacets(
         yAxis: layout.yAxis,
         series: labeledPanels,
         graphic: layout.graphic,
-        ...(maps.length > 0 ? { visualMap: maps } : {}),
+        visualMap: maps.length > 0 ? maps : undefined,
         legend: layout.legend,
     });
 }
 
 /** The layout members of a facet: one grid and one axis pair for each panel, the panel labels and the axis titles, and the legend. */
-interface FacetLayout {
+type FacetLayout = {
     readonly grid: EchartOption[];
     readonly xAxis: EchartOption[];
     readonly yAxis: EchartOption[];
     readonly graphic: EchartOption[];
     readonly legend: EchartOption;
-}
+};
 
 /**
  * The layout of the panels of a facet, one panel for each name in order.
@@ -2769,11 +2771,11 @@ function facetLayout(names: readonly (Cell | undefined)[], shared: AxisPair, leg
  * turned label still covers its neighbor. `widthPx` is the panel width on the page, and an x axis alone states it.
  */
 function panelAxis(axis: EchartOption, widthPx?: number): EchartOption {
-    const label = typeof axis.axisLabel === "object" && axis.axisLabel !== null ? (axis.axisLabel as EchartOption) : {};
+    const label = typeof axis.axisLabel === "object" && axis.axisLabel !== null ? (optionRecord(axis.axisLabel)) : {};
     const base = { ...withoutName(axis), splitNumber: FACET_SPLIT_NUMBER };
     if (axis.type !== "category" || !Array.isArray(axis.data)) return { ...base, axisLabel: { ...label, hideOverlap: true } };
     const turn = widthPx === undefined || label.rotate !== undefined ? undefined : categoryTurn(axis.data as readonly Cell[], widthPx);
-    return { ...base, axisLabel: { ...label, interval: 0, ...(turn !== undefined ? { rotate: turn } : {}) } };
+    return { ...base, axisLabel: { ...label, interval: 0, rotate: turn !== undefined ? turn : undefined } };
 }
 
 /** The width of one character of the chart text, as a share of the text size. */
@@ -2808,8 +2810,8 @@ function thinnedLabels(option: EchartOption): EchartOption {
     let thinned = false;
     const thin = (axis: unknown): unknown => {
         if (typeof axis !== "object" || axis === null || Array.isArray(axis)) return axis;
-        const fields = axis as EchartOption;
-        const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? (fields.axisLabel as EchartOption) : {};
+        const fields = optionRecord(axis);
+        const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? (optionRecord(fields.axisLabel)) : {};
         if (fields.type !== "category" || !Array.isArray(fields.data) || label.rotate !== 90 || label.show === false) return axis;
         const interval = categoryInterval(fields.data.length, CHART_PAGE_TEXT_PX, pagePlotWidth(option.grid, fields));
         if (interval === 0) return axis;
@@ -2817,7 +2819,11 @@ function thinnedLabels(option: EchartOption): EchartOption {
         return { ...fields, axisLabel: { ...label, interval } };
     };
     const xAxis = Array.isArray(option.xAxis) ? option.xAxis.map(thin) : thin(option.xAxis);
-    return { ...option, xAxis, ...(thinned && option.tooltip === undefined ? { tooltip: { trigger: "axis" } } : {}) };
+    const out: EchartOption = { ...option, xAxis };
+    // The flag flips inside the `thin` callback; the closure reads it at call time.
+    const wasThinned = (): boolean => thinned;
+    if (wasThinned() && option.tooltip === undefined) out.tooltip = { trigger: "axis" };
+    return out;
 }
 
 /**
@@ -2826,7 +2832,7 @@ function thinnedLabels(option: EchartOption): EchartOption {
  */
 function pagePlotWidth(grid: unknown, axis: EchartOption): number {
     const entry = Array.isArray(grid) ? grid[typeof axis.gridIndex === "number" ? axis.gridIndex : 0] : grid;
-    const fields = typeof entry === "object" && entry !== null ? (entry as EchartOption) : {};
+    const fields = typeof entry === "object" && entry !== null ? (optionRecord(entry)) : {};
     const stated = pagePx(fields.width);
     return stated > 0 ? stated : CHART_PAGE_WIDTH_PX - pagePx(fields.left) - pagePx(fields.right);
 }
@@ -2997,7 +3003,7 @@ function plottedSeries(entry: ResolvedSeries, axes: AxisPair, meanings: ColumnMe
         ...entry,
         x: plottedChannel(entry.x, xAxis, meanings),
         y: plottedChannel(entry.y, yAxis, meanings),
-        ...(entry.y0 !== undefined ? { y0: plottedChannel(entry.y0, yAxis, meanings) } : {}),
+        y0: entry.y0 !== undefined ? plottedChannel(entry.y0, yAxis, meanings) : undefined,
     };
 }
 
@@ -3016,7 +3022,7 @@ function plottedSeries(entry: ResolvedSeries, axes: AxisPair, meanings: ColumnMe
 function plottedChannel(channel: ResolvedChannel, axis: EchartOption, meanings: ColumnMeanings): ResolvedChannel {
     if (axis.type === "category") {
         const retyped = channel.values.some((cell) => typeof cell === "number");
-        return { ...channel, values: channel.values.map((cell) => (cell === null ? null : categoryCell(cell))), ...(retyped ? { retyped: true } : {}) };
+        return { ...channel, values: channel.values.map((cell) => (cell === null ? null : categoryCell(cell))), retyped: retyped ? true : undefined };
     }
     if (channel.transformed || channel.values.some((cell) => cell !== null && isNonNumericString(cell))) return channel;
     if (namesCategories(meanings, channel.column)) return channel;
@@ -3243,16 +3249,16 @@ function collectSource(
     collector.series.push({
         x,
         y,
-        ...(color !== undefined ? { color } : {}),
-        ...(size !== undefined ? { size } : {}),
-        ...(group !== undefined ? { group } : {}),
-        ...(split.category === undefined && split.name !== undefined ? { value: split.name } : {}),
-        ...(split.category !== undefined ? { category: split.category } : {}),
-        ...(label !== undefined ? { label } : {}),
-        ...(flags.length > 0 ? { flags } : {}),
-        ...(SORTED_FORMS.has(form) ? { sort: true } : {}),
-        ...(rises ? { rise: true } : {}),
-        ...(isHorizontalBar(entry.declared) ? { swap: true } : {}),
+        color: color !== undefined ? color : undefined,
+        size: size !== undefined ? size : undefined,
+        group: group !== undefined ? group : undefined,
+        value: split.category === undefined && split.name !== undefined ? split.name : undefined,
+        category: split.category !== undefined ? split.category : undefined,
+        label: label !== undefined ? label : undefined,
+        flags: flags.length > 0 ? flags : undefined,
+        sort: SORTED_FORMS.has(form) ? true : undefined,
+        rise: rises ? true : undefined,
+        swap: isHorizontalBar(entry.declared) ? true : undefined,
     });
 }
 
@@ -3276,11 +3282,10 @@ function columnSource(collector: SourceCollector, channel: ResolvedChannel): Cha
  * no item style, and the theme answers for it.
  */
 function seriesItemStyle(color: string | undefined, form: ChartSeries["form"], density: ScatterDensity): EchartOption {
-    const fields = {
-        ...(color !== undefined ? { color } : {}),
-        ...(form === "scatter" && density === "crowd" ? { opacity: SCATTER_CROWD_OPACITY } : {}),
-    };
-    return Object.keys(fields).length > 0 ? { itemStyle: fields } : {};
+    const style: EchartOption = {};
+    if (color !== undefined) style.color = color;
+    if (form === "scatter" && density === "crowd") style.opacity = SCATTER_CROWD_OPACITY;
+    return Object.keys(style).length > 0 ? { itemStyle: style } : {};
 }
 
 /**
@@ -3387,14 +3392,13 @@ function seriesData(
             continue;
         }
         itemObjects = true;
-        data.push({
-            value: pair,
-            // A marked point of a series with no label channel takes the x cell as its name. Thus the
-            // `{b}` of the label template and of the tooltip names a cell of the row, and never nothing.
-            ...(named || marked ? { name: named ? String(label) : String(point.x) } : {}),
-            ...(color !== undefined ? { itemStyle: { color } } : {}),
-            ...(marked ? { label: { ...POINT_LABEL } } : {}),
-        });
+        const item: EchartOption = { value: pair };
+        // A marked point of a series with no label channel takes the x cell as its name. Thus the
+        // `{b}` of the label template and of the tooltip names a cell of the row, and never nothing.
+        if (named || marked) item.name = named ? String(label) : String(point.x);
+        if (color !== undefined) item.itemStyle = { color };
+        if (marked) item.label = { ...POINT_LABEL };
+        data.push(item);
     }
     return { data, itemObjects };
 }
@@ -3463,13 +3467,17 @@ function formOptions(form: ChartSeries["form"], density: ScatterDensity, perPoin
             return { step: "end", showSymbol: false };
         case "area":
             return { showSymbol: false, areaStyle: {} };
-        case "scatter":
-            return {
-                ...(density === "normal" ? {} : { symbolSize: density === "crowd" ? SCATTER_CROWD_SYMBOL_SIZE : SCATTER_HOVER_SYMBOL_SIZE }),
-                // The large path draws a simplified point in one fill, and it drops a per-item style. Thus a
-                // series whose items carry a name, a label, a color, or a size keeps the normal path.
-                ...(perPoint ? {} : { large: true, largeThreshold: LARGE_SCATTER_THRESHOLD }),
-            };
+        case "scatter": {
+            const fields: EchartOption = {};
+            if (density !== "normal") fields.symbolSize = density === "crowd" ? SCATTER_CROWD_SYMBOL_SIZE : SCATTER_HOVER_SYMBOL_SIZE;
+            // The large path draws a simplified point in one fill, and it drops a per-item style. Thus a
+            // series whose items carry a name, a label, a color, or a size keeps the normal path.
+            if (!perPoint) {
+                fields.large = true;
+                fields.largeThreshold = LARGE_SCATTER_THRESHOLD;
+            }
+            return fields;
+        }
     }
 }
 
@@ -3530,7 +3538,7 @@ function pointLabelRows(
 function topRows(rows: readonly ChartRow[], column: string, order: "asc" | "desc", n: number, plotted: ReadonlySet<number>): number[] {
     const ranked: number[] = [];
     for (let index = 0; index < rows.length; index += 1) {
-        if (plotted.has(index) && rows[index][column] !== undefined) ranked.push(index);
+        if (plotted.has(index) && typedMember(rows[index], column) !== undefined) ranked.push(index);
     }
     ranked.sort((a, b) => {
         const compared = compareCell(rows[a][column], rows[b][column]);
@@ -3562,10 +3570,10 @@ function markMembers(annotations: readonly ChartAnnotation[]): EchartOption {
             ]);
         }
     }
-    return {
-        ...(lines.length > 0 ? { markLine: guideMarkLine(lines) } : {}),
-        ...(areas.length > 0 ? { markArea: { silent: true, data: areas } } : {}),
-    };
+    const marks: EchartOption = {};
+    if (lines.length > 0) marks.markLine = guideMarkLine(lines);
+    if (areas.length > 0) marks.markArea = { silent: true, data: areas };
+    return marks;
 }
 
 /**
@@ -3576,8 +3584,8 @@ function markMembers(annotations: readonly ChartAnnotation[]): EchartOption {
  */
 function markLabel(label: string | undefined, position?: string): EchartOption {
     const fields = {
-        ...(label !== undefined ? { formatter: label } : {}),
-        ...(position !== undefined ? { position } : {}),
+        formatter: label !== undefined ? label : undefined,
+        position: position !== undefined ? position : undefined,
     };
     return Object.keys(fields).length > 0 ? { label: fields } : {};
 }
@@ -3696,7 +3704,7 @@ function compositionAxis(
     if (base.type !== "category") {
         return err(problem(context.blockId, valueAxisOrderFault(channel.column)));
     }
-    const ordered = orderChannel(context, channel, base.data as string[]);
+    const ordered = orderChannel(context, channel, optionStrings(base.data));
     return ordered.map((data) => ({ ...base, data }));
 }
 
@@ -3810,7 +3818,7 @@ function orderedAxis(
         blockId,
         rows.length,
         (index) => String(rows[index][column]),
-        inferred.data as string[],
+        optionStrings(inferred.data),
         order,
         (index) => rows[index][order.by],
     );
@@ -3867,18 +3875,18 @@ function withValueLabels(
     const labeled = (entry: EchartOption): boolean => entry.type === "bar" && entry.stack === undefined && Array.isArray(entry.data);
     let count = 0;
     for (const entry of series) {
-        if (labeled(entry)) count += (entry.data as unknown[]).length;
+        if (labeled(entry)) count += optionArray(entry.data).length;
     }
     if (count === 0 || count > BAR_VALUE_LABEL_LIMIT) {
         return [...series];
     }
     return series.map((entry, index) => {
         if (!labeled(entry) || !labelable(index)) return entry;
-        const data = (entry.data as unknown[]).map((item) => {
+        const data = optionArray(entry.data).map((item) => {
             // A bar item is a pair or an object whose value is the pair, thus the two forms read one field.
-            const fields: EchartOption = typeof item === "object" && item !== null && !Array.isArray(item) ? (item as EchartOption) : { value: item };
+            const fields: EchartOption = typeof item === "object" && item !== null && !Array.isArray(item) ? (optionRecord(item)) : { value: item };
             if (fields.label !== undefined || !Array.isArray(fields.value)) return item;
-            const cell = (fields.value as Cell[])[horizontal ? 0 : 1];
+            const cell = optionCells(fields.value)[horizontal ? 0 : 1];
             return { ...fields, label: { show: true, position: labelPosition(cell, horizontal), formatter: textOf(cell, index) } };
         });
         return { ...entry, data };
@@ -3904,10 +3912,10 @@ function labelRoom(series: readonly EchartOption[], horizontal: boolean): Echart
     for (const entry of series) {
         if (entry.type !== "bar" || !Array.isArray(entry.data)) continue;
         for (const item of entry.data as unknown[]) {
-            if (typeof item !== "object" || item === null || Array.isArray(item) || (item as EchartOption).label === undefined) continue;
-            const value = (item as EchartOption).value;
+            if (typeof item !== "object" || item === null || Array.isArray(item) || (optionRecord(item)).label === undefined) continue;
+            const value = (optionRecord(item)).value;
             // The sign rule of `labelPosition`: a bar under zero puts its label at its lower end.
-            if ((toNumber(Array.isArray(value) ? (value as Cell[])[horizontal ? 0 : 1] : null) ?? 0) < 0) negative = true;
+            if ((toNumber(Array.isArray(value) ? optionCell(value[horizontal ? 0 : 1]) : null) ?? 0) < 0) negative = true;
             else positive = true;
         }
     }
@@ -3971,10 +3979,10 @@ const BAR_CATEGORY_GAP = "20%";
  * The two titles of one axis: the title that a value axis shows, and the title that a category axis shows
  * where the block declares one.
  */
-interface AxisTitles {
+type AxisTitles = {
     readonly value: string;
     readonly category?: string;
-}
+};
 
 /** The two titles of the axis of one quick-path column: its value title, and its declared label alone. */
 function axisTitles(labels: ColumnLabels, column: string): AxisTitles {
@@ -4171,13 +4179,13 @@ const VIOLIN_HALF_WIDTH = 0.4;
 const VIOLIN_MIN_VALUES = 5;
 
 /** The shape of one violin: the grid, the density at each grid point, and the three quartiles. */
-interface ViolinShape {
+type ViolinShape = {
     readonly grid: readonly number[];
     readonly densities: readonly number[];
     readonly q1: number;
     readonly median: number;
     readonly q3: number;
-}
+};
 
 /**
  * The Gaussian kernel density of one category on the fixed grid, or `undefined` for a category that draws

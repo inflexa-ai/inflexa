@@ -29,12 +29,12 @@ const CLIP_MARKER = "…";
  * One outline entry. It carries the id, the kind, the nesting depth, and a short label. A top-level
  * section is depth 0. The entry carries no binding, thus the outline stays small.
  */
-export interface OutlineEntry {
+export type OutlineEntry = {
     id: string;
     kind: DraftBlock["kind"];
     depth: number;
     label: string;
-}
+};
 
 /**
  * A section as the read surface gives it: its own fields, and the id of each child in document order.
@@ -43,12 +43,12 @@ export interface OutlineEntry {
  * subtree would be a second copy of the outline, and a read of a top-level section would return the whole
  * draft.
  */
-export interface ShallowSection {
+export type ShallowSection = {
     kind: "section";
     id: string;
     title: string;
     childIds: string[];
-}
+};
 
 /** One block as the read surface gives it. An atom reads in full and hash-free, and a section reads shallow. */
 export type ReadableBlock = AuthoringAtomBlock | ShallowSection;
@@ -65,7 +65,7 @@ export type ReadableBlock = AuthoringAtomBlock | ShallowSection;
  * were the whole one.
  */
 function clip(text: string): string {
-    const points = [...text];
+    const points = Array.from(text);
     if (points.length <= PROSE_CLIP) {
         return text;
     }

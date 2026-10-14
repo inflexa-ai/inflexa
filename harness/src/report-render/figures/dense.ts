@@ -17,6 +17,7 @@ import { formatNumberCell } from "../number-format.js";
 import type { RenderProblem } from "../types.js";
 import { chartProblem, toNumber, transformColumn } from "./common.js";
 import { EXPORT_PLOT_FRAMES, PAGE_PLOT_FRAME, type LeaderName, type NamedPoint, type NameFrame } from "./label-room.js";
+import { optionRecord } from "../option-lens.js";
 
 /**
  * The symbol sizes in pixels of a dense figure: a signal point, and a point that states no finding.
@@ -218,12 +219,12 @@ export function seriesOf(option: EchartOption): EchartOption[] {
 /** The axis of an option as one object. A composition of one grid gives one object for each axis. */
 export function axisOf(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption {
     const axis = option[key];
-    return typeof axis === "object" && axis !== null && !Array.isArray(axis) ? (axis as EchartOption) : {};
+    return typeof axis === "object" && axis !== null && !Array.isArray(axis) ? (optionRecord(axis)) : {};
 }
 
 /** The fields of one layer of points: the fill, the opacity, the symbol size, and the drawing order. */
 export function pointLayer(color: string, size: number, opacity: number, z?: number): EchartOption {
-    return { itemStyle: { color, opacity }, symbolSize: size, ...(z !== undefined ? { z } : {}) };
+    return { itemStyle: { color, opacity }, symbolSize: size, z: z !== undefined ? z : undefined };
 }
 
 /** The shown text of a count in a legend name: a whole number with a thousands separator. */

@@ -91,7 +91,7 @@ export type RecordVersionResult =
  * derived directory of the session under that root, thus the seam is mandatory: a composition that bound
  * none would record a version and leave every unused derivation on disk.
  */
-export interface RecordVersionToolDeps {
+export type RecordVersionToolDeps = {
     readonly gateway: ReportSessionStateGateway;
     readonly store: ReportVersionStore;
     readonly threads: Pick<ThreadStore, "getThread">;
@@ -100,7 +100,7 @@ export interface RecordVersionToolDeps {
     /** The provenance seam; an unbound session emit emits nothing and the record runs the same. */
     readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
-}
+};
 
 /** A short account of a record refusal, for the detail of a transient failure. */
 function describeRecordFailure(error: RecordVersionError): string {
@@ -255,9 +255,9 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
             if (!validation.valid) {
                 return ok({
                     outcome: "invalid",
-                    ...(validation.schemaIssues ? { schemaIssues: validation.schemaIssues } : {}),
-                    ...(validation.duplicateIds ? { duplicateIds: validation.duplicateIds } : {}),
-                    ...(validation.resolutionFailures ? { resolutionFailures: validation.resolutionFailures } : {}),
+                    schemaIssues: validation.schemaIssues ? validation.schemaIssues : undefined,
+                    duplicateIds: validation.duplicateIds ? validation.duplicateIds : undefined,
+                    resolutionFailures: validation.resolutionFailures ? validation.resolutionFailures : undefined,
                 });
             }
 

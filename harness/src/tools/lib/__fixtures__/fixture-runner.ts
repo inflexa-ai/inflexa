@@ -19,6 +19,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { jsonParse } from "../../../lib/json.js";
 import { z } from "zod";
 
 export type { FixtureManifest, FixtureManifestEntry } from "./manifest.js";
@@ -26,7 +27,7 @@ export type { FixtureManifest, FixtureManifestEntry } from "./manifest.js";
 const FIXTURES_DIR = fileURLToPath(new URL(".", import.meta.url));
 
 /** One row of a fixture table. `S` is the schema under test. */
-export interface FixtureCase<S extends z.ZodType> {
+export type FixtureCase<S extends z.ZodType> = {
     /** The name of the schema under test, as the test output shows it. */
     name: string;
     /** The fixture directory of the provider, under `src/tools/lib/__fixtures__/`. */
@@ -42,7 +43,7 @@ export interface FixtureCase<S extends z.ZodType> {
      * its own mapper here and asserts the mapped record.
      */
     assertOutput?: (output: z.infer<S>) => void;
-}
+};
 
 /**
  * A fixture case whose schema type is erased.
@@ -60,12 +61,14 @@ export type ErasedFixtureCase = FixtureCase<z.ZodType>;
  * each row through this function, and never through a bare object literal.
  */
 export function fixtureCase<S extends z.ZodType>(testCase: FixtureCase<S>): ErasedFixtureCase {
+    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return testCase as unknown as ErasedFixtureCase;
 }
 
 /** Read one fixture file of a provider directory and parse it as JSON. */
 export function readFixture(provider: string, file: string): unknown {
-    return JSON.parse(readFileSync(join(FIXTURES_DIR, provider, file), "utf8")) as unknown;
+    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+    return jsonParse(readFileSync(join(FIXTURES_DIR, provider, file), "utf8"), z.unknown());
 }
 
 /** Register the accept, map, and reject assertions for each row of a fixture table. */

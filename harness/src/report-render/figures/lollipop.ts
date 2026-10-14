@@ -68,19 +68,19 @@ const BOX_OPACITY = 0.35;
 export const LOLLIPOP_FIGURE: FigureModule = { reads: new Set(["x", "y", "group", "label", "track"]), derive: deriveLollipop };
 
 /** One plotted mutation: the row, its position, and its count. */
-interface Stem {
+type Stem = {
     readonly row: ChartRow;
     readonly x: number;
     readonly y: number;
-}
+};
 
 /** One box of the track: its span, its name, and its lane. */
-interface DomainBox {
+type DomainBox = {
     readonly start: number;
     readonly end: number;
     readonly name: string;
     readonly lane: number;
-}
+};
 
 function deriveLollipop(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
     const position = numericChannel(block, rows, context, "x");

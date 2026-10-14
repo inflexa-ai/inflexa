@@ -11,6 +11,7 @@
 
 import type { ModelMessage } from "ai";
 import { getEncoding, type Tiktoken } from "js-tiktoken";
+import { maybeRecord } from "../lib/shape.js";
 
 let encoder: Tiktoken | undefined;
 
@@ -33,12 +34,13 @@ function enc(): Tiktoken {
  */
 function toolResultText(output: unknown): string {
     if (typeof output !== "object" || output === null) return JSON.stringify(output ?? {});
-    const out = output as Record<string, unknown>;
+    const out = maybeRecord(output);
+    if (out === undefined) return JSON.stringify(output);
     if (out.type !== "content" || !Array.isArray(out.value)) return JSON.stringify(out);
     const texts: string[] = [];
     for (const item of out.value) {
         if (typeof item !== "object" || item === null) continue;
-        const nested = item as Record<string, unknown>;
+        const nested : Record<string, unknown> = item;
         if (nested.type === "text" && typeof nested.text === "string") texts.push(nested.text);
     }
     return texts.join(" ");
@@ -54,7 +56,8 @@ function toolResultText(output: unknown): string {
 function tokenizableText(block: unknown): string {
     if (typeof block === "string") return block;
     if (typeof block !== "object" || block === null) return JSON.stringify(block);
-    const part = block as Record<string, unknown>;
+    const part = maybeRecord(block);
+    if (part === undefined) return JSON.stringify(block);
     switch (part.type) {
         case "text":
             return typeof part.text === "string" ? part.text : "";

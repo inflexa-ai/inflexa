@@ -14,6 +14,7 @@ import type { Pool } from "pg";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { cortexMigrations } from "./migrations/index.js";
+import { isError } from "../lib/thrown.js";
 
 /**
  * The longest time that a migration statement waits for a lock. An `ALTER TABLE`
@@ -42,14 +43,14 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
             migrationLockTableName: "cortex_migration_lock",
             // Without a schema, the migrator finds its tables in any schema, thus a
             // test schema would see the tables of the other test schemas.
-            migrationTableSchema: rows[0]!.schema,
+            migrationTableSchema: rows[0].schema,
         });
         const { error, results } = await migrator.migrateToLatest();
         for (const result of results ?? []) {
             if (result.status === "Success") logger.info("migration applied", { migration: result.migrationName });
         }
         if (error !== undefined) {
-            throw error instanceof Error ? error : new Error(`cortex state migration failed: ${String(error)}`);
+            throw isError(error) ? error : new Error(`cortex state migration failed: ${String(error)}`);
         }
     } finally {
         await db.destroy();

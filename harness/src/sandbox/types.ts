@@ -35,10 +35,10 @@ export type ToolchainSource = "image" | "store";
  * per-analysis read-write cache. When it is present, the backend mounts it
  * at `/mnt/libs/cache`.
  */
-export interface FarmLocation {
+export type FarmLocation = {
     readonly farmPath: string;
     readonly cachePath?: string;
-}
+};
 
 /** The answer of a farm resolver: a usable farm, or a refusal that carries the reason of the embedder. */
 export type FarmResolution = { readonly kind: "available"; readonly location: FarmLocation } | { readonly kind: "unavailable"; readonly reason: string };
@@ -120,10 +120,10 @@ export type ExtendAnalysisFarm = (analysisId: string, queries: readonly PackageQ
  * terminated reason `OOMKilled`) — the exec surfaces it as the
  * `sandbox-oom-killed` failure reason instead of the generic `sandbox-dead`.
  */
-export interface SandboxLiveness {
+export type SandboxLiveness = {
     readonly alive: boolean;
     readonly oomKilled: boolean;
-}
+};
 
 export type SandboxRef = PersistedSandboxRef;
 
@@ -256,15 +256,15 @@ export type PollResponse = z.infer<typeof PollResponseSchema>;
  * One command for `SandboxClient.exec`. It carries no exec id: the exec
  * derives its id from the durable step it runs in.
  */
-export interface ExecRequest {
+export type ExecRequest = {
     readonly command: readonly string[];
     readonly cwd?: string;
     readonly env?: Readonly<Record<string, string>>;
     readonly timeoutSeconds?: number;
-}
+};
 
 /** Wire shape the exec POSTs to sandbox-server's `/exec`. */
-export interface SubmitExecBody {
+export type SubmitExecBody = {
     command: string[];
     execId: string;
     cwd?: string;
@@ -278,10 +278,10 @@ export interface SubmitExecBody {
      */
     stdoutByteCap?: number;
     stderrByteCap?: number;
-}
+};
 
 /** What a spawn needs beside its session. */
-export interface SandboxSpec {
+export type SandboxSpec = {
     /** Owning DBOS child workflow id (`"${parentRunId}-${N}"`). Recorded verbatim
      *  on the sandbox machine under `cortex/owner-workflow-id` so the reaper can
      *  map a cluster-side machine back to its workflow and check liveness. */
@@ -302,7 +302,7 @@ export interface SandboxSpec {
      *  mount, thus a run provisions exactly as before. A tail beside `readOnly` is
      *  a contradiction, and the mount builders refuse it. */
     writableTail?: string;
-}
+};
 
 /** The labels that the host adds to a sandbox. The harness stamps each one as the host gives it. */
 export type SandboxLabels = Readonly<Record<string, string>>;
@@ -320,11 +320,11 @@ export type ResolveSandboxLabels = (session: RunSession) => ResultAsync<SandboxL
  * recovery re-run of the spawn step adopts the already-created machine under
  * the same name instead of leaking a second one.
  */
-export interface SandboxIdentity {
+export type SandboxIdentity = {
     /** `sbx-{run8}-{uuid4}` — informative for `kubectl`, not load-bearing; the
      *  checkpoint, not the name, is what makes create idempotent. */
     sandboxId: string;
-}
+};
 
 /**
  * A sandbox machine the backend is running that Cortex *manages*
@@ -334,11 +334,11 @@ export interface SandboxIdentity {
  * machine records no owner, and such a machine is reaped only past a
  * creation-time grace and only when observably dead.
  */
-export interface ManagedSandbox {
+export type ManagedSandbox = {
     sandboxId: string;
     ownerWorkflowId: string | null;
     createdAtMs: number | null;
-}
+};
 
 /**
  * Progress callback of `SandboxClient.exec`, called with each sandbox event in

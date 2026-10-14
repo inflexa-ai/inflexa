@@ -30,15 +30,15 @@ import { defineTool, type Tool } from "../define-tool.js";
 
 export const REPORT_BLOCKER_TOOL_ID = "report_blocker";
 
-export interface BlockerOutcome {
+export type BlockerOutcome = {
     readonly kind: "blocker";
     readonly reason: string;
-}
+};
 
 /** Per-run mutable cell the sandbox-step body reads after the loop. */
-export interface BlockerHolder {
+export type BlockerHolder = {
     outcome: BlockerOutcome | null;
-}
+};
 
 export function createBlockerHolder(): BlockerHolder {
     return { outcome: null };
@@ -52,7 +52,7 @@ const ReportBlockerInputSchema = z.object({
         .describe("What blocks the work, stated as a fact: the missing or unreadable input, or the capability that is not available, and what you tried."),
 });
 
-export interface ReportBlockerDeps {
+export type ReportBlockerDeps = {
     /**
      * The calling loop's blocker-capture side effect — writes the outcome into
      * whatever cell that body reads after its loop. Invoked on every call; the
@@ -66,7 +66,7 @@ export interface ReportBlockerDeps {
      * so a description can never promise a loop this instance does not end.
      */
     readonly blockedWhen: string;
-}
+};
 
 /**
  * Build the `report_blocker` tool for one loop. The id, the input schema and
@@ -79,14 +79,14 @@ export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool {
         description: `Terminal. ${deps.blockedWhen} Pass a clear reason. Stop immediately after calling — take no further actions.`,
         inputSchema: ReportBlockerInputSchema,
         describeCall: "none",
-        execute: async (input) => {
+        execute: (input) => {
             const degenerate = degenerateTerminalText(input.reason);
             if (degenerate) return err({ error: `${degenerate} Give the real reason, or continue the work.`, retryable: true });
             deps.record({ kind: "blocker", reason: input.reason });
-            return ok({
+            return Promise.resolve(ok({
                 recorded: true as const,
                 message: "Blocker recorded. You are done — stop now and do not take further actions.",
-            });
+            }));
         },
     });
 }

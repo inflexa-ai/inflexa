@@ -26,17 +26,18 @@ import type { EchartOption } from "../chart.js";
 import { TOOLBOX_BAND_PX } from "../chart-toolbox.js";
 import { CHART_EXPORT_SIZES, CHART_PAGE_TEXT_PX, FACET_COLUMNS } from "../design.js";
 import { legendLineCount, legendLinePx } from "./common.js";
+import { optionNumber } from "../option-lens.js";
 
 /** The margins around the squares, in pixels at the page text size. */
-export interface SquareMargins {
+export type SquareMargins = {
     readonly top: number;
     readonly bottom: number;
     readonly left: number;
     readonly right: number;
-}
+};
 
 /** What one square layout places: the panels, their margins, and the members of the band at their right. */
-export interface SquareLayoutFields {
+export type SquareLayoutFields = {
     readonly panels: number;
     readonly margins: SquareMargins;
     /** The width in pixels of the band at the right of the squares, or 0 for no band. */
@@ -58,15 +59,15 @@ export interface SquareLayoutFields {
      * an axis of a small square.
      */
     readonly squareLabel?: { readonly series: number; readonly insetPx: number };
-}
+};
 
 /** The grids of a square layout, the places of the band members, and the media rules that resize them. */
-export interface SquareLayout {
+export type SquareLayout = {
     readonly grid: EchartOption[];
     readonly legend?: EchartOption;
     readonly visualMap?: EchartOption[];
     readonly media: EchartOption[];
-}
+};
 
 /** The smallest square side, in pixels. A container smaller than its rule still draws this square. */
 const SQUARE_MIN_PX = 120;
@@ -105,14 +106,14 @@ const POINT_SCALE_FROM_PX = 330;
 const POINT_MIN_PX = 1;
 
 /** One place of the layout at one square side: the grids, the band members, and the smallest container that holds them. */
-interface Placement {
+type Placement = {
     readonly series?: EchartOption[];
     readonly grid: EchartOption[];
     readonly legend?: EchartOption;
     readonly visualMap?: EchartOption[];
     readonly minWidth: number;
     readonly minHeight: number;
-}
+};
 
 /**
  * The layout of some square panels, and of the band at their right.
@@ -141,8 +142,8 @@ export function squareLayout(fields: SquareLayoutFields): SquareLayout {
     }
     return {
         grid: smallest.grid,
-        ...(smallest.legend !== undefined ? { legend: smallest.legend } : {}),
-        ...(smallest.visualMap !== undefined ? { visualMap: smallest.visualMap } : {}),
+        legend: smallest.legend !== undefined ? smallest.legend : undefined,
+        visualMap: smallest.visualMap !== undefined ? smallest.visualMap : undefined,
         media,
     };
 }
@@ -158,21 +159,21 @@ function marginScale(side: number): number {
 /** The option of one media rule: the point size, the grids, the legend, and the color scales of one placement. */
 function placedOption(entry: Placement): EchartOption {
     return {
-        ...(entry.series !== undefined ? { series: entry.series } : {}),
+        series: entry.series !== undefined ? entry.series : undefined,
         grid: entry.grid,
-        ...(entry.legend !== undefined ? { legend: entry.legend } : {}),
-        ...(entry.visualMap !== undefined ? { visualMap: entry.visualMap } : {}),
+        legend: entry.legend !== undefined ? entry.legend : undefined,
+        visualMap: entry.visualMap !== undefined ? entry.visualMap : undefined,
     };
 }
 
 /** One placement moved right by some pixels: each grid, the legend, and each color scale. */
 function shifted(entry: Placement, by: number): Placement {
-    const move = (member: EchartOption): EchartOption => ({ ...member, left: (member.left as number) + by });
+    const move = (member: EchartOption): EchartOption => ({ ...member, left: optionNumber(member.left) + by });
     return {
         ...entry,
         grid: entry.grid.map(move),
-        ...(entry.legend !== undefined ? { legend: move(entry.legend) } : {}),
-        ...(entry.visualMap !== undefined ? { visualMap: entry.visualMap.map(move) } : {}),
+        legend: entry.legend !== undefined ? move(entry.legend) : undefined,
+        visualMap: entry.visualMap !== undefined ? entry.visualMap.map(move) : undefined,
     };
 }
 
@@ -206,8 +207,8 @@ function placement(side: number, fields: SquareLayoutFields, scale: number, leas
     const series: EchartOption[] = Array.from(
         { length: Math.max(points?.series ?? 0, squareLabel === undefined ? 0 : squareLabel.series + 1) },
         (_entry, index) => ({
-            ...(points !== undefined && index < points.series ? { symbolSize: pointPx } : {}),
-            ...(squareLabel !== undefined && index === squareLabel.series ? { label: { width: side - 2 * squareLabel.insetPx, overflow: "break" } } : {}),
+            symbolSize: points !== undefined && index < points.series ? pointPx : undefined,
+            label: squareLabel !== undefined && index === squareLabel.series ? { width: side - 2 * squareLabel.insetPx, overflow: "break" } : undefined,
         }),
     );
     const blockBottom = top + rows * side + (rows - 1) * gap + margin(fields.margins.bottom);
@@ -221,29 +222,27 @@ function placement(side: number, fields: SquareLayoutFields, scale: number, leas
               ? { legend: { left: bandLeft, top } }
               : { legend: { left, top: blockBottom, width: blockRight - left, orient: "horizontal" } };
     return {
-        ...(series.length > 0 ? { series } : {}),
+        series: series.length > 0 ? series : undefined,
         grid,
         ...legend,
-        ...(fields.visualMaps !== undefined && fields.visualMaps > 0
-            ? { visualMap: Array.from({ length: fields.visualMaps }, () => ({ left: bandLeft, top })) }
-            : {}),
+        visualMap: fields.visualMaps !== undefined && fields.visualMaps > 0 ? Array.from({ length: fields.visualMaps }, () => ({ left: bandLeft, top })) : undefined,
         minWidth: blockRight + band + margin(fields.margins.right),
         minHeight: blockBottom + legendHeight,
     };
 }
 
 /** The range of one axis. */
-export interface AxisRange {
+export type AxisRange = {
     readonly min: number;
     readonly max: number;
-}
+};
 
 /** The ranges of the two axes of one unit, and the tick step of a rounded pair. */
-export interface EqualRanges {
+export type EqualRanges = {
     readonly x: AxisRange;
     readonly y: AxisRange;
     readonly step?: number;
-}
+};
 
 /**
  * The ranges of two axes that share one unit: each axis spans one length, around its own data.

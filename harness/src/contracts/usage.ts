@@ -13,7 +13,7 @@
  * all-zero one, so a consumer can tell "spent nothing" from "was told nothing".
  */
 
-export interface TokenUsageRollup {
+export type TokenUsageRollup = {
     /** Total billed prefix, cache reads included. */
     readonly inputTokens?: number;
     readonly outputTokens?: number;
@@ -27,7 +27,7 @@ export interface TokenUsageRollup {
      * total varies by provider, so arithmetic between the two is a guess.
      */
     readonly reasoningTokens?: number;
-}
+};
 
 /**
  * The rollup's fields as values — the single enumeration a fold can iterate.

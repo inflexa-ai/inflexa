@@ -132,7 +132,7 @@ export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "tem
     if (step.constraints && step.constraints.length > 0) {
         parts.push(section("Constraints (each one is a requirement of this step)", bullets(step.constraints)));
     }
-    if (step.acceptance_criteria && step.acceptance_criteria.length > 0) {
+    if (step.acceptance_criteria.length > 0) {
         parts.push(section("Acceptance criteria (the result must satisfy all of these)", bullets(step.acceptance_criteria)));
     }
     if (step.caveats && step.caveats.length > 0) {
@@ -367,12 +367,12 @@ export function renderTemplateContract(brief: TemplateBrief | undefined): string
  * every other path in the briefing is rooted with, thus one field serves the
  * workspace section and the orientation alike.
  */
-export interface WorkspaceFrame {
+export type WorkspaceFrame = {
     /** The analysis id. The sandbox mounts the read-only analysis tree at `/{analysisId}`. */
     readonly analysisId: string;
     /** In-sandbox working directory — this step's writable artifact directory, and its cwd. */
     readonly workingDir: string;
-}
+};
 
 /** The in-sandbox analysis root of a frame — the read-only mount of the whole tree. */
 export function analysisRootOf(frame: WorkspaceFrame): string {
@@ -435,7 +435,7 @@ export function renderOrientation(profile: DataProfileResult | null | undefined,
  * to the rest — an agent that needs more than the excerpt reads the summary at
  * `summaryPath` rather than having the whole document pushed into its context.
  */
-export interface UpstreamHandoff {
+export type UpstreamHandoff = {
     readonly stepId: string;
     readonly agentId: string;
     /** The dependency's step summary. Clamped to {@link UPSTREAM_SUMMARY_MAX_CHARS} here, not by the caller. */
@@ -446,7 +446,7 @@ export interface UpstreamHandoff {
     readonly outputDir: string;
     /** In-sandbox absolute paths of the artifacts the dependency registered. */
     readonly artifacts: readonly string[];
-}
+};
 
 export function renderUpstream(handoffs: readonly UpstreamHandoff[]): string {
     if (handoffs.length === 0) return "";
@@ -483,7 +483,7 @@ function renderHandoff(handoff: UpstreamHandoff): string {
 // ── Composition ───────────────────────────────────────────────────────
 
 /** Everything one step's seed is composed from — all of it known at dispatch time. */
-export interface StepBriefing {
+export type StepBriefing = {
     readonly step: AnalysisStep;
     readonly workspace: WorkspaceFrame;
     /** The analysis's persisted data profile; `null` when never profiled or still pending. */
@@ -500,7 +500,7 @@ export interface StepBriefing {
      * service does not hold the template. Read only when `template` is absent.
      */
     readonly templateNotRetrieved?: string;
-}
+};
 
 /**
  * Compose the seed. Absent sections collapse out entirely — an independent step

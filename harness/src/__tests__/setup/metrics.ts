@@ -8,24 +8,23 @@
 import { type Attributes, metrics } from "@opentelemetry/api";
 import {
     AggregationTemporality,
-    type HistogramMetricData,
+    DataPointType,
     InMemoryMetricExporter,
     MeterProvider,
     type MetricData,
     PeriodicExportingMetricReader,
-    type SumMetricData,
 } from "@opentelemetry/sdk-metrics";
 
 import { __resetMetricsForTest } from "../../lib/metrics.js";
 
-export interface MetricsCapture {
+export type MetricsCapture = {
     /** `[attributes, value]` of each data point of a counter; `[]` when the instrument exported nothing. */
     sums(name: string): Promise<Array<[Attributes, number]>>;
     /** `[attributes, {count, sum}]` of each data point of a histogram; `[]` when the instrument exported nothing. */
     histograms(name: string): Promise<Array<[Attributes, { count: number; sum: number | undefined }]>>;
     /** Shut the provider down and unbind the global meter provider. */
     dispose(): Promise<void>;
-}
+};
 
 export function captureMetrics(): MetricsCapture {
     __resetMetricsForTest();
@@ -44,12 +43,14 @@ export function captureMetrics(): MetricsCapture {
 
     return {
         async sums(name) {
-            const metric = (await find(name)) as SumMetricData | undefined;
-            return metric?.dataPoints.map((dp) => [dp.attributes, dp.value]) ?? [];
+            const metric = await find(name);
+            if (metric?.dataPointType !== DataPointType.SUM) return [];
+            return metric.dataPoints.map((dp) => [dp.attributes, dp.value]);
         },
         async histograms(name) {
-            const metric = (await find(name)) as HistogramMetricData | undefined;
-            return metric?.dataPoints.map((dp) => [dp.attributes, { count: dp.value.count, sum: dp.value.sum }]) ?? [];
+            const metric = await find(name);
+            if (metric?.dataPointType !== DataPointType.HISTOGRAM) return [];
+            return metric.dataPoints.map((dp) => [dp.attributes, { count: dp.value.count, sum: dp.value.sum }]);
         },
         async dispose() {
             await provider.shutdown();

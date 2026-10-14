@@ -1,0 +1,410 @@
+import { describe, expect, it } from "bun:test";
+
+import type { ModelMessage } from "ai";
+
+import type { EmitFn } from "../../loop/types.js";
+import { dropMarkerMessage, markCompactionExchange, summaryMarkerMessage, syntheticUserMessage } from "../ai-sdk-message-storage.js";
+import { createConversationDisplayRecorder } from "../conversation-display-recorder.js";
+
+const TOP = { agentId: "conversation", callPath: ["conversation"] };
+const SUB = { agentId: "child", callPath: ["conversation", "child"] };
+
+function harness() {
+    const forwarded: Parameters<EmitFn>[0][] = [];
+    const recorder = createConversationDisplayRecorder({
+        userText: "question",
+        agentId: TOP.agentId,
+        sink: (event) => {
+            forwarded.push(event);
+        },
+        userMessageId: "u1",
+        assistantMessageId: "a1",
+    });
+    return { recorder, forwarded };
+}
+
+describe("conversation display recorder", () => {
+    it("preserves text/card/text order and copies emitted data", async () => {
+        const { recorder, forwarded } = harness();
+        const data = { id: "p1", content: { kind: "markdown" as const, body: "card" } };
+        await recorder.emit({ type: "text-delta", text: "before" });
+        await recorder.emit({ type: "data-presentation", source: TOP, data });
+        data.content.body = "mutated";
+        await recorder.emit({ type: "text-delta", text: "after" });
+
+        const display = recorder.finish();
+        expect(display[1].parts).toEqual([
+            { type: "text", text: "before", state: "done" },
+            { type: "data-presentation", id: "p1", data: { id: "p1", content: { kind: "markdown", body: "card" } } },
+            { type: "text", text: "after", state: "done" },
+        ]);
+        expect(forwarded).toHaveLength(3);
+    });
+
+    it("keeps each plan step field that the card shows", async () => {
+        const { recorder } = harness();
+        const step = {
+            id: "T1S1",
+            name: "Normalize",
+            agent: "rna-seq",
+            question: "Which genes change?",
+            depends_on: [],
+            maxSteps: 40,
+            track: "1",
+            step_type: "analysis",
+            acceptance_criteria: ["A counts table exists"],
+            constraints: ["Use DESeq2"],
+            caveats: ["Low depth"],
+            resources: { cpu: 4, memoryGb: 16, gpu: { count: 1 } },
+        };
+        await recorder.emit({ type: "data-plan", source: TOP, data: { id: "pres-1", planId: "pln-0123abcd", steps: [step] } });
+
+        const display = recorder.finish();
+        expect(display[1].parts).toEqual([{ type: "data-plan", id: "pres-1", data: { id: "pres-1", planId: "pln-0123abcd", steps: [step] } }]);
+    });
+
+    it("keeps observed concurrent card order rather than tool declaration order", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "a", name: "tool_a", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "b", name: "tool_b", input: {} });
+        await recorder.emit({
+            type: "data-presentation",
+            source: TOP,
+            data: { id: "from-b", content: { kind: "markdown", body: "B" } },
+        });
+        await recorder.emit({
+            type: "data-presentation",
+            source: TOP,
+            data: { id: "from-a", content: { kind: "markdown", body: "A" } },
+        });
+        // Finishing out of start order must not reorder the parts: each call reconciles
+        // in the position it first took, which is the order the user watched them appear.
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "b", name: "tool_b", outcome: "ok" });
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "a", name: "tool_a", outcome: "ok" });
+
+        expect(recorder.finish()[1].parts.map((part) => ("id" in part ? part.id : part.type))).toEqual(["a", "b", "from-b", "from-a"]);
+    });
+
+    it("records a child-session-started part in the position of its emission", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "starting" });
+        await recorder.emit({ type: "data-child-session-started", source: TOP, data: { threadId: "r1", parentThreadId: "p1", threadType: "report" } });
+        await recorder.emit({ type: "text-delta", text: "done" });
+
+        // The part is durable conversation display, thus the recorder keeps it
+        // between the two text runs and a reload shows it where the spawn ran.
+        const display = recorder.finish();
+        expect(display[1].parts).toEqual([
+            { type: "text", text: "starting", state: "done" },
+            { type: "data-child-session-started", data: { threadId: "r1", parentThreadId: "p1", threadType: "report" } },
+            { type: "text", text: "done", state: "done" },
+        ]);
+    });
+
+    it("records a report-rendered part in the position of its emission", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "rendering" });
+        await recorder.emit({
+            type: "data-report-rendered",
+            source: TOP,
+            data: { id: "rr1", renderedAt: "2026-08-18T00:00:00.000Z", title: "Report" },
+        });
+        await recorder.emit({ type: "text-delta", text: "done" });
+
+        // The part is durable conversation display, thus the recorder keeps it
+        // between the two text runs and a reload shows it where the render ran.
+        const display = recorder.finish();
+        expect(display[1].parts).toEqual([
+            { type: "text", text: "rendering", state: "done" },
+            { type: "data-report-rendered", id: "rr1", data: { id: "rr1", renderedAt: "2026-08-18T00:00:00.000Z", title: "Report" } },
+            { type: "text", text: "done", state: "done" },
+        ]);
+    });
+
+    it("keeps an emitted compaction part out of the assistant message, and forwards it", async () => {
+        const { recorder, forwarded } = harness();
+        await recorder.emit({ type: "text-delta", text: "before" });
+        await recorder.emit({ type: "data-compaction", source: TOP, data: { id: "c-1", status: "running", tokensBefore: 162_000 } });
+        await recorder.emit({
+            type: "data-compaction",
+            source: TOP,
+            data: { id: "c-1", status: "done", tokensBefore: 162_000, durationMs: 21_000 },
+        });
+
+        expect(recorder.takeRound([])).toEqual([{ id: "a1", role: "assistant", parts: [{ type: "text", text: "before", state: "done" }] }]);
+        expect(forwarded.filter((event) => event.type === "data-compaction")).toHaveLength(2);
+    });
+
+    it("records each call's outcome and detail as shown, denial distinct from failure", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "r", name: "read_file", input: {}, detail: "scripts/run.py" });
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "r", name: "read_file", outcome: "ok", detail: "scripts/run.py" });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "x", name: "execute_command", input: {} });
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "x", name: "execute_command", outcome: "denied" });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "e", name: "grep", input: {} });
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "e", name: "grep", outcome: "error" });
+
+        expect(recorder.finish()[1].parts).toEqual([
+            { type: "data-tool-call", id: "r", data: { toolCallId: "r", toolName: "read_file", outcome: "ok", detail: "scripts/run.py" } },
+            { type: "data-tool-call", id: "x", data: { toolCallId: "x", toolName: "execute_command", outcome: "denied" } },
+            { type: "data-tool-call", id: "e", data: { toolCallId: "e", toolName: "grep", outcome: "error" } },
+        ]);
+    });
+
+    it("reconciles approval to one terminal part and excludes sub-agent display", async () => {
+        const { recorder } = harness();
+        const base = { id: "ask-1", title: "Run?", command: "python analysis.py" };
+        await recorder.emit({ type: "data-ask", source: TOP, data: { ...base, status: "pending" } });
+        await recorder.emit({
+            type: "data-presentation",
+            source: SUB,
+            data: { id: "hidden", content: { kind: "markdown", body: "child" } },
+        });
+        await recorder.emit({ type: "data-ask", source: TOP, data: { ...base, status: "resolved" } });
+
+        expect(recorder.finish()[1].parts).toEqual([{ type: "data-ask", id: "ask-1", data: { ...base, status: "resolved" } }]);
+    });
+
+    it("leaves an unfinished call incomplete on interruption", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "call-1", name: "execute_analysis", input: { mode: "plan" } });
+        await recorder.emit({
+            type: "data-ask",
+            source: TOP,
+            data: { id: "ask-interrupted", title: "Run?", command: "inflexa run", status: "pending" },
+        });
+
+        const assistant = recorder.finish({ interrupted: true })[1];
+        expect(assistant.metadata).toEqual({ interrupted: true });
+        // The call never finished, so it still holds the `incomplete` it was recorded with
+        // at dispatch. An interrupted call is neither a success nor a failure, and one field
+        // carrying `incomplete` says so without a reader having to combine two.
+        expect(assistant.parts[0]).toEqual({
+            type: "data-tool-call",
+            id: "call-1",
+            data: { toolCallId: "call-1", toolName: "execute_analysis", outcome: "incomplete" },
+        });
+        expect(assistant.parts[1]).toEqual({
+            type: "data-ask",
+            id: "ask-interrupted",
+            data: { id: "ask-interrupted", title: "Run?", command: "inflexa run", status: "aborted" },
+        });
+    });
+
+    it("uses final text only when the provider emitted no deltas", async () => {
+        const { recorder } = harness();
+        expect(recorder.finish({ fallbackText: "whole answer" })[1].parts).toEqual([{ type: "text", text: "whole answer", state: "done" }]);
+
+        const streamed = harness().recorder;
+        await streamed.emit({ type: "text-delta", text: "streamed" });
+        expect(streamed.finish({ fallbackText: "streamed in full" })[1].parts).toEqual([{ type: "text", text: "streamed", state: "done" }]);
+    });
+});
+
+describe("conversation display recorder — sub-agent activity", () => {
+    const PLANNER = { agentId: "planner", callPath: ["conversation", "planner"], invocationId: "t1" };
+    const T0 = Date.parse("2026-10-12T10:00:00.000Z");
+
+    function timed() {
+        let tick = 0;
+        const recorder = createConversationDisplayRecorder({
+            userText: "question",
+            agentId: TOP.agentId,
+            sink: () => {},
+            userMessageId: "u1",
+            assistantMessageId: "a1",
+            now: () => T0 + 1000 * tick++,
+        });
+        return recorder;
+    }
+
+    it("keeps the tool calls of a sub-agent as entries of the part of their root call", async () => {
+        const recorder = timed();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "iteration", source: PLANNER, index: 0, final: false });
+        await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed", input: { secret: "key" }, detail: "TP53" });
+        await recorder.emit({ type: "tool-finished", source: PLANNER, toolUseId: "s1", name: "search_pubmed", outcome: "ok", durationMs: 250 });
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "generate_plan", outcome: "ok" });
+
+        const parts = recorder.finish()[1]!.parts;
+        const stored = parts.find((part) => part.type === "data-subagent-activity");
+        expect(stored).toEqual({
+            type: "data-subagent-activity",
+            id: "subagent-activity-t1",
+            data: {
+                id: "subagent-activity-t1",
+                toolCallId: "t1",
+                dropped: 0,
+                entries: [
+                    {
+                        agentId: "planner",
+                        callPath: ["conversation", "planner"],
+                        tool: "search_pubmed",
+                        label: "TP53",
+                        startedAt: new Date(T0 + 2000).toISOString(),
+                        endedAt: new Date(T0 + 2250).toISOString(),
+                        outcome: "ok",
+                    },
+                ],
+            },
+        });
+        expect(JSON.stringify(parts)).not.toContain("secret");
+        expect(parts.filter((part) => part.type === "data-subagent-activity")).toHaveLength(1);
+    });
+
+    it("keeps a sub-agent display part out", async () => {
+        const recorder = timed();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "data-presentation", source: PLANNER, data: { id: "hidden", content: { kind: "markdown", body: "child" } } });
+
+        expect(recorder.finish()[1]!.parts).toEqual([
+            { type: "data-tool-call", id: "t1", data: { toolCallId: "t1", toolName: "generate_plan", outcome: "incomplete" } },
+        ]);
+    });
+
+    it("leaves no record for a frame with no invocation id", async () => {
+        const recorder = timed();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        const compaction = { agentId: "conversation-compaction", callPath: ["conversation", "conversation-compaction"] };
+        await recorder.emit({ type: "tool-started", source: compaction, toolUseId: "c1", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-finished", source: compaction, toolUseId: "c1", name: "read_file", outcome: "ok" });
+
+        expect(recorder.finish()[1]!.parts.map((part) => part.type)).toEqual(["data-tool-call"]);
+    });
+
+    it("closes an unfinished entry as incomplete", async () => {
+        const recorder = timed();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed", input: {} });
+
+        const stored = recorder.takeRound([{ role: "assistant", content: "" }])[0]!.parts.find((part) => part.type === "data-subagent-activity");
+        expect(stored).toMatchObject({
+            data: { toolCallId: "t1", entries: [{ tool: "search_pubmed", outcome: "incomplete", startedAt: new Date(T0 + 1000).toISOString() }] },
+        });
+        expect(stored && "data" in stored ? stored.data.entries[0] : undefined).not.toHaveProperty("endedAt");
+    });
+});
+
+describe("conversation display recorder — rounds", () => {
+    it("gives the user message of the turn at the opening", () => {
+        const { recorder } = harness();
+
+        expect(recorder.takeOpening()).toEqual([{ id: "u1", role: "user", parts: [{ type: "text", text: "question", state: "done" }] }]);
+    });
+
+    it("gives the parts of each round under one assistant id", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "first" });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "c1", name: "read_file", outcome: "ok" });
+        const first = recorder.takeRound([]);
+        await recorder.emit({ type: "text-delta", text: "second" });
+        const second = recorder.takeRound([]);
+
+        expect(first).toEqual([
+            {
+                id: "a1",
+                role: "assistant",
+                parts: [
+                    { type: "text", text: "first", state: "done" },
+                    { type: "data-tool-call", id: "c1", data: { toolCallId: "c1", toolName: "read_file", outcome: "ok" } },
+                ],
+            },
+        ]);
+        expect(second).toEqual([{ id: "a1", role: "assistant", parts: [{ type: "text", text: "second", state: "done" }] }]);
+    });
+
+    it("takes the text of the assistant message when the round streamed no text", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} });
+
+        const round = recorder.takeRound([
+            {
+                role: "assistant",
+                content: [
+                    { type: "text", text: "whole answer" },
+                    { type: "tool-call", toolCallId: "c1", toolName: "read_file", input: {} },
+                ],
+            },
+            { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "read_file", output: { type: "text", value: "x" } }] },
+        ]);
+
+        expect(round[0].parts.at(-1)).toEqual({ type: "text", text: "whole answer", state: "done" });
+    });
+
+    it("marks a pending approval aborted at the take", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "Run?", command: "inflexa run", status: "pending" } });
+
+        expect(recorder.takeRound([])[0].parts).toEqual([
+            { type: "data-ask", id: "ask-1", data: { id: "ask-1", title: "Run?", command: "inflexa run", status: "aborted" } },
+        ]);
+    });
+
+    it("gives no message for a round with no part", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "taken" });
+        recorder.takeRound([]);
+
+        expect(recorder.takeRound([{ role: "tool", content: [] }])).toEqual([]);
+    });
+});
+
+describe("conversation display recorder — compaction rounds", () => {
+    const base: ModelMessage[] = [
+        syntheticUserMessage("Reply with the summary."),
+        { role: "assistant", content: [{ type: "text", text: "The user compares two groups." }] },
+    ];
+    const exchange: ModelMessage[] = base.map((message) => markCompactionExchange(message, "c-1"));
+    const figures = { id: "c-1", tokensBefore: 162_000, durationMs: 21_000 };
+
+    it("gives no message for an exchange round, and never takes the text of the exchange", async () => {
+        const { recorder } = harness();
+
+        expect(recorder.takeRound(exchange)).toEqual([]);
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c2", name: "read_file", input: {} });
+        expect(recorder.takeRound(exchange)[0].parts.map((part) => part.type)).toEqual(["data-tool-call"]);
+    });
+
+    it("gives the divider of a marker round with the figures of the marker", () => {
+        const { recorder } = harness();
+
+        const round = recorder.takeRound([summaryMarkerMessage("The user compares two groups.", { kind: "summary", ...figures })]);
+
+        expect(round).toEqual([{ id: "c-1", role: "system", parts: [{ type: "data-compaction", id: "c-1", data: { ...figures, status: "done" } }] }]);
+    });
+
+    it("gives the divider the trigger of the marker", () => {
+        const { recorder } = harness();
+
+        const round = recorder.takeRound([summaryMarkerMessage("The user compares two groups.", { kind: "summary", ...figures, trigger: "turn-start" })]);
+
+        expect(round[0].parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "done", trigger: "turn-start" } }]);
+    });
+
+    it("gives the divider of a drop marker with the status failed, after the assistant message of the parts", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "before" });
+
+        const round = recorder.takeRound([dropMarkerMessage({ kind: "drop", ...figures, keptTurns: 2 })]);
+
+        expect(round.map((message) => [message.id, message.role])).toEqual([
+            ["a1", "assistant"],
+            ["c-1", "system"],
+        ]);
+        expect(round[1].parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "failed" } }]);
+    });
+
+    it("gives a round after a marker round a new assistant id", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "first" });
+        const first = recorder.takeRound([]);
+        recorder.takeRound([summaryMarkerMessage("summary", { kind: "summary", ...figures })]);
+        await recorder.emit({ type: "text-delta", text: "second" });
+        const second = recorder.takeRound([]);
+
+        expect(first[0].id).toBe("a1");
+        expect(second[0].id).not.toBe("a1");
+        expect(second[0].parts).toEqual([{ type: "text", text: "second", state: "done" }]);
+    });
+});

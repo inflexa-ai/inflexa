@@ -11,6 +11,7 @@
  */
 
 import type { ExecResult, SandboxLiveness, SandboxRef } from "./types.js";
+import { errorMessage } from "../lib/thrown.js";
 
 /**
  * Consecutive `unavailable` polls tolerated before probing. On the fast poll
@@ -61,7 +62,7 @@ export async function probeLiveness(isAlive: (ref: SandboxRef) => Promise<Sandbo
     try {
         liveness = await isAlive(ref);
     } catch (cause) {
-        return { kind: "inconclusive", detail: cause instanceof Error ? cause.message : String(cause) };
+        return { kind: "inconclusive", detail: errorMessage(cause) };
     }
     return liveness.alive ? { kind: "alive" } : { kind: "dead", oomKilled: liveness.oomKilled };
 }

@@ -332,7 +332,7 @@ const PAGE_EXPORT_SIZES = Object.fromEntries(
             textPx: size.textPx,
             width: size.widthPx,
             height: size.heightPx,
-            ...("widthMm" in size ? { widthMm: size.widthMm, heightMm: size.heightMm } : {}),
+            widthMm: "widthMm" in size ? size.widthMm : undefined, heightMm: "widthMm" in size ? size.heightMm : undefined,
             pixelRatio: size.pixelRatio,
         },
     ]),

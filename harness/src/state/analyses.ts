@@ -40,7 +40,7 @@ export function loadAnalysisStatus(pool: Querier, resourceId: string): ResultAsy
             text: "SELECT status, context FROM cortex_analysis_state WHERE analysis_id = $1",
             values: [resourceId],
         });
-        const row = result.rows[0];
+        const row = result.rows.at(0);
         if (!row) return null;
         return { status: row.status, context: row.context ?? null };
     });

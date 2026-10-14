@@ -19,7 +19,7 @@
  * service derives from its object-store index and the CLI synthesizes from the
  * local path — the harness treats them as opaque labels.
  */
-export interface StagedInput {
+export type StagedInput = {
     readonly fileId: string;
     readonly mountName: string;
     readonly key: string;
@@ -39,4 +39,4 @@ export interface StagedInput {
     readonly mtimeMs: number;
     /** Path relative to the data dir, e.g. "inputs/{mountName}/{key}". */
     readonly relativePath: string;
-}
+};

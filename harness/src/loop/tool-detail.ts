@@ -22,7 +22,7 @@ import { normalizeUnicode, redactSecrets } from "../input-sanitization.js";
 import type { Logger } from "../lib/logger.js";
 import type { Tool } from "../tools/define-tool.js";
 
-export type { ToolCallDetail };
+export type { ToolCallDetail } from "../contracts/chat-events.js";
 
 /**
  * The length cap, in characters. A full workspace path with a line range fits
@@ -97,6 +97,7 @@ export function normalizeDetail(raw: unknown): ToolCallDetail | undefined {
     // `normalizeUnicode` leaves tab, newline and carriage return in place (they
     // are legitimate whitespace in prose); the collapse below is what turns them
     // into the single line this contract promises.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const oneLine = normalizeUnicode(raw).replace(/\s+/g, " ").trim();
     if (oneLine.length === 0) return undefined;
 

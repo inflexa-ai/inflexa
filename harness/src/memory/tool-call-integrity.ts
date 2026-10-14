@@ -29,10 +29,10 @@ export function notRunResult(call: Pick<ToolCallPart, "toolCallId" | "toolName">
 }
 
 /** One tool call that {@link answerUnansweredToolCalls} answered, identified for the caller's diagnostic record. */
-export interface AnsweredToolCall {
+export type AnsweredToolCall = {
     readonly toolCallId: string;
     readonly toolName: string;
-}
+};
 
 /**
  * Whether this tool call needs a client-supplied result. A provider-executed
@@ -77,14 +77,14 @@ export function answerUnansweredToolCalls(messages: ModelMessage[], fromIndex = 
     // Backward, so an insertion after a message cannot shift an index this walk
     // has yet to visit.
     for (let idx = messages.length - 1; idx >= fromIndex; idx--) {
-        const message = messages[idx]!;
+        const message = messages[idx];
         if (message.role !== "assistant" || typeof message.content === "string") continue;
         const unanswered = message.content.filter(
             (part): part is ToolCallPart => part.type === "tool-call" && needsClientResult(part) && !resultIds.has(part.toolCallId),
         );
         if (unanswered.length === 0) continue;
         let insertAt = idx + 1;
-        while (insertAt < messages.length && messages[insertAt]!.role === "tool") insertAt++;
+        while (insertAt < messages.length && messages[insertAt].role === "tool") insertAt++;
         messages.splice(insertAt, 0, { role: "tool", content: unanswered.map((part) => notRunResult(part)) });
         // Prepended as a batch: the walk visits messages tail-first, but the
         // caller's record reads in transcript order.

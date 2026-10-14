@@ -33,6 +33,7 @@ import {
     type ChannelSource,
 } from "./common.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
+import { typedMember } from "../../lib/shape.js";
 
 /** The members of a forest block that the figure reads. */
 const FOREST_READS: ReadonlySet<FigureMember> = new Set<FigureMember>(["x", "y", "low", "high", "p", "size"]);
@@ -103,23 +104,23 @@ const ESTIMATE_SCIENTIFIC_FLOOR = 1e-3;
 const CHART_EDGE = "2%";
 
 /** The columns that the channels of one forest block name. */
-interface ForestColumns {
+type ForestColumns = {
     readonly term: string;
     readonly estimate: string;
     readonly low?: string;
     readonly high?: string;
     readonly p?: string;
     readonly size?: string;
-}
+};
 
 /** One row of the figure: its term, its cells read as numbers, and the row of the table. */
-interface ForestRow {
+type ForestRow = {
     readonly term: Cell;
     readonly estimate: number;
     readonly low: number | null;
     readonly high: number | null;
     readonly row: ChartRow;
-}
+};
 
 /** Derive the figure of one forest block. */
 function deriveForest(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
@@ -212,10 +213,10 @@ function forestColumns(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     return ok({
         term: channelColumn(term),
         estimate: estimate.value,
-        ...(optional.low !== undefined ? { low: optional.low } : {}),
-        ...(optional.high !== undefined ? { high: optional.high } : {}),
-        ...(optional.p !== undefined ? { p: optional.p } : {}),
-        ...(optional.size !== undefined ? { size: optional.size } : {}),
+        low: optional.low !== undefined ? optional.low : undefined,
+        high: optional.high !== undefined ? optional.high : undefined,
+        p: optional.p !== undefined ? optional.p : undefined,
+        size: optional.size !== undefined ? optional.size : undefined,
     });
 }
 
@@ -230,7 +231,7 @@ function forestRows(rows: readonly ChartRow[], columns: ForestColumns, blockId: 
     const seen = new Set<string>();
     const forest: ForestRow[] = [];
     for (const [index, row] of rows.entries()) {
-        const term = row[columns.term];
+        const term = typedMember(row, columns.term);
         const estimate = toNumber(row[columns.estimate]);
         if (term === undefined || String(term) === "" || estimate === null) continue;
         if (seen.has(String(term))) {
@@ -254,10 +255,10 @@ function forestRows(rows: readonly ChartRow[], columns: ForestColumns, blockId: 
 }
 
 /** The two ends of one axis. */
-interface AxisRange {
+type AxisRange = {
     readonly min: number;
     readonly max: number;
-}
+};
 
 /**
  * The ends of the log axis: the largest nice ratio at or under the smallest value, and the smallest nice ratio

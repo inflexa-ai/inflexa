@@ -7,24 +7,24 @@ import type { FailedRequest } from "../../lib/page-capture.js";
 import { capCodePoints } from "../../loop/tool-detail.js";
 
 /** One distinct console error of a look, and how many times the page logged it. */
-export interface ConsoleErrorEntry {
+export type ConsoleErrorEntry = {
     text: string;
     count: number;
-}
+};
 
 /** One distinct failed request of a look, and how many times the page made it. */
-export interface FailedRequestEntry {
+export type FailedRequestEntry = {
     url: string;
     reason: string;
     count: number;
-}
+};
 
 /** The digest of one look. `omittedFaults` counts the distinct entries that the cap left out, thus a cut is never silent. */
-export interface PageFaults {
+export type PageFaults = {
     consoleErrors: ConsoleErrorEntry[];
     failedRequests: FailedRequestEntry[];
     omittedFaults?: { consoleErrors: number; failedRequests: number };
-}
+};
 
 /** The most code points of one fault text, after the placeholders replace the inline data. */
 const MAX_FAULT_TEXT = 300;
@@ -33,9 +33,11 @@ const MAX_FAULT_TEXT = 300;
 const MAX_FAULT_ENTRIES = 20;
 
 /** A data URI. A fault text quotes a URI in quotes or parentheses, thus those characters end the data. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const DATA_URI = /data:([a-z0-9.+-]+\/[a-z0-9.+-]+)?((?:;[^,;\s'"()<>]*)*),([^\s'"()<>]*)/gi;
 
 /** A base64 run of 100 characters or more. A content hash in hex is 64 characters, thus a hash stays. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const BASE64_RUN = /[A-Za-z0-9+/]{100,}={0,2}/g;
 
 /** Shorten one fault text: the inline data becomes placeholders, and the text stops at the cap. */
@@ -74,6 +76,6 @@ export function digestPageFaults(consoleErrors: readonly string[], failedRequest
     return {
         consoleErrors: errors.slice(0, MAX_FAULT_ENTRIES),
         failedRequests: requests.slice(0, MAX_FAULT_ENTRIES),
-        ...(omittedErrors + omittedRequests > 0 ? { omittedFaults: { consoleErrors: omittedErrors, failedRequests: omittedRequests } } : {}),
+        omittedFaults: omittedErrors + omittedRequests > 0 ? { consoleErrors: omittedErrors, failedRequests: omittedRequests } : undefined,
     };
 }

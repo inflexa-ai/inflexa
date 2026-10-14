@@ -1,7 +1,7 @@
-interface CacheEntry<Value> {
+type CacheEntry<Value> = {
     readonly value: Value;
     readonly expiresAt: number;
-}
+};
 
 export class BoundedTtlCache<Value> {
     private readonly entries = new Map<string, CacheEntry<Value>>();
@@ -30,7 +30,7 @@ export class BoundedTtlCache<Value> {
         this.entries.delete(key);
         this.entries.set(key, { value, expiresAt: this.now() + ttlMs });
         while (this.entries.size > this.maximum) {
-            const oldest = this.entries.keys().next().value as string | undefined;
+            const oldest = this.entries.keys().next().value;
             if (oldest === undefined) break;
             this.entries.delete(oldest);
         }

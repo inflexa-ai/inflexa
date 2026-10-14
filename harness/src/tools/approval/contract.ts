@@ -18,7 +18,7 @@
  * they saw is precisely what is granted, nothing broader. No tool- or
  * domain-specific fields: the harness stays agnostic to what is being approved.
  */
-export interface AskRequest {
+export type AskRequest = {
     readonly title: string;
     readonly command: string;
     readonly detail?: string;
@@ -30,7 +30,7 @@ export interface AskRequest {
      * field, and the surface never renders it. Absent, the grant keys on `command`.
      */
     readonly grantKey?: string;
-}
+};
 
 /**
  * A user's decision on an approval request — three distinct outcomes, never a
@@ -75,9 +75,9 @@ export class AskRejectedError extends Error {
  * Realizations are wired by the embedder; an unwired host resolves to
  * `UnavailableAsk`.
  */
-export interface Ask {
+export type Ask = {
     ask(request: AskRequest): Promise<AskApproval>;
-}
+};
 
 /**
  * Deny-by-default realization — the shipped `Ask` for hosts that wire no
@@ -86,7 +86,7 @@ export interface Ask {
  * rather than left waiting on a surface that will never respond.
  */
 export class UnavailableAsk implements Ask {
-    async ask(_request: AskRequest): Promise<AskApproval> {
-        throw new AskRejectedError("approval is unavailable in this environment");
+    ask(_request: AskRequest): Promise<AskApproval> {
+        return Promise.reject(new AskRejectedError("approval is unavailable in this environment"));
     }
 }

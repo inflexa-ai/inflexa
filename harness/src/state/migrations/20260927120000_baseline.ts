@@ -11,6 +11,7 @@ import { CompiledQuery, sql } from "kysely";
 import type { Migration } from "kysely/migration";
 import { backfillAiSdkMessageEnvelopes } from "../../memory/message-backfill.js";
 import type { Logger } from "../../lib/logger.js";
+import { errorMessage } from "../../lib/thrown.js";
 
 // No ';' may appear anywhere in this text, comments included: it is executed by
 // splitting on ';' (see `DDL.split` below), so a semicolon inside a comment cuts
@@ -643,7 +644,7 @@ export function baseline(logger: Logger): Migration {
             try {
                 await sql.raw("CREATE EXTENSION IF NOT EXISTS vector").execute(db);
             } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
+                const msg = errorMessage(err);
                 throw new Error(
                     `Cortex requires the pgvector extension. ` +
                         `CREATE EXTENSION IF NOT EXISTS vector failed: ${msg}. ` +

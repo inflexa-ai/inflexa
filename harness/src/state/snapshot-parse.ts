@@ -17,10 +17,10 @@ import { z } from "zod";
 import type { ArtifactSnapshot, ReportSnapshot } from "../report-model/reference-resolver.js";
 
 /** One reduced schema issue -- the dotted path and the message, without the rest. */
-export interface SchemaIssue {
+export type SchemaIssue = {
     readonly path: string;
     readonly message: string;
-}
+};
 
 /**
  * One pinned artifact of a stored snapshot. The value carries the content hash, an
@@ -107,7 +107,7 @@ export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIss
     // wrote, and an equality test over a stored snapshot holds across the round trip.
     return ok({
         artifacts,
-        ...(citations.data === undefined ? {} : { citations: citations.data }),
-        ...(citationRecords.data === undefined ? {} : { citationRecords: citationRecords.data }),
+        citations: !(citations.data === undefined) ? citations.data : undefined,
+        citationRecords: !(citationRecords.data === undefined) ? citationRecords.data : undefined,
     });
 }

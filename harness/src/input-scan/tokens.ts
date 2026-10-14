@@ -26,10 +26,10 @@ import {
 
 export type TokenKind = "alpha" | "digit" | "delim" | "id" | "date";
 
-export interface NameToken {
+export type NameToken = {
     readonly kind: TokenKind;
     readonly value: string;
-}
+};
 
 export const ID_SYMBOL = "ID";
 export const DIGIT_SYMBOL = "#";
@@ -54,26 +54,33 @@ export function splitStem(fileName: string): { stem: string; suffix: string } {
     const parts = fileName.split(".");
     let cut = parts.length;
     while (cut > 1) {
-        const candidate = parts[cut - 1]!.toLowerCase();
+        const candidate = parts[cut - 1].toLowerCase();
         if (!KNOWN_EXTENSIONS.has(candidate) || candidate.length > MAX_SUFFIX_TOKEN_LENGTH) break;
         cut--;
     }
     return { stem: parts.slice(0, cut).join("."), suffix: parts.slice(cut).join(".").toLowerCase() };
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
 const HEX_DIGEST_PATTERN = /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
 const BASE64URL_PATTERN = /^[A-Za-z0-9\-_=]+$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
 const DELIMITED_DATE_PATTERN = /^(\d{4})[-_](\d{2})[-_](\d{2})$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
 const COMPACT_DATE_PATTERN = /^(\d{4})(\d{2})(\d{2})$/;
 
 function charClassCount(value: string): number {
     let classes = 0;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     for (const pattern of [/[A-Z]/, /[a-z]/, /[0-9]/, /[-_=]/]) if (pattern.test(value)) classes++;
     return classes;
 }
 
 function meanRunLength(value: string): number {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     const runs = value.match(/[A-Za-z]+|[0-9]+/g) ?? [];
     if (runs.length === 0) return 0;
     return runs.reduce((total, run) => total + run.length, 0) / runs.length;
@@ -82,8 +89,9 @@ function meanRunLength(value: string): number {
 function caseTransitions(value: string): number {
     let flips = 0;
     for (let i = 1; i < value.length; i++) {
-        const before = value[i - 1]!;
-        const after = value[i]!;
+        const before = value[i - 1];
+        const after = value[i];
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
         if (!/[A-Za-z]/.test(before) || !/[A-Za-z]/.test(after)) continue;
         if ((before === before.toUpperCase()) !== (after === after.toUpperCase())) flips++;
     }
@@ -114,7 +122,9 @@ export function isOpaqueId(value: string): boolean {
     const flipBudget = Math.max(MIN_OPAQUE_ID_CASE_FLIPS, Math.floor(value.length / OPAQUE_ID_CASE_FLIP_DIVISOR));
     if (caseTransitions(value) >= flipBudget) return true;
 
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     if (fractionOf(value, /[-_=]/g) > MAX_OPAQUE_ID_SEPARATOR_FRACTION) return false;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     return meanRunLength(value) <= MAX_OPAQUE_ID_MEAN_RUN && fractionOf(value, /[0-9]/g) >= MIN_OPAQUE_ID_DIGIT_FRACTION;
 }
 
@@ -128,11 +138,14 @@ export function isDateToken(value: string): boolean {
     return year >= 1900 && year <= 2999 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
 const EMBEDDED_DATE_PATTERN = /(?<![0-9])(?:\d{4}[-_]\d{2}[-_]\d{2}|\d{8})(?![0-9])/g;
 
 function pushRuns(text: string, into: NameToken[]): void {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     for (const run of text.matchAll(/[A-Za-z]+|[0-9]+|[-_=]+/g)) {
         const value = run[0];
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
         const kind: TokenKind = /^[0-9]/.test(value) ? "digit" : /^[A-Za-z]/.test(value) ? "alpha" : "delim";
         into.push({ kind, value });
     }
@@ -149,8 +162,10 @@ function pushRuns(text: string, into: NameToken[]): void {
  */
 export function tokenizeSegment(segment: string): NameToken[] {
     const tokens: NameToken[] = [];
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     for (const match of segment.matchAll(/[A-Za-z0-9\-_=]+|[^A-Za-z0-9\-_=]+/g)) {
         const value = match[0];
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
         if (!/[A-Za-z0-9]/.test(value)) {
             tokens.push({ kind: "delim", value });
             continue;
@@ -182,7 +197,7 @@ export function tokenizeName(fileName: string): { tokens: NameToken[]; suffix: s
     const parts = stem.split(".");
     for (let i = 0; i < parts.length; i++) {
         if (i > 0) tokens.push({ kind: "delim", value: "." });
-        tokens.push(...tokenizeSegment(parts[i]!));
+        tokens.push(...tokenizeSegment(parts[i]));
     }
     return { tokens, suffix };
 }
@@ -205,7 +220,7 @@ export function maskSegment(segment: string): string {
 
 export type SlotTokenClass = "constant" | "date" | "digits-fixed" | "digits" | "hex" | "opaque-id" | "word" | "pattern" | "any";
 
-export interface ValueClass {
+export type ValueClass = {
     readonly tokenClass: SlotTokenClass;
     /** Digit width, when every value is a fixed-width number. */
     readonly width?: number;
@@ -213,31 +228,34 @@ export interface ValueClass {
     readonly maxLength?: number;
     /** The shared masked form, when the class is `pattern`. */
     readonly skeleton?: string;
-}
+};
 
 /** Place a set of observed values on the lattice, most specific class first. */
 export function classifyValues(values: readonly string[]): ValueClass {
     if (values.length === 0) return { tokenClass: "any" };
     if (values.length === 1) {
-        const only = values[0]!;
+        const only = values[0];
         if (isDateToken(only)) return { tokenClass: "date" };
         if (isOpaqueId(only)) return { tokenClass: "opaque-id", minLength: only.length, maxLength: only.length };
         return { tokenClass: "constant" };
     }
     if (values.every((value) => isDateToken(value))) return { tokenClass: "date" };
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     if (values.every((value) => /^[0-9]+$/.test(value))) {
-        const width = values[0]!.length;
+        const width = values[0].length;
         return values.every((value) => value.length === width) ? { tokenClass: "digits-fixed", width } : { tokenClass: "digits" };
     }
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     if (values.every((value) => /^[0-9a-fA-F]+$/.test(value) && value.length >= 4)) return { tokenClass: "hex" };
     if (values.every((value) => isOpaqueId(value))) {
         const lengths = values.map((value) => value.length);
         return { tokenClass: "opaque-id", minLength: Math.min(...lengths), maxLength: Math.max(...lengths) };
     }
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     if (values.every((value) => /^[A-Za-z]+$/.test(value))) return { tokenClass: "word" };
     const skeletons = new Set(values.map((value) => maskSegment(value)));
     if (skeletons.size === 1) {
-        const skeleton = [...skeletons][0]!;
+        const skeleton = [...skeletons][0];
         if (skeleton.includes(DIGIT_SYMBOL) || skeleton.includes(ID_SYMBOL) || skeleton.includes(DATE_SYMBOL)) {
             return { tokenClass: "pattern", skeleton };
         }
@@ -253,14 +271,14 @@ export function classifyValues(values: readonly string[]): ValueClass {
  */
 export function commonAffixes(values: readonly string[]): { prefix: string; suffix: string } {
     if (values.length < 2) return { prefix: "", suffix: "" };
-    let prefix = values[0]!;
+    let prefix = values[0];
     for (const value of values) {
         let i = 0;
         while (i < prefix.length && i < value.length && prefix[i] === value[i]) i++;
         prefix = prefix.slice(0, i);
         if (!prefix) break;
     }
-    let suffix = values[0]!.slice(prefix.length);
+    let suffix = values[0].slice(prefix.length);
     for (const value of values) {
         const rest = value.slice(prefix.length);
         let i = 0;
@@ -279,8 +297,11 @@ export function commonAffixes(values: readonly string[]): { prefix: string; suff
  * member happened to share it.
  */
 export function maskAffix(affix: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
     return affix.replace(/[A-Za-z0-9]{3,}/g, (run) => {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
         const mixedCase = /[A-Z]/.test(run) && /[a-z]/.test(run);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
         const alphanumeric = /[A-Za-z]/.test(run) && /[0-9]/.test(run);
         return mixedCase || alphanumeric ? `<x${run.length}>` : run;
     });

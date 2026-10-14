@@ -9,12 +9,12 @@ import { jsonSchema, tool as aiTool, type ToolSet } from "ai";
 
 import type { Tool } from "./define-tool.js";
 
-export interface Registry {
+export type Registry = {
     /** The AI SDK tool definitions to send with a chat request. */
     definitions(): ToolSet;
     /** Resolve a tool by name for dispatch; `undefined` if unknown. */
     get(name: string): Tool | undefined;
-}
+};
 
 export function createRegistry(tools: readonly Tool[]): Registry {
     const byName = new Map<string, Tool>();

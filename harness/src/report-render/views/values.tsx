@@ -133,7 +133,7 @@ export function tableColumns(value: TableValue): string[] {
     if (value.columns !== undefined) {
         return value.columns;
     }
-    const first = value.rows[0];
+    const first = value.rows.at(0);
     return first !== undefined ? Object.keys(first) : [];
 }
 

@@ -114,7 +114,7 @@ const CONVERSATION_COMPACTION: CompactionRules = { turnStartBudget: 150_000, bud
  * what is importable that a sandbox agent has — read host-side, so answering
  * "does this environment have X?" costs a lookup rather than a container.
  */
-export interface ConversationAgentDeps extends EnvironmentStorePaths {
+export type ConversationAgentDeps = EnvironmentStorePaths & {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     /**
@@ -215,7 +215,7 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      * it, the link pass returns at once.
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
-}
+};
 
 /** Build the conversation `AgentDefinition` with every tool fully dep-bound. */
 export function createConversationAgent(deps: ConversationAgentDeps): AgentDefinition {
@@ -244,15 +244,15 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
-    const chemDb = createChemDbTools(bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
+    const chemDb = createChemDbTools(bioKeys, { logger: deps.logger ? deps.logger : undefined });
     const amass = createAmassTools(bioKeys);
     // The write path of this agent: coordinates resolve per call from the
     // session's analysis scope, the write prefix is the analysis root, and
     // every successful write emits a `write-file` provenance session event.
     const mutator = createSessionWorkspaceMutator({
         resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
-        ...(deps.provenance ? { provenance: deps.provenance } : {}),
-        ...(deps.logger ? { logger: deps.logger } : {}),
+        provenance: deps.provenance ? deps.provenance : undefined,
+        logger: deps.logger ? deps.logger : undefined,
     });
 
     const tools: Tool[] = [
@@ -273,7 +273,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createResolveCitationTool(citationResolver),
         // Literature outside PubMed. A question about a method, a model or a
         // preprint has no MEDLINE record, thus PubMed alone cannot answer it.
-        createSearchSemanticScholarTool({ ...(bioKeys.semanticScholar === undefined ? {} : { apiKey: bioKeys.semanticScholar }) }),
+        createSearchSemanticScholarTool({ apiKey: !(bioKeys.semanticScholar === undefined) ? bioKeys.semanticScholar : undefined }),
         searchArxivTool,
         // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
         chemblTool,
@@ -302,16 +302,16 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // and a host that does asks the user to approve the download. Deciding that
         // blind is how a user gets asked to download something already installed, or
         // told nothing is missing when it is; this is the only tool that can tell.
-        createListAvailableRefsTool({ ...(refStorePath ? { refStorePath } : {}) }),
+        createListAvailableRefsTool({ refStorePath: refStorePath ? refStorePath : undefined }),
         // What the STORE holds, pool-scope where the embedder binds the reader:
         // the ask flow of this agent marks the packages the pool does not hold,
         // and the farm of a new analysis is empty — a farm view here would read
         // every pool package as absent. The farm-lock fallback keeps a host
         // with no pool reader on the old answer.
         createListAvailablePackagesTool({
-            ...(farmLockFile ? { farmLockFile } : {}),
-            ...(imagePackagesFile ? { imagePackagesFile } : {}),
-            ...(readPoolInventory ? { readPoolInventory } : {}),
+            farmLockFile: farmLockFile ? farmLockFile : undefined,
+            imagePackagesFile: imagePackagesFile ? imagePackagesFile : undefined,
+            readPoolInventory: readPoolInventory ? readPoolInventory : undefined,
         }),
         // Execution.
         createInspectRunTool(pool),
@@ -322,14 +322,14 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             pool,
             resourcePolicy,
             usageRecorder,
-            ...(toolOutputStore ? { toolOutputStore } : {}),
+            toolOutputStore: toolOutputStore ? toolOutputStore : undefined,
             bioKeys,
-            ...(deps.knowledge ? { knowledge: deps.knowledge } : {}),
-            ...(refStorePath ? { refStorePath } : {}),
-            ...(farmLockFile ? { farmLockFile } : {}),
-            ...(imagePackagesFile ? { imagePackagesFile } : {}),
-            ...(readPoolInventory ? { readPoolInventory } : {}),
-            ...(deps.logger ? { logger: deps.logger } : {}),
+            knowledge: deps.knowledge ? deps.knowledge : undefined,
+            refStorePath: refStorePath ? refStorePath : undefined,
+            farmLockFile: farmLockFile ? farmLockFile : undefined,
+            imagePackagesFile: imagePackagesFile ? imagePackagesFile : undefined,
+            readPoolInventory: readPoolInventory ? readPoolInventory : undefined,
+            logger: deps.logger ? deps.logger : undefined,
         }),
         createExecuteAnalysisTool({
             pool,
@@ -339,12 +339,12 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             resourcePolicy,
             utilityProvider,
             utilityModel,
-            ...(farmLockFile ? { farmLockFile } : {}),
-            ...(imagePackagesFile ? { imagePackagesFile } : {}),
-            ...(readPoolInventory ? { readPoolInventory } : {}),
-            ...(deps.extendAnalysisFarm ? { extendAnalysisFarm: deps.extendAnalysisFarm } : {}),
-            ...(deps.logger ? { logger: deps.logger } : {}),
-            ...(usageRecorder ? { usageRecorder } : {}),
+            farmLockFile: farmLockFile ? farmLockFile : undefined,
+            imagePackagesFile: imagePackagesFile ? imagePackagesFile : undefined,
+            readPoolInventory: readPoolInventory ? readPoolInventory : undefined,
+            extendAnalysisFarm: deps.extendAnalysisFarm ? deps.extendAnalysisFarm : undefined,
+            logger: deps.logger ? deps.logger : undefined,
+            usageRecorder: usageRecorder ? usageRecorder : undefined,
         }),
         // The one report path. The tool starts a report thread as a child of the
         // conversation, and the user composes the report there with the Report
@@ -353,9 +353,9 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             pool,
             chrome,
             anchorSession: deps.anchorReportSession,
-            ...(deps.eyes ? { eyes: deps.eyes } : {}),
-            ...(deps.provenance ? { provenance: deps.provenance } : {}),
-            ...(deps.logger ? { logger: deps.logger } : {}),
+            eyes: deps.eyes ? deps.eyes : undefined,
+            provenance: deps.provenance ? deps.provenance : undefined,
+            logger: deps.logger ? deps.logger : undefined,
         }),
         // Display.
         showUserTool,
@@ -367,8 +367,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             model,
             bioKeys,
             usageRecorder,
-            ...(toolOutputStore ? { toolOutputStore } : {}),
-            ...(deps.logger ? { logger: deps.logger } : {}),
+            toolOutputStore: toolOutputStore ? toolOutputStore : undefined,
+            logger: deps.logger ? deps.logger : undefined,
         }),
         // Workspace semantic search + raw read/grep over the read seam.
         createWorkspaceSearchTool(pool, embedding),

@@ -9,13 +9,13 @@
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { AuthContext, RequestSession, Scope } from "../../auth/types.js";
 
-export interface SessionOverrides {
+export type SessionOverrides = {
     user?: string;
     scope?: Scope;
     agentId?: string;
     callPath?: readonly string[];
     auth?: AuthContext;
-}
+};
 
 /** Build a fully-populated harness `RequestSession` for tests, with per-field overrides. */
 export function makeSession(overrides: SessionOverrides = {}): RequestSession {

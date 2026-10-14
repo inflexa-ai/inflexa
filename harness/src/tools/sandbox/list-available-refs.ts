@@ -40,6 +40,7 @@ import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
 import { REFS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { defineTool } from "../define-tool.js";
+import { parseJsonOrUndefined } from "../../lib/json.js";
 
 /**
  * Container path the ref store is mounted at: every reported path is rendered
@@ -89,7 +90,7 @@ const ListAvailableRefsInputSchema = z.object({
 
 export type ListAvailableRefsDeps = Pick<EnvironmentStorePaths, "refStorePath">;
 
-export interface ReferenceInventoryMetadata {
+export type ReferenceInventoryMetadata = {
     readonly datasetId?: string;
     readonly version?: string;
     readonly title?: string;
@@ -105,12 +106,12 @@ export interface ReferenceInventoryMetadata {
     readonly contents?: string;
     readonly rows?: number;
     readonly endpoint?: string;
-}
+};
 
-interface ReferenceInventoryEntryBase {
+type ReferenceInventoryEntryBase = {
     readonly path: string;
     readonly metadata?: ReferenceInventoryMetadata;
-}
+};
 
 /** A bounded, no-follow observation of the reference store. */
 export type ReferenceInventoryEntry =
@@ -129,7 +130,7 @@ export type ReferenceInventoryEntry =
  * is explicit: `returned`/`total`/`hasMore` describe how much of the match set
  * this response carries, and `categories` is the drill-in index.
  */
-export interface ReferenceInventoryResult {
+export type ReferenceInventoryResult = {
     readonly available: boolean;
     readonly state: RawScan["state"] | "out_of_scope";
     readonly path: string;
@@ -141,16 +142,16 @@ export interface ReferenceInventoryResult {
     readonly hasMore: boolean;
     readonly categories: readonly string[];
     readonly content: string;
-}
+};
 
-interface RawScan {
+type RawScan = {
     readonly state: "unavailable" | "empty" | "populated" | "not_found" | "not_a_directory" | "symlink";
     readonly entries: ReferenceInventoryEntry[];
     readonly scannedEntries: number;
     readonly truncated: boolean;
     readonly receipts?: unknown[];
     readonly legacyEntries?: unknown[];
-}
+};
 
 function resolveRequestedPath(input: string | undefined): { ok: true; path: string } | { ok: false; reason: string } {
     if (input === undefined || input === "" || input === REFS_ROOT) return { ok: true, path: REFS_ROOT };
@@ -171,11 +172,11 @@ function resolveRequestedPath(input: string | undefined): { ok: true; path: stri
     return { ok: true, path: normalized };
 }
 
-interface ScannedName {
+type ScannedName = {
     readonly name: string;
     readonly kind: "file" | "directory" | "symlink" | "other";
     readonly bytes: number;
-}
+};
 
 /**
  * Inspect at most `limit` names in one directory, sorted by name.
@@ -236,7 +237,8 @@ async function summarizeDirectory(
     const stack = [directory];
 
     while (stack.length > 0 && scanned < MAX_SCANNED_ENTRIES) {
-        const current = stack.pop()!;
+        const current = stack.pop();
+        if (current === undefined) break;
         const { values, cut } = await cappedEntries(current, MAX_SCANNED_ENTRIES - scanned);
         truncated = truncated || cut;
         const childDirectories: string[] = [];
@@ -272,7 +274,7 @@ async function readReceipts(root: string): Promise<unknown[]> {
         // A shared try would abandon the loop and silently drop every receipt sorting
         // after the bad one, quietly stripping metadata from datasets that are fine.
         try {
-            receipts.push(JSON.parse(await readFile(hostJoin(receiptsDirectory, entry.name), "utf-8")));
+            receipts.push(parseJsonOrUndefined(await readFile(hostJoin(receiptsDirectory, entry.name), "utf-8")));
             totalBytes += entry.bytes;
         } catch {
             continue;
@@ -288,11 +290,11 @@ async function readLegacyEntries(root: string): Promise<unknown[]> {
         if (await crossesSymlink(root, "registry.json")) return [];
         const registryPath = hostJoin(root, "registry.json");
         if ((await lstat(registryPath)).size > MAX_REGISTRY_BYTES) return [];
-        const registry: unknown = JSON.parse(await readFile(registryPath, "utf-8"));
+        const registry = parseJsonOrUndefined(await readFile(registryPath, "utf-8"));
         if (!registry || typeof registry !== "object") return [];
         const byCategory = (registry as { files?: { by_category?: unknown } }).files?.by_category;
         if (!byCategory || typeof byCategory !== "object") return [];
-        for (const category of Object.keys(byCategory as Record<string, unknown>).sort()) {
+        for (const category of Object.keys(byCategory).sort()) {
             const values = (byCategory as Record<string, unknown>)[category];
             if (!Array.isArray(values)) continue;
             for (const item of values) {
@@ -327,7 +329,8 @@ async function collectFiles(
     const stack: { path: string; relative: string }[] = [{ path: directory, relative }];
 
     while (stack.length > 0 && budget.scanned < MAX_SCANNED_ENTRIES) {
-        const current = stack.pop()!;
+        const current = stack.pop();
+        if (current === undefined) break;
         const { values, cut } = await cappedEntries(current.path, MAX_SCANNED_ENTRIES - budget.scanned);
         truncated = truncated || cut;
         for (const child of values) {
@@ -470,17 +473,8 @@ function enrichEntries(entries: readonly ReferenceInventoryEntry[], raw: RawScan
             metadata.set(`${REFS_ROOT}/managed/${receipt.datasetId}/${receipt.datasetVersion}/${artifact.path}`, {
                 datasetId: receipt.datasetId,
                 version: receipt.datasetVersion,
-                ...(dataset
-                    ? {
-                          title: dataset.title,
-                          description: dataset.description,
-                          sourceUrl: dataset.sourceUrl,
-                          license: dataset.license.url ?? dataset.license.identifier,
-                          category: dataset.recommendation.group,
-                          ...(dataset.organism ? { organism: dataset.organism } : {}),
-                      }
-                    : {}),
-                ...(catalogArtifact ? { format: catalogArtifact.format, contents: catalogArtifact.contents } : {}),
+                title: dataset ? dataset.title : undefined, description: dataset ? dataset.description : undefined, sourceUrl: dataset ? dataset.sourceUrl : undefined, license: dataset ? dataset.license.url ?? dataset.license.identifier : undefined, category: dataset ? dataset.recommendation.group : undefined, organism: dataset ? dataset.organism ? dataset.organism : undefined : undefined,
+                format: catalogArtifact ? catalogArtifact.format : undefined, contents: catalogArtifact ? catalogArtifact.contents : undefined,
             });
         }
     }
@@ -493,12 +487,12 @@ function enrichEntries(entries: readonly ReferenceInventoryEntry[], raw: RawScan
         const resolved = resolveRequestedPath(localPath);
         if (!resolved.ok) continue;
         const legacyMetadata: ReferenceInventoryMetadata = {
-            ...(stringValue(item.dataset) ? { datasetId: stringValue(item.dataset)! } : {}),
-            ...(stringValue(item.category) ? { category: stringValue(item.category)! } : {}),
-            ...(stringValue(item.subtype) ? { subtype: stringValue(item.subtype)! } : {}),
-            ...(stringValue(item.organism) ? { organism: stringValue(item.organism)! } : {}),
-            ...(numberValue(item.rows) !== undefined ? { rows: numberValue(item.rows)! } : {}),
-            ...(stringValue(item.endpoint) ? { endpoint: stringValue(item.endpoint)! } : {}),
+            datasetId: stringValue(item.dataset) ? stringValue(item.dataset) : undefined,
+            category: stringValue(item.category) ? stringValue(item.category) : undefined,
+            subtype: stringValue(item.subtype) ? stringValue(item.subtype) : undefined,
+            organism: stringValue(item.organism) ? stringValue(item.organism) : undefined,
+            rows: numberValue(item.rows) !== undefined ? numberValue(item.rows) : undefined,
+            endpoint: stringValue(item.endpoint) ? stringValue(item.endpoint) : undefined,
         };
         metadata.set(resolved.path, { ...legacyMetadata, ...metadata.get(resolved.path) });
     }
@@ -638,7 +632,7 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
             // The budget comes off the rendered filter, never off a count of its
             // parts, thus it cannot drift from the template above. One code point
             // pays for the joining space.
-            return `${capCodePoints(named, DETAIL_MAX_LENGTH - [...filter].length - 1)} ${filter}`;
+            return `${capCodePoints(named, DETAIL_MAX_LENGTH - Array.from(filter).length - 1)} ${filter}`;
         },
         execute: async ({ path, category, query, limit }) => {
             // `category` is shorthand for a top-level path; an explicit `path` wins.

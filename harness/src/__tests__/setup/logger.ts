@@ -14,17 +14,17 @@ import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "
 export const silentLogger: Logger = createNoopLogger();
 
 /** One record as a capturing logger saw it, with `with()`/`named()` already applied. */
-export interface CapturedLog {
+export type CapturedLog = {
     level: LogLevel;
     /** The message including any `named()` prefix, exactly as a sink would receive it. */
     msg: string;
     fields: LogFields;
-}
+};
 
-export interface CapturingLogger extends Logger {
+export type CapturingLogger = Logger & {
     /** Records captured so far, in emission order. Shared across derived loggers. */
     readonly records: CapturedLog[];
-}
+};
 
 /**
  * Collects records so a test can assert on what an operator would actually see —

@@ -20,9 +20,11 @@ import {
     type CitationSource,
     type CitationSourceClient,
     type CitationSourceOutcome,
+    type CitationSourcePlanItem,
     type CitationSourceRequest,
     type RegistrationAgencyEvidence,
 } from "./types.js";
+import { abortReason, errorMessage, isError } from "../lib/thrown.js";
 
 const SOURCE_PLAN_VERSION = "citation-plan-v1";
 const SOURCE_ORDER: readonly CitationSource[] = ["doi_registry", "crossref", "pubmed", "arxiv", "semantic_scholar"];
@@ -35,11 +37,11 @@ const DEFAULT_RATE_LIMITS: Record<CitationSource, RateLimitConfig> = {
     semantic_scholar: { maxConcurrency: 1, requestsPerSecond: 1, maxRetries: 2, maxRetryDelayMs: 10_000 },
 };
 
-export interface CitationResolverSourceConfig extends Partial<RateLimitConfig> {
+export type CitationResolverSourceConfig = Partial<RateLimitConfig> & {
     readonly enabled?: boolean;
-}
+};
 
-export interface CitationResolverConfig {
+export type CitationResolverConfig = {
     readonly maxBatchSize?: number;
     readonly timeoutMs?: number;
     readonly cache?: {
@@ -55,31 +57,31 @@ export interface CitationResolverConfig {
     };
     readonly ncbiApiKey?: string;
     readonly semanticScholarApiKey?: string;
-}
+};
 
-export interface CitationResolverDependencies extends RateLimitRuntime {
+export type CitationResolverDependencies = RateLimitRuntime & {
     readonly fetch?: typeof globalThis.fetch;
     readonly clients?: readonly CitationSourceClient[];
-}
+};
 
-interface PendingCitation {
+type PendingCitation = {
     readonly input: CitationInput;
     readonly normalized: ReturnType<typeof normalizeCitation>;
     readonly plans: ReturnType<typeof planCitationSources>;
-}
+};
 
 function mergedRateLimit(source: CitationSource, config: CitationResolverConfig): RateLimitConfig {
-    return { ...DEFAULT_RATE_LIMITS[source], ...(config.sources?.[source] ?? {}) };
+    return { ...DEFAULT_RATE_LIMITS[source], ...(config.sources?.[source]) };
 }
 
 function createDefaultClients(config: CitationResolverConfig, deps: CitationResolverDependencies): CitationSourceClient[] {
-    const runtime: RateLimitRuntime = { ...(deps.now ? { now: deps.now } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}) };
+    const runtime: RateLimitRuntime = { now: deps.now ? deps.now : undefined, sleep: deps.sleep ? deps.sleep : undefined };
     const http = (source: CitationSource): SourceHttpOptions => {
         const limits = mergedRateLimit(source, config);
         return {
-            ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
-            ...(config.timeoutMs === undefined ? {} : { timeoutMs: config.timeoutMs }),
-            ...(deps.sleep ? { sleep: deps.sleep } : {}),
+            fetch: !(deps.fetch === undefined) ? deps.fetch : undefined,
+            timeoutMs: !(config.timeoutMs === undefined) ? config.timeoutMs : undefined,
+            sleep: deps.sleep ? deps.sleep : undefined,
             schedule: createRateLimitSchedule(limits, runtime),
             maxRetries: limits.maxRetries,
             maxRetryDelayMs: limits.maxRetryDelayMs,
@@ -89,17 +91,17 @@ function createDefaultClients(config: CitationResolverConfig, deps: CitationReso
         createDoiRegistryClient(http("doi_registry")),
         createCrossrefClient({
             ...http("crossref"),
-            ...(config.crossref?.mailto === undefined ? {} : { mailto: config.crossref.mailto }),
-            ...(config.crossref?.userAgent === undefined ? {} : { userAgent: config.crossref.userAgent }),
+            mailto: !(config.crossref?.mailto === undefined) ? config.crossref.mailto : undefined,
+            userAgent: !(config.crossref?.userAgent === undefined) ? config.crossref.userAgent : undefined,
         }),
         createPubmedCitationClient({
             ...http("pubmed"),
-            ...(config.ncbiApiKey === undefined ? {} : { apiKey: config.ncbiApiKey }),
+            apiKey: !(config.ncbiApiKey === undefined) ? config.ncbiApiKey : undefined,
         }),
         createArxivCitationClient(http("arxiv")),
         createSemanticScholarCitationClient({
             ...http("semantic_scholar"),
-            ...(config.semanticScholarApiKey === undefined ? {} : { apiKey: config.semanticScholarApiKey }),
+            apiKey: !(config.semanticScholarApiKey === undefined) ? config.semanticScholarApiKey : undefined,
         }),
     ];
 }
@@ -107,10 +109,6 @@ function createDefaultClients(config: CitationResolverConfig, deps: CitationReso
 function cacheable(outcomes: readonly CitationSourceOutcome[]): "positive" | "negative" | undefined {
     if (outcomes.some((outcome) => outcome.status === "unavailable")) return undefined;
     return outcomes.some((outcome) => outcome.records.length > 0) ? "positive" : "negative";
-}
-
-function abortReason(signal: AbortSignal): Error {
-    return signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
 }
 
 function withCallerSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -126,7 +124,7 @@ function withCallerSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise
             },
             (error: unknown) => {
                 signal.removeEventListener("abort", onAbort);
-                reject(error);
+                reject(isError(error) ? error : new Error(errorMessage(error)));
             },
         );
     });
@@ -157,12 +155,12 @@ function registrationAgencyEvidence(outcome: CitationSourceOutcome | undefined):
 async function runSource(client: CitationSourceClient, requests: readonly CitationSourceRequest[], signal?: AbortSignal): Promise<CitationSourceOutcome[]> {
     const unavailable = (request: CitationSourceRequest, detail: string): CitationSourceOutcome =>
         sourceOutcome(client.source, request.plan.operation, "unavailable", 0, [], detail);
-    const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+    const describe = (error: unknown): string => (errorMessage(error));
 
     if (client.resolveMany === undefined) {
         const settled = await Promise.allSettled(requests.map((request) => client.resolve(request, signal)));
         if (signal?.aborted) throw abortReason(signal);
-        return settled.map((outcome, index) => (outcome.status === "fulfilled" ? outcome.value : unavailable(requests[index]!, describe(outcome.reason))));
+        return settled.map((outcome, index) => (outcome.status === "fulfilled" ? outcome.value : unavailable(requests[index], describe(outcome.reason))));
     }
 
     try {
@@ -185,10 +183,18 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
     };
     const cache = new BoundedTtlCache<readonly CitationSourceOutcome[]>(cacheConfig.maximum, now);
     const inFlight = new Map<string, Promise<readonly CitationSourceOutcome[]>>();
-    const matchConfig: CitationMatchConfig = { ...DEFAULT_MATCH_CONFIG, ...(config.match ?? {}) };
+    const matchConfig: CitationMatchConfig = { ...DEFAULT_MATCH_CONFIG, ...(config.match) };
     const maxBatchSize = config.maxBatchSize ?? 200;
 
     const keyFor = (input: CitationInput): string => `${SOURCE_PLAN_VERSION}:${citationLookupKey(input)}`;
+
+    // planCitationSources emits exactly one plan per source; a missing plan is a
+    // planner defect, and the guard makes it loud instead of silently skipped.
+    const planForSource = (plans: readonly CitationSourcePlanItem[], source: CitationSource): CitationSourcePlanItem => {
+        const plan = plans.find((candidate) => candidate.source === source);
+        if (plan === undefined) throw new Error(`no citation plan for source ${source}`);
+        return plan;
+    };
 
     async function resolveUncachedBatch(entries: readonly PendingCitation[], signal?: AbortSignal): Promise<CitationSourceOutcome[][]> {
         const outcomes = entries.map(() => new Map<CitationSource, CitationSourceOutcome>());
@@ -198,10 +204,10 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
             const requests: CitationSourceRequest[] = [];
             const requestIndices: number[] = [];
             for (let index = 0; index < entries.length; index += 1) {
-                const entry = entries[index]!;
-                const plan = entry.plans.find((candidate) => candidate.source === source)!;
+                const entry = entries[index];
+                const plan = planForSource(entry.plans, source);
                 if (!plan.applicable || sourceConfig?.enabled === false || client === undefined) {
-                    outcomes[index]!.set(
+                    outcomes[index].set(
                         source,
                         sourceConfig?.enabled === false
                             ? notApplicableOutcome({ ...plan, applicable: false, operation: "none", reason: "source disabled by resolver configuration" })
@@ -215,18 +221,18 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
                     input: entry.input,
                     normalized: entry.normalized,
                     plan,
-                    registrationAgency: registrationAgencyEvidence(outcomes[index]!.get("doi_registry")),
+                    registrationAgency: registrationAgencyEvidence(outcomes[index].get("doi_registry")),
                 });
                 requestIndices.push(index);
             }
             if (requests.length === 0 || client === undefined) continue;
             const resolved = await runSource(client, requests, signal);
             for (let requestIndex = 0; requestIndex < resolved.length; requestIndex += 1) {
-                outcomes[requestIndices[requestIndex]!]!.set(source, resolved[requestIndex]!);
+                outcomes[requestIndices[requestIndex]].set(source, resolved[requestIndex]);
             }
         }
         return entries.map((entry, index) =>
-            SOURCE_ORDER.map((source) => outcomes[index]!.get(source) ?? notApplicableOutcome(entry.plans.find((plan) => plan.source === source)!)),
+            SOURCE_ORDER.map((source) => outcomes[index].get(source) ?? notApplicableOutcome(planForSource(entry.plans, source))),
         );
     }
 
@@ -257,7 +263,8 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
                 pending.set(key, running);
                 continue;
             }
-            const input = firstByKey.get(key)!;
+            const input = firstByKey.get(key);
+            if (input === undefined) throw new Error(`deduplicated lookup key ${key} has no input`);
             const normalized = normalizeCitation(input);
             uncached.push({ key, entry: { input, normalized, plans: planCitationSources(input, normalized) } });
         }
@@ -268,8 +275,8 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
                 options.signal,
             );
             for (let index = 0; index < uncached.length; index += 1) {
-                const { key } = uncached[index]!;
-                const one = batch.then((results) => results[index]!);
+                const { key } = uncached[index];
+                const one = batch.then((results) => results[index]);
                 const tracked = one.then(
                     (outcomes) => {
                         const kind = cacheable(outcomes);
@@ -290,16 +297,22 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
         const outcomesByKey = new Map<string, readonly CitationSourceOutcome[]>();
         await Promise.all(
             uniqueOrder.map(async (key) => {
-                outcomesByKey.set(key, await withCallerSignal(pending.get(key)!, options.signal));
+                const tracked = pending.get(key);
+                if (tracked === undefined) throw new Error(`deduplicated lookup key ${key} was never started`);
+                outcomesByKey.set(key, await withCallerSignal(tracked, options.signal));
             }),
         );
         // Aggregated per input, never per shared lookup: comparisons and the
         // verdict they drive belong to the caller's own supplied metadata.
-        return parsed.map((input) => aggregateCitationResolution(input, normalizeCitation(input), outcomesByKey.get(keyFor(input))!, matchConfig));
+        return parsed.map((input) => {
+            const outcomes = outcomesByKey.get(keyFor(input));
+            if (outcomes === undefined) throw new Error(`deduplicated lookup key ${keyFor(input)} resolved to no outcomes`);
+            return aggregateCitationResolution(input, normalizeCitation(input), outcomes, matchConfig);
+        });
     }
 
     return {
-        resolveOne: async (input, options = {}) => (await resolveMany([input], options))[0]!,
+        resolveOne: async (input, options = {}) => (await resolveMany([input], options))[0],
         resolveMany,
     };
 }

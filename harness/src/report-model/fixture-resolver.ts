@@ -18,6 +18,7 @@ import type {
     UnresolvedReference,
 } from "../contracts/report-reference.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
+import { wideMember } from "../lib/shape.js";
 import {
     applyRowBound,
     columnsHeldByNoRow,
@@ -85,7 +86,7 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
     // `null`. None of the three is a value that a scalar reference can bind. An empty string is a value,
     // thus it stays valid. The wider annotation admits the three, because the row type promises a value
     // for each key that it holds.
-    const cell: string | number | null | undefined = selectedRow[locator.column];
+    const cell = wideMember(selectedRow, locator.column);
     if (cell === undefined || cell === null) {
         return fail(reference, "locator-out-of-range", `column ${locator.column} holds no value in the selected row`);
     }

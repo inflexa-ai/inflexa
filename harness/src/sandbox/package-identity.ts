@@ -64,6 +64,7 @@ export type PackageIdentity = {
  * idempotent, thus a fold of a folded name gives that name again.
  */
 function fold(name: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
     return name.replace(/[-_.]+/g, "-").toLowerCase();
 }
 
@@ -175,12 +176,15 @@ export type ParseQueryError =
  * A path, a URL, or a store directory. The entry is trimmed already, thus a
  * leading space cannot defeat the guard.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
 const LOCATION = /^[.~]|[/\\]|:\/\//;
 
 /** The `<word>:` prefix of an entry. The group holds the word before the colon. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
 const PREFIX = /^([A-Za-z][A-Za-z0-9_.-]*):/;
 
 /** A run of specifier characters. Only the exact run `==` names a version. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
 const SPECIFIER = /[<>!~=]+/;
 
 /**
@@ -189,6 +193,7 @@ const SPECIFIER = /[<>!~=]+/;
  * thus `numpy==1.26,<2` gives the version `1.26,<2` without this guard, and
  * the compound range then rides into the pool as a version string.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
 const VERSION_INTRUDER = /[<>!~=,\s]+/;
 
 /**
@@ -216,7 +221,7 @@ export function parseQuery(entry: string): Result<PackageQuery, ParseQueryError>
     if (rest === "") return err({ type: "empty" });
 
     const specifier = SPECIFIER.exec(rest);
-    if (specifier === null) return ok({ spelling: rest, ...(track === undefined ? {} : { track }) });
+    if (specifier === null) return ok({ spelling: rest, track: !(track === undefined) ? track : undefined });
     if (specifier[0] !== "==") {
         return err({ type: "unsupported_specifier", specifier: specifier[0], entry: trimmed });
     }
@@ -235,8 +240,8 @@ export function parseQuery(entry: string): Result<PackageQuery, ParseQueryError>
     }
     return ok({
         spelling,
-        ...(track === undefined ? {} : { track }),
-        ...(version === "" ? {} : { version }),
+        track: !(track === undefined) ? track : undefined,
+        version: !(version === "") ? version : undefined,
     });
 }
 

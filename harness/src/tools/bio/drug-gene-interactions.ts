@@ -26,6 +26,7 @@ import { defineTool } from "../define-tool.js";
 import { searchDgidb, type DgidbResult } from "../lib/dgidb-client.js";
 import { searchDrugbank, type DrugResult } from "../lib/drugbank-client.js";
 import { searchPharmgkb, type PharmgkbAnnotation } from "../lib/pharmgkb-client.js";
+import { errorMessage } from "../../lib/thrown.js";
 
 const SOURCES = ["dgidb", "drugbank", "pharmgkb"] as const;
 type Source = (typeof SOURCES)[number];
@@ -36,26 +37,26 @@ const MAX_INPUTS = 25;
 /** Prose kept per DrugBank field when the full record is not requested. */
 const PROSE_PREVIEW_CHARS = 200;
 
-interface SourceOutcome {
+type SourceOutcome = {
     source: Source;
     status: "ok" | "no_data" | "unavailable";
     returned: number;
     detail?: string;
-}
+};
 
 /**
  * A DrugBank record projected for context. `includeDrugRecord` decides whether
  * the description arrives whole or as a preview — a 500-character field across
  * ten records is narrative that a drug-vs-gene question rarely needs.
  */
-interface ProjectedDrug {
+type ProjectedDrug = {
     drugbankId: string;
     name: string;
     type: string;
     groups: string[];
     description: string;
     proseTruncated: boolean;
-}
+};
 
 const inputSchema = z.object({
     query: z
@@ -109,13 +110,13 @@ const inputSchema = z.object({
         ),
 });
 
-interface DrugGeneOutput {
+type DrugGeneOutput = {
     direction: "gene_to_drugs" | "drug_to_genes";
     perSource: SourceOutcome[];
     dgidb?: DgidbResult[];
     drugbank?: ProjectedDrug[];
     pharmgkb?: PharmgkbAnnotation[];
-}
+};
 
 function projectDrug(drug: DrugResult, includeFullProse: boolean): ProjectedDrug {
     return {
@@ -143,7 +144,7 @@ async function runSource<T>(source: Source, fetch: () => Promise<T[]>): Promise<
         return { outcome: { source, status: records.length > 0 ? "ok" : "no_data", returned: records.length }, records };
     } catch (error) {
         return {
-            outcome: { source, status: "unavailable", returned: 0, detail: error instanceof Error ? error.message : String(error) },
+            outcome: { source, status: "unavailable", returned: 0, detail: errorMessage(error) },
             records: [],
         };
     }
@@ -184,10 +185,10 @@ export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; l
                               isGeneSide ? "gene" : "drug",
                               {
                                   limit,
-                                  ...(input.interactionTypes ? { interactionTypes: input.interactionTypes } : {}),
-                                  ...(input.sourceDbs ? { sourceDbs: input.sourceDbs } : {}),
-                                  ...(input.minSources !== undefined ? { minSources: input.minSources } : {}),
-                                  ...(input.includeAttributes !== undefined ? { includeAttributes: input.includeAttributes } : {}),
+                                  interactionTypes: input.interactionTypes ? input.interactionTypes : undefined,
+                                  sourceDbs: input.sourceDbs ? input.sourceDbs : undefined,
+                                  minSources: input.minSources !== undefined ? input.minSources : undefined,
+                                  includeAttributes: input.includeAttributes !== undefined ? input.includeAttributes : undefined,
                               },
                               (errors) => logger.warn("dgidb partial errors alongside data", { errors }),
                           ),
@@ -196,13 +197,13 @@ export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; l
                 selected.includes("drugbank")
                     ? runSource<ProjectedDrug>("drugbank", async () => {
                           if (!deps.drugbankApiKey) throw new Error("DRUGBANK_API_KEY is not configured");
-                          const drugs = await searchDrugbank(deps.drugbankApiKey, inputs[0]!, isGeneSide ? "target" : "drug", limit);
+                          const drugs = await searchDrugbank(deps.drugbankApiKey, inputs[0], isGeneSide ? "target" : "drug", limit);
                           return drugs.map((d) => projectDrug(d, input.includeDrugRecord ?? false));
                       })
                     : null,
                 selected.includes("pharmgkb")
                     ? runSource<PharmgkbAnnotation>("pharmgkb", async () => {
-                          const res = await searchPharmgkb(inputs[0]!, isGeneSide ? "gene" : "drug", limit);
+                          const res = await searchPharmgkb(inputs[0], isGeneSide ? "gene" : "drug", limit);
                           return res.annotations;
                       })
                     : null,

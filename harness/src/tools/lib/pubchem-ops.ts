@@ -80,11 +80,11 @@ export const PubChemPropertyResponseSchema = z.object({
     PropertyTable: z.object({ Properties: z.array(PugPropertyRowSchema).optional() }).optional(),
 });
 
-export interface PubChemCrossRef {
+export type PubChemCrossRef = {
     /** The registry that the identifier pattern names, or `null` when no pattern matches. */
     source: string | null;
     id: string;
-}
+};
 
 // The PUG-REST xrefs wire shape, validated at the fetch boundary: one
 // `Information` entry per CID with its `RegistryID[]` list. Every field is
@@ -114,18 +114,26 @@ export const PubChemXrefResponseSchema = z.object({
  * A loose pattern runs last, thus a specific registry claims its own id first.
  */
 const REGISTRY_PATTERNS: ReadonlyArray<readonly [source: string, pattern: RegExp]> = [
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
     ["ChEMBL", /^CHEMBL\d+$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
     ["ChEBI", /^CHEBI:\d+$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
     ["DrugBank", /^DB\d{5}$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
     ["KEGG", /^[CD]\d{5}$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
     ["HMDB", /^HMDB\d+$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
     ["CAS", /^\d{2,7}-\d{2}-\d$/],
     // A PDB id is four characters that start with a digit. The lookahead demands a
     // letter as well, thus a plain registry number does not read as a structure.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
     ["PDB", /^[1-9](?=.*[A-Za-z])[0-9A-Za-z]{3}$/],
     // A UNII is ten alphanumeric characters, and the lookahead demands a letter
     // among them. A plain ten-digit registry number, such as `0000050782`, matches
     // the pattern without it, and the row then names the wrong registry.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
     ["UNII", /^(?=.*[A-Z])[A-Z0-9]{10}$/],
 ];
 
@@ -137,13 +145,13 @@ export function classifyRegistryId(id: string): string | null {
     return null;
 }
 
-export interface PubChemAssay {
+export type PubChemAssay = {
     aid: number;
     assayName: string | null;
     targetName: string | null;
     activityOutcome: string | null;
     activityValue: number | null;
-}
+};
 
 // The PUG-REST assay-summary wire shape, validated at the fetch boundary: one
 // `Column` list of plain heading strings, and one `Cell` list of plain strings
@@ -284,7 +292,7 @@ export function parseAssaySummary(data: PugAssaySummary): PubChemAssay[] {
         // An empty cell is the empty string, which carries no value.
         const getCellStr = (idx: number | undefined): string | null => {
             if (idx === undefined) return null;
-            const cell = cells[idx];
+            const cell = cells.at(idx);
             return cell !== undefined && cell !== "" ? cell : null;
         };
         const getCellNum = (idx: number | undefined): number | null => parseWireNumber(getCellStr(idx));

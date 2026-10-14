@@ -4,12 +4,13 @@
  */
 
 import type { ResultAsync } from "neverthrow";
+import { z } from "zod";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
-import type { ArtifactRole, ArtifactRow } from "./schema.js";
+import { ArtifactRole, type ArtifactRow } from "./schema.js";
 
-export interface RegisterArtifactInput {
+export type RegisterArtifactInput = {
     resourceId: string;
     path: string;
     hash: string;
@@ -24,7 +25,7 @@ export interface RegisterArtifactInput {
      * `step_output` rows (their `file_id` is assigned after upload-sync).
      */
     fileId?: string | null;
-}
+};
 
 export function upsertArtifact(pool: Querier, entry: RegisterArtifactInput): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
@@ -123,12 +124,12 @@ export function upsertArtifacts(pool: Querier, entries: RegisterArtifactInput[])
 }
 
 /** Result type for input artifact metadata lookups. */
-export interface InputArtifactMeta {
+export type InputArtifactMeta = {
     path: string;
     hash: string;
     size: number;
     fileId: string | null;
-}
+};
 
 /**
  * Query cortex_artifacts for input-role rows matching the given paths.
@@ -174,11 +175,11 @@ export function queryUnsyncedStepArtifacts(pool: Querier, resourceId: string, ru
 }
 
 /** One registered step output, as a downstream consumer needs to name it. */
-export interface StepArtifactRef {
+export type StepArtifactRef = {
     /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
     path: string;
     fileType: string | null;
-}
+};
 
 /**
  * The artifacts a completed step registered, most consequential first. Ordered
@@ -216,12 +217,12 @@ export function queryStepArtifactPaths(
 }
 
 /** One registered artifact of an analysis, as a reader of the full artifact set names it. */
-export interface AnalysisArtifactRef {
+export type AnalysisArtifactRef = {
     /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
     path: string;
     hash: string;
     fileType: string | null;
-}
+};
 
 /**
  * Every artifact of one analysis, ordered by path so the same call gives the same rows.
@@ -381,7 +382,7 @@ export function updateFileIds(pool: Querier, pairs: Array<{ artifactId: string; 
         for (let i = 0; i < pairs.length; i++) {
             const base = i * 2;
             tuples.push(`($${base + 1}::text, $${base + 2}::text)`);
-            values.push(pairs[i]!.artifactId, pairs[i]!.fileId);
+            values.push(pairs[i].artifactId, pairs[i].fileId);
         }
         await pool.query({
             text: `UPDATE cortex_artifacts AS a
@@ -393,19 +394,41 @@ export function updateFileIds(pool: Querier, pairs: Array<{ artifactId: string; 
     });
 }
 
+/**
+ * The `cortex_artifacts` row as the driver hands it over, parsed into the row
+ * type. The SQL column nullabilities ARE the schema: a row that misses them is
+ * a defect this parse names instead of an `as` that lets it through.
+ */
+const ArtifactRowDb = z
+    .object({
+        analysis_id: z.string(),
+        path: z.string(),
+        artifact_id: z.string().nullable(),
+        file_id: z.string().nullable(),
+        hash: z.string(),
+        size: z.coerce.number(),
+        role: ArtifactRole,
+        source_step: z.string().nullable(),
+        source_run: z.string().nullable(),
+        created_at: z.string(),
+        unrecoverable_at: z.string().nullable(),
+        file_type: z.string().nullable(),
+    })
+    .transform((row): ArtifactRow => ({
+        resourceId: row.analysis_id,
+        path: row.path,
+        artifactId: row.artifact_id ?? null,
+        fileId: row.file_id ?? null,
+        hash: row.hash,
+        size: row.size,
+        role: row.role,
+        sourceStep: row.source_step ?? null,
+        sourceRun: row.source_run ?? null,
+        createdAt: row.created_at,
+        unrecoverableAt: row.unrecoverable_at ?? null,
+        fileType: row.file_type ?? null,
+    }));
+
 function mapArtifactRow(row: Record<string, unknown>): ArtifactRow {
-    return {
-        resourceId: row.analysis_id as string,
-        path: row.path as string,
-        artifactId: (row.artifact_id as string) ?? null,
-        fileId: (row.file_id as string) ?? null,
-        hash: row.hash as string,
-        size: Number(row.size),
-        role: row.role as ArtifactRow["role"],
-        sourceStep: (row.source_step as string) ?? null,
-        sourceRun: (row.source_run as string) ?? null,
-        createdAt: row.created_at as string,
-        unrecoverableAt: (row.unrecoverable_at as string) ?? null,
-        fileType: (row.file_type as string) ?? null,
-    };
+    return ArtifactRowDb.parse(row);
 }

@@ -24,7 +24,7 @@ const POLL_INTERVAL_MS = 1_000;
 
 type FormattedRun = ReturnType<typeof formatRun>;
 
-interface FormattedStep {
+type FormattedStep = {
     stepId: string;
     agentId: string;
     wave: number;
@@ -36,12 +36,12 @@ interface FormattedStep {
     lastErrorClass?: string | null;
     finishReason?: string | null;
     hitMaxSteps?: boolean | null;
-}
+};
 
-interface WaitMetadata {
+type WaitMetadata = {
     readonly requestedSeconds: number;
     readonly cutoffReached: boolean;
-}
+};
 
 type InspectRunOutput =
     | { runs: FormattedRun[]; total: number; page: number; pageSize: number; hasMore: boolean }
@@ -56,10 +56,10 @@ type InspectRunOutput =
           selfWaitPrevented?: boolean;
       };
 
-interface InspectRunClock {
+type InspectRunClock = {
     now(): number;
     wait(ms: number, signal: AbortSignal): Promise<void>;
-}
+};
 
 const systemClock: InspectRunClock = {
     now: Date.now,
@@ -71,7 +71,18 @@ function isTerminal(status: CortexRunRow["status"]): boolean {
 }
 
 function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r.status)) {
-    return {
+    const run: {
+        runId: string;
+        workflowName: CortexRunRow["workflowName"];
+        status: CortexRunRow["status"];
+        startedAt: CortexRunRow["startedAt"];
+        completedAt: CortexRunRow["completedAt"];
+        planId: CortexRunRow["planId"];
+        synthesisPath: string | null;
+        synthesisStatus: CortexRunRow["synthesisStatus"];
+        synthesisReason?: CortexRunRow["synthesisReason"];
+        error?: CortexRunRow["error"];
+    } = {
         runId: r.runId,
         workflowName: r.workflowName,
         status: r.status,
@@ -80,31 +91,31 @@ function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r
         planId: r.planId,
         synthesisPath: exposePaths && r.synthesisStatus === "produced" ? `runs/${r.runId}/synthesis.json` : null,
         synthesisStatus: r.synthesisStatus,
-        ...(r.synthesisReason !== null ? { synthesisReason: r.synthesisReason } : {}),
-        ...(verbose ? { error: r.error } : {}),
     };
+    if (r.synthesisReason !== null) run.synthesisReason = r.synthesisReason;
+    if (verbose) run.error = r.error;
+    return run;
 }
 
 function formatSteps(runId: string, stepRows: StepExecutionRow[], verbose: boolean, exposePaths: boolean): FormattedStep[] {
-    return stepRows.map((s) => ({
-        stepId: s.stepId,
-        agentId: s.agentId,
-        wave: s.wave,
-        status: s.status,
-        ...(exposePaths && s.status !== "pending" && s.status !== "skipped" && s.stepId !== SYNTHESIS_STEP_ID
-            ? { summaryPath: `runs/${runId}/${s.stepId}/output/summary.md` }
-            : {}),
-        ...(verbose
-            ? {
-                  durationMs: s.durationMs,
-                  error: s.error,
-                  attempts: s.attempts,
-                  lastErrorClass: s.lastErrorClass,
-                  finishReason: s.finishReason,
-                  hitMaxSteps: s.hitMaxSteps,
-              }
-            : {}),
-    }));
+    return stepRows.map((s) => {
+        const step: { -readonly [K in keyof FormattedStep]: FormattedStep[K] } = {
+            stepId: s.stepId,
+            agentId: s.agentId,
+            wave: s.wave,
+            status: s.status,
+        };
+        if (exposePaths && s.status !== "pending" && s.status !== "skipped" && s.stepId !== SYNTHESIS_STEP_ID) step.summaryPath = `runs/${runId}/${s.stepId}/output/summary.md`;
+        if (verbose) {
+            step.durationMs = s.durationMs;
+            step.error = s.error;
+            step.attempts = s.attempts;
+            step.lastErrorClass = s.lastErrorClass;
+            step.finishReason = s.finishReason;
+            step.hitMaxSteps = s.hitMaxSteps;
+        }
+        return step;
+    });
 }
 
 const inputSchema = z
@@ -129,14 +140,14 @@ const inputSchema = z
     .superRefine((input, refinement) => {
         if (input.runId && (input.page !== undefined || input.pageSize !== undefined)) {
             refinement.addIssue({
-                code: z.ZodIssueCode.custom,
+                code: "custom",
                 message: "page and pageSize are valid only when runId is omitted",
                 path: input.page !== undefined ? ["page"] : ["pageSize"],
             });
         }
         if (!input.runId && input.waitForTerminalSeconds !== undefined) {
             refinement.addIssue({
-                code: z.ZodIssueCode.custom,
+                code: "custom",
                 message: "waitForTerminalSeconds requires runId",
                 path: ["waitForTerminalSeconds"],
             });
@@ -188,7 +199,7 @@ export function createInspectRunTool(pool: Pool, clock: InspectRunClock = system
                 return ok({
                     inspectionState: "not_found",
                     message: `Run ${input.runId} was not found in this analysis.`,
-                    ...(waitSeconds === undefined ? {} : { wait: { requestedSeconds: waitSeconds, cutoffReached: false } }),
+                    wait: !(waitSeconds === undefined) ? { requestedSeconds: waitSeconds, cutoffReached: false } : undefined,
                 });
             }
 
@@ -232,7 +243,7 @@ export function createInspectRunTool(pool: Pool, clock: InspectRunClock = system
                     steps,
                     elapsedMs: Math.max(0, clock.now() - Date.parse(run.startedAt)),
                     ...wait,
-                    ...(selfWait ? { selfWaitPrevented: true } : {}),
+                    selfWaitPrevented: selfWait ? true : undefined,
                 });
             }
 

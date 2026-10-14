@@ -10,8 +10,7 @@
  * empty ledger renders no list at all.
  */
 
-import type { PropsWithChildren } from "hono/jsx";
-
+import type { FC, PropsWithChildren } from "hono/jsx";
 import { citationRecordOf, type CitationRecords } from "../../report-model/reference-resolver.js";
 import type { ArtifactValueReference, CitationReference, Reference } from "../../contracts/report-reference.js";
 import { citationKeyOf, type ArtifactReference, type DerivationChain, type DerivationChains, type ReferenceLedger } from "../references.js";
@@ -27,7 +26,7 @@ import { LineageControl } from "./lineage.js";
  * marker that names no place carries no control. The page shows the control only where a stamp gives the
  * script a key to walk.
  */
-export function Marker({ n, lineage }: { n: number; lineage?: number }) {
+export const Marker: FC<{ n: number; lineage?: number }> = ({ n, lineage }) => {
     return (
         <span class="report-marker">
             <a href={`#ref-${n}`}>{`[${n}]`}</a>
@@ -37,22 +36,22 @@ export function Marker({ n, lineage }: { n: number; lineage?: number }) {
 }
 
 /** The kind label of one reference entry. */
-function RefKind({ children }: PropsWithChildren) {
+const RefKind: FC<PropsWithChildren> = ({ children }) => {
     return <span class="report-ref-kind">{children}</span>;
 }
 
 /** A path in a monospace code span. */
-function PathCode({ children }: PropsWithChildren) {
+const PathCode: FC<PropsWithChildren> = ({ children }) => {
     return <code class="report-ref-path">{children}</code>;
 }
 
 /** A plain detail such as a locator or an external id. */
-function Detail({ children }: PropsWithChildren) {
+const Detail: FC<PropsWithChildren> = ({ children }) => {
     return <span class="report-ref-detail">{children}</span>;
 }
 
 /** The head of a content hash in a monospace span. */
-function HashCode({ children }: PropsWithChildren) {
+const HashCode: FC<PropsWithChildren> = ({ children }) => {
     return <code class="report-ref-hash">{children}</code>;
 }
 
@@ -79,7 +78,7 @@ function hashHead(hash: string): string {
  * The hash head stays the text of the link. Thus the reader reads the same head as before, and the click
  * opens the script itself. A chain with no staged script shows the head alone.
  */
-function ScriptLink({ chain }: { chain: DerivationChain }) {
+const ScriptLink: FC<{ chain: DerivationChain }> = ({ chain }) => {
     const head = <HashCode>{hashHead(chain.scriptHash)}</HashCode>;
     return chain.scriptSource === undefined ? (
         head
@@ -102,7 +101,7 @@ function ScriptLink({ chain }: { chain: DerivationChain }) {
  * host. Each hash head stays beside its link, because the head is what a reader compares against the name of
  * a staged file.
  */
-function ChainLine({ chain }: { chain: DerivationChain }) {
+const ChainLine: FC<{ chain: DerivationChain }> = ({ chain }) => {
     return (
         <div class="report-ref-chain">
             <RefKind>Derived from</RefKind>{" "}
@@ -156,7 +155,7 @@ function describeLocator(locator: ArtifactValueReference["locator"]): string {
  * the reference pins one cell. A derivation entry names its operation and its two inputs, each by path and
  * locator.
  */
-function ReferenceBody({ reference }: { reference: ArtifactReference }) {
+const ReferenceBody: FC<{ reference: ArtifactReference }> = ({ reference }) => {
     switch (reference.kind) {
         case "artifact-value":
             return (
@@ -197,7 +196,7 @@ function ReferenceBody({ reference }: { reference: ArtifactReference }) {
  * A path that no record names renders the body alone, thus a page over pinned artifacts alone reads exactly
  * as it did before the chains existed.
  */
-function ArtifactEntry({ reference, chains }: { reference: ArtifactReference; chains: DerivationChains | undefined }) {
+const ArtifactEntry: FC<{ reference: ArtifactReference; chains: DerivationChains | undefined }> = ({ reference, chains }) => {
     const path = pathOf(reference);
     const chain = path === undefined ? undefined : chains?.get(path);
     return (
@@ -216,7 +215,7 @@ function ArtifactEntry({ reference, chains }: { reference: ArtifactReference; ch
  * The description sits in the appendix and never on the card. The card sits in the body of the report,
  * where a paragraph about the paper competes with the prose around it.
  */
-function CitationEntry({ reference, records }: { reference: CitationReference; records: CitationRecords | undefined }) {
+const CitationEntry: FC<{ reference: CitationReference; records: CitationRecords | undefined }> = ({ reference, records }) => {
     const key = citationKeyOf(reference);
     const record = citationRecordOf(records, key);
     const description = record?.description;
@@ -235,7 +234,7 @@ function CitationEntry({ reference, records }: { reference: CitationReference; r
 }
 
 /** One appendix entry. The kind of the reference selects the shape, and the two shapes share the ladder. */
-function ReferenceEntry({ reference, records, chains }: { reference: Reference; records: CitationRecords | undefined; chains: DerivationChains | undefined }) {
+const ReferenceEntry: FC<{ reference: Reference; records: CitationRecords | undefined; chains: DerivationChains | undefined }> = ({ reference, records, chains }) => {
     return reference.kind === "citation" ? <CitationEntry reference={reference} records={records} /> : <ArtifactEntry reference={reference} chains={chains} />;
 }
 

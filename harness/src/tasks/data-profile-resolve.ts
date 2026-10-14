@@ -17,6 +17,7 @@
  * the profile cover" stops being a question and becomes a census.
  */
 
+import { present } from "../lib/invariants.js";
 import { assessCompleteness } from "../input-scan/companions.js";
 import type { SetMenu } from "../input-scan/menu.js";
 import { buildSetMenu } from "../input-scan/menu.js";
@@ -52,12 +53,12 @@ export const MAX_UNCLASSIFIED_RECIPE_PATHS = 1000;
 export const MAX_CONTESTED_SAMPLE = 10;
 
 /** A resolved group plus the membership the record deliberately does not carry. */
-export interface ResolvedGroup extends DataProfileGroup {
+export type ResolvedGroup = DataProfileGroup & {
     /** Member paths — what the index projects from. The persisted record holds counts only. */
     readonly memberPaths: readonly string[];
-}
+};
 
-export interface ProfileResolution {
+export type ProfileResolution = {
     /** Repairable faults. A submission carrying any of these is handed back to the agent whole. */
     readonly errors: readonly string[];
     /** Kept members no operation claimed. Already swept into the `unclassified` group below. */
@@ -69,15 +70,15 @@ export interface ProfileResolution {
     readonly probes: readonly DataProfileProbeReport[];
     readonly partition: DataProfilePartition;
     readonly recipe: readonly DataProfileRecipeStep[];
-}
+};
 
-interface Claim {
+type Claim = {
     readonly member: MemberFile;
     readonly set?: DetectedSet;
     readonly memberIndex?: number;
-}
+};
 
-interface DraftGroup {
+type DraftGroup = {
     readonly annotation: GroupAnnotation;
     readonly nameOverride?: string;
     readonly reason?: string;
@@ -87,19 +88,21 @@ interface DraftGroup {
     /** Slot values this draft claimed, for the recipe's value mapping. */
     readonly splitValues?: readonly string[];
     readonly unclassified?: boolean;
-}
+};
 
 /** One operation and the groups it produced, paired so the recipe can name them by id. */
-interface RecipeEntry {
+type RecipeEntry = {
     readonly step: DataProfileRecipeStep;
     readonly drafts: DraftGroup[];
-}
+};
 
 function slug(value: string): string {
     return (
         value
             .toLowerCase()
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             .replace(/[^a-z0-9]+/g, "-")
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             .replace(/^-|-$/g, "")
             .slice(0, 60) || "group"
     );
@@ -148,14 +151,14 @@ function narrowSlot(slot: SetSlot, values: readonly string[]): DataProfileGroupS
         tokenClass: slot.tokenClass,
         distinctValues: distinct.length,
         sampleValues: distinct.slice(0, MAX_SLOT_SAMPLE_VALUES),
-        ...(slot.sameAsSlot ? { sameAsSlot: slot.sameAsSlot } : {}),
+        sameAsSlot: slot.sameAsSlot ? slot.sameAsSlot : undefined,
     };
 }
 
 function groupSlots(detected: DetectedSets, draft: DraftGroup, claims: readonly Claim[]): DataProfileGroupSlot[] {
     const slots: DataProfileGroupSlot[] = [];
     for (const set of draft.sets) {
-        const indices = claims.filter((claim) => claim.set?.id === set.id && claim.memberIndex !== undefined).map((claim) => claim.memberIndex!);
+        const indices = claims.flatMap((claim) => (claim.set?.id === set.id && claim.memberIndex !== undefined ? [claim.memberIndex] : []));
         for (const slot of set.slots) {
             const values = detected.memberSlotValues.get(slot.id);
             if (!values) continue;
@@ -183,30 +186,24 @@ function finalizeGroup(detected: DetectedSets, draft: DraftGroup, id: string, cl
         description: annotation.description,
         role: annotation.role,
         category: annotation.category,
-        ...(annotation.categoryLabel ? { categoryLabel: annotation.categoryLabel } : {}),
-        ...(annotation.subtype ? { subtype: annotation.subtype } : {}),
-        ...(annotation.categoryReason ? { categoryReason: annotation.categoryReason } : {}),
-        ...(draft.reason ? { reason: draft.reason } : {}),
+        categoryLabel: annotation.categoryLabel ? annotation.categoryLabel : undefined,
+        subtype: annotation.subtype ? annotation.subtype : undefined,
+        categoryReason: annotation.categoryReason ? annotation.categoryReason : undefined,
+        reason: draft.reason ? draft.reason : undefined,
         count: members.length,
         fileCount: fileCountOf(members),
         totalBytes: bytesOf(members),
         displayPattern: draft.displayPattern,
         formats: formatCensus(members),
-        ...(slots.length > 0 ? { slots } : {}),
-        ...(annotation.memberAnnotations && annotation.memberAnnotations.length > 0
-            ? { memberAnnotations: annotation.memberAnnotations.map((entry) => ({ path: entry.path, note: entry.note })) }
-            : {}),
-        ...(completeness.expectedCompanions.length > 0
-            ? {
-                  completeness: {
+        slots: slots.length > 0 ? slots : undefined,
+        memberAnnotations: annotation.memberAnnotations && annotation.memberAnnotations.length > 0 ? annotation.memberAnnotations.map((entry) => ({ path: entry.path, note: entry.note })) : undefined,
+        completeness: completeness.expectedCompanions.length > 0 ? {
                       expectedCompanions: [...completeness.expectedCompanions],
                       completeMembers: completeness.completeMembers,
                       incompleteMembers: completeness.incompleteMembers,
                       incompleteSample: completeness.incompleteSample.map((entry) => ({ path: entry.path, missingCompanions: [...entry.missingCompanions] })),
-                  },
-              }
-            : {}),
-        ...(draft.unclassified ? { unclassified: true } : {}),
+                  } : undefined,
+        unclassified: draft.unclassified ? true : undefined,
         memberPaths: members.map((member) => member.path),
     };
 }
@@ -229,14 +226,14 @@ function unclassifiedDraft(claims: readonly Claim[]): DraftGroup {
     };
 }
 
-interface OperationContext {
+type OperationContext = {
     readonly detected: DetectedSets;
     readonly menuSets: ReadonlyMap<string, DetectedSet>;
     readonly errors: string[];
     readonly drafts: DraftGroup[];
     readonly recipe: RecipeEntry[];
     readonly byPath: ReadonlyMap<string, Claim>;
-}
+};
 
 function openStep(ctx: OperationContext, step: DataProfileRecipeStep): RecipeEntry {
     const entry: RecipeEntry = { step, drafts: [] };
@@ -266,8 +263,9 @@ function allClaims(set: DetectedSet): Claim[] {
 }
 
 function claimsAt(set: DetectedSet, indices: readonly number[]): Claim[] {
-    return indices.map((index) => ({ member: set.members[index]!, set, memberIndex: index }));
+    return indices.map((index) => ({ member: set.members[index], set, memberIndex: index }));
 }
+
 
 function applyUse(ctx: OperationContext, op: Extract<MenuOperation, { op: "use" }>): void {
     const set = resolveSet(ctx, op.setId, "use");
@@ -280,7 +278,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
     const set = resolveSet(ctx, op.setId, "split");
     if (!set) return;
     const slotIndex = set.slots.findIndex((slot) => slot.id === op.by.slotId);
-    const slot = set.slots[slotIndex];
+    const slot = set.slots.at(slotIndex);
     if (!slot) {
         ctx.errors.push(`split ${op.setId}: no slot "${op.by.slotId}" on that set. Its slots are ${set.slots.map((s) => s.id).join(", ") || "none"}.`);
         return;
@@ -311,7 +309,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
                 reason: op.reason,
                 displayPattern: set.pathTemplate,
                 sets: [set],
-                claims: claimsAt(set, byValue.get(value)!),
+                claims: claimsAt(set, present(byValue.get(value), "members of a named split value")),
                 splitValues: [value],
             });
         }
@@ -356,7 +354,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
     const restValues = [...byValue.keys()].filter((value) => !claimedValues.has(value));
     if (restValues.length === 0) return;
     if (!op.by.rest) {
-        const restMembers = restValues.reduce((total, value) => total + byValue.get(value)!.length, 0);
+        const restMembers = restValues.reduce((total, value) => total + present(byValue.get(value), "members").length, 0);
         ctx.errors.push(
             `split ${op.setId} by ${slot.id}: ${restMembers} members take a value the mapping did not name. ` +
                 'Name the remaining values, or add a "rest" group for them.',
@@ -370,7 +368,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
         sets: [set],
         claims: claimsAt(
             set,
-            restValues.flatMap((value) => byValue.get(value)!),
+            restValues.flatMap((value) => present(byValue.get(value), "members")),
         ),
         splitValues: restValues,
     });
@@ -417,7 +415,7 @@ function applyGroup(ctx: OperationContext, op: Extract<MenuOperation, { op: "gro
     const entry = openStep(ctx, { op: "group", templates: [], paths: [...op.paths], groupIds: [] });
     emit(ctx, entry, {
         annotation: op.group,
-        displayPattern: paths.length === 1 ? paths[0]! : `${commonDirectory(paths) || "."}/… (${paths.length} paths)`,
+        displayPattern: paths.length === 1 ? paths[0] : `${commonDirectory(paths) || "."}/… (${paths.length} paths)`,
         sets: [],
         claims,
     });
@@ -433,13 +431,13 @@ function keptMembers(detected: DetectedSets): Map<string, Claim> {
     return byPath;
 }
 
-interface ObservationContext {
+type ObservationContext = {
     readonly detected: DetectedSets;
     readonly menuSets: ReadonlyMap<string, DetectedSet>;
     readonly groupsBySet: ReadonlyMap<string, readonly string[]>;
     readonly label: string;
     readonly errors: string[];
-}
+};
 
 function resolveObservation(observation: Observation, ctx: ObservationContext): DataProfileObservation | undefined {
     if (observation.kind !== "slot") return { ...observation };
@@ -450,7 +448,7 @@ function resolveObservation(observation: Observation, ctx: ObservationContext): 
         return undefined;
     }
     const slotIndex = set.slots.findIndex((candidate) => candidate.id === observation.slotId);
-    const slot = set.slots[slotIndex];
+    const slot = set.slots.at(slotIndex);
     if (!slot) {
         ctx.errors.push(`dimension "${ctx.label}": set "${observation.setId}" has no slot "${observation.slotId}".`);
         return undefined;
@@ -467,7 +465,7 @@ function resolveObservation(observation: Observation, ctx: ObservationContext): 
         tokenClass: slot.tokenClass,
         cardinality: slot.distinctValues,
         sampleValues: [...values].sort((a, b) => a.localeCompare(b, "en")).slice(0, MAX_SLOT_SAMPLE_VALUES),
-        ...(observation.note ? { note: observation.note } : {}),
+        note: observation.note ? observation.note : undefined,
     };
 }
 
@@ -493,7 +491,7 @@ function slotsById(detected: DetectedSets): Map<string, SetSlot> {
  */
 function crossCheckSlots(detected: DetectedSets, observations: readonly DataProfileObservation[]): DataProfileObservation[] {
     const reference = observations.find((observation) => observation.kind === "slot");
-    if (!reference || reference.kind !== "slot") return [...observations];
+    if (!reference) return [...observations];
     const byId = slotsById(detected);
     const referenceSlot = byId.get(reference.slotId);
     const referenceValues = new Set(detected.slotValues.get(reference.slotId) ?? []);
@@ -506,7 +504,7 @@ function crossCheckSlots(detected: DetectedSets, observations: readonly DataProf
             return {
                 ...observation,
                 sameAsSlot: reference.slotId,
-                ...(linked?.crossCheckMismatches !== undefined ? { sameAsSlotMismatches: linked.crossCheckMismatches } : {}),
+                sameAsSlotMismatches: linked?.crossCheckMismatches !== undefined ? linked.crossCheckMismatches : undefined,
             };
         }
         if (referenceValues.size === 0) return observation;
@@ -547,33 +545,29 @@ function resolveDimensions(
         resolved.push({
             label: dimension.label,
             category: dimension.category,
-            ...(dimension.categoryLabel ? { categoryLabel: dimension.categoryLabel } : {}),
+            categoryLabel: dimension.categoryLabel ? dimension.categoryLabel : undefined,
             scope: dimensionScope(dimension.category, dimension.scope),
-            ...(dimension.description ? { description: dimension.description } : {}),
+            description: dimension.description ? dimension.description : undefined,
             observations: crossCheckSlots(detected, observations),
-            ...(dimension.reconciliations && dimension.reconciliations.length > 0
-                ? {
-                      reconciliations: dimension.reconciliations.map((entry) => ({
+            reconciliations: dimension.reconciliations && dimension.reconciliations.length > 0 ? dimension.reconciliations.map((entry) => ({
                           note: entry.note,
-                          ...(entry.delta !== undefined ? { delta: entry.delta } : {}),
-                      })),
-                  }
-                : {}),
-            ...(dimension.nestsUnder ? { nestsUnder: { ...dimension.nestsUnder } } : {}),
-            ...(dimension.treatmentReason ? { treatmentReason: dimension.treatmentReason } : {}),
+                          delta: entry.delta !== undefined ? entry.delta : undefined,
+                      })) : undefined,
+            nestsUnder: dimension.nestsUnder ? { ...dimension.nestsUnder } : undefined,
+            treatmentReason: dimension.treatmentReason ? dimension.treatmentReason : undefined,
         });
     }
     return resolved;
 }
 
-export interface ResolveOptions {
+export type ResolveOptions = {
     /**
      * True when no repair round follows. A contested file is then swept rather than
      * reported: there is nobody left to hand the error to, and leaving it with whichever
      * operation ran first would be the precedence the partition forbids.
      */
     readonly finalRound?: boolean;
-}
+};
 
 /**
  * Resolve a submission against the scan it was authored over.
@@ -632,7 +626,7 @@ export function resolveProfileSubmission(
     const claimsByDraft = new Map<DraftGroup, Claim[]>();
     const claimants = new Map<string, string[]>();
     for (const draft of ctx.drafts) {
-        const id = ids.get(draft)!;
+        const id = present(ids.get(draft), "group id of a draft");
         const seen = new Set<string>();
         const kept: Claim[] = [];
         for (const claim of draft.claims) {
@@ -670,16 +664,16 @@ export function resolveProfileSubmission(
                 );
         } else {
             for (const path of contested) {
-                const owners = claimants.get(path)!;
+                const owners = present(claimants.get(path), "claimants of a contested path");
                 errors.push(`"${path}" is claimed by both "${owners[0]}" and "${owners[1]}". A kept file belongs to exactly one group.`);
             }
             // The repair round decides who keeps it. Until then the first claimant holds it,
             // so the accounting handed back to the agent still sums.
             for (const [draft, kept] of claimsByDraft) {
-                const id = ids.get(draft)!;
+                const id = present(ids.get(draft), "group id of a draft");
                 claimsByDraft.set(
                     draft,
-                    kept.filter((claim) => !disputed.has(claim.member.path) || claimants.get(claim.member.path)![0] === id),
+                    kept.filter((claim) => !disputed.has(claim.member.path) || present(claimants.get(claim.member.path), "claimants")[0] === id),
                 );
             }
         }
@@ -691,32 +685,27 @@ export function resolveProfileSubmission(
     const unclaimed = [...byPath.keys()].filter((path) => !claimed.has(path)).sort((a, b) => a.localeCompare(b, "en"));
     const drafts = [...ctx.drafts];
     if (unclaimed.length > 0) {
-        const residue = unclassifiedDraft(unclaimed.map((path) => byPath.get(path)!));
+        const residue = unclassifiedDraft(unclaimed.map((path) => present(byPath.get(path), "claim of an unclaimed path")));
         drafts.push(residue);
         ids.set(residue, UNCLASSIFIED_GROUP_ID);
         claimsByDraft.set(residue, [...residue.claims]);
     }
 
     for (const entry of ctx.recipe) {
-        entry.step.groupIds = entry.drafts.map((draft) => ids.get(draft)!);
+        entry.step.groupIds = entry.drafts.map((draft) => present(ids.get(draft), "group id"));
         if (entry.step.op === "split") {
-            entry.step.valueMapping = entry.drafts.map((draft) => ({ groupId: ids.get(draft)!, values: [...(draft.splitValues ?? [])] }));
+            entry.step.valueMapping = entry.drafts.map((draft) => ({ groupId: present(ids.get(draft), "group id"), values: [...(draft.splitValues ?? [])] }));
         }
     }
 
     const recipe: DataProfileRecipeStep[] = ctx.recipe.map((entry) => entry.step);
     if (unclaimed.length > 0) {
         const paths = unclaimed.slice(0, MAX_UNCLASSIFIED_RECIPE_PATHS);
-        recipe.push({
-            op: "unclassified",
-            templates: [],
-            paths,
-            ...(unclaimed.length > paths.length ? { pathsTruncated: true } : {}),
-            groupIds: [UNCLASSIFIED_GROUP_ID],
-        });
+        const truncated = unclaimed.length > paths.length ? { pathsTruncated: true } : {};
+        recipe.push({ op: "unclassified", templates: [], paths, ...truncated, groupIds: [UNCLASSIFIED_GROUP_ID] });
     }
 
-    const groups = drafts.map((draft) => finalizeGroup(detected, draft, ids.get(draft)!, claimsByDraft.get(draft) ?? []));
+    const groups = drafts.map((draft) => finalizeGroup(detected, draft, present(ids.get(draft), "group id"), claimsByDraft.get(draft) ?? []));
     const unclassifiedGroup = groups.find((group) => group.unclassified);
 
     const partition: DataProfilePartition = {
@@ -732,8 +721,8 @@ export function resolveProfileSubmission(
             reasons: detected.quarantine.reasons.map((entry) => ({ reason: entry.reason, count: entry.count })),
             sample: [...detected.quarantine.sample],
         },
-        ...(contested.length > 0 ? { contested: { members: contested.length, sample: contested.slice(0, MAX_CONTESTED_SAMPLE) } } : {}),
-        ...(menu.truncated ? { scanTruncated: true } : {}),
+        contested: contested.length > 0 ? { members: contested.length, sample: contested.slice(0, MAX_CONTESTED_SAMPLE) } : undefined,
+        scanTruncated: menu.truncated ? true : undefined,
     };
 
     return {

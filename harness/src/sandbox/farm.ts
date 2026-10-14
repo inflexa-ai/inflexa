@@ -23,6 +23,7 @@ import { z } from "zod";
 
 import type { SandboxError } from "./sandbox-error.js";
 import type { FarmLocation, FarmSource } from "./types.js";
+import { jsonParse } from "../lib/json.js";
 
 /** The one metadata file of a farm. */
 export const FARM_LOCK_FILE = "inflexa.lock";
@@ -39,7 +40,7 @@ export const FarmLockPackageSchema = z
         hash: z.string(),
         requested: z.boolean(),
     })
-    .passthrough();
+    .loose();
 
 /**
  * `inflexa.lock` at schema version 1. Additive fields pass through — a
@@ -53,7 +54,7 @@ export const FarmLockSchema = z
         /** Per-language provenance. Each language object owns its own fields. */
         languages: z
             .object({
-                python: z.object({ version: z.string(), index: z.string() }).passthrough().optional(),
+                python: z.object({ version: z.string(), index: z.string() }).loose().optional(),
                 r: z
                     .object({
                         version: z.string(),
@@ -61,10 +62,10 @@ export const FarmLockSchema = z
                         /** The embedded pak lock of the build, verbatim. */
                         pak_lock: z.unknown().optional(),
                     })
-                    .passthrough()
+                    .loose()
                     .optional(),
             })
-            .passthrough(),
+            .loose(),
         /** The warm replay record. Present in the catalog farm only. */
         warm: z
             .record(
@@ -74,7 +75,7 @@ export const FarmLockSchema = z
                         script_sha256: z.string(),
                         cache_entries: z.array(z.string()),
                     })
-                    .passthrough(),
+                    .loose(),
             )
             .optional(),
         /** The top-level entries that the link merge kept-first or skipped. */
@@ -85,11 +86,11 @@ export const FarmLockSchema = z
                         entry: z.string(),
                         action: z.enum(["kept-first", "skipped"]),
                     })
-                    .passthrough(),
+                    .loose(),
             )
             .optional(),
     })
-    .passthrough();
+    .loose();
 export type FarmLock = z.infer<typeof FarmLockSchema>;
 
 export type FarmLockError =
@@ -115,7 +116,7 @@ export function readFarmLockFile(lockPath: string): Result<FarmLock, FarmLockErr
     }
     let parsed: unknown;
     try {
-        parsed = JSON.parse(raw);
+        parsed = jsonParse(raw, z.unknown());
     } catch (cause) {
         return err({ type: "lock_invalid", lockPath, cause });
     }

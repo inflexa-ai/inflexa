@@ -15,7 +15,7 @@ import type { Browser, BrowserContext, Page } from "puppeteer-core";
 import { createNoopLogger } from "./console-logger.js";
 import type { Logger } from "./logger.js";
 
-export interface ChromeConfig {
+export type ChromeConfig = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     /**
@@ -29,7 +29,7 @@ export interface ChromeConfig {
      */
     readonly browserUrl?: string;
     readonly maxPages?: number;
-}
+};
 
 /** Whether a value names an endpoint. An absent value and a blank value each name none. */
 function namesEndpoint(browserUrl: string | undefined): browserUrl is string {
@@ -83,14 +83,14 @@ export function setBrowserConnector(next: BrowserConnector): () => void {
     };
 }
 
-interface Semaphore {
+type Semaphore = {
     acquire(): Promise<() => void>;
-}
+};
 
 function createSemaphore(max: number): Semaphore {
     let active = 0;
     const queue: Array<() => void> = [];
-    const release = () => {
+    const release = (): void => {
         active--;
         const next = queue.shift();
         if (next) next();
@@ -116,11 +116,11 @@ const DEFAULT_MAX_PAGES = 4;
  * The live state of one endpoint: the connection, the connect in flight, and the page gate. The three share
  * one lifetime, thus one entry holds them and one eviction drops them together.
  */
-interface EndpointEntry {
+type EndpointEntry = {
     browser?: Browser;
     connecting?: Promise<Browser>;
     readonly semaphore: Semaphore;
-}
+};
 
 /**
  * The entry of each endpoint that the process reached, keyed by the endpoint URL. A disconnect evicts an
@@ -168,7 +168,7 @@ export async function getBrowser(browserUrl?: string, injected?: Logger): Promis
             logger.info("connected", { wsEndpoint: b.wsEndpoint() });
             return b;
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
             logger.error("failed to connect to browser", logger.errorFields(err));
             // A failed connect leaves nothing to reuse. The entry goes, thus a run of looks that each name a
             // new endpoint and each fail cannot grow the map. The two guards match the disconnect listener,

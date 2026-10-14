@@ -45,7 +45,7 @@ export class UnknownRunError extends Error {
     }
 }
 
-export interface CancelRunResult {
+export type CancelRunResult = {
     readonly runId: string;
     /** The DBOS parent workflow id — equal to `runId` by the launch contract
      * (`execute_analysis` launches with `workflowId: runId`). */
@@ -64,9 +64,9 @@ export interface CancelRunResult {
         readonly charge: boolean;
         readonly mandate: boolean;
     };
-}
+};
 
-export interface RunCancelerDeps {
+export type RunCancelerDeps = {
     readonly pool: Pool;
     readonly runCharge: RunCharge;
     readonly runAuthorizer: RunAuthorizer;
@@ -74,16 +74,16 @@ export interface RunCancelerDeps {
     /** Test seam over the engine cancel. Production default: the workflow
      * purger's `DBOSClient`-backed cancel, child-cascading and launch-free. */
     readonly cancelWorkflows?: (workflowIds: readonly string[]) => Promise<void>;
-}
+};
 
-export interface RunCanceler {
+export type RunCanceler = {
     /**
      * Cancel the run's workflows and converge its ledgers. Rejects when the
      * engine cancel itself fails (retry-safe: nothing converged) or the run is
      * unknown; convergence-phase failures resolve with their flag false.
      */
     cancel(runId: string, session: AgentSession): Promise<CancelRunResult>;
-}
+};
 
 const TERMINAL: ReadonlySet<RunStatus> = new Set(["completed", "partial", "failed", "canceled", "suspended_insufficient_funds"]);
 

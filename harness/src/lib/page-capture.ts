@@ -34,19 +34,21 @@ import type { Page } from "puppeteer-core";
 import { withPage, type ChromeConfig } from "./chrome.js";
 import { PAGE_NAV_TIMEOUT_MS, PAGE_READY_TIMEOUT_MS, THEME_READY_EVENT, THEME_READY_SENTINEL } from "../report-render/page.js";
 import { BLOCK_ID_ATTRIBUTE } from "../report-render/views/block-mark.js";
+import { isError } from "./thrown.js";
+import { sleep } from "../lib/async-utils.js";
 
 /** One request that the page could not load, with the reason that the browser gave. */
-export interface FailedRequest {
+export type FailedRequest = {
     url: string;
     reason: string;
-}
+};
 
 /** One picture of a capture: the base64 bytes, and the document rows that a slice holds. */
-export interface CapturedShot {
+export type CapturedShot = {
     readonly base64: string;
     /** The vertical document range of a slice, in CSS pixels. Absent on a whole-document or window picture. */
     readonly range?: { readonly fromY: number; readonly toY: number };
-}
+};
 
 /**
  * What the pictures hold together. `full` is one shot of the whole document. `tiled` is consecutive vertical
@@ -66,7 +68,7 @@ export type CaptureCoverage =
     | { readonly kind: "no-block" };
 
 /** The pictures and the faults of one page capture. */
-export interface PageCapture {
+export type PageCapture = {
     /**
      * The pictures in document order: one shot under `full` and `viewport`, the slices under `tiled` and
      * `block`, and none under `no-block`.
@@ -75,7 +77,7 @@ export interface PageCapture {
     coverage: CaptureCoverage;
     consoleErrors: string[];
     failedRequests: FailedRequest[];
-}
+};
 
 /**
  * The capture seam. It navigates to a page URL, and it gives back the screenshots and the faults. The seam
@@ -85,14 +87,14 @@ export interface PageCapture {
 export type CapturePage = (url: string, options?: CaptureOptions) => Promise<PageCapture>;
 
 /** The extra settle steps and the target of one capture. A call site that needs none passes nothing. */
-export interface CaptureOptions {
+export type CaptureOptions = {
     /** A CSS selector to wait for after the readiness signal. The wait is best-effort. */
     readonly waitForSelector?: string;
     /** An extra settle time in milliseconds after the readiness signal, for a late paint. */
     readonly waitMs?: number;
     /** The id of the one block to capture. Absent, the capture takes the whole document. */
     readonly blockId?: string;
-}
+};
 
 /** The budget of the optional selector wait. The wait is best-effort, thus a miss captures the page anyway. */
 const SELECTOR_TIMEOUT_MS = 5_000;
@@ -142,6 +144,7 @@ function waitForThemeReady(sentinel: string, event: string, timeout: number): Pr
             resolve();
             return;
         }
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the page-side fallback resolves the wait when the theme event does not arrive; the event clears the timer, so it cannot outlive the wait.
         const timer = setTimeout(() => {
             resolve();
         }, timeout);
@@ -179,12 +182,12 @@ async function measureTotalHeight(page: Page): Promise<number> {
 }
 
 /** A document area of one capture, in CSS pixels: the columns from `x`, and the rows from `fromY` to `toY`. */
-interface CaptureArea {
+type CaptureArea = {
     readonly x: number;
     readonly width: number;
     readonly fromY: number;
     readonly toY: number;
-}
+};
 
 /**
  * Capture the rows of one area as slices, in document order. Each slice clips {@link TILE_HEIGHT_PX} rows,
@@ -269,7 +272,7 @@ async function captureShots(page: Page): Promise<Shots> {
         } catch (refusedViewport) {
             // The two refusals together are the account of a dead look, and the caller reports the second one
             // alone. Thus the first one rides as the cause, and no reader of that report loses half of it.
-            if (refusedViewport instanceof Error && refusedViewport.cause === undefined) {
+            if (isError(refusedViewport) && refusedViewport.cause === undefined) {
                 refusedViewport.cause = refused;
             }
             throw refusedViewport;
@@ -323,7 +326,7 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
         }
         if (options.waitMs !== undefined && options.waitMs > 0) {
             const settle = options.waitMs;
-            await new Promise((resolve) => setTimeout(resolve, settle));
+            await sleep(settle);
         }
 
         // The pictures must show the whole document at the layout that a reader gets. Thus a defect below the

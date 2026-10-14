@@ -38,6 +38,7 @@ export async function computeSha256File(filePath: string): Promise<string> {
  * an attestation invariant violation, not something to paper over.
  */
 export function hasValidContentHash(hash: string | undefined): boolean {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return !!hash && /^[a-z0-9]+:[0-9a-f]+$/i.test(hash);
 }
 
@@ -148,7 +149,7 @@ export async function writeFileWithinRoot(workspaceRoot: string, absPath: string
     // `O_NOFOLLOW ?? 0`: the flag is defined on Linux/macOS (the harness host
     // platforms); the `?? 0` keeps the open valid on a platform that lacks it
     // rather than NaN-ing the flag mask.
-    const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | (fsConstants.O_NOFOLLOW ?? 0);
+    const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | (fsConstants.O_NOFOLLOW);
     const fh = await open(target, flags, 0o644);
     try {
         await fh.writeFile(data);

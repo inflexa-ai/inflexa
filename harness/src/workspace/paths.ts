@@ -242,6 +242,7 @@ export function toAnalysisRootPath(resourceId: string, path: string): string {
 
     // A record holds no host path. Thus a leading slash is how a model writes the
     // same root-relative path, and the remainder is the tail.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const tail = normalizeTail(trimmed.replace(/^\/+/, ""));
     if (tail === ".." || tail.startsWith("../")) return trimmed;
     return joinAnalysisRoot(resourceId, tail);
@@ -305,6 +306,7 @@ function stripAnalysisRoot(path: string, analysisId: string): string | null {
     return slashIdx === -1 ? "" : withoutLead.slice(slashIdx + 1);
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const SAFE_ID = /^[\w.-]+$/;
 
 /**

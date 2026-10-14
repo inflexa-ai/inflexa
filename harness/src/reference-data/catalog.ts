@@ -6,8 +6,11 @@ import { z } from "zod";
 /** Schema version for the checked-in reference-data catalog. */
 export const REFERENCE_DATA_CATALOG_VERSION = 1 as const;
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 const SAFE_ID = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 const SAFE_VERSION = /^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 const SHA256 = /^[a-f0-9]{64}$/;
 
 function isSafeRelativePath(value: string): boolean {
@@ -35,6 +38,7 @@ const ReferenceArtifactUrlSchema = z.url().refine((value) => value.startsWith("h
  * remain cheap to add, and an unrecognized format degrades to "unknown reader"
  * rather than failing catalog validation.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 export const ReferenceArtifactFormatSchema = z.string().regex(/^[a-z0-9]+(?:[+-][a-z0-9]+)*$/, "Expected a lowercase format token");
 
 /**
@@ -65,6 +69,7 @@ export const ReferenceArtifactSchema = z.strictObject({
  * choice is most silently wrong on — human regulons over mouse counts still run —
  * so it is a first-class field rather than something inferred from the id suffix.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 export const ReferenceOrganismSchema = z.string().regex(/^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/, "Expected a lowercase organism common name");
 
 /** Provenance and licensing information for one supported reference dataset. */
@@ -2174,10 +2179,10 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
 export type ReferenceInstallPlanDataset = ReferenceDataset & { readonly installPath: string };
 
 /** Deterministic plan; every artifact carries the upstream URL it is fetched from. */
-export interface ReferenceInstallPlan {
+export type ReferenceInstallPlan = {
     readonly catalogVersion: typeof REFERENCE_DATA_CATALOG_VERSION;
     readonly datasets: readonly ReferenceInstallPlanDataset[];
-}
+};
 
 /** A requested dataset id was not present in the selected catalog. */
 export class UnknownReferenceDatasetError extends Error {
@@ -2203,16 +2208,16 @@ export function resolveReferenceInstallPlanFromCatalogForTesting(
     const availableIds = [...byId.keys()].sort();
     const selectedIds = [...new Set(datasetIds)].sort();
 
+    const datasets = [];
     for (const id of selectedIds) {
-        if (!byId.has(id)) return err(new UnknownReferenceDatasetError(id, availableIds));
+        const dataset = byId.get(id);
+        if (dataset === undefined) return err(new UnknownReferenceDatasetError(id, availableIds));
+        datasets.push({ ...dataset, installPath: `${dataset.id}/${dataset.version}` });
     }
 
     return ok({
         catalogVersion: catalog.version,
-        datasets: selectedIds.map((id) => {
-            const dataset = byId.get(id)!;
-            return { ...dataset, installPath: `${dataset.id}/${dataset.version}` };
-        }),
+        datasets,
     });
 }
 

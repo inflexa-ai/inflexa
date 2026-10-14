@@ -29,8 +29,11 @@ import {
 import { millimeterRoot } from "./hybrid-svg.js";
 import type { DataAsset } from "./table-data.js";
 import type { RenderProblem } from "./types.js";
+import { optionRecord } from "./option-lens.js";
+import { errorMessage } from "../lib/thrown.js";
 
 /** One instance token of the chart runtime: a class, a clip path, or a gradient, for example `zr1-cls-2`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const INSTANCE_TOKEN = /zr\d+-[a-z]+-?\d+/g;
 
 /**
@@ -38,6 +41,7 @@ const INSTANCE_TOKEN = /zr\d+-[a-z]+-?\d+/g;
  * a `url(#...)` reference, and the style block. A text node is none of them, thus a category name that
  * reads as a token keeps its text.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const TOKEN_PLACES = /\s(?:id|class)="[^"]*"|url\(#[^)]*\)|<style[^>]*>[\s\S]*?<\/style>/g;
 
 /** The count of hash characters in an asset name. It matches the name of a table asset. */
@@ -58,10 +62,10 @@ export function loadChartRuntime(): Promise<ChartRuntime> {
 }
 
 /** The two SVG files of one chart: the single journal column and the double journal column. */
-export interface ChartSvgs {
+export type ChartSvgs = {
     readonly single: DataAsset;
     readonly double: DataAsset;
-}
+};
 
 /**
  * Render one option to SVG text at one column size.
@@ -89,7 +93,7 @@ export function renderChartSvg(echarts: ChartRuntime, option: EchartOption, size
         chart.setOption(exportOption(option, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx));
         return ok(finishedSvg(chart.renderToSVGString(), size));
     } catch (cause) {
-        return err(cause instanceof Error ? cause.message : String(cause));
+        return err(errorMessage(cause));
     } finally {
         Math.random = random;
         chart?.dispose();
@@ -127,6 +131,7 @@ function finishedSvg(svg: string, size: ChartExportSize): string {
     const renumber = (token: string): string => {
         let next = tokens.get(token);
         if (next === undefined) {
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             const family = /^zr\d+-([a-z]+)/.exec(token)?.[1] ?? "t";
             next = `zr0-${family}-${tokens.size}`;
             tokens.set(token, next);
@@ -153,7 +158,7 @@ function plottedPoints(option: EchartOption): number {
     let count = 0;
     for (const entry of series) {
         if (typeof entry !== "object" || entry === null) continue;
-        const fields = entry as EchartOption;
+        const fields = optionRecord(entry);
         if (!Array.isArray(fields.data)) continue;
         for (const item of fields.data) {
             if (fields.type === "radar") count += polygonCoordinates(item);
@@ -166,7 +171,7 @@ function plottedPoints(option: EchartOption): number {
 
 /** True when one item draws a coordinate: a number, or a value whose members hold no empty slot. */
 function drawnItem(item: unknown): boolean {
-    const value = typeof item === "object" && item !== null && !Array.isArray(item) ? (item as EchartOption).value : item;
+    const value = typeof item === "object" && item !== null && !Array.isArray(item) ? (optionRecord(item)).value : item;
     if (typeof value === "number") return true;
     return Array.isArray(value) && value.every((member) => member !== null && member !== undefined && member !== "-");
 }
@@ -185,7 +190,7 @@ const OUTLINE_LEAD_MEMBERS = 4;
 
 /** The count of coordinates that one radar polygon draws: each member of its value that is not empty. */
 function polygonCoordinates(item: unknown): number {
-    const value = typeof item === "object" && item !== null ? (item as EchartOption).value : undefined;
+    const value = typeof item === "object" && item !== null ? (optionRecord(item)).value : undefined;
     return Array.isArray(value) ? value.filter((member) => member !== null && member !== undefined).length : 0;
 }
 

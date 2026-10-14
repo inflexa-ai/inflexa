@@ -22,16 +22,16 @@ import type { DetectedSet, DetectedSets, MemberFile, ReadoutSelection, SetRepres
 export const MAX_LEFTOVER_READOUTS = 64;
 
 /** A file the selection named, with what the scan already knows about its bytes. */
-export interface ReadoutTarget {
+export type ReadoutTarget = {
     readonly path: string;
     readonly format: string;
     readonly wrapper?: string;
-}
+};
 
 /** The member a set is best read through: the first non-empty one, by path order. */
 function representativeOf(set: DetectedSet): string | undefined {
     const ordered = [...set.members].sort((a, b) => a.path.localeCompare(b.path, "en"));
-    return (ordered.find((member) => member.size > 0) ?? ordered[0])?.path;
+    return (ordered.find((member) => member.size > 0) ?? ordered[0]).path;
 }
 
 export function selectReadouts(sets: readonly DetectedSet[], leftovers: readonly MemberFile[]): ReadoutSelection {
@@ -64,7 +64,7 @@ export function readoutTargets(detected: DetectedSets): ReadoutTarget[] {
         const member = members.get(path);
         if (!member || seen.has(path)) continue;
         seen.add(path);
-        targets.push({ path, format: member.format, ...(member.wrapper ? { wrapper: member.wrapper } : {}) });
+        targets.push({ path, format: member.format, wrapper: member.wrapper ? member.wrapper : undefined });
     }
     return targets;
 }

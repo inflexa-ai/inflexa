@@ -62,15 +62,16 @@ import type { GateFailure } from "../../lib/hooks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { createStaticEyes, type AcquireEyes, type EyesLease, type EyesScope } from "../../lib/eyes.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
-import { capturePage, type CaptureCoverage, type CaptureOptions, type CapturePage, type FailedRequest, type PageCapture } from "../../lib/page-capture.js";
+import { capturePage, type CaptureCoverage, type CaptureOptions, type CapturePage, type PageCapture } from "../../lib/page-capture.js";
 import { reportSessionDir, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolResultImages, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 import { digestPageFaults, type ConsoleErrorEntry, type FailedRequestEntry } from "./page-faults.js";
+import { errorMessage, isError } from "../../lib/thrown.js";
 
 // The capture shapes live beside the chrome connection. The tool keeps them on its own surface, thus a
 // consumer of the tool imports one module.
-export type { CaptureCoverage, CapturePage, FailedRequest, PageCapture };
+export type { CaptureCoverage, CapturePage, FailedRequest, PageCapture } from "../../lib/page-capture.js";
 
 /**
  * The URL formation of one look. It maps the page of the thread onto the URL that the browser opens.
@@ -92,11 +93,11 @@ const examinePageInput = z.object({
 export type ExaminePageInput = z.infer<typeof examinePageInput>;
 
 /** The document range of one slice of a tiled look, in the order that the pictures ride. */
-export interface ExaminedTile {
+export type ExaminedTile = {
     index: number;
     fromY: number;
     toY: number;
-}
+};
 
 /**
  * The typed outcome of the eyes tool. Each arm is ok-channel data, thus the tool never throws for a
@@ -139,7 +140,7 @@ export type ExaminePageResult =
  * tree names a served URL instead. `capture` is optional and it replaces the whole transport, thus a test
  * injects a seam that reads no browser.
  */
-export interface ExaminePageToolDeps {
+export type ExaminePageToolDeps = {
     readonly gateway: ReportSessionStateGateway;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly chrome: ChromeConfig;
@@ -153,7 +154,7 @@ export interface ExaminePageToolDeps {
      * {@link RELEASE_DEADLINE_MS}, which no composition tunes.
      */
     readonly deadlines?: { readonly acquireMs?: number; readonly releaseMs?: number };
-}
+};
 
 /**
  * The transport of one look, fixed at construction.
@@ -193,10 +194,10 @@ function resolveEyes(deps: ExaminePageToolDeps): EyesTransport {
 type LookStage = "acquire" | "capture";
 
 /** A fault of one look: the stage that raised it, and the cause that it raised. */
-interface LookFault {
+type LookFault = {
     readonly stage: LookStage;
     readonly cause: unknown;
-}
+};
 
 /** The log line of each stage. The outcome of the tool is one arm, thus the stage rides in the log alone. */
 const LOOK_FAULT_MESSAGE: Record<LookStage, string> = {
@@ -246,6 +247,7 @@ async function withDeadline<T>(work: Promise<T>, ms: number): Promise<Result<T, 
         (cause: unknown) => err({ kind: "threw" as const, cause }),
     );
     const expiry = new Promise<typeof EXPIRED>((resolve) => {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the deadline arm resolves the race and the winner clears it one line below, so it cannot outlive the call.
         timer = setTimeout(() => resolve(EXPIRED), ms);
     });
     const winner = await Promise.race([settled, expiry]);
@@ -269,7 +271,7 @@ function startSeamCall<T>(call: () => Promise<T>): Promise<T> {
     try {
         return call();
     } catch (cause) {
-        return Promise.reject(cause);
+        return Promise.reject(isError(cause) ? cause : new Error(errorMessage(cause)));
     }
 }
 
@@ -463,7 +465,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
             if (looked.isErr()) {
                 const { stage, cause } = looked.error;
                 logger.warn(LOOK_FAULT_MESSAGE[stage], { threadId, analysisId, ...defaultErrorFields(cause) });
-                return ok({ outcome: "capture-failed", detail: cause instanceof Error ? cause.message : String(cause) });
+                return ok({ outcome: "capture-failed", detail: errorMessage(cause) });
             }
             const captured: PageCapture = looked.value;
             if (blockId !== undefined && captured.coverage.kind === "no-block") {
@@ -499,7 +501,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                     {
                         outcome: "examined" as const,
                         coverage: captured.coverage,
-                        ...(tiles.length === 0 ? {} : { tiles }),
+                        tiles: !(tiles.length === 0) ? tiles : undefined,
                         ...digestPageFaults(captured.consoleErrors, captured.failedRequests),
                         pagePath: relativePagePath,
                     },

@@ -48,6 +48,7 @@ import {
 } from "./common.js";
 import { checkTree, type CheckedTree } from "./dendrogram.js";
 import type { FigureContext, FigureModule } from "./index.js";
+import { typedMember } from "../../lib/shape.js";
 
 /** The count of x categories past which the matrix hides the x labels and states the count in the axis title. */
 export const HEATMAP_LABEL_LIMIT = 40;
@@ -157,9 +158,13 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
             return err(chartProblem(block.id, `The heatmap chart needs a column for the "${member}" channel.`));
         }
     }
-    const xChannel = encoding.x as ChartChannel;
-    const yChannel = encoding.y as ChartChannel;
-    const valueChannel = encoding.value as ChartChannel;
+    const { x: xEncoding, y: yEncoding, value: valueEncoding } = encoding;
+    if (xEncoding === undefined || yEncoding === undefined || valueEncoding === undefined) {
+        return err(chartProblem(block.id, "The heatmap chart needs a column for each of the x, y, and value channels."));
+    }
+    const xChannel: ChartChannel = xEncoding;
+    const yChannel: ChartChannel = yEncoding;
+    const valueChannel: ChartChannel = valueEncoding;
     if (channelOrder(valueChannel) !== undefined) {
         return err(chartProblem(block.id, 'The "value" channel draws no category axis, thus it takes no "orderBy".'));
     }
@@ -218,7 +223,7 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         data: xCategories.map(String),
         ...axisNameFields("x", xTitle),
         ...LINELESS_AXIS,
-        ...(hidden ? { axisLabel: { show: false } } : {}),
+        axisLabel: hidden ? { show: false } : undefined,
     };
     const yAxis: EchartOption = {
         type: "category",
@@ -376,12 +381,12 @@ function axisOrder(
  * beside its row. The tree of y reads down, as the matrix reads down.
  */
 function leafAxis(gridIndex: number, count: number, inverse: boolean): EchartOption {
-    return { type: "value", gridIndex, min: -0.5, max: count - 0.5, ...(inverse ? { inverse: true } : {}), show: false };
+    return { type: "value", gridIndex, min: -0.5, max: count - 0.5, inverse: inverse ? true : undefined, show: false };
 }
 
 /** The hidden value axis of the heights of a dendrogram. The tree of y turns it, thus the root sits at the left and the leaves face the row names. */
 function heightAxis(gridIndex: number, height: number, inverse: boolean): EchartOption {
-    return { type: "value", gridIndex, min: 0, max: height > 0 ? height : 1, ...(inverse ? { inverse: true } : {}), show: false };
+    return { type: "value", gridIndex, min: 0, max: height > 0 ? height : 1, inverse: inverse ? true : undefined, show: false };
 }
 
 /** The branches of one dendrogram: one elbow of lines for each edge, in the order of the tree table. */
@@ -418,11 +423,11 @@ function bandShare(band: number, body: number): string {
 }
 
 /** One annotation strip: its title, its categories in order, and the place of the category of each x category. */
-interface TrackStrip {
+type TrackStrip = {
     readonly title: string;
     readonly values: readonly Cell[];
     readonly codes: readonly (number | null)[];
-}
+};
 
 /**
  * The strip of each track column. The categories of a strip take the order in which the x axis meets them.
@@ -443,8 +448,8 @@ function trackStrips(
         if (column.isErr()) return err(column.error);
         const held = new Map<string, Cell>();
         for (const row of rows) {
-            const category = row[xColumn];
-            const value = row[track];
+            const category = typedMember(row, xColumn);
+            const value = typedMember(row, track);
             if (category === undefined || value === undefined || value === "") continue;
             const key = cellKey(category);
             const prior = held.get(key);

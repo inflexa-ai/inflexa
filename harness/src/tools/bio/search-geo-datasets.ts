@@ -41,7 +41,7 @@ const GeoDatasetSummarySchema = z.object({
 type GeoDatasetSummary = z.infer<typeof GeoDatasetSummarySchema>;
 
 /** One dataset row, as the tool returns it. */
-export interface GeoDataset {
+export type GeoDataset = {
     accession: string;
     title: string;
     summary: string;
@@ -49,7 +49,7 @@ export interface GeoDataset {
     sampleCount: number | null;
     organism: string | null;
     pubmedIds: (string | number)[];
-}
+};
 
 // The esummary `result` object mixes a `uids` string array in with the
 // numeric-keyed dataset summaries; `.catch(undefined)` on the record value lets
@@ -67,7 +67,7 @@ export const GeoEsummaryResponseSchema = z.object({
  * payload.
  */
 export function mapGeoDatasets(ids: string[], summary: z.infer<typeof GeoEsummaryResponseSchema>): GeoDataset[] {
-    const result: Record<string, GeoDatasetSummary | undefined> = summary?.result ?? {};
+    const result: Record<string, GeoDatasetSummary | undefined> = summary.result ?? {};
     const datasets: GeoDataset[] = [];
     for (const id of ids) {
         const r = result[id];
@@ -122,11 +122,12 @@ export const searchGeoDatasetsTool = defineTool({
             .describe("Max datasets to return (default 10, max 50). totalFound reports the true match count regardless."),
     }),
     describeCall: "none",
-    execute: async ({ query, organism, datasetType = "gse", limit = 10 }) => {
+    execute: async ({ query, organism, datasetType, limit }) => {
         let searchQuery = query;
         // Escape backslashes first, then quotes, so a `\` in the organism value
         // cannot smuggle an unescaped `"` past the escaping and break out of the
         // quoted Entrez phrase.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         if (organism) searchQuery += ` AND "${organism.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"[Organism]`;
 
         const db = "gds";
@@ -137,7 +138,7 @@ export const searchGeoDatasetsTool = defineTool({
         const searchRes = await apiFetchValidated(searchUrl, GeoEsearchResponseSchema);
         if (searchRes.isErr()) throw new Error(describeApiError(searchRes.error));
 
-        const ids: string[] = searchRes.value?.esearchresult?.idlist ?? [];
+        const ids: string[] = searchRes.value.esearchresult?.idlist ?? [];
         if (ids.length === 0) return ok({ totalFound: 0, datasets: [] });
 
         const summaryUrl = `${ESEARCH_BASE}/esummary.fcgi?db=${db}&id=${ids.join(",")}&retmode=json`;
@@ -146,7 +147,7 @@ export const searchGeoDatasetsTool = defineTool({
 
         const datasets = mapGeoDatasets(ids, summaryRes.value);
 
-        const totalFound = Number(searchRes.value?.esearchresult?.count) || datasets.length;
+        const totalFound = Number(searchRes.value.esearchresult?.count) || datasets.length;
 
         return ok({ totalFound, datasets });
     },

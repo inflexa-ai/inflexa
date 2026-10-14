@@ -11,7 +11,7 @@
 
 import type { ToolOutcome } from "../contracts/chat-events.js";
 
-export type { ToolOutcome };
+export type { ToolOutcome } from "../contracts/chat-events.js";
 
 /**
  * Classify a tool result's output type.

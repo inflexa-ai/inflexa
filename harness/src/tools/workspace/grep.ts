@@ -16,6 +16,8 @@ import { z } from "zod";
 import { defineTool, type ToolError } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { ListEntry, ReadFileResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
+import { errorMessage } from "../../lib/thrown.js";
+import { splitLines } from "../../lib/text.js";
 
 const DEFAULT_MAX_MATCHES = 50;
 const DEFAULT_MAX_MATCH_BYTES = 512;
@@ -38,11 +40,11 @@ const GrepInputSchema = z.object({
     ignoreCase: z.boolean().optional().describe("Case-insensitive match. Defaults to false."),
 });
 
-interface Match {
+type Match = {
     readonly file: string;
     readonly line: number;
     readonly preview: string;
-}
+};
 
 type GrepOutput =
     | { status: "invalid_pattern"; pattern: string; error: string }
@@ -76,12 +78,13 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
         execute: async ({ pattern, path, ignoreCase }, ctx): Promise<Result<GrepOutput, ToolError>> => {
             let regex: RegExp;
             try {
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
                 regex = new RegExp(pattern, ignoreCase === true ? "i" : "");
             } catch (err) {
                 return ok({
                     status: "invalid_pattern" as const,
                     pattern,
-                    error: err instanceof Error ? err.message : String(err),
+                    error: errorMessage(err),
                 });
             }
 
@@ -95,6 +98,8 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
 
             const matches: Match[] = [];
             let truncated = false;
+            // The flag flips inside the directory walk; the closure reads it at call time.
+            const wasTruncated = (): boolean => truncated;
             const session = ctx.session;
 
             async function searchFile(filePath: string): Promise<void> {
@@ -116,13 +121,13 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
                 const text = buf.toString("utf8");
                 if (read.kind === "truncated") truncated = true;
 
-                const lines = text.split(/\r?\n/);
+                const lines = splitLines(text);
                 for (let i = 0; i < lines.length; i++) {
                     if (matches.length >= DEFAULT_MAX_MATCHES) {
                         truncated = true;
                         return;
                     }
-                    const line = lines[i]!;
+                    const line = lines[i];
                     if (regex.test(line)) {
                         matches.push({
                             file: filePath,
@@ -164,7 +169,7 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
             if (matches.length === 0) {
                 return ok({ status: "no_matches" as const, path, pattern });
             }
-            if (truncated) {
+            if (wasTruncated()) {
                 return ok({
                     status: "truncated" as const,
                     path,

@@ -6,24 +6,24 @@
 
 import benchmarksData from "../../data/clinical-benchmarks.json" with { type: "json" };
 
-export interface PhaseTransitions {
+export type PhaseTransitions = {
     phase1_to_phase2: number;
     phase2_to_phase3: number;
     phase3_to_nda: number;
     nda_to_approval: number;
     phase1_to_approval: number;
-}
+};
 
-export interface BenchmarkResult {
+export type BenchmarkResult = {
     therapeutic_area: string;
     source: "available" | "fallback";
     data_version: string;
     data_window: string;
     attribution: string;
     transitions: PhaseTransitions;
-}
+};
 
-interface BenchmarksFile {
+type BenchmarksFile = {
     schema_version: number;
     data_version: string;
     data_window: string;
@@ -32,11 +32,11 @@ interface BenchmarksFile {
     refresh_procedure: string;
     phase_transitions: Record<string, PhaseTransitions>;
     indication_to_therapeutic_area: { patterns: string[]; therapeutic_area: string }[];
-}
+};
 
 const dataset = benchmarksData as BenchmarksFile;
 
-if (!dataset.phase_transitions || !dataset.phase_transitions.all) {
+if (!("phase_transitions" in dataset) || !("all" in dataset.phase_transitions)) {
     throw new Error("clinical-benchmarks.json is missing phase_transitions.all baseline");
 }
 
@@ -71,7 +71,7 @@ export function inferTherapeuticArea(indicationLabels: string[]): string | null 
 export function getBenchmarks(therapeuticArea: string | null): BenchmarkResult {
     const dataset = loadDataset();
     const useFallback = !therapeuticArea || !dataset.phase_transitions[therapeuticArea];
-    const ta = useFallback ? "all" : therapeuticArea!;
+    const ta = useFallback ? "all" : therapeuticArea;
     return {
         therapeutic_area: ta,
         source: useFallback ? "fallback" : "available",

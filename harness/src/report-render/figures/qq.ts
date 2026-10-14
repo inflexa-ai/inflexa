@@ -68,12 +68,12 @@ const BAND_NAME = "Null band";
 const READS: ReadonlySet<FigureMember> = new Set(["x", "y", "low", "high", "statistics"]);
 
 /** One row of the band: the expected value and its two bounds. */
-interface BandRow {
+type BandRow = {
     readonly x: number;
     readonly low: number;
     readonly high: number;
     readonly index: number;
-}
+};
 
 /**
  * The rows that the band reads: each row with a number in the three columns, in ascending order of x, thinned
@@ -214,7 +214,7 @@ function deriveQq(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
                   ]
                 : []),
         ],
-        ...(statistics.length > 0 ? { graphic: statistics } : {}),
+        graphic: statistics.length > 0 ? statistics : undefined,
     });
 }
 

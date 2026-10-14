@@ -23,15 +23,15 @@ import { err, ok, ResultAsync } from "neverthrow";
 
 import type { Logger } from "./logger.js";
 
-export interface GateFailure {
+export type GateFailure = {
     readonly reason: string;
     /** True when the host asks the harness to suspend the work in place of a failure. */
     readonly suspend: boolean;
-}
+};
 
-export interface NoticeFailure {
+export type NoticeFailure = {
     readonly reason: string;
-}
+};
 
 export type GateName = "RunAuthorizer.authorize" | "RunCharge.open" | "ArtifactRegistry.register" | "resolveRequestHeaders" | "resolveSandboxLabels";
 

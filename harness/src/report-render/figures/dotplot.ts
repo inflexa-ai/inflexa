@@ -19,7 +19,8 @@ import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel, type ChartComposition } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
-import type { Cell, ChartRow, EchartOption } from "../chart.js";
+import type { ChartRow, EchartOption } from "../chart.js";
+import { optionCell, optionMemberOrUndefined } from "../option-lens.js";
 import { CHART_BODY_PX, SEQUENTIAL_RAMP } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
@@ -35,6 +36,7 @@ import {
     type ColumnLabels,
 } from "./common.js";
 import type { FigureContext, FigureModule } from "./index.js";
+import { optionRecord, optionRecords } from "../option-lens.js";
 
 /** The band at the right of the plot that holds the color scale and the size legend, in percent of the width. */
 const DOTPLOT_KEY_BAND = "28%";
@@ -129,7 +131,10 @@ function formatSource(context: FigureContext, channel: ChartChannel): [string, C
 /** The members of one item: the array form, or the value of the object form. */
 function itemValue(item: unknown): unknown[] | undefined {
     if (Array.isArray(item)) return item;
-    if (typeof item === "object" && item !== null && Array.isArray((item as EchartOption).value)) return (item as EchartOption).value as unknown[];
+    if (typeof item === "object" && item !== null) {
+                const value = optionRecord(item).value;
+                if (Array.isArray(value)) return value;
+            }
     return undefined;
 }
 
@@ -138,7 +143,7 @@ function placedItem(item: unknown, place: number): unknown {
     const value = itemValue(item);
     if (value === undefined) return item;
     const moved = [value[0], place, ...value.slice(2)];
-    return Array.isArray(item) ? moved : { ...(item as EchartOption), value: moved };
+    return Array.isArray(item) ? moved : { ...(optionRecord(item)), value: moved };
 }
 
 function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
@@ -167,9 +172,9 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
                     x,
                     // The figure orders the y categories itself, thus the composition reads the plain column.
                     y: yColumn,
-                    ...(size !== undefined ? { size } : {}),
-                    ...(color !== undefined ? { color } : {}),
-                    ...(label !== undefined ? { label } : {}),
+                    size: size !== undefined ? size : undefined,
+                    color: color !== undefined ? color : undefined,
+                    label: label !== undefined ? label : undefined,
                 },
             },
         ],
@@ -180,10 +185,10 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const option = composed.value;
 
     const places = new Map(categories.value.map((category, place) => [String(category), place]));
-    const series = (Array.isArray(option.series) ? (option.series as EchartOption[]) : []).map((entry) => ({
+    const series = (Array.isArray(option.series) ? (optionRecords(option.series)) : []).map((entry) => ({
         ...entry,
         data: (Array.isArray(entry.data) ? entry.data : []).flatMap((item) => {
-            const place = places.get(String(itemValue(item)?.[1] as Cell));
+            const place = places.get(String(itemValue(item)?.[1]));
             return place === undefined ? [] : [placedItem(item, place)];
         }),
     }));
@@ -193,12 +198,12 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const terms = wraps ? categories.value.map((category) => wrappedTerm(String(category))) : undefined;
     const yAxis = {
         ...categoryAxis("y", terms ?? categories.value, { title: categoryAxisTitle(context.labels, yColumn), topDown: true }),
-        ...(wraps ? { axisLabel: { lineHeight: DOTPLOT_LINE_PX } } : {}),
+        axisLabel: wraps ? { lineHeight: DOTPLOT_LINE_PX } : undefined,
     };
     const lines = terms === undefined ? 1 : highestOf(terms.map((term) => term.split("\n").length));
     const body = (categories.value.length * (lines * DOTPLOT_LINE_PX + DOTPLOT_ROW_GAP_PX)) / DOTPLOT_PLOT_SHARE;
 
-    const maps = Array.isArray(option.visualMap) ? (option.visualMap as EchartOption[]) : [];
+    const maps = Array.isArray(option.visualMap) ? (optionRecords(option.visualMap)) : [];
     const keys: EchartOption[] = [];
     const graphic: EchartOption[] = [];
     const colorMap = maps.find((entry) => entry.show !== false);
@@ -211,14 +216,14 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const sizeMaps = maps.filter((entry) => entry.show === false);
     keys.push(...sizeMaps);
     if (size !== undefined && sizeMaps.length > 0) {
-        const range = { min: toNumber(sizeMaps[0].min as Cell) ?? 0, max: toNumber(sizeMaps[0].max as Cell) ?? 0 };
+        const range = { min: toNumber(optionCell(sizeMaps[0].min)) ?? 0, max: toNumber(optionCell(sizeMaps[0].max)) ?? 0 };
         graphic.push(sizeLegend(range, scaleTitle(context.labels, size), formatSource(context, size)[0], DOTPLOT_SIZE_PLACE, formatSource(context, size)[1]));
     }
 
-    const composedX = typeof option.xAxis === "object" && option.xAxis !== null ? (option.xAxis as EchartOption) : {};
+    const composedX = typeof option.xAxis === "object" && option.xAxis !== null ? (optionRecord(option.xAxis)) : {};
     const xAxis =
         composedX.type === "value"
-            ? { ...composedX, boundaryGap: [...DOTPLOT_VALUE_ROOM], axisLabel: { ...(composedX.axisLabel as EchartOption | undefined), hideOverlap: true } }
+            ? { ...composedX, boundaryGap: [...DOTPLOT_VALUE_ROOM], axisLabel: { ...optionMemberOrUndefined(composedX.axisLabel), hideOverlap: true } }
             : composedX;
     const drawn: EchartOption = {
         ...option,
@@ -226,7 +231,7 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         xAxis,
         yAxis,
         visualMap: keys,
-        ...(graphic.length > 0 ? { graphic } : {}),
+        graphic: graphic.length > 0 ? graphic : undefined,
         legend: { show: false },
         // The grid holds its labels and its titles inside the chart, as the runtime does by default.
         grid: { right: DOTPLOT_KEY_BAND },
@@ -239,7 +244,7 @@ function drawnMembers(series: readonly EchartOption[], dimension: number): numbe
     const members: number[] = [];
     for (const entry of series) {
         for (const item of Array.isArray(entry.data) ? entry.data : []) {
-            const member = toNumber(itemValue(item)?.[dimension] as Cell | undefined);
+            const member = toNumber(optionCell(itemValue(item)?.[dimension]));
             if (member !== null) members.push(member);
         }
     }
