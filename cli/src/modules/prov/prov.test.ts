@@ -1041,6 +1041,54 @@ describe("provenance recorder handles execution events (bus → flush → signed
         rmSync(tmpDir, { recursive: true, force: true });
     });
 
+    test("an approval lands before the start of its run, whatever order the bus delivers them in", async () => {
+        const { mkdirSync, rmSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { tmpdir } = await import("node:os");
+        const { randomUUIDv7: uuid } = await import("bun");
+        const { z } = await import("zod");
+
+        const tmpDir = join(tmpdir(), `prov-approval-e2e-${uuid()}`);
+        mkdirSync(tmpDir, { recursive: true });
+        resetSigningForTests(join(tmpDir, "prov_key.json"));
+
+        insertAnchor({ id: "anchor1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis(analysis)._unsafeUnwrap();
+
+        // The run start reaches the recorder first, which is the order that a model clock would get wrong:
+        // the approval is applied later, yet its payload time is before the start of the run.
+        Bus.emit("inflexa", { type: "prov.analysis_created", analysisId: "a1", actor: system });
+        Bus.emit("inflexa", { type: "prov.run_started", analysisId: "a1", actor: system, run: runRef });
+        Bus.emit("inflexa", {
+            type: "prov.plan_approved",
+            analysisId: "a1",
+            actor: user,
+            approval: { threadId: "thread-1", planId: "pln-0000000a", runId: runRef.runId, approvedAtMs: runRef.startedAtMs - 1_000 },
+        });
+        await flushProvenanceAsync();
+
+        const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
+        expect(stored).not.toBeNull();
+        const section = z.record(z.string(), z.record(z.string(), z.unknown())).optional();
+        const records = z.object({ activity: section, wasAssociatedWith: section, wasInformedBy: section }).parse(JSON.parse(stored!));
+        const approvalEntry = Object.entries(records.activity ?? {}).find(([, activity]) => activity["prov:type"] === "inflexa:ApprovePlan");
+        expect(approvalEntry).toBeDefined();
+        const [approvalQn, approval] = approvalEntry!;
+        expect(approval).toMatchObject({ "inflexa:threadId": "thread-1", "inflexa:planId": "pln-0000000a", "inflexa:runId": runRef.runId });
+        const approvedAt = Date.parse(String(approval["prov:startTime"]));
+        const startedAt = Date.parse(String(records.activity?.["inflexa:run-run-001"]?.["prov:startTime"]));
+        expect(approvedAt).toBe(runRef.startedAtMs - 1_000);
+        expect(approvedAt).toBeLessThan(startedAt);
+        expect(Object.values(records.wasAssociatedWith ?? {})).toContainEqual({
+            "prov:activity": approvalQn,
+            "prov:agent": "inflexa:agent-user-alice_example_org",
+        });
+        expect(records.wasInformedBy?.["inflexa:informed-approval-run-001"]).toEqual({ "prov:informed": "inflexa:run-run-001", "prov:informant": approvalQn });
+
+        resetSigningForTests(null);
+        rmSync(tmpDir, { recursive: true, force: true });
+    });
+
     // Capstone: a realistic MIXED registration through the bus — 2 command groups (one the
     // intra-step chain A→B), 1 file-tool group, their produced-file events, 1 leaf file, and the
     // step-level input_used — flushes to the signed column with the command activities and per-command

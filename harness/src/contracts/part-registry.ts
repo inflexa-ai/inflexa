@@ -20,6 +20,7 @@ export const PART_REGISTRY: Record<ChatPartType, PartDescriptor> = {
     "data-presentation": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-plan": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-run-card": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
+    "data-plan-approval": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-file-reference": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-ask": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: true },
     "data-run-started": { emitter: "workflow", consumer: "sidebar", transient: true, reconciling: false },

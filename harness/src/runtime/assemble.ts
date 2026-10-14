@@ -15,10 +15,11 @@
  * before launch — a blue/green drain treats them as a single cohort.
  */
 
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
 import { createReportSessionAgent } from "../agents/report-session-agent.js";
+import { approvePlan, type ApprovePlanInput, type ApprovePlanRefusal, type PlanApproval } from "../app/approve-plan.js";
 import { createReportSessionRuntime, type ReportSessionRuntime } from "../app/report-session-runtime.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -284,6 +285,12 @@ export interface CoreRuntime {
     readonly reportSession: Pick<ReportSessionRuntime, "ensureSessionState">;
     readonly workflows: RegisteredWorkflows;
     readonly citationResolver: CitationResolver;
+    /**
+     * Approve a stored plan by its id and start its run with no model call. It runs over the deps that
+     * reach the `execute_analysis` tool of the conversation agent, thus the approval and the tool launch
+     * a plan the same way.
+     */
+    readonly approvePlan: (input: ApprovePlanInput) => ResultAsync<PlanApproval, ApprovePlanRefusal>;
 }
 
 /**
@@ -452,5 +459,19 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             deriveTableExec,
         },
         citationResolver,
+        approvePlan: (input) =>
+            approvePlan(
+                {
+                    pool: conversation.pool,
+                    executeAnalysisWorkflow: executeAnalysis,
+                    runAuthorizer: conversation.runAuthorizer,
+                    runLauncher: conversation.runLauncher,
+                    ...(resourcePolicy ? { resourcePolicy } : {}),
+                    ...(conversation.extendAnalysisFarm ? { extendAnalysisFarm: conversation.extendAnalysisFarm } : {}),
+                    ...(conversation.logger ? { logger: conversation.logger } : {}),
+                    ...(deps.provenance ? { provenance: deps.provenance } : {}),
+                },
+                input,
+            ),
     };
 }

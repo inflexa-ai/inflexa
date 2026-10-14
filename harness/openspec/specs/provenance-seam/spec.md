@@ -47,6 +47,7 @@ the member is bound:
 - preview the page
 - record a version
 - write a file with a file tool, from a conversation turn
+- approve a plan, when the approval starts the run of the plan
 
 Each event carries the analysis id and the data of its action. Each event
 except `write-file` carries the thread id. The `write-file` event carries the
@@ -79,6 +80,14 @@ SHA-256 hash of the exact bytes, the size in bytes, and the tool name. It
 also carries the `invocationId` of the tool call. The invocation id is the
 replay-stable identity of the write, and the consumer keys the deterministic
 call activity on it. A refused write and a failed write emit nothing.
+
+The `approve-plan` event MUST come from the approval of a plan, after the
+launch starts the run. It carries the analysis id, the thread id, the plan id,
+the run id, and `atMs`. `atMs` is the epoch time in milliseconds of the
+approval, read before the launch. It is the one session event that carries a
+time, because the record must place the approval before the start of its run.
+An approval whose plan has an active run emits nothing, and a refused approval
+emits nothing.
 
 #### Scenario: The creation of a conversation emits
 
@@ -129,6 +138,14 @@ call activity on it. A refused write and a failed write emit nothing.
 - **THEN** the member receives one `write-file` event with the analysis id,
   the thread id, the path, the hash, the size, and the tool `write_file`
 - **AND** the event carries the invocation id of the call
+
+#### Scenario: An approval that starts a run emits
+
+- **WHEN** a host approves a plan, the launch starts run `r1`, and the member
+  is bound
+- **THEN** the member receives one `approve-plan` event with the analysis id,
+  the thread id, the plan id, and the run id `r1`
+- **AND** the event carries the time of the approval
 
 ### Requirement: The emits are fire-and-forget
 

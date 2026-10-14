@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +22,8 @@ import { createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { upsertAnalysis } from "../state/analyses.js";
+import { upsertPlan } from "../state/plans.js";
+import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { ReportVersionStore } from "../state/report-versions.js";
 import { makeToolContext } from "../tools/__fixtures__/tool-context.js";
@@ -570,5 +573,100 @@ describe("the barrel resolution surface", () => {
         // The barrel error type is the refusal type. Thus the error branch assigns to it.
         const refusal: UnregisteredThreadType | undefined = outcome.isErr() ? outcome.error : undefined;
         expect(refusal).toEqual({ type: "unregistered_thread_type", threadType: "report" });
+    });
+});
+
+describe("the approval of the composition", () => {
+    const ANALYSIS_ID = "analysis-approve";
+    const THREAD_ID = "thread-approve";
+    const PLAN_ID = "pln-0000000a";
+    const plan = {
+        analytical_narrative: "test plan",
+        created_at: "2026-01-01T00:00:00Z",
+        steps: [
+            {
+                id: "step-a",
+                name: "Step a",
+                track: "test",
+                step_type: "analysis",
+                question: "do a",
+                acceptance_criteria: ["completes"],
+                depends_on: [],
+                agent: "bulk-transcriptomics-agent",
+                resources: { cpu: 1, memoryGb: 4 },
+                maxSteps: 30,
+            },
+        ],
+    };
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("assemble_approval"));
+        (await upsertAnalysis(pool, ANALYSIS_ID, null))._unsafeUnwrap();
+        (await createThreadStore(pool).createThread({ threadId: THREAD_ID, analysisId: ANALYSIS_ID }))._unsafeUnwrap();
+        (await upsertPlan(pool, { planId: PLAN_ID, analysisId: ANALYSIS_ID, plan }))._unsafeUnwrap();
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("starts the run through the run launcher of the conversation deps", async () => {
+        const launched: string[] = [];
+        const runLauncher: RunLauncher = {
+            launch: async (_workflow, options) => {
+                launched.push(options.workflowId);
+            },
+        };
+        const runAuthorizer: RunAuthorizer = {
+            authorize: () => okAsync({ runSession: {} as never, ownsMandate: true }),
+            revoke: () => okAsync(undefined),
+            revokeByJti: () => okAsync(undefined),
+        };
+        const deps: CoreRuntimeDeps = {
+            conversation: {
+                provider: {} as ChatProvider,
+                utilityProvider: {} as ChatProvider,
+                pool,
+                embedding: {} as EmbeddingProvider,
+                workspaceFs: {} as WorkspaceFilesystem,
+                model: "test/model",
+                utilityModel: "test/utility-model",
+                resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+                runAuthorizer,
+                runLauncher,
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                skillsDir: "/skills",
+                chrome: {},
+            },
+            workflows: {
+                sandboxStep: {} as CoreWorkflowDeps["sandboxStep"],
+                buildExecuteAnalysis: () => ({}) as ReturnType<CoreWorkflowDeps["buildExecuteAnalysis"]>,
+                dataProfile: {} as CoreWorkflowDeps["dataProfile"],
+            },
+        };
+        const dbos = await import("@dbos-inc/dbos-sdk");
+        const register = dbos.DBOS.registerWorkflow;
+        // The registry of DBOS is global to the process, and a launched engine refuses a registration.
+        (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = (workflow: unknown) => workflow;
+        try {
+            const runtime = assembleCoreRuntime(deps);
+
+            const approval = (
+                await runtime.approvePlan({
+                    analysisId: ANALYSIS_ID,
+                    threadId: THREAD_ID,
+                    planId: PLAN_ID,
+                    identity: { user: "person-1" },
+                    auth: makeLocalAuth(),
+                })
+            )._unsafeUnwrap();
+
+            expect(approval.started).toBe(true);
+            expect(launched).toEqual([approval.runId]);
+        } finally {
+            (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = register;
+        }
     });
 });

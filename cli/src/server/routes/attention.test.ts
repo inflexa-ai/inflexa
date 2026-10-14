@@ -160,6 +160,7 @@ function appOver(fixture: Fixture, over: Partial<AttentionRouteOpts> = {}, runOp
                 readiness: () => Promise.reject(new Error("unused")),
                 sandboxRefusal: () => Promise.resolve(null),
                 healFarm: () => Promise.reject(new Error("unused")),
+                approvePlan: () => errAsync({ type: "thread_not_found" }),
                 ...runOpts,
             }),
         );

@@ -115,6 +115,43 @@ describe("MessageBlock compaction divider", () => {
     });
 });
 
+describe("MessageBlock plan approval", () => {
+    const approval: Part = { type: "data-plan-approval", planId: "pln-0000000a", runId: "r-approved", approvedAt: "2026-10-13T10:00:00.000Z" };
+    const card: Part = {
+        type: "data-run-card",
+        id: "run-card-r-approved",
+        runId: "r-approved",
+        planId: "pln-0000000a",
+        title: "Differential expression",
+        stepCount: 3,
+    };
+
+    // The run card resolves its state against module-level run snapshots that other files can leave in any state, thus
+    // the case reads only what every state shows: the title and the run id of the launch record.
+    test("a reloaded approval shows its line and its run card in one event entry", async () => {
+        const frame = await frameWith(
+            () => <MessageBlock index={1} role="system" parts={[approval, card]} streamPartId={() => null} streamText={() => ""} />,
+            "Approved pln-0000000a.",
+            { width: 60, height: 14 },
+        );
+
+        expect(frame).toContain("Approved pln-0000000a.");
+        expect(frame).toContain("Differential expression");
+        expect(frame).toContain("r-approved");
+        expect(frame.split("\n").find((line) => line.includes("Approved pln-0000000a."))).toContain("│");
+    });
+
+    test("an approval whose run card could not be read still shows its line", async () => {
+        const frame = await frameWith(
+            () => <MessageBlock index={1} role="system" parts={[approval]} streamPartId={() => null} streamText={() => ""} />,
+            "Approved pln-0000000a.",
+        );
+
+        expect(frame).toContain("Approved pln-0000000a.");
+        expect(frame).not.toContain("data-plan-approval");
+    });
+});
+
 // A live call has no outcome while it runs, and a reload gives `incomplete` to a call that the turn cut
 // off. Both render as running; a finished call renders its outcome and its duration.
 describe("MessageBlock tool-call outcomes", () => {

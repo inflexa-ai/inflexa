@@ -5,7 +5,8 @@
  * Categories:
  *   Presentation:    data-presentation (agent-synthesized content),
  *                    data-plan (plan by id), data-file-reference (files by path)
- *   Approval:        data-ask (a tool's pending user-approval prompt)
+ *   Approval:        data-ask (a tool's pending user-approval prompt),
+ *                    data-plan-approval (the record of an approved plan)
  *   Compaction:      data-compaction (a compaction of the conversation thread)
  *   Run lifecycle:   run-started, dag-state, run-completed, run-failed, run-synthesis,
  *                    synthesis-progress
@@ -79,6 +80,17 @@ export interface RunCardPart {
     planId: string;
     title: string;
     stepCount: number;
+}
+
+// ── Plan approval (conversation record) ─────────────────────────────
+
+export interface PlanApprovalPart {
+    type: "data-plan-approval";
+    planId: string;
+    /** The run that the approval started. */
+    runId: string;
+    /** ISO 8601. The instant of the approval, equal to the time of the `approve-plan` provenance event. */
+    approvedAt: string;
 }
 
 // ── File reference (artifact-store-backed, resolved at render time) ──────────
@@ -537,6 +549,7 @@ export type ChatPart =
     | PresentationPart
     | PlanPart
     | RunCardPart
+    | PlanApprovalPart
     | FileReferencePart
     | AskPart
     | RunStartedPart

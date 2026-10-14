@@ -1,6 +1,13 @@
 // The wire types of the runs and the data profile of an analysis (draft 2.4). Each harness type below is a
 // type-only import: it is erased at compile time, thus a client that imports this file loads no harness code.
-import type { DataProfileLifecycleStatus, DataProfileResult, PlanGraphStep, PlanPart, RunSynthesisPart } from "@inflexa-ai/harness/contracts/index.js";
+import type {
+    ChatMessage,
+    DataProfileLifecycleStatus,
+    DataProfileResult,
+    PlanGraphStep,
+    PlanPart,
+    RunSynthesisPart,
+} from "@inflexa-ai/harness/contracts/index.js";
 import type { CancelRunResult as HarnessCancelRunResult } from "@inflexa-ai/harness/execution/run-canceler.js";
 import type {
     RunStatus as HarnessRunStatus,
@@ -96,6 +103,32 @@ export type RunDetail = RunSummary & {
      */
     unattributedUsage: UsageTotals | null;
 };
+
+/** The body of `POST {A}/plans/:planId/approve`. */
+export type ApprovePlanBody = {
+    /** The conversation thread on which the person approves the plan. */
+    threadId: string;
+};
+
+/**
+ * The 201 body of `POST {A}/plans/:planId/approve`. `started: false` means that a run of the plan was already
+ * active: the approval then recorded nothing, and `message` is `null`. `message` is also `null` when the record
+ * of an approval that started the run could not be stored.
+ */
+export type PlanApprovalResult = {
+    planId: string;
+    runId: string;
+    started: boolean;
+    /** The record of the approval, in the shape of a message of `GET {T}/messages`, with no `createdAt`. */
+    message: ChatMessage | null;
+};
+
+/** The `details` of a 409 `conflict` of `POST {A}/plans/:planId/approve`. The `reason` tells the cases apart. */
+export type PlanApprovalConflict =
+    | { reason: "superseded"; supersededBy: string }
+    | { reason: "plan_invalid"; errors: string[] }
+    | { reason: "packages_missing"; missing: string[]; collisions: string[]; unavailable?: string }
+    | { reason: "not_authorized" | "suspended" };
 
 /** The body of `GET {A}/plans/:planId`: a plan with its lineage and the ids of its runs. */
 export type PlanView = {

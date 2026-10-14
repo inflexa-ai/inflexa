@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
 import { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "../document.js";
-import { applyProvEvent } from "../events.js";
+import { applyProvEvent, type ProvEvent } from "../events.js";
 import { computeLineage, computeReachable, deriveLineageModel, findFileEntity, type LineageEdge, type LineageEdgeKind, type LineageModel } from "../lineage.js";
 import type { ProvActor, ProvCallRef, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef } from "../types.js";
 import { parseProvJson } from "./prov-json.js";
@@ -54,8 +54,8 @@ describe("deriveLineageModel — golden fixture", () => {
             "inflexa:input-39n74a7sqlbvc",
         ]);
         expect(model.nodes.filter((n) => n.kind === "report" || n.kind === "report_version").map((n) => n.qn)).toEqual([reportQn, reportVersionQn]);
-        // 9 execution and lifecycle activities, plus the 10 action activities of the report family.
-        expect(model.nodes.filter((n) => n.kind === "activity")).toHaveLength(19);
+        // 9 execution and lifecycle activities, plus the 11 action activities of the report family and the plan approval.
+        expect(model.nodes.filter((n) => n.kind === "activity")).toHaveLength(20);
         expect(model.nodes.filter((n) => n.kind === "agent")).toHaveLength(3);
     });
 
@@ -199,6 +199,13 @@ describe("deriveLineageModel — golden fixture", () => {
             expect(threadCall.stepId).toBeUndefined();
         }
         expect(nodeOf(model, "inflexa:action-golden-1")).toMatchObject({ kind: "activity", activity: "action", actionType: "CreateAnalysis" });
+        expect(nodeOf(model, "inflexa:action-golden-14")).toMatchObject({
+            kind: "activity",
+            activity: "action",
+            actionType: "ApprovePlan",
+            runId: "r1",
+            startTime: "2023-11-14T22:13:19.900Z",
+        });
     });
 
     test("classifies agents", () => {
@@ -263,9 +270,9 @@ describe("deriveLineageModel — golden fixture", () => {
     });
 
     test("derives exactly the seven edge kinds with no dangling endpoint; delegation is not an edge", () => {
-        // 34 associations + 13 usages + 9 generations + 8 attributions + 5 derivations +
-        // 4 communications; the model delegation is skipped.
-        expect(model.edges).toHaveLength(73);
+        // 35 associations + 13 usages + 9 generations + 8 attributions + 5 derivations +
+        // 5 communications; the model delegation is skipped.
+        expect(model.edges).toHaveLength(75);
         expect(model.edges.some((e) => e.id.startsWith("inflexa:delegation-"))).toBe(false);
         const nodeQns = new Set(qns(model));
         for (const edge of model.edges) {
@@ -278,9 +285,56 @@ describe("deriveLineageModel — golden fixture", () => {
         expect(deriveLineageModel(goldenJson)._unsafeUnwrap()).toEqual(model);
     });
 
+    test("reads the run as informed by the plan approval", () => {
+        expect(edgeOf(model, "inflexa:informed-approval-r1")).toEqual({
+            id: "inflexa:informed-approval-r1",
+            kind: "informed",
+            from: "inflexa:run-r1",
+            to: "inflexa:action-golden-14",
+        });
+    });
+
     test("bytes that do not parse return prov_corrupt", () => {
         expect(deriveLineageModel("not prov json")._unsafeUnwrapErr().type).toBe("prov_corrupt");
     });
+});
+
+describe("deriveLineageModel — the plan approval", () => {
+    const approvalQn = "inflexa:action-approval-1";
+    const approved: ProvEvent = {
+        type: "plan_approved",
+        analysisId: "a1",
+        actor: { kind: "user", id: "u-1" },
+        approval: { threadId: "t1", planId: "pln-0000000a", runId: "r1", approvedAtMs: 1_700_000_000_000 },
+    };
+    const started: ProvEvent = {
+        type: "run_started",
+        analysisId: "a1",
+        actor: { kind: "system", label: "kernel-test", version: "0.0.1" },
+        run: { runId: "r1", planSummary: "plan", startedAtMs: 1_700_000_005_000 },
+    };
+
+    function modelOfEvents(events: ProvEvent[]): LineageModel {
+        const m = createProvDocumentModel({ now: () => new Date(1_800_000_000_000), mintActionId: () => "approval-1" });
+        const doc = m.freshDocument({ analysisId: "a1" });
+        for (const event of events) applyProvEvent(m, doc, event);
+        return modelFrom(doc);
+    }
+
+    for (const [order, events] of [
+        ["the approval before its run", [approved, started]],
+        ["the run before its approval", [started, approved]],
+    ] as const) {
+        test(`gives an informed edge from the run to the approval, with ${order}`, () => {
+            const lineage = modelOfEvents([...events]);
+
+            expect(hasEdge(lineage.edges, "informed", "inflexa:run-r1", approvalQn)).toBe(true);
+            expect(edgeOf(lineage, "inflexa:informed-approval-r1")).toMatchObject({ kind: "informed", from: "inflexa:run-r1", to: approvalQn });
+            expect(lineage.nodes.filter((n) => n.qn === "inflexa:run-r1")).toHaveLength(1);
+            expect(nodeOf(lineage, "inflexa:run-r1")).toMatchObject({ activity: "run", planSummary: "plan", startTime: "2023-11-14T22:13:25.000Z" });
+            expect(nodeOf(lineage, approvalQn)).toMatchObject({ activity: "action", actionType: "ApprovePlan", startTime: "2023-11-14T22:13:20.000Z" });
+        });
+    }
 });
 
 // The traversal fixtures: the canonical chain counts.csv → command A (Rscript) → de_results.csv →

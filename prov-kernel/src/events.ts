@@ -7,6 +7,7 @@ import type {
     ProvFileRef,
     ProvInputRef,
     ProvModelId,
+    ProvPlanApprovalRef,
     ProvReportBlockRef,
     ProvReportDerivationRef,
     ProvReportPreviewRef,
@@ -39,6 +40,7 @@ export type ProvEvent =
     | { type: "input_removed"; analysisId: string; actor: ProvActor; input: ProvInputRef }
     | { type: "run_started"; analysisId: string; actor: ProvActor; run: ProvRunRef }
     | { type: "run_completed"; analysisId: string; actor: ProvActor; outcome: ProvRunOutcome }
+    | { type: "plan_approved"; analysisId: string; actor: ProvActor; approval: ProvPlanApprovalRef }
     | {
           type: "step_completed";
           analysisId: string;
@@ -114,6 +116,9 @@ export function applyProvEvent(model: ProvDocumentModel, doc: ProvDocument, even
             return;
         case "run_completed":
             m.appendRunCompleted(doc, event.analysisId, event.actor, event.outcome);
+            return;
+        case "plan_approved":
+            m.appendPlanApproved(doc, event.analysisId, event.actor, event.approval);
             return;
         case "step_completed":
             m.appendStepCompleted(doc, event.analysisId, event.actor, event.outcome, event.model);

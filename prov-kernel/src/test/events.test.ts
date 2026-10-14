@@ -237,6 +237,64 @@ describe("applyProvEvent", () => {
     });
 });
 
+describe("the plan approval", () => {
+    const person: ProvActor = { kind: "user", id: "u-42" };
+    const approved: ProvEvent = {
+        type: "plan_approved",
+        analysisId: "a1",
+        actor: person,
+        approval: { threadId: "t-chat", planId: "pln-0000000a", runId: "r1", approvedAtMs: 1_000 },
+    };
+    const started: ProvEvent = { type: "run_started", analysisId: "a1", actor, run: { runId: "r1", planSummary: "test plan", startedAtMs: 2_000 } };
+
+    test("names its plan, its thread, and its run, and associates the person and no model", () => {
+        const model = makeModel();
+        const doc = serialize(model, [approved]);
+
+        expect(doc.activity?.["inflexa:action-evt-1"]).toMatchObject({
+            "prov:type": "inflexa:ApprovePlan",
+            "inflexa:threadId": "t-chat",
+            "inflexa:planId": "pln-0000000a",
+            "inflexa:runId": "r1",
+        });
+        const userAgent = "inflexa:agent-user-u-42";
+        expect(Object.keys(doc.agent ?? {})).toEqual([userAgent]);
+        expect(Object.values(doc.wasAssociatedWith ?? {})).toEqual([{ "prov:activity": "inflexa:action-evt-1", "prov:agent": userAgent }]);
+        expect(doc.actedOnBehalfOf).toBeUndefined();
+    });
+
+    test("takes both formal times from the payload and not from the model clock", () => {
+        const doc = serialize(makeModel(), [approved]);
+
+        expect(doc.activity?.["inflexa:action-evt-1"]).toMatchObject({
+            "prov:startTime": "1970-01-01T00:00:01+00:00",
+            "prov:endTime": "1970-01-01T00:00:01+00:00",
+        });
+    });
+
+    for (const [order, events] of [
+        ["the approval first", [approved, started]],
+        ["the run start first", [started, approved]],
+    ] as const) {
+        test(`places the approval before the start of its run, with ${order}`, () => {
+            const doc = serialize(makeModel(), [...events]);
+
+            expect(doc.activity?.["inflexa:action-evt-1"]).toMatchObject({ "prov:startTime": "1970-01-01T00:00:01+00:00" });
+            expect(doc.activity?.["inflexa:run-r1"]).toMatchObject({ "prov:startTime": "1970-01-01T00:00:02+00:00", "inflexa:planSummary": "test plan" });
+            expect(doc.wasInformedBy?.["inflexa:informed-approval-r1"]).toMatchObject({
+                "prov:informed": "inflexa:run-r1",
+                "prov:informant": "inflexa:action-evt-1",
+            });
+        });
+    }
+
+    test("merges the informed edge of a repeated delivery under its explicit id", () => {
+        const doc = serialize(makeModel(), [started, approved, approved]);
+
+        expect(Object.keys(doc.wasInformedBy ?? {})).toEqual(["inflexa:informed-approval-r1"]);
+    });
+});
+
 const reportThread = "t-report";
 const reportQn = `inflexa:report-${defaultProvDigest(reportThread)}`;
 const versionQn = `inflexa:report-version-${defaultProvDigest("v-1")}`;

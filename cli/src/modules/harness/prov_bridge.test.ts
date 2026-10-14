@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Buffer } from "node:buffer";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUIDv7 } from "bun";
 import type { AgentSession, ArtifactManifestEntry, ArtifactRegistrationInput, ProvenanceCollector, RunProvenanceEvent } from "@inflexa-ai/harness";
 import { attestationSchema, verifyAttestation } from "@inflexa-ai/prov-kernel";
@@ -9,6 +10,7 @@ import { attestationSchema, verifyAttestation } from "@inflexa-ai/prov-kernel";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { getAnalysisProvenance } from "../../db/primary_query.ts";
 import { Bus } from "../../lib/bus.ts";
+import { env } from "../../lib/env.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { freshDb } from "../../test_support/db.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -723,6 +725,50 @@ describe("createSessionEmit", () => {
         if (first?.type !== "prov.report_block_added" || second?.type !== "prov.report_block_added") throw new Error("expected two block events");
         expect(first.model).toBe("anthropic/claude-sonnet-4-5");
         expect(second.model).toBe("openai/gpt-5");
+    });
+});
+
+describe("createSessionEmit — the approval of a plan", () => {
+    const approval = {
+        type: "approve-plan",
+        analysisId: sessionAnalysisId,
+        threadId: "thread-conv-1",
+        planId: "pln-0000000a",
+        runId: "r1",
+        atMs: 1_700_000_000_000,
+    } as const;
+
+    // The suite shares one process, thus a session file that survives a case would name a person in a later case.
+    afterEach(() => rmSync(env.authPath, { force: true }));
+
+    function signIn(email: string): void {
+        const idToken = `header.${Buffer.from(JSON.stringify({ sub: "auth0|1", email })).toString("base64url")}.signature`;
+        mkdirSync(dirname(env.authPath), { recursive: true });
+        writeFileSync(
+            env.authPath,
+            JSON.stringify({ accessToken: "access", refreshToken: "refresh", idToken, expiresAt: new Date(Date.now() + 3_600_000).toISOString() }),
+        );
+    }
+
+    test("an approval names the person: the user actor, no model, and the approval ref of the run", () => {
+        signIn("ada@example.com");
+
+        emitSession(approval);
+
+        const event = onlyEvent();
+        if (event.type !== "prov.plan_approved") throw new Error(`expected prov.plan_approved, got ${event.type}`);
+        expect(event.analysisId).toBe(sessionAnalysisId);
+        expect(event.actor).toEqual({ kind: "user", id: "ada@example.com", email: "ada@example.com" });
+        expect("model" in event).toBe(false);
+        expect(event.approval).toEqual({ threadId: "thread-conv-1", planId: "pln-0000000a", runId: "r1", approvedAtMs: 1_700_000_000_000 });
+    });
+
+    test("a signed-out cli records the person as anonymous and not as the system", () => {
+        emitSession(approval);
+
+        const event = onlyEvent();
+        if (event.type !== "prov.plan_approved") throw new Error(`expected prov.plan_approved, got ${event.type}`);
+        expect(event.actor).toEqual({ kind: "anonymous" });
     });
 });
 

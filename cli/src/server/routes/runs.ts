@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Hono, type Context } from "hono";
 import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
 import PQueue from "p-queue";
+import { z } from "zod";
 import {
     createLocalRunAuthorizer,
     createNoopRunCharge,
@@ -25,10 +26,13 @@ import {
     readRunSynthesis,
     UnknownRunError,
     type AgentSession,
+    type ApprovePlanInput,
+    type ApprovePlanRefusal,
     type CortexRunRow,
     type DataProfileStatus,
     type DbError,
     type Pool,
+    type PlanApproval,
     type PlanRecord,
     type RunCanceler,
     type RunArtifactCount,
@@ -39,13 +43,17 @@ import type { RunSynthesisPart } from "@inflexa-ai/harness/contracts/index.js";
 import { CONVERSATION_AGENT_ID } from "@inflexa-ai/harness/agents/conversation-agent.js";
 import { queryRunsByThread, queryRunsForInspection } from "@inflexa-ai/harness/state/runs.js";
 
+import { describeBusyReason, type BusyReason } from "../../api/analyses.ts";
 import type { PageQuery } from "../../api/common.ts";
 import type {
+    ApprovePlanBody,
     CancelRunResult,
     ChatContext,
     DataProfileView,
     FarmHealOutcome,
     FarmHealResult,
+    PlanApprovalConflict,
+    PlanApprovalResult,
     PlanView,
     ProfileOutcome,
     ProfileRerunResult,
@@ -73,15 +81,18 @@ import {
 import { recordRunSeen } from "../../db/primary_mutation.ts";
 import { env } from "../../lib/env.ts";
 import { getLogger } from "../../lib/log.ts";
+import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
 import { ensureProfileAtParity, forceReprofile, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import { buildChatSession } from "../../modules/harness/turn.ts";
 import { analysisFarmPath, catalogFarmPath, composeFullFarm, describeFarmCompositionError } from "../../modules/libs/composition.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { ServerBoot } from "../boot.ts";
-import { apiError, holdConnection, internalError, listEnvelope, parsePage, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
+import { apiError, holdConnection, internalError, listEnvelope, parsePage, readBody, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
 import { profileWorkPending, serializeProfileWork } from "../profile_queue.ts";
 import { readSandboxReadiness, sandboxRefusal } from "../sandbox_gate.ts";
+import { newTurnsRefused, runningTurnsByThread } from "../turns.ts";
 import { workspaceRoot } from "./conversation.ts";
 
 /**
@@ -131,6 +142,8 @@ export type RunRoutesOpts = {
     readonly ensureParity: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
     /** The deliberate re-profile. */
     readonly forceReprofile: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    /** Approve a stored plan and start its run with no model call. Each outcome rides the `Result`. */
+    readonly approvePlan: (runtime: HarnessRuntime, input: ApprovePlanInput) => ResultAsync<PlanApproval, ApprovePlanRefusal>;
     /** The image, the store, and the farm verdict for a sandbox of the analysis. */
     readonly readiness: (analysisId: string) => Promise<Omit<SandboxReadiness, "inputCount">>;
     /** Why a profile drive cannot start a sandbox now, or `null` when it can. Each profile route asks it before its drive. */
@@ -172,6 +185,7 @@ export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     readiness: readSandboxReadiness,
     sandboxRefusal,
     healFarm: healAnalysisFarm,
+    approvePlan: (runtime, input) => runtime.approvePlan(input),
 };
 
 /**
@@ -248,6 +262,35 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
             runIds: runIds.slice(0, PLAN_RUN_IDS_LIMIT),
             hasMoreRuns: runIds.length > PLAN_RUN_IDS_LIMIT,
         });
+    });
+
+    routes.post("/plans/:planId/approve", runtimeGate, async (c) => {
+        // The stop refuses new work before the body is read.
+        if (newTurnsRefused())
+            return apiError(c, "draining", "The Inflexa server is stopping and approves no plan. Approve the plan again after the server starts again.");
+        const analysisId = analysisParam(c);
+        const planId = c.req.param("planId");
+        const body = await readBody<ApprovePlanBody>(c, z.object({ threadId: z.string().min(1) }));
+        if (body.isErr()) return body.error;
+        const { threadId } = body.value;
+        // The record of the approval lands in the thread between two rounds of a running turn, at the earliest. The
+        // approval waits for the turn instead. The check is not a lock: a turn that starts after it still sees a
+        // valid sequence of messages.
+        if (runningTurnsByThread().has(threadId)) {
+            const busy: BusyReason[] = ["chat_turn"];
+            return apiError(c, "busy", `Cannot approve a plan while ${describeBusyReason("chat_turn")}.`, { reasons: busy });
+        }
+
+        const { identity, auth } = buildChatSession(analysisId, threadId);
+        const approval = await opts.approvePlan(c.get("runtime"), { analysisId, threadId, planId, identity, auth });
+        return approval.match(
+            (result) => {
+                // An approval that found the run active changed nothing, thus it is no activity.
+                if (result.started) noteAnalysisActivity(analysisId, Date.now());
+                return c.json<PlanApprovalResult>(result, 201);
+            },
+            (refusal) => approvalRefusal(c, planId, refusal),
+        );
     });
 
     routes.get("/run/:runId/synthesis", runtimeGate, async (c) => {
@@ -410,6 +453,40 @@ export function isTerminalRunStatus(status: RunStatus): status is TerminalRunSta
 /** The `analysisId` of the mount path. A route outside that mount reads an empty id, which matches no row. */
 function analysisParam(c: Context<ServerEnv>): string {
     return c.req.param("analysisId") ?? "";
+}
+
+/** The response for a refusal of the approval of a plan. The refusals of the plan and of the launch are 409; the failures of the store and of the start are 500. */
+function approvalRefusal(c: Context<ServerEnv>, planId: string, refusal: ApprovePlanRefusal): Response {
+    const conflict = (message: string, details: PlanApprovalConflict): Response => apiError(c, "conflict", message, details);
+    switch (refusal.type) {
+        case "thread_not_found":
+            return apiError(c, "not_found", "Thread not found.");
+        case "plan_not_found":
+            return apiError(c, "not_found", `This analysis has no plan ${planId}.`);
+        case "superseded":
+            return conflict(`Plan ${planId} was replaced by plan ${refusal.supersededBy}.`, { reason: "superseded", supersededBy: refusal.supersededBy });
+        case "plan_invalid":
+            return conflict(`Plan ${planId} is not valid.`, { reason: "plan_invalid", errors: refusal.errors });
+        case "packages_missing":
+            return conflict(`The packages of plan ${planId} cannot link.`, {
+                reason: "packages_missing",
+                missing: refusal.missing,
+                collisions: refusal.collisions,
+                ...(refusal.unavailable === undefined ? {} : { unavailable: refusal.unavailable }),
+            });
+        case "not_authorized":
+            return conflict(`The run was not authorized: ${refusal.reason}`, { reason: "not_authorized" });
+        case "suspended":
+            return conflict(`The analysis is suspended: ${refusal.reason}`, { reason: "suspended" });
+        case "store_failed":
+            return internalError(c, refusal.cause, "approve the plan");
+        case "launch_failed":
+            return internalError(c, refusal.cause, "start the run of the plan");
+        default: {
+            const exhaustive: never = refusal;
+            throw new Error(`unhandled approval refusal: ${JSON.stringify(exhaustive)}`);
+        }
+    }
 }
 
 function runNotFound(c: Context<ServerEnv>, runId: string): Response {

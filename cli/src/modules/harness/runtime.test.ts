@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
-import { ok, okAsync, err } from "neverthrow";
+import { ok, okAsync, err, errAsync } from "neverthrow";
 import {
     createCitationResolver,
     createSandboxClient,
@@ -199,6 +199,8 @@ function recordingSeams(calls: string[]): BootSeams {
                     // real (pure, network-lazy) constructor stands in here, matching how this
                     // seam uses the real `createSandboxClient` above.
                     citationResolver: createCitationResolver(),
+                    // The offline boot approves no plan, thus the stand-in refuses every thread.
+                    approvePlan: () => errAsync({ type: "thread_not_found" }),
                 },
                 shutdown: async () => {},
             };
@@ -282,6 +284,8 @@ describe("bootHarnessRuntime", () => {
         // type through the resolver — `conversation` resolves to the assembled conversation agent.
         expect(runtime.agents.forThread("conversation")._unsafeUnwrap().id).toBe("conversation-agent");
         expect(runtime.conversation.provider).toBeDefined();
+        // The approval of a plan is the function that the core runtime bound, not a second binding.
+        expect(runtime.approvePlan).toBeInstanceOf(Function);
     });
 
     test("exposes run-trigger deps: the parent callable, a run launcher, and the run authorizer", async () => {

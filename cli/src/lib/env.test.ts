@@ -363,6 +363,7 @@ describe("the base folders of the data and the configuration", () => {
     function resolvedPaths(vars: Record<string, string>): { dataDir: string; configPath: string; home: string } {
         const home = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-env-")));
         try {
+            // The running binary, not `bun` from PATH: a shim on PATH can read HOME, which this child replaces.
             const run = Bun.spawnSync(
                 [
                     process.execPath,

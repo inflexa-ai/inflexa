@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
-import type { SubAgentActivityPart } from "../contracts/chat-parts.js";
+import type { PlanApprovalPart, SubAgentActivityPart } from "../contracts/chat-parts.js";
 import {
     conversationDisplayPart,
     conversationUIToChatMessages,
@@ -193,5 +193,18 @@ describe("a stored sub-agent activity part", () => {
         const parsed = await parseStoredDisplayEnvelope(value, "t/0/display");
 
         expect(parsed.messages[0]!.parts).toEqual([{ type: "text", text: "kept" }]);
+    });
+});
+
+describe("a stored plan-approval part", () => {
+    const part: PlanApprovalPart = { type: "data-plan-approval", planId: "pln-0000000a", runId: "r1", approvedAt: "2026-10-13T10:00:00.000Z" };
+
+    it("round-trips field for field", async () => {
+        const stored: ConversationUIMessage = { id: "s1", role: "system", parts: [conversationDisplayPart(part)] };
+
+        const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))) as unknown, "t/0/display");
+
+        expect(parsed.messages).toEqual([stored]);
+        expect(conversationUIToChatMessages(parsed.messages)[0]!.parts).toEqual([part]);
     });
 });

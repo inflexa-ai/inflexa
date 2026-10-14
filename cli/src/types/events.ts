@@ -5,6 +5,7 @@ import type {
     ProvModelId,
     ProvRunRef,
     ProvRunOutcome,
+    ProvPlanApprovalRef,
     ProvStepRef,
     ProvStepOutcome,
     ProvUsedInputRef,
@@ -86,6 +87,7 @@ export type BusEvent =
     | { type: "prov.input_removed"; analysisId: AnalysisId; actor: ProvActor; input: ProvInputRef }
     | { type: "prov.run_started"; analysisId: AnalysisId; actor: ProvActor; run: ProvRunRef }
     | { type: "prov.run_completed"; analysisId: AnalysisId; actor: ProvActor; outcome: ProvRunOutcome }
+    | { type: "prov.plan_approved"; analysisId: AnalysisId; actor: ProvActor; approval: ProvPlanApprovalRef }
     | {
           type: "prov.step_completed";
           analysisId: AnalysisId;

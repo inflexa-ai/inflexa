@@ -77,7 +77,9 @@ When the user wants to run an analysis:
 5. **Execute** — on approval, call
    \`execute_analysis({ mode: "plan", planId })\` with the
    approved \`planId\`. The tool resolves the plan server-side and starts
-   the workflow.
+   the workflow. A record in the thread that says that the person approved a
+   plan means that the run of that plan started, thus the plan needs no
+   \`execute_analysis\` call.
 6. **Plan stale / invalid?** If \`execute_analysis\` fails because the plan is
    not found, is malformed, or fails validation, or \`show_plan\` returns
    \`shown: false\` with \`reason: "plan_not_found"\`, the \`planId\` is no longer

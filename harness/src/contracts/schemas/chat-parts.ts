@@ -96,6 +96,15 @@ export const RunCardPartSchema = z.object({
     stepCount: z.number(),
 });
 
+// ── Plan approval ───────────────────────────────────────────────────
+
+export const PlanApprovalPartSchema = z.object({
+    type: z.literal("data-plan-approval"),
+    planId: z.string().regex(/^pln-[a-f0-9]{8}$/),
+    runId: z.string(),
+    approvedAt: z.iso.datetime(),
+});
+
 // ── File reference ──────────────────────────────────────────────────
 
 export const FileReferenceEntrySchema = z.object({
@@ -423,6 +432,7 @@ export const ChatPartSchema = z.discriminatedUnion("type", [
     PresentationPartSchema,
     PlanPartSchema,
     RunCardPartSchema,
+    PlanApprovalPartSchema,
     FileReferencePartSchema,
     AskPartSchema,
     RunStartedPartSchema,
