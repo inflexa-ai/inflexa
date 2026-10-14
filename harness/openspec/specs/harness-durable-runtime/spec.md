@@ -398,10 +398,27 @@ first, in this order:
 6. an optional embedder `beforeLaunch()` hook (host-specific pre-launch work —
    scheduled sweeps, an ephemeral reap, an agent-switch install — that must
    attach before DBOS launch re-emits events),
-7. `launchDbos(...)`.
+7. `launchDbos(...)`,
+8. `reconcileOrphanedRuns(pool)`.
 
 Boot-step failures SHALL propagate to the caller (the embedder's composition
 root releases whatever it acquired). Only `shutdown` swallows per-step failures.
+The repair of step 8 is the exception: a failure SHALL be logged and SHALL NOT
+stop the boot, because the repair only frees the slot of a plan.
+
+`reconcileOrphanedRuns` SHALL set `failed` on each `running` run that started
+more than `ORPHANED_RUN_GRACE_MS` (5 minutes) ago and that has no
+`dbos.workflow_status` row. Such a run reserved its row, but its workflow never
+started, thus nothing will ever settle it, and it holds the active-plan slot of
+its plan. A run whose workflow row exists, also a terminal one, SHALL stay with
+its workflow. The grace keeps a launch that is between its reservation and its
+workflow start from being failed.
+
+#### Scenario: A run whose workflow never started is failed at boot
+
+- **GIVEN** a `running` run that started 10 minutes ago and has no workflow row
+- **WHEN** the harness boots
+- **THEN** the run is `failed`, and a new launch of its plan can reserve a run
 
 #### Scenario: Skills are validated before launch
 

@@ -41,6 +41,8 @@ export {
     RunDedupCollisionError,
     RunIdentityCollisionError,
     updateRunStatus,
+    reconcileOrphanedRuns,
+    ORPHANED_RUN_GRACE_MS,
     markRunCanceledIfActive,
     promoteFailedToPartial,
     setRunMandate, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)

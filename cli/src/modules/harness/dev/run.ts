@@ -218,16 +218,15 @@ export async function triggerAnalysisRun(
     // caller won, and we recover its runId via `queryActiveRun` (nothing to revoke
     // — we never authorized).
     //
-    // TODO(robustness): a HARD kill (SIGKILL/OOM/power-loss) in the window between
+    // A HARD kill (SIGKILL/OOM/power-loss) in the window between
     // this reserve and `seams.launch` persisting the DBOS workflow leaves the row
     // wedged at `running` with no `dbos.workflow_status` row, so recovery has
     // nothing to reclaim. Every later re-run of the byte-identical plan then dedups
     // onto the orphan (`already_active`) and `waitForRunTerminal` polls a row that
     // will never transition. An ordinary throw on either post-reserve path IS
     // compensated below (the row is marked `failed`); only the hard-kill window is
-    // exposed. The profile path heals its identical window post-boot via the
-    // harness's `reconcileOrphanedDataProfile`; the run engine has no exported
-    // `reconcileOrphanedRun` yet — that shared recovery path is deferred to #28.
+    // exposed until the next harness boot: `bootHarness` then fails each
+    // `running` run with no workflow row (`reconcileOrphanedRuns`), which frees the slot.
     const runId = seams.newRunId();
     try {
         const inserted = await seams.insertRun({ runId, analysisId, threadId: null, workflowName: "executeAnalysis", planId });
