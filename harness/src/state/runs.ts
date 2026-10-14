@@ -203,6 +203,44 @@ export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string): Re
     });
 }
 
+/**
+ * How long a reserved run may wait for its workflow before {@link reconcileOrphanedRuns} fails it. A launch writes
+ * the workflow row seconds after the reservation, and the margin covers a slow authorization gate of a managed host.
+ */
+export const ORPHANED_RUN_GRACE_MS = 5 * 60 * 1000;
+
+/**
+ * Fail each `running` run that started before the grace and that has no DBOS workflow row, and give the ids of
+ * the runs that it failed.
+ *
+ * A launch reserves the run row, then starts the workflow. A host that dies between the two, or a start that throws
+ * while the following status write also fails, leaves a `running` row that no workflow will ever settle. That row
+ * holds the active-plan slot, thus each later launch of the plan answers `started: false` for a run that never
+ * started. Recovery cannot help, because no workflow row exists to recover.
+ *
+ * Only a run with no workflow row at all is failed. A run whose workflow exists, also a terminal one, is the
+ * workflow's to settle: a failed mark could misname a run that completed. Call it after `DBOS.launch()`, thus a
+ * recovered workflow is visible to the predicate.
+ */
+export function reconcileOrphanedRuns(pool: Querier, opts: { now?: number; graceMs?: number } = {}): ResultAsync<string[], DbError> {
+    const now = opts.now ?? Date.now();
+    const before = new Date(now - (opts.graceMs ?? ORPHANED_RUN_GRACE_MS)).toISOString();
+    return tryMutation("runs.reconcileOrphanedRuns", async () => {
+        const result = await pool.query<{ run_id: string }>({
+            text: `UPDATE cortex_runs r
+            SET status = 'failed',
+                error = 'The workflow of the run never started.',
+                completed_at = $1
+            WHERE r.status = 'running'
+              AND r.started_at < $2
+              AND NOT EXISTS (SELECT 1 FROM dbos.workflow_status ws WHERE ws.workflow_uuid = r.run_id)
+            RETURNING r.run_id`,
+            values: [new Date(now).toISOString(), before],
+        });
+        return result.rows.map((row) => row.run_id);
+    });
+}
+
 export function updateRunStatus(
     pool: Querier,
     runId: string,

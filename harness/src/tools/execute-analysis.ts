@@ -515,9 +515,10 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
         await deps.runLauncher.launch(deps.executeAnalysisWorkflow, { workflowId: runId }, wfInput);
     } catch (cause) {
         await deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, "workflow-start-failed"));
+        // A failed write leaves the row `running` with no workflow. The boot repair (`reconcileOrphanedRuns`) fails it.
         await updateRunStatus(deps.pool, runId, "failed", "workflow start failed").match(
             () => {},
-            () => {},
+            (error) => logger.warn("the failed status of a run whose start failed was not written", { runId, ...logger.errorFields(error) }),
         );
         return err({ type: "launch_failed", cause });
     }

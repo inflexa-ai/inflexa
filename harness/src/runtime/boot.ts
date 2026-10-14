@@ -25,6 +25,9 @@
  *      legacy-workflow reap, an agent-switch install). Runs after registration
  *      so it may close over the registered callables.
  *   7. `launchDbos(...)` — the last registration-dependent step.
+ *   8. `reconcileOrphanedRuns(pool)` — fails each `running` run whose workflow never started. It runs
+ *      after launch, thus a workflow that recovery re-queued counts as started. A failure is logged and does
+ *      not stop the boot, because the repair only frees the slot of a plan.
  *
  * No step reads or rewrites stored conversation display. A boot that validated
  * every `messages` row is what let a single retired part key fail startup for a
@@ -42,6 +45,7 @@ import type { Logger } from "../lib/logger.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
 import { initCortexState } from "../state/init.js";
+import { reconcileOrphanedRuns } from "../state/runs.js";
 import { assembleCoreRuntime, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
 import { assertConnectionBudget, type ConnectionBudgetConfig } from "./connection-budget.js";
 import { launchDbos, shutdownDbos, type DbosConfig } from "./dbos.js";
@@ -107,7 +111,15 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
 
     await launchDbos({ config: deps.dbos, logger });
 
-    logger.named("boot").info("harness booted", { executorId: deps.dbos.executorId });
+    const bootLog = logger.named("boot");
+    (await reconcileOrphanedRuns(pool)).match(
+        (runIds) => {
+            if (runIds.length > 0) bootLog.warn("failed the runs whose workflow never started", { runIds });
+        },
+        (error) => bootLog.warn("the repair of the orphaned runs failed", bootLog.errorFields(error)),
+    );
+
+    bootLog.info("harness booted", { executorId: deps.dbos.executorId });
 
     const shutdown = (signal: string): Promise<void> =>
         runShutdownSequence({

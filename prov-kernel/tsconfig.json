@@ -7,6 +7,9 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
+    // `cli kernel:local` links this tsprov to the cli copy. Its types import luxon, and @types/luxon is
+    // installed here only, thus the import must resolve from the link path, not from the real path.
+    "preserveSymlinks": true,
     "types": ["bun", "node"],
     "paths": {
       "@inflexa-ai/prov-kernel": ["./src/index.ts"],
