@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
+import type { Pool } from "pg";
 
 import type { EmbeddingProvider } from "../../../providers/types.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";

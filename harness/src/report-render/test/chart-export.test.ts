@@ -621,7 +621,7 @@ function textExtents(svg: string, lines: readonly string[]): number[][] {
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
     for (const match of svg.matchAll(/<text[^>]*?(?:\sx="(-?[\d.]+)")?[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*>([^<]*)<\/text>/g)) {
         if (!lines.includes(match[4])) continue;
-        const center = Number(match[2]) + Number(match[1]);
+        const center = Number(match[2]) + Number(match[1] ?? 0);
         const half = (match[4].length * CHART_PRINT_TEXT_PX * 0.6) / 2;
         extents.push([center - half, center + half]);
     }

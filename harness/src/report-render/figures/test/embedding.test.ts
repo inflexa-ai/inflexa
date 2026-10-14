@@ -119,7 +119,6 @@ describe("the continuous color of an embedding", () => {
             binding: { kind: "artifact-table", path: "cells.csv", hash: HASH, columnLabels: { LYZ: title } },
         };
         const render = deriveChartRender(labeled, PBMC, undefined, { key: "e1", columns: [] })._unsafeUnwrap();
-        const scaleLeft = optionNumber((optionRecords(render.option.visualMap))[0].left);
         const media = optionRecords(render.option.media);
         // The body takes the width of the chosen rule, and the title of the scale ends inside it.
         const chosen = media

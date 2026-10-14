@@ -169,7 +169,7 @@ describe("the canvas layer of the toolbox", () => {
         try {
             chart.setOption(option);
             const counts: Record<string, number> = {};
-            for (const element of chart.getZr().storage.getDisplayList(true)) counts[element.zlevel] = (counts[element.zlevel]) + 1;
+            for (const element of chart.getZr().storage.getDisplayList(true)) counts[element.zlevel] = (counts[element.zlevel] ?? 0) + 1;
             return counts;
         } finally {
             chart.dispose();

@@ -121,7 +121,7 @@ export function createVectorStore(pool: Pool): VectorStore {
             });
         },
 
-        buildIndex({ indexName, indexConfig }) {
+        buildIndex({ indexName }) {
             assertIdent(indexName);
             // m/ef_construction default to 8/32.
             return tryMutation("vectorStore.buildIndex", async () => {

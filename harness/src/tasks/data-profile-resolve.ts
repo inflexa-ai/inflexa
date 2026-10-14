@@ -278,7 +278,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
     const set = resolveSet(ctx, op.setId, "split");
     if (!set) return;
     const slotIndex = set.slots.findIndex((slot) => slot.id === op.by.slotId);
-    const slot = set.slots.at(slotIndex);
+    const slot = slotIndex === -1 ? undefined : set.slots[slotIndex];
     if (!slot) {
         ctx.errors.push(`split ${op.setId}: no slot "${op.by.slotId}" on that set. Its slots are ${set.slots.map((s) => s.id).join(", ") || "none"}.`);
         return;
@@ -448,7 +448,7 @@ function resolveObservation(observation: Observation, ctx: ObservationContext): 
         return undefined;
     }
     const slotIndex = set.slots.findIndex((candidate) => candidate.id === observation.slotId);
-    const slot = set.slots.at(slotIndex);
+    const slot = slotIndex === -1 ? undefined : set.slots[slotIndex];
     if (!slot) {
         ctx.errors.push(`dimension "${ctx.label}": set "${observation.setId}" has no slot "${observation.slotId}".`);
         return undefined;

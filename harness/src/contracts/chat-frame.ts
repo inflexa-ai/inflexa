@@ -196,7 +196,7 @@ function mergeTextDelta(parts: MessagePart[], delta: string): MessagePart[] {
 
 function stampUsage(messages: ChatMessage[], assistantId: string, usage: TokenUsageRollup): ChatMessage[] {
     const idx = messages.findIndex((m) => m.id === assistantId);
-    const message = messages.at(idx);
+    const message = idx === -1 ? undefined : messages[idx];
     if (message === undefined) return messages;
     const next = messages.slice();
     next[idx] = { ...message, usage };
@@ -205,7 +205,7 @@ function stampUsage(messages: ChatMessage[], assistantId: string, usage: TokenUs
 
 function updateAssistant(messages: ChatMessage[], assistantId: string, updater: (parts: MessagePart[]) => MessagePart[]): ChatMessage[] {
     const idx = messages.findIndex((m) => m.id === assistantId);
-    const existing = messages.at(idx);
+    const existing = idx === -1 ? undefined : messages[idx];
     if (existing === undefined) return [...messages, { id: assistantId, role: "assistant", parts: updater([]) }];
     const next = messages.slice();
     next[idx] = { ...existing, parts: updater(existing.parts) };

@@ -502,7 +502,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
 
                     const inspected = await trySandbox(() => sandbox.value.container.inspect(), createFailed);
                     if (inspected.isErr()) return err(inspected.error);
-                    const hostPort = inspected.value.NetworkSettings.Ports[`${SANDBOX_SERVER_PORT}/tcp`][0].HostPort;
+                    const hostPort = inspected.value.NetworkSettings.Ports?.[`${SANDBOX_SERVER_PORT}/tcp`]?.[0]?.HostPort;
                     if (!hostPort) {
                         // A container we cannot reach is useless; stop and remove it so a retry
                         // starts clean rather than colliding with an unroutable name.

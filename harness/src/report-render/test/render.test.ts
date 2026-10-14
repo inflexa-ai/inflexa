@@ -121,7 +121,7 @@ function attributeReferences(html: string): string[] {
     const references: string[] = [];
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
     for (const match of html.matchAll(/\b(srcset|src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-        const value = match[2];
+        const value = match[2] ?? match[3];
         if (match[1] === "srcset") references.push(...srcsetCandidates(value));
         else references.push(value);
     }

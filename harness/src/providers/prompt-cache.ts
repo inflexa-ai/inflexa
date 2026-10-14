@@ -245,8 +245,9 @@ function withoutBreakpoint<M extends ModelMessage>(message: M): M {
     if (!carriesBreakpoint(message)) return message;
     let remaining: Record<string, Record<string, unknown>> = { ...message.providerOptions };
     for (const [namespace, key] of BREAKPOINT_SITES) {
-        const bag = remaining[namespace];
-        if (bag[key] === undefined) continue;
+        // providerOptions may lack a namespace at runtime, whatever its type claims.
+        const bag: Record<string, unknown> | undefined = remaining[namespace];
+        if (bag === undefined || bag[key] === undefined) continue;
         const { [key]: _dropped, ...rest } = bag;
         if (Object.keys(rest).length === 0) {
             const { [namespace]: _droppedNamespace, ...withoutNamespace } = remaining;
