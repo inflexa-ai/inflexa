@@ -43,6 +43,14 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
             return { analysisId: event.analysisId, actorKind: event.actor.kind, runId: event.run.runId };
         case "prov.run_completed":
             return { analysisId: event.analysisId, actorKind: event.actor.kind, runId: event.outcome.runId, status: event.outcome.status };
+        case "prov.plan_approved":
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                threadId: event.approval.threadId,
+                planId: event.approval.planId,
+                runId: event.approval.runId,
+            };
         case "prov.step_completed":
             return {
                 analysisId: event.analysisId,

@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import { PART_REGISTRY } from "./part-registry.js";
-import { CompactionPartSchema, ChatPartSchema, PresentationContentSchema, PresentationPartSchema, RunSynthesisPartSchema } from "./schemas/chat-parts.js";
+import {
+    CompactionPartSchema,
+    ChatPartSchema,
+    PlanApprovalPartSchema,
+    PresentationContentSchema,
+    PresentationPartSchema,
+    RunSynthesisPartSchema,
+} from "./schemas/chat-parts.js";
 
 describe("PresentationContentSchema — echart dataPath", () => {
     test("accepts an echart content carrying dataPath and round-trips it (does not strip it)", () => {
@@ -204,5 +211,28 @@ describe("the finding of the run synthesis part", () => {
     test("a concordance outside the four values fails the parse", () => {
         const odd = { ...finding, references: [{ ...finding.references[0]!, concordance: "agrees" }] };
         expect(RunSynthesisPartSchema.safeParse({ ...part, findings: [odd] }).success).toBe(false);
+    });
+});
+
+describe("the data-plan-approval part", () => {
+    const part = { type: "data-plan-approval" as const, planId: "pln-0000000a", runId: "r1", approvedAt: "2026-10-13T10:00:00.000Z" };
+
+    test("a valid part round-trips through the part schema and the union schema", () => {
+        expect(PlanApprovalPartSchema.parse(part)).toEqual(part);
+        expect(ChatPartSchema.parse(part)).toEqual(part);
+    });
+
+    test("a plan id off the pln-<8hex> shape is refused", () => {
+        expect(PlanApprovalPartSchema.safeParse({ ...part, planId: "pln-xyz" }).success).toBe(false);
+        expect(PlanApprovalPartSchema.safeParse({ ...part, planId: "plan-0000000a" }).success).toBe(false);
+    });
+
+    test("an approvedAt that is not an ISO 8601 date and time is refused", () => {
+        expect(PlanApprovalPartSchema.safeParse({ ...part, approvedAt: "yesterday" }).success).toBe(false);
+        expect(PlanApprovalPartSchema.safeParse({ ...part, approvedAt: "2026-10-13" }).success).toBe(false);
+    });
+
+    test("the registry lists it as a conversation part, not transient and not reconciling", () => {
+        expect(PART_REGISTRY["data-plan-approval"]).toEqual({ emitter: "conversation", consumer: "conversation", transient: false, reconciling: false });
     });
 });

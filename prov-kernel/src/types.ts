@@ -103,6 +103,25 @@ export type ProvRunOutcome = {
 };
 
 /**
+ * The approval of a plan by a person, which starts the run of that plan. Recorded as a PROV
+ * **activity** that the run activity `wasInformedBy`.
+ */
+export type ProvPlanApprovalRef = {
+    /** The conversation thread on which the person approved the plan. */
+    threadId: string;
+    /** The approved plan, as an attribute of the approval activity. The kernel has no plan entity. */
+    planId: string;
+    /** The run that the approval started — the run activity the approval informs. */
+    runId: string;
+    /**
+     * Epoch-ms of the approval. The host reads it before it starts the run, thus it is not later than
+     * the `startedAtMs` of that run. Builders convert it to the formal start and end time of the
+     * approval activity, in place of the model clock.
+     */
+    approvedAtMs: number;
+};
+
+/**
  * A pure reference to a workflow step within a run — the identity a file generation or an input
  * read edges to. Settlement facts (status, times, duration) live on {@link ProvStepOutcome}, not
  * here — this is deliberately just the `(runId, stepId)` key so a file/input edge never carries

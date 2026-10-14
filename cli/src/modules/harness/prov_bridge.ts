@@ -16,7 +16,7 @@ import { Bus } from "../../lib/bus.ts";
 import { getLogger } from "../../lib/log.ts";
 import type { ProvCommandInputRef, ProvCommandRef, ProvFileKey, ProvFileRef, ProvModelId, ProvStepRef, ProvUsedInputRef } from "../../types/prov.ts";
 import { provModel } from "../prov/document.ts";
-import { flushProvenanceAsync, systemActor } from "../prov/prov.ts";
+import { currentUserActor, flushProvenanceAsync, systemActor } from "../prov/prov.ts";
 import { buildAttestation } from "../prov/verify.ts";
 
 // The cli↔harness provenance bridge: the whole `ProvenanceSeam` over ONE signed analysis document.
@@ -469,7 +469,8 @@ type ReportBlockMember = "prov.report_block_added" | "prov.report_block_changed"
  * The agent does each of these acts, thus the record names the system actor and carries the model on
  * whose behalf it acted — the same treatment a model-driven step gets. The source is total and the
  * emit reads it at act time, thus every record names a model and a live agent switch re-stamps every
- * later act.
+ * later act. The approval of a plan is the one act that a person does, thus it names the user actor
+ * and no model.
  *
  * The mapping restates each payload into the cli's own ref names instead of forwarding the harness
  * object. Thus a widened seam shape fails to compile here, and it never reaches a subscriber
@@ -576,6 +577,17 @@ export function createSessionEmit(sessionModel: ReportSessionModel): (event: Ses
                         // carrying `undefined` into the record.
                         ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
                     },
+                });
+                return;
+            case "approve-plan":
+                // A person approves, and no model drives the act, thus the member carries the user
+                // actor and no model. The kernel writes the approval at `atMs` and not at the clock
+                // of the recorder, which is what places it before the start of its run.
+                Bus.emit("inflexa", {
+                    type: "prov.plan_approved",
+                    analysisId,
+                    actor: currentUserActor(),
+                    approval: { threadId: event.threadId, planId: event.planId, runId: event.runId, approvedAtMs: event.atMs },
                 });
                 return;
             default: {

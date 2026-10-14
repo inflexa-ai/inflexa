@@ -6,6 +6,7 @@ import type {
     ProvInputRef,
     ProvModelId,
     ProvRunRef,
+    ProvPlanApprovalRef,
     ProvRunOutcome,
     ProvStepRef,
     ProvStepOutcome,
@@ -107,6 +108,7 @@ export type ProvDocumentModelInternal = {
     appendInputRemoved(doc: ProvDocument, analysisId: string, actor: ProvActor, input: ProvInputRef): void;
     appendRunStarted(doc: ProvDocument, analysisId: string, actor: ProvActor, run: ProvRunRef): void;
     appendRunCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvRunOutcome): void;
+    appendPlanApproved(doc: ProvDocument, analysisId: string, actor: ProvActor, approval: ProvPlanApprovalRef): void;
     appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome, model: ProvModelId): void;
     appendCommandExecuted(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, command: ProvCommandRef, model: ProvModelId): void;
     appendFileWritten(
@@ -466,6 +468,33 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}): Prov
         });
         doc.wasAssociatedWith(rQn, agentQn, undefined, `${NS_PREFIX}:assoc-run-${run.runId}-${agentDigest(agentQn)}`);
         doc.used(rQn, analysisQn, undefined, `${NS_PREFIX}:used-run-${run.runId}`);
+    }
+
+    /**
+     * Append the records of a plan approval: an action activity of the type `inflexa:ApprovePlan`,
+     * associated anonymously with the actor, and the `wasInformedBy` edge from the run activity.
+     *
+     * The formal times come from the payload and never from the model clock, so
+     * {@link appendLifecycleAction} is not used: the recorder applies the event when the bus delivers
+     * it, which can follow the `run_started` of the same run, and the document must still place the
+     * approval first. The attributes ride the one declaration, because a second declaration with
+     * another time would put two formal times on one activity.
+     *
+     * The edge can precede the run activity in the document. `unified()` merges the run records by
+     * QName, and its explicit id lets a repeated delivery merge.
+     */
+    function appendPlanApproved(doc: ProvDocument, analysisId: string, actor: ProvActor, approval: ProvPlanApprovalRef): void {
+        const { agentQn } = recordPreamble(doc, analysisId, actor);
+        const actionQn = `${NS_PREFIX}:action-${mintActionId()}`;
+        const approvedAt = new Date(approval.approvedAtMs).toISOString();
+        doc.activity(actionQn, approvedAt, approvedAt, {
+            "prov:type": "inflexa:ApprovePlan",
+            "inflexa:threadId": approval.threadId,
+            "inflexa:planId": approval.planId,
+            "inflexa:runId": approval.runId,
+        });
+        doc.wasAssociatedWith(actionQn, agentQn);
+        doc.wasInformedBy(runQName(approval.runId), actionQn, `${NS_PREFIX}:informed-approval-${approval.runId}`);
     }
 
     /**
@@ -897,6 +926,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}): Prov
         appendInputRemoved,
         appendRunStarted,
         appendRunCompleted,
+        appendPlanApproved,
         appendStepCompleted,
         appendCommandExecuted,
         appendFileWritten,

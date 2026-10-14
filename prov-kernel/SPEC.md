@@ -97,6 +97,7 @@ A written file carries `prov:type` `inflexa:File`, `inflexa:path`,
 | Kind | QName | Formal times |
 |-|-|-|
 | lifecycle action | `inflexa:action-{mintActionId()}` | start = end = the model clock at append time |
+| plan approval | `inflexa:action-{mintActionId()}` | start = end from `approvedAtMs` |
 | run | `inflexa:run-{runId}` | start from `startedAtMs`, end from `completedAtMs` |
 | step | `inflexa:step-{runId}-{stepId}` | end from `completedAtMs` |
 | command | `inflexa:cmd-{runId}-{stepId}-{groupDigest}` | none |
@@ -107,7 +108,9 @@ is a random UUID. The model clock (`now`) defaults to the wall clock. Both are
 injectable, and a lifecycle action (`inflexa:CreateAnalysis`,
 `inflexa:AddInput`, `inflexa:RemoveInput`, one of the nine session and report
 types below, or a host-defined type through the generic lifecycle-action
-builder) is deliberately not deterministic by default.
+builder) is deliberately not deterministic by default. The plan approval
+(`inflexa:ApprovePlan`) mints its id the same way, but it takes its formal
+times from the payload and not from the model clock.
 
 The command group digest is:
 
@@ -210,6 +213,7 @@ the formal time argument. `aDigest = digest(agentQName)`.
 | command associated with agent | `inflexa:assoc-cmd-{runId}-{stepId}-{groupDigest}-{aDigest}` |
 | call informed by step | `inflexa:informed-call-{callDigest}` |
 | call associated with agent | `inflexa:assoc-call-{callDigest}-{aDigest}` |
+| run informed by plan approval | `inflexa:informed-approval-{runId}` |
 | model delegation | `inflexa:delegation-{digest(modelQn)}-{digest(responsibleQn)}` |
 | model association | `{assocIdBase}-{digest(modelQn)}` |
 | file generation | `inflexa:gen-{fileDigest}` |
@@ -230,7 +234,8 @@ The three authorities write the same identifier, thus re-emission merges.
 
 A lifecycle relation (creation, input add, input remove) carries no explicit
 identifier, and neither does a relation of the session and report family. Only
-the execution relations obey the deterministic-id rule. On
+the execution relations and the `wasInformedBy` of a plan approval obey the
+deterministic-id rule. On
 serialization each identifier-less record receives a blank-node id `_:idN`:
 one document-wide counter that starts at 1 and increments per distinct
 anonymous record, in record insertion order. Value-equal anonymous records
@@ -329,6 +334,26 @@ Re-declares the run activity `inflexa:run-{runId}` with `prov:endTime` from
 `completedAtMs`, `inflexa:status`, and optional `inflexa:durationMs`. The
 event declares no agent and appends no relation. The terminal values write
 directly and resolve last-wins at unify.
+
+### plan_approved
+
+Payload: `threadId`, `planId`, `runId`, and `approvedAtMs`, the epoch time of
+the approval in milliseconds. The event names no model, because a person
+approves and no model drives the act.
+
+1. the action activity `inflexa:action-{mintActionId()}`, start = end = the ISO
+   of `approvedAtMs`, `prov:type` `inflexa:ApprovePlan`, `inflexa:threadId`,
+   `inflexa:planId`, `inflexa:runId`, in one declaration
+2. `wasAssociatedWith(action, actor)` — anonymous
+3. `wasInformedBy(run, action)`, id `inflexa:informed-approval-{runId}`
+
+The formal times come from the payload, and never from the model clock. A
+recorder applies the event when its bus delivers it, which can follow the
+`run_started` of the same run. The host reads `approvedAtMs` before it starts
+the run, thus the document places the approval before the start of the run in
+either order of delivery. The edge can precede the declaration of the run
+activity, and `unified()` merges the run records by QName. The kernel has no
+plan entity, thus `inflexa:planId` carries the plan.
 
 ### step_completed
 

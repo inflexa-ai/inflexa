@@ -18,7 +18,8 @@ import type { ProvActor, ProvModelId } from "../types.js";
  * `call` — the call once step-scoped and once thread-scoped), a plain-boolean `inflexa:isDir`, a
  * typed-int `inflexa:size`, and a non-zero-millisecond formal time. The session and report family
  * adds both session kinds (the conversation arm mints no entity), a parent thread, the four block
- * acts, a repeated `inflexa:source` attribute, and the version entity with its specialization.
+ * acts, a repeated `inflexa:source` attribute, and the version entity with its specialization. The
+ * plan approval carries a payload time that precedes the start of its run, and the run `wasInformedBy` it.
  */
 
 const user: ProvActor = { kind: "user", id: "u-42", email: "golden@example.com" };
@@ -137,6 +138,7 @@ export function buildGoldenDocument(m: ProvDocumentModelInternal): ProvDocument 
     );
     m.appendReportPreviewed(doc, "a-golden", user, { threadId: "t-report", pagePath: "reports/t-report/preview.html", documentHash: "sha256:333" }, model);
     m.appendReportVersionRecorded(doc, "a-golden", user, { threadId: "t-report", versionId: "v-1", replaced: false }, model);
+    m.appendPlanApproved(doc, "a-golden", user, { threadId: "t-chat", planId: "pln-0000000a", runId: "r1", approvedAtMs: 1_699_999_999_900 });
     return doc;
 }
 

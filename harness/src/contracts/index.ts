@@ -9,6 +9,7 @@ export type {
     PresentationPart,
     PlanPart,
     RunCardPart,
+    PlanApprovalPart,
     FileReferenceEntry,
     FileReferencePart,
     AskPart,

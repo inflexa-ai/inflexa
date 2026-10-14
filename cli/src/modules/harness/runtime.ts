@@ -21,6 +21,7 @@ import {
     type AskGateway,
     type ChatProvider,
     type ConversationAssemblyDeps,
+    type CoreRuntime,
     type CoreWorkflowDeps,
     type DataProfileTriggerDeps,
     type EmbeddingProvider,
@@ -163,6 +164,12 @@ export type HarnessRuntime = {
      * agent's `execute_analysis` tool launches the identical `executeAnalysis` parent.
      */
     readonly agents: ThreadAgentResolver;
+    /**
+     * Approve a stored plan by its id and start its run with no model call. It is the harness
+     * function that `assembleCoreRuntime` binds over the deps of the conversation agent, thus an
+     * approval launches a plan through the same run launcher as the `execute_analysis` tool.
+     */
+    readonly approvePlan: CoreRuntime["approvePlan"];
     /**
      * The ONE {@link UsageRecorder} realization this runtime booted with — the same instance
      * `assembleCoreRuntime` stamps onto every workflow deps bag.
@@ -1265,6 +1272,7 @@ async function bootHarnessRuntimeOnce(
             triggerDeps: { pool, runAuthorizer, workflow: core.workflows.dataProfile },
             runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
             agents: core.agents,
+            approvePlan: core.approvePlan,
             usageRecorder,
             // The connection's identity the boot resolved — surfaced by the status UI, immutable across
             // live role-model swaps (the connection is shared by all roles, so a swap changes only a

@@ -23,6 +23,7 @@ import type {
     ChildSessionStartedPart,
     CompactionPart,
     FileReferencePart,
+    PlanApprovalPart,
     PlanPart,
     PresentationPart,
     ReportRenderedPart,
@@ -35,6 +36,7 @@ import {
     ChildSessionStartedPartSchema,
     CompactionPartSchema,
     FileReferencePartSchema,
+    PlanApprovalPartSchema,
     PlanPartSchema,
     PresentationPartSchema,
     ReportRenderedPartSchema,
@@ -63,6 +65,7 @@ export type ConversationUIData = {
     presentation: Payload<PresentationPart>;
     plan: Payload<PlanPart>;
     "run-card": Payload<RunCardPart>;
+    "plan-approval": Payload<PlanApprovalPart>;
     "file-reference": Payload<FileReferencePart>;
     ask: Payload<AskPart>;
     "child-session-started": Payload<ChildSessionStartedPart>;
@@ -127,6 +130,7 @@ const dataSchemas = {
     presentation: PresentationPartSchema.omit({ type: true }),
     plan: PlanPartSchema.omit({ type: true }),
     "run-card": RunCardPartSchema.omit({ type: true }),
+    "plan-approval": PlanApprovalPartSchema.omit({ type: true }),
     "file-reference": FileReferencePartSchema.omit({ type: true }),
     ask: AskPartSchema.omit({ type: true }),
     "child-session-started": ChildSessionStartedPartSchema.omit({ type: true }),

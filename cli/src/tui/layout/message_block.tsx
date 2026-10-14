@@ -231,6 +231,8 @@ export function MessageBlock(props: MessageBlockProps) {
                     }
                     case "data-run-card":
                         return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} state={resolveRunCardState(part.runId)} />;
+                    case "data-plan-approval":
+                        return <MarkdownBody content={`Approved ${part.planId}.`} paddingLeft={bodyPadLeft()} />;
                     case "data-presentation": {
                         // The reader deep-copies the chart spec, and a store proxy cannot be cloned, thus
                         // the reader gets the plain part that the proxy wraps.

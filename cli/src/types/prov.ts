@@ -20,6 +20,7 @@ export type {
     ProvInputRef,
     ProvRunRef,
     ProvRunOutcome,
+    ProvPlanApprovalRef,
     ProvStepRef,
     ProvStepOutcome,
     ProvUsedInputRef,

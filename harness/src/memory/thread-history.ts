@@ -43,7 +43,14 @@ import {
     syntheticRecordMessage,
     type StoredMessageEnvelope,
 } from "./ai-sdk-message-storage.js";
-import { envelopeDisplayMessages, parseStoredDisplayEnvelope, type ConversationUIMessage, type StoredDisplayEnvelope } from "./conversation-display-storage.js";
+import type { MessagePart } from "../contracts/message.js";
+import {
+    conversationDisplayPart,
+    envelopeDisplayMessages,
+    parseStoredDisplayEnvelope,
+    type ConversationUIMessage,
+    type StoredDisplayEnvelope,
+} from "./conversation-display-storage.js";
 
 /** A resolved `ok(undefined)` ResultAsync — the empty/seed transaction step. */
 function okVoid<E = DbError>(): ResultAsync<void, E> {
@@ -134,11 +141,22 @@ export interface ConversationTurn {
  * never shown. The harness owns the record-to-`system` mapping for the same
  * reason it owns the marker — a host that hand-assembled either could produce a
  * message the turn-boundary predicates fail to recognise.
+ *
+ * With `displayParts`, the display message holds those parts in place of the
+ * text part, and the model message is still the record of `text`. The text then
+ * stays for the model alone.
  */
-export function conversationRecordTurn(text: string): ConversationTurn {
+export function conversationRecordTurn(text: string, displayParts?: readonly Exclude<MessagePart, { type: "text" }>[]): ConversationTurn {
     return {
         modelMessages: [syntheticRecordMessage(text)],
-        displayMessages: [{ id: randomUUID(), role: "system", parts: [{ type: "text", text, state: "done" }] }],
+        displayMessages: [
+            {
+                id: randomUUID(),
+                role: "system",
+                parts:
+                    displayParts !== undefined && displayParts.length > 0 ? displayParts.map(conversationDisplayPart) : [{ type: "text", text, state: "done" }],
+            },
+        ],
     };
 }
 

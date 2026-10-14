@@ -94,7 +94,7 @@ type BlockAct = {
  * One observation of a session.
  *
  * The union names one event for each act: the start of a session, the four block operations, the title,
- * the derivation, the preview, the record, and the file write of a conversation turn. Each event carries
+ * the derivation, the preview, the record, the file write of a conversation turn, and the approval of a plan. Each event carries
  * the analysis and the thread, thus a consumer places it with no lookup. The title sits on the document,
  * thus the title event names no block.
  *
@@ -132,6 +132,20 @@ export type SessionProvenanceEvent =
       }
     | { type: "preview"; analysisId: string; threadId: string; pagePath: string; documentHash: string }
     | { type: "record-version"; analysisId: string; threadId: string; versionId: string; replaced: boolean }
+    | {
+          /**
+           * A host approved a plan and the approval started its run. This is the one session event that
+           * carries a time: the approval is read before the launch, and the run emits `run_started` from
+           * its workflow body, thus a record orders the approval before the start only through `atMs`.
+           */
+          type: "approve-plan";
+          analysisId: string;
+          threadId: string;
+          planId: string;
+          runId: string;
+          /** Epoch milliseconds of the approval, read before the launch. */
+          atMs: number;
+      }
     | {
           /**
            * One file that a conversation turn wrote with a file tool — a write under no run and no

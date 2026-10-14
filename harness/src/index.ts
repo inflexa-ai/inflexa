@@ -59,6 +59,13 @@ export type {
     ReportSessionDelta,
     NewestReportChild,
 } from "./app/spawn-report-session.js";
+// Start the run of a stored plan, and approve a plan by its id. Each gives a `Result` and never throws, thus
+// a host route calls them with no `try`. `CoreRuntime.approvePlan` binds the approval over the deps of the
+// conversation agent.
+export { launchPlanRun } from "./tools/execute-analysis.js";
+export type { LaunchPlanRunDeps, LaunchPlanRunRefusal, PlanLaunch } from "./tools/execute-analysis.js";
+export { approvePlan } from "./app/approve-plan.js";
+export type { ApprovePlanDeps, ApprovePlanInput, ApprovePlanRefusal, PlanApproval } from "./app/approve-plan.js";
 // The outcome of the report-session anchor operation. `ConversationAgentDeps`
 // names it, thus an embedder cannot type that dep without this name.
 export type { EnsureSessionStateResult } from "./app/report-session-runtime.js";
@@ -431,6 +438,7 @@ export type {
     PresentationContent,
     PlanPart,
     RunCardPart,
+    PlanApprovalPart,
     FileReferencePart,
     FileReferenceEntry,
     RunStartedPart,

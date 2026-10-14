@@ -858,6 +858,34 @@ describe("host-appended synthetic records", () => {
     });
 });
 
+describe("conversationRecordTurn display parts", () => {
+    const approval = { type: "data-plan-approval" as const, planId: "pln-0000000a", runId: "r1", approvedAt: "2026-10-13T10:00:00.000Z" };
+    const card = { type: "data-run-card" as const, id: "run-card-r1", runId: "r1", planId: "pln-0000000a", title: "Plan", stepCount: 2 };
+
+    it("shows the parts and no text part, and keeps the synthetic record as the model message", async () => {
+        const text = "The person approved plan pln-0000000a. Run r1 started.";
+        const turn = conversationRecordTurn(text, [approval, card]);
+
+        expect(turn.modelMessages).toEqual([syntheticRecordMessage(text)]);
+        expect(turn.displayMessages).toHaveLength(1);
+        expect(turn.displayMessages[0]!.role).toBe("system");
+        expect(turn.displayMessages[0]!.parts.map((part) => part.type)).toEqual(["data-plan-approval", "data-run-card"]);
+
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        const row = (await history.loadAll(THREAD))._unsafeUnwrap().flat()[0]!;
+        expect(row.displayEnvelope?.messages).toEqual([...turn.displayMessages]);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual([...turn.modelMessages]);
+    });
+
+    it("keeps the text part when no parts are given", () => {
+        const text = "Run run-1 completed.";
+
+        for (const turn of [conversationRecordTurn(text), conversationRecordTurn(text, [])]) {
+            expect(turn.displayMessages[0]!.parts).toEqual([{ type: "text", text, state: "done" }]);
+        }
+    });
+});
+
 describe("dual model/display turn persistence", () => {
     it("round-trips display on the turn head while loadRecent stays model-only", async () => {
         const modelMessages = [userText("show results"), assistantText("Here they are.")];

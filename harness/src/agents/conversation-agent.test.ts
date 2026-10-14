@@ -90,6 +90,16 @@ describe("createConversationAgent", () => {
         expect(systemPrompt).toContain("Never loop on");
     });
 
+    test("the prompt reads an approval record as a started run, and the prompt does not change between agents", () => {
+        const { systemPrompt } = buildAgent();
+
+        // The prompt wraps its lines, thus the match reads the prompt with one space between words.
+        expect(systemPrompt.replace(/\s+/g, " ")).toContain(
+            "A record in the thread that says that the person approved a plan means that the run of that plan started",
+        );
+        expect(buildAgent().systemPrompt).toBe(systemPrompt);
+    });
+
     test("exposes the expected leaf and loop-driving tools", () => {
         const agent = buildAgent();
         const ids = new Set(agent.tools.map((t) => t.id));

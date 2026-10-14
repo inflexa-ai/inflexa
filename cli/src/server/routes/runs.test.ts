@@ -4,14 +4,17 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { errAsync, okAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
     createRunEventStream,
     UnknownRunError,
     type AgentSession,
+    type ApprovePlanInput,
+    type ApprovePlanRefusal,
     type CortexRunRow,
     type DataProfileStatus,
     type Pool,
+    type PlanApproval,
     type PlanRecord,
     type RunArtifactCount,
     type StepExecutionRow,
@@ -24,6 +27,7 @@ import type {
     ChatContext,
     DataProfileView,
     FarmHealResult,
+    PlanApprovalResult,
     PlanView,
     ProfileRerunResult,
     RunDetail,
@@ -44,6 +48,7 @@ import { freshDb } from "../../test_support/db.ts";
 import type { ServerBoot } from "../boot.ts";
 import type { ServerEnv } from "../http.ts";
 import { __resetProfileQueueForTest, profileWorkInFlight, serializeProfileWork, watchInputDrift } from "../profile_queue.ts";
+import { __resetTurnsForTest, refuseNewTurns, startTurn } from "../turns.ts";
 import { DEFAULT_RUN_ROUTES_OPTS, runRoutes, type RunRoutesOpts } from "./runs.ts";
 
 // The routes under the mount path of the app, with no bearer check and no analysis guard: `app.test.ts` covers
@@ -87,6 +92,7 @@ const UNEXPECTED: RunRoutesOpts = {
     readiness: failing("readiness"),
     sandboxRefusal: failing("sandboxRefusal"),
     healFarm: failing("healFarm"),
+    approvePlan: failing("approvePlan"),
 };
 
 /** The routes over a sandbox that can start, unless `opts` gives a refusal. */
@@ -1125,5 +1131,234 @@ describe("POST {A}/farm/heal", () => {
         const response = await app.request("/api/v1/analyses/mine/farm/heal", { method: "POST" });
         expect(response.status).toBe(202);
         expect((await response.json()) as FarmHealResult).toEqual({ outcome: { kind: "composed", packages: 12 } });
+    });
+});
+
+describe("POST {A}/plans/:planId/approve", () => {
+    const planId = "pln-0000000a";
+    const startedApproval: PlanApproval = {
+        planId,
+        runId: "r1",
+        started: true,
+        message: {
+            id: "m1",
+            role: "system",
+            parts: [{ type: "data-plan-approval", planId, runId: "r1", approvedAt: "2026-10-13T10:00:00.000Z" }],
+        },
+    };
+
+    beforeEach(() => {
+        __resetTurnsForTest();
+    });
+    afterEach(() => {
+        __resetTurnsForTest();
+    });
+
+    /** The route over a fake approval that records its inputs and gives `outcome`. */
+    function approvalApp(
+        outcome: () => ResultAsync<PlanApproval, ApprovePlanRefusal>,
+        boot: ServerBoot = readyBoot,
+    ): { app: Hono<ServerEnv>; inputs: ApprovePlanInput[] } {
+        const inputs: ApprovePlanInput[] = [];
+        const app = appWith(
+            {
+                approvePlan: (_runtime, input) => {
+                    inputs.push(input);
+                    return outcome();
+                },
+            },
+            boot,
+        );
+        return { app, inputs };
+    }
+
+    function approve(app: Hono<ServerEnv>, analysisId: string, body: unknown = { threadId: "t1" }): Response | Promise<Response> {
+        return app.request(`/api/v1/analyses/${analysisId}/plans/${planId}/approve`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+        });
+    }
+
+    function activityOf(analysisId: string): number | undefined {
+        const page = listAnalysisPage({ projectId: null, sort: "created", limit: 100, offset: 0 })._unsafeUnwrap();
+        return page.items.find((item) => item.analysis.id === analysisId)?.lastActivityAt;
+    }
+
+    test("a click on Approve gives 201 with the result, and the approval runs under the local identity and the analysis, thread, and plan of the request", async () => {
+        const analysisId = seedAnalysis();
+        const { app, inputs } = approvalApp(() => okAsync(startedApproval));
+
+        const response = await approve(app, analysisId);
+
+        expect(response.status).toBe(201);
+        expect((await response.json()) as PlanApprovalResult).toEqual(startedApproval);
+        expect(inputs).toHaveLength(1);
+        expect(inputs[0]).toMatchObject({ analysisId, threadId: "t1", planId, identity: { user: "local" } });
+        expect(inputs[0]!.auth).toBeDefined();
+    });
+
+    test("an approval that started the run raises the activity of the analysis", async () => {
+        const analysisId = seedAnalysis();
+        const before = activityOf(analysisId)!;
+        await Bun.sleep(5);
+
+        expect((await approve(approvalApp(() => okAsync(startedApproval)).app, analysisId)).status).toBe(201);
+
+        expect(activityOf(analysisId)!).toBeGreaterThan(before);
+    });
+
+    test("a second click names the active run with started false and message null, and changes no activity", async () => {
+        const analysisId = seedAnalysis();
+        const before = activityOf(analysisId);
+        const active: PlanApproval = { planId, runId: "r1", started: false, message: null };
+
+        const response = await approve(approvalApp(() => okAsync(active)).app, analysisId);
+
+        expect(response.status).toBe(201);
+        expect(await response.json()).toEqual(active);
+        expect(activityOf(analysisId)).toBe(before);
+    });
+
+    test("a running turn on the thread gives 409 `busy` with the reason, and the approval does not run", async () => {
+        const analysisId = seedAnalysis();
+        startTurn({ turnId: "turn-1", threadId: "t1", analysisId }, new Date());
+        const { app, inputs } = approvalApp(() => okAsync(startedApproval));
+
+        const response = await approve(app, analysisId);
+
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({
+            error: "busy",
+            message: "Cannot approve a plan while a chat turn is running.",
+            details: { reasons: ["chat_turn"] },
+        });
+        expect(inputs).toEqual([]);
+    });
+
+    test("a running turn on a different thread does not hold the approval", async () => {
+        const analysisId = seedAnalysis();
+        startTurn({ turnId: "turn-1", threadId: "t-other", analysisId }, new Date());
+
+        expect((await approve(approvalApp(() => okAsync(startedApproval)).app, analysisId)).status).toBe(201);
+    });
+
+    test("an unknown thread and an unknown plan give 404 `not_found`", async () => {
+        const analysisId = seedAnalysis();
+
+        const thread = await approve(approvalApp(() => errAsync({ type: "thread_not_found" })).app, analysisId);
+        const plan = await approve(approvalApp(() => errAsync({ type: "plan_not_found", planId })).app, analysisId);
+
+        expect(thread.status).toBe(404);
+        expect(await thread.json()).toEqual({ error: "not_found", message: "Thread not found." });
+        expect(plan.status).toBe(404);
+        expect(await plan.json()).toEqual({ error: "not_found", message: `This analysis has no plan ${planId}.` });
+    });
+
+    test("each refusal of the plan and of the launch gives 409 `conflict` with its reason and data", async () => {
+        const analysisId = seedAnalysis();
+        const cases: Array<[ApprovePlanRefusal, string, unknown]> = [
+            [
+                { type: "superseded", supersededBy: "pln-0000000b" },
+                `Plan ${planId} was replaced by plan pln-0000000b.`,
+                { reason: "superseded", supersededBy: "pln-0000000b" },
+            ],
+            [
+                { type: "plan_invalid", planId, malformed: false, errors: ["Step a has no agent"] },
+                `Plan ${planId} is not valid.`,
+                { reason: "plan_invalid", errors: ["Step a has no agent"] },
+            ],
+            [
+                { type: "packages_missing", missing: ["scanpy"], collisions: ["xgboost"] },
+                `The packages of plan ${planId} cannot link.`,
+                { reason: "packages_missing", missing: ["scanpy"], collisions: ["xgboost"] },
+            ],
+            [
+                { type: "packages_missing", missing: [], collisions: [], unavailable: "the farm is locked" },
+                `The packages of plan ${planId} cannot link.`,
+                { reason: "packages_missing", missing: [], collisions: [], unavailable: "the farm is locked" },
+            ],
+            [{ type: "not_authorized", reason: "mint refused" }, "The run was not authorized: mint refused", { reason: "not_authorized" }],
+            [{ type: "suspended", reason: "no_funds" }, "The analysis is suspended: no_funds", { reason: "suspended" }],
+        ];
+
+        for (const [refusal, message, details] of cases) {
+            const response = await approve(approvalApp(() => errAsync(refusal)).app, analysisId);
+
+            expect(response.status).toBe(409);
+            expect(await response.json()).toEqual({ error: "conflict", message, details });
+        }
+    });
+
+    test("a failed store and a failed start give 500 `internal_error` with no cause in the body", async () => {
+        const analysisId = seedAnalysis();
+        const refusals: ApprovePlanRefusal[] = [
+            { type: "store_failed", cause: { type: "query_failed", op: "plans.loadPlan", cause: new Error("secret store detail") } },
+            { type: "launch_failed", cause: new Error("secret launch detail") },
+        ];
+
+        for (const refusal of refusals) {
+            const response = await approve(approvalApp(() => errAsync(refusal)).app, analysisId);
+
+            expect(response.status).toBe(500);
+            const text = await response.text();
+            expect(JSON.parse(text)).toMatchObject({ error: "internal_error" });
+            expect(text).not.toContain("secret");
+        }
+    });
+
+    test("a body with no thread id, an empty thread id, and a body that is not JSON give 400, and the approval does not run", async () => {
+        const analysisId = seedAnalysis();
+        const { app, inputs } = approvalApp(() => okAsync(startedApproval));
+
+        for (const body of [{}, { threadId: "" }, { threadId: 7 }]) {
+            const response = await approve(app, analysisId, body);
+            expect(response.status).toBe(400);
+            expect(await response.json()).toMatchObject({ error: "validation_error" });
+        }
+        const notJson = await app.request(`/api/v1/analyses/${analysisId}/plans/${planId}/approve`, { method: "POST", body: "not json" });
+        expect(notJson.status).toBe(400);
+        expect(await notJson.json()).toMatchObject({ error: "invalid_json" });
+        expect(inputs).toEqual([]);
+    });
+
+    test("a stopping server gives 503 `draining` before it reads the body, and no run starts", async () => {
+        const analysisId = seedAnalysis();
+        const { app, inputs } = approvalApp(() => okAsync(startedApproval));
+        refuseNewTurns();
+
+        const response = await app.request(`/api/v1/analyses/${analysisId}/plans/${planId}/approve`, { method: "POST" });
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ error: "draining" });
+        expect(inputs).toEqual([]);
+    });
+
+    test("503 `unavailable` while the runtime boots, and the approval does not run", async () => {
+        const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
+        const { app, inputs } = approvalApp(() => okAsync(startedApproval), { state: () => starting, runtime: () => null, start: async () => undefined });
+
+        const response = await approve(app, "a1");
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+        expect(inputs).toEqual([]);
+    });
+
+    test("the default binding calls the approval of the runtime", async () => {
+        const analysisId = seedAnalysis();
+        const calls: ApprovePlanInput[] = [];
+        const bound = {
+            pool,
+            approvePlan: (input: ApprovePlanInput) => {
+                calls.push(input);
+                return okAsync(startedApproval);
+            },
+        } as unknown as HarnessRuntime;
+
+        const result = await DEFAULT_RUN_ROUTES_OPTS.approvePlan(bound, { analysisId, threadId: "t1", planId, identity: { user: "local" }, auth: {} });
+
+        expect(result._unsafeUnwrap()).toEqual(startedApproval);
+        expect(calls).toHaveLength(1);
     });
 });
