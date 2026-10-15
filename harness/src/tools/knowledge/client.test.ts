@@ -79,8 +79,8 @@ describe("createHttpKnowledgeClient", () => {
     beforeAll(() => {
         server = stubService();
     });
-    afterAll(() => {
-        server.stop(true);
+    afterAll(async () => {
+        await server.stop(true);
     });
 
     function client(apiKey = "secret") {
@@ -178,7 +178,7 @@ describe("createHttpKnowledgeClient", () => {
         expect(answer.local_slots).toEqual(["counts_path"]);
         expect(answer.slots[0]).toMatchObject({ name: "counts_path", source: "local" });
         const contract = await client().contract("tpl-deseq2-two-group");
-        if ("match" in contract && typeof contract.match === "string") throw new Error("expected a contract");
+        if (!("parameters" in contract)) throw new Error("expected a contract");
         expect(contract.parameters.find((slot) => slot.name === "counts_path")?.local).toBe(true);
         expect(contract.parameters.find((slot) => slot.name === "lfc_shrink")?.local).toBeUndefined();
     });
