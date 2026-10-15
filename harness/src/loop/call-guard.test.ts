@@ -44,7 +44,7 @@ describe("guardRepeatedCalls", () => {
         const { tool, count } = makeTool("list_available_packages");
         const refusals: string[] = [];
         const [guarded] = guardRepeatedCalls([tool], {
-            policy: { identicalLimit: 2, perToolLimit: 3 },
+            policy: { identicalLimit: 2, perToolLimit: 3, totalLimit: 40 },
             onRefusal: (refusal) => refusals.push(`${refusal.tool}:${refusal.kind}:${refusal.calls}`),
         });
         for (const query of ["a", "b", "c"]) expect((await guarded!.execute({ query }, ctx)).isOk()).toBe(true);

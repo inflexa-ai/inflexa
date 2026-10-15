@@ -92,7 +92,9 @@ describe("edit_file tool", () => {
         const { tool } = buildTool();
         const { ctx } = makeToolContext();
 
-        const out = (await tool.execute({ path: "scripts/de.R", old_string: "0.05", new_string: "0.1", replace_all: false }, ctx))._unsafeUnwrap();
+        const out = (
+            await tool.execute({ path: "scripts/de.R", old_string: "0.05", new_string: "0.1", replace_all: false, regex: false }, ctx)
+        )._unsafeUnwrap();
         expect(out).toMatchObject({ status: "ok", decision_record_noted: true });
 
         const record = JSON.parse(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8"));
@@ -106,12 +108,15 @@ describe("edit_file tool", () => {
         // A file that is not a rendered script, and a script without a record, note nothing.
         await seed("hello world");
         const plain = (
-            await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "world", new_string: "there", replace_all: false }, ctx)
+            await tool.execute(
+                { path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "world", new_string: "there", replace_all: false, regex: false },
+                ctx,
+            )
         )._unsafeUnwrap();
         expect(plain).toMatchObject({ status: "ok" });
         expect("decision_record_noted" in plain).toBe(false);
         await writeFile(join(stepDir, "scripts", "own.R"), "x <- 1\n");
-        const own = (await tool.execute({ path: "scripts/own.R", old_string: "1", new_string: "2", replace_all: false }, ctx))._unsafeUnwrap();
+        const own = (await tool.execute({ path: "scripts/own.R", old_string: "1", new_string: "2", replace_all: false, regex: false }, ctx))._unsafeUnwrap();
         expect(own).toMatchObject({ status: "ok" });
         expect("decision_record_noted" in own).toBe(false);
     });
