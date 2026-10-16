@@ -7,6 +7,7 @@ import type { Pool } from "pg";
 
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { DbError } from "../lib/db-result.js";
+import { countingQuerier } from "../__tests__/setup/counting-querier.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import {
     contextRecordMessage,
@@ -26,6 +27,7 @@ import {
     conversationRecordTurn,
     createThreadHistory,
     type ConversationTurn,
+    type StoredMessage,
     type ThreadHistory,
 } from "./thread-history.js";
 import { createThreadStore } from "./thread-store.js";
@@ -1471,5 +1473,268 @@ describe("latestTurnAt", () => {
     it("is scoped to its own thread", async () => {
         (await append(THREAD, [userText("mine"), assistantText("ok")]))._unsafeUnwrap();
         expect((await history.latestTurnAt("some-other-thread"))._unsafeUnwrap()).toBeNull();
+    });
+});
+
+// --- loadPage ---------------------------------------------------------------
+
+describe("loadPage", () => {
+    /** The user text of each turn of a page, which names the turn without its rows. */
+    function asks(turns: readonly { message: ModelMessage }[][]): string[] {
+        return turns.map((turn) => JSON.stringify(turn[0]!.message.content));
+    }
+
+    /** The expected `asks` entry of the turn `label`, as `labeledTurn` writes it. */
+    function ask(label: string): string {
+        return JSON.stringify(labeledTurn(label)[0]!.content);
+    }
+
+    /** Append `count` two-row turns, labeled `0` to `count - 1`. The turn `i` opens at `seq` `2 * i`. */
+    async function appendLabeled(count: number, threadId = THREAD): Promise<void> {
+        for (let i = 0; i < count; i++) (await append(threadId, labeledTurn(String(i))))._unsafeUnwrap();
+    }
+
+    it("gives the newest turns, whole, oldest-first, and a cursor for the older page", async () => {
+        await appendLabeled(5);
+
+        const page = (await history.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
+
+        expect(asks(page.turns)).toEqual([ask("3"), ask("4")]);
+        expect(page.turns.map((turn) => turn.map((m) => m.seq))).toEqual([
+            [6, 7],
+            [8, 9],
+        ]);
+        expect(page.before).toBe(6);
+    });
+
+    it("gives the turns before the cursor, then a null cursor on the last page", async () => {
+        await appendLabeled(5);
+        const newest = (await history.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
+
+        const middle = (await history.loadPage(THREAD, { limit: 2, before: newest.before! }))._unsafeUnwrap();
+        expect(asks(middle.turns)).toEqual([ask("1"), ask("2")]);
+        expect(middle.before).toBe(2);
+
+        const last = (await history.loadPage(THREAD, { limit: 2, before: middle.before! }))._unsafeUnwrap();
+        expect(asks(last.turns)).toEqual([ask("0")]);
+        expect(last.before).toBeNull();
+    });
+
+    it("gives a null cursor when the page reaches the start of the thread", async () => {
+        await appendLabeled(2);
+
+        const page = (await history.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
+
+        expect(asks(page.turns)).toEqual([ask("0"), ask("1")]);
+        expect(page.before).toBeNull();
+    });
+
+    it("gives an empty page and a null cursor for a thread with no rows", async () => {
+        expect((await history.loadPage("thread-with-no-rows", { limit: 5 }))._unsafeUnwrap()).toEqual({ turns: [], before: null });
+    });
+
+    it("holds the rows before the first turn start as one group", async () => {
+        (await append(THREAD, [syntheticRecordMessage("Run GSEA completed: 3/3 steps.")]))._unsafeUnwrap();
+        (await append(THREAD, labeledTurn("0")))._unsafeUnwrap();
+
+        const both = (await history.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
+        expect(both.turns.map((turn) => turn.map((m) => m.seq))).toEqual([[0], [1, 2]]);
+        expect(both.before).toBeNull();
+
+        // A limit of 1 leaves the group of the record to the next page, which still reaches it.
+        const newest = (await history.loadPage(THREAD, { limit: 1 }))._unsafeUnwrap();
+        expect(newest.turns.map((turn) => turn.map((m) => m.seq))).toEqual([[1, 2]]);
+        expect(newest.before).toBe(1);
+        const oldest = (await history.loadPage(THREAD, { limit: 1, before: newest.before! }))._unsafeUnwrap();
+        expect(oldest.turns.map((turn) => turn.map((m) => m.seq))).toEqual([[0]]);
+        expect(oldest.before).toBeNull();
+    });
+
+    it("holds each row of a multi-row turn, and a nudge does not start a turn", async () => {
+        (await append(THREAD, labeledTurn("0")))._unsafeUnwrap();
+        const turn = [
+            userText("run the search"),
+            assistantToolUse("c1", "workspace_search", { query: "the staged dataset" }),
+            userToolResult("c1", "one hit"),
+            syntheticUserMessage("Your previous reply was cut off at the output-token limit; continue concisely."),
+            assistantText("here is the hit"),
+        ];
+        (await append(THREAD, turn))._unsafeUnwrap();
+
+        const page = (await history.loadPage(THREAD, { limit: 1 }))._unsafeUnwrap();
+
+        expect(page.turns).toHaveLength(1);
+        expect(page.turns[0]!.map((m) => m.message)).toEqual(turn);
+        expect(page.before).toBe(2);
+    });
+
+    it("gives the rows of a closed chat turn exactly as loadAll gives them", async () => {
+        const opening: ConversationTurn = {
+            modelMessages: [
+                userText("run the comparison"),
+                contextRecordMessage("run-activity", "[Run Activity]\nNo runs are currently running or suspended."),
+            ],
+            displayMessages: [{ id: "user-1", role: "user", parts: [{ type: "text", text: "run the comparison", state: "done" }] }],
+            author: "dr.chen@lab.example",
+        };
+        const round: ConversationTurn = {
+            modelMessages: [assistantToolUse("call-a", "run_pca", { k: 2 }), userToolResult("call-a", "done"), assistantText("here are the results")],
+            displayMessages: [{ id: "assistant-1", role: "assistant", parts: [{ type: "text", text: "here are the results", state: "done" }] }],
+        };
+        (await append(THREAD, labeledTurn("old")))._unsafeUnwrap();
+        (
+            await history.writeTurn(THREAD, {
+                opening,
+                rounds: [round],
+                close: { status: "done", turnUsage: { inputTokens: 1200, outputTokens: 340 }, turnDurationMs: 8412 },
+            })
+        )._unsafeUnwrap();
+
+        const all = (await history.loadAll(THREAD))._unsafeUnwrap();
+        const page = (await history.loadPage(THREAD, { limit: 1 }))._unsafeUnwrap();
+
+        expect(page.turns).toEqual([all.at(-1)!]);
+        const opened = page.turns[0]![0]!;
+        expect(opened.author).toBe("dr.chen@lab.example");
+        expect(opened.displayEnvelope).toBeDefined();
+        expect(opened.turn).toEqual({ status: "done", usage: { inputTokens: 1200, outputTokens: 340 }, durationMs: 8412 });
+        expect(opened.createdAt).toBeInstanceOf(Date);
+    });
+
+    it("gives a turn whole for a cursor inside the turn", async () => {
+        for (let i = 0; i < 3; i++) {
+            (
+                await append(THREAD, [
+                    userText(`ask ${i}`),
+                    assistantToolUse(`c${i}`, "run_pca", { k: 2 }),
+                    userToolResult(`c${i}`, "done"),
+                    assistantText(`answer ${i}`),
+                ])
+            )._unsafeUnwrap();
+        }
+        // The second turn holds seq 4 to 7, and seq 6 is its third row.
+        const page = (await history.loadPage(THREAD, { limit: 2, before: 6 }))._unsafeUnwrap();
+
+        expect(page.turns.map((turn) => turn.map((m) => m.seq))).toEqual([
+            [0, 1, 2, 3],
+            [4, 5, 6, 7],
+        ]);
+        expect(page.before).toBeNull();
+
+        const one = (await history.loadPage(THREAD, { limit: 1, before: 6 }))._unsafeUnwrap();
+        expect(one.turns.map((turn) => turn.map((m) => m.seq))).toEqual([[4, 5, 6, 7]]);
+        expect(one.before).toBe(4);
+    });
+
+    it.each([
+        { limit: 0, turns: 1 },
+        { limit: -3, turns: 1 },
+        { limit: Number.NaN, turns: 1 },
+        { limit: Number.POSITIVE_INFINITY, turns: 1 },
+        { limit: 1.9, turns: 1 },
+        { limit: 2.9, turns: 2 },
+    ])("reads a limit of $limit as $turns turn(s)", async ({ limit, turns }) => {
+        await appendLabeled(3);
+
+        const page = (await history.loadPage(THREAD, { limit }))._unsafeUnwrap();
+
+        expect(page.turns).toHaveLength(turns);
+        expect(asks(page.turns).at(-1)).toBe(ask("2"));
+        expect(page.before).not.toBeNull();
+    });
+
+    it("gives the whole thread for a limit above the count of turns", async () => {
+        await appendLabeled(3);
+
+        const page = (await history.loadPage(THREAD, { limit: Number.MAX_VALUE }))._unsafeUnwrap();
+
+        expect(asks(page.turns)).toEqual([ask("0"), ask("1"), ask("2")]);
+        expect(page.before).toBeNull();
+    });
+
+    it("reads the pages of a long thread back to the whole thread, each page deep in it", async () => {
+        const TURNS = 60;
+        const LIMIT = 7;
+        await appendLabeled(TURNS);
+
+        const pages: StoredMessage[][][] = [];
+        let before: number | undefined;
+        do {
+            const page = (await history.loadPage(THREAD, before === undefined ? { limit: LIMIT } : { limit: LIMIT, before }))._unsafeUnwrap();
+            expect(page.turns.length).toBeLessThanOrEqual(LIMIT);
+            pages.push(page.turns);
+            before = page.before ?? undefined;
+        } while (before !== undefined);
+
+        expect(pages).toHaveLength(Math.ceil(TURNS / LIMIT));
+        // The fourth page from the newest holds the turns 32 to 38.
+        expect(asks(pages[3]!)).toEqual(Array.from({ length: LIMIT }, (_, i) => ask(String(32 + i))));
+        const rebuilt = [...pages].reverse().flat();
+        expect(rebuilt).toEqual((await history.loadAll(THREAD))._unsafeUnwrap());
+    });
+
+    it("gives the older turns for a cursor whose turn a retract removed", async () => {
+        await appendLabeled(4);
+        const newest = (await history.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
+        expect(newest.before).toBe(4);
+
+        (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+
+        const older = (await history.loadPage(THREAD, { limit: 2, before: newest.before! }))._unsafeUnwrap();
+        expect(asks(older.turns)).toEqual([ask("0"), ask("1")]);
+        expect(older.before).toBeNull();
+    });
+
+    it("keeps a cursor correct across a later append", async () => {
+        await appendLabeled(3);
+        const newest = (await history.loadPage(THREAD, { limit: 1 }))._unsafeUnwrap();
+
+        (await append(THREAD, labeledTurn("3")))._unsafeUnwrap();
+
+        const older = (await history.loadPage(THREAD, { limit: 1, before: newest.before! }))._unsafeUnwrap();
+        expect(asks(older.turns)).toEqual([ask("1")]);
+        expect(older.before).toBe(2);
+    });
+
+    it("does not read the rows before its page", async () => {
+        // A row whose envelope the store cannot parse, the oldest row of the thread.
+        // The statement stores a `tokens` value because the column is NOT NULL.
+        await pool.query(`INSERT INTO messages (thread_id, seq, message_envelope, tokens) VALUES ($1, 0, '{"not":"an envelope"}'::json, 1)`, [THREAD]);
+        await appendLabeled(5);
+
+        const failure = (await history.loadAll(THREAD))._unsafeUnwrapErr();
+        expect(failure.type).toBe("query_failed");
+
+        const page = (await history.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
+        expect(asks(page.turns)).toEqual([ask("3"), ask("4")]);
+        expect(page.before).not.toBeNull();
+    });
+
+    it("scopes the page to its own thread", async () => {
+        await appendLabeled(3);
+        await appendLabeled(2, "some-other-thread");
+
+        const page = (await history.loadPage(THREAD, { limit: 5 }))._unsafeUnwrap();
+
+        expect(asks(page.turns)).toEqual([ask("0"), ask("1"), ask("2")]);
+        expect(page.before).toBeNull();
+    });
+
+    it("sends one statement for each page", async () => {
+        await appendLabeled(6);
+        // The wrapper forwards `query` to the pool, and the page read only calls `query`. The cast
+        // gives the factory the `Pool` type that the wrapper stands in for.
+        const counted = countingQuerier(pool);
+        const counting = createThreadHistory(counted.querier as unknown as Pool);
+
+        const newest = (await counting.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
+        expect(counted.calls()).toBe(1);
+
+        (await counting.loadPage(THREAD, { limit: 2, before: newest.before! }))._unsafeUnwrap();
+        expect(counted.calls()).toBe(2);
+
+        (await counting.loadPage("thread-with-no-rows", { limit: 2 }))._unsafeUnwrap();
+        expect(counted.calls()).toBe(3);
     });
 });

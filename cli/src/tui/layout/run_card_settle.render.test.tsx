@@ -213,7 +213,7 @@ describe("synthetic record entries in the transcript", () => {
         ];
         await loadMessages("analysis-1", "s1", {
             fetchThread: () => okAsync(null),
-            fetchMessages: () => okAsync({ messages: replayed, total: replayed.length, page: 0, perPage: replayed.length, hasMore: false }),
+            fetchMessages: () => okAsync({ messages: replayed, total: replayed.length, page: 0, perPage: replayed.length, hasMore: false, before: null }),
         });
 
         expect(messages.map((m) => m.role)).toEqual(["user", "system", "assistant"]);

@@ -330,6 +330,7 @@ function stagedHistory(turns: ModelMessage[][]): { history: ThreadHistory; retra
                     turn.map((message, seq) => ({ seq, envelope: { kind: "ai-sdk-model-message" as const, aiSdkMajor: 7 as const, message }, message })),
                 ),
             ),
+        loadPage: () => okAsync({ turns: [], before: null }),
         retractLastTurn: () => {
             retracts++;
             return okAsync({ kind: "retracted", messages: turns[turns.length - 1]?.length ?? 0 });

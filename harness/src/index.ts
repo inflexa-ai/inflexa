@@ -375,6 +375,8 @@ export { createThreadHistory, conversationRecordTurn } from "./memory/thread-his
 export type {
     ThreadHistory,
     StoredMessage,
+    LoadPageOptions,
+    TurnPage,
     RetractOutcome,
     ConversationTurn,
     TurnWrite,

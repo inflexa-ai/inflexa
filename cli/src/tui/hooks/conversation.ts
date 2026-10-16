@@ -14,7 +14,7 @@ import {
     type ToolCallPart,
 } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { MessageList, RetractResponse, ThreadSummary, TurnList, TurnSummary } from "../../api/conversation.ts";
+import { MAX_TRANSCRIPT_TURNS, type MessageList, type RetractResponse, type ThreadSummary, type TurnList, type TurnSummary } from "../../api/conversation.ts";
 import { describeClientError, type ClientError } from "../../client/api.ts";
 import { abortTurn, createChatTurn, fetchMessages, fetchThread, fetchTurn, fetchTurns, retractTurn, type ChatTurnStream } from "../../client/conversation.ts";
 import { describeCause } from "../../lib/cause.ts";
@@ -59,7 +59,9 @@ export type UIMessage = Omit<ChatMessage, "parts"> & { parts: Part[] };
 //
 // One unit throughout: the live store shifts once it exceeds this (`pushUserMessage` /
 // `startAssistantTurn`), and `loadMessages` slices the replayed transcript to the same count. The
-// store's read imposes no ceiling of its own, so this is free to move.
+// server pages the transcript by whole turns, and the loader reads pages until it holds this many
+// messages. A page holds an unknown count of messages, so the cap is not a page size and this is free
+// to move.
 const MESSAGE_CAP = 200;
 
 const [messages, setMessages] = createStore<UIMessage[]>([]);
@@ -810,14 +812,19 @@ function finishEndedTurn(end: TurnEnd, assistantId: string, startedAt: number): 
 export type LoadOpts = {
     /** The row of a thread, for its `updatedAt`, or `null` when it has no live row. Real: {@link fetchThread}. */
     readonly fetchThread: (analysisId: string, threadId: string) => ResultAsync<ThreadSummary | null, ClientError>;
-    /** The whole transcript of a thread, as the server replays it. Real: {@link fetchMessages}. */
-    readonly fetchMessages: (analysisId: string, threadId: string) => ResultAsync<MessageList, ClientError>;
+    /**
+     * One page of the transcript of a thread, as the server replays it: the newest page with no `before`, else
+     * the page that the cursor `before` of an earlier page names. Real: {@link fetchMessages}, at the maximum
+     * page size.
+     */
+    readonly fetchMessages: (analysisId: string, threadId: string, before?: string) => ResultAsync<MessageList, ClientError>;
 };
 
 /** The production {@link LoadOpts}. */
 export const DEFAULT_LOAD_OPTS: LoadOpts = {
     fetchThread: (analysisId, threadId) => fetchThread(analysisId, threadId),
-    fetchMessages: (analysisId, threadId) => fetchMessages(analysisId, threadId),
+    fetchMessages: (analysisId, threadId, before) =>
+        fetchMessages(analysisId, threadId, before === undefined ? { limit: MAX_TRANSCRIPT_TURNS } : { before, limit: MAX_TRANSCRIPT_TURNS }),
 };
 
 // Monotonic token ordering EVERY asynchronous write to the message store. Two producers write it —
@@ -864,7 +871,8 @@ export const otherClientTurn = otherTurn;
 
 /**
  * Load a session's transcript from the server (`GET {T}/messages`), replacing whatever was mounted.
- * The thread id equals the session id. The server gives the whole transcript; the trailing
+ * The thread id equals the session id. The server pages the transcript, newest turns first; the loader
+ * reads pages until it holds {@link MESSAGE_CAP} messages or the session starts, and the trailing
  * {@link MESSAGE_CAP} slice keeps the newest MESSAGES, which is the window the TUI mounts.
  *
  * A thread with no row (404: a freshly minted id whose first turn has not landed) renders empty —
@@ -888,6 +896,11 @@ export async function loadMessages(analysisId: string, sessionId: string, opts: 
  * gave. `report` raises the load banner on a failed read. `quiet` leaves the screen as it is, for a read
  * that a later poll or a later send makes again.
  *
+ * The read takes the newest page, then each next older page while the pages hold fewer than
+ * {@link MESSAGE_CAP} messages and an older page exists. A page that fails ends the load with the
+ * handling of a failed first read, and the pages read so far are not mounted: a partial transcript
+ * would show a gap in the middle of the window.
+ *
  * The write goes through `reconcile` by message id: a message that did not change keeps its object, thus
  * its block does not mount again, and a read again after a turn of a different client repaints the new
  * messages alone.
@@ -900,12 +913,24 @@ async function mountTranscript(
     opts: LoadOpts,
     onFailure: "report" | "quiet",
 ): Promise<void> {
-    const res = await opts.fetchMessages(analysisId, sessionId);
-    if (myLoad !== loadGeneration) return; // a newer swap started while the read was in flight — drop it
-    if (res.isErr() && !(res.error.type === "http" && res.error.status === 404)) {
+    let replayed: ChatMessage[] = [];
+    let failure: ClientError | null = null;
+    let cursor: string | undefined;
+    while (replayed.length < MESSAGE_CAP) {
+        const res = await opts.fetchMessages(analysisId, sessionId, cursor);
+        if (myLoad !== loadGeneration) return; // a newer swap started while the read was in flight — drop it
+        if (res.isErr()) {
+            failure = res.error;
+            break;
+        }
+        replayed = [...res.value.messages, ...replayed];
+        if (res.value.before === null) break;
+        cursor = res.value.before;
+    }
+    if (failure !== null && !(failure.type === "http" && failure.status === 404)) {
         if (onFailure === "report") {
-            const text = `Failed to load the conversation: ${describeClientError(res.error)}`;
-            if (isServerStateError(res.error)) setServerStateError(text);
+            const text = `Failed to load the conversation: ${describeClientError(failure)}`;
+            if (isServerStateError(failure)) setServerStateError(text);
             else setErrorMsg(text);
             setChatStatus("error");
         }
@@ -918,7 +943,7 @@ async function mountTranscript(
     if (myLoad !== loadGeneration) return;
     // The cap is in MESSAGES, matching the unit the live append caps by. Record the session this load
     // mounted so `send` knows the history is already on screen and skips its post-turn reload.
-    setMessages(reconcile(res.isOk() ? res.value.messages.slice(-MESSAGE_CAP) : [], { key: "id" }));
+    setMessages(reconcile(failure === null ? replayed.slice(-MESSAGE_CAP) : [], { key: "id" }));
     loadedSessionId = sessionId;
     mountedThread = { threadId: sessionId, updatedAt };
 }
