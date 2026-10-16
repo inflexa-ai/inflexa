@@ -20,6 +20,8 @@ import { optionNumber, optionRecord } from "../../../report-render/option-lens.j
 import { maybeRecord } from "../../../lib/shape.js";
 import { z } from "zod";
 import { PlanningAgentOutputSchema } from "../../../schemas/plan-schemas.js";
+import { AnalysisPlanSchema } from "../../../schemas/workflow-state.js";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 
 /** The key slice the search tools of the planner take. An empty key keeps every tool constructible offline. */
 const TEST_BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
@@ -38,13 +40,6 @@ function toolContext(analysisId = "analysis-001"): ToolContext {
         ask: () => Promise.reject(new Error("ask should not be reached")),
     };
 }
-
-type PlanResult = {
-    event: string;
-    error?: string;
-    question?: string;
-    planId?: string;
-};
 
 /**
  * Everything the caller supplies. There is no dataset field here — the dataset's
@@ -295,7 +290,7 @@ describe("generatePlan loop-driving tool", () => {
             makeMessage([textBlock("Asked.")], "end_turn"),
         ]);
 
-        const result = (await toolFor(provider).execute(INPUT, toolContext()))._unsafeUnwrap() as PlanResult;
+        const result = PlanningAgentOutputSchema.parse((await toolFor(provider).execute(INPUT, toolContext()))._unsafeUnwrap());
 
         expect(result.event).toBe("clarification_needed");
         expect(result.question).toBe("Which two conditions should be contrasted?");
@@ -385,11 +380,11 @@ describe("generatePlan loop-driving tool", () => {
             ]);
             const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
 
-            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            const result = PlanningAgentOutputSchema.parse((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as { steps: { grounding?: { template?: string } }[] };
-            expect(stored.steps[0]?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
+            const stored = AnalysisPlanSchema.parse((await loadPlan(pool, must(result.planId, "planId"), { analysisId }))._unsafeUnwrap());
+            expect(stored.steps.at(0)?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
         });
 
         it("stamps the snapshot digest of a skeleton step that the model miscopied", async () => {
@@ -420,14 +415,12 @@ describe("generatePlan loop-driving tool", () => {
             ]);
             const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
 
-            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            const result = PlanningAgentOutputSchema.parse((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as {
-                steps: { grounding?: { snapshot?: string; template?: string } }[];
-            };
-            expect(stored.steps[0]?.grounding?.snapshot).toBe(SNAPSHOT.digest);
-            expect(stored.steps[0]?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
+            const stored = AnalysisPlanSchema.parse((await loadPlan(pool, must(result.planId, "planId"), { analysisId }))._unsafeUnwrap());
+            expect(stored.steps.at(0)?.grounding?.snapshot).toBe(SNAPSHOT.digest);
+            expect(stored.steps.at(0)?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
         });
 
         it("stamps the digest of a step outside the skeleton when one of its claims is a claim of the answer, and leaves one with no such claim", async () => {
@@ -453,7 +446,7 @@ describe("generatePlan loop-driving tool", () => {
                 id: "T1S2",
                 grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" },
             });
-            const first = base.steps[0]!;
+            const first = base.steps[0];
             const typed = `${SNAPSHOT.digest.slice(0, 60)}0000`;
             const plan = {
                 ...base,
@@ -486,12 +479,10 @@ describe("generatePlan loop-driving tool", () => {
             ]);
             const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
 
-            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            const result = PlanningAgentOutputSchema.parse((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as {
-                steps: { id: string; grounding?: { snapshot?: string } }[];
-            };
+            const stored = AnalysisPlanSchema.parse((await loadPlan(pool, must(result.planId, "planId"), { analysisId }))._unsafeUnwrap());
             const digestOf = (id: string) => stored.steps.find((step) => step.id === id)?.grounding?.snapshot;
             expect(digestOf("T1S2")).toBe(SNAPSHOT.digest);
             expect(digestOf("T2S1")).toBe(SNAPSHOT.digest);
@@ -532,15 +523,13 @@ describe("generatePlan loop-driving tool", () => {
             ]);
             const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
 
-            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            const result = PlanningAgentOutputSchema.parse((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as {
-                steps: { grounding?: { status?: string; snapshot?: string; template?: string } }[];
-            };
-            expect(stored.steps[0]?.grounding?.status).toBe("ungrounded");
-            expect(stored.steps[0]?.grounding?.snapshot).toBe(SNAPSHOT.digest);
-            expect(stored.steps[0]?.grounding?.template).toBeUndefined();
+            const stored = AnalysisPlanSchema.parse((await loadPlan(pool, must(result.planId, "planId"), { analysisId }))._unsafeUnwrap());
+            expect(stored.steps.at(0)?.grounding?.status).toBe("ungrounded");
+            expect(stored.steps.at(0)?.grounding?.snapshot).toBe(SNAPSHOT.digest);
+            expect(stored.steps.at(0)?.grounding?.template).toBeUndefined();
         });
 
         it("repairs a claim id whose hash the model miscopied", async () => {
@@ -575,11 +564,11 @@ describe("generatePlan loop-driving tool", () => {
             ]);
             const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
 
-            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            const result = PlanningAgentOutputSchema.parse((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as { steps: { grounding?: { claims?: string[] } }[] };
-            expect(stored.steps[0]?.grounding?.claims).toEqual(["R-0001@e7d0", "R-0166@4d5e"]);
+            const stored = AnalysisPlanSchema.parse((await loadPlan(pool, must(result.planId, "planId"), { analysisId }))._unsafeUnwrap());
+            expect(stored.steps.at(0)?.grounding?.claims).toEqual(["R-0001@e7d0", "R-0166@4d5e"]);
         });
 
         it("rejects a claim the answer did not return, and accepts the corrected plan", async () => {
@@ -618,14 +607,14 @@ describe("generatePlan loop-driving tool", () => {
             const logger = createCapturingLogger();
             const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, logger, bioKeys: TEST_BIO_KEYS, knowledge: client });
 
-            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            const result = PlanningAgentOutputSchema.parse((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
             const rejections = logger.records.filter((r) => r.level === "warn" && r.msg.includes("submit_plan rejected"));
             expect(rejections).toHaveLength(1);
-            expect(JSON.stringify(rejections[0]!.fields)).toContain("R-0999@abcd");
-            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as { steps: { grounding?: { claims?: string[] } }[] };
-            expect(stored.steps[0]?.grounding?.claims).toEqual(["R-0001@e7d0"]);
+            expect(JSON.stringify(rejections[0].fields)).toContain("R-0999@abcd");
+            const stored = AnalysisPlanSchema.parse((await loadPlan(pool, must(result.planId, "planId"), { analysisId }))._unsafeUnwrap());
+            expect(stored.steps.at(0)?.grounding?.claims).toEqual(["R-0001@e7d0"]);
         });
 
         it("leaves a step with a different snapshot as it is", async () => {
@@ -653,14 +642,12 @@ describe("generatePlan loop-driving tool", () => {
             ]);
             const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
 
-            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            const result = PlanningAgentOutputSchema.parse((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as {
-                steps: { grounding?: { snapshot?: string; template?: string } }[];
-            };
-            expect(stored.steps[0]?.grounding?.snapshot).toBe("none");
-            expect(stored.steps[0]?.grounding?.template).toBeUndefined();
+            const stored = AnalysisPlanSchema.parse((await loadPlan(pool, must(result.planId, "planId"), { analysisId }))._unsafeUnwrap());
+            expect(stored.steps.at(0)?.grounding?.snapshot).toBe("none");
+            expect(stored.steps.at(0)?.grounding?.template).toBeUndefined();
         });
 
         it("accepts a plan that the model sent as a JSON-encoded string", async () => {
@@ -671,9 +658,10 @@ describe("generatePlan loop-driving tool", () => {
             // runs, and the planner decodes it before its own validation.
             const provider = scriptedProvider([makeMessage([toolUseBlock("t1", "submit_plan", { plan: JSON.stringify(validCandidate()) })], "tool_use")]);
 
-            const result = (await toolFor(provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            const result = PlanningAgentOutputSchema.parse((await toolFor(provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
             expect(result.planId).toMatch(/^pln-[a-f0-9]{8}$/);
         });
 

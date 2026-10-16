@@ -6,6 +6,8 @@ import { AnalysisStepSchema } from "../../schemas/workflow-state.js";
 import type { AnalysisStep } from "../../schemas/workflow-state.js";
 import { WORKING_MEMORY_LIMITS } from "../../memory/working-memory.js";
 import { contractAnswer } from "../../tools/knowledge/__fixtures__/fake-client.js";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { maybeRecord } from "../../lib/shape.js";
 import {
     ANALYSIS_MEMORY_HEADING,
     MAX_TEMPLATE_SLOTS,
@@ -54,6 +56,12 @@ function fullyPopulatedStep(): AnalysisStep {
         agent: "bulk-transcriptomics-agent",
         maxSteps: 10,
     };
+}
+
+/** The rendered sections join with one blank line; a run of three or more newlines leaks a gap. */
+function expectNoBlankGap(text: string): void {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the whitespace-collapse grammar of the rendered output; no builtin matcher counts blank-line runs.
+    expect(text).not.toMatch(/\n{3,}/);
 }
 
 function handoff(overrides: Partial<UpstreamHandoff> = {}): UpstreamHandoff {
@@ -199,7 +207,7 @@ describe("renderTemplateContract", () => {
         const rendered = renderTemplateContract(brief({ bound: [], unbound_settings: [] }));
         expect(rendered).not.toContain("Bound by the plan");
         expect(rendered).not.toContain("Unbound settings");
-        expect(rendered).not.toMatch(/\n{3,}/);
+        expectNoBlankGap(rendered);
     });
 
     it("renders nothing when no contract was retrieved", () => {
@@ -228,6 +236,7 @@ describe("renderTemplateContract", () => {
         for (let i = 0; i < MAX_TEMPLATE_SLOTS; i++) expect(rendered).toContain(`\`slot_${i}\``);
         expect(rendered).not.toContain(`\`slot_${MAX_TEMPLATE_SLOTS}\``);
         expect(rendered).toContain("+16 more");
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the run-of-the-pad-character grammar the clamp measures; no builtin finds the longest run.
         const longestRun = Math.max(...(rendered.match(/x+/g) ?? [""]).map((run) => run.length));
         expect(longestRun).toBeLessThan(TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS);
         expect(rendered.length).toBeLessThan(MAX_TEMPLATE_SLOTS * (TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS + 80) + 600);
@@ -485,7 +494,7 @@ describe("composeStepBriefing", () => {
         // The section sits between the task and the workspace, and no gap opens.
         expect(seed.indexOf("## Template contract")).toBeGreaterThan(seed.indexOf("## Grounding"));
         expect(seed.indexOf("## Template contract")).toBeLessThan(seed.indexOf("## Workspace"));
-        expect(seed).not.toMatch(/\n{3,}/);
+        expectNoBlankGap(seed);
     });
 
     it("says the contract was not retrieved, with the reason, when the grounding names a template and the seed carries none", () => {
@@ -499,12 +508,13 @@ describe("composeStepBriefing", () => {
         });
         expect(seed).toContain("- Template contract: not retrieved (the knowledge service did not answer: timeout)");
         expect(seed).not.toContain("## Template contract");
-        expect(seed).not.toMatch(/\n{3,}/);
+        expectNoBlankGap(seed);
     });
 
     it("says nothing about a contract for a step whose grounding names no template", () => {
         const step = fullyPopulatedStep();
-        const ungrounded = { ...step, grounding: { ...step.grounding!, template: undefined } };
+        const grounding = must(step.grounding, "the populated grounding");
+        const ungrounded = { ...step, grounding: { ...grounding, template: undefined } };
         const seed = composeStepBriefing({ step: ungrounded, workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
         expect(seed).not.toContain("Template contract");
     });
@@ -582,11 +592,11 @@ describe("AnalysisStep field-coverage guard", () => {
         // forgets to emit is caught here.
         const base = fullyPopulatedStep();
         const sentinels = new Map<string, string>();
-        const step = { ...base } as Record<string, unknown>;
+        const step: AnalysisStep = { ...base };
         for (const field of STEP_TASK_FIELDS) {
             const sentinel = `COVER_${field.toUpperCase()}`;
             sentinels.set(field, sentinel);
-            const current = (base as Record<string, unknown>)[field];
+            const current: unknown = Reflect.get(base, field);
             // An object-valued field (the grounding) keeps its shape, and each of its
             // string members carries the sentinel, thus the renderer must emit the
             // members and not only the presence of the field. A list of objects
@@ -594,16 +604,18 @@ describe("AnalysisStep field-coverage guard", () => {
             const withSentinel = (value: unknown): unknown => {
                 if (Array.isArray(value)) {
                     const first: unknown = value[0];
-                    return typeof first === "object" && first !== null ? [withSentinel(first)] : [sentinel];
+                    return maybeRecord(first) !== undefined ? [withSentinel(first)] : [sentinel];
                 }
-                if (typeof value === "object" && value !== null) {
-                    return Object.fromEntries(Object.entries(value).map(([key, member]) => [key, withSentinel(member)]));
+                const record = maybeRecord(value);
+                if (record !== undefined) {
+                    return Object.fromEntries(Object.entries(record).map(([key, member]) => [key, withSentinel(member)]));
                 }
                 return typeof value === "string" ? sentinel : value;
             };
-            step[field] = withSentinel(current);
+            // The sentinels deliberately violate the declared member types (an enum member becomes prose), so the plant writes through Reflect.set and the copy keeps its AnalysisStep declaration.
+            Reflect.set(step, field, withSentinel(current));
         }
-        const prompt = renderTask(step as unknown as AnalysisStep);
+        const prompt = renderTask(step);
         for (const [field, sentinel] of sentinels) {
             expect(prompt, `task field "${field}" is not rendered`).toContain(sentinel);
         }

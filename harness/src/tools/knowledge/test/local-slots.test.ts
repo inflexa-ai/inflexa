@@ -6,8 +6,8 @@
 
 import { describe, expect, it } from "bun:test";
 
-import type { TemplateParameter } from "./client.js";
-import { bindLocalSlots, validateLocalSlot } from "./local-slots.js";
+import type { TemplateParameter } from "../client.js";
+import { bindLocalSlots, validateLocalSlot } from "../local-slots.js";
 
 const PARAMETERS: TemplateParameter[] = [
     { name: "design", type: "formula", description: "d", adaptable: true, local: true },

@@ -412,9 +412,7 @@ describe("list_available_packages — reading the inventory", () => {
     it("finds a tool by its executable name when the package name differs", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        const result = checkedOf(
-            (await createListAvailablePackagesTool(deps).execute({ names: ["eagle", "eagle2"] }, makeToolContext().ctx))._unsafeUnwrap(),
-        );
+        const result = checkedOf((await createListAvailablePackagesTool(deps).execute({ names: ["eagle", "eagle2"] }, makeToolContext().ctx))._unsafeUnwrap());
 
         expect(result.checked).toEqual([
             { requested: "eagle", present: true, name: "eagle", section: "System tools (CLI)", version: "2.4.1" },
@@ -435,19 +433,13 @@ describe("list_available_packages — reading the inventory", () => {
             }),
         );
 
-        const listed = (await createListAvailablePackagesTool(deps).execute({ language: "r" }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            content: string;
-        };
+        const listed = listingOf((await createListAvailablePackagesTool(deps).execute({ language: "r" }, makeToolContext().ctx))._unsafeUnwrap());
         expect(listed.content).toContain("R (ships with R)");
         expect(listed.content).toContain("survival==3.8-6");
         // The R filter answers with the R tracks alone.
         expect(listed.content).not.toContain("samtools");
 
-        const checked = (await createListAvailablePackagesTool(deps).execute({ names: ["survival"] }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            checked: readonly CheckedPackage[];
-        };
+        const checked = checkedOf((await createListAvailablePackagesTool(deps).execute({ names: ["survival"] }, makeToolContext().ctx))._unsafeUnwrap());
         expect(checked.checked[0]).toMatchObject({ requested: "survival", present: true, name: "survival", version: "3.8-6" });
     });
 
@@ -615,9 +607,7 @@ describe("list_available_packages — reading the inventory", () => {
 
     /** The presence answer of `Seurat`, the package that only the full lock holds. */
     async function seuratPresent(deps: Parameters<typeof createListAvailablePackagesTool>[0], analysisId: string): Promise<boolean> {
-        const result = checkedOf(
-            (await createListAvailablePackagesTool(deps).execute({ names: ["Seurat"] }, contextFor(analysisId)))._unsafeUnwrap(),
-        );
+        const result = checkedOf((await createListAvailablePackagesTool(deps).execute({ names: ["Seurat"] }, contextFor(analysisId)))._unsafeUnwrap());
         return result.checked[0]?.present ?? false;
     }
 

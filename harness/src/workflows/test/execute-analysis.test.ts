@@ -1890,7 +1890,10 @@ describe("executeAnalysis child input projection", () => {
         const result = await runExecuteAnalysisBody(grounded, deps);
         expect(result.status).toBe("completed");
 
-        const childB = dbosState.childInputs.find((i) => i.stepId === "B")!;
+        const childB = must(
+            dbosState.childInputs.find((i) => i.stepId === "B"),
+            "child B input",
+        );
         expect(childB.templateBinding).toEqual({
             template: "tpl-deseq2-two-group@1.0.0",
             slots: { lfc_shrink: "apeglm" },
@@ -1904,7 +1907,11 @@ describe("executeAnalysis child input projection", () => {
                 .map((slot) => slot.name),
         });
         expect(childB.prompt).toContain("## Template contract");
-        expect(dbosState.childInputs.find((i) => i.stepId === "A")!.templateBinding).toBeUndefined();
+        const childA = must(
+            dbosState.childInputs.find((i) => i.stepId === "A"),
+            "child A input",
+        );
+        expect(childA.templateBinding).toBeUndefined();
     });
 
     it("hands the child the seed of a checkpoint written as a bare string, with no binding", async () => {
@@ -1922,7 +1929,10 @@ describe("executeAnalysis child input projection", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
         expect(result.status).toBe("completed");
 
-        const childA = dbosState.childInputs.find((i) => i.stepId === "A")!;
+        const childA = must(
+            dbosState.childInputs.find((i) => i.stepId === "A"),
+            "child A input",
+        );
         expect(childA.prompt).toBe("LEGACY SEED");
         expect(childA.templateBinding).toBeUndefined();
     });

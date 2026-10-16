@@ -2,8 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolContext } from "../tools/define-tool.js";
-import { canonicalInputKey, guardRepeatedCalls } from "./call-guard.js";
+import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
+import { defineTool } from "../../tools/define-tool.js";
+import { canonicalInputKey, guardRepeatedCalls } from "../call-guard.js";
 
 function makeTool(id: string) {
     let served = 0;
@@ -12,15 +13,15 @@ function makeTool(id: string) {
         description: `the ${id} tool`,
         inputSchema: z.object({ query: z.string().optional(), limit: z.number().optional() }),
         describeCall: ({ query }) => `query ${query ?? "(none)"}`,
-        execute: async () => {
+        execute: () => {
             served += 1;
-            return ok({ served });
+            return Promise.resolve(ok({ served }));
         },
     });
     return { tool, count: () => served };
 }
 
-const ctx = {} as ToolContext;
+const ctx = makeToolContext().ctx;
 
 describe("guardRepeatedCalls", () => {
     it("keys an input by its content, not by the order of its keys", () => {
@@ -31,9 +32,9 @@ describe("guardRepeatedCalls", () => {
     it("serves two identical calls and refuses the third without a call to the tool", async () => {
         const { tool, count } = makeTool("list_available_refs");
         const [guarded] = guardRepeatedCalls([tool]);
-        expect((await guarded!.execute({ query: "hallmark" }, ctx)).isOk()).toBe(true);
-        expect((await guarded!.execute({ query: "hallmark" }, ctx)).isOk()).toBe(true);
-        const third = await guarded!.execute({ query: "hallmark" }, ctx);
+        expect((await guarded.execute({ query: "hallmark" }, ctx)).isOk()).toBe(true);
+        expect((await guarded.execute({ query: "hallmark" }, ctx)).isOk()).toBe(true);
+        const third = await guarded.execute({ query: "hallmark" }, ctx);
         expect(third.isErr()).toBe(true);
         expect(third._unsafeUnwrapErr().error).toContain("exact input 2 times");
         expect(third._unsafeUnwrapErr().retryable).toBe(false);
@@ -47,8 +48,8 @@ describe("guardRepeatedCalls", () => {
             policy: { identicalLimit: 2, perToolLimit: 3, totalLimit: 40 },
             onRefusal: (refusal) => refusals.push(`${refusal.tool}:${refusal.kind}:${refusal.calls}`),
         });
-        for (const query of ["a", "b", "c"]) expect((await guarded!.execute({ query }, ctx)).isOk()).toBe(true);
-        const fourth = await guarded!.execute({ query: "d" }, ctx);
+        for (const query of ["a", "b", "c"]) expect((await guarded.execute({ query }, ctx)).isOk()).toBe(true);
+        const fourth = await guarded.execute({ query: "d" }, ctx);
         expect(fourth.isErr()).toBe(true);
         expect(fourth._unsafeUnwrapErr().error).toContain("3 calls of list_available_packages");
         expect(count()).toBe(3);
@@ -59,12 +60,12 @@ describe("guardRepeatedCalls", () => {
         const a = makeTool("a");
         const b = makeTool("b");
         const guarded = guardRepeatedCalls([a.tool, b.tool], { policy: { identicalLimit: 1, perToolLimit: 12, totalLimit: 40 } });
-        expect((await guarded[0]!.execute({ query: "x" }, ctx)).isOk()).toBe(true);
-        expect((await guarded[1]!.execute({ query: "x" }, ctx)).isOk()).toBe(true);
-        expect((await guarded[0]!.execute({ query: "x" }, ctx)).isErr()).toBe(true);
-        expect(guarded[0]!.id).toBe("a");
-        expect(guarded[0]!.describeCall?.({ query: "x" })).toBe("query x");
-        expect(guarded[0]!.jsonSchema).toEqual(a.tool.jsonSchema);
+        expect((await guarded[0].execute({ query: "x" }, ctx)).isOk()).toBe(true);
+        expect((await guarded[1].execute({ query: "x" }, ctx)).isOk()).toBe(true);
+        expect((await guarded[0].execute({ query: "x" }, ctx)).isErr()).toBe(true);
+        expect(guarded[0].id).toBe("a");
+        expect(guarded[0].describeCall?.({ query: "x" })).toBe("query x");
+        expect(guarded[0].jsonSchema).toEqual(a.tool.jsonSchema);
     });
 
     it("refuses every tool past the total budget of the run, whatever the tool", async () => {
@@ -75,10 +76,10 @@ describe("guardRepeatedCalls", () => {
             policy: { identicalLimit: 2, perToolLimit: 12, totalLimit: 3 },
             onRefusal: (refusal) => refusals.push(`${refusal.tool}:${refusal.kind}:${refusal.calls}`),
         });
-        expect((await guarded[0]!.execute({ query: "1" }, ctx)).isOk()).toBe(true);
-        expect((await guarded[1]!.execute({ query: "2" }, ctx)).isOk()).toBe(true);
-        expect((await guarded[0]!.execute({ query: "3" }, ctx)).isOk()).toBe(true);
-        const fourth = await guarded[1]!.execute({ query: "4" }, ctx);
+        expect((await guarded[0].execute({ query: "1" }, ctx)).isOk()).toBe(true);
+        expect((await guarded[1].execute({ query: "2" }, ctx)).isOk()).toBe(true);
+        expect((await guarded[0].execute({ query: "3" }, ctx)).isOk()).toBe(true);
+        const fourth = await guarded[1].execute({ query: "4" }, ctx);
         expect(fourth.isErr()).toBe(true);
         expect(fourth._unsafeUnwrapErr().error).toContain("3 calls across its search tools");
         expect(a.count() + b.count()).toBe(3);
@@ -88,9 +89,9 @@ describe("guardRepeatedCalls", () => {
     it("starts the counters at zero for each wrapped list", async () => {
         const { tool } = makeTool("c");
         const first = guardRepeatedCalls([tool], { policy: { identicalLimit: 1, perToolLimit: 12, totalLimit: 40 } });
-        expect((await first[0]!.execute({}, ctx)).isOk()).toBe(true);
-        expect((await first[0]!.execute({}, ctx)).isErr()).toBe(true);
+        expect((await first[0].execute({}, ctx)).isOk()).toBe(true);
+        expect((await first[0].execute({}, ctx)).isErr()).toBe(true);
         const second = guardRepeatedCalls([tool], { policy: { identicalLimit: 1, perToolLimit: 12, totalLimit: 40 } });
-        expect((await second[0]!.execute({}, ctx)).isOk()).toBe(true);
+        expect((await second[0].execute({}, ctx)).isOk()).toBe(true);
     });
 });

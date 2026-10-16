@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { degenerateTerminalText } from "./terminal-text.js";
+import { degenerateTerminalText } from "../terminal-text.js";
 
 describe("degenerateTerminalText", () => {
     it("refuses a placeholder, a short text, and a filler word, and accepts a real question", () => {

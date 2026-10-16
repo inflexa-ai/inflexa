@@ -3,19 +3,28 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
-import { makeFakeSandboxAgentDeps } from "../../agents/sandbox/__fixtures__/deps.js";
-import { createSandboxAgents } from "../../agents/sandbox/index.js";
-import { stepWritePrefix } from "../../workspace/paths.js";
-import { makeToolContext } from "../__fixtures__/tool-context.js";
-import { createWorkspaceMutator } from "../workspace/mutator.js";
-import { contractAnswer, fakeKnowledgeClient, renderAnswer, SNAPSHOT, substituteRenderAnswer } from "./__fixtures__/fake-client.js";
-import { decisionRecordPath } from "../workspace/decision-record.js";
-import { createKnowledgeTemplateTool, type TemplateBinding } from "./template.js";
+import { makeFakeSandboxAgentDeps } from "../../../agents/sandbox/__fixtures__/deps.js";
+import { createSandboxAgents } from "../../../agents/sandbox/index.js";
+import { stepWritePrefix } from "../../../workspace/paths.js";
+import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { createWorkspaceMutator } from "../../workspace/mutator.js";
+import { contractAnswer, fakeKnowledgeClient, renderAnswer, SNAPSHOT, substituteRenderAnswer } from "../__fixtures__/fake-client.js";
+import { decisionRecordPath } from "../../workspace/decision-record.js";
+import { createKnowledgeTemplateTool, type TemplateBinding } from "../template.js";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { jsonParse } from "../../../lib/json.js";
 
 const ANALYSIS = "analysis-001";
 const TEMPLATE = "tpl-deseq2-two-group@1.0.0";
 const COUNTS = "/analysis-001/data/inputs/f1/counts.csv";
+
+const DecisionRecordSchema = z.looseObject({
+    script_path: z.string(),
+    bound_slots: z.array(z.json()),
+    settings_overrides: z.array(z.json()),
+});
 
 /** The two-group binding of the plan: the shrinkage estimator, the count filter, a list-valued slot, and the grounding of the step. */
 function binding(over: Partial<TemplateBinding> = {}): TemplateBinding {
@@ -48,12 +57,12 @@ describe("knowledge_template with a binding", () => {
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S2" });
         const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
         const fake = fakeKnowledgeClient(answers);
-        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, ...(bound ? { binding: bound } : {}) });
+        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, binding: bound });
         return { tool, workingDir, calls: fake.calls };
     }
 
-    async function recordOf(workingDir: string): Promise<Record<string, unknown>> {
-        return JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"));
+    async function recordOf(workingDir: string) {
+        return jsonParse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), DecisionRecordSchema);
     }
 
     it("rides the bound slots into the render request when the model sends no value for them", async () => {
@@ -125,7 +134,7 @@ describe("knowledge_template with a binding", () => {
         expect(out).toMatchObject({ match: "rejected" });
         if (!("match" in out) || out.match !== "rejected") return;
         expect(out.issues).toHaveLength(1);
-        const issue = out.issues[0]!;
+        const issue = out.issues[0];
         expect(issue.slot).toBe("lfc_shrink");
         expect(issue.message).toContain('"apeglm"');
         expect(issue.message).toContain("doi:10.1093/bioinformatics/bty895");
@@ -162,17 +171,19 @@ describe("knowledge_template with a binding", () => {
     it("records no override for a slot whose value the model did not change, or did not send", async () => {
         const { tool, workingDir } = build(binding());
         const { ctx } = makeToolContext();
-        await tool.execute(
-            {
-                template: TEMPLATE,
-                slots: { counts_path: COUNTS, lfc_shrink: "apeglm" },
-                overrides: [
-                    { slot: "lfc_shrink", reason: "no change" },
-                    { slot: "min_count", reason: "not sent" },
-                ],
-            },
-            ctx,
-        ).then((r) => r._unsafeUnwrap());
+        await tool
+            .execute(
+                {
+                    template: TEMPLATE,
+                    slots: { counts_path: COUNTS, lfc_shrink: "apeglm" },
+                    overrides: [
+                        { slot: "lfc_shrink", reason: "no change" },
+                        { slot: "min_count", reason: "not sent" },
+                    ],
+                },
+                ctx,
+            )
+            .then((r) => r._unsafeUnwrap());
         expect((await recordOf(workingDir)).settings_overrides).toEqual([]);
     });
 
@@ -181,7 +192,10 @@ describe("knowledge_template with a binding", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ template: "tpl-deseq2-blocked@1.0.0", slots: { counts_path: COUNTS } }, ctx))._unsafeUnwrap();
         if (!("match" in out) || out.match !== "rejected") throw new Error("expected a refusal");
-        expect(out.issues).toEqual([{ field: "template", message: expect.stringContaining(TEMPLATE), permitted: [TEMPLATE] }]);
+        expect(out.issues).toHaveLength(1);
+        expect(out.issues[0]?.field).toBe("template");
+        expect(out.issues[0]?.message).toContain(TEMPLATE);
+        expect(out.issues[0]?.permitted).toEqual([TEMPLATE]);
         expect(calls.render).toHaveLength(0);
     });
 
@@ -215,7 +229,7 @@ describe("knowledge_template with a binding", () => {
         const out = (await tool.execute({ template: "tpl-decoupler-scores@1.0.0", slots: { counts_path: COUNTS } }, ctx))._unsafeUnwrap();
         if (!("status" in out) || out.status !== "ok") throw new Error("expected a render");
         expect(out.template.method).toEqual(substitute.template.method);
-        expect(out.template.substitute_for).toEqual(substitute.template.substitute_for!);
+        expect(out.template.substitute_for).toEqual(substitute.template.substitute_for);
         expect(out.run_with).toBe("python3 scripts/tpl-decoupler-scores.py");
 
         const plain = build(binding(), { render: renderAnswer() });
@@ -231,10 +245,13 @@ describe("the binding rides the step coordinates into the template tool", () => 
         const fake = fakeKnowledgeClient();
         const base = makeFakeSandboxAgentDeps();
         const agents = createSandboxAgents({ ...base, knowledge: fake.client, step: { ...base.step, templateBinding: binding() } });
-        const tool = agents["bulk-transcriptomics-agent"]!.tools.find((candidate) => candidate.id === "knowledge_template");
+        const tool = must(
+            agents["bulk-transcriptomics-agent"].tools.find((candidate) => candidate.id === "knowledge_template"),
+            "knowledge_template on the bulk-transcriptomics agent",
+        );
         expect(tool).toBeDefined();
         const { ctx } = makeToolContext();
-        const out = (await tool!.execute({ template: TEMPLATE, slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
+        const out = (await tool.execute({ template: TEMPLATE, slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
         expect(out).toMatchObject({ match: "rejected" });
         expect(fake.calls.render).toHaveLength(0);
     });
@@ -243,9 +260,12 @@ describe("the binding rides the step coordinates into the template tool", () => 
         // The fake answers unavailable, thus the call reaches the service and the tool writes nothing.
         const fake = fakeKnowledgeClient({ render: { match: "unavailable", reason: "off" } });
         const agents = createSandboxAgents({ ...makeFakeSandboxAgentDeps(), knowledge: fake.client });
-        const tool = agents["bulk-transcriptomics-agent"]!.tools.find((candidate) => candidate.id === "knowledge_template");
+        const tool = must(
+            agents["bulk-transcriptomics-agent"].tools.find((candidate) => candidate.id === "knowledge_template"),
+            "knowledge_template on the bulk-transcriptomics agent",
+        );
         const { ctx } = makeToolContext();
-        const out = (await tool!.execute({ template: "tpl-deseq2-blocked@1.0.0", slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
+        const out = (await tool.execute({ template: "tpl-deseq2-blocked@1.0.0", slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
         expect(out).toEqual({ match: "unavailable", reason: "off" });
         expect(fake.calls.render).toHaveLength(1);
         expect(fake.calls.render[0]?.slots).toEqual({ lfc_shrink: "ashr" });

@@ -133,14 +133,14 @@ describe("runToTerminal", () => {
     });
 
     it("salvages a run that the early cap stopped, and the salvage turn ignores the cap", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const submit = submitTool(cell);
         const probe = defineTool({
             id: "probe",
             description: "A search tool the first run keeps calling.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok({}),
+            execute: () => Promise.resolve(ok({})),
         });
         let probeCalls = 0;
         const provider = scriptedProvider((i, request) => {

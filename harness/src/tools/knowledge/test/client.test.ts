@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
-import { createHttpKnowledgeClient, RecommendResponseSchema, type KnowledgeSituation } from "./client.js";
+import { createHttpKnowledgeClient, RecommendResponseSchema, type KnowledgeSituation } from "../client.js";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { maybeRecord } from "../../../lib/shape.js";
 import {
     contractAnswer,
     fakeKnowledgeClient,
@@ -10,7 +12,7 @@ import {
     SNAPSHOT,
     substituteRenderAnswer,
     substitutionAnswer,
-} from "./__fixtures__/fake-client.js";
+} from "../__fixtures__/fake-client.js";
 
 const SITUATION: KnowledgeSituation = {
     question: "differential_expression",
@@ -36,8 +38,10 @@ function stubService() {
         hostname: "127.0.0.1",
         async fetch(request) {
             const url = new URL(request.url);
-            const body = request.method === "POST" ? ((await request.clone().json()) as Record<string, unknown>) : undefined;
-            served.push({ method: request.method, pathname: url.pathname, ...(body ? { body } : {}) });
+            const body = request.method === "POST" ? maybeRecord(await request.clone().json()) : undefined;
+            const entry: { method: string; pathname: string; body?: Record<string, unknown> } = { method: request.method, pathname: url.pathname };
+            if (body !== undefined) entry.body = body;
+            served.push(entry);
             if (request.headers.get("authorization") !== "Bearer secret") return Response.json({ error: "unauthorized" }, { status: 401 });
             // A pin on another release refuses every operation with the served digest, before any work.
             if (body?.expected_snapshot === OTHER_DIGEST) {
@@ -46,16 +50,17 @@ function stubService() {
                     { status: 409 },
                 );
             }
-            const templateMatch = url.pathname.match(/^\/v1\/templates\/(.+)$/);
-            if (request.method === "GET" && templateMatch) {
-                const id = decodeURIComponent(templateMatch[1]!);
+            const templatePrefix = "/v1/templates/";
+            const templateId = url.pathname.startsWith(templatePrefix) ? url.pathname.slice(templatePrefix.length) : undefined;
+            if (request.method === "GET" && templateId) {
+                const id = decodeURIComponent(templateId);
                 if (id === "tpl-boom") return Response.json({ error: "server", message: "boom" }, { status: 500 });
                 if (id !== "tpl-deseq2-two-group") return Response.json({ error: "not_found", message: "no such template in this snapshot" }, { status: 404 });
                 return Response.json({ ...contractAnswer(), step_types: ["model_design"], environment: [] });
             }
             if (url.pathname === "/v1/recommend") {
-                const body = (await request.json()) as { situation: KnowledgeSituation };
-                if (body.situation.n_groups === 99) {
+                const situation = maybeRecord(maybeRecord(await request.json())?.situation);
+                if (situation?.n_groups === 99) {
                     return Response.json(
                         { error: "validation", message: "bad field", issues: [{ field: "n_groups", message: "too many", permitted: ["2"] }] },
                         { status: 400 },
@@ -65,8 +70,8 @@ function stubService() {
             }
             if (url.pathname === "/v1/check") return Response.json(notAssessedCheckAnswer());
             if (url.pathname === "/v1/template/render") {
-                const body = (await request.json()) as { template: string };
-                if (body.template === "tpl-x") return Response.json({ error: "server", message: "boom" }, { status: 500 });
+                const body = maybeRecord(await request.json());
+                if (body?.template === "tpl-x") return Response.json({ error: "server", message: "boom" }, { status: 500 });
                 return Response.json(substituteRenderAnswer());
             }
             return Response.json({ error: "not_found" }, { status: 404 });
@@ -84,7 +89,7 @@ describe("createHttpKnowledgeClient", () => {
     });
 
     function client(apiKey = "secret") {
-        return createHttpKnowledgeClient({ baseUrl: `http://127.0.0.1:${server.port}/`, apiKey, maxRetries: 0, timeoutMs: 5_000 });
+        return createHttpKnowledgeClient({ baseUrl: `${server.url.origin}/`, apiKey, maxRetries: 0, timeoutMs: 5_000 });
     }
 
     it("posts the situation with the bearer key and parses the answer", async () => {
@@ -92,9 +97,15 @@ describe("createHttpKnowledgeClient", () => {
         expect(answer.match).toBe("applicable");
         if (answer.match !== "applicable") return;
         expect(answer.claims.map((view) => view.id)).toContain("R-0001@e7d0");
-        const de = answer.procedure.find((step) => step.step === "differential_expression")!;
+        const de = must(
+            answer.procedure.find((step) => step.step === "differential_expression"),
+            "the differential_expression step of the answer",
+        );
         expect(de.alternatives?.[0]?.rules).toEqual(["R-0001@e7d0"]);
-        const adjust = answer.procedure.find((step) => step.step === "multiple_testing")!;
+        const adjust = must(
+            answer.procedure.find((step) => step.step === "multiple_testing"),
+            "the multiple_testing step of the answer",
+        );
         expect(adjust.conflicts).toEqual([
             {
                 parameter: "independent_filtering",
@@ -108,14 +119,20 @@ describe("createHttpKnowledgeClient", () => {
 
     it("parses a substitution and a language limit on a step", () => {
         const substituted = RecommendResponseSchema.parse(substitutionAnswer());
-        const enrichment = substituted.procedure.find((step) => step.step === "enrichment")!;
+        const enrichment = must(
+            substituted.procedure.find((step) => step.step === "enrichment"),
+            "the enrichment step of the substituted answer",
+        );
         expect(enrichment.substitution).toEqual({
             for: "M-0034",
             label: "Per-sample set scores with a linear model",
             template: "tpl-decoupler-scores@1.0.0",
         });
         const limited = RecommendResponseSchema.parse(limitAnswer());
-        const de = limited.procedure.find((step) => step.step === "differential_expression")!;
+        const de = must(
+            limited.procedure.find((step) => step.step === "differential_expression"),
+            "the differential_expression step of the limited answer",
+        );
         expect(de.limit).toEqual({
             requested_language: "python",
             reason: "no Python template of M-0001 honors pairing",
@@ -137,7 +154,7 @@ describe("createHttpKnowledgeClient", () => {
                 },
             ],
         });
-        expect(refused.procedure[0]!.limit?.skipped[0]?.refused).toBe("the slot lfc_shrink takes one of apeglm, none");
+        expect(refused.procedure[0].limit?.skipped[0]?.refused).toBe("the slot lfc_shrink takes one of apeglm, none");
     });
 
     it("parses the render answer with the method and the method of record of a substitute", async () => {

@@ -1502,8 +1502,9 @@ describe("runAgent — finish signal", () => {
         expect(finish.cappedOut).toBe(true);
         expect(finish.reason).toBe("max_iterations");
         expect(toolCalls).toBe(2);
-        expect(messages.at(-1)!.role).toBe("assistant");
-        expect(messages.at(-1)!.content).toEqual([{ type: "text", text: "wrapped up" }]);
+        const last = must(messages.at(-1), "the wrap-up assistant message");
+        expect(last.role).toBe("assistant");
+        expect(last.content).toEqual([{ type: "text", text: "wrapped up" }]);
     });
 
     it("reports cappedOut with reason max_iterations on the wrap-up path", async () => {
