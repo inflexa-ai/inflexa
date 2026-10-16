@@ -63,7 +63,7 @@ interface MessageRow {
     readonly tokens: number;
 }
 
-/** One stored message, as returned by the display read (`loadAll`). */
+/** One stored message, as returned by the display reads (`loadAll` and `loadPage`). */
 export interface StoredMessage {
     readonly seq: number;
     readonly envelope: StoredMessageEnvelope;
@@ -211,6 +211,22 @@ export interface LoadRecentOptions {
     readonly keepFirstTurn?: boolean;
 }
 
+/** The options of {@link ThreadHistory.loadPage}. */
+export interface LoadPageOptions {
+    /** The cursor that the previous page gave. Absent for the newest page. */
+    readonly before?: number;
+    /** The maximum count of turns in the page. */
+    readonly limit: number;
+}
+
+/** One page of the display read, as {@link ThreadHistory.loadPage} gives it. */
+export interface TurnPage {
+    /** The whole turns of the page, oldest-first. */
+    readonly turns: StoredMessage[][];
+    /** The cursor of the next older page, or `null` when the page holds the oldest row of the thread. */
+    readonly before: number | null;
+}
+
 /**
  * The conversation message store. Two methods, by design — no generic row
  * insert (see the harness-thread-store spec). `threadId` is the conversation scope — one UI thread.
@@ -234,12 +250,8 @@ export interface ThreadHistory {
     /**
      * Return a thread's messages oldest-first for UI display, grouped into turns.
      * It gives each row, and the view of the agent loop is `loadRecent`'s job.
-     *
-     * There is no paginated form, because a page could never cost less: the read
-     * selects and parses every row of the thread and would slice only afterwards,
-     * so a page saves no query and no parse. It would only truncate the answer,
-     * which is a way to lose turns and not a way to save work. A reader wanting a
-     * window takes one here, where it knows what it is bounding.
+     * It selects and parses every row of the thread, thus its work grows with the
+     * thread. {@link ThreadHistory.loadPage} bounds that work.
      *
      * Grouped rather than flat because the grouping is what the read computes and
      * what a turn count means, and `.flat()` recovers the rows in `seq` order for
@@ -248,6 +260,23 @@ export interface ThreadHistory {
      * this read already found.
      */
     loadAll(threadId: string): ResultAsync<StoredMessage[][], DbError>;
+    /**
+     * Return the newest whole turns of a thread for UI display, up to `limit` turns, oldest-first.
+     * With `before`, it returns the newest whole turns below the turn that the cursor names.
+     * The rows are the same as the rows of {@link ThreadHistory.loadAll}.
+     *
+     * The read selects and parses only the rows of its page, thus its work does not grow with
+     * the turns before the page. The page edges inside the thread are turn starts, so the read
+     * never truncates a turn, also for a cursor that is not a turn start: the turn of the cursor
+     * row is then the newest turn of the page, and it is whole. The rows before the first turn
+     * start make one group, and the group counts as a turn.
+     *
+     * The cursor is the `seq` of the opening row of the oldest turn of the page. A `seq` never
+     * moves and a retract removes only the tail, thus a cursor stays correct across a later
+     * append and a later retract. A `limit` that is not finite reads as 1, and each other
+     * `limit` reads as its integer part with a minimum of 1.
+     */
+    loadPage(threadId: string, options: LoadPageOptions): ResultAsync<TurnPage, DbError>;
     /**
      * Remove the thread's most recent turn — every row from the last
      * genuine-user-start `seq` onward, and its turn record — in a single transaction.
@@ -507,6 +536,130 @@ function closeTurnRecord(client: PoolClient, threadId: string, startSeq: number,
     ).map(() => undefined);
 }
 
+/** The columns of a display-read row, and the join that the turn record needs. Both display reads select them. */
+const STORED_ROW_COLUMNS = `messages.seq::text AS seq, messages.message_envelope, messages.display_envelope, messages.reported_usage,
+                messages.turn_duration_ms::text AS turn_duration_ms, messages.author, messages.created_at,
+                turns.status AS turn_status, turns.reason AS turn_reason, turns.reported_usage AS turn_usage,
+                turns.turn_duration_ms::text AS turn_record_duration_ms`;
+function storedRowFrom(turnJoinBounds = ""): string {
+    return `FROM messages
+         LEFT JOIN cortex_thread_turns turns ON turns.thread_id = messages.thread_id AND turns.start_seq = messages.seq${turnJoinBounds}`;
+}
+
+interface StoredRow {
+    seq: string;
+    message_envelope: unknown;
+    display_envelope: unknown;
+    // pg parses a `jsonb` column into a JS value. The cast on the way out is
+    // sound because each writer of the two usage columns stores a
+    // `TokenUsageRollup`, and null is preserved as null by the spread in
+    // `toStoredMessage` rather than read as a rollup.
+    reported_usage: TokenUsageRollup | null;
+    // The driver hands a bigint back as text, and the `::text` cast in
+    // `STORED_ROW_COLUMNS` says so. `Number` makes the crossing in one place —
+    // the way every other read of a bigint column in this module does.
+    turn_duration_ms: string | null;
+    author: string | null;
+    // The driver hands a `TIMESTAMPTZ` back as a `Date`, and the column is
+    // NOT NULL, thus every row of a display read holds a time.
+    created_at: Date;
+    // The CHECK constraint of the column holds the value to the four statuses.
+    turn_status: TurnStatus | null;
+    turn_reason: string | null;
+    turn_usage: TokenUsageRollup | null;
+    turn_record_duration_ms: string | null;
+}
+
+/** The largest `bigint`, the bound of a cursor that the caller did not give. */
+const MAX_SEQ = "9223372036854775807";
+/** The smallest `bigint`, below every `seq`. */
+const MIN_SEQ = "'-9223372036854775808'";
+const PAGE_LOWER_BOUND = `COALESCE((SELECT seq FROM page_lower), ${MIN_SEQ}::bigint)`;
+const PAGE_UPPER_BOUND = `COALESCE((SELECT seq FROM page_upper), ${MAX_SEQ}::bigint)`;
+
+/**
+ * The statement of one page of the display read (`$1` thread, `$2` cursor or `NULL`, `$3` limit).
+ *
+ * One statement reads one snapshot, thus an append or a retract cannot add a turn between the
+ * read of the page edges and the read of the rows. The parts:
+ *
+ * - `page_walk`: a walk down from the cursor, one row for each step, that counts the turn starts
+ *   and stops at the `$3`-th. Each step is a `LIMIT 1` read of the primary key `(thread_id, seq)`
+ *   that evaluates the start predicate in the select list.
+ * - `page_lower`: the row where the walk reached `$3` starts, else `NULL`. A page that is not
+ *   full reaches the start of the thread and holds the rows before the first turn start.
+ * - `page_climb` and `page_upper`: a walk up from the cursor to the first turn start at or above
+ *   it, else `NULL`. For a cursor that a page gave this is the cursor row. For a cursor inside a
+ *   turn it is the start of the next turn, thus the turn of the cursor stays whole.
+ * - `page_next`: `page_lower` when a row lies below it. The `EXISTS` reads no envelope.
+ *
+ * The start predicate is never a `WHERE` condition of a scan that has an `ORDER BY` and a `LIMIT`.
+ * The planner has no statistics for a JSON path, so it estimates that very few rows match. It then
+ * chooses a bitmap scan and a sort of each row of the thread, and it evaluates the predicate on the
+ * envelope of each row (a tool result can be many KB). A walk of `LIMIT 1` reads of the key does
+ * not depend on that estimate, and its work grows with the rows of the page.
+ *
+ * An absent cursor, `page_lower`, and `page_upper` each become a `bigint` extreme through
+ * `COALESCE`, never a `NULL` in a comparison: `seq >= NULL` matches no row, and a form such as
+ * `($2 IS NULL OR seq < $2)` is a filter, which would visit each newer row. Each bound is an
+ * index condition on `(thread_id, seq)`. The join to the turn records carries the same bounds,
+ * because the planner estimates a bounded range as a fixed fraction of the thread and then reads
+ * each turn record of the thread through a hash join.
+ */
+const PAGE_SQL = `WITH RECURSIVE page_walk(seq, starts) AS (
+           SELECT COALESCE($2::bigint, ${MAX_SEQ}::bigint), 0::bigint
+           UNION ALL
+           SELECT below.seq, page_walk.starts + below.is_start::int
+             FROM page_walk
+            CROSS JOIN LATERAL (
+              SELECT messages.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages
+               WHERE messages.thread_id = $1 AND messages.seq < page_walk.seq
+               ORDER BY messages.seq DESC
+               LIMIT 1
+            ) below
+            WHERE page_walk.starts < $3::bigint
+         ),
+         page_lower AS (
+           SELECT (SELECT page_walk.seq FROM page_walk WHERE page_walk.starts = $3::bigint) AS seq
+         ),
+         page_climb(seq, is_start) AS (
+           SELECT above.seq, above.is_start FROM (
+             SELECT messages.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages
+              WHERE messages.thread_id = $1 AND messages.seq >= COALESCE($2::bigint, ${MAX_SEQ}::bigint)
+              ORDER BY messages.seq ASC
+              LIMIT 1
+           ) above
+           UNION ALL
+           SELECT above.seq, above.is_start
+             FROM page_climb
+            CROSS JOIN LATERAL (
+              SELECT messages.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages
+               WHERE messages.thread_id = $1 AND messages.seq > page_climb.seq
+               ORDER BY messages.seq ASC
+               LIMIT 1
+            ) above
+            WHERE NOT page_climb.is_start
+         ),
+         page_upper AS (
+           SELECT page_climb.seq FROM page_climb WHERE page_climb.is_start
+         ),
+         page_next AS (
+           SELECT page_lower.seq FROM page_lower
+            WHERE page_lower.seq IS NOT NULL
+              AND EXISTS (SELECT 1 FROM messages WHERE thread_id = $1 AND seq < page_lower.seq)
+         )
+         SELECT ${STORED_ROW_COLUMNS}, (SELECT seq::text FROM page_next) AS next_before
+         ${storedRowFrom(` AND turns.start_seq >= ${PAGE_LOWER_BOUND} AND turns.start_seq < ${PAGE_UPPER_BOUND}`)}
+         WHERE messages.thread_id = $1
+           AND messages.seq >= ${PAGE_LOWER_BOUND}
+           AND messages.seq < ${PAGE_UPPER_BOUND}
+         ORDER BY messages.seq ASC`;
+
+/** The limit that the page statement receives: an integer, at least 1, and a bigint-safe size. */
+function pageLimit(limit: number): number {
+    return Number.isFinite(limit) ? Math.min(Math.max(1, Math.trunc(limit)), Number.MAX_SAFE_INTEGER) : 1;
+}
+
 /**
  * Create a `ThreadHistory` bound to a Postgres pool — a factory closure
  * capturing `pool` (dependency injection per the harness-durable-runtime spec). The `messages` table is
@@ -594,89 +747,81 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
         });
     }
 
-    // Display reads are turn-bounded, not row-bounded. A serial-tool assistant
-    // turn is persisted as one row per step (plus its tool_result `user` rows),
-    // so a row-windowed page could split a turn — truncating the trailing
-    // report card/text out of the page the UI fetches. Read the thread and group
-    // into turns, so a turn always reloads intact. Threads are conversation-scoped
-    // and bounded, so reading every row here matches `loadRecent`'s existing
+    // A display read is turn-bounded, not row-bounded. A serial-tool assistant
+    // turn is persisted as one row per step (plus its tool_result rows), so a
+    // row-windowed read could split a turn and truncate the trailing report
+    // card or text out of what the UI fetches. Both reads group rows into turns,
+    // so a turn always reloads intact.
+
+    // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
+    // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
+    // The duration and the author obey the same rule, each from its own column.
+    // The creation time is unconditional: its column is NOT NULL, thus it has no
+    // absence to represent.
+    async function toStoredMessage(threadId: string, r: StoredRow): Promise<StoredMessage> {
+        const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
+        const displayEnvelope =
+            r.display_envelope == null ? undefined : await parseStoredDisplayEnvelope(r.display_envelope, `${threadId}/${r.seq}/display`, logger);
+        const turn: StoredTurnRecord | undefined =
+            r.turn_status === null
+                ? undefined
+                : {
+                      status: r.turn_status,
+                      ...(r.turn_reason === null ? {} : { reason: r.turn_reason }),
+                      ...(r.turn_usage === null ? {} : { usage: r.turn_usage }),
+                      ...(r.turn_record_duration_ms === null ? {} : { durationMs: Number(r.turn_record_duration_ms) }),
+                  };
+        return {
+            seq: Number(r.seq),
+            envelope,
+            message: envelope.message,
+            ...(displayEnvelope ? { displayEnvelope } : {}),
+            ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
+            ...(r.turn_duration_ms === null ? {} : { durationMs: Number(r.turn_duration_ms) }),
+            ...(turn === undefined ? {} : { turn }),
+            ...(r.author === null ? {} : { author: r.author }),
+            createdAt: r.created_at,
+        };
+    }
+
+    async function toTurns(threadId: string, rows: readonly StoredRow[]): Promise<StoredMessage[][]> {
+        const stored = await Promise.all(rows.map((row) => toStoredMessage(threadId, row)));
+        return groupTurns(stored, (row) => isGenuineUserStart(row.message));
+    }
+
     async function readTurns(threadId: string): Promise<StoredMessage[][]> {
-        const { rows } = await pool.query<{
-            seq: string;
-            message_envelope: unknown;
-            display_envelope: unknown;
-            // pg parses a `jsonb` column into a JS value. The cast on the way out is
-            // sound because each writer of the two usage columns stores a
-            // `TokenUsageRollup`, and null is preserved as null by the spread below
-            // rather than read as a rollup.
-            reported_usage: TokenUsageRollup | null;
-            // The driver hands a bigint back as text, and the `::text` cast below
-            // says so. `Number` makes the crossing in one place — the way every
-            // other read of a bigint column in this module does.
-            turn_duration_ms: string | null;
-            author: string | null;
-            // The driver hands a `TIMESTAMPTZ` back as a `Date`, and the column is
-            // NOT NULL, thus every row of this read holds a time.
-            created_at: Date;
-            // The CHECK constraint of the column holds the value to the four statuses.
-            turn_status: TurnStatus | null;
-            turn_reason: string | null;
-            turn_usage: TokenUsageRollup | null;
-            turn_record_duration_ms: string | null;
-        }>(
+        const { rows } = await pool.query<StoredRow>(
             // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
             // `seq::text AS seq` output alias (Postgres resolves an unqualified
             // ORDER BY name to the output column), sorting the bigint as text:
             // "10" before "2". The qualified name forces the bigint column.
-            `SELECT messages.seq::text AS seq, messages.message_envelope, messages.display_envelope, messages.reported_usage,
-                messages.turn_duration_ms::text AS turn_duration_ms, messages.author, messages.created_at,
-                turns.status AS turn_status, turns.reason AS turn_reason, turns.reported_usage AS turn_usage,
-                turns.turn_duration_ms::text AS turn_record_duration_ms
-         FROM messages
-         LEFT JOIN cortex_thread_turns turns ON turns.thread_id = messages.thread_id AND turns.start_seq = messages.seq
+            `SELECT ${STORED_ROW_COLUMNS}
+         ${storedRowFrom()}
          WHERE messages.thread_id = $1
          ORDER BY messages.seq ASC`,
             [threadId],
         );
+        return toTurns(threadId, rows);
+    }
 
-        // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
-        // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
-        // The duration and the author obey the same rule, each from its own column.
-        // The creation time is unconditional: its column is NOT NULL, thus it has no
-        // absence to represent.
-        const stored: StoredMessage[] = await Promise.all(
-            rows.map(async (r) => {
-                const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
-                const displayEnvelope =
-                    r.display_envelope == null ? undefined : await parseStoredDisplayEnvelope(r.display_envelope, `${threadId}/${r.seq}/display`, logger);
-                const turn: StoredTurnRecord | undefined =
-                    r.turn_status === null
-                        ? undefined
-                        : {
-                              status: r.turn_status,
-                              ...(r.turn_reason === null ? {} : { reason: r.turn_reason }),
-                              ...(r.turn_usage === null ? {} : { usage: r.turn_usage }),
-                              ...(r.turn_record_duration_ms === null ? {} : { durationMs: Number(r.turn_record_duration_ms) }),
-                          };
-                return {
-                    seq: Number(r.seq),
-                    envelope,
-                    message: envelope.message,
-                    ...(displayEnvelope ? { displayEnvelope } : {}),
-                    ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
-                    ...(r.turn_duration_ms === null ? {} : { durationMs: Number(r.turn_duration_ms) }),
-                    ...(turn === undefined ? {} : { turn }),
-                    ...(r.author === null ? {} : { author: r.author }),
-                    createdAt: r.created_at,
-                };
-            }),
-        );
-
-        return groupTurns(stored, (row) => isGenuineUserStart(row.message));
+    async function readPage(threadId: string, options: LoadPageOptions): Promise<TurnPage> {
+        const { rows } = await pool.query<StoredRow & { next_before: string | null }>(PAGE_SQL, [
+            threadId,
+            options.before === undefined ? null : String(options.before),
+            pageLimit(options.limit),
+        ]);
+        // The cursor rides each row, and an empty page has no row. An empty page has no cursor either:
+        // `page_lower` is set only when its row is in the page.
+        const next = rows[0]?.next_before ?? null;
+        return { turns: await toTurns(threadId, rows), before: next === null ? null : Number(next) };
     }
 
     function loadAll(threadId: string): ResultAsync<StoredMessage[][], DbError> {
         return tryQuery("thread-history.loadAll", () => readTurns(threadId));
+    }
+
+    function loadPage(threadId: string, options: LoadPageOptions): ResultAsync<TurnPage, DbError> {
+        return tryQuery("thread-history.loadPage", () => readPage(threadId, options));
     }
 
     function retractLastTurn(threadId: string): ResultAsync<RetractOutcome, DbError> {
@@ -778,5 +923,5 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
         ).map(({ rows }) => Number(rows[0]!.turns));
     }
 
-    return { appendTurn, writeTurn, loadRecent, loadAll, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };
+    return { appendTurn, writeTurn, loadRecent, loadAll, loadPage, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };
 }

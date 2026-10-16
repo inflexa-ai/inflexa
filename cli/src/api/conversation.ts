@@ -65,8 +65,30 @@ export type PurgedThread = {
     pages: ReportPageFate;
 };
 
-/** The body of `GET {T}/messages`: the whole transcript. `total` counts the turns, and the paging fields are fixed, as in Cortex. */
-export type MessageList = ListEnvelope<"messages", ChatMessage>;
+/** The turns in a page of `GET {T}/messages` when the request sends no `limit`, or a `limit` that is not a positive integer. */
+export const DEFAULT_TRANSCRIPT_TURNS = 20;
+
+/** The largest `limit` of `GET {T}/messages`. A larger request gets this many turns. */
+export const MAX_TRANSCRIPT_TURNS = 100;
+
+/** The query of `GET {T}/messages`. Each key is optional: no `before` asks for the newest page. */
+export type MessagePageQuery = {
+    /** The `before` of an earlier page of the same thread. A client sends it back as it got it. */
+    before?: string;
+    /** The most turns in the page. */
+    limit?: number;
+};
+
+/**
+ * The body of `GET {T}/messages`: one page of the transcript, whole turns, newest page first. `page` is 0 and
+ * `perPage` is the limit that the server applied. `hasMore` is true when `before` is not `null`.
+ */
+export type MessageList = Omit<ListEnvelope<"messages", ChatMessage>, "total"> & {
+    /** The count of the turns in this page. It is not the count of the turns of the thread, which the server does not read. */
+    total: number;
+    /** The cursor of the next older page, as an opaque string. `null` when this page holds the start of the session. */
+    before: string | null;
+};
 
 /** The body of `POST {A}/chat`. */
 export type ChatRequest = {

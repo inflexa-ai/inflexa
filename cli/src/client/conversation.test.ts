@@ -4,7 +4,7 @@ import type { ChatFrame } from "@inflexa-ai/harness/contracts/index.js";
 
 import { TURN_ID_HEADER } from "../api/conversation.ts";
 import type { ClientOpts } from "./api.ts";
-import { createChatTurn, fetchThread, fetchThreads } from "./conversation.ts";
+import { createChatTurn, fetchMessages, fetchThread, fetchThreads } from "./conversation.ts";
 
 const BASE = "http://127.0.0.1:8436";
 
@@ -70,5 +70,33 @@ describe("fetchThreads", () => {
         const { opts, urls } = withFetch(() => Response.json({ threads: [], total: 0, page: 1, perPage: 5, hasMore: false }));
         (await fetchThreads("a1", { type: "report", parentThreadId: "p1", includeArchived: true }, { page: 1, perPage: 5 }, opts))._unsafeUnwrap();
         expect(urls).toEqual([`${BASE}/api/v1/analyses/a1/threads?page=1&perPage=5&type=report&parentThreadId=p1&includeArchived=true`]);
+    });
+});
+
+describe("fetchMessages", () => {
+    const EMPTY_PAGE = { messages: [], total: 0, page: 0, perPage: 20, hasMore: false, before: null };
+
+    test("sends no query value for an empty query", async () => {
+        const { opts, urls } = withFetch(() => Response.json(EMPTY_PAGE));
+        (await fetchMessages("a1", "t1", {}, opts))._unsafeUnwrap();
+        expect(urls).toEqual([`${BASE}/api/v1/analyses/a1/threads/t1/messages`]);
+    });
+
+    test("sends the cursor and the limit that the query holds", async () => {
+        const { opts, urls } = withFetch(() => Response.json(EMPTY_PAGE));
+        (await fetchMessages("a1", "t1", { before: "42", limit: 100 }, opts))._unsafeUnwrap();
+        expect(urls).toEqual([`${BASE}/api/v1/analyses/a1/threads/t1/messages?before=42&limit=100`]);
+    });
+
+    test("sends only the cursor when the query holds no limit", async () => {
+        const { opts, urls } = withFetch(() => Response.json(EMPTY_PAGE));
+        (await fetchMessages("a1", "t1", { before: "7" }, opts))._unsafeUnwrap();
+        expect(urls).toEqual([`${BASE}/api/v1/analyses/a1/threads/t1/messages?before=7`]);
+    });
+
+    test("sends only the limit when the query holds no cursor", async () => {
+        const { opts, urls } = withFetch(() => Response.json(EMPTY_PAGE));
+        (await fetchMessages("a1", "t1", { limit: 5 }, opts))._unsafeUnwrap();
+        expect(urls).toEqual([`${BASE}/api/v1/analyses/a1/threads/t1/messages?limit=5`]);
     });
 });

@@ -56,12 +56,12 @@ export async function readBody<T>(c: Context, schema: ZodType<T>): Promise<Resul
 }
 
 /**
- * A count from a query value: a positive integer, at most {@link MAX_PER_PAGE}. A value that is absent, or that
- * is not a positive integer, gives `fallback`.
+ * A count from a query value: a positive integer, at most `max` ({@link MAX_PER_PAGE} when the caller names
+ * none). A value that is absent, or that is not a positive integer, gives `fallback`.
  */
-export function parseCount(value: string | undefined, fallback: number): number {
+export function parseCount(value: string | undefined, fallback: number, max: number = MAX_PER_PAGE): number {
     const count = value !== undefined && /^\d+$/.test(value) && Number(value) > 0 ? Number(value) : fallback;
-    return Math.min(count, MAX_PER_PAGE);
+    return Math.min(count, max);
 }
 
 /**

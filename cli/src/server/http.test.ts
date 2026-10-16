@@ -55,6 +55,15 @@ describe("parseCount", () => {
         expect(parseCount("1000", 10)).toBe(200);
         for (const value of [undefined, "", "0", "-1", "2.5", "abc"]) expect(parseCount(value, 10)).toBe(10);
     });
+
+    test("a maximum that the caller names replaces the default cap, and a fallback above it is cut to it", () => {
+        expect(parseCount("500", 20, 100)).toBe(100);
+        expect(parseCount("100", 20, 100)).toBe(100);
+        expect(parseCount("7", 20, 100)).toBe(7);
+        expect(parseCount("300", 20, 1000)).toBe(300);
+        expect(parseCount("abc", 20, 100)).toBe(20);
+        expect(parseCount("abc", 20, 5)).toBe(5);
+    });
 });
 
 describe("listEnvelope", () => {

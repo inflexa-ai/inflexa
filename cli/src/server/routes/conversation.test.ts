@@ -2,7 +2,21 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import { err, errAsync, ok, okAsync, ResultAsync } from "neverthrow";
-import type { AnswerOutcome, AskGateway, AskReply, ChatFrame, DbError, PendingAsk, StoredMessage, Thread, ThreadPage, ThreadStore } from "@inflexa-ai/harness";
+import {
+    envelopeDisplayMessages,
+    type AnswerOutcome,
+    type AskGateway,
+    type AskReply,
+    type ChatFrame,
+    type DbError,
+    type LoadPageOptions,
+    type PendingAsk,
+    type StoredMessage,
+    type Thread,
+    type ThreadPage,
+    type ThreadStore,
+    type TurnPage,
+} from "@inflexa-ai/harness";
 
 import type { ServerBootState } from "../../api/server.ts";
 import {
@@ -114,6 +128,48 @@ function readyBoot(gateway: AskGateway = fakeGateway([])): ServerBoot {
     return { state: () => state, runtime: () => runtime, start: async () => undefined };
 }
 
+/** One stored user row that opens turn `index`: its display projection replays as one `user` chat message that reads `turn <index>`. */
+function turnRow(index: number): StoredMessage[] {
+    const message = { role: "user" as const, content: `turn ${index}` };
+    return [
+        {
+            seq: index,
+            envelope: { kind: "ai-sdk-model-message", aiSdkMajor: 7, message },
+            message,
+            displayEnvelope: envelopeDisplayMessages([{ id: `m${index}`, role: "user", parts: [{ type: "text", text: `turn ${index}` }] }]),
+        },
+    ];
+}
+
+/** The text of a replayed one-part chat message. */
+function textOf(message: MessageList["messages"][number]): string {
+    const part = message.parts[0];
+    return part?.type === "text" ? part.text : "";
+}
+
+/**
+ * A thread of `count` turns that answers `loadPage` by the contract of the harness: the newest `limit` turns
+ * below the cursor, and the opening `seq` of the oldest turn as the next cursor, or `null` at the start. Each
+ * call it receives is in `calls`.
+ */
+function turnStore(count: number): {
+    calls: LoadPageOptions[];
+    loadPage: (pool: unknown, threadId: string, options: LoadPageOptions) => ResultAsync<TurnPage, DbError>;
+} {
+    const calls: LoadPageOptions[] = [];
+    const all = Array.from({ length: count }, (_, i) => turnRow(i));
+    return {
+        calls,
+        loadPage: (_pool, _threadId, options) => {
+            calls.push(options);
+            const upper = options.before ?? count;
+            const turns = all.slice(Math.max(0, upper - options.limit), upper);
+            const oldest = turns[0]?.[0]?.seq ?? 0;
+            return okAsync({ turns, before: oldest > 0 ? oldest : null });
+        },
+    };
+}
+
 type Options = Partial<ConversationRouteOpts> & { store?: ThreadStore; boot?: ServerBoot };
 
 function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes> {
@@ -121,7 +177,7 @@ function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes> {
     return conversationRoutes(o.boot ?? readyBoot(), {
         ...DEFAULT_CONVERSATION_ROUTE_OPTS,
         threads: () => store,
-        loadTurns: () => okAsync([]),
+        loadPage: () => okAsync({ turns: [], before: null }),
         retract: () => okAsync({ kind: "retracted", messages: 2 }),
         threadAnalysisId: (_pool, id) => okAsync(id === T ? A : null),
         runTurn: () => Promise.resolve({ kind: "ok", opened: true, fallbackText: "" }),
@@ -377,17 +433,84 @@ describe("the thread routes", () => {
         expect((await routesWith().request(`/${A}/threads/${T}/purge`, json("POST", {}))).status).toBe(400);
     });
 
-    test("GET {T}/messages gives the whole transcript, with `total` the count of turns, and 404 for a thread with no row", async () => {
-        const turn: StoredMessage[] = [];
-        const routes = routesWith({ loadTurns: () => okAsync([turn, turn]) });
-        const list = (await (await routes.request(`/${A}/threads/${T}/messages`)).json()) as MessageList;
-        expect(list).toEqual({ messages: [], total: 2, page: 0, perPage: 2, hasMore: false });
-        expect((await routes.request(`/${A}/threads/missing/messages`)).status).toBe(404);
+    test("GET {T}/messages gives the newest turns, in chat order, with a cursor for the next older page", async () => {
+        const thread = turnStore(30);
+        const response = await routesWith({ loadPage: thread.loadPage }).request(`/${A}/threads/${T}/messages`);
+        expect(response.status).toBe(200);
+        const list = (await response.json()) as MessageList;
+        expect(list.messages.map(textOf)).toEqual(Array.from({ length: 20 }, (_, i) => `turn ${i + 10}`));
+        expect(list).toMatchObject({ total: 20, page: 0, perPage: 20, hasMore: true, before: "10" });
+    });
+
+    test("GET {T}/messages with the cursor of a page gives the turns before it, and the last page has a null cursor", async () => {
+        const thread = turnStore(30);
+        const routes = routesWith({ loadPage: thread.loadPage });
+        const first = (await (await routes.request(`/${A}/threads/${T}/messages`)).json()) as MessageList;
+        const last = (await (await routes.request(`/${A}/threads/${T}/messages?before=${first.before}`)).json()) as MessageList;
+        expect(last.messages.map(textOf)).toEqual(Array.from({ length: 10 }, (_, i) => `turn ${i}`));
+        expect(last).toMatchObject({ total: 10, page: 0, perPage: 20, hasMore: false, before: null });
+    });
+
+    test("GET {T}/messages gives a short thread in one page", async () => {
+        const list = (await (await routesWith({ loadPage: turnStore(3).loadPage }).request(`/${A}/threads/${T}/messages`)).json()) as MessageList;
+        expect(list.messages.map(textOf)).toEqual(["turn 0", "turn 1", "turn 2"]);
+        expect(list).toMatchObject({ total: 3, hasMore: false, before: null });
+    });
+
+    test("GET {T}/messages gives a page of no turns for a thread that holds none", async () => {
+        const list = (await (await routesWith().request(`/${A}/threads/${T}/messages`)).json()) as MessageList;
+        expect(list).toEqual({ messages: [], total: 0, page: 0, perPage: 20, hasMore: false, before: null });
+    });
+
+    test("GET {T}/messages gives the store a limit of 20 by default, caps it at 100, and falls back to 20 for a bad value", async () => {
+        const thread = turnStore(500);
+        const routes = routesWith({ loadPage: thread.loadPage });
+        const perPageOf = async (query: string): Promise<number> =>
+            ((await (await routes.request(`/${A}/threads/${T}/messages${query}`)).json()) as MessageList).perPage;
+        expect(await perPageOf("")).toBe(20);
+        expect(await perPageOf("?limit=500")).toBe(100);
+        expect(await perPageOf("?limit=abc")).toBe(20);
+        expect(await perPageOf("?limit=0")).toBe(20);
+        expect(await perPageOf("?limit=7")).toBe(7);
+        expect(thread.calls.map((call) => call.limit)).toEqual([20, 100, 20, 20, 7]);
+    });
+
+    test("GET {T}/messages reads the turns of the page only: the store gets the cursor as a number, and no cursor as no key", async () => {
+        const thread = turnStore(500);
+        const routes = routesWith({ loadPage: thread.loadPage });
+        await routes.request(`/${A}/threads/${T}/messages?limit=20`);
+        await routes.request(`/${A}/threads/${T}/messages?limit=20&before=480`);
+        await routes.request(`/${A}/threads/${T}/messages?before=0`);
+        expect(thread.calls).toEqual([{ limit: 20 }, { limit: 20, before: 480 }, { limit: 20, before: 0 }]);
+        expect(thread.calls.every((call) => !("before" in call) || typeof call.before === "number")).toBe(true);
+    });
+
+    test("GET {T}/messages refuses a cursor that is not a decimal safe integer with 400 `validation_error`, and reads no turn", async () => {
+        const thread = turnStore(30);
+        const routes = routesWith({ loadPage: thread.loadPage });
+        for (const bad of ["abc", "", "-1", "1.5", "1e3", "0x10", "9007199254740993"]) {
+            const response = await routes.request(`/${A}/threads/${T}/messages?before=${bad}`);
+            expect({ bad, status: response.status }).toEqual({ bad, status: 400 });
+            const body = (await response.json()) as { error: string; details: { fieldErrors: Record<string, string[]> } };
+            expect(body.error).toBe("validation_error");
+            expect(body.details.fieldErrors.before).toBeDefined();
+        }
+        expect(thread.calls).toEqual([]);
+    });
+
+    test("GET {T}/messages gives 404 `not_found` for a thread with no row, and reads no turn", async () => {
+        const thread = turnStore(30);
+        const routes = routesWith({ loadPage: thread.loadPage });
+        const response = await routes.request(`/${A}/threads/missing/messages`);
+        expect(response.status).toBe(404);
+        expect(await response.json()).toMatchObject({ error: "not_found" });
+        expect((await routes.request(`/other/threads/${T}/messages`)).status).toBe(404);
+        expect(thread.calls).toEqual([]);
     });
 
     test("GET {T}/messages gives 500 `internal_error` when the read fails", async () => {
         const failed: DbError = { type: "query_failed", op: "test", cause: new Error("db down") };
-        const routes = routesWith({ loadTurns: () => okAsync([]).andThen(() => err(failed)) as ResultAsync<StoredMessage[][], DbError> });
+        const routes = routesWith({ loadPage: () => errAsync(failed) });
         const response = await routes.request(`/${A}/threads/${T}/messages`);
         expect(response.status).toBe(500);
         expect(await response.json()).toMatchObject({ error: "internal_error" });

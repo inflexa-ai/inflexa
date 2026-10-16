@@ -126,13 +126,16 @@ function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () =
         fetchTurn: (analysisId, threadId, turnId) => okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", ...end }),
         reloadTranscript: async () => undefined,
         healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
-        transcript: { fetchThread: () => okAsync(null), fetchMessages: () => okAsync({ messages: [], total: 0, page: 0, perPage: 0, hasMore: false }) },
+        transcript: {
+            fetchThread: () => okAsync(null),
+            fetchMessages: () => okAsync({ messages: [], total: 0, page: 0, perPage: 0, hasMore: false, before: null }),
+        },
     };
 }
 
 /** A transcript as `GET {T}/messages` gives it. */
 function messageList(list: ChatMessage[]): MessageList {
-    return { messages: list, total: list.length, page: 0, perPage: list.length, hasMore: false };
+    return { messages: list, total: list.length, page: 0, perPage: list.length, hasMore: false, before: null };
 }
 
 /**

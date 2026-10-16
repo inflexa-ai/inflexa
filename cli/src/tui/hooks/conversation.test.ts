@@ -197,7 +197,7 @@ const PREPARE_FAILED: ClientError = { type: "http", status: 500, body: { error: 
 
 /** A transcript as `GET {T}/messages` gives it. */
 function messageList(list: ChatMessage[]): MessageList {
-    return { messages: list, total: list.length, page: 0, perPage: list.length, hasMore: false };
+    return { messages: list, total: list.length, page: 0, perPage: list.length, hasMore: false, before: null };
 }
 
 /** Load options whose read gives `list`. */
@@ -1146,28 +1146,45 @@ describe("send() turn cleanup", () => {
     });
 });
 
-describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread", () => {
-    // The fixture is N single-message turns (message t -> "m<t>"), handed back whole because the server
-    // reads no window. What is under test is the trailing cap: the mount holds the NEWEST messages and
-    // drops the oldest, whatever the thread's length.
-    function transcript(n: number): ChatMessage[] {
-        return Array.from({ length: n }, (_, t): ChatMessage => ({
-            id: `id-${t}`,
-            role: t % 2 === 0 ? "user" : "assistant",
-            parts: [{ type: "text", text: `m${t}` }],
-        }));
-    }
+/**
+ * A server that pages a transcript the way `GET {T}/messages` does: `turns` is the transcript turn by turn,
+ * oldest first. A read gives the newest `pageTurns` turns before the cursor, which is the index of the
+ * oldest turn of the page before it, and the cursor of the next older page or `null` at the start. The
+ * `cursors` list holds the cursor of each read, in order.
+ */
+function pagingLoad(turns: ChatMessage[][], pageTurns: number): LoadOpts & { cursors: (string | undefined)[] } {
+    const cursors: (string | undefined)[] = [];
+    return {
+        cursors,
+        fetchThread: () => okAsync(null),
+        fetchMessages: (_analysisId, _threadId, before) => {
+            cursors.push(before);
+            const end = before === undefined ? turns.length : Number(before);
+            const start = Math.max(0, end - pageTurns);
+            return okAsync({
+                messages: turns.slice(start, end).flat(),
+                total: end - start,
+                page: 0,
+                perPage: pageTurns,
+                hasMore: start > 0,
+                before: start > 0 ? String(start) : null,
+            });
+        },
+    };
+}
 
-    function countingLoad(list: ChatMessage[]): LoadOpts & { reads: () => number } {
-        let reads = 0;
-        return {
-            fetchThread: () => okAsync(null),
-            fetchMessages: () => {
-                reads++;
-                return okAsync(messageList(list));
+describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread", () => {
+    // The fixture is N single-message turns (message t -> "m<t>"), and the server pages them 100 turns at
+    // a time. What is under test is the trailing cap: the mount holds the NEWEST messages and drops the
+    // oldest, whatever the thread's length.
+    function transcript(n: number): ChatMessage[][] {
+        return Array.from({ length: n }, (_, t): ChatMessage[] => [
+            {
+                id: `id-${t}`,
+                role: t % 2 === 0 ? "user" : "assistant",
+                parts: [{ type: "text", text: `m${t}` }],
             },
-            reads: () => reads,
-        };
+        ]);
     }
 
     function textAt(i: number): string | undefined {
@@ -1176,37 +1193,132 @@ describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread",
     }
 
     test("a thread at the cap mounts whole", async () => {
-        await loadMessages(AID, SID, countingLoad(transcript(200)));
+        await loadMessages(AID, SID, pagingLoad(transcript(200), 100));
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m0");
         expect(textAt(199)).toBe("m199");
     });
 
     test("one past the cap drops the oldest message, not the newest", async () => {
-        await loadMessages(AID, SID, countingLoad(transcript(201)));
+        await loadMessages(AID, SID, pagingLoad(transcript(201), 100));
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m1");
         expect(textAt(199)).toBe("m200");
     });
 
     test("a thread far past the cap still ends on its newest message", async () => {
-        await loadMessages(AID, SID, countingLoad(transcript(400)));
+        await loadMessages(AID, SID, pagingLoad(transcript(400), 100));
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m200");
         expect(textAt(199)).toBe("m399");
     });
 
     test("a thread shorter than the cap mounts whole", async () => {
-        await loadMessages(AID, SID, countingLoad(transcript(3)));
+        await loadMessages(AID, SID, pagingLoad(transcript(3), 100));
         expect(messages.length).toBe(3);
         expect(textAt(0)).toBe("m0");
         expect(textAt(2)).toBe("m2");
     });
 
-    test("one read, whatever the thread's length", async () => {
-        const load = countingLoad(transcript(400));
+    test("the reads stop at the cap, whatever the thread's length", async () => {
+        const load = pagingLoad(transcript(400), 100);
         await loadMessages(AID, SID, load);
-        expect(load.reads()).toBe(1);
+        expect(load.cursors).toEqual([undefined, "300"]);
+    });
+});
+
+describe("loadMessages reads older pages until the window is full", () => {
+    // Turns of three messages, 50 turns to a page: a page holds 150 messages, which is under the cap.
+    function threeMessageTurns(n: number): ChatMessage[][] {
+        return Array.from({ length: n }, (_, t): ChatMessage[] =>
+            [0, 1, 2].map((k) => ({ id: `id-${t}-${k}`, role: k === 0 ? "user" : "assistant", parts: [{ type: "text", text: `t${t}m${k}` }] })),
+        );
+    }
+
+    function textAt(i: number): string | undefined {
+        const p = messages[i]?.parts[0];
+        return p?.type === "text" ? p.text : undefined;
+    }
+
+    test("an older page is read with the cursor of the newest page, and the newest window mounts in order", async () => {
+        const load = pagingLoad(threeMessageTurns(120), 50);
+        await loadMessages(AID, SID, load);
+
+        // Newest page: turns 70..119 (150 messages). Under the cap, with an older page: read turns 20..69.
+        expect(load.cursors).toEqual([undefined, "70"]);
+        expect(messages.length).toBe(200);
+        // 300 messages were read; the newest 200 are the last 66 turns plus the last two messages of turn 53.
+        expect(textAt(0)).toBe("t53m1");
+        expect(textAt(1)).toBe("t53m2");
+        expect(textAt(2)).toBe("t54m0");
+        expect(textAt(199)).toBe("t119m2");
+    });
+
+    test("a page of the older read goes in front of the newer page, whole turns in chat order", async () => {
+        await loadMessages(AID, SID, pagingLoad(threeMessageTurns(60), 50));
+
+        // Newest page: turns 10..59 (150 messages). Older page: turns 0..9 (30 messages). 180 in all.
+        expect(messages.length).toBe(180);
+        expect(textAt(0)).toBe("t0m0");
+        expect(textAt(29)).toBe("t9m2");
+        expect(textAt(30)).toBe("t10m0");
+        expect(textAt(179)).toBe("t59m2");
+    });
+
+    test("a thread that fits in one page costs one read", async () => {
+        const load = pagingLoad(threeMessageTurns(10), 50);
+        await loadMessages(AID, SID, load);
+
+        expect(load.cursors).toEqual([undefined]);
+        expect(messages.length).toBe(30);
+    });
+
+    test("a load that stops at the start of the session reads no cursor past it", async () => {
+        const load = pagingLoad(threeMessageTurns(60), 50);
+        await loadMessages(AID, SID, load);
+
+        expect(load.cursors).toEqual([undefined, "10"]);
+    });
+});
+
+describe("loadMessages when a page read gives an error", () => {
+    const history: ChatMessage[] = [{ id: "kept", role: "assistant", parts: [{ type: "text", text: "kept-history" }] }];
+
+    /** Turns of three messages, so that two pages are necessary to fill the window. */
+    const turns = Array.from({ length: 120 }, (_, t): ChatMessage[] =>
+        [0, 1, 2].map((k) => ({ id: `id-${t}-${k}`, role: k === 0 ? "user" : "assistant", parts: [{ type: "text", text: `t${t}m${k}` }] })),
+    );
+
+    /** A paging server whose read with a cursor gives `error`. */
+    function failingOlderPage(error: ClientError): LoadOpts {
+        const paged = pagingLoad(turns, 50);
+        return {
+            fetchThread: paged.fetchThread,
+            fetchMessages: (analysisId, threadId, before) => (before === undefined ? paged.fetchMessages(analysisId, threadId) : errAsync(error)),
+        };
+    }
+
+    test("a failed older page raises the load banner and mounts no partial page", async () => {
+        await loadMessages(AID, SID, loadOf(history));
+        expect(messages.length).toBe(1);
+
+        await loadMessages(AID, SID, failingOlderPage(PREPARE_FAILED));
+
+        expect(errorMsg()).toContain("Failed to load the conversation");
+        expect(chatStatus()).toBe("error");
+        // The newest page was read, but it does not replace the transcript that the screen holds.
+        expect(messages.length).toBe(1);
+        expect(messages[0]?.id).toBe("kept");
+    });
+
+    test("an older page that gives 404 mounts an empty transcript and raises nothing", async () => {
+        await loadMessages(AID, SID, loadOf(history));
+
+        await loadMessages(AID, SID, failingOlderPage(THREAD_NOT_FOUND));
+
+        expect(messages.length).toBe(0);
+        expect(errorMsg()).toBeNull();
+        expect(chatStatus()).toBe("idle");
     });
 });
 
@@ -1254,6 +1366,46 @@ describe("loadMessages staleness guard", () => {
         expect(messages.length).toBe(1);
         const final = messages[0]?.parts[0];
         expect(final?.type === "text" ? final.text : undefined).toBe("new-msg");
+    });
+});
+
+describe("loadMessages staleness guard between two page reads", () => {
+    const chatText = (id: string, text: string): ChatMessage[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }];
+
+    test("a newer load that starts between two page reads wins, and the older load writes nothing", async () => {
+        // The older load reads its newest page, then parks on its older page. The newer load starts there and
+        // completes. The older page then resolves: the older load must drop, and read no page after it.
+        let releaseOlder!: () => void;
+        const olderGate = new Promise<void>((r) => {
+            releaseOlder = r;
+        });
+        const cursors: (string | undefined)[] = [];
+        const oldLoad: LoadOpts = {
+            fetchThread: () => okAsync(null),
+            fetchMessages: (_analysisId, _threadId, before) => {
+                cursors.push(before);
+                if (before === undefined) {
+                    return okAsync({ ...messageList(chatText("old-new", "old-newest-page")), hasMore: true, before: "5" });
+                }
+                return ResultAsync.fromSafePromise(
+                    olderGate.then(() => ({ ...messageList(chatText("old-old", "old-older-page")), hasMore: true, before: "2" })),
+                );
+            },
+        };
+
+        const parked = loadMessages(AID, SID, oldLoad);
+        // Let the older load reach its second read.
+        while (cursors.length < 2) await Promise.sleep(0);
+
+        await loadMessages(AID, SID, loadOf(chatText("new", "new-msg")));
+        expect(messages.map((m) => m.id)).toEqual(["new"]);
+
+        releaseOlder();
+        await parked;
+
+        expect(messages.map((m) => m.id)).toEqual(["new"]);
+        // The older load dropped at its second read and did not ask for a third page.
+        expect(cursors).toEqual([undefined, "5"]);
     });
 });
 
@@ -1406,21 +1558,23 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
 });
 
 describe("MESSAGE_CAP answers to the display alone", () => {
-    test("the read asks for the whole thread, never for a window", async () => {
-        // MESSAGE_CAP once doubled as a page size that the store clamped to 200 — so a larger cap silently
-        // stranded every turn past the clamp. The read takes no size, so the cap is a display bound and
-        // nothing else. Pin the read taking no window, since a reintroduced size argument would quietly
-        // restore the coupling.
-        let seen: unknown[] = [];
+    test("the first read names no cursor, and no read names a size", async () => {
+        // The page size of a read is the business of the production binding, and the cap is a display bound
+        // and nothing else. Pin the read taking a cursor alone, since a size argument that the loader passes
+        // would quietly tie the cap to the page size.
+        const seen: unknown[][] = [];
         const load: LoadOpts = {
             fetchThread: () => okAsync(null),
             fetchMessages: (...args: unknown[]) => {
-                seen = args;
+                seen.push(args);
                 return okAsync(messageList([]));
             },
         };
         await loadMessages(AID, SID, load);
-        expect(seen).toEqual([AID, SID]);
+        expect(seen).toHaveLength(1);
+        expect(seen[0]?.slice(0, 2)).toEqual([AID, SID]);
+        expect(seen[0]?.[2]).toBeUndefined();
+        expect(seen[0]).toHaveLength(3);
     });
 });
 

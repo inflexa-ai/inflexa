@@ -972,7 +972,7 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         const cadences = (): number[] => live.filter((t) => t.live).map((t) => t.ms);
         const turns = (running: boolean): ThreadPollOpts => ({
             fetchThread: () => okAsync(null),
-            fetchMessages: () => okAsync({ messages: [], total: 0, page: 0, perPage: 0, hasMore: false }),
+            fetchMessages: () => okAsync({ messages: [], total: 0, page: 0, perPage: 0, hasMore: false, before: null }),
             fetchTurns: () =>
                 okAsync({
                     turns: running

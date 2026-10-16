@@ -84,7 +84,7 @@ function transcriptRead(rows: FixtureRow[]): LoadOpts {
         ],
     }));
     // One turn carrying every fixture row: the replay reads rows, not turn boundaries.
-    return { fetchThread: () => okAsync(null), fetchMessages: () => okAsync({ messages, total: 1, page: 0, perPage: 1, hasMore: false }) };
+    return { fetchThread: () => okAsync(null), fetchMessages: () => okAsync({ messages, total: 1, page: 0, perPage: 1, hasMore: false, before: null }) };
 }
 
 /**

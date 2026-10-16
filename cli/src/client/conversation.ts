@@ -11,6 +11,7 @@ import {
     type ChatRequest,
     type DeletedThread,
     type MessageList,
+    type MessagePageQuery,
     type PurgedThread,
     type PurgeThreadRequest,
     type RetractRequest,
@@ -98,9 +99,22 @@ export function purgeThread(
     return request<PurgedThread>("POST", `${threadPath(analysisId, threadId)}/purge`, { body }, opts);
 }
 
-/** `GET {T}/messages`: the whole transcript. 404 `not_found` for a thread with no row. */
-export function fetchMessages(analysisId: string, threadId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<MessageList, ClientError> {
-    return request<MessageList>("GET", `${threadPath(analysisId, threadId)}/messages`, {}, opts);
+/**
+ * `GET {T}/messages`: one page of the transcript, the newest turns first. A query value that the query does
+ * not hold is not sent, thus the server applies its default: the newest page. 404 `not_found` for a thread
+ * with no row.
+ */
+export function fetchMessages(
+    analysisId: string,
+    threadId: string,
+    query: MessagePageQuery = {},
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): ResultAsync<MessageList, ClientError> {
+    const params = new URLSearchParams();
+    if (query.before !== undefined) params.set("before", query.before);
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    const queryString = params.size === 0 ? "" : `?${params.toString()}`;
+    return request<MessageList>("GET", `${threadPath(analysisId, threadId)}/messages${queryString}`, {}, opts);
 }
 
 /** `POST {T}/retract`: remove the tail turn. With `ifOrphan`, only a tail turn with no assistant row. */

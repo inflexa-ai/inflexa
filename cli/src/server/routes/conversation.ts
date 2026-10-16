@@ -14,15 +14,18 @@ import {
     type ChatFrame,
     type AskGateway,
     type DbError,
+    type LoadPageOptions,
     type PendingAsk,
     type Pool,
-    type StoredMessage,
     type Thread,
     type ThreadStore,
+    type TurnPage,
 } from "@inflexa-ai/harness";
 import type { EventSource } from "@inflexa-ai/harness/contracts/index.js";
 
 import {
+    DEFAULT_TRANSCRIPT_TURNS,
+    MAX_TRANSCRIPT_TURNS,
     TURN_ID_HEADER,
     type AbortTurnResponse,
     type AnswerAskResponse,
@@ -55,6 +58,7 @@ import {
     DEFAULT_SSE_OPTS,
     internalError,
     listEnvelope,
+    parseCount,
     parsePage,
     readBody,
     requireRuntime,
@@ -74,8 +78,8 @@ export type WorkspaceRootLookup = { readonly kind: "root"; readonly root: string
 export type ConversationRouteOpts = {
     /** The thread store over the pool. Real: `createThreadStore`. */
     readonly threads: (pool: Pool) => ThreadStore;
-    /** Each turn of a thread, for the transcript. Real: `createThreadHistory(pool).loadAll`. */
-    readonly loadTurns: (pool: Pool, threadId: string) => ResultAsync<StoredMessage[][], DbError>;
+    /** One page of the turns of a thread, newest page first, for the transcript. Real: `createThreadHistory(pool).loadPage`. */
+    readonly loadPage: (pool: Pool, threadId: string, options: LoadPageOptions) => ResultAsync<TurnPage, DbError>;
     /** Remove the tail turn. With `ifOrphan`, only a tail turn with no assistant row. Real: `retractTailTurn`, `healTailOrphan`. */
     readonly retract: (pool: Pool, threadId: string, ifOrphan: boolean) => ResultAsync<RetractResponse, DbError>;
     /** The analysis of a thread, archived or live, or `null` when no row has the id. Real: one primary-key read. */
@@ -98,7 +102,7 @@ export type ConversationRouteOpts = {
 /** The production {@link ConversationRouteOpts}. */
 export const DEFAULT_CONVERSATION_ROUTE_OPTS: ConversationRouteOpts = {
     threads: createThreadStore,
-    loadTurns: (pool, threadId) => createThreadHistory(pool).loadAll(threadId),
+    loadPage: (pool, threadId, options) => createThreadHistory(pool).loadPage(threadId, options),
     retract: (pool, threadId, ifOrphan) => (ifOrphan ? healTailOrphan(pool, threadId) : retractTailTurn(pool, threadId)),
     threadAnalysisId,
     runTurn: (args) => runChatTurn(args),
@@ -124,6 +128,19 @@ const chatBody = z.object({ threadId: z.string().min(1), message: z.string().min
 
 /** The body of `PATCH {T}`. */
 const updateThreadBody = z.object({ title: z.string() });
+
+/**
+ * The query of `GET {T}/messages` that needs a form check. `before` is decimal digits whose number is a safe
+ * integer, which is what the store compares a turn start against. The empty string has no digits, thus the
+ * pattern refuses it.
+ */
+const transcriptQuery = z.object({
+    before: z
+        .string()
+        .regex(/^\d+$/, "must be a decimal integer")
+        .refine((value) => Number.isSafeInteger(Number(value)), "must be a safe integer")
+        .optional(),
+});
 
 /** The body of `POST {T}/purge`. */
 const purgeThreadBody = z.object({ files: z.enum(["keep", "remove"]) });
@@ -264,15 +281,26 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
     routes.get("/:analysisId/threads/:threadId/messages", runtime, async (c) => {
         const { analysisId, threadId } = c.req.param();
         const pool = c.get("runtime").pool;
-        const turns = await liveThreadOf(opts.threads(pool), analysisId, threadId).andThen((thread) =>
-            thread === null ? ResultAsync.fromSafePromise<StoredMessage[][] | null, DbError>(Promise.resolve(null)) : opts.loadTurns(pool, threadId),
+        // The cursor is checked before any read, thus a bad cursor costs the store nothing.
+        const query = transcriptQuery.safeParse({ before: c.req.query("before") });
+        if (!query.success) return apiError(c, "validation_error", "`before` must be the cursor of an earlier page.", z.flattenError(query.error));
+        const limit = parseCount(c.req.query("limit"), DEFAULT_TRANSCRIPT_TURNS, MAX_TRANSCRIPT_TURNS);
+        const options: LoadPageOptions = query.data.before === undefined ? { limit } : { before: Number(query.data.before), limit };
+        const page = await liveThreadOf(opts.threads(pool), analysisId, threadId).andThen((thread) =>
+            thread === null ? ResultAsync.fromSafePromise<TurnPage | null, DbError>(Promise.resolve(null)) : opts.loadPage(pool, threadId, options),
         );
-        return turns.match(
+        return page.match(
             (loaded) => {
                 if (loaded === null) return threadNotFound(c);
-                // The Cortex form: the whole transcript, with `total` the count of turns and one page that holds it.
-                const messages = storedMessagesToChat(loaded.flat());
-                return c.json<MessageList>(listEnvelope("messages", messages, loaded.length, { page: 0, perPage: loaded.length }));
+                // Not `listEnvelope`: it derives `hasMore` from a total over the thread, which this read never counts.
+                return c.json<MessageList>({
+                    messages: storedMessagesToChat(loaded.turns.flat()),
+                    total: loaded.turns.length,
+                    page: 0,
+                    perPage: limit,
+                    hasMore: loaded.before !== null,
+                    before: loaded.before === null ? null : String(loaded.before),
+                });
             },
             (e) => internalError(c, e, "read the transcript"),
         );
