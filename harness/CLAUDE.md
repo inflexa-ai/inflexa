@@ -605,7 +605,7 @@ The `must-use-result` rule runs in `inflexa-typecheck` (`typecheck.config.ts`).
 It recognizes a `Result` that goes directly to `unwrapOrThrow`, `passGate`,
 `deliverNotice`, or `keepSuspendingRefusal` as consumed. Do not rewrite a bridge
 site into an inline `.match` plus throw form. Do not add a per-site disable for
-it
+it.
 
 ## Code Comments
 

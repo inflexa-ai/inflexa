@@ -64,6 +64,17 @@ describe("toChatFrame", () => {
         });
     });
 
+    test("gives an omitted tool detail no detail key", () => {
+        const started: EmitEvent = { type: "tool-started", source: topLevel, toolUseId: "tu_1", name: "search_gene", input: {} };
+        const startedFrame = toChatFrame(started, fallback);
+        expect(Object.hasOwn(startedFrame ?? {}, "detail")).toBe(false);
+
+        const finished: EmitEvent = { type: "tool-finished", source: topLevel, toolUseId: "tu_1", name: "search_gene", outcome: "ok" };
+        const finishedFrame = toChatFrame(finished, fallback);
+        expect(Object.hasOwn(finishedFrame ?? {}, "detail")).toBe(false);
+        expect(Object.hasOwn(finishedFrame ?? {}, "durationMs")).toBe(false);
+    });
+
     test("keeps the tool events of a sub-agent with their source", () => {
         const started: EmitEvent = { type: "tool-started", source: nested, toolUseId: "tu_2", name: "search_pubmed", input: {} };
         const finished: EmitEvent = { type: "tool-finished", source: nested, toolUseId: "tu_2", name: "search_pubmed", outcome: "ok" };
@@ -101,12 +112,14 @@ describe("toChatFrame", () => {
 
     test("flattens a data part to the wire part shape", () => {
         const part: ChatDataPart = { type: "data-presentation", data: { id: "pres-abc", title: "A chart", content: { kind: "markdown", body: "text" } } };
-        expect(toChatFrame(part, fallback)).toEqual({
+        const frame = toChatFrame(part, fallback);
+        expect(frame).toEqual({
             type: "data-presentation",
             id: "pres-abc",
             title: "A chart",
             content: { kind: "markdown", body: "text" },
         });
+        expect(Object.hasOwn(frame ?? {}, "source")).toBe(false);
     });
 
     test("keeps the source of a top-level data part", () => {
@@ -206,6 +219,19 @@ describe("applyChatFrame", () => {
         expect(messages[0].parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "searchGene", outcome: "ok", detail: "TP53", durationMs: 420 }]);
     });
 
+    test("a finish without a detail keeps the detail of its start", () => {
+        const { messages } = applyMany(
+            [],
+            [
+                { type: "tool-started", toolUseId: "tu_1", name: "searchGene", detail: "Reading the dataset", source: SOURCE },
+                { type: "tool-finished", toolUseId: "tu_1", name: "searchGene", outcome: "ok", source: SOURCE },
+            ],
+        );
+        const part = messages[0].parts[0];
+        expect(part).toEqual({ type: "tool-call", toolCallId: "tu_1", toolName: "searchGene", detail: "Reading the dataset", outcome: "ok" });
+        expect(Object.hasOwn(part, "durationMs")).toBe(false);
+    });
+
     test("a finish with no start appends the finished call", () => {
         const { messages } = applyMany(
             [],
@@ -227,6 +253,11 @@ describe("applyChatFrame", () => {
             toolCallId: "tu_1",
             toolName: "x",
         });
+    });
+
+    test("an in-flight call with no detail carries no detail key", () => {
+        const { messages } = applyMany([], [{ type: "tool-started", toolUseId: "tu_1", name: "x", source: SOURCE }]);
+        expect(Object.hasOwn(messages[0].parts[0], "detail")).toBe(false);
     });
 
     test("a denial is preserved as its own outcome, not as an error", () => {

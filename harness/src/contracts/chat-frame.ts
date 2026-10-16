@@ -2,7 +2,7 @@
 
 import type { ChatDataPart, EmitEvent } from "../loop/types.js";
 import type { ChatStreamEvent } from "../providers/types.js";
-import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent, IterationEvent } from "./chat-events.js";
+import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent, IterationEvent, ToolFinishedEvent, ToolStartedEvent } from "./chat-events.js";
 import type { ChatMessage, MessagePart, TextPart, ToolCallPart } from "./message.js";
 import { isReconciling, PART_REGISTRY } from "./part-registry.js";
 import { EventSourceSchema } from "./schemas/chat-events.js";
@@ -53,25 +53,30 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
         case "done":
             return null;
 
-        case "tool-started":
-            return {
+        case "tool-started": {
+            // Each optional member is assigned only when present, so an omitted detail stays an absent own key.
+            const frame: ToolStartedEvent = {
                 type: "tool-started",
                 toolUseId: event.toolUseId,
                 name: event.name,
-                detail: !(event.detail === undefined) ? event.detail : undefined,
                 source: toSource(event.source),
             };
+            if (event.detail !== undefined) frame.detail = event.detail;
+            return frame;
+        }
 
-        case "tool-finished":
-            return {
+        case "tool-finished": {
+            const frame: ToolFinishedEvent = {
                 type: "tool-finished",
                 toolUseId: event.toolUseId,
                 name: event.name,
                 outcome: event.outcome,
-                detail: !(event.detail === undefined) ? event.detail : undefined,
-                durationMs: !(event.durationMs === undefined) ? event.durationMs : undefined,
                 source: toSource(event.source),
             };
+            if (event.detail !== undefined) frame.detail = event.detail;
+            if (event.durationMs !== undefined) frame.durationMs = event.durationMs;
+            return frame;
+        }
 
         case "text-delta":
             return { type: "text-delta", text: event.text, source: toSource(fallbackSource) };
@@ -80,7 +85,9 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
             const part = flattenDataPart(event);
             // SAFETY: the cast names the frame that the type claims — `checkChatPart` is the check that runs where the frame arrives.
             // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the producer gate deliberately forwards parts that fail their schema (documented contract); the flatten output is typed by the gate's contract, not by a parse.
-            return { ...part, source: !(event.source === undefined) ? toSource(event.source) : undefined } as ChatPartFrame;
+            const frame = { ...part } as ChatPartFrame;
+            if (event.source !== undefined) frame.source = toSource(event.source);
+            return frame;
         }
     }
 }
@@ -152,25 +159,16 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
     switch (frame.type) {
         case "text-delta":
             return mergeTextDelta(parts, frame.text);
-        case "tool-started":
-            return [
-                ...parts,
-                {
-                    type: "tool-call",
-                    toolCallId: frame.toolUseId,
-                    toolName: frame.name,
-                    detail: !(frame.detail === undefined) ? frame.detail : undefined,
-                } satisfies ToolCallPart,
-            ];
+        case "tool-started": {
+            const started: ToolCallPart = { type: "tool-call", toolCallId: frame.toolUseId, toolName: frame.name };
+            if (frame.detail !== undefined) started.detail = frame.detail;
+            return [...parts, started];
+        }
         case "tool-finished": {
-            const finished = {
-                type: "tool-call",
-                toolCallId: frame.toolUseId,
-                toolName: frame.name,
-                outcome: frame.outcome,
-                detail: !(frame.detail === undefined) ? frame.detail : undefined,
-                durationMs: !(frame.durationMs === undefined) ? frame.durationMs : undefined,
-            } satisfies ToolCallPart;
+            // `finished` spreads over the started part, so an omitted member stays an absent key — the spread would otherwise overwrite the started detail with `undefined`.
+            const finished: ToolCallPart = { type: "tool-call", toolCallId: frame.toolUseId, toolName: frame.name, outcome: frame.outcome };
+            if (frame.detail !== undefined) finished.detail = frame.detail;
+            if (frame.durationMs !== undefined) finished.durationMs = frame.durationMs;
             const started = parts.some((p) => p.type === "tool-call" && p.toolCallId === frame.toolUseId);
             const next = parts.map((p) => {
                 if (p.type !== "tool-call" || p.toolCallId !== frame.toolUseId) return p;
