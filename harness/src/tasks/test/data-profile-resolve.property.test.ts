@@ -213,7 +213,10 @@ describe("every kept file lands in exactly one group", () => {
             expect(resolution.errors, `seed ${seed}`).toEqual([]);
             expectPartitions(detected, resolution, seed);
 
-            const unclassified = must(resolution.groups.filter((group) => group.unclassified), "unclassified");
+            const unclassified = must(
+                resolution.groups.filter((group) => group.unclassified),
+                "unclassified",
+            );
             expect(unclassified.length, `seed ${seed}`).toBe(resolution.unclaimed.length > 0 ? 1 : 0);
             if (unclassified.length === 1) {
                 swept++;
@@ -251,9 +254,14 @@ describe("every kept file lands in exactly one group", () => {
                     final.errors.some((error) => error.includes("claimed by both")),
                     `seed ${seed}`,
                 ).toBe(false);
-                const unclassified = must(final.groups.find((group) => group.id === UNCLASSIFIED_GROUP_ID), "unclassified");
+                const unclassified = must(
+                    final.groups.find((group) => group.id === UNCLASSIFIED_GROUP_ID),
+                    "unclassified",
+                );
                 for (const path of final.contested) expect(unclassified.memberPaths, `seed ${seed}`).toContain(path);
-                expect(must(must(final, "final").partition.contested, "must(final, \"final\").partition.contested").members, `seed ${seed}`).toBe(final.contested.length);
+                expect(must(must(final, "final").partition.contested, 'must(final, "final").partition.contested').members, `seed ${seed}`).toBe(
+                    final.contested.length,
+                );
             }
         }
         expect(contested).toBeGreaterThan(0);
@@ -289,7 +297,10 @@ describe("no operation sequence produces an unaccounted or doubly-claimed file",
 
     it("refuses two operations that claim the same file, naming the overlap", () => {
         const { detected, menu } = fixture();
-        const calls = must(menu.sets.find((set) => set.pathTemplate.includes("calls")), "calls");
+        const calls = must(
+            menu.sets.find((set) => set.pathTemplate.includes("calls")),
+            "calls",
+        );
         const resolution = resolveProfileSubmission(
             submission([
                 { op: "use", setId: calls.id, group: annotation("calls") },
@@ -307,8 +318,14 @@ describe("no operation sequence produces an unaccounted or doubly-claimed file",
 
     it("refuses a split whose value mapping overlaps, rather than picking a winner", () => {
         const { detected, menu } = fixture();
-        const calls = must(menu.sets.find((set) => set.pathTemplate.includes("calls")), "calls");
-        const slot = must(calls.slots.find((candidate) => candidate.tokenClass === "word"), "slot");
+        const calls = must(
+            menu.sets.find((set) => set.pathTemplate.includes("calls")),
+            "calls",
+        );
+        const slot = must(
+            calls.slots.find((candidate) => candidate.tokenClass === "word"),
+            "slot",
+        );
         const resolution = resolveProfileSubmission(
             submission([
                 {
@@ -352,7 +369,7 @@ describe("no operation sequence produces an unaccounted or doubly-claimed file",
 
         expect(resolution.errors.some((error) => error.includes("past the menu's listed bound"))).toBe(true);
         expect(resolution.groups.some((group) => group.name === "unlisted")).toBe(false);
-        expect(resolution.unclaimed).toEqual(expect.arrayContaining(unlisted.members.map((member) => member.path)));
+        for (const path of unlisted.members.map((member) => member.path)) expect(resolution.unclaimed).toContain(path);
         expectPartitions(detected, resolution, 0);
     });
 

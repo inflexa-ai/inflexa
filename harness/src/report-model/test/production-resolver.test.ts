@@ -595,12 +595,8 @@ describe("production resolver, the prepare batch of fall-throughs", () => {
         // One arm call covers the whole batch, and the batch holds each fall-through request.
         expect(batches.length).toBe(1);
         expect(batches[0]).toHaveLength(2);
-        expect(batches[0]).toEqual(
-            expect.arrayContaining([
-                { path: "fall-a.csv", hash: hashA, format: "csv" },
-                { path: "fall-b.csv", hash: hashB, format: "csv" },
-            ]),
-        );
+        expect(batches[0]).toContainEqual({ path: "fall-a.csv", hash: hashA, format: "csv" });
+        expect(batches[0]).toContainEqual({ path: "fall-b.csv", hash: hashB, format: "csv" });
 
         // The later resolve reads the arm value from the cache, and it opens no new batch.
         const outA = await resolver.resolve(refA, snapshot);

@@ -61,7 +61,7 @@ import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS } from "../view
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { captureOf } from "@inflexa-ai/harness/lib/test/captures.js";
 import { optionArray, optionNumber, optionRecord, optionRecords, optionRecordsOrEmpty } from "../option-lens.js";
-import { jsonParse } from "../../lib/json.js";
+import { jsonParse, parseJsonOrUndefined } from "../../lib/json.js";
 import { z } from "zod";
 import { compilePageScript, runPageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 
@@ -334,7 +334,10 @@ describe("the table data assets", () => {
      * The asset is browser source text, thus a read of the source string would test the serialization and
      * not the value that a reader takes. `decode` runs the page decoder over the payload as well.
      */
-    function registeredPayload(asset: { bytes: string }, decode = false): {
+    function registeredPayload(
+        asset: { bytes: string },
+        decode = false,
+    ): {
         columns: string[];
         rows: unknown[];
         dict: Record<string, string[]>;
@@ -345,7 +348,9 @@ describe("the table data assets", () => {
         if (decode) {
             runPageScript(["window"], TABLE_DATA_DECODER, window);
         }
-        return stagedTable<{ columns: string[]; rows: unknown[]; dict: Record<string, string[]>; display?: { label: string; kind: string; bound?: number }[] }>(window)["tbl"];
+        return stagedTable<{ columns: string[]; rows: unknown[]; dict: Record<string, string[]>; display?: { label: string; kind: string; bound?: number }[] }>(
+            window,
+        )["tbl"];
     }
 
     it("holds one empty grid mount, and the payload holds every row", async () => {
@@ -679,8 +684,12 @@ describe("the lineage stamp and the popover control", () => {
     /** The keys that one block stamped, read back from the container of the block. */
     function keysOf(html: string, blockId: string): unknown[] {
         const value = load(html)(`[${LINEAGE_BLOCK_ATTRIBUTE}="${blockId}"]`).attr(LINEAGE_KEYS_ATTRIBUTE);
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        return value === undefined ? [] : jsonParse(value, z.array(z.unknown()));
+        return value === undefined
+            ? []
+            : jsonParse(
+                  value,
+                  z.custom<unknown[]>((v) => Array.isArray(v)),
+              );
     }
 
     /** The place that each control of one block names, in document order. */
@@ -1915,7 +1924,7 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(page("li#ref-3").text()).toContain("pvalue");
         expect(page("li#ref-4").text()).toContain("hr");
         // The option prints each statistic in the number format of its column.
-        const option = optionRecord(jsonParse(page(".report-chart script[type='application/json']").text(), z.unknown()));
+        const option = optionRecord(parseJsonOrUndefined(page(".report-chart script[type='application/json']").text()));
         const graphic = optionRecordsOrEmpty(option.graphic)[0];
         expect(optionRecord(graphic.style).text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
     });
@@ -2883,7 +2892,7 @@ describe("the chart bootstrap binds the toolbox", () => {
     }
 
     it("attaches the zoom handler of the toolbox to the chart", () => {
-        expect(bootToolbox().chartEvents).toEqual(expect.arrayContaining(["datazoom", "restore"]));
+        for (const expected of ["datazoom", "restore"]) expect(bootToolbox().chartEvents).toContain(expected);
     });
 
     it("binds each handler name of the toolbox to its page function before the chart reads the option", () => {
@@ -3315,7 +3324,7 @@ describe("the chart exports", () => {
     it("puts the toolbox of the chart type into the page option, with each handler as the name of a page function", async () => {
         const page = chartPage(bars, barRows);
         const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
-        const option = optionRecord(jsonParse(load(rendered.html)("script[type='application/json']").text(), z.unknown()));
+        const option = optionRecord(parseJsonOrUndefined(load(rendered.html)("script[type='application/json']").text()));
         expect(option.toolbox).toEqual(chartToolbox("bar"));
         // Each export removes the toolbox, thus a file never shows it.
         for (const asset of rendered.dataAssets.filter((entry) => entry.name.endsWith(".svg"))) expect(asset.bytes).not.toContain("Download");

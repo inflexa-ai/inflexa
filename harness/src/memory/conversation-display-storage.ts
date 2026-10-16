@@ -88,7 +88,10 @@ const DisplayEnvelopeHeaderSchema = z.object({
     kind: z.literal("ai-sdk-ui-messages"),
     aiSdkMajor: z.literal(7),
     schemaVersion: z.literal(SUPPORTED_DISPLAY_SCHEMA_VERSION),
-    messages: z.array(z.unknown()).min(1),
+    // The envelope at this boundary is the in-memory UIMessage form, whose members may carry
+    // `undefined` (`metadata: undefined` on a turn that was not interrupted). The message shape
+    // itself is `validateUIMessages`' subject, not this header's.
+    messages: z.array(z.custom<unknown>(() => true)).min(1),
 });
 
 /**

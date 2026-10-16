@@ -84,7 +84,7 @@ function capturingFetch(respond: (text: string, model: string) => Response): { f
     const requests: CapturedRequest[] = [];
     const fetch: FetchLike = (_input, init) => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = init?.body ? jsonParse(requestBodyText(init.body), z.record(z.string(), z.unknown())) : {};
+        const body = init?.body ? jsonParse(requestBodyText(init.body), z.record(z.string(), z.json())) : {};
         // `Headers` folds each name to lowercase, thus an assertion does not
         // depend on the spelling that the SDK forwards.
         const headers = Object.fromEntries(new Headers(init?.headers));

@@ -171,7 +171,7 @@ async function listProviders(selected: string[]): Promise<string[]> {
 async function readManifest(provider: string, path: string): Promise<FixtureManifest | null> {
     let raw: unknown;
     try {
-        raw = jsonParse(await readFile(path, "utf8"), z.unknown());
+        raw = jsonParse(await readFile(path, "utf8"), z.json());
     } catch (error) {
         // A missing or malformed file is a normal condition of an edit in progress. Report the cause and
         // continue with the other providers, because a stack trace here hides the drift report.
@@ -271,7 +271,7 @@ async function politeFetch(url: string, entry: FixtureManifestEntry): Promise<Re
 /** Parse JSON text. A body that is not JSON stays a string, thus the diff reports it instead of throwing. */
 function safeJson(text: string): unknown {
     try {
-        return jsonParse(text, z.unknown());
+        return jsonParse(text, z.json());
     } catch {
         return text;
     }

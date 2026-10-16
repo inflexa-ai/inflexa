@@ -11,7 +11,7 @@ import { runToTerminal } from "../run-to-terminal.js";
 import type { AgentDefinition, RunStep } from "../types.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { toolResultParts } from "../../lib/test/messages.js";
-import { jsonParse } from "../../lib/json.js";
+import { parseJsonOrUndefined } from "../../lib/json.js";
 
 const GO = [{ role: "user" as const, content: "go" }];
 const NUDGE = "Call submit now.";
@@ -354,7 +354,7 @@ describe("runToTerminal", () => {
         );
         expect(refused.output.type).toBe("error-text");
         if (refused.output.type !== "error-text") throw new Error("expected an error-text output");
-        expect(jsonParse(refused.output.value, z.unknown())).toEqual({
+        expect(parseJsonOrUndefined(refused.output.value)).toEqual({
             error: "The tool search is not available for this request, thus it did not run. The tools that can run now: submit.",
             retryable: false,
         });

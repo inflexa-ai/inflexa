@@ -119,7 +119,7 @@ describe("the regional association plot", () => {
         const option = derive();
         const points = seriesOf(option)[0];
         // The composition carries the r² as the third member of each item, thus the bins read it.
-        expect(pairs(points).map((pair) => pair[2])).toEqual(expect.arrayContaining([0.93, 1, 0.7, 0.5, 0.3, 0.05]));
+        for (const expected of [0.93, 1, 0.7, 0.5, 0.3, 0.05]) expect(pairs(points).map((pair) => pair[2])).toContain(expected);
         expect(pairs(points).length).toBe(6);
         expect(LD_BINS.map((bin) => [bin.low, bin.high, bin.color])).toEqual([
             [0, 0.2, "#000080"],

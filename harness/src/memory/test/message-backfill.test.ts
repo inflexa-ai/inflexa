@@ -3,8 +3,7 @@ import { Client, type QueryResult } from "pg";
 
 import { envelopeMessage, legacyAnthropicToModelMessage, parseStoredMessageEnvelope } from "../ai-sdk-message-storage.js";
 import { backfillAiSdkMessageEnvelopes } from "../message-backfill.js";
-import { jsonParse } from "../../lib/json.js";
-import { z } from "zod";
+import { parseJsonOrUndefined } from "../../lib/json.js";
 
 type LegacyRow = {
     readonly thread_id: string;
@@ -156,7 +155,7 @@ describe("backfillAiSdkMessageEnvelopes", () => {
         expect(fake.updates).toHaveLength(1);
         const envelope = fake.updates[0][0];
         if (typeof envelope !== "string") throw new Error("the backfill passes the envelope text as the first query value");
-        expect(jsonParse(envelope, z.unknown())).toEqual(
+        expect(parseJsonOrUndefined(envelope)).toEqual(
             envelopeMessage({ role: "user", content: [{ type: "text", text: "hello", providerOptions: undefined }] }),
         );
 

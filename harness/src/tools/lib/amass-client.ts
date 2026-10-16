@@ -82,7 +82,7 @@ export const AmassErrorEnvelopeSchema = z.object({
 function envelopeOf(body: string): { code: string | null; message: string } {
     let parsed: unknown;
     try {
-        parsed = jsonParse(body, z.unknown());
+        parsed = jsonParse(body, z.json());
     } catch {
         return { code: null, message: body || "no message" };
     }

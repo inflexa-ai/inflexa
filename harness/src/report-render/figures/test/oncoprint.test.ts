@@ -128,7 +128,7 @@ describe("the oncoprint figure", () => {
 
     it("orders the genes and the samples by their order columns, the first gene at the top", () => {
         const option = derive();
-        expect(axesOf(option, "yAxis")[0]).toEqual(expect.objectContaining({ type: "category", inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] }));
+        expect(axesOf(option, "yAxis")[0]).toMatchObject({ type: "category", inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] });
         expect(axesOf(option, "xAxis")[0].data).toEqual(["TCGA-AB-2945", "TCGA-AB-2965", "TCGA-AB-2802", "TCGA-AB-2803"]);
     });
 
@@ -145,7 +145,7 @@ describe("the oncoprint figure", () => {
         // Each sample sums the classes of its altered genes, and the unaltered sample counts zero.
         const totals = [0, 1, 2, 3].map((place) => bars.reduce((sum, bar) => sum + (optionNullableNumbers(bar.data)[place] ?? 0), 0));
         expect(totals).toEqual([3, 3, 2, 0]);
-        expect(axesOf(option, "xAxis")[1]).toEqual(expect.objectContaining({ gridIndex: 1, data: axesOf(option, "xAxis")[0].data }));
+        expect(axesOf(option, "xAxis")[1]).toMatchObject({ gridIndex: 1, data: axesOf(option, "xAxis")[0].data });
     });
 
     it("draws the share of altered samples of each gene at the right, with its percent text over every sample", () => {
@@ -156,7 +156,7 @@ describe("the oncoprint figure", () => {
         const data = optionRecords(must(share, "the share series").data);
         expect(data.map((item) => optionNumber(item.value))).toEqual([0.5, 0.75, 0.75]);
         expect(data.map((item) => optionString(optionRecord(item.label).formatter))).toEqual(["50%", "75%", "75%"]);
-        expect(axesOf(option, "yAxis")[2]).toEqual(expect.objectContaining({ gridIndex: 2, inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] }));
+        expect(axesOf(option, "yAxis")[2]).toMatchObject({ gridIndex: 2, inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] });
     });
 
     it("hides the sample names, and the axis title states the sample count", () => {
@@ -234,7 +234,7 @@ describe("the oncoprint figure", () => {
             ]);
             const grounds = strips.map((entry) => optionRecord(entry.itemPayload).ground);
             expect(new Set(grounds).size).toBe(3);
-            expect(axesOf(option, "yAxis")[3]).toEqual(expect.objectContaining({ gridIndex: 3, data: ["subtype"] }));
+            expect(axesOf(option, "yAxis")[3]).toMatchObject({ gridIndex: 3, data: ["subtype"] });
             // The sample title moves under the strips.
             expect(axesOf(option, "xAxis")[0].name).toBeUndefined();
             expect(axesOf(option, "xAxis")[3].name).toBe("sample (n = 4)");

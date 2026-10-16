@@ -4,7 +4,7 @@ import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { createSearchRegulatoryApprovalsTool } from "../search-regulatory-approvals.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { jsonParse } from "../../../lib/json.js";
+import { parseJsonOrUndefined } from "../../../lib/json.js";
 import { z } from "zod";
 import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
@@ -39,7 +39,7 @@ function stubFetch(routes: Array<[string, (request: SeenRequest) => Response]>):
             url: new URL(urlText(input)),
             method: init?.method ?? "GET",
             authorization: new Headers(init?.headers).get("authorization"),
-            body: typeof init?.body === "string" ? jsonParse(init.body, z.unknown()) : undefined,
+            body: typeof init?.body === "string" ? parseJsonOrUndefined(init.body) : undefined,
         };
         seen.push(request);
         for (const [needle, make] of routes) {

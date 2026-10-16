@@ -162,7 +162,7 @@ export function stubRunSession(members: Partial<RunSession> = {}): RunSession {
 /** The query argument the harness passes a pool: the SQL text and its parameters. */
 export type PoolQueryArg = { text: string; values?: unknown[] };
 
-export const poolQuerySchema = z.object({ text: z.string(), values: z.array(z.unknown()).optional() }).loose();
+export const poolQuerySchema = z.object({ text: z.string(), values: z.custom<unknown[]>((v) => Array.isArray(v)).optional() }).loose();
 
 /** The slice of a query result the harness reads: the row payload and the affected count. */
 export type PoolResult = { rows?: unknown[]; rowCount?: number | null };

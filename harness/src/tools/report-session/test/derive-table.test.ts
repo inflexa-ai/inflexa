@@ -52,8 +52,7 @@ import {
     type DeriveTableResult,
 } from "../derive-table.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { jsonParse } from "../../../lib/json.js";
-import { z } from "zod";
+import { parseJsonOrUndefined } from "../../../lib/json.js";
 
 /** Each root that a test made. The cleanup removes them after the suite. */
 const roots: string[] = [];
@@ -414,7 +413,7 @@ describe("the derived table", () => {
         // The working directory is the write mount, thus the script writes beside where it stands.
         expect(body.cwd).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived`);
         // Each declared input rides as the path that the container reads, with the hash of the membership.
-        expect(jsonParse(must(must(body, "body").env, 'must(body, "body").env')[DERIVE_INPUT_ENV], z.unknown())).toEqual([
+        expect(parseJsonOrUndefined(must(must(body, "body").env, 'must(body, "body").env')[DERIVE_INPUT_ENV])).toEqual([
             { path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH },
         ]);
         // The output path rides too, thus the script names no directory of its own.
@@ -771,7 +770,7 @@ describe("buildDerivationExec", () => {
         expect(body.command).toEqual(["python3", "-c", "print(1)"]);
         expect(body.cwd).toBe("/an-1/report-sessions/t1/derived");
         expect(body.timeoutSeconds).toBe(300);
-        expect(jsonParse(must(must(body, "body").env, 'must(body, "body").env')[DERIVE_INPUT_ENV], z.unknown())).toEqual([
+        expect(parseJsonOrUndefined(must(must(body, "body").env, 'must(body, "body").env')[DERIVE_INPUT_ENV])).toEqual([
             { path: "/an-1/data/x.csv", hash: "sha256:h1" },
         ]);
         expect(must(must(body, "body").env, 'must(body, "body").env')[DERIVE_OUTPUT_ENV]).toBe("/an-1/report-sessions/t1/derived/y.csv");

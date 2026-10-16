@@ -185,9 +185,7 @@ describe("the two draws of a hybrid SVG", () => {
         ]);
         expect(series[0].markLine).toEqual({ data: [{ yAxis: 7.3 }] });
         // A large layer draws each item alike, thus the vector draw turns the large path off and the anchors draw no symbol.
-        expect(series[1]).toEqual(
-            expect.objectContaining({ large: false, data: [expect.objectContaining({ value: [500, 1] }), expect.objectContaining({ value: [900, 4] })] }),
-        );
+        expect(series[1]).toMatchObject({ large: false, data: [{ value: [500, 1] }, { value: [900, 4] }] });
         // A name series is no point layer, thus the vector draw keeps it as it is.
         expect(optionArray(input.series)[2]).toBe(optionArray(vector.series)[2]);
         expect(vector.graphic).toBe(input.graphic);
@@ -457,9 +455,7 @@ describe("the page build of a hybrid SVG", () => {
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         expect(text).toMatch(/<text[^>]*>rs2<\/text>/);
         // The raster draws at 300 DPI in the print theme, and the crop reads the grid rectangle at that ratio.
-        expect(raster.init).toEqual(
-            expect.objectContaining({ theme: CHART_PRINT_THEME_NAME, renderer: "canvas", width: 336, height: 253, devicePixelRatio: 300 / 96 }),
-        );
+        expect(raster.init).toMatchObject({ theme: CHART_PRINT_THEME_NAME, renderer: "canvas", width: 336, height: 253, devicePixelRatio: 300 / 96 });
         if (raster.ratio === undefined) throw new Error("expected a raster ratio");
         expect(raster.ratio).toBe(300 / 96);
         const [sx, sy, sw, sh] = drawn[0];

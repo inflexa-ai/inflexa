@@ -13,10 +13,9 @@ import { describe, expect, it } from "bun:test";
 
 import type { ReportSnapshot } from "../reference-resolver.js";
 import { stampReferenceHashes, stripReferenceHashes } from "../reference-stamp.js";
-import { jsonParse } from "../../lib/json.js";
+import { parseJsonOrUndefined } from "../../lib/json.js";
 import { maybeRecord, typedMember } from "../../lib/shape.js";
 import { must } from "../../lib/test/guards.js";
-import { z } from "zod";
 
 const OUTPUT_PATH = "runs/run-1/step-a/output/de.csv";
 const OUTPUT_HASH = `sha256:${"a".repeat(64)}`;
@@ -223,9 +222,8 @@ describe("the faithful copy", () => {
     it("copies an own key that names the prototype, and it keeps the copy a plain object", () => {
         // `JSON.parse` makes an own `__proto__` key, and a stored payload arrives through it. An object
         // literal cannot express the same key, because the literal sets the prototype.
-        const payload: unknown = jsonParse(
+        const payload: unknown = parseJsonOrUndefined(
             `{"kind":"table","id":"table-1","__proto__":{"note":"an own key"},"binding":{"kind":"artifact-table","path":"${OUTPUT_PATH}"}}`,
-            z.unknown(),
         );
 
         const stamped = stampReferenceHashes(payload, snapshot)._unsafeUnwrap();

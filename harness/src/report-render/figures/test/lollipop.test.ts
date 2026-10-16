@@ -10,15 +10,7 @@ import { deriveChartOption, type ChartInputs, type ChartRow, type EchartOption }
 import { STEM_RENDERER } from "../../chart-renderers.js";
 import { firstFreeLanes } from "../common.js";
 import { ALTERATION_CLASS_COLORS } from "../oncoprint.js";
-import {
-    optionMember,
-    optionNumber,
-    optionNumbers,
-    optionRecord,
-    optionRecordPairs,
-    optionRecords,
-    optionString,
-} from "../../option-lens.js";
+import { optionMember, optionNumber, optionNumbers, optionRecord, optionRecordPairs, optionRecords, optionString } from "../../option-lens.js";
 import { must } from "../../../lib/test/guards.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -109,27 +101,27 @@ describe("the lollipop figure", () => {
 
     it("starts the count axis at zero with whole counts", () => {
         const counts = axisList(derive(), "yAxis")[0];
-        expect(counts).toEqual(expect.objectContaining({ type: "value", min: 0, minInterval: 1, name: "Mutations" }));
+        expect(counts).toMatchObject({ type: "value", min: 0, minInterval: 1, name: "Mutations" });
     });
 
     it("spans the x axis from zero to the length column of the track", () => {
         for (const axis of axisList(derive(), "xAxis")) {
-            expect(axis).toEqual(expect.objectContaining({ type: "value", min: 0, max: 912 }));
+            expect(axis).toMatchObject({ type: "value", min: 0, max: 912 });
         }
     });
 
     it("spans the x axis to the largest end or position where the track names no length", () => {
         const { length: _length, ...noLength } = TRACK;
         const option = derive(lollipop(ENCODING, { track: noLength }));
-        expect(axisList(option, "xAxis")[0]).toEqual(expect.objectContaining({ min: 0, max: 912 }));
+        expect(axisList(option, "xAxis")[0]).toMatchObject({ min: 0, max: 912 });
         const bare = derive(lollipop(ENCODING, {}), {});
-        expect(axisList(bare, "xAxis")[0]).toEqual(expect.objectContaining({ min: 0, max: 882 }));
+        expect(axisList(bare, "xAxis")[0]).toMatchObject({ min: 0, max: 882 });
     });
 
     it("spans the x axis past the length column to a position that passes it", () => {
         const isoform = { track: { rows: [{ start: 100, end: 400, name: "PWWP", protein_length: 600 }] } };
         for (const axis of axisList(derive(lollipop(), isoform), "xAxis")) {
-            expect(axis).toEqual(expect.objectContaining({ min: 0, max: 882 }));
+            expect(axis).toMatchObject({ min: 0, max: 882 });
         }
     });
 
@@ -154,7 +146,7 @@ describe("the lollipop figure", () => {
         // The band axis carries the position title, and the stem axis above it carries no tick label.
         const [stemAxis, bandAxis] = axisList(option, "xAxis");
         expect(stemAxis.axisLabel).toEqual(expect.objectContaining({ show: false }));
-        expect(bandAxis).toEqual(expect.objectContaining({ gridIndex: 1, name: "Amino-acid position" }));
+        expect(bandAxis).toMatchObject({ gridIndex: 1, name: "Amino-acid position" });
     });
 
     it("puts each span in the lowest lane whose last span ends before it starts, in the order of the spans", () => {

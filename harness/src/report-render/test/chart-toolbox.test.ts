@@ -129,10 +129,11 @@ describe("the toolbox of a page chart", () => {
     it("gives each chart the data view and the download control, with the download control last", () => {
         const toolbox = chartToolbox("bar");
         expect(Object.keys(features(toolbox))).toEqual(["dataView", "myExport"]);
-        expect(features(toolbox).myExport).toEqual(expect.objectContaining({ show: true, onclick: EXPORT_MENU_FUNCTION }));
+        expect(features(toolbox).myExport).toMatchObject({ show: true, onclick: EXPORT_MENU_FUNCTION });
         expect(optionText(features(toolbox).myExport.icon).startsWith("path://")).toBe(true);
-        expect(features(toolbox).dataView).toEqual(expect.objectContaining({ readOnly: true, optionToContent: DATA_VIEW_FUNCTION }));
-        expect(toolbox).toEqual(expect.objectContaining({ show: true, right: expect.any(Number), top: 0 }));
+        expect(features(toolbox).dataView).toMatchObject({ readOnly: true, optionToContent: DATA_VIEW_FUNCTION });
+        expect(toolbox).toMatchObject({ show: true, top: 0 });
+        expect(toolbox.right).toBeNumber();
     });
 
     it("adds the zoom and the restore controls to each dense cartesian chart type alone", () => {

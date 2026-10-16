@@ -19,7 +19,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { jsonParse } from "../../../lib/json.js";
+import { parseJsonOrUndefined } from "../../../lib/json.js";
 import { z } from "zod";
 
 export type { FixtureManifest, FixtureManifestEntry } from "./manifest.js";
@@ -66,8 +66,7 @@ export function fixtureCase<S extends z.ZodType>(testCase: FixtureCase<S>): Eras
 
 /** Read one fixture file of a provider directory and parse it as JSON. */
 export function readFixture(provider: string, file: string): unknown {
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return jsonParse(readFileSync(join(FIXTURES_DIR, provider, file), "utf8"), z.unknown());
+    return parseJsonOrUndefined(readFileSync(join(FIXTURES_DIR, provider, file), "utf8"));
 }
 
 /** Register the accept, map, and reject assertions for each row of a fixture table. */

@@ -161,7 +161,7 @@ describe("the named renderers", () => {
         const element = intervalRenderer({}, stubApi([0, 10, 8, 12, 1, -0.2, 1]));
         const children = childrenOf(element);
         expect(children.map((child) => child.type)).toEqual(["line", "circle"]);
-        expect(shapedOf(children[1]).shape).toEqual(expect.objectContaining({ cx: -0.2 * BAND_X, cy: 10 }));
+        expect(shapedOf(children[1]).shape).toMatchObject({ cx: -0.2 * BAND_X, cy: 10 });
     });
 
     it("draws an outline as one closed polygon, symmetric about its center", () => {
@@ -176,7 +176,7 @@ describe("the named renderers", () => {
             expect(right[1]).toBe(left[1]);
             expect(right[0] - center).toBeCloseTo(center - left[0], 10);
         }
-        expect(polygon.style).toEqual(expect.objectContaining({ fill: SERIES_COLOR }));
+        expect(polygon.style).toMatchObject({ fill: SERIES_COLOR });
     });
 
     it("draws a cell with no alteration as the gray ground alone, one gap inside its band", () => {
@@ -207,7 +207,7 @@ describe("the named renderers", () => {
         expect(children.map((child) => child.type)).toEqual(["line", "circle"]);
         expect(shapedOf(children[0]).shape).toEqual({ x1: 882, y1: 0, x2: 882, y2: 27 });
         expect(shapedOf(children[1]).shape).toEqual({ cx: 882, cy: 27, r: STEM_HEAD_RADIUS_PX });
-        expect(shapedOf(children[1]).style).toEqual(expect.objectContaining({ fill: SERIES_COLOR }));
+        expect(shapedOf(children[1]).style).toMatchObject({ fill: SERIES_COLOR });
     });
 
     it("gives the same elements on the page as on the server, for every item", () => {

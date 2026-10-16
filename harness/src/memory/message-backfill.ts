@@ -13,7 +13,7 @@ const LegacyRowSchema = z.object({
     thread_id: z.string(),
     seq: z.string(),
     role: z.string(),
-    content_jsonb: z.union([z.string(), z.array(z.record(z.string(), z.unknown()))]),
+    content_jsonb: z.union([z.string(), z.array(z.record(z.string(), z.json()))]),
 });
 
 type LegacyRow = z.infer<typeof LegacyRowSchema>;

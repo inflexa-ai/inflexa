@@ -223,7 +223,14 @@ describe("data-profile state transitions", () => {
         const cleared = (await clearDataProfile(pool, "a-clear-done"))._unsafeUnwrap();
         expect(cleared).toBe(true);
 
-        const raw = await pool.query({
+        const raw = await pool.query<{
+            data_profile_status: string | null;
+            data_profile_error: string | null;
+            data_profile_started_at: string | null;
+            data_profile_completed_at: string | null;
+            data_profile_result: unknown;
+            seed_input_file_ids: string[] | null;
+        }>({
             text: `SELECT data_profile_status, data_profile_error, data_profile_started_at,
                    data_profile_completed_at, data_profile_result, seed_input_file_ids
             FROM cortex_analysis_state WHERE analysis_id = $1`,

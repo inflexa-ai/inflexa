@@ -191,7 +191,7 @@ describe("generatePlan loop-driving tool", () => {
         // to the planner into an unrelated failure in a test about blocker outcomes.
         expect(provider.sessions[0].provenance.agentId).toBe("planner");
         expect(provider.sessions[0].provenance.callPath).toEqual(["conversation-agent", "planner"]);
-        expect(Object.keys(provider.calls[0].tools)).toEqual(expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker"]));
+        for (const expected of ["submit_plan", "request_clarification", "report_blocker"]) expect(Object.keys(provider.calls[0].tools)).toContain(expected);
     });
 
     // The planner has no sandbox, so reference discovery is only attachable because it
@@ -227,9 +227,10 @@ describe("generatePlan loop-driving tool", () => {
             )
         )._unsafeUnwrap();
 
-        expect(Object.keys(provider.calls[0].tools)).toEqual(
-            expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker", "list_available_refs"]),
-        );
+        const plannedTools = Object.keys(provider.calls[0].tools);
+        for (const expected of ["submit_plan", "request_clarification", "report_blocker", "list_available_refs"]) {
+            expect(plannedTools).toContain(expected);
+        }
         // The census still rides in the seed. The tool is for the narrow second
         // look, thus the planner never has to call one to learn what is staged.
         expect(transcript(provider)).toContain("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
@@ -312,7 +313,13 @@ describe("generatePlan loop-driving tool", () => {
             );
 
             expect(Object.keys(optionRecord(schema.properties))).not.toContain("dataContext");
-            expect(Object.keys(optionRecord(schema.properties)).sort()).toEqual(["analystNotes", "parentPlanId", "priorRuns", "researchQuestion", "userConstraints"]);
+            expect(Object.keys(optionRecord(schema.properties)).sort()).toEqual([
+                "analystNotes",
+                "parentPlanId",
+                "priorRuns",
+                "researchQuestion",
+                "userConstraints",
+            ]);
             expect(schema.required).toEqual(["researchQuestion"]);
         });
 

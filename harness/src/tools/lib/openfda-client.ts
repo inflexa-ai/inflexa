@@ -54,9 +54,9 @@ const FaersMetaResponseSchema = z.object({
 
 /** openFDA drug-label metadata block (`openfda`) — all fields free-form JSON. */
 const OpenFdaLabelMetaSchema = z.object({
-    application_number: z.unknown().optional(),
-    brand_name: z.unknown().optional(),
-    generic_name: z.unknown().optional(),
+    application_number: z.json().optional(),
+    brand_name: z.json().optional(),
+    generic_name: z.json().optional(),
 });
 type OpenFdaLabelMeta = z.infer<typeof OpenFdaLabelMetaSchema>;
 
@@ -68,12 +68,12 @@ type OpenFdaLabelMeta = z.infer<typeof OpenFdaLabelMetaSchema>;
  * provider types both as an array of string.
  */
 const OpenFdaLabelSchema = z.object({
-    set_id: z.unknown().optional(),
+    set_id: z.json().optional(),
     openfda: OpenFdaLabelMetaSchema.optional(),
-    effective_time: z.unknown().optional(),
-    boxed_warning: z.unknown().optional(),
-    warnings_and_cautions: z.unknown().optional(),
-    warnings: z.unknown().optional(),
+    effective_time: z.json().optional(),
+    boxed_warning: z.json().optional(),
+    warnings_and_cautions: z.json().optional(),
+    warnings: z.json().optional(),
     spl_medguide: z.array(z.string()).optional(),
     patient_medication_information: z.array(z.string()).optional(),
 });

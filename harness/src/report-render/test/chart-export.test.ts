@@ -588,9 +588,9 @@ describe("the export option at a column width", () => {
         };
         const maps = optionRecords(exportOption(option, CHART_PRINT_TEXT_PX, 336, 253).visualMap);
         // A title wider than the scale band wraps at its spaces, and the upper end stays the last line.
-        expect(maps[0]).toEqual(expect.objectContaining({ calculable: false, text: ["Adjusted\np\n0.13", "1e-4"] }));
+        expect(maps[0]).toMatchObject({ calculable: false, text: ["Adjusted\np\n0.13", "1e-4"] });
         // The scale starts at the top of the plot and stays short, thus its lower end never meets the x labels.
-        expect(maps[0]).toEqual(expect.objectContaining({ top: "8%", itemHeight: 8 * CHART_PRINT_TEXT_PX }));
+        expect(maps[0]).toMatchObject({ top: "8%", itemHeight: 8 * CHART_PRINT_TEXT_PX });
         expect(maps[1]).toEqual(option.visualMap[1]);
     });
 

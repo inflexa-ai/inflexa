@@ -8,6 +8,7 @@
 /** Whether the value is a non-null object, read as the string-keyed record the XML/JSON navigations walk. */
 function isRecord(value: unknown): value is Record<string, unknown> {
     // SAFETY: the predicate claims exactly the set the `typeof`/`null` tests accept, and it must stay that way.
+    // oxlint-disable-next-line @inflexa-ai/no-typeof-object -- the record narrow is this module's specified boundary; every other site routes through it.
     return typeof value === "object" && value !== null;
 }
 

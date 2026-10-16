@@ -46,7 +46,7 @@ function capturingFetch(respond: () => Response): { readonly fetch: FetchLike; r
     const bodies: ResponsesRequestBody[] = [];
     const fetch: FetchLike = (_input, init) => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        bodies.push(init?.body === undefined || init.body === null ? {} : jsonParse(requestBodyText(init.body), z.record(z.string(), z.unknown())));
+        bodies.push(init?.body === undefined || init.body === null ? {} : jsonParse(requestBodyText(init.body), z.record(z.string(), z.json())));
         return Promise.resolve(respond());
     };
     return { fetch, bodies };

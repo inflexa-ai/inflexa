@@ -123,7 +123,7 @@ export function readImagePackagesFile(recordPath: string): Result<ImagePackages,
     }
     let parsed: unknown;
     try {
-        parsed = jsonParse(raw, z.unknown());
+        parsed = jsonParse(raw, z.json());
     } catch (cause) {
         return err({ type: "record_invalid", recordPath, cause });
     }

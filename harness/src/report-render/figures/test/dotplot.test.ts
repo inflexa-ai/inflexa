@@ -50,21 +50,21 @@ describe("the marker dot plot", () => {
     )._unsafeUnwrap();
 
     it("lists the clusters top-down and the genes along x", () => {
-        expect(asObj(option.yAxis)).toEqual(expect.objectContaining({ type: "category", inverse: true, data: ["CD4 T", "CD14 Monocytes", "B"] }));
+        expect(asObj(option.yAxis)).toMatchObject({ type: "category", inverse: true, data: ["CD4 T", "CD14 Monocytes", "B"] });
         expect(asObj(option.yAxis).name).toBeUndefined();
-        expect(asObj(option.xAxis)).toEqual(expect.objectContaining({ type: "category", data: ["IL7R", "LYZ", "MS4A1"] }));
+        expect(asObj(option.xAxis)).toMatchObject({ type: "category", data: ["IL7R", "LYZ", "MS4A1"] });
         // Each dot names its cluster by its place on the y axis.
         expect(optionUnknownMatrix(optionRecords(option.series)[0].data)[1]).toEqual(["IL7R", 1, 0.0, 0.11666666666666667]);
     });
 
     it("colors on the sequential ramp and prints the two ends with the number helper", () => {
-        const color = (optionRecords(option.visualMap)).find((map) => map.show !== false);
-        expect(color).toEqual(expect.objectContaining({ dimension: 2, min: 0, max: 1, calculable: false, inRange: { color: [...SEQUENTIAL_RAMP] } }));
+        const color = optionRecords(option.visualMap).find((map) => map.show !== false);
+        expect(color).toMatchObject({ dimension: 2, min: 0, max: 1, calculable: false, inRange: { color: [...SEQUENTIAL_RAMP] } });
         expect(color?.text).toEqual(["Scaled mean expression\n1", "0"]);
     });
 
     it("keys the size with three reference circles and their values", () => {
-        const legend = (optionRecords(option.graphic))[0];
+        const legend = optionRecords(option.graphic)[0];
         const children = optionRecords(legend.children);
         expect(asObj(children[0].style).text).toBe("Fraction of cells");
         expect(children.filter((child) => child.type === "circle").length).toBe(3);
@@ -101,12 +101,12 @@ describe("the enrichment dot plot", () => {
             "apical junction assembly\n(GO:0043297)",
             "septate junction assembly\n(GO:0019991)",
         ]);
-        expect(asObj(asObj(option.yAxis).axisLabel)).toEqual(expect.objectContaining({ lineHeight: DOTPLOT_LINE_PX }));
-        expect(asObj(option.xAxis)).toEqual(expect.objectContaining({ type: "value", name: "Gene ratio" }));
+        expect(asObj(asObj(option.yAxis).axisLabel)).toMatchObject({ lineHeight: DOTPLOT_LINE_PX });
+        expect(asObj(option.xAxis)).toMatchObject({ type: "value", name: "Gene ratio" });
     });
 
     it("titles a transformed color with its transform, and prints its ends as plain numbers", () => {
-        const color = (optionRecords(option.visualMap)).find((map) => map.show !== false);
+        const color = optionRecords(option.visualMap).find((map) => map.show !== false);
         expect(asObj(color).text).toEqual(["−log10(adjusted p)\n4.11", "3.96"]);
     });
 

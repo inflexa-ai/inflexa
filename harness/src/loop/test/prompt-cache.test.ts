@@ -506,7 +506,7 @@ describe("runAgent cache-token metrics", () => {
 function cannedOpenAiFetch(seen: Record<string, unknown>[]): typeof fetch {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return fetchDouble((_input, init) => {
-        seen.push(jsonParse(requestBodyText(init?.body), z.record(z.string(), z.unknown())));
+        seen.push(jsonParse(requestBodyText(init?.body), z.record(z.string(), z.json())));
         const base = { id: "chatcmpl-1", object: "chat.completion.chunk", created: 1_700_000_000, model: "local-model" };
         const body = [
             `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "done" }, finish_reason: null }] })}\n\n`,
@@ -588,7 +588,7 @@ describe("prompt caching against an openai-compatible provider", () => {
 function cannedBedrockFetch(seen: Record<string, unknown>[]): typeof fetch {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return fetchDouble((_input, init) => {
-        seen.push(jsonParse(requestBodyText(init?.body), z.record(z.string(), z.unknown())));
+        seen.push(jsonParse(requestBodyText(init?.body), z.record(z.string(), z.json())));
         return Promise.resolve(
             new Response(
                 JSON.stringify({

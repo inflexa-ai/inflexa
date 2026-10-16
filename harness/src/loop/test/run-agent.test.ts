@@ -42,7 +42,7 @@ import type { AgentDefinition, EmitEvent, EmitFn, LoopMessage, RunStep } from ".
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { sleep } from "../../lib/async-utils.js";
 import { jsonClone } from "../../lib/json.js";
-import { jsonParse } from "../../lib/json.js";
+import { parseJsonOrUndefined } from "../../lib/json.js";
 import { optionArray } from "../../report-render/option-lens.js";
 
 // ── Harness helpers ─────────────────────────────────────────────────
@@ -516,7 +516,7 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = toolResultParts(messages[2])[0];
         expect(isErrorResult(result)).toBe(true);
-        expect(jsonParse(textOf(outputValue(result)), z.unknown())).toEqual({
+        expect(parseJsonOrUndefined(textOf(outputValue(result)))).toEqual({
             error: "upstream down",
             retryable: true,
         });
@@ -540,7 +540,7 @@ describe("runAgent — tool-error boundary", () => {
         const result = toolResultParts(messages[2])[0];
         expect(isErrorResult(result)).toBe(true);
         expect(textOf(outputValue(result))).not.toContain("[object Object]");
-        expect(jsonParse(textOf(outputValue(result)), z.unknown())).toEqual({
+        expect(parseJsonOrUndefined(textOf(outputValue(result)))).toEqual({
             error: "sandbox refused the exec",
             retryable: false,
         });
@@ -660,7 +660,7 @@ describe("runAgent — a picture on a tool result", () => {
         // The text part carries the faults, and it holds no bytes.
         const textPart = parts.find((p) => "text" in p);
         if (textPart === undefined) throw new Error("expected a text part");
-        expect(jsonParse(textPart.text, z.unknown())).toEqual({ faults: ["boom"] });
+        expect(parseJsonOrUndefined(textPart.text)).toEqual({ faults: ["boom"] });
         expect(textPart.text).not.toContain("PNGBYTES");
         // The file part carries the picture bytes and the media type.
         const filePart = parts.find((p) => "data" in p);
@@ -1662,7 +1662,8 @@ describe("runAgent — event provenance", () => {
             }),
         );
 
-        expect(events.map((e) => e.type)).toEqual(expect.arrayContaining(["iteration", "tool-started", "tool-finished"]));
+        const eventTypes = events.map((e) => e.type);
+        for (const expected of ["iteration", "tool-started", "tool-finished"] as const) expect(eventTypes).toContain(expected);
         for (const event of events) {
             expect(event.source).toEqual({ agentId: "planner", callPath: ["conversation-agent", "planner"], invocationId: "tu-parent" });
         }
@@ -2522,7 +2523,9 @@ describe("runAgent — compaction", () => {
         expect(finish.reason).toBe("stop");
         // [user, assistant(call), tool, request, summary reply, marker, record, assistant(done)]
         expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "tool", "user", "assistant", "user", "user", "assistant"]);
-        expect(messages.slice(3, 5).map((message) => compactionExchangeOf(message))).toEqual([expect.any(String), expect.any(String)]);
+        const [firstExchange, secondExchange] = messages.slice(3, 5).map((message) => compactionExchangeOf(message));
+        expect(firstExchange).toBeString();
+        expect(secondExchange).toBeString();
         expect(compactionMarkerOf(messages[5])).toMatchObject({ kind: "summary", id: compactionExchangeOf(messages[3]) });
         expect(messages[5].content).toBe(`[Conversation Summary]\n${SUMMARY}`);
         expect(messages[6]).toEqual(RECORD);
@@ -2561,7 +2564,7 @@ describe("runAgent — compaction", () => {
         expect(exchange.toolNames).toEqual(task.toolNames);
         expect(exchange.system).toEqual(task.system);
         expect(JSON.stringify(exchange.messages.slice(0, 3))).toBe(JSON.stringify(messages.slice(0, 3)));
-        expect(exchange.messages.slice(3)).toEqual([expect.objectContaining({ role: "user", content: COMPACT })]);
+        expect(exchange.messages.slice(3)).toMatchObject([{ role: "user", content: COMPACT }]);
     });
 
     it("sends the marker and the records after a summary, and no message of the exchange", async () => {
@@ -2984,7 +2987,7 @@ describe("runAgent — compaction", () => {
             expect(markerAt).toBeGreaterThan(-1);
             expect(messages.indexOf(USER_MESSAGE)).toBeGreaterThan(markerAt);
             expect(messages).not.toContain(TURN[1]);
-            expect(messages.slice(markerAt)).toEqual([messages[markerAt], RECORD, USER_MESSAGE, expect.objectContaining({ role: "assistant" })]);
+            expect(messages.slice(markerAt)).toMatchObject([messages[markerAt], RECORD, USER_MESSAGE, { role: "assistant" }]);
         });
 
         it("gives the sink the exchange, then the marker with its records, then the user message, each as one round", async () => {

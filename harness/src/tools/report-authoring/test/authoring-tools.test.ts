@@ -10,12 +10,14 @@ import { describe, expect, it } from "bun:test";
 
 import type { Scope } from "../../../auth/types.js";
 import { normalizeDetail } from "../../../loop/tool-detail.js";
+import type { AuthoringBlock } from "../../../report-model/authoring-grammar.js";
 import type { DraftDocument } from "../../../report-model/draft.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ToolContext } from "../../define-tool.js";
 import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
+import type { ToolExecutionMode } from "../../define-tool.js";
 import {
     createReportAuthoringTools,
     type ReportAuthoringTools,
@@ -27,8 +29,7 @@ import {
     type StampResult,
 } from "../authoring-tools.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { jsonParse } from "../../../lib/json.js";
-import { z } from "zod";
+import { parseJsonOrUndefined } from "../../../lib/json.js";
 
 /** The authoring tools read and write the draft only, thus a stamp is a no-op stub in these tests. */
 const stampStubs = {
@@ -542,7 +543,7 @@ describe("change_block", () => {
         const tools = createReportAuthoringTools(gateway);
         // The loop validates against `inputSchema` before it runs `execute`, thus the retitle call must
         // pass the schema with the `block` key absent. The parse types the call input.
-        const input = jsonParse('{"targetId":"s1","title":"Results"}', z.record(z.string(), z.unknown()));
+        const input = parseJsonOrUndefined('{"targetId":"s1","title":"Results"}');
         expect(tools.change_block.inputSchema.safeParse(input).success).toBe(true);
         const value = (await tools.change_block.execute(tools.change_block.inputSchema.parse(input), ctxForThread("t1")))._unsafeUnwrap();
 
@@ -761,7 +762,7 @@ describe("the tool surface", () => {
             tools.finish_draft,
         ];
 
-        expect(packaged.map((tool) => tool.executionMode)).toEqual(Array(8).fill("inline"));
+        expect(packaged.map((tool) => tool.executionMode)).toEqual(Array<ToolExecutionMode>(8).fill("inline"));
     });
 });
 
@@ -1050,7 +1051,7 @@ describe("the report observation", () => {
         const events: SessionProvenanceEvent[] = [];
         const { tools } = seeded({ provenance: { emitSessionEvent: (event) => events.push(event) } });
 
-        const section = {
+        const section: AuthoringBlock = {
             kind: "section",
             id: "s2",
             title: "Results",

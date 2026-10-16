@@ -537,7 +537,7 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
 
     it("draws the chromosome names under the plot before a zoom", () => {
         const { under } = textsAfter([]);
-        expect(under).toEqual(expect.arrayContaining(["1", "2", "3"]));
+        for (const expected of ["1", "2", "3"]) expect(under).toContain(expected);
         expect(under.filter((text) => POSITION.test(text))).toEqual([]);
     });
 
@@ -551,7 +551,7 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
     ];
     for (const [description, window] of windows) {
         it(`names chromosome 2 under the plot after a zoom to ${description}`, () => {
-            expect(textsAfter([window]).under).toEqual(expect.arrayContaining([expect.stringMatching(CHROMOSOME_TWO)]));
+            expect(textsAfter([window]).under.some((text) => CHROMOSOME_TWO.test(text))).toBe(true);
         });
     }
 
@@ -565,14 +565,14 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
 
     it("draws the chromosome names again and hides the positions after the undo of the zoom", () => {
         const { under } = textsAfter([{ x: [255e6, 300e6], y: [5, 15] }, "undo"]);
-        expect(under).toEqual(expect.arrayContaining(["1", "2", "3"]));
+        for (const expected of ["1", "2", "3"]) expect(under).toContain(expected);
         expect(under.filter((text) => POSITION.test(text))).toEqual([]);
     });
 
     it("draws the chromosome names after the restore of the toolbox, and prints the positions again at the next zoom", () => {
         const zoom: ZoomWindow = { x: [255e6, 300e6], y: [5, 15] };
         const restored = textsAfter([zoom, "restore"]).under;
-        expect(restored).toEqual(expect.arrayContaining(["1", "2", "3"]));
+        for (const expected of ["1", "2", "3"]) expect(restored).toContain(expected);
         expect(restored.filter((text) => POSITION.test(text))).toEqual([]);
         expect(textsAfter([zoom, "restore", zoom]).under.filter((text) => POSITION.test(text)).length).toBeGreaterThan(0);
     });
@@ -584,6 +584,6 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
         expect(zoomed).not.toContain("5.3");
         expect(zoomed).not.toContain("12.7");
         const full = textsAfter([{ x: [100e6, 600e6], y: [5.3, 12.7] }, "undo"]).left;
-        expect(full).toEqual(expect.arrayContaining(["0", String(asTop(derive()))]));
+        for (const expected of ["0", String(asTop(derive()))]) expect(full).toContain(expected);
     });
 });

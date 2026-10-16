@@ -95,7 +95,7 @@ describe("the continuous color and the size", () => {
         const maps = mapsOf(option);
 
         expect(maps.length).toBe(1);
-        expect(maps[0]).toEqual(expect.objectContaining({ type: "continuous", dimension: 2, min: 0, max: 6, inRange: { color: [...SEQUENTIAL_RAMP] } }));
+        expect(maps[0]).toMatchObject({ type: "continuous", dimension: 2, min: 0, max: 6, inRange: { color: [...SEQUENTIAL_RAMP] } });
         const series = seriesOf(option).filter((entry) => entry.type === "scatter");
         expect(series.length).toBe(1);
         // The large path draws one fill, thus a colored series never takes it.
@@ -151,9 +151,9 @@ describe("the continuous color and the size", () => {
         const size = maps.find((map) => asObj(map.inRange).symbolSize !== undefined);
         const color = maps.find((map) => asObj(map.inRange).color !== undefined);
 
-        expect(size).toEqual(expect.objectContaining({ show: false, dimension: 3, min: 12, max: 40 }));
+        expect(size).toMatchObject({ show: false, dimension: 3, min: 12, max: 40 });
         // The number helper prints each end in the form of its column, thus a small p reads in the exponent form.
-        expect(color).toEqual(expect.objectContaining({ dimension: 2, min: 0.001, max: 0.04, calculable: false, text: ["padj\n0.04", "1 × 10⁻³"] }));
+        expect(color).toMatchObject({ dimension: 2, min: 0.001, max: 0.04, calculable: false, text: ["padj\n0.04", "1 × 10⁻³"] });
         expect(asArr(seriesOf(option)[0].data)[0]).toEqual([0.3, "Hypoxia", 0.001, 40]);
     });
 
@@ -163,7 +163,7 @@ describe("the continuous color and the size", () => {
             { pathway: "Apoptosis", nes: -1.4, padj: 0.03 },
         ];
         const option = derive(quick("bar", { x: "pathway", y: "nes", color: "padj" }), rows);
-        expect(mapsOf(option)[0]).toEqual(expect.objectContaining({ dimension: 2, seriesIndex: [0] }));
+        expect(mapsOf(option)[0]).toMatchObject({ dimension: 2, seriesIndex: [0] });
         const first = asArr(seriesOf(option)[0].data)[0];
         expect(asObj(first).value ?? first).toEqual(["Hypoxia", 2.4, 0.001]);
     });
@@ -877,7 +877,7 @@ describe("the number-like categories", () => {
             { cluster: "02", v: "3", rank: "1" },
         ];
         const plain = derive(quick("scatter", { x: "cluster", y: "v" }, { binding }), rows);
-        expect(asObj(plain.xAxis)).toEqual(expect.objectContaining({ type: "category", data: ["01", "10", "02"] }));
+        expect(asObj(plain.xAxis)).toMatchObject({ type: "category", data: ["01", "10", "02"] });
         expect(asArr(seriesOf(plain)[0].data).map((item) => asArr(item)[0])).toEqual(["01", "10", "02"]);
         const ordered = derive(quick("line", { x: { column: "cluster", orderBy: "rank" }, y: "v" }, { binding }), rows);
         expect(asObj(ordered.xAxis).data).toEqual(["02", "01", "10"]);
@@ -885,7 +885,7 @@ describe("the number-like categories", () => {
             { ...composed({ series: [{ form: "scatter", encoding: { x: { column: "cluster", orderBy: "rank" }, y: "v" } }] }), binding },
             rows,
         );
-        expect(asObj(viaComposition.xAxis)).toEqual(expect.objectContaining({ type: "category", data: ["02", "01", "10"] }));
+        expect(asObj(viaComposition.xAxis)).toMatchObject({ type: "category", data: ["02", "01", "10"] });
         // A table that types the cluster as a number still draws each point on its own category.
         const typed = rows.map((row) => ({ ...row, cluster: Number(row.cluster) }));
         expect(asArr(seriesOf(derive(quick("scatter", { x: "cluster", y: "v" }, { binding }), typed))[0].data).map((item) => asArr(item)[0])).toEqual([

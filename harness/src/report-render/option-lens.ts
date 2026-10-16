@@ -12,7 +12,13 @@ import { z } from "zod";
 
 import type { Cell, EchartOption } from "./chart.js";
 
-const record = z.record(z.string(), z.unknown());
+/**
+ * An option member is whatever the builder wrote: ECharts members include function formatters and
+ * callbacks, so no JSON-only schema admits the tree. The per-member checks of each lens decide the
+ * shapes that matter; the member schema itself stays permissive by this module's design.
+ */
+const member = z.custom<unknown>(() => true);
+const record = z.record(z.string(), member);
 const records = z.array(record);
 
 /** Reads a member the option holds as a record; fails the read when it does not. */
@@ -36,7 +42,7 @@ export function optionRecordsOrEmpty(value: unknown): EchartOption[] {
  * its shape needs.
  */
 export function optionArray(value: unknown): unknown[] {
-    return z.array(z.unknown()).parse(value);
+    return z.array(member).parse(value);
 }
 
 /** Reads a member that may be absent or hold another shape: yields `{}` so member reads stay safe. */
@@ -124,7 +130,7 @@ export function optionNumberMatrix(value: unknown): number[][] {
 
 /** Reads a member the option holds as an array of arrays of unknown members (a dotplot item row); fails the read when it does not. */
 export function optionUnknownMatrix(value: unknown): unknown[][] {
-    return z.array(z.array(z.unknown())).parse(value);
+    return z.array(z.array(member)).parse(value);
 }
 
 const columnSource = z.object({ column: z.number() }).loose();

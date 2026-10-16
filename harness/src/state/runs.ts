@@ -158,7 +158,7 @@ function isPartialUniqueViolation(err: unknown): boolean {
  */
 export function queryActiveRun(pool: Querier, analysisId: string, planId: string | null): ResultAsync<CortexRunRow | null, DbError> {
     return tryQuery("runs.queryActiveRun", async () => {
-        const result = await pool.query({
+        const result = await pool.query<Record<string, unknown>>({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
@@ -168,7 +168,7 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
               AND status = 'running'`,
             values: [analysisId, planId],
         });
-        const row = result.rows[0];
+        const row = result.rows.at(0);
         return row ? mapRunRow(row) : null;
     });
 }
@@ -298,7 +298,7 @@ export function promoteFailedToPartial(pool: Querier, runId: string): ResultAsyn
 
 export function queryRun(pool: Querier, runId: string): ResultAsync<CortexRunRow | null, DbError> {
     return tryQuery("runs.queryRun", async () => {
-        const result = await pool.query({
+        const result = await pool.query<Record<string, unknown>>({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
@@ -306,7 +306,7 @@ export function queryRun(pool: Querier, runId: string): ResultAsync<CortexRunRow
             WHERE run_id = $1`,
             values: [runId],
         });
-        const row = result.rows[0];
+        const row = result.rows.at(0);
         return row ? mapRunRow(row) : null;
     });
 }
@@ -355,7 +355,7 @@ export function queryRunIdsByPlan(pool: Querier, opts: { analysisId: string; pla
  */
 export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string, limit = 20): ResultAsync<RunPage, DbError> {
     return tryQuery("runs.queryNonTerminalRunsByAnalysis", async () => {
-        const countResult = await pool.query({
+        const countResult = await pool.query<{ total: number }>({
             text: `SELECT COUNT(*)::int AS total
             FROM cortex_runs
             WHERE analysis_id = $1
@@ -376,7 +376,7 @@ export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string
         });
         return {
             runs: rowsResult.rows.map(mapRunRow),
-            total: Number(countResult.rows[0]?.total ?? 0),
+            total: countResult.rows[0]?.total ?? 0,
         };
     });
 }
@@ -392,7 +392,7 @@ export function queryRunsForInspection(
     { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
 ): ResultAsync<RunPage, DbError> {
     return tryQuery("runs.queryRunsForInspection", async () => {
-        const countResult = await pool.query({
+        const countResult = await pool.query<{ total: number }>({
             text: "SELECT COUNT(*)::int AS total FROM cortex_runs WHERE analysis_id = $1",
             values: [analysisId],
         });
@@ -413,7 +413,7 @@ export function queryRunsForInspection(
         });
         return {
             runs: rowsResult.rows.map(mapRunRow),
-            total: Number(countResult.rows[0]?.total ?? 0),
+            total: countResult.rows[0]?.total ?? 0,
         };
     });
 }
@@ -495,7 +495,7 @@ const RunRowDb = z
         error: z.string().nullable(),
         synthesis_status: SynthesisStatus.nullable(),
         synthesis_reason: z.string().nullable(),
-        parts: z.unknown().nullable(),
+        parts: z.json().nullable(),
         mandate_jti: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
         mandate_expires_at: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
         plan_id: z.string().nullable(),
@@ -518,16 +518,12 @@ const RunRowDb = z
     }));
 
 /** JSONB is parsed by `pg` into native arrays. A legacy TEXT row is parsed here; malformed text counts as null. */
-function rowParts(value: unknown): unknown[] | null {
-    if (Array.isArray(value)) {
-        const parts: unknown[] = value;
-        return parts;
-    }
+function rowParts(value: z.JSONType | null): z.JSONType[] | null {
     if (typeof value === "string") {
-        const parsed = parseJsonOrUndefined(value);
-        return Array.isArray(parsed) ? parsed : null;
+        const result = z.array(z.json()).safeParse(parseJsonOrUndefined(value));
+        return result.success ? result.data : null;
     }
-    return null;
+    return Array.isArray(value) ? value : null;
 }
 
 function mapRunRow(row: Record<string, unknown>): CortexRunRow {

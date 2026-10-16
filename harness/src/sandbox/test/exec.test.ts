@@ -98,7 +98,7 @@ describe("the submit", () => {
         );
         expect(post.url).toBe("http://127.0.0.1:8765/exec");
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(jsonParse(optionString(must(must(post, "post").init, 'must(post, "post").init').body), z.record(z.string(), z.unknown()))).toEqual({
+        expect(jsonParse(optionString(must(must(post, "post").init, 'must(post, "post").init').body), z.record(z.string(), z.json()))).toEqual({
             command: ["echo", "hi"],
             execId: EXEC_ID,
             cwd: "/an-1",
@@ -112,7 +112,7 @@ describe("the submit", () => {
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = jsonParse(optionString(must(must(seen, "seen")[0].init, 'must(seen, "seen")[0].init').body), z.record(z.string(), z.unknown()));
+        const body = jsonParse(optionString(must(must(seen, "seen")[0].init, 'must(seen, "seen")[0].init').body), z.record(z.string(), z.json()));
         expect(body.stdoutByteCap).toBe(1_048_576);
         expect(body.stderrByteCap).toBe(1_048_576);
     });
@@ -122,7 +122,7 @@ describe("the submit", () => {
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, execStreamByteCap: 1234, fetch: sandbox([completed], seen) });
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = jsonParse(optionString(must(must(seen, "seen")[0].init, 'must(seen, "seen")[0].init').body), z.record(z.string(), z.unknown()));
+        const body = jsonParse(optionString(must(must(seen, "seen")[0].init, 'must(seen, "seen")[0].init').body), z.record(z.string(), z.json()));
         expect(body.stdoutByteCap).toBe(1234);
         expect(body.stderrByteCap).toBe(1234);
     });

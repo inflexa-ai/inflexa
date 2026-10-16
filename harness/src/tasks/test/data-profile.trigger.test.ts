@@ -81,8 +81,9 @@ function parkedDispatchDeps(pool: Pool): DataProfileTriggerDeps {
             revoke: () => okAsync(undefined),
             revokeByJti: () => okAsync(undefined),
         },
-        workflow:  () => {    return Promise.resolve();
-},
+        workflow: () => {
+            return Promise.resolve();
+        },
     };
 }
 
@@ -333,7 +334,7 @@ describe("triggerDataProfile seed-first guard", () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         const raced: DataProfileTriggerDeps = {
             ...tripwireDeps(pool),
-            pool: Object.assign(Object.create(Object.getPrototypeOf(pool)), pool, {
+            pool: Object.assign(Object.create(Reflect.getPrototypeOf(pool)), pool, {
                 // Wipe the seed the instant the guard finishes reading it, before the CAS runs.
                 query: async (...args: Parameters<Pool["query"]>) => {
                     const res = await pool.query(...args);

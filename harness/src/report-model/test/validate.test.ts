@@ -868,7 +868,7 @@ describe("resolveDocumentReferences — the slots of a chart", () => {
         });
         const { failures } = await resolveDocumentReferences(reportWith(chart).sections, snapshot, resolver);
         expect(failures).toHaveLength(1);
-        expect(failures[0]).toEqual(expect.objectContaining({ blockId: "chart-slots", slot: "track" }));
+        expect(failures[0]).toMatchObject({ blockId: "chart-slots", slot: "track" });
         expect(failures[0].failure.detail).toBe("the track names column invented_end, which the track table does not hold");
     });
 
@@ -901,7 +901,7 @@ describe("resolveDocumentReferences — the slots of a chart", () => {
     it("names the block and the slot of a tree column that the tree table does not hold", async () => {
         const { failures } = await resolveDocumentReferences(reportWith(treeChart("invented_height")).sections, snapshot, resolver);
         expect(failures).toHaveLength(1);
-        expect(failures[0]).toEqual(expect.objectContaining({ blockId: "chart-trees", slot: "tree:y" }));
+        expect(failures[0]).toMatchObject({ blockId: "chart-trees", slot: "tree:y" });
         expect(failures[0].failure.detail).toBe("the tree names column invented_height, which the tree table does not hold");
     });
 

@@ -61,13 +61,13 @@ import { parseJsonOrUndefined } from "../../lib/json.js";
  * The grammar is the authoring one, thus no artifact reference of the published schema carries a hash. The
  * pinned snapshot owns that value, and the land path stamps it from the path.
  *
- * The `z.unknown()` member keeps the runtime parse permissive. Thus a malformed payload still reaches the
- * core, which parses it with the draft grammar and refuses `malformed-block` as typed data in the ok
+ * The permissive second arm keeps the runtime parse permissive. Thus a malformed payload still reaches
+ * the core, which parses it with the draft grammar and refuses `malformed-block` as typed data in the ok
  * channel. A strict input schema would turn that designed refusal into a hard input-validation error from
  * the loop. A payload that carries a hash rides the same arm, and the stamp drops the value before the
- * parse.
+ * parse. `z.json()` is the arm because the published input schema must stay JSON-Schema representable.
  */
-const blockPayload = z.union([AuthoringBlockSchema, z.unknown()]);
+const blockPayload = z.union([AuthoringBlockSchema, z.json()]);
 
 /**
  * A flat field that the model can leave out.

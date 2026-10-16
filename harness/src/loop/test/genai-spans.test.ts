@@ -81,7 +81,8 @@ it("exports the loop and model-call spans as one trace, with no prompt or comple
     );
 
     const spans = exporter.getFinishedSpans();
-    expect(spans.map((span) => span.name)).toEqual(expect.arrayContaining(["invoke_agent test-agent", "chat mock-model-id", "execute_tool lookup"]));
+    const spanNames = spans.map((span) => span.name);
+    for (const expected of ["invoke_agent test-agent", "chat mock-model-id", "execute_tool lookup"]) expect(spanNames).toContain(expected);
     expect(new Set(spans.map((span) => span.spanContext().traceId)).size).toBe(1);
     expect(JSON.stringify(spans.map((span) => [span.attributes, span.events, span.status]))).not.toContain("SECRET");
 });
@@ -129,7 +130,11 @@ it("writes only chat and execute_tool under invoke_agent for a durable model cal
 
     const spans = exporter.getFinishedSpans();
     expect(spans.map((span) => span.name).sort()).toEqual(["chat mock-model-id", "execute_tool lookup", "invoke_agent test-agent"]);
-    const named = (name: string): ReadableSpan => must(must(spans, "spans").find((span) => span.name === name), "must(spans, \"spans\").find((span) => span.name ==");
+    const named = (name: string): ReadableSpan =>
+        must(
+            must(spans, "spans").find((span) => span.name === name),
+            'must(spans, "spans").find((span) => span.name ==',
+        );
     const agent = named("invoke_agent test-agent");
     expect(agent.parentSpanContext).toBeUndefined();
     for (const child of [named("chat mock-model-id"), named("execute_tool lookup")]) {
@@ -153,7 +158,11 @@ function runScriptedTurn(session: AgentSession = makeSession()): Promise<unknown
     );
 }
 
-const spanNamed = (spans: readonly ReadableSpan[], name: string): ReadableSpan => must(must(spans, "spans").find((span) => span.name === name), "must(spans, \"spans\").find((span) => span.name ==");
+const spanNamed = (spans: readonly ReadableSpan[], name: string): ReadableSpan =>
+    must(
+        must(spans, "spans").find((span) => span.name === name),
+        'must(spans, "spans").find((span) => span.name ==',
+    );
 
 it("starts a new trace for the root of a turn, and links it to the span that was active", async () => {
     const session: AgentSession = {
@@ -249,7 +258,7 @@ it("records an exception that a tool throws on its execute_tool span", async () 
         description: "Always throws.",
         inputSchema: z.object({}),
         describeCall: "none",
-        execute:  () => Promise.reject(new TypeError("kaboom")),
+        execute: () => Promise.reject(new TypeError("kaboom")),
     });
 
     const span = await executeToolSpan(boom, "tc-throw", {});

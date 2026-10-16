@@ -60,7 +60,7 @@ export const FarmLockSchema = z
                         version: z.string(),
                         bioc_releases: z.array(z.string()),
                         /** The embedded pak lock of the build, verbatim. */
-                        pak_lock: z.unknown().optional(),
+                        pak_lock: z.json().optional(),
                     })
                     .loose()
                     .optional(),
@@ -116,7 +116,7 @@ export function readFarmLockFile(lockPath: string): Result<FarmLock, FarmLockErr
     }
     let parsed: unknown;
     try {
-        parsed = jsonParse(raw, z.unknown());
+        parsed = jsonParse(raw, z.json());
     } catch (cause) {
         return err({ type: "lock_invalid", lockPath, cause });
     }

@@ -61,7 +61,7 @@ describe("the points of a box and of a violin", () => {
             const option = deriveChartOption(block(chartType, { x: "cluster", y: "pct_counts_mt" }), QC_ROWS)._unsafeUnwrap();
             // The cluster of 201 values draws no points, thus the cluster of 15 values draws none either.
             expect(pointsOf(option)).toEqual([]);
-            expect((optionRecord(option.xAxis)).jitter).toBeUndefined();
+            expect(optionRecord(option.xAxis).jitter).toBeUndefined();
         });
 
         it(`draws the points of a grouped ${chartType} on the slot axis, with no axis jitter`, () => {
@@ -70,7 +70,7 @@ describe("the points of a box and of a violin", () => {
             const [categories] = optionRecords(option.xAxis);
             expect(categories.jitter).toBeUndefined();
             // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-            expect(slotSeries(option).map((entry) => (optionArray(entry.data)).length)).toEqual([10, 10]);
+            expect(slotSeries(option).map((entry) => optionArray(entry.data).length)).toEqual([10, 10]);
         });
     }
 
@@ -90,22 +90,20 @@ describe("the points of a box and of a violin", () => {
         ];
         const option = deriveChartOption(block("box", { x: "cluster", y: "pct_counts_mt" }), rows)._unsafeUnwrap();
         const outliers = seriesOf(option).find((entry) => entry.type === "scatter");
-        expect(outliers).toEqual(
-            expect.objectContaining({
-                symbolSize: 4,
-                itemStyle: { color: CHART_INK },
-                data: [
-                    [0, 90],
-                    [1, 80],
-                ],
-            }),
-        );
+        expect(outliers).toMatchObject({
+            symbolSize: 4,
+            itemStyle: { color: CHART_INK },
+            data: [
+                [0, 90],
+                [1, 80],
+            ],
+        });
     });
 
     it("keeps the axis plain where each category passes the limit", () => {
         const option = deriveChartOption(block("box", { x: "cluster", y: "pct_counts_mt" }), cells("CD4 T", 201))._unsafeUnwrap();
         expect(pointsOf(option)).toEqual([]);
-        expect((optionRecord(option.xAxis)).jitter).toBeUndefined();
+        expect(optionRecord(option.xAxis).jitter).toBeUndefined();
     });
 
     it("gives the same SVG bytes for two exports of a jittered chart", () => {
@@ -157,7 +155,7 @@ describe("the thin slots of a box and of a violin", () => {
         it(`draws each value of a grouped ${chartType} as a point inside the slot of its group, and never an empty chart`, () => {
             const option = deriveChartOption(block(chartType, { x: "gene", y: "count", group: "condition" }), COUNTS)._unsafeUnwrap();
             const axes = optionRecords(option.xAxis);
-            expect(axes[1]).toEqual(expect.objectContaining({ type: "value", min: -0.5, max: 1.5, show: false }));
+            expect(axes[1]).toMatchObject({ type: "value", min: -0.5, max: 1.5, show: false });
             const points = slotSeries(option).map((entry) => [entry.name, optionNumberMatrix(entry.data).length]);
             expect(points).toEqual([
                 ["untreated", 7],
@@ -217,13 +215,13 @@ describe("the facet of the stacked bars", () => {
         // The stimulated panel holds its own parts in the category order of the table.
         expect(series[3].data).toEqual([90, 70]);
         // Each panel reads one value range over the largest total of any panel.
-        const values = (optionRecords(option.yAxis)).map((axis) => [axis.min, axis.max]);
+        const values = optionRecords(option.yAxis).map((axis) => [axis.min, axis.max]);
         expect(values).toEqual([
             [0, 500],
             [0, 500],
         ]);
-        const labels = (optionRecords(option.graphic)).map((element) => (optionRecord(element.style)).text);
-        expect(labels).toEqual(expect.arrayContaining(["control", "stimulated"]));
+        const labels = optionRecords(option.graphic).map((element) => optionRecord(element.style).text);
+        for (const expected of ["control", "stimulated"]) expect(labels).toContain(expected);
     });
 
     it("draws the shares of each panel on a value axis from 0 to 1", () => {
@@ -234,7 +232,7 @@ describe("the facet of the stacked bars", () => {
         const series = seriesOf(option);
         expect(series[0].data).toEqual([0.25, 0.5]);
         expect(series[2].data).toEqual([0.1, 0.3]);
-        for (const axis of optionRecords(option.yAxis)) expect(axis).toEqual(expect.objectContaining({ min: 0, max: 1 }));
+        for (const axis of optionRecords(option.yAxis)) expect(axis).toMatchObject({ min: 0, max: 1 });
     });
 
     it("refuses a pair that repeats inside one panel", () => {

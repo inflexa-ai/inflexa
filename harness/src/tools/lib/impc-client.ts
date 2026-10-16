@@ -47,13 +47,13 @@ const ORGAN_SYSTEM_MAP: Record<string, string> = {
 // A single IMPC Solr document — fields vary by core; all optional. `p_value` admits the
 // numeric string an older core wrote, because the code reads it defensively
 // (`typeof === "number"`) and a drifted field degrades on its own instead of failing the
-// whole response. `top_level_mp_term_name` and `sex` stay `z.unknown()` for the same reason.
+// whole response. `top_level_mp_term_name` and `sex` stay free-form JSON for the same reason.
 const ImpcSolrDocSchema = z.object({
     mp_term_id: z.string().optional(),
     mp_term_name: z.string().optional(),
     p_value: z.union([z.number(), z.string()]).optional(),
-    top_level_mp_term_name: z.unknown().optional(),
-    sex: z.unknown().optional(),
+    top_level_mp_term_name: z.json().optional(),
+    sex: z.json().optional(),
     parameter_stable_id: z.string().optional(),
     parameter_name: z.string().optional(),
     marker_symbol: z.string().optional(),

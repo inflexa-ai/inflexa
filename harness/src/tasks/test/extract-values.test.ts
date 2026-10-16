@@ -6,8 +6,7 @@ import type { ExecResult } from "../../sandbox/types.js";
 import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT } from "../extract-values-script.js";
 import { buildExtractionExec, createExtractionArm, extractionArtifactsFromResult, parseExtractionOutput } from "../extract-values.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { jsonParse } from "../../lib/json.js";
-import { z } from "zod";
+import { parseJsonOrUndefined } from "../../lib/json.js";
 
 // The workflow body needs a launched durability engine and a sandbox, thus a unit test does not reach it.
 // The decidable parts are lifted out: the exec command, the output parse, and the arm mapping. These tests
@@ -84,7 +83,7 @@ describe("buildExtractionExec", () => {
 
         // The request list rides in one environment variable. Each request carries its pinned hash, thus
         // the script can refuse a file that drifted from the pin.
-        const parsed = jsonParse(must(must(body, "body").env, "must(body, \"body\").env")[EXTRACTION_INPUT_ENV], z.unknown());
+        const parsed = parseJsonOrUndefined(must(must(body, "body").env, 'must(body, "body").env')[EXTRACTION_INPUT_ENV]);
         expect(parsed).toEqual([
             { path: "data/x.tsv", format: "tsv", hash: "h1" },
             { path: "/an-1/data/y.parquet", format: "parquet", hash: "h2" },
@@ -97,7 +96,7 @@ describe("buildExtractionExec", () => {
         // that this arm repeats no mapping of its own.
         const body = buildExtractionExec("an-1", [{ path: "data/x.csv", hash: "h1", format: "tsv" }]);
 
-        const parsed = jsonParse(must(must(body, "body").env, "must(body, \"body\").env")[EXTRACTION_INPUT_ENV], z.unknown());
+        const parsed = parseJsonOrUndefined(must(must(body, "body").env, 'must(body, "body").env')[EXTRACTION_INPUT_ENV]);
         expect(parsed).toEqual([{ path: "data/x.csv", format: "tsv", hash: "h1" }]);
     });
 });
@@ -144,12 +143,14 @@ describe("extractionArtifactsFromResult", () => {
 describe("createExtractionArm", () => {
     it("forwards every request to the runner and maps the outcome", async () => {
         let received: readonly ExtractionRequest[] | undefined;
-        const arm = createExtractionArm( (requests) => {
+        const arm = createExtractionArm((requests) => {
             received = requests;
-            return Promise.resolve(ok({
-                "data/a.csv": { rows: [{ gene: "TP53", value: 4 }] },
-                "data/b.parquet": { error: { type: "read-fault", message: "boom" } },
-            }));
+            return Promise.resolve(
+                ok({
+                    "data/a.csv": { rows: [{ gene: "TP53", value: 4 }] },
+                    "data/b.parquet": { error: { type: "read-fault", message: "boom" } },
+                }),
+            );
         });
 
         const requests: ExtractionRequest[] = [
@@ -173,7 +174,7 @@ describe("createExtractionArm", () => {
     });
 
     it("rejects when the runner faults", async () => {
-        const arm = createExtractionArm( () => Promise.reject(new Error("the workflow faulted")));
+        const arm = createExtractionArm(() => Promise.reject(new Error("the workflow faulted")));
         await expect(arm.extract([{ path: "data/a.csv", hash: "h1", format: "csv" }])).rejects.toThrow("the workflow faulted");
     });
 });

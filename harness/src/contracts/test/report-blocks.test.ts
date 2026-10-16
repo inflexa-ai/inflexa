@@ -548,7 +548,7 @@ describe("the canonical figures", () => {
         const five = [statistic("A"), statistic("B"), statistic("C"), statistic("D"), statistic("E")];
         const parsed = ChartBlockSchema.safeParse(chart({ chartType: "roc", encoding: { x: "fpr", y: "tpr" }, statistics: five }));
         expect(parsed.success).toBe(false);
-        expect(parsed.error?.issues[0]).toEqual(expect.objectContaining({ code: "too_big", path: ["statistics"] }));
+        expect(parsed.error?.issues[0]).toMatchObject({ code: "too_big", path: ["statistics"] });
         expect(parses({ chartType: "roc", encoding: { x: "fpr", y: "tpr" }, statistics: [] })).toBe(false);
     });
 

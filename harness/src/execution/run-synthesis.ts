@@ -362,7 +362,7 @@ function buildValidateTool(ctx: InnerToolContext): Tool {
         // The permissive schema also means the loop's string repair never runs
         // here, so `execute` decodes a JSON-encoded string itself.
         inputSchema: z.object({
-            synthesis: z.unknown().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
+            synthesis: z.json().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
         }),
         describeCall: "none",
         execute: (input) => {

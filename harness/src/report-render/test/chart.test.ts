@@ -643,7 +643,7 @@ describe("the axis name placement", () => {
 
     it("turns the y title of a composition upright, and a declared axes title takes the same place", () => {
         const option = derive(composedBlock({ series: [{ form: "line", encoding: { x: "t", y: "v" } }], axes: { y: { title: "Signal" } } }), [{ t: 1, v: 2 }]);
-        expect(asObj(option.yAxis)).toEqual(expect.objectContaining({ name: "Signal", nameLocation: "middle", nameRotate: 90 }));
+        expect(asObj(option.yAxis)).toMatchObject({ name: "Signal", nameLocation: "middle", nameRotate: 90 });
     });
 
     it("shows no raw column name on a category axis, and shows a declared label or axes title there", () => {

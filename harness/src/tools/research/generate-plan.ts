@@ -694,7 +694,7 @@ function buildInnerTools(
             // Keep the authoritative shape visible to the model while the
             // permissive branch lets malformed candidates reach execute for
             // structured issue reporting.
-            plan: z.union([PlannerPlanSchema, z.unknown()]).describe("Candidate plan; malformed values are reported in issues."),
+            plan: z.union([PlannerPlanSchema, z.json()]).describe("Candidate plan; malformed values are reported in issues."),
         }),
         describeCall: "none",
         execute: async (input): Promise<Result<SubmitPlanOutput, ToolError>> => {

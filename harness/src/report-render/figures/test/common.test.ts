@@ -92,16 +92,14 @@ describe("the statistics text", () => {
 
     it("prints one line for each statistic, in block order, at the corner that the figure names", () => {
         const [element] = statisticsGraphic(statistics, "top-right");
-        expect(element).toEqual(
-            expect.objectContaining({
-                type: "text",
-                right: "7%",
-                top: "12%",
-                style: expect.objectContaining({ text: "Log-rank p = 1.3e-3\nHR = 0.53", align: "right" }),
-            }),
-        );
+        expect(element).toMatchObject({
+            type: "text",
+            right: "7%",
+            top: "12%",
+            style: { text: "Log-rank p = 1.3e-3\nHR = 0.53", align: "right" },
+        });
         const [lower] = statisticsGraphic(statistics, "bottom-left");
-        expect(lower).toEqual(expect.objectContaining({ left: "12%", bottom: "24%" }));
+        expect(lower).toMatchObject({ left: "12%", bottom: "24%" });
         expect(optionRecord(lower.style).fontSize).toBe(CHART_PAGE_TEXT_PX);
     });
 
@@ -139,7 +137,7 @@ describe("the continuous color scale", () => {
 describe("the size legend", () => {
     it("draws three reference circles at the sizes of the size map, with the value of each one", () => {
         const legend = sizeLegend({ min: 10, max: 50 }, "Genes", "count", { right: 8, bottom: "20%" });
-        expect(legend).toEqual(expect.objectContaining({ type: "group", right: 8, bottom: "20%" }));
+        expect(legend).toMatchObject({ type: "group", right: 8, bottom: "20%" });
         const children = optionRecords(legend.children);
         const circles = children.filter((child) => child.type === "circle");
         const [small, large] = SIZE_CHANNEL_RANGE_PX;

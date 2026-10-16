@@ -127,7 +127,7 @@ describe("the gsea figure", () => {
         ]);
         expect(xAxes.map((axis) => axis.name)).toEqual([undefined, undefined, "Rank in ordered dataset"]);
         expect(xAxes.map((axis) => optionRecord(axis.axisLabel).show)).toEqual([false, false, undefined]);
-        expect(xAxes[2]).toEqual(expect.objectContaining({ type: "value", nameLocation: "middle" }));
+        expect(xAxes[2]).toMatchObject({ type: "value", nameLocation: "middle" });
     });
 
     it("draws the running score of each set in the top panel, in the palette color and in table order", () => {
@@ -178,18 +178,16 @@ describe("the gsea figure", () => {
             }
         }
         const yAxes = list(derive(SMALL), "yAxis");
-        expect(yAxes[1]).toEqual(expect.objectContaining({ gridIndex: 1, min: 0, max: 2, inverse: true, show: false }));
+        expect(yAxes[1]).toMatchObject({ gridIndex: 1, min: 0, max: 2, inverse: true, show: false });
     });
 
     it("draws the ranked metric once as a gray area with a line at zero in the bottom panel", () => {
         const option = derive(SMALL);
         const [metric] = panelSeries(option, 2);
-        expect(metric).toEqual(
-            expect.objectContaining({ type: "line", name: "Ranked metric", areaStyle: expect.objectContaining({ color: MUTED_CHART_COLOR }) }),
-        );
+        expect(metric).toMatchObject({ type: "line", name: "Ranked metric", areaStyle: { color: MUTED_CHART_COLOR } });
         expect(drawn(metric)).toHaveLength(1000);
         expect(drawn(metric)[0]).toEqual([1, optionNumber(SMALL[0].ranked_metric)]);
-        expect(optionRecords(optionRecord(metric.markLine).data)[0]).toEqual(expect.objectContaining({ yAxis: 0 }));
+        expect(optionRecords(optionRecord(metric.markLine).data)[0]).toMatchObject({ yAxis: 0 });
         const yAxes = list(option, "yAxis");
         expect([yAxes[0].name, yAxes[2].name]).toEqual(["Enrichment score", "Ranked metric"]);
         expect([yAxes[0].nameRotate, yAxes[2].nameRotate]).toEqual([90, 90]);

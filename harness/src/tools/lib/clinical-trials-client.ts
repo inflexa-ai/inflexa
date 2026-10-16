@@ -98,7 +98,7 @@ const CtInterventionSchema = z.object({
     name: z.string().optional(),
     type: z.string().optional(),
     description: z.string().optional(),
-    otherNames: z.unknown().optional(),
+    otherNames: z.json().optional(),
 });
 const CtOutcomeSchema = z.object({
     measure: z.string().optional(),
@@ -235,7 +235,10 @@ export function mapClinicalTrialStudy(s: CtStudy): ClinicalTrial {
         name: i.name ?? "Unknown",
         type: i.type ?? null,
         description: i.description ?? null,
-        otherNames: Array.isArray(i.otherNames) ? i.otherNames : [],
+        otherNames: z
+            .array(z.string())
+            .catch([])
+            .parse(i.otherNames ?? []),
     }));
     const interventions = interventionDetails.map((i) => i.name);
     const sponsor = proto.sponsorCollaboratorsModule?.leadSponsor?.name ?? null;

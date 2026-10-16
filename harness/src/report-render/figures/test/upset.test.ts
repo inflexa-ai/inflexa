@@ -188,7 +188,7 @@ describe("the upset figure", () => {
         const joins = seriesById(option, "joins");
         // The set axis reads the largest set at the top.
         const matrixY = axesOf(option, "yAxis")[optionNumber(members.yAxisIndex)];
-        expect(matrixY).toEqual(expect.objectContaining({ type: "category", inverse: true, data: ["DNMT3A", "FLT3", "NPM1", "IDH2"] }));
+        expect(matrixY).toMatchObject({ type: "category", inverse: true, data: ["DNMT3A", "FLT3", "NPM1", "IDH2"] });
         expect(members.data).toEqual([
             [0, 0],
             [1, 1],
@@ -238,9 +238,9 @@ describe("the upset figure", () => {
         const sets = seriesById(option, "sets");
         expect(sets.data).toEqual([5, 4, 4, 1]);
         const valueX = axesOf(option, "xAxis")[optionNumber(sets.xAxisIndex)];
-        expect(valueX).toEqual(expect.objectContaining({ type: "value", inverse: true, name: "Set size" }));
+        expect(valueX).toMatchObject({ type: "value", inverse: true, name: "Set size" });
         const setY = axesOf(option, "yAxis")[optionNumber(sets.yAxisIndex)];
-        expect(setY).toEqual(expect.objectContaining({ type: "category", inverse: true, data: ["DNMT3A", "FLT3", "NPM1", "IDH2"], show: false }));
+        expect(setY).toMatchObject({ type: "category", inverse: true, data: ["DNMT3A", "FLT3", "NPM1", "IDH2"], show: false });
         // The three grids line up: the set bars share the rows of the matrix, and the top bars share its columns.
         const grids = optionRecords(option.grid);
         const matrix = grids[optionNumber(seriesById(option, "members").xAxisIndex)];

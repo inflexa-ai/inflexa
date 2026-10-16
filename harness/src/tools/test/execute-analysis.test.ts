@@ -32,7 +32,7 @@ import {
     type LaunchPlanRunDeps,
 } from "../execute-analysis.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { jsonParse } from "../../lib/json.js";
+import { parseJsonOrUndefined } from "../../lib/json.js";
 import { errorMessage } from "../../lib/thrown.js";
 import { z } from "zod";
 import { AnalysisPlanSchema, AnalysisStepSchema } from "../../schemas/workflow-state.js";
@@ -189,7 +189,7 @@ function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: M
         }
         if (q.text.includes("INSERT INTO cortex_plans")) {
             const planId = textOf(values[0]);
-            if (!plans.has(planId)) plans.set(planId, jsonParse(textOf(values[2]), z.unknown()));
+            if (!plans.has(planId)) plans.set(planId, parseJsonOrUndefined(textOf(values[2])));
             return { rows: [], rowCount: 1 };
         }
         if (q.text.includes("INSERT INTO cortex_runs") && q.text.includes("ON CONFLICT (run_id)")) {

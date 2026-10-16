@@ -73,7 +73,7 @@ describe("the heatmap with annotation tracks", () => {
         expect(xAxis.data).toEqual(["treated1", "treated2", "treated3", "untreated1", "untreated4", "untreated2", "untreated3"]);
         expect(yAxis.data).toEqual(["Treh", "Kal1"]);
         expect(yAxis.inverse).toBe(true);
-        expect(maps[0]).toEqual(expect.objectContaining({ seriesIndex: 0, inRange: { color: [...DIVERGING_RAMP] } }));
+        expect(maps[0]).toMatchObject({ seriesIndex: 0, inRange: { color: [...DIVERGING_RAMP] } });
         expect(maps[0].min).toBe(-optionNumber(maps[0].max));
         expect(maps[0].text).toEqual(["z-score\n1.17", "−1.17"]);
     });
@@ -306,15 +306,13 @@ describe("the dendrograms of the heatmap", () => {
     });
 
     it("draws each edge as one elbow from the child up to the height of the parent and across to the place of the parent", () => {
-        expect(xTree.series).toEqual(
-            expect.objectContaining({
-                type: "lines",
-                coordinateSystem: "cartesian2d",
-                polyline: true,
-                silent: true,
-                lineStyle: expect.objectContaining({ color: CHART_INK, opacity: 1 }),
-            }),
-        );
+        expect(xTree.series).toMatchObject({
+            type: "lines",
+            coordinateSystem: "cartesian2d",
+            polyline: true,
+            silent: true,
+            lineStyle: { color: CHART_INK, opacity: 1 },
+        });
         const elbows = optionRecords(xTree.series.data).map((item) => optionArray(item.coords));
         expect(elbows).toHaveLength(SAMPLE_TREE.length);
         // The root joins s10 (over treated1 and the pair of treated2 and treated3) and s11 (over the untreated samples).

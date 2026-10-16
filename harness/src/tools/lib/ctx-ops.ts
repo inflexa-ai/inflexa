@@ -115,7 +115,7 @@ const ToxcastMc5ParamSchema = z.object({
 });
 
 const ToxcastMc6ParamSchema = z.object({
-    flag: z.unknown().optional(),
+    flag: z.json().optional(),
 });
 type ToxcastMc6Param = z.infer<typeof ToxcastMc6ParamSchema>;
 
@@ -176,7 +176,10 @@ export async function fetchToxcastBioactivity(
     const results = page.map((r) => {
         const aeid = r.aeid ?? 0;
         const mc6: ToxcastMc6Param = r.mc6Param ?? {};
-        const flags: string[] = Array.isArray(mc6.flag) ? mc6.flag : [];
+        const flags: string[] = z
+            .array(z.string())
+            .catch([])
+            .parse(mc6.flag ?? []);
 
         return {
             aeid,

@@ -33,7 +33,7 @@ type CssFinding = { name: string; message: string; property?: string };
 
 /** The one signature that the gate uses. The cast gives the untyped import a precise type. */
 // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-const validateCss : (css: string, filename?: string) => CssFinding[] = validateCssRaw;
+const validateCss: (css: string, filename?: string) => CssFinding[] = validateCssRaw;
 
 /**
  * The HTML validator with the recommended preset. Two rules turn off, because the page rejects each one on
@@ -164,7 +164,7 @@ describe("a raw script sink stays hardened", () => {
             throw new Error("The page holds no application/json script element.");
         }
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const parsed = jsonParse(match[1], z.object({ xAxis: z.object({ data: z.array(z.unknown()) }) }));
+        const parsed = jsonParse(match[1], z.object({ xAxis: z.object({ data: z.array(z.json()) }) }));
         expect(parsed.xAxis.data).toContain(hostileCell);
         expect(JSON.stringify(parsed)).toContain(hostileCell);
     });
