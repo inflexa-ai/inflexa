@@ -18,7 +18,7 @@ where diagnostics go, and that decision should be conscious. Every module deps b
 it optionally and falls back to `createNoopLogger()`, so internal call sites log unconditionally
 rather than threading `?.` through every diagnostic; the fallback is never `console`.
 `harness/src` calls `console` nowhere outside `lib/console-logger.ts` (enforced by `no-console` in
-`eslint.config.js`, exempted by path): a host whose UI owns stdout discards console output, so the
+`oxlint.config.ts`, exempted by path): a host whose UI owns stdout discards console output, so the
 write succeeds and the record is gone — silent loss exactly when something has failed.
 
 Run context rides as structured fields (`runId`, `stepId`, `analysisId`, `execId`, `sandboxId`,
@@ -202,9 +202,9 @@ being lost.
 ### Requirement: Harness source is free of console statements
 
 `harness/src` SHALL NOT call `console.*` for diagnostics. The prohibition SHALL
-be enforced by a `no-console` lint rule configured in `harness/eslint.config.js`,
-scoped to permit the console realization alone, rather than by per-site
-suppressions or review discipline.
+be enforced by a `no-console` lint rule configured in `harness/oxlint.config.ts`,
+scoped to permit the console realization and its test alone, rather than by
+per-site suppressions or review discipline.
 
 #### Scenario: A new console call fails lint
 
@@ -214,5 +214,5 @@ suppressions or review discipline.
 
 #### Scenario: The console realization is permitted
 
-- **WHEN** lint runs over the `createConsoleLogger` source
-- **THEN** it passes, because the rule's configuration exempts that file
+- **WHEN** lint runs over the `createConsoleLogger` source and its test
+- **THEN** it passes, because the rule's configuration exempts those files
