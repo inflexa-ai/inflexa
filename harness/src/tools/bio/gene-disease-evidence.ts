@@ -30,7 +30,7 @@ import { z } from "zod";
 
 import type { Logger } from "../../lib/logger.js";
 import { guaranteed, present } from "../../lib/invariants.js";
-import { defineTool } from "../define-tool.js";
+import { defineTool, type Tool } from "../define-tool.js";
 import { getSomaticMutationFrequencies, type MutationFrequency } from "../lib/cbioportal-client.js";
 import { filterInformative, searchClinvar, type ClinvarVariant } from "../lib/clinvar-client.js";
 import { DISGENET_SOURCES, searchDisgenet, type Gda } from "../lib/disgenet-client.js";
@@ -202,7 +202,11 @@ async function runSource<T>(source: Source, fetch: () => Promise<{ records: T[];
     }
 }
 
-export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disgenetApiKey: string; logger?: Logger }) {
+export function createGeneDiseaseEvidenceTool(deps: {
+    ncbiApiKey?: string;
+    disgenetApiKey: string;
+    logger?: Logger;
+}): Tool<z.infer<typeof inputSchema>, GeneDiseaseEvidenceOutput> {
     return defineTool({
         id: "gene_disease_evidence",
         description:

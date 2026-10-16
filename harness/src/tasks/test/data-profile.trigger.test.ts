@@ -332,18 +332,20 @@ describe("triggerDataProfile seed-first guard", () => {
         await setSeed(pool, "a-raced", ["file-aaa"]);
 
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+        const racedPool: Pool = Object.assign({}, pool, {
+            // Wipe the seed the instant the guard finishes reading it, before the CAS runs.
+            query: async (...args: Parameters<Pool["query"]>) => {
+                const res = await pool.query(...args);
+                // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+                const text = typeof args[0] === "string" ? args[0] : (args[0] as { text: string }).text;
+                if (text.includes("SELECT seed_input_file_ids")) await setSeed(pool, "a-raced", null);
+                return res;
+            },
+        });
+        Reflect.setPrototypeOf(racedPool, Reflect.getPrototypeOf(pool));
         const raced: DataProfileTriggerDeps = {
             ...tripwireDeps(pool),
-            pool: Object.assign(Object.create(Reflect.getPrototypeOf(pool)), pool, {
-                // Wipe the seed the instant the guard finishes reading it, before the CAS runs.
-                query: async (...args: Parameters<Pool["query"]>) => {
-                    const res = await pool.query(...args);
-                    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                    const text = typeof args[0] === "string" ? args[0] : (args[0] as { text: string }).text;
-                    if (text.includes("SELECT seed_input_file_ids")) await setSeed(pool, "a-raced", null);
-                    return res;
-                },
-            }),
+            pool: racedPool,
         };
 
         const result = (

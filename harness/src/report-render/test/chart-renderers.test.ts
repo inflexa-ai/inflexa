@@ -127,12 +127,12 @@ describe("the named renderers", () => {
 
     it("draws an error bar as one line between the bounds and two caps", () => {
         const element = intervalRenderer({}, stubApi([2, 5, 4, 7, 1, 0, 0]));
-        expect(element).toEqual({
+        expect(element).toMatchObject({
             type: "group",
             children: [
-                { type: "line", shape: { x1: 2, y1: 4, x2: 2, y2: 7 }, style: expect.objectContaining({ lineWidth: 1.5 }) },
-                { type: "line", shape: { x1: 2 - INTERVAL_CAP_PX, y1: 4, x2: 2 + INTERVAL_CAP_PX, y2: 4 }, style: expect.objectContaining({ lineWidth: 1.5 }) },
-                { type: "line", shape: { x1: 2 - INTERVAL_CAP_PX, y1: 7, x2: 2 + INTERVAL_CAP_PX, y2: 7 }, style: expect.objectContaining({ lineWidth: 1.5 }) },
+                { type: "line", shape: { x1: 2, y1: 4, x2: 2, y2: 7 }, style: { lineWidth: 1.5 } },
+                { type: "line", shape: { x1: 2 - INTERVAL_CAP_PX, y1: 4, x2: 2 + INTERVAL_CAP_PX, y2: 4 }, style: { lineWidth: 1.5 } },
+                { type: "line", shape: { x1: 2 - INTERVAL_CAP_PX, y1: 7, x2: 2 + INTERVAL_CAP_PX, y2: 7 }, style: { lineWidth: 1.5 } },
             ],
         });
     });

@@ -12,6 +12,7 @@ import type { Scope } from "../../../auth/types.js";
 import { normalizeDetail } from "../../../loop/tool-detail.js";
 import type { AuthoringBlock } from "../../../report-model/authoring-grammar.js";
 import type { DraftDocument } from "../../../report-model/draft.js";
+import type { FinishGap } from "../../../report-model/draft-finish.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
@@ -673,7 +674,10 @@ describe("set_title", () => {
         const untitled = (await tools.finish_draft.execute({}, ctx))._unsafeUnwrap();
         expect("valid" in untitled && untitled.valid).toBe(false);
         if ("valid" in untitled && !untitled.valid) {
-            expect(untitled.gaps).toContainEqual({ kind: "schema", path: "title", message: expect.stringContaining(">=1") });
+            const gap = untitled.gaps.find(
+                (entry: FinishGap): entry is Extract<FinishGap, { kind: "schema" }> => entry.kind === "schema" && entry.path === "title",
+            );
+            expect(gap?.message).toContain(">=1");
         }
 
         const set = (await tools.set_title.execute({ title: "Differential expression" }, ctx))._unsafeUnwrap();

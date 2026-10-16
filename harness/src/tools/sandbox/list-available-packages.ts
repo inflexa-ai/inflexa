@@ -23,7 +23,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "../../config/environment-stores.js";
 import {
     identityAddress,
@@ -543,7 +543,28 @@ export async function readInventorySections(deps: ListAvailablePackagesDeps, ana
  * host-readable farm `inflexa.lock` otherwise (a sandbox agent). The image
  * record merges into either report.
  */
-export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps = {}) {
+const inputSchema = z.object({
+    names: z
+        .array(z.string())
+        .max(100)
+        .optional()
+        .describe(
+            "Check these packages for presence. Each entry is a query in the one grammar, `[python:|r:]<name>`. Returns one entry for each track that holds the name: present/absent + the language track it lives in. An absent name carries the spelling the pool holds, where there is one.",
+        ),
+    query: z.string().optional().describe("Case-insensitive substring filter over package names."),
+    language: z.enum(["r", "python", "cli", "node"]).optional().describe("Restrict results to one language track."),
+    limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(DEFAULT_LIMIT)
+        .optional()
+        .describe(
+            `Cap the packages listed. Omit to get the whole set — the store fits well within the ${DEFAULT_LIMIT} ceiling. Ignored when \`names\` is given.`,
+        ),
+});
+
+export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps = {}): Tool<z.infer<typeof inputSchema>, PackagesResult> {
     const readPoolInventory = deps.readPoolInventory;
     // The scope decides the framing sentence: a sandbox agent reads what it can
     // import NOW, and a conversation surface reads what the store HOLDS — a
@@ -568,26 +589,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
             "`language`: restrict to one track (r | python | cli | node). " +
             "`limit`: cap the packages listed; the response always carries the true `total` and a `hasMore` flag, so truncation is never silent. " +
             "Each entry renders as `name==version` where the source pins a version, and a `names` check also reports the store directory and the content hash where the source records them.",
-        inputSchema: z.object({
-            names: z
-                .array(z.string())
-                .max(100)
-                .optional()
-                .describe(
-                    "Check these packages for presence. Each entry is a query in the one grammar, `[python:|r:]<name>`. Returns one entry for each track that holds the name: present/absent + the language track it lives in. An absent name carries the spelling the pool holds, where there is one.",
-                ),
-            query: z.string().optional().describe("Case-insensitive substring filter over package names."),
-            language: z.enum(["r", "python", "cli", "node"]).optional().describe("Restrict results to one language track."),
-            limit: z
-                .number()
-                .int()
-                .min(1)
-                .max(DEFAULT_LIMIT)
-                .optional()
-                .describe(
-                    `Cap the packages listed. Omit to get the whole set — the store fits well within the ${DEFAULT_LIMIT} ceiling. Ignored when \`names\` is given.`,
-                ),
-        }),
+        inputSchema,
         // `queryPackages` returns on `names` before it reads another field, thus
         // the presence check comes first. An empty array is not a presence check.
         // `names` are exact identifiers a caller checks for, thus they name the

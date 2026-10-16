@@ -17,7 +17,7 @@ import { unwrapOrThrow } from "../../lib/result.js";
 import { queryRun, queryRunsForInspection, queryStepsByRun } from "../../state/index.js";
 import type { CortexRunRow, StepExecutionRow } from "../../state/schema.js";
 import { SYNTHESIS_STEP_ID } from "../../workspace/paths.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 const DEFAULT_PAGE_SIZE = 50;
 const POLL_INTERVAL_MS = 1_000;
@@ -160,7 +160,7 @@ const inputSchema = z
  * Build the run-inspection tool. The optional clock is an internal testing
  * seam for deterministic cutoff and transition coverage.
  */
-export function createInspectRunTool(pool: Pool, clock: InspectRunClock = systemClock) {
+export function createInspectRunTool(pool: Pool, clock: InspectRunClock = systemClock): Tool<z.infer<typeof inputSchema>, InspectRunOutput> {
     return defineTool({
         id: "inspect_run",
         description:

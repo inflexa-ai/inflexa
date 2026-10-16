@@ -39,7 +39,7 @@ import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { loadDataProfileStatus, type DataProfileFile, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
 import { toAnalysisRootPath } from "../../workspace/paths.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 /** Per-file records returned per page when the caller names none. */
 const DEFAULT_PAGE_SIZE = 20;
@@ -240,7 +240,26 @@ const FAILURE_SCOPE_NOTE =
     "holds now, so do not read it as a verdict on the current data. Compare failedAt against when the input set " +
     "last changed, and re-profile if they have moved apart.";
 
-export function createInspectDataProfileTool(pool: Pool) {
+const inputSchema = z.object({
+    scope: z
+        .enum(["overview", "groups", "files"])
+        .optional()
+        .describe(
+            "'overview' (default): dataset-level facts, the partition accounting, the annotated-member count, and the dataset file count. " +
+                "'groups': the groups the dataset is made of, with their slots, and the dimensions that vary across it. " +
+                "'files': paged records for the individually annotated members.",
+        ),
+    page: z.number().int().min(1).optional().describe("1-based page of member records. Only used when scope is 'files'. Default 1."),
+    pageSize: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_PAGE_SIZE)
+        .optional()
+        .describe(`Member records per page. Only used when scope is 'files'. Default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}.`),
+});
+
+export function createInspectDataProfileTool(pool: Pool): Tool<z.infer<typeof inputSchema>, InspectDataProfileOutput> {
     return defineTool({
         id: "inspect_data_profile",
         description:
@@ -270,24 +289,7 @@ export function createInspectDataProfileTool(pool: Pool) {
             "input files you are holding now, and this tool cannot tell you whether that attempt covered them. Compare failedAt " +
             "against when the input set last changed before you conclude anything: if the data moved since, say the profile " +
             "needs re-running rather than diagnosing the data itself.",
-        inputSchema: z.object({
-            scope: z
-                .enum(["overview", "groups", "files"])
-                .optional()
-                .describe(
-                    "'overview' (default): dataset-level facts, the partition accounting, the annotated-member count, and the dataset file count. " +
-                        "'groups': the groups the dataset is made of, with their slots, and the dimensions that vary across it. " +
-                        "'files': paged records for the individually annotated members.",
-                ),
-            page: z.number().int().min(1).optional().describe("1-based page of member records. Only used when scope is 'files'. Default 1."),
-            pageSize: z
-                .number()
-                .int()
-                .min(1)
-                .max(MAX_PAGE_SIZE)
-                .optional()
-                .describe(`Member records per page. Only used when scope is 'files'. Default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}.`),
-        }),
+        inputSchema,
         // `execute` defaults both fields internally, and the hook applies the same
         // defaults. Without them the ordinary call, which names no field at all,
         // gives no detail. `page` acts only on the `files` scope, as in `execute`.

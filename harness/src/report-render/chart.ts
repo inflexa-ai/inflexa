@@ -2874,7 +2874,7 @@ function thinnedLabels(option: EchartOption): EchartOption {
  * as a facet panel does. Every other grid spans the page chart body less its two side margins.
  */
 function pagePlotWidth(grid: unknown, axis: EchartOption): number {
-    const entry = Array.isArray(grid) ? grid[typeof axis.gridIndex === "number" ? axis.gridIndex : 0] : grid;
+    const entry: unknown = Array.isArray(grid) ? grid[typeof axis.gridIndex === "number" ? axis.gridIndex : 0] : grid;
     const fields = optionMember(entry);
     const stated = pagePx(fields.width);
     return stated > 0 ? stated : CHART_PAGE_WIDTH_PX - pagePx(fields.left) - pagePx(fields.right);

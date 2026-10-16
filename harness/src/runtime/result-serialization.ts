@@ -56,6 +56,7 @@ function toJson(value: unknown): Json {
 
 export const okRecipe: SerializationRecipe<Ok<unknown, never>, EncodedOk> = {
     name: "neverthrow.Ok",
+    // oxlint-disable-next-line @inflexa-ai/no-unknown-type-guards -- the DBOS serialization contract pins this predicate's form; the implementation cannot retype it.
     isApplicable: (v): v is Ok<unknown, never> => v instanceof Ok,
     serialize: (v) => ({ value: toJson(v.value) }),
     deserialize: (s) => ok(s.value),
@@ -63,6 +64,7 @@ export const okRecipe: SerializationRecipe<Ok<unknown, never>, EncodedOk> = {
 
 export const errRecipe: SerializationRecipe<Err<never, unknown>, EncodedErr> = {
     name: "neverthrow.Err",
+    // oxlint-disable-next-line @inflexa-ai/no-unknown-type-guards -- the DBOS serialization contract pins this predicate's form; the implementation cannot retype it.
     isApplicable: (v): v is Err<never, unknown> => v instanceof Err,
     serialize: (v) => ({ error: toJson(v.error) }),
     deserialize: (s) => err(s.error),

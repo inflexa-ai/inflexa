@@ -392,8 +392,8 @@ describe("spawnReportSession seed", () => {
         expect(transcript[0]).toContain(`Objective: ${BRIEF.objective}`);
         expect(transcript[0]).toContain(`Audience: ${BRIEF.audience}`);
         expect(transcript[0]).toContain(`Angle: ${BRIEF.angle}`);
-        expect(transcript[0]).toContain(`Exclusions: ${BRIEF.exclusions}`);
-        expect(transcript[0]).toContain(`Open questions: ${BRIEF.openQuestions}`);
+        expect(transcript[0]).toContain(`Exclusions: ${BRIEF.exclusions ?? ""}`);
+        expect(transcript[0]).toContain(`Open questions: ${BRIEF.openQuestions ?? ""}`);
         expect(transcript[0]).toContain("# Working Memory");
         expect(transcript[0]).toContain("Find the batch effect");
     });
@@ -524,13 +524,15 @@ describe("reportSessionDelta", () => {
         (await appendTurn("p1"))._unsafeUnwrap();
         const delta = must((await spawn.reportSessionDelta("p1"))._unsafeUnwrap(), "delta");
         expect(delta.newestChild?.threadId).toBe(child.threadId);
-        expect(must(must(delta, "delta").newestChild, "must(delta, \"delta\").newestChild").anchor).toBeLessThan((must(await latestSeqOf("p1"), "await latestSeqOf(\"p1\")")));
+        expect(must(must(delta, "delta").newestChild, 'must(delta, "delta").newestChild').anchor).toBeLessThan(
+            must(await latestSeqOf("p1"), 'await latestSeqOf("p1")'),
+        );
         expect(delta.userTurnsSinceAnchor).toBe(2);
     });
 
     it("finds the greatest anchor on a later page of the children listing", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
-        const anchor = (await latestSeqOf("p1"));
+        const anchor = await latestSeqOf("p1");
         // The listing orders by `updated_at`, thus the oldest stamp puts the child
         // with the greatest anchor on the second page, behind one full page.
         await insertReportChildren("filler", REPORT_CHILD_PAGE_SIZE, "p1", 0, 0);

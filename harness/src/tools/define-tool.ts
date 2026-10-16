@@ -50,6 +50,7 @@ export type ToolError = {
 export type ToolExecutionMode = "step" | "inline";
 
 /** Runtime guard — does a `Result`'s error value carry the `ToolError` shape? */
+// oxlint-disable-next-line @inflexa-ai/no-unknown-type-guards -- a public barrel export whose predicate form is the published surface; the lookup re-type is the recorded redesign.
 export function isToolError(value: unknown): value is ToolError {
     const record = maybeRecord(value);
     return record !== undefined && typeof record.error === "string" && typeof record.retryable === "boolean";

@@ -251,7 +251,9 @@ describe("approvePlan", () => {
 
         const refusal = (await approvePlan(depsOf(d), input()))._unsafeUnwrapErr();
 
-        expect(refusal).toMatchObject({ type: "launch_failed", cause: expect.objectContaining({ message: "launch boom" }) });
+        expect(refusal.type).toBe("launch_failed");
+        if (refusal.type !== "launch_failed") throw new Error("expected a launch_failed refusal");
+        expect(refusal.cause).toMatchObject({ message: "launch boom" });
         expect(d.events).toEqual([]);
         expect(await threadRowCount()).toBe(0);
     });

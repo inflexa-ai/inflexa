@@ -232,7 +232,7 @@ function makeAuthorizer(): FakeAuthorizer {
     const revoked: string[] = [];
     const authorizer: RunAuthorizer = {
         authorize(input) {
-            frames.push(`${input.frame.runId}/${input.frame.stepId}/${input.provenance.agentId}`);
+            frames.push(`${input.frame.runId}/${input.frame.stepId ?? ""}/${input.provenance.agentId}`);
             return local.authorize(input);
         },
         revoke(_authorization, reason) {

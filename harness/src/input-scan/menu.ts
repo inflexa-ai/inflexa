@@ -234,10 +234,15 @@ export function buildSetMenu(detected: DetectedSets, options: BuildSetMenuOption
     };
 }
 
+/** The display text of one readout field value. */
+function fieldText(value: string | number | boolean): string {
+    return typeof value === "string" ? value : String(value);
+}
+
 function renderHeader(readout: HeaderReadout | undefined): string | undefined {
     if (!readout) return undefined;
     const fields = Object.entries(readout.fields)
-        .map(([key, value]) => `${key}=${value}`)
+        .map(([key, value]) => `${key}=${fieldText(value)}`)
         .join(", ");
     return `  - readout (${readout.path}): ${fields || readout.unavailable || "no fields read"}`;
 }

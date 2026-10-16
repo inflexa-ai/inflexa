@@ -426,10 +426,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         ...(write && plan.writableStepPath
                             ? [`${tailWritePrefix({ workspaceRoot: hostTreePath, tail: write.tail })}:${plan.writableStepPath}:rw`]
                             : []),
-                        ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
+                        ...(libsMounted && config.libStorePath && plan.libsPath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
                         ...(libsMounted && farm && plan.farmPath ? [`${farm.farmPath}:${plan.farmPath}:ro`] : []),
                         ...(libsMounted && cacheBindable && farm?.cachePath && plan.cachePath ? [`${farm.cachePath}:${plan.cachePath}:rw`] : []),
-                        ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
+                        ...(refsMounted && config.refStorePath && plan.refsPath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
                         ...cpuBinds,
                     ];
 

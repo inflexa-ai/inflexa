@@ -262,7 +262,7 @@ function splitDelimited(line: string, delimiter: string): string[] {
 function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     const whole = parseJson(text.slice(0, READOUT_TEXT_BYTES));
     if (Array.isArray(whole)) {
-        const first = whole[0];
+        const first: unknown = whole[0];
         const fields: ReadoutFields = { jsonType: "array", elementCount: whole.length };
         const firstRecord = plainRecord(first);
         if (firstRecord !== undefined) fields.firstElementKeys = joinKeys(Object.keys(firstRecord));

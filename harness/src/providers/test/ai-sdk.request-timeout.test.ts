@@ -490,7 +490,7 @@ describe("SDK chunk bound", () => {
 
             expect(failure).toBeUndefined();
             const done = events.at(-1);
-            if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+            if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type ?? "no terminal event"}`);
             expect(done.response.message).toEqual({ role: "assistant", content: [{ type: "text", text: "abcdefgh" }] });
         } finally {
             await endpoint.close();

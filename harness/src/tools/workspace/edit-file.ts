@@ -17,7 +17,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import { defineTool, type Tool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { noteScriptChange, scriptSha256 } from "./decision-record.js";
@@ -179,7 +179,7 @@ function replaceRegex(
     return { kind: "ok", content: content.replace(compiled, replacement), replacements: matches.length, lines };
 }
 
-export function createEditFileTool(deps: EditFileDeps) {
+export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof EditFileInputSchema>, EditFileResult> {
     return defineTool({
         id: "edit_file",
         description:

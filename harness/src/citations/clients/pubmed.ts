@@ -49,7 +49,7 @@ export function createPubmedCitationClient(options: PubmedCitationClientOptions 
             pmids = match.value;
         } else {
             requestCount += 1;
-            const term = request.plan.operation === "pubmed_doi" ? `${request.normalized.identifiers.doi}[AID]` : `${request.input.title ?? ""}[Title]`;
+            const term = request.plan.operation === "pubmed_doi" ? `${request.normalized.identifiers.doi ?? ""}[AID]` : `${request.input.title ?? ""}[Title]`;
             const search = await source.searchIds(term, options.maxCandidates ?? 5, signal);
             if (search.status !== "ok") return sourceOutcome("pubmed", request.plan.operation, search.status, requestCount, [], search.detail);
             pmids = search.value;
@@ -97,7 +97,11 @@ export function createPubmedCitationClient(options: PubmedCitationClientOptions 
                 if (results[index] === undefined) results[index] = await resolve(request, signal);
             }),
         );
-        return results.map((result, index) => result ?? sourceOutcome("pubmed", requests[index].plan.operation, "unavailable", 0, [], "the batch resolver left this request without an outcome"));
+        return results.map(
+            (result, index) =>
+                result ??
+                sourceOutcome("pubmed", requests[index].plan.operation, "unavailable", 0, [], "the batch resolver left this request without an outcome"),
+        );
     }
 
     return { source: "pubmed", resolve, resolveMany };

@@ -761,7 +761,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
         if (reference.hash !== identity.onDiskHash) {
             return err({ reference, reason: "hash-mismatch", detail: `expected ${reference.hash} but the artifact hash is ${identity.onDiskHash}` });
         }
-        if (fileTypeHoldsNoCell(identity.fileType)) {
+        if (identity.fileType !== undefined && identity.fileType !== null && fileTypeHoldsNoCell(identity.fileType)) {
             return err({ reference, reason: "unreadable-artifact", detail: `the ${identity.fileType} at ${reference.path} holds no cell to read` });
         }
         const cells = await getCells(reference.path, identity);

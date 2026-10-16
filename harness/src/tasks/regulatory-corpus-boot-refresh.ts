@@ -116,7 +116,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
     }
 
     if (!freshness.stale) {
-        log.log(`[boot] Regulatory corpus is fresh (age ${freshness.ageDays?.toFixed(1)}d < ${intervalDays}d); skipping refresh`);
+        log.log(`[boot] Regulatory corpus is fresh (age ${(freshness.ageDays ?? Infinity).toFixed(1)}d < ${intervalDays}d); skipping refresh`);
         return "skipped-fresh";
     }
 
@@ -138,7 +138,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
         }
     }
     if (!embedder) {
-        const ageStr = freshness.lastIndexedAt === null ? "empty" : `age ${freshness.ageDays?.toFixed(1)}d`;
+        const ageStr = freshness.lastIndexedAt === null ? "empty" : `age ${(freshness.ageDays ?? Infinity).toFixed(1)}d`;
         log.warn(
             `[boot] Regulatory corpus is stale (${ageStr}) but ` +
                 "REGULATORY_CORPUS_OPENAI_API_KEY is unset; skipping auto-refresh. " +
@@ -169,7 +169,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
         return "skipped-locked";
     }
 
-    const ageStr = freshness.lastIndexedAt === null ? "empty" : `age ${freshness.ageDays?.toFixed(1)}d`;
+    const ageStr = freshness.lastIndexedAt === null ? "empty" : `age ${(freshness.ageDays ?? Infinity).toFixed(1)}d`;
     log.log(`[boot] Regulatory corpus is stale (${ageStr}); starting async refresh in background`);
 
     // Detached promise — startup must not wait for this to finish.

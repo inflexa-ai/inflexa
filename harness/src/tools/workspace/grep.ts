@@ -13,7 +13,7 @@ import { posix as posixPath } from "node:path";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { ListEntry, ReadFileResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { errorMessage } from "../../lib/thrown.js";
@@ -60,7 +60,7 @@ type GrepOutput =
       }
     | { status: "ok"; path: string; pattern: string; matches: Match[] };
 
-export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
+export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): Tool<z.infer<typeof GrepInputSchema>, GrepOutput> {
     return defineTool({
         id: "grep",
         description:

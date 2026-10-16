@@ -188,7 +188,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
 
 function firstString(value: unknown): string | null {
     if (Array.isArray(value)) {
-        const first = value.find((v) => typeof v === "string" && v.trim());
+        const first: unknown = value.find((v) => typeof v === "string" && v.trim());
         return typeof first === "string" ? first : null;
     }
     if (typeof value === "string") return value || null;

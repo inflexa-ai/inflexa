@@ -20,7 +20,7 @@ import type { EmbeddingProvider } from "../../providers/types.js";
 import { scopeResource } from "../../auth/types.js";
 import { tryQuery } from "../../lib/db-result.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { defineTool } from "../define-tool.js";
+import { defineTool, type Tool } from "../define-tool.js";
 
 /** pgvector / Postgres "undefined_table" — the index has no rows indexed yet. */
 const UNDEFINED_TABLE = "42P01";
@@ -60,7 +60,19 @@ export function fileTargetOf(id: string, metadata: unknown): string | undefined 
     return id.replace(/^\/[^/]+\//, "");
 }
 
-export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvider) {
+type WorkspaceSearchResult = { id: string; score: number; path?: string; metadata: unknown };
+type WorkspaceSearchOutput = { results: WorkspaceSearchResult[] };
+
+const inputSchema = z.object({
+    query: z.string().min(1).describe("What to search for, in natural language"),
+    type: z
+        .enum(["input-group", "input-dimension", "input", "input-kind", "output", "summary", "synthesis"])
+        .optional()
+        .describe('Restrict results to one entry type: "input-group", "input-dimension", "input", "input-kind", "output", "summary", or "synthesis"'),
+    limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
+});
+
+export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvider): Tool<z.infer<typeof inputSchema>, WorkspaceSearchOutput> {
     return defineTool({
         id: "workspace_search",
         description:
@@ -80,14 +92,7 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
             "metadata, e.g. search input-group for a group's display pattern, then list the tree for " +
             "its members. Most input files carry no entry of their own — find them through their " +
             "group and the listing tools.",
-        inputSchema: z.object({
-            query: z.string().min(1).describe("What to search for, in natural language"),
-            type: z
-                .enum(["input-group", "input-dimension", "input", "input-kind", "output", "summary", "synthesis"])
-                .optional()
-                .describe('Restrict results to one entry type: "input-group", "input-dimension", "input", "input-kind", "output", "summary", or "synthesis"'),
-            limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
-        }),
+        inputSchema,
         describeCall: ({ query, type }) => (type === undefined ? query : `${query} (${type})`),
         execute: async ({ query, type, limit }, ctx) => {
             const vector = unwrapOrThrow(await embedding.embed([query], ctx.session)).at(0);

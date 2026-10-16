@@ -446,10 +446,11 @@ describe("runChatTurn", () => {
         const replay = storedMessagesToChat(await storedRows());
 
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
-        expect(replay[1].parts).toEqual([
-            { type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok", durationMs: expect.any(Number) },
-            { type: "text", text: "the groups differ" },
-        ]);
+        const calls = replay[1].parts.filter((part) => part.type === "tool-call");
+        expect(replay[1].parts).toHaveLength(2);
+        expect(calls.at(0)).toMatchObject({ toolCallId: "tu-1", toolName: "echo", outcome: "ok" });
+        expect(calls.at(0)?.durationMs).toBeNumber();
+        expect(replay[1].parts.at(-1)).toEqual({ type: "text", text: "the groups differ" });
     });
 
     it("keeps two rounds, adds the note, and closes failed when the third request fails on the credential", async () => {
@@ -905,16 +906,10 @@ describe("runChatTurn — compaction", () => {
 
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant", "system", "assistant"]);
         expect(replay[1].id).not.toBe(replay[3].id);
-        expect(replay[2].parts).toEqual([
-            {
-                type: "data-compaction",
-                id: replay[2].id,
-                status: "done",
-                tokensBefore: OVER,
-                durationMs: expect.any(Number),
-                trigger: "mid-turn",
-            },
-        ]);
+        const compactions = replay[2].parts.filter((part) => part.type === "data-compaction");
+        expect(compactions).toHaveLength(1);
+        expect(compactions.at(0)).toMatchObject({ id: replay[2].id, status: "done", tokensBefore: OVER, trigger: "mid-turn" });
+        expect(compactions.at(0)?.durationMs).toBeNumber();
         expect(JSON.stringify(replay)).not.toContain(SUMMARY);
         expect(replay[3].parts).toEqual([{ type: "text", text: "done" }]);
     });
@@ -1067,9 +1062,10 @@ describe("runChatTurn — compaction", () => {
         expect(rows.flatMap((row) => (row.author === undefined ? [] : [[row.seq, row.author]]))).toEqual([[rows[7].seq, "dr.chen@lab.example"]]);
         const replay = storedMessagesToChat(rows);
         expect(replay.map((message) => message.role)).toEqual(["system", "user", "assistant"]);
-        expect(replay[0].parts).toEqual([
-            { type: "data-compaction", id: replay[0].id, status: "done", tokensBefore: OVER, durationMs: expect.any(Number), trigger: "turn-start" },
-        ]);
+        const compactions = replay[0].parts.filter((part) => part.type === "data-compaction");
+        expect(compactions).toHaveLength(1);
+        expect(compactions.at(0)).toMatchObject({ id: replay[0].id, status: "done", tokensBefore: OVER, trigger: "turn-start" });
+        expect(compactions.at(0)?.durationMs).toBeNumber();
     });
 
     it("stores the exchange, and no user message and no turn record, when an abort ends the turn-start compaction", async () => {

@@ -283,7 +283,7 @@ function setAtPath(root: unknown, path: readonly PropertyKey[], value: unknown):
 
     const child = setAtPath(Reflect.get(fields, key), rest, value);
     if (Array.isArray(root)) {
-        const copy = [...root];
+        const copy: unknown[] = Array.from(root, (member): unknown => member);
         return Object.assign(copy, { [key]: child });
     }
     return { ...fields, [key]: child };

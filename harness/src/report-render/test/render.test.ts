@@ -1999,7 +1999,7 @@ describe("the evidentiary bindings in the appendix", () => {
             .toArray()
             .map((node) => page(node).attr("href"));
         expect(targets.length).toBe(4);
-        expect(targets.filter((target) => page(`li${target}`).length === 1).length).toBe(4);
+        expect(targets.filter((target) => target !== undefined && page(`li${target}`).length === 1).length).toBe(4);
         expect(page("ol.report-references li").length).toBe(3);
         // Every entry names the derived path, thus every entry states the chain of that path.
         expect(page("ol.report-references li .report-ref-chain").length).toBe(3);
@@ -2173,7 +2173,7 @@ describe("the section scrollspy", () => {
         expect(margin).not.toBeNull();
         // The script is browser source text, thus the test reads it as text. The fallback measures the same
         // box that the observer takes, and one constant feeds both. Thus the two readings cannot drift.
-        expect(SECTION_SPY).toContain(`(100 - ${margin?.[1]})`);
+        expect(SECTION_SPY).toContain(`(100 - ${margin?.[1] ?? ""})`);
         expect(SECTION_SPY).toContain("clientHeight");
         expect(SECTION_SPY).toContain("getBoundingClientRect().top <= end");
         expect(SECTION_SPY).toContain("active = nearestAbove()");
@@ -3429,7 +3429,7 @@ describe("the chart exports", () => {
         const page = chartPage(faceted, rows);
         const svgs = (await renderReportPage(page.document, page.values))._unsafeUnwrap().dataAssets.filter((asset) => asset.name.endsWith(".svg"));
         const single = exportSizeFor(CHART_EXPORT_SIZES.single, CHART_BODY_PX + FACET_ROW_PX);
-        expect(svgs.find((asset) => asset.name.endsWith("-89mm.svg"))?.bytes).toContain(`<svg width="89mm" height="${single.heightMm}mm"`);
+        expect(svgs.find((asset) => asset.name.endsWith("-89mm.svg"))?.bytes).toContain(`<svg width="89mm" height="${single.heightMm ?? ""}mm"`);
     });
 
     it("keeps the container of each new form with zero rows, and reports no problem", async () => {

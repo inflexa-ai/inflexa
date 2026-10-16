@@ -20,7 +20,7 @@ import { okAsync, type ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { tryQuery, type DbError } from "../lib/db-result.js";
-import { plainRecord } from "../lib/shape.js";
+import { maybeRecord, plainRecord } from "../lib/shape.js";
 import type { PlanPart } from "../contracts/chat-parts.js";
 import { PlanPartSchema } from "../contracts/schemas/chat-parts.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
@@ -234,7 +234,7 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
 
     const files: FileReferenceEntryData[] = [];
     for (const raw of rawFiles) {
-        const file: Record<string, unknown> = raw ?? {};
+        const file = maybeRecord(raw) ?? {};
         const path = typeof file.path === "string" ? file.path : "";
         if (validatePath(path) !== null) return null;
         const runId = deriveRunId(path);

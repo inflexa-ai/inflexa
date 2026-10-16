@@ -2722,7 +2722,8 @@ describe("runAgent — compaction", () => {
         expect(markersOf(messages)).toEqual([]);
         const parts = compactionParts(events);
         expect(parts.map((part) => part.status)).toEqual(["running", "failed"]);
-        expect(parts[1]).toMatchObject({ id: parts[0].id, tokensBefore: OVER, durationMs: expect.any(Number) });
+        expect(parts[1]).toMatchObject({ id: parts[0].id, tokensBefore: OVER });
+        expect(parts[1].durationMs).toBeNumber();
         expect(parts[1]).not.toHaveProperty("tokensAfter");
         const error = logger.records.find(
             (record) => record.level === "error" && record.msg.includes("compaction gave no summary, thus the run compacts no more"),
@@ -2731,10 +2732,10 @@ describe("runAgent — compaction", () => {
             compactionId: parts[0].id,
             trigger: "mid-turn",
             tokensBefore: OVER,
-            durationMs: expect.any(Number),
             status: 400,
             providerError: refusal400.message,
         });
+        expect(error?.fields.durationMs).toBeNumber();
     });
 
     it.each<[string, ProviderError]>([
@@ -2876,7 +2877,8 @@ describe("runAgent — compaction", () => {
         expect(parts.map((event) => ("source" in event ? event.source?.callPath : undefined))).toEqual([["tui-chat"], ["tui-chat"]]);
         const [running, done] = compactionParts(events);
         expect(running).toMatchObject({ status: "running", tokensBefore: OVER });
-        expect(done).toMatchObject({ id: running.id, status: "done", tokensBefore: OVER, durationMs: expect.any(Number) });
+        expect(done).toMatchObject({ id: running.id, status: "done", tokensBefore: OVER });
+        expect(done.durationMs).toBeNumber();
         expect(done).not.toHaveProperty("tokensAfter");
         expect(markerIn(messages)).toEqual(
             must(

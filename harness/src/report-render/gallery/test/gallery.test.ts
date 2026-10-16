@@ -287,7 +287,7 @@ describe("the gallery manifest", () => {
         );
         expect(pins.size).toBeGreaterThan(0);
         for (const [path, hash] of pins) {
-            expect({ path, hash: `sha256:${manifest.find((entry) => entry.path === path)?.sha256}` }).toEqual({ path, hash });
+            expect({ path, hash: `sha256:${manifest.find((entry) => entry.path === path)?.sha256 ?? ""}` }).toEqual({ path, hash });
         }
     });
 });

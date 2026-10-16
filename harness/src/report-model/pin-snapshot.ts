@@ -221,7 +221,8 @@ export async function pinReportSnapshot(
 
     // The ledger accepts any path. A null-prototype map keeps a key such as `__proto__` an ordinary
     // entry, thus no path collides with a prototype slot.
-    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
+    const artifacts: Record<string, ArtifactSnapshot> = {};
+    Reflect.setPrototypeOf(artifacts, null);
     for (const row of ledgerRows.value) {
         artifacts[row.path] = { hash: row.hash, fileType: row.fileType };
     }

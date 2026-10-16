@@ -88,7 +88,8 @@ export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIss
     }
     // The map takes a null prototype, the same as the pin, thus a path such as
     // `__proto__` stays an ordinary entry and never reaches a prototype slot.
-    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
+    const artifacts: Record<string, ArtifactSnapshot> = {};
+    Reflect.setPrototypeOf(artifacts, null);
     const issues: SchemaIssue[] = [];
     for (const [path, value] of Object.entries(artifactsRecord)) {
         const parsed = ArtifactSnapshotSchema.safeParse(value);

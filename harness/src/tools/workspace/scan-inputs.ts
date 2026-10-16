@@ -20,7 +20,7 @@ import { renderInputScanManifest, scanInputTree } from "../../input-scan/scan.js
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 export type ScanInputsDeps = {
     readonly workspaceFs: WorkspaceFilesystem;
@@ -39,7 +39,11 @@ type ScanInputsOutput = {
     readonly manifest: string;
 };
 
-export function createScanInputsTool(deps: ScanInputsDeps) {
+const inputSchema = z.object({
+    path: z.string().min(1).describe("Directory to scan, relative to the analysis root (e.g. 'data/inputs' or 'data/inputs/vcf')."),
+});
+
+export function createScanInputsTool(deps: ScanInputsDeps): Tool<z.infer<typeof inputSchema>, ScanInputsOutput> {
     return defineTool({
         id: "scan_inputs",
         description:
@@ -53,9 +57,7 @@ export function createScanInputsTool(deps: ScanInputsDeps) {
             "Your briefing already carries a scan of the whole input tree; call this to look at a subtree more closely, " +
             "or to check a grouping you are unsure about. " +
             "It reports observations only: which files are one KIND of data, and what a varying position MEANS, are yours to decide.",
-        inputSchema: z.object({
-            path: z.string().min(1).describe("Directory to scan, relative to the analysis root (e.g. 'data/inputs' or 'data/inputs/vcf')."),
-        }),
+        inputSchema,
         describeCall: ({ path }) => path,
         execute: async ({ path }, ctx): Promise<Result<ScanInputsOutput, ToolError>> => {
             const scan = await scanInputTree({
@@ -70,7 +72,8 @@ export function createScanInputsTool(deps: ScanInputsDeps) {
                 shapes: scan.manifest.shapes,
                 session: ctx.session,
                 fs: deps.workspaceFs,
-                sandboxClient: deps.sandboxClient && deps.sandbox ? deps.sandboxClient : undefined, sandbox: deps.sandboxClient && deps.sandbox ? deps.sandbox : undefined,
+                sandboxClient: deps.sandboxClient && deps.sandbox ? deps.sandboxClient : undefined,
+                sandbox: deps.sandboxClient && deps.sandbox ? deps.sandbox : undefined,
                 mountRoot: `/${deps.analysisId}`,
                 deadlineMs: deps.deadlineMs(),
                 emit: ctx.emit,

@@ -679,7 +679,7 @@ describe("the staged table data", () => {
             expect(await readFile(join(assetsDir, must(dataAsset, "dataAsset")), "utf8")).toContain("TP53");
 
             const page = await readFile(result.pagePath, "utf8");
-            expect(page).toContain(`assets/${dataAsset}`);
+            expect(page).toContain(`assets/${dataAsset ?? ""}`);
             expect(page).toContain(`assets/${sidecar}`);
         }
         assertNoLegacyDirs(root);

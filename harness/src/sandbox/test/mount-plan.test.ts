@@ -131,7 +131,7 @@ describe("buildSessionSubPaths", () => {
         expect(subPaths.rw).toBe("an-1/runs/run-1/step-a");
         // The RW subPath matches the container RW mount path sans leading slash — the two
         // sides of the same directory.
-        expect(`/${subPaths.rw}`).toBe(buildMountPlan(COORDS, { libs: false, refs: false }).writableStepPath ?? "");
+        expect(`/${subPaths.rw ?? ""}`).toBe(buildMountPlan(COORDS, { libs: false, refs: false }).writableStepPath ?? "");
     });
 
     test("tracks a workspace root that is NOT laid out as {pvcRoot}/{analysisId}", () => {
@@ -190,8 +190,11 @@ describe("the declared write tail", () => {
         expect(subPaths.rw).toBe(`tenants/acme/an-1/${TAIL}`);
         // The RW subPath matches the container RW mount path sans leading slash — the two sides of the
         // same directory.
-        expect(`/an-1/${must(must(subPaths, "subPaths").rw, "must(subPaths, \"subPaths\").rw").slice("tenants/acme/an-1/".length)}`).toBe(
-            must(must(buildMountPlan, "buildMountPlan")({ ...COORDS, writableTail: TAIL }, { libs: false, refs: false }).writableStepPath, "the writable step path"),
+        expect(`/an-1/${must(must(subPaths, "subPaths").rw, 'must(subPaths, "subPaths").rw').slice("tenants/acme/an-1/".length)}`).toBe(
+            must(
+                must(buildMountPlan, "buildMountPlan")({ ...COORDS, writableTail: TAIL }, { libs: false, refs: false }).writableStepPath,
+                "the writable step path",
+            ),
         );
     });
 

@@ -287,10 +287,9 @@ describe("pubmed — action 'details'", () => {
         const result = (await tool.execute({ action: "details", pmids: ["12345678"] }, ctx))._unsafeUnwrap();
         if (!("articles" in result)) throw new Error("expected the details variant");
 
-        expect(result).toEqual({
-            articles: [expect.objectContaining({ pmid: "12345678", pmcId: null })],
-            notFound: [],
-        });
+        expect(result.articles).toHaveLength(1);
+        expect(result.articles.at(0)).toMatchObject({ pmid: "12345678", pmcId: null });
+        expect(result.notFound).toEqual([]);
     });
 
     it("throws on an upstream 5xx failure", async () => {

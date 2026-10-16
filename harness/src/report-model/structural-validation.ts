@@ -44,7 +44,7 @@ function validatePin(reference: PinnedReference, snapshot: ReportSnapshot): Resu
     // of each report.
     const readsACell = reference.kind === "artifact-value" || reference.kind === "artifact-table";
     const fileType = entry.fileType;
-    if (readsACell && fileTypeHoldsNoCell(fileType)) {
+    if (readsACell && fileType !== undefined && fileType !== null && fileTypeHoldsNoCell(fileType)) {
         return fail(reference, "unreadable-artifact", `the ${fileType} at ${reference.path} holds no cell to read`);
     }
     return ok();

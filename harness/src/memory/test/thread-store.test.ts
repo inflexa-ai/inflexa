@@ -762,11 +762,9 @@ describe("createThread integrity rules", () => {
         // Absence is the foreign key's verdict, not a rule the store pre-empts
         // with a read — so the refusal arrives from the insert, naming the edge
         // that refused it rather than the primary key.
-        expect(failed).toMatchObject({
-            type: "constraint_violation",
-            op: "thread-store.createThread.insert",
-            constraint: expect.stringContaining("parent_thread_id"),
-        });
+        expect(failed).toMatchObject({ type: "constraint_violation", op: "thread-store.createThread.insert" });
+        if (failed.type !== "constraint_violation") throw new Error("expected a constraint_violation");
+        expect(failed.constraint).toContain("parent_thread_id");
         expect(await threadRowCount("child")).toBe(0);
     });
 

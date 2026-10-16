@@ -138,7 +138,9 @@ export function renderChart(
                 <div id={chartMenuId(containerId)} class="report-chart-menu" role="menu" aria-label={MENU_LABEL}>
                     {SVG_EXPORTS.map((kind) => {
                         const size = exportSizeFor(CHART_EXPORT_SIZES[kind], card.bodyPx);
-                        const file = `${stem}-${size.widthMm}mm.svg`;
+                        const widthMm = size.widthMm;
+                        if (widthMm === undefined) throw new Error(`SVG export size ${size.label} carries no width in mm`);
+                        const file = `${stem}-${widthMm}mm.svg`;
                         const label = `SVG · ${size.label}`;
                         if (card.svg !== undefined) {
                             return (

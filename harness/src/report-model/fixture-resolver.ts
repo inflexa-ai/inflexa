@@ -52,7 +52,7 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
     // A caller supplies the rows of a fixture. A fixture that supplies rows for a figure would resolve a
     // cell that no real artifact holds. Thus the refusal comes before the read of the rows.
     const valueFileType = artifact.fileType;
-    if (fileTypeHoldsNoCell(valueFileType)) {
+    if (valueFileType !== undefined && valueFileType !== null && fileTypeHoldsNoCell(valueFileType)) {
         return fail(reference, "unreadable-artifact", `the ${valueFileType} at ${reference.path} holds no cell to read`);
     }
 
@@ -105,7 +105,7 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
     }
 
     const tableFileType = artifact.fileType;
-    if (fileTypeHoldsNoCell(tableFileType)) {
+    if (tableFileType !== undefined && tableFileType !== null && fileTypeHoldsNoCell(tableFileType)) {
         return fail(reference, "unreadable-artifact", `the ${tableFileType} at ${reference.path} holds no cell to read`);
     }
 

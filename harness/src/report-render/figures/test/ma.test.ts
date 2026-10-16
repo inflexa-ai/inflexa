@@ -9,7 +9,7 @@ import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
-import { DENSE_NULL_Z } from "../dense.js";
+import { DENSE_NULL_OPACITY, DENSE_NULL_Z, DENSE_SIGNAL_OPACITY } from "../dense.js";
 import { FIGURE_MODULES } from "../index.js";
 import { MA_FIGURE, MA_P_THRESHOLD } from "../ma.js";
 import { optionMember, optionRecord, optionRecords, optionRecordsOrEmpty, optionText } from "../../option-lens.js";
@@ -75,8 +75,8 @@ describe("the MA figure", () => {
         expect(MA_P_THRESHOLD).toBe(0.1);
         expect(significant.name).toBe("padj < 0.1");
         expect(rest.name).toBe("Not significant");
-        expect(significant.itemStyle).toEqual({ color: CHART_PALETTE[0], opacity: expect.any(Number) });
-        expect(rest.itemStyle).toEqual({ color: MUTED_CHART_COLOR, opacity: expect.any(Number) });
+        expect(significant.itemStyle).toEqual({ color: CHART_PALETTE[0], opacity: DENSE_SIGNAL_OPACITY });
+        expect(rest.itemStyle).toEqual({ color: MUTED_CHART_COLOR, opacity: DENSE_NULL_OPACITY });
         expect(rest.z).toBe(DENSE_NULL_Z);
         expect(names(significant)).toEqual(["Kal1", "Ant2", "CG1"]);
         // A gene with no adjusted p draws gray, as DESeq2 draws it. A mean of zero has no place on a log axis.

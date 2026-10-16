@@ -1480,6 +1480,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         }
         for (const stepId of admit) {
             const idx = stepIndexById.get(stepId);
+            if (idx === undefined) throw new Error(`step ${stepId} left the scheduler index mid-walk`);
             const childWorkflowId = `${workflowId}-${idx}`;
             // Compose the seed HERE — the dependencies of `stepId` are all in
             // `completed`, so this is the first (and only) moment their results

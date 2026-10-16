@@ -11,7 +11,16 @@ import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartOp
 import { exportOption } from "../../chart-renderers.js";
 import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
-import { BELOW_RESOLUTION_SYMBOL, DENSE_NULL_SYMBOL_PX, DENSE_NULL_Z, DENSE_SIGNAL_SYMBOL_PX, niceCeiling, POINT_NAMES } from "../dense.js";
+import {
+    BELOW_RESOLUTION_SYMBOL,
+    DENSE_NULL_OPACITY,
+    DENSE_NULL_SYMBOL_PX,
+    DENSE_NULL_Z,
+    DENSE_SIGNAL_OPACITY,
+    DENSE_SIGNAL_SYMBOL_PX,
+    niceCeiling,
+    POINT_NAMES,
+} from "../dense.js";
 import { EXPORT_PLOT_FRAMES, leaderNameBox, overlaps, PAGE_PLOT_FRAME, type LeaderName, type NameFrame } from "../label-room.js";
 import { FIGURE_MODULES } from "../index.js";
 import { VOLCANO_FIGURE, VOLCANO_LABEL_COUNT } from "../volcano.js";
@@ -97,9 +106,9 @@ describe("the volcano figure", () => {
 
     it("draws the null points under the two signal sides, gray and smaller", () => {
         const [down, up, ns] = seriesOf(derive());
-        expect(down.itemStyle).toEqual({ color: CHART_PALETTE[0], opacity: expect.any(Number) });
-        expect(up.itemStyle).toEqual({ color: CHART_PALETTE[1], opacity: expect.any(Number) });
-        expect(ns.itemStyle).toEqual({ color: MUTED_CHART_COLOR, opacity: expect.any(Number) });
+        expect(down.itemStyle).toEqual({ color: CHART_PALETTE[0], opacity: DENSE_SIGNAL_OPACITY });
+        expect(up.itemStyle).toEqual({ color: CHART_PALETTE[1], opacity: DENSE_SIGNAL_OPACITY });
+        expect(ns.itemStyle).toEqual({ color: MUTED_CHART_COLOR, opacity: DENSE_NULL_OPACITY });
         expect(ns.z).toBe(DENSE_NULL_Z);
         // The runtime draws a scatter at the order 2 where the series names none, thus the null layer sits under.
         expect(down.z === undefined || optionNumber(down.z) > DENSE_NULL_Z).toBe(true);

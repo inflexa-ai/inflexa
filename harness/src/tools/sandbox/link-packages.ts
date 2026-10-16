@@ -17,7 +17,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { parseQuery, type PackageQuery, type ParseQueryError } from "../../sandbox/package-identity.js";
 import type { ExtendAnalysisFarm, PackageRequestOutcome } from "../../sandbox/types.js";
 import { errorMessage } from "../../lib/thrown.js";
@@ -67,7 +67,17 @@ export async function callExtendAnalysisFarm(
     }
 }
 
-export function createLinkPackagesTool(deps: LinkPackagesDeps) {
+const inputSchema = z.object({
+    packages: z
+        .array(z.string().min(1))
+        .min(1)
+        .max(50)
+        .describe(
+            'The packages to link into the farm, each as `[python:|r:]<name>[==<version>]`, for example ["scanpy", "r:Seurat", "numpy==1.26.4"]. A bare name searches both tracks.',
+        ),
+});
+
+export function createLinkPackagesTool(deps: LinkPackagesDeps): Tool<z.infer<typeof inputSchema>, LinkPackagesResult> {
     return defineTool({
         id: "link_packages",
         description:
@@ -81,15 +91,7 @@ export function createLinkPackagesTool(deps: LinkPackagesDeps) {
             "or `unavailable` (the link pass itself could not answer — the `reason` says why; it says nothing about the package's presence, so report the reason and do not re-request packages). " +
             "After a `collision` of one name that BOTH tracks hold, call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`. " +
             "A collision is terminal only after that second call also refuses, or when it names two versions of one distribution — then report it and continue without the package.",
-        inputSchema: z.object({
-            packages: z
-                .array(z.string().min(1))
-                .min(1)
-                .max(50)
-                .describe(
-                    'The packages to link into the farm, each as `[python:|r:]<name>[==<version>]`, for example ["scanpy", "r:Seurat", "numpy==1.26.4"]. A bare name searches both tracks.',
-                ),
-        }),
+        inputSchema,
         describeCall: ({ packages }) => packages.join(", "),
         execute: async (input): Promise<Result<LinkPackagesResult, ToolError>> => {
             // Every entry parses before any link lands. A partial link over a

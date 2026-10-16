@@ -467,7 +467,7 @@ describe("usage reporting", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type ?? "no terminal event"}`);
         expect(done.response.usage).toEqual({
             inputTokens: 2000,
             outputTokens: 42,
@@ -576,7 +576,7 @@ describe("usage reporting", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type ?? "no terminal event"}`);
         expect(done.response.usage?.reasoningTokens).toBe(40);
     });
 });
@@ -1408,7 +1408,7 @@ describe("model identity", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type ?? "no terminal event"}`);
         expect(done.response.requestedModelId).toBe("fake-model");
         expect(done.response.servedModelId).toBe("fake-model-20260101");
     });
@@ -1425,7 +1425,7 @@ describe("model identity", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type ?? "no terminal event"}`);
         expect(done.response.requestedModelId).toBe("fake-model");
         expect(done.response.servedModelId).toBeUndefined();
     });
@@ -1452,7 +1452,7 @@ describe("model identity", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type ?? "no terminal event"}`);
         expect(done.response.requestedModelId).toBe("fake-model");
         expect(done.response.servedModelId).toBe("fake-model-20260101");
     });
@@ -1545,8 +1545,8 @@ describe("failure logging", () => {
         const provider = createAiSdkProvider({
             model: fakeModel(() => {
                 controller.abort();
-                const reason = controller.signal.reason;
-                return Promise.reject(errorOf(reason) ?? new Error(String(reason)));
+                const reason: unknown = controller.signal.reason;
+                return Promise.reject(errorOf(reason) ?? new Error(errorMessage(reason)));
             }),
             maxRetries: 0,
             logger,

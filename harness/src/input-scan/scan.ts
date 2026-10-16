@@ -87,6 +87,11 @@ async function walk(args: ScanInputTreeArgs): Promise<{ files: ScannedFile[]; tr
     return { files, truncated };
 }
 
+/** The display text of one header field value. */
+function fieldText(value: string | number | boolean): string {
+    return typeof value === "string" ? value : String(value);
+}
+
 function formatCensus(files: readonly ScannedFile[]): FormatCount[] {
     const counts = new Map<string, number>();
     for (const file of files) counts.set(file.format, (counts.get(file.format) ?? 0) + 1);
@@ -169,7 +174,7 @@ export function renderInputScanManifest(manifest: InputScanManifest): string {
             }
             if (shape.header) {
                 const fields = Object.entries(shape.header.fields)
-                    .map(([key, value]) => `${key}=${value}`)
+                    .map(([key, value]) => `${key}=${fieldText(value)}`)
                     .join(", ");
                 lines.push(`  - header (${shape.header.path}): ${fields || shape.header.unavailable || "no fields read"}`);
             } else {

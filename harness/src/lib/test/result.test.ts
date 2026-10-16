@@ -59,8 +59,11 @@ describe("asResult", () => {
     });
 
     it("is false for plain values that merely look result-ish", () => {
+        // typecheck-disable-next-line must-use-result -- the Result is the fixture consumed by asResult, the brand check under test
         expect(asResult({ value: 1 })).toBeUndefined();
+        // typecheck-disable-next-line must-use-result -- the Result is the fixture consumed by asResult, the brand check under test
         expect(asResult(null)).toBeUndefined();
+        // typecheck-disable-next-line must-use-result -- the Result is the fixture consumed by asResult, the brand check under test
         expect(asResult("ok")).toBeUndefined();
     });
 });

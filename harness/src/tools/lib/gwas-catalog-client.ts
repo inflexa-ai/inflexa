@@ -194,7 +194,7 @@ export async function searchGwasCatalog(
         const traitUri = (traitRes.value._embedded?.efoTraits ?? [])[0]?._links?.self?.href;
         if (!traitUri) return { totalFound: 0, associations: [] };
 
-        associationsUrl = `${GWAS_BASE}/efoTraits/${traitUri.split("/").pop()}/associations?size=${limit}`;
+        associationsUrl = `${GWAS_BASE}/efoTraits/${traitUri.split("/").pop() ?? ""}/associations?size=${limit}`;
     }
 
     const res = await apiFetchValidated(associationsUrl, GwasEmbeddedSchema, { headers: GWAS_HEADERS });

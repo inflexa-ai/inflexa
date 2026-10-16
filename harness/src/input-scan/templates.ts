@@ -344,7 +344,8 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
         index,
         tokenClass: observed.tokenClass,
         width: observed.width !== undefined ? observed.width : undefined,
-        minLength: observed.minLength !== undefined ? observed.minLength : undefined, maxLength: observed.minLength !== undefined ? observed.maxLength : undefined,
+        minLength: observed.minLength !== undefined ? observed.minLength : undefined,
+        maxLength: observed.minLength !== undefined ? observed.maxLength : undefined,
         skeleton: observed.skeleton !== undefined ? observed.skeleton : undefined,
         prefix: prefix ? prefix : undefined,
         suffix: suffix ? suffix : undefined,
@@ -358,10 +359,16 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
 /** The template token a slot renders as. */
 export function slotToken(slot: DraftSlot): string {
     switch (slot.tokenClass) {
-        case "digits-fixed":
-            return `<digits:${slot.width}>`;
-        case "pattern":
-            return `<pattern:${slot.skeleton}>`;
+        case "digits-fixed": {
+            const width = slot.width;
+            if (width === undefined) throw new Error(`digits-fixed slot ${slot.index} carries no width`);
+            return `<digits:${width}>`;
+        }
+        case "pattern": {
+            const skeleton = slot.skeleton;
+            if (skeleton === undefined) throw new Error(`pattern slot ${slot.index} carries no skeleton`);
+            return `<pattern:${skeleton}>`;
+        }
         default:
             return `<${slot.tokenClass}>`;
     }

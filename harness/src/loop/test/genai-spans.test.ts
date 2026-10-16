@@ -303,9 +303,9 @@ it("records the shape of rejected input on the span and in one warn, with no val
     expect(span.attributes["error.type"]).toBe("validation");
     expect(span.attributes["inflexa.tool.validation.issues"]).toEqual(issues);
     const warns = logger.records.filter((record) => record.level === "warn");
-    expect(warns).toEqual([
-        { level: "warn", msg: "[loop] tool call rejected", fields: expect.objectContaining({ tool: "typed", toolCallId: "tc-shape", issues }) },
-    ]);
+    expect(warns).toHaveLength(1);
+    expect(warns.at(0)).toMatchObject({ level: "warn", msg: "[loop] tool call rejected" });
+    expect(warns.at(0)?.fields).toMatchObject({ tool: "typed", toolCallId: "tc-shape", issues });
     expect(JSON.stringify([span.attributes, span.events, span.status, logger.records])).not.toContain("SECRET");
 });
 

@@ -22,7 +22,7 @@ import { z } from "zod";
 
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
-import { defineTool } from "../define-tool.js";
+import { defineTool, type Tool } from "../define-tool.js";
 import { searchDgidb, type DgidbResult } from "../lib/dgidb-client.js";
 import { searchDrugbank, type DrugResult } from "../lib/drugbank-client.js";
 import { searchPharmgkb, type PharmgkbAnnotation } from "../lib/pharmgkb-client.js";
@@ -153,7 +153,7 @@ async function runSource<T>(source: Source, fetch: () => Promise<T[]>): Promise<
     }
 }
 
-export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; logger?: Logger }) {
+export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; logger?: Logger }): Tool<z.infer<typeof inputSchema>, DrugGeneOutput> {
     const logger = (deps.logger ?? createNoopLogger()).named("drug_gene_interactions");
 
     return defineTool({

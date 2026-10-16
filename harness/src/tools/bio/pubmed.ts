@@ -28,7 +28,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { guaranteed } from "../../lib/invariants.js";
 import {
     boundArticleDetails,
@@ -146,7 +146,7 @@ type PubMedOutput =
     | { pmcId: string; available: false }
     | ({ pmcId: string; available: true } & Omit<BoundedFullText, "sections">);
 
-export function createPubMedTool(deps: { ncbiApiKey?: string }) {
+export function createPubMedTool(deps: { ncbiApiKey?: string }): Tool<z.infer<typeof inputSchema>, PubMedOutput> {
     return defineTool({
         id: "pubmed",
         description:

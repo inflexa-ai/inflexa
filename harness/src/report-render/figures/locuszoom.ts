@@ -198,7 +198,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
         );
     }
     const chromosomes = chromosome === undefined ? [] : distinctNames(rows, chromosome);
-    if (chromosomes.length > 1) {
+    if (chromosome !== undefined && chromosomes.length > 1) {
         return err(
             chartProblem(
                 context.blockId,
@@ -212,7 +212,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
         return err(
             chartProblem(
                 context.blockId,
-                `The locuszoom reads the "${r2}" column as the r² with the lead variant, and row ${outside + 1} holds ${r2s[outside]}, which is outside 0 to 1.`,
+                `The locuszoom reads the "${r2}" column as the r² with the lead variant, and row ${outside + 1} holds ${r2s[outside] ?? ""}, which is outside 0 to 1.`,
             ),
         );
     }

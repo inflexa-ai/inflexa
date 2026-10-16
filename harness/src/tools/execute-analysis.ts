@@ -30,7 +30,7 @@ import { RunDedupCollisionError, insertRun, loadPlan, queryActiveRun, reserveRun
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { routeAdHocRequest, type AdHocRoute, type AdHocRouterDeps } from "./ad-hoc-router.js";
 import { adHocPlanId, adHocRunId } from "./analysis-invocation.js";
-import { defineTool, type ToolContext } from "./define-tool.js";
+import { defineTool, type Tool, type ToolContext } from "./define-tool.js";
 import { queryPackages, readInventorySections, type ListAvailablePackagesDeps } from "./sandbox/list-available-packages.js";
 import { callExtendAnalysisFarm } from "./sandbox/link-packages.js";
 import { errorName } from "../lib/thrown.js";
@@ -647,7 +647,7 @@ function throwLaunchRefusal(refusal: Exclude<LaunchPlanRunRefusal, { type: "not_
     }
 }
 
-export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
+export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z.infer<typeof inputSchema>, { runId: string; status: "in_progress" }> {
     return defineTool({
         id: "execute_analysis",
         description:
@@ -664,7 +664,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
         execute: async (input, ctx) => {
             const analysisId = ctx.session.scope.analysisId;
             const planId = input.mode === "plan" ? guaranteed(input.planId, "planId") : adHocPlanId(analysisId, ctx.invocationId);
-            const emitRunCard = async (runId: string) => {
+            const emitRunCard = async (runId: string): Promise<void> => {
                 const card = await buildRunCardData(deps.pool, { planId, analysisId, runId }).unwrapOr(null);
                 if (card) await ctx.emit({ type: "data-run-card", source: ctx.session.provenance, data: card });
             };

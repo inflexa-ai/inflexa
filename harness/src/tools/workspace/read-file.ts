@@ -11,7 +11,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 
@@ -80,7 +80,7 @@ const ReadFileInputSchema = z.object({
         ),
 });
 
-export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string) {
+export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string): Tool<z.infer<typeof ReadFileInputSchema>, ReadFileOutput> {
     return defineTool({
         id: "read_file",
         description:

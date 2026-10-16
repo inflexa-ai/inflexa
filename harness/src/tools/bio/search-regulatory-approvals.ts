@@ -16,7 +16,7 @@ import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { guaranteed } from "../../lib/invariants.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import {
     describeAmassError,
     getRegulatoryRecord,
@@ -124,7 +124,7 @@ function failure(e: AmassError): Result<never, ToolError> {
     throw new Error(describeAmassError(e));
 }
 
-export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
+export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }): Tool<z.infer<typeof inputSchema>, RegulatoryApprovalsOutput> {
     return defineTool({
         id: "search_regulatory_approvals",
         description:
@@ -170,7 +170,11 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
             }
 
             if (input.action === "section") {
-                const section = await getRegulatorySection(guaranteed(input.amassId, "amassId"), guaranteed(input.documentSectionId, "documentSectionId"), headers);
+                const section = await getRegulatorySection(
+                    guaranteed(input.amassId, "amassId"),
+                    guaranteed(input.documentSectionId, "documentSectionId"),
+                    headers,
+                );
                 if (section.isErr()) return failure(section.error);
                 return ok(section.value ? { status: "found" as const, section: section.value } : { status: "not_found" as const });
             }

@@ -17,6 +17,7 @@ import type { Tool, ToolContext } from "../../define-tool.js";
 import { fakeKnowledgeClient, SNAPSHOT } from "../../knowledge/__fixtures__/fake-client.js";
 import { createGeneratePlanTool } from "../generate-plan.js";
 import { optionNumber, optionRecord } from "../../../report-render/option-lens.js";
+import { maybeRecord } from "../../../lib/shape.js";
 import { z } from "zod";
 import { PlanningAgentOutputSchema } from "../../../schemas/plan-schemas.js";
 
@@ -958,7 +959,8 @@ describe("generatePlan loop-driving tool", () => {
             expect(record.fields.loop).toMatchObject({ finishReason: "stop", salvaged: true, firstFinishReason: "stop", toolCalls: [] });
             // The planner's last words — the single artifact that explains a run which stopped
             // talking instead of calling a terminal tool, and which nothing else preserves.
-            expect(record.fields.modelAuthored).toMatchObject({ plannerFinalProse: expect.stringContaining("think about this out loud") });
+            const prose = maybeRecord(record.fields.modelAuthored)?.plannerFinalProse;
+            expect(prose).toContain("think about this out loud");
         });
 
         it("nests model prose under one key and omits it where something else explains the outcome", async () => {

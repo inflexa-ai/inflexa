@@ -413,7 +413,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
 
         const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("mint refused"), retryable: false });
+        const failure = result._unsafeUnwrapErr();
+        expect(failure.error).toContain("mint refused");
+        expect(failure.retryable).toBe(false);
         // The reserved row is released — marked failed with the reason — so the
         // partial-unique slot frees up and a retry can re-run.
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed") && q.values.includes("mint refused"))).toBe(true);
@@ -439,7 +441,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
 
         const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("no_funds"), retryable: false });
+        const failure = result._unsafeUnwrapErr();
+        expect(failure.error).toContain("no_funds");
+        expect(failure.retryable).toBe(false);
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("suspended_insufficient_funds") && q.values.includes("no_funds"))).toBe(
             true,
         );
@@ -1341,7 +1345,8 @@ describe("the launch of a stored plan, over a real database", () => {
             const refusal = (await launchPlanRun(deps({ pool: colliding }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
 
             expect(refusal.type).toBe("store_failed");
-            expect(refusal).toMatchObject({ cause: expect.any(RunDedupCollisionError) });
+            if (refusal.type !== "store_failed") throw new Error("expected a store_failed refusal");
+            expect(refusal.cause).toBeInstanceOf(RunDedupCollisionError);
         });
 
         it("gives store_failed when a read of the store fails, and does not reject", async () => {

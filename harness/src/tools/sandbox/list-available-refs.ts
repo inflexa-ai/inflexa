@@ -40,7 +40,7 @@ import { maybeRecord, recordMember, typedMember } from "../../lib/shape.js";
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
 import { REFS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
-import { defineTool } from "../define-tool.js";
+import { defineTool, type Tool } from "../define-tool.js";
 import { parseJsonOrUndefined } from "../../lib/json.js";
 
 /**
@@ -591,7 +591,7 @@ export async function readReferenceInventory(
     return { available: raw.state !== "unavailable", entries: enrichEntries(raw.entries, raw) };
 }
 
-export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
+export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z.infer<typeof ListAvailableRefsInputSchema>, ReferenceInventoryResult> {
     const storeRoot = deps.refStorePath ?? REFS_ROOT;
     return defineTool({
         id: "list_available_refs",

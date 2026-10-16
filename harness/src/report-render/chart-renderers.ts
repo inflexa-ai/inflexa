@@ -211,7 +211,7 @@ export function outlineRenderer(_params: RenderParams, api: RenderApi): Rendered
  */
 export function cellGlyphRenderer(params: RenderParams, api: RenderApi): RenderedElement {
     const payload = params.itemPayload ?? {};
-    const colors = Array.isArray(payload.colors) ? payload.colors : [];
+    const colors: unknown[] = Array.isArray(payload.colors) ? payload.colors : [];
     const ground = typeof payload.ground === "string" ? payload.ground : CHART_INK;
     const center = api.coord([api.value(0), api.value(1)]);
     const klass = api.value(2);
@@ -221,9 +221,10 @@ export function cellGlyphRenderer(params: RenderParams, api: RenderApi): Rendere
     const children: RenderedElement[] = [
         { type: "rect", shape: { x: center[0] - width / 2, y: center[1] - height / 2, width, height }, style: { fill: ground } },
     ];
-    if (klass >= 0 && klass < colors.length) {
+    if (klass >= 0 && klass < colors.length && typeof colors[klass] === "string") {
+        const fill = colors[klass];
         const glyph = height * CELL_GLYPH_SHARE;
-        children.push({ type: "rect", shape: { x: center[0] - width / 2, y: center[1] - glyph / 2, width, height: glyph }, style: { fill: colors[klass] } });
+        children.push({ type: "rect", shape: { x: center[0] - width / 2, y: center[1] - glyph / 2, width, height: glyph }, style: { fill } });
     }
     return { type: "group", children };
 }
@@ -435,7 +436,7 @@ function wrappedTitle(title: string, textPx: number, widthPx: number): string {
  */
 function gridWidth(grid: unknown, axis: unknown, widthPx: number): number {
     const place = optionNumberOrUndefined(optionMemberOrUndefined(axis)?.gridIndex) ?? 0;
-    const entry = Array.isArray(grid) ? grid[place] : grid;
+    const entry: unknown = Array.isArray(grid) ? grid[place] : grid;
     const width = optionMemberOrUndefined(entry)?.width;
     if (typeof width === "string" && width.endsWith("%")) return (widthPx * Number.parseFloat(width)) / 100;
     if (typeof width === "number") return width;
@@ -518,7 +519,7 @@ function legendLines(option: Record<string, unknown>, textPx: number, widthPx: n
     if (Array.isArray(legend.data)) {
         for (const entry of legend.data) {
             const fields = optionMemberOrUndefined(entry);
-            const name = fields !== undefined ? fields.name : entry;
+            const name: unknown = fields !== undefined ? fields.name : entry;
             if (typeof name === "string") names.push(name);
         }
     } else if (Array.isArray(option.series)) {

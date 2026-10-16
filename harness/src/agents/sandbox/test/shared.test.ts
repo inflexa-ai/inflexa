@@ -146,7 +146,10 @@ describe("createSandboxAgent", () => {
         const root = await mkdtemp(join(tmpdir(), "shared-refs-"));
         const base = makeFakeSandboxAgentDeps();
         const def = createSandboxAgent({ ...base, sandboxClient, refStorePath: root }, meta, body);
-        const tool = must(def.tools.find((candidate) => candidate.id === "list_available_refs"), "tool");
+        const tool = must(
+            def.tools.find((candidate) => candidate.id === "list_available_refs"),
+            "tool",
+        );
 
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
         expect(result).toMatchObject({ available: true, state: "empty" });
@@ -220,8 +223,8 @@ describe("createSandboxAgent", () => {
 
     it("resolves the citation tool only when the shared resolver dependency is supplied", () => {
         const citationResolver = {
-            resolveOne:  () => Promise.reject(new Error("not executed in this roster test")),
-            resolveMany:  () => Promise.reject(new Error("not executed in this roster test")),
+            resolveOne: () => Promise.reject(new Error("not executed in this roster test")),
+            resolveMany: () => Promise.reject(new Error("not executed in this roster test")),
         } satisfies CitationResolver;
         const citationMeta = { ...meta, tools: [...BASE_SANDBOX_TOOLS, "resolve_citation"] as const };
 
@@ -281,7 +284,10 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         // of a two-track collision, thus a description that calls every
         // collision terminal contradicts the grammar the tool reads.
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
-        const description = must(must(def, "def").tools.find((tool) => tool.id === "link_packages"), "must(def, \"def\").tools.find((tool) => tool.id ==").description;
+        const description = must(
+            must(def, "def").tools.find((tool) => tool.id === "link_packages"),
+            'must(def, "def").tools.find((tool) => tool.id ==',
+        ).description;
 
         expect(description).toContain("call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`");
         expect(description).toContain("terminal only after that second call also refuses");
@@ -290,7 +296,10 @@ describe("createSandboxAgent — the farm-extension seam", () => {
     it("the description of list_available_packages stops at absent only when the seam is bound", () => {
         const closedWorld = "only what this tool reports is importable";
         const descriptionOf = (def: ReturnType<typeof createSandboxAgent>): string =>
-            must(must(def, "def").tools.find((tool) => tool.id === "list_available_packages"), "must(def, \"def\").tools.find((tool) => tool.id ==").description;
+            must(
+                must(def, "def").tools.find((tool) => tool.id === "list_available_packages"),
+                'must(def, "def").tools.find((tool) => tool.id ==',
+            ).description;
         const bound = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
         const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
 
@@ -325,7 +334,10 @@ describe("createSandboxAgent — the farm-extension seam", () => {
             meta,
             body,
         );
-        const tool = must(def.tools.find((t) => t.id === "link_packages"), "tool");
+        const tool = must(
+            def.tools.find((t) => t.id === "link_packages"),
+            "tool",
+        );
 
         const result = (await tool.execute({ packages: ["scanpy", "Seurat"] }, makeToolContext().ctx))._unsafeUnwrap();
 
@@ -353,7 +365,10 @@ describe("createSandboxAgent — the farm-extension seam", () => {
             meta,
             body,
         );
-        const tool = must(def.tools.find((t) => t.id === "link_packages"), "tool");
+        const tool = must(
+            def.tools.find((t) => t.id === "link_packages"),
+            "tool",
+        );
 
         const result = (await tool.execute({ packages: ["scanpy", "nonesuch"] }, makeToolContext().ctx))._unsafeUnwrap();
 
@@ -400,7 +415,9 @@ describe("createSandboxAgent — the file-metadata output tool", () => {
         const result = await tool.execute({ files: [{ path: "output/a.csv", description: "d", dataType: "table", format: "csv" }] }, makeToolContext().ctx);
 
         expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr()).toMatchObject({ retryable: false, error: expect.stringContaining("after the task") });
+        const failure = result._unsafeUnwrapErr();
+        expect(failure.retryable).toBe(false);
+        expect(failure.error).toContain("after the task");
     });
 });
 

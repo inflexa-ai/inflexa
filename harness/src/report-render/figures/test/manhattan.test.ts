@@ -257,11 +257,8 @@ describe("the Manhattan figure", () => {
         const option = derive(block(), rows);
         const names = optionRecords(optionRecord(seriesOf(option).find((entry) => entry.name === "Chromosome names")).data).map((entry) => entry.name);
         expect(names).toEqual(["1", "2", "10", "X", "Y", "MT", "Un"]);
-        const colors = Object.fromEntries(
-            seriesOf(option)
-                .slice(0, 7)
-                .map((entry) => [entry.name, optionRecord(entry.itemStyle).color]),
-        );
+        const colors: Record<string, unknown> = {};
+        for (const entry of seriesOf(option).slice(0, 7)) colors[optionText(entry.name)] = optionRecord(entry.itemStyle).color;
         const [blue, gray] = MANHATTAN_COLORS;
         expect(colors).toEqual({ "1": blue, "2": gray, "10": blue, X: gray, Y: blue, MT: gray, Un: blue });
     });

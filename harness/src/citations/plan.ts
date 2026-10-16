@@ -24,8 +24,9 @@ function indicatesArxiv(input: CitationInput, normalized: NormalizedCitation): b
 }
 
 export function planCitationSources(input: CitationInput, normalized: NormalizedCitation): CitationSourcePlanItem[] {
-    if (normalized.unsupportedWorkKind !== undefined) {
-        return SOURCES.map((source) => item(source, false, "none", `unsupported work kind: ${normalized.unsupportedWorkKind}`));
+    const unsupportedWorkKind = normalized.unsupportedWorkKind;
+    if (unsupportedWorkKind !== undefined) {
+        return SOURCES.map((source) => item(source, false, "none", `unsupported work kind: ${unsupportedWorkKind}`));
     }
 
     if (normalized.kind === "doi") {

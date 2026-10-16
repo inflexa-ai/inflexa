@@ -122,7 +122,8 @@ function serveMembership(snapshot: ReportSnapshot, derivations: readonly Derivat
     if (derivations.length === 0) {
         return snapshot;
     }
-    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
+    const artifacts: Record<string, ArtifactSnapshot> = {};
+    Reflect.setPrototypeOf(artifacts, null);
     for (const [path, entry] of Object.entries(snapshot.artifacts)) {
         artifacts[path] = entry;
     }

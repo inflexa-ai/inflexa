@@ -20,7 +20,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { splitLines } from "../../lib/text.js";
 
 /** Bounds — keep a search over a deep skill tree cheap and context-safe. */
@@ -72,7 +72,20 @@ async function collectTextFiles(dir: string, acc: string[]): Promise<void> {
     }
 }
 
-export function createSkillTools(deps: SkillToolsDeps) {
+const skillSearchInput = z.object({
+    query: z.string().min(1).describe("Keywords to match (e.g. 'PyDESeq2 contrast syntax')."),
+    topK: z.number().int().min(1).max(MAX_TOP_K).optional().describe(`Max results to return. Defaults to ${DEFAULT_TOP_K}.`),
+});
+
+const skillReadInput = z.object({
+    skill: z.string().min(1).describe("Skill name (one of your declared skills)."),
+    path: z.string().min(1).describe("File path within the skill, e.g. 'SKILL.md' or 'references/pydeseq2-api.md'."),
+});
+
+export function createSkillTools(deps: SkillToolsDeps): {
+    skillSearch: Tool<z.infer<typeof skillSearchInput>, SkillSearchOutput>;
+    skillRead: Tool<z.infer<typeof skillReadInput>, SkillReadOutput>;
+} {
     const allowed = new Set(deps.skills);
 
     const skillSearch = defineTool({
@@ -84,10 +97,7 @@ export function createSkillTools(deps: SkillToolsDeps) {
             "case-insensitive substring. Returns one entry per matching skill file — its skill, its path, " +
             "and the first line that holds a query word — ranked by how many distinct query words the file " +
             "holds. Then `skill_read` the file. No matches returns a data variant.",
-        inputSchema: z.object({
-            query: z.string().min(1).describe("Keywords to match (e.g. 'PyDESeq2 contrast syntax')."),
-            topK: z.number().int().min(1).max(MAX_TOP_K).optional().describe(`Max results to return. Defaults to ${DEFAULT_TOP_K}.`),
-        }),
+        inputSchema: skillSearchInput,
         describeCall: "none",
         execute: async ({ query, topK }): Promise<Result<SkillSearchOutput, ToolError>> => {
             if (allowed.size === 0) {
@@ -148,10 +158,7 @@ export function createSkillTools(deps: SkillToolsDeps) {
             "Read a file from one of your skills (e.g. its SKILL.md or a reference " +
             "found via skill_search). Confined to your declared skills. Undeclared " +
             "skills and missing paths return a data variant.",
-        inputSchema: z.object({
-            skill: z.string().min(1).describe("Skill name (one of your declared skills)."),
-            path: z.string().min(1).describe("File path within the skill, e.g. 'SKILL.md' or 'references/pydeseq2-api.md'."),
-        }),
+        inputSchema: skillReadInput,
         describeCall: "none",
         execute: async ({ skill, path }): Promise<Result<SkillReadOutput, ToolError>> => {
             if (!allowed.has(skill)) {

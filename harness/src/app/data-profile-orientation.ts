@@ -146,12 +146,15 @@ function formatFileFacts(file: { rows?: number | null; cols?: number | null; for
 
 /** What the dataset IS, or — on a snapshot carrying no structured identity — its summary. */
 function identityLine(result: DataProfileResult): string {
+    const tissue = present(result.tissue);
+    const cellType = present(result.cellType);
+    const condition = present(result.condition);
     const identity = [
         [present(result.domain), present(result.subtype)].filter((f: string | undefined): f is string => f !== undefined).join(" / ") || undefined,
         formatOrganism(result.organism),
-        present(result.tissue) ? `tissue: ${present(result.tissue)}` : undefined,
-        present(result.cellType) ? `cells: ${present(result.cellType)}` : undefined,
-        present(result.condition) ? `condition: ${present(result.condition)}` : undefined,
+        tissue ? `tissue: ${tissue}` : undefined,
+        cellType ? `cells: ${cellType}` : undefined,
+        condition ? `condition: ${condition}` : undefined,
     ].filter((f: string | undefined): f is string => f !== undefined);
 
     return `Dataset: ${identity.length > 0 ? identity.join(" — ") : clip(result.summary, MAX_IDENTITY_CHARS)}`;

@@ -226,8 +226,10 @@ function polygonCoordinates(item: unknown): number {
 
 /** One SVG asset: the content-addressed name, with the column in millimeters, and the text. */
 function svgAsset(bytes: string, size: ChartExportSize): DataAsset {
+    const widthMm = size.widthMm;
+    if (widthMm === undefined) throw new Error(`SVG export size ${size.label} carries no width in mm`);
     const hash = createHash("sha256").update(bytes).digest("hex").slice(0, HASH_CHARS);
-    return { name: `c-${hash}-${size.widthMm}mm.svg`, bytes };
+    return { name: `c-${hash}-${widthMm}mm.svg`, bytes };
 }
 
 /**

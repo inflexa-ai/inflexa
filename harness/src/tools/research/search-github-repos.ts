@@ -14,7 +14,7 @@ import { maybeRecord } from "../../lib/shape.js";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 
 const BASE_URL = "https://api.github.com/search/repositories";
@@ -75,7 +75,13 @@ export function parseGithubReposResponse(raw: unknown): GithubRepo[] {
     });
 }
 
-export function createSearchGithubReposTool(deps: { githubToken?: string }) {
+const inputSchema = z.object({
+    query: z.string().describe("GitHub search syntax. Plain text matches anywhere; qualifiers " + 'like "topic:bioinformatics" or "stars:>100" are supported.'),
+    language: z.string().optional().describe('Optional language filter (e.g., "python").'),
+    limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
+});
+
+export function createSearchGithubReposTool(deps: { githubToken?: string }): Tool<z.infer<typeof inputSchema>, SearchGithubReposOutput> {
     return defineTool({
         id: "search_github_repos",
         description:
@@ -90,13 +96,7 @@ export function createSearchGithubReposTool(deps: { githubToken?: string }) {
             "and `success: false` with an `error` string means GitHub could not be " +
             "reached or refused the request (the low unauthenticated rate limit " +
             "lands here). Report either one and continue, do not retry unchanged.",
-        inputSchema: z.object({
-            query: z
-                .string()
-                .describe("GitHub search syntax. Plain text matches anywhere; qualifiers " + 'like "topic:bioinformatics" or "stars:>100" are supported.'),
-            language: z.string().optional().describe('Optional language filter (e.g., "python").'),
-            limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
-        }),
+        inputSchema,
         describeCall: "none",
         execute: async ({ query, language, limit }): Promise<Result<SearchGithubReposOutput, ToolError>> => {
             const q = language ? `${query} language:${language}` : query;

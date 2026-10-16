@@ -174,7 +174,7 @@ describe("openai arm stream", () => {
             { type: "text-delta", text: "lo" },
         ]);
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type ?? "no terminal event"}`);
         expect(events).toHaveLength(3);
         expect(done.response.message).toMatchObject({ role: "assistant", content: [{ type: "text", text: "Hello" }] });
         expect(done.response.usage?.cacheReadInputTokens).toBe(900);

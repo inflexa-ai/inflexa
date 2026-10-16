@@ -83,6 +83,7 @@ export type ProviderError =
  * recognized by `instanceof`; this checks the discriminant plus the two
  * always-present fields. Used by `toProviderError` to stay idempotent.
  */
+// oxlint-disable-next-line @inflexa-ai/no-unknown-type-guards -- a public barrel export whose predicate form is the published surface; the lookup re-type is the recorded redesign.
 export function isProviderError(value: unknown): value is ProviderError {
     const v = maybeRecord(value);
     return (
@@ -106,19 +107,13 @@ export type SuspendError = Extract<ProviderError, { readonly type: "suspend" }>;
  */
 export function findSuspendError(err: unknown): SuspendError | undefined {
     const asSuspend = (value: unknown): SuspendError | undefined => (isProviderError(value) && value.type === "suspend" ? value : undefined);
-    return findInCauseChain(
-        err,
-        (link) => asSuspend(link) ?? asSuspend(typedMember(maybeRecord(link), "value")),
-    );
+    return findInCauseChain(err, (link) => asSuspend(link) ?? asSuspend(typedMember(maybeRecord(link), "value")));
 }
 
 /** Find a `ProviderError` of any kind, by the walk of {@link findSuspendError}. */
 export function findProviderError(err: unknown): ProviderError | undefined {
     const asProviderError = (value: unknown): ProviderError | undefined => (isProviderError(value) ? value : undefined);
-    return findInCauseChain(
-        err,
-        (link) => asProviderError(link) ?? asProviderError(typedMember(maybeRecord(link), "value")),
-    );
+    return findInCauseChain(err, (link) => asProviderError(link) ?? asProviderError(typedMember(maybeRecord(link), "value")));
 }
 
 /**
@@ -345,9 +340,7 @@ const SDK_TIMEOUT_ERROR_NAME = "TimeoutError";
  * hops down.
  */
 function findSdkTimeout(err: unknown): boolean {
-    return (
-        findInCauseChain(err, (link) => (typedMember(maybeRecord(link), "name") === SDK_TIMEOUT_ERROR_NAME ? true : undefined)) ?? false
-    );
+    return findInCauseChain(err, (link) => (typedMember(maybeRecord(link), "name") === SDK_TIMEOUT_ERROR_NAME ? true : undefined)) ?? false;
 }
 
 /** Does any link of the `cause` chain look like a transport-level failure? */
