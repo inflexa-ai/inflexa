@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 
+import { jsonParse } from "../../lib/json.js";
 import { apiFetchValidated, describeApiError, type ApiError } from "../lib/api-utils.js";
 
 // ── The situation ───────────────────────────────────────────────────
@@ -32,8 +33,18 @@ export type CovariateRole = "sex" | "age" | "clinical" | "technical" | "other";
 export type PredictorRole = "dose" | "time" | "age" | "score" | "other";
 
 /** The typed description of one analysis situation. Never a sample row, never an identifier, and never a column name. */
-export interface KnowledgeSituation {
-    readonly question: "differential_expression" | "enrichment" | "qc" | "full_plan";
+export type KnowledgeSituation = {
+    readonly question:
+        | "differential_expression"
+        | "enrichment"
+        | "qc"
+        | "full_plan"
+        | "tf_activity"
+        | "deconvolution"
+        | "coexpression"
+        | "clustering"
+        | "survival"
+        | "signature_scoring";
     readonly modality: "bulk_rna_seq";
     readonly data_state: "fastq" | "counts" | "tpm_or_fpkm" | "log_normalized";
     readonly count_source?: "salmon" | "kallisto" | "star_featurecounts" | "rsem" | "unknown";
@@ -68,7 +79,7 @@ export interface KnowledgeSituation {
     /** True for a classifier of the samples into classes; absent for a per-sample score. */
     readonly classifier?: boolean;
     readonly quality_flags?: readonly ("low_depth_sample" | "outlier_sample" | "sample_identity_doubt" | "high_duplication" | "degraded_rna")[];
-}
+};
 
 // ── The answers, as the harness reads them ──────────────────────────
 
@@ -80,7 +91,7 @@ const MethodRefSchema = z.looseObject({ id: z.string(), label: z.string() });
 /** Two rules of equal specificity and strength disagree on a parameter. The step omits the parameter and names both. */
 const ProcedureConflictSchema = z.looseObject({
     parameter: z.string(),
-    entries: z.array(z.looseObject({ rule: z.string(), value: z.unknown() })),
+    entries: z.array(z.looseObject({ rule: z.string(), value: z.json() })),
 });
 
 /** The step method is a declared substitute: `for` names the method of record it stands in for. */
@@ -110,7 +121,7 @@ const ProcedureStepSchema = z.looseObject({
     flags: z.array(z.looseObject({ rule: z.string(), severity: z.string(), message: z.string(), outcome: z.string().optional() })).optional(),
     alternatives: z.array(z.looseObject({ method: z.string(), label: z.string(), when: z.string(), rules: z.array(z.string()) })).optional(),
     disputed: z.looseObject({ rule: z.string(), sides: z.array(z.string()) }).optional(),
-    parameters: z.array(z.looseObject({ name: z.string(), value: z.unknown(), default_source: z.string().optional() })).optional(),
+    parameters: z.array(z.looseObject({ name: z.string(), value: z.json(), default_source: z.string().optional() })).optional(),
     conflicts: z.array(ProcedureConflictSchema).optional(),
     substitution: ProcedureSubstitutionSchema.optional(),
     limit: ProcedureLimitSchema.optional(),
@@ -178,7 +189,7 @@ export const RenderResponseSchema = z.looseObject({
     slots: z.array(
         z.looseObject({
             name: z.string(),
-            value: z.unknown().optional(),
+            value: z.json().optional(),
             source: z.string(),
             adaptable: z.boolean(),
             lines: z.array(z.number()),
@@ -190,7 +201,7 @@ export const RenderResponseSchema = z.looseObject({
     environment: z.looseObject({ match: z.string() }),
     syntax: z.looseObject({ status: z.string() }),
     outputs: z.array(z.looseObject({ name: z.string(), path: z.string(), description: z.string().optional() })),
-    decision_record: z.record(z.string(), z.unknown()),
+    decision_record: z.record(z.string(), z.json()),
 });
 export type RenderResponse = z.infer<typeof RenderResponseSchema>;
 
@@ -267,12 +278,12 @@ const ValidationFailureSchema = z.looseObject({
 });
 
 /** The preferences of the caller: the language of the template the answer names. */
-export interface KnowledgePreferences {
+export type KnowledgePreferences = {
     readonly language?: "R" | "python";
-}
+};
 
 /** What a drafted step carries into the check. */
-export interface DraftedStep {
+export type DraftedStep = {
     readonly step_type: string;
     readonly method: string;
     /** The catalog id of the method (`M-dddd`), copied from the recommendation. An exact match wins over the wording. */
@@ -281,33 +292,33 @@ export interface DraftedStep {
     readonly parameters?: readonly { readonly name: string; readonly value: string | number | boolean }[];
     /** The outcome the step states when the design forbids inference, for example `descriptive_only`. */
     readonly outcome?: string;
-}
+};
 
-export interface FarmPackage {
+export type FarmPackage = {
     readonly name: string;
     readonly version: string;
-}
+};
 
 /** The service could not answer after the retry policy. The run continues from the prose skills. */
-export interface KnowledgeUnavailable {
+export type KnowledgeUnavailable = {
     readonly match: "unavailable";
     readonly reason: string;
-}
+};
 
 /**
  * The service serves another release than the one the plan pinned, and it
  * did no work. A plan is not moved to a new release in silence: the caller
  * proceeds as with an unavailable service, and it states the two digests.
  */
-export interface KnowledgeSnapshotMismatch {
+export type KnowledgeSnapshotMismatch = {
     readonly match: "snapshot_mismatch";
     readonly message: string;
     readonly expected: string;
     readonly served: { readonly date: string; readonly digest: string };
-}
+};
 
 /** The service refused the request and named the field or the slot and the permitted values. */
-export interface KnowledgeRejected {
+export type KnowledgeRejected = {
     readonly match: "rejected";
     readonly message: string;
     readonly issues: readonly {
@@ -317,19 +328,19 @@ export interface KnowledgeRejected {
         readonly reason?: string;
         readonly permitted?: readonly string[];
     }[];
-}
+};
 
 /** What a render call carries beside the template and the slots. */
-export interface RenderCallOptions {
+export type RenderCallOptions = {
     /** The id of the plan step that runs the script. */
     readonly step?: string;
     /** The claims of the plan step that selected the template. Each must resolve in the served snapshot. */
     readonly claims?: readonly string[];
     /** The release digest the plan pinned. The service refuses another release with `snapshot_mismatch`. */
     readonly expectedSnapshot?: string;
-}
+};
 
-export interface KnowledgeClient {
+export type KnowledgeClient = {
     /** `expectedSnapshot` pins the release of an earlier answer of the same plan; the first call of a plan has none. */
     recommend(
         situation: KnowledgeSituation,
@@ -356,26 +367,24 @@ export interface KnowledgeClient {
      * unknown template is `rejected` with the field `template`.
      */
     contract(template: string): Promise<TemplateContract | KnowledgeUnavailable | KnowledgeRejected>;
-}
+};
 
-export interface HttpKnowledgeClientConfig {
+export type HttpKnowledgeClientConfig = {
     /** The service origin, for example `https://knowledge.inflexa.ai`. */
     readonly baseUrl: string;
     /** The bearer key. The license of the service. */
     readonly apiKey: string;
     readonly timeoutMs?: number;
     readonly maxRetries?: number;
-}
+};
 
 /** The `message` of an error envelope, or the body itself when it is not one. */
 function messageOf(body: string): string | undefined {
     try {
-        const raw: unknown = JSON.parse(body);
-        if (raw !== null && typeof raw === "object" && "message" in raw && typeof raw.message === "string") return raw.message;
+        return jsonParse(body, ErrorEnvelopeSchema).message;
     } catch {
-        // Not JSON: the body is the message.
+        return body || undefined;
     }
-    return body || undefined;
 }
 
 /** The template id of a reference: `tpl-x@1.0.0` gives `tpl-x`. The service serves one version, thus the route takes the id alone. */
@@ -391,6 +400,9 @@ const SnapshotMismatchSchema = z.looseObject({
     served: SnapshotRefSchema,
 });
 
+/** An error envelope of the service: an object with a `message`. */
+const ErrorEnvelopeSchema = z.looseObject({ message: z.string() });
+
 /**
  * A 400 is a rejection that names the field and the permitted values. A 404
  * is one only on a lookup route, where `notFoundField` names the field whose
@@ -405,26 +417,20 @@ function refusalOf(error: ApiError, notFoundField?: string): KnowledgeRejected |
         return { match: "rejected", message, issues: [{ field: notFoundField, message }] };
     }
     if (error.status === 409) {
-        let raw: unknown;
         try {
-            raw = JSON.parse(error.body);
+            const parsed = jsonParse(error.body, SnapshotMismatchSchema);
+            return { match: "snapshot_mismatch", message: parsed.message, expected: parsed.expected, served: parsed.served };
         } catch {
             return undefined;
         }
-        const parsed = SnapshotMismatchSchema.safeParse(raw);
-        if (!parsed.success) return undefined;
-        return { match: "snapshot_mismatch", message: parsed.data.message, expected: parsed.data.expected, served: parsed.data.served };
     }
     if (error.status !== 400) return undefined;
-    let raw: unknown;
     try {
-        raw = JSON.parse(error.body);
+        const parsed = jsonParse(error.body, ValidationFailureSchema);
+        return { match: "rejected", message: parsed.message, issues: parsed.issues };
     } catch {
         return { match: "rejected", message: error.body || "the service refused the request", issues: [] };
     }
-    const parsed = ValidationFailureSchema.safeParse(raw);
-    if (!parsed.success) return { match: "rejected", message: error.body, issues: [] };
-    return { match: "rejected", message: parsed.data.message, issues: parsed.data.issues };
 }
 
 export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): KnowledgeClient {
@@ -434,66 +440,56 @@ export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): Kn
     const authorization = `Bearer ${config.apiKey}`;
     const policy = { timeoutMs: config.timeoutMs ?? 30_000, maxRetries: config.maxRetries ?? 2, retryDelayMs: 500 };
 
-    /** One call of the service: a POST with a JSON body, or a GET without one. Every call carries the bearer key. */
+    /** One call of the service: a POST with a JSON body. Every call carries the bearer key. */
     async function call<S extends z.ZodType>(
-        method: "GET" | "POST",
         path: string,
         body: unknown,
         schema: S,
-        notFoundField?: string,
     ): Promise<z.infer<S> | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch> {
-        const headers: Record<string, string> = body === undefined ? { authorization } : { "content-type": "application/json", authorization };
         const result = await apiFetchValidated(`${base}${path}`, schema, {
             ...policy,
-            method,
-            headers,
-            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            method: "POST",
+            headers: { "content-type": "application/json", authorization },
+            body: JSON.stringify(body),
         });
         if (result.isOk()) return result.value;
-        const refusal = refusalOf(result.error, notFoundField);
+        const refusal = refusalOf(result.error);
         if (refusal) return refusal;
         return { match: "unavailable", reason: describeApiError(result.error) };
     }
 
-    /** A contract lookup carries no pin, thus a mismatch cannot come back; the type says so. */
+    /** A contract lookup: a GET with no body, thus no pin, thus a mismatch cannot come back. */
     async function lookup<S extends z.ZodType>(path: string, schema: S, notFoundField: string): Promise<z.infer<S> | KnowledgeUnavailable | KnowledgeRejected> {
-        const answer = await call("GET", path, undefined, schema, notFoundField);
-        // A GET without a body has no pin, thus a 409 is not among its answers; the guard keeps the type honest.
-        if (typeof answer === "object" && answer !== null && "match" in answer && answer.match === "snapshot_mismatch") {
-            return { match: "unavailable", reason: answer.message };
-        }
-        return answer as z.infer<S> | KnowledgeUnavailable | KnowledgeRejected;
+        const result = await apiFetchValidated(`${base}${path}`, schema, { ...policy, method: "GET", headers: { authorization } });
+        if (result.isOk()) return result.value;
+        const refusal = refusalOf(result.error, notFoundField);
+        if (refusal === undefined) return { match: "unavailable", reason: describeApiError(result.error) };
+        // A GET carries no pin, thus the service never answers snapshot_mismatch; the arm degrades to unavailable.
+        if (refusal.match === "snapshot_mismatch") return { match: "unavailable", reason: refusal.message };
+        return refusal;
     }
 
     return {
-        recommend: (situation, responseFormat, preferences, expectedSnapshot) =>
-            call(
-                "POST",
-                "/v1/recommend",
-                {
-                    situation,
-                    ...(responseFormat ? { response_format: responseFormat } : {}),
-                    ...(preferences ? { preferences } : {}),
-                    ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}),
-                },
-                RecommendResponseSchema,
-            ),
-        check: (situation, steps, expectedSnapshot) =>
-            call("POST", "/v1/check", { situation, steps, ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}) }, CheckResponseSchema),
-        render: (template, slots, farm, options) =>
-            call(
-                "POST",
-                "/v1/template/render",
-                {
-                    template,
-                    slots,
-                    ...(farm ? { farm } : {}),
-                    ...(options?.step ? { step: options.step } : {}),
-                    ...(options?.claims ? { claims: options.claims } : {}),
-                    ...(options?.expectedSnapshot ? { expected_snapshot: options.expectedSnapshot } : {}),
-                },
-                RenderResponseSchema,
-            ),
+        recommend: (situation, responseFormat, preferences, expectedSnapshot) => {
+            const body: Record<string, unknown> = { situation };
+            if (responseFormat) body.response_format = responseFormat;
+            if (preferences) body.preferences = preferences;
+            if (expectedSnapshot) body.expected_snapshot = expectedSnapshot;
+            return call("/v1/recommend", body, RecommendResponseSchema);
+        },
+        check: (situation, steps, expectedSnapshot) => {
+            const body: Record<string, unknown> = { situation, steps };
+            if (expectedSnapshot) body.expected_snapshot = expectedSnapshot;
+            return call("/v1/check", body, CheckResponseSchema);
+        },
+        render: (template, slots, farm, options) => {
+            const body: Record<string, unknown> = { template, slots };
+            if (farm) body.farm = farm;
+            if (options?.step) body.step = options.step;
+            if (options?.claims) body.claims = options.claims;
+            if (options?.expectedSnapshot) body.expected_snapshot = options.expectedSnapshot;
+            return call("/v1/template/render", body, RenderResponseSchema);
+        },
         contract: (template) => lookup(`/v1/templates/${encodeURIComponent(templateIdOf(template))}`, TemplateContractSchema, "template"),
     };
 }

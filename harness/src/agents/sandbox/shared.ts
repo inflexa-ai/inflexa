@@ -245,9 +245,9 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
                 ? createKnowledgeTemplateTool({
                       client: deps.knowledge,
                       mutator,
-                      ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
-                      ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
-                      ...(deps.step.templateBinding ? { binding: deps.step.templateBinding } : {}),
+                      farmLockFile: deps.farmLockFile,
+                      imagePackagesFile: deps.imagePackagesFile,
+                      binding: deps.step.templateBinding,
                   })
                 : undefined,
     };

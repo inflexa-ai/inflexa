@@ -233,19 +233,19 @@ export function renderMemory(memory: StepMemory): string {
 // ── (1c) Template contract ────────────────────────────────────────────
 
 /** A file the script of the template reads. `path` names the slot that gives it, for example `{{counts_path}}`. */
-export interface TemplateBriefInput {
+export type TemplateBriefInput = {
     readonly name: string;
     readonly path: string;
     readonly description?: string;
-}
+};
 
 /** One plan setting bound to an adaptable slot of the template. */
-export interface TemplateBoundSetting {
+export type TemplateBoundSetting = {
     readonly name: string;
     readonly value: TemplateBindingValue;
     /** The source of the value (a doi or a document), or `plan` when the procedure names none. */
     readonly source: string;
-}
+};
 
 /**
  * The contract of the template a step renders, projected for the seed. The
@@ -253,7 +253,7 @@ export interface TemplateBoundSetting {
  * section is what lets an agent that has never seen the template make one
  * valid render call.
  */
-export interface TemplateBrief {
+export type TemplateBrief = {
     /** The template reference of the plan step, with its version when the plan names one. */
     readonly ref: string;
     /** The version the service serves. Differs from the version of `ref` when the snapshot moved on. */
@@ -265,7 +265,7 @@ export interface TemplateBrief {
     readonly bound: readonly TemplateBoundSetting[];
     /** The plan settings no bound slot carries, one line each with the reason. */
     readonly unbound_settings: readonly string[];
-}
+};
 
 /** A value as the render request carries it: JSON, thus `"apeglm"` and `10` cannot be confused. */
 function slotValue(value: unknown): string {

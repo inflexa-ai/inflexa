@@ -10,16 +10,16 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import type { CheckResponse, KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable } from "./client.js";
 import type { SnapshotPin } from "./pin.js";
 import { SituationFieldsSchema, toSituation } from "./situation.js";
 
-export interface KnowledgeCheckDeps {
+export type KnowledgeCheckDeps = {
     readonly client: KnowledgeClient;
     /** The release the plan pinned on its first recommend answer. The check sends it, thus another release refuses the call. */
     readonly pin?: SnapshotPin;
-}
+};
 
 export type KnowledgeCheckOutput = CheckResponse | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
 
@@ -54,6 +54,7 @@ const DraftedStepSchema = z.object({
     method: z.string().min(1).describe("The method as the step names it, for example `DESeq2 Wald test` or `edgeR quasi-likelihood`."),
     method_id: z
         .string()
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the method-id grammar of the catalog (`M-dddd`).
         .regex(/^M-\d{4}$/)
         .optional()
         .describe(
@@ -77,7 +78,12 @@ function describeFindings(result: CheckResponse): string {
     return notAssessed > 0 ? `${findings}, ${notAssessed} not assessed` : findings;
 }
 
-export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps) {
+/** The input of `knowledge_check`: the situation fields beside the drafted steps. */
+const CheckInputSchema = SituationFieldsSchema.extend({
+    steps: z.array(DraftedStepSchema).min(1).describe("The drafted method steps, one entry per step type."),
+});
+
+export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps): Tool<z.infer<typeof CheckInputSchema>, KnowledgeCheckOutput> {
     let calls = 0;
     return defineTool({
         id: "knowledge_check",
@@ -89,9 +95,7 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps) {
             "`not_assessed` lists the steps that no rule covers; the check neither passed nor failed them, so submit them as drafted. " +
             "`match: unavailable` means the service did not answer, and `match: snapshot_mismatch` means the service moved to another release than the one your recommend answer came from; in both cases submit the draft as it is. " +
             `The host accepts ${CHECK_CALL_LIMIT} checks per plan; after that the tool refuses and you submit with the findings you have.`,
-        inputSchema: SituationFieldsSchema.extend({
-            steps: z.array(DraftedStepSchema).min(1).describe("The drafted method steps, one entry per step type."),
-        }),
+        inputSchema: CheckInputSchema,
         describeCall: ({ steps }) => `${steps.length} drafted step(s)`,
         describeResult: (_input, result: KnowledgeCheckOutput) => ("ok" in result ? describeFindings(result) : result.match),
         execute: async (input): Promise<Result<KnowledgeCheckOutput, ToolError>> => {

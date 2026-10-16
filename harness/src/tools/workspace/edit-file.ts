@@ -254,7 +254,7 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
                 filesystem: deps.workspaceFilesystem,
                 mutator: deps.mutator,
                 session: ctx.session,
-                ...(deps.workingDir !== undefined ? { workingDir: deps.workingDir } : {}),
+                workingDir: deps.workingDir,
                 invocationId: ctx.invocationId,
                 toolName: "edit_file",
                 scriptPath: path,
@@ -278,12 +278,7 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
             };
             // Absent stays absent: the gate reads key presence with the `in` operator.
             if (noted.status === "noted") result.decision_record_noted = true;
-            return ok(
-                withToolCallRecord(
-                    result,
-                    noted.status === "noted" ? [write.record, noted.write] : [write.record],
-                ),
-            );
+            return ok(withToolCallRecord(result, noted.status === "noted" ? [write.record, noted.write] : [write.record]));
         },
         foldCallRecord: (records) => {
             for (const record of records) deps.mutator.recordWrite(record);

@@ -62,7 +62,7 @@ import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { maybeRecord } from "../../lib/shape.js";
+import { maybeRecord, plainRecord } from "../../lib/shape.js";
 import { decodeObjectString, hintForZodIssue } from "../../lib/zod-issues.js";
 import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
 import { errorMessage } from "../../lib/thrown.js";
@@ -462,12 +462,12 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
  * alternatives, their disputed rules, the claim views, and the flags, and
  * the snapshot digest the answer came from.
  */
-interface RecommendMemory {
+type RecommendMemory = {
     readonly steps: Map<string, SkeletonStep>;
     readonly claims: Set<string>;
     /** The digest of the last answer; `undefined` before the first. */
     digest?: string;
-}
+};
 
 function rememberAnswer(memory: RecommendMemory, answer: KnowledgeRecommendAnswer): void {
     memory.steps.clear();
@@ -502,11 +502,11 @@ function claimsByRule(claims: ReadonlySet<string>): ReadonlyMap<string, string> 
 }
 
 /** A claim id the model repaired on one step: the id it wrote and the id of the answer. */
-interface RepairedClaim {
+type RepairedClaim = {
     readonly step: string;
     readonly from: string;
     readonly to: string;
-}
+};
 
 /**
  * Restore the grounding fields the host owns on each candidate step, from the
@@ -550,7 +550,8 @@ function restoreSkeletonGrounding(
     readonly unknown: readonly ValidationIssue[];
 } {
     const decoded = decodeObjectString(candidate);
-    if (memory.steps.size === 0 || typeof decoded !== "object" || decoded === null || !Array.isArray((decoded as { steps?: unknown }).steps)) {
+    const decodedRecord = plainRecord(decoded);
+    if (memory.steps.size === 0 || !Array.isArray(decodedRecord?.steps)) {
         return { candidate: decoded, stamped: [], restored: [], repaired: [], unknown: [] };
     }
     const byRule = claimsByRule(memory.claims);
@@ -558,11 +559,13 @@ function restoreSkeletonGrounding(
     const restored: string[] = [];
     const repaired: RepairedClaim[] = [];
     const unknown: ValidationIssue[] = [];
-    const steps = (decoded as { steps: unknown[] }).steps.map((step, index) => {
-        if (typeof step !== "object" || step === null) return step;
-        const { id, grounding } = step as { id?: unknown; grounding?: unknown };
-        if (typeof grounding !== "object" || grounding === null) return step;
-        const current = grounding as { status?: unknown; template?: unknown; snapshot?: unknown; claims?: unknown };
+    const rawSteps: readonly unknown[] = decodedRecord.steps;
+    const steps = rawSteps.map((step, index) => {
+        const stepRecord = plainRecord(step);
+        if (stepRecord === undefined) return step;
+        const { id, grounding } = stepRecord;
+        const current = plainRecord(grounding);
+        if (current === undefined) return step;
         const label = typeof id === "string" ? id : String(index);
         let next = current;
         const source = typeof id === "string" ? memory.steps.get(id) : undefined;
@@ -577,22 +580,28 @@ function restoreSkeletonGrounding(
             }
         }
         if (Array.isArray(current.claims)) {
+            const priorClaims: readonly unknown[] = current.claims;
             let changed = false;
-            const claims = current.claims.map((claim, position) => {
-                if (typeof claim !== "string" || memory.claims.has(claim)) return claim;
+            const claims: unknown[] = [];
+            for (const [position, claim] of priorClaims.entries()) {
+                if (typeof claim !== "string" || memory.claims.has(claim)) {
+                    claims.push(claim);
+                    continue;
+                }
                 const match = byRule.get(ruleOf(claim));
                 if (match !== undefined) {
                     repaired.push({ step: label, from: claim, to: match });
+                    claims.push(match);
                     changed = true;
-                    return match;
+                    continue;
                 }
                 unknown.push({
                     path: `plan.steps.${index}.grounding.claims.${position}`,
                     code: "semantic",
                     message: `Claim ${claim} is not a claim of the knowledge_recommend answer of this run. Cite a claim id the answer returned, or remove it.`,
                 });
-                return claim;
-            });
+                claims.push(claim);
+            }
             if (changed) next = { ...next, claims };
         }
         // The repaired claims are the ones compared, thus a step whose only claim was miscopied still gets the digest.
@@ -601,9 +610,9 @@ function restoreSkeletonGrounding(
             stamped.push(label);
             next = { ...next, snapshot: memory.digest };
         }
-        return next === current ? step : { ...step, grounding: next };
+        return next === current ? step : { ...stepRecord, grounding: next };
     });
-    return { candidate: { ...decoded, steps }, stamped, restored, repaired, unknown };
+    return { candidate: { ...decodedRecord, steps }, stamped, restored, repaired, unknown };
 }
 
 /**
@@ -1137,11 +1146,11 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonl
         // The knowledge plane: one cited procedure per situation, and one check
         // of the draft. Both attach only when the embedder binds a client.
         ...createKnowledgeTools({
-            ...(deps.knowledge === undefined ? {} : { client: deps.knowledge }),
-            ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-            ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-            ...(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
-            ...(hooks.onRecommend === undefined ? {} : { onRecommend: hooks.onRecommend }),
+            client: deps.knowledge,
+            farmLockFile: deps.farmLockFile,
+            imagePackagesFile: deps.imagePackagesFile,
+            refStorePath: deps.refStorePath,
+            onRecommend: hooks.onRecommend,
         }),
     ];
 }

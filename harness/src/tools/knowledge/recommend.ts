@@ -15,16 +15,18 @@
  */
 
 import { ok, type Result } from "neverthrow";
+import type { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { maybeRecord } from "../../lib/shape.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable, RecommendResponse } from "./client.js";
 import type { SnapshotPin } from "./pin.js";
 import { joinEnvironment, type EnvironmentPaths, type RecommendWithEnvironment } from "./environment.js";
 import { SITUATION_EXAMPLE, SituationFieldsSchema, toPreferences, toSituation } from "./situation.js";
 import { buildPlanSkeleton, type SkeletonStep } from "./skeleton.js";
 
-export interface KnowledgeRecommendDeps extends Omit<EnvironmentPaths, "farmLockFile"> {
+export type KnowledgeRecommendDeps = Omit<EnvironmentPaths, "farmLockFile"> & {
     readonly client: KnowledgeClient;
     /** Host path of the farm `inflexa.lock`, or its resolver for each analysis. Absent, the packages read as unknown. */
     readonly farmLockFile?: EnvironmentStorePaths["farmLockFile"];
@@ -40,13 +42,13 @@ export interface KnowledgeRecommendDeps extends Omit<EnvironmentPaths, "farmLock
      * to another release between two calls refuses instead of mixing releases.
      */
     readonly pin?: SnapshotPin;
-}
+};
 
 /**
  * The model-facing answer of the tool: the skeleton and the claims, with the
  * envelope of the service and the environment source. Never the procedure.
  */
-export interface KnowledgeRecommendAnswer {
+export type KnowledgeRecommendAnswer = {
     readonly match: RecommendResponse["match"];
     readonly snapshot: RecommendResponse["snapshot"];
     /** The situation as the service normalized it. */
@@ -62,39 +64,39 @@ export interface KnowledgeRecommendAnswer {
     readonly claims: RecommendResponse["claims"];
     readonly nearest?: RecommendResponse["nearest"];
     readonly reason?: string;
-}
+};
 
 export type KnowledgeRecommendOutput = KnowledgeRecommendAnswer | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function stringList(value: unknown): readonly string[] | undefined {
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+    if (!Array.isArray(value)) return undefined;
+    const entries: readonly unknown[] = value;
+    return entries.flatMap((item) => (typeof item === "string" ? [item] : []));
 }
 
 /** The one representation: the envelope, the skeleton, and the claims. The procedure stays host-side. */
 export function toPlannerAnswer(joined: RecommendWithEnvironment): KnowledgeRecommendAnswer {
     const dropped = stringList(joined.dropped);
     const unrealized = stringList(joined.unrealized);
-    return {
+    const answer: { -readonly [K in keyof KnowledgeRecommendAnswer]: KnowledgeRecommendAnswer[K] } = {
         match: joined.match,
         snapshot: joined.snapshot,
-        ...(isRecord(joined.situation) ? { situation: joined.situation } : {}),
         flags: joined.flags,
-        ...(dropped ? { dropped } : {}),
         uncovered: joined.uncovered,
-        ...(unrealized && unrealized.length > 0 ? { unrealized } : {}),
-        ...(joined.environment_source ? { environment_source: joined.environment_source } : {}),
         plan_skeleton: buildPlanSkeleton(joined),
         claims: joined.claims,
-        ...(joined.nearest ? { nearest: joined.nearest } : {}),
-        ...(joined.reason !== undefined ? { reason: joined.reason } : {}),
     };
+    const situation = maybeRecord(joined.situation);
+    if (situation !== undefined) answer.situation = situation;
+    if (dropped !== undefined) answer.dropped = dropped;
+    if (unrealized !== undefined && unrealized.length > 0) answer.unrealized = unrealized;
+    if (joined.environment_source !== undefined) answer.environment_source = joined.environment_source;
+    if (joined.nearest !== undefined) answer.nearest = joined.nearest;
+    if (joined.reason !== undefined) answer.reason = joined.reason;
+    return answer;
 }
 
-export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
+export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool<z.infer<typeof SituationFieldsSchema>, KnowledgeRecommendOutput> {
     return defineTool({
         id: "knowledge_recommend",
         description:
@@ -138,9 +140,9 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
             deps.pin?.set(answer.snapshot.digest);
             const farmLockFile = typeof deps.farmLockFile === "function" ? deps.farmLockFile(ctx.session.scope.analysisId) : deps.farmLockFile;
             const joined = await joinEnvironment(answer, {
-                ...(farmLockFile ? { farmLockFile } : {}),
-                ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
-                ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
+                farmLockFile,
+                imagePackagesFile: deps.imagePackagesFile,
+                refStorePath: deps.refStorePath,
             });
             const planner = toPlannerAnswer(joined);
             deps.onAnswer?.(planner);

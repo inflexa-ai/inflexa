@@ -506,7 +506,7 @@ export function buildChildInput(args: {
         dependsOn: planStep.depends_on,
         // Composed beside the seed, thus the same checkpoint carries both and a
         // replay hands the child the binding its briefing describes.
-        ...(templateBinding ? { templateBinding } : {}),
+        templateBinding,
         level,
         prompt,
         parentWorkflowId: workflowId,
@@ -537,14 +537,14 @@ export function buildChildInput(args: {
  */
 export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepId: string; runId: string; deps: ExecuteAnalysisDeps }): Promise<StepSeed> {
     const { briefing, templateBinding } = await gatherStepPackage(args);
-    return { prompt: composeStepBriefing(briefing), ...(templateBinding ? { templateBinding } : {}) };
+    return { prompt: composeStepBriefing(briefing), templateBinding };
 }
 
 /** What `gatherStepPackage` gives: the data of the seed, and the binding of the plan settings when one holds. */
-export interface StepPackage {
+export type StepPackage = {
     readonly briefing: StepBriefing;
     readonly templateBinding?: TemplateBinding;
-}
+};
 
 /**
  * Do every read of one step's package and give the data its seed is rendered
@@ -608,7 +608,7 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
 
     const contract = await resolveTemplateContract(step, deps.knowledge);
 
-    return {
+    const pkg: { -readonly [M in keyof StepPackage]: StepPackage[M] } = {
         briefing: {
             step,
             workspace,
@@ -617,8 +617,9 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
             memory: { goal: memory.goal, constraints: memory.constraints },
             ...contract.briefing,
         },
-        ...(contract.binding ? { templateBinding: contract.binding } : {}),
     };
+    if (contract.binding !== undefined) pkg.templateBinding = contract.binding;
+    return pkg;
 }
 
 /**
@@ -627,16 +628,16 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
  * its served version is the version the plan names. JSON-serialisable, as a
  * durable step result must be.
  */
-export interface StepSeed {
+export type StepSeed = {
     readonly prompt: string;
     readonly templateBinding?: TemplateBinding;
-}
+};
 
 /** The template part of a seed: the brief or the reason for its absence, and the binding when one holds. */
-interface TemplateSeedPart {
+type TemplateSeedPart = {
     readonly briefing: Pick<StepBriefing, "template" | "templateNotRetrieved">;
     readonly binding?: TemplateBinding;
-}
+};
 
 /** A served contract carries no `match`; the two refusals do. */
 function isTemplateContract(answer: TemplateContract | KnowledgeUnavailable | KnowledgeRejected): answer is TemplateContract {
@@ -663,11 +664,12 @@ async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClie
                 : `the knowledge service refused the lookup: ${answer.message}`;
         return { briefing: { templateNotRetrieved: reason } };
     }
-    return bindTemplateContract(ref, answer, step.grounding?.settings ?? [], {
+    const grounding: { -readonly [M in keyof StepGroundingRef]: StepGroundingRef[M] } = {
         stepId: step.id,
         claims: step.grounding?.claims ?? [],
-        ...(step.grounding?.snapshot && step.grounding.snapshot !== "none" ? { snapshot: step.grounding.snapshot } : {}),
-    });
+    };
+    if (step.grounding?.snapshot && step.grounding.snapshot !== "none") grounding.snapshot = step.grounding.snapshot;
+    return bindTemplateContract(ref, answer, step.grounding?.settings ?? [], grounding);
 }
 
 /** The version of a template reference (`tpl-x@1.0.0` gives `1.0.0`), or `undefined` when the reference has none. */
@@ -713,11 +715,11 @@ function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
  * as unbound lines under the caveat the section renders.
  */
 /** What binds the render to the plan step beside the settings: its id, its claims, and the release the plan pinned. */
-interface StepGroundingRef {
+type StepGroundingRef = {
     readonly stepId: string;
     readonly claims: readonly string[];
     readonly snapshot?: string;
-}
+};
 
 function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[], grounding: StepGroundingRef): TemplateSeedPart {
     const refVersion = versionOfRef(ref);
@@ -743,7 +745,7 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                 unbound.push(`${shown}: a policy of the plan, not a value of the \`${setting.name}\` slot (${slot.type}); state the value it gives`);
                 continue;
             }
-            const prior = slots[setting.name];
+            const prior = typedMember(slots, setting.name);
             if (prior !== undefined) {
                 if (!sameSettingValue(prior, setting.value)) unbound.push(`${shown}: differs from the bound value ${JSON.stringify(prior)} of the same slot`);
                 continue;
@@ -766,7 +768,7 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
         unbound.push(`${shown}: no slot of the template carries it`);
     }
 
-    return {
+    const part: { -readonly [M in keyof TemplateSeedPart]: TemplateSeedPart[M] } = {
         briefing: {
             template: {
                 ref,
@@ -775,29 +777,28 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                 inputs: (contract.inputs ?? []).map((input) => ({
                     name: input.name,
                     path: input.path,
-                    ...(input.description ? { description: input.description } : {}),
+                    description: input.description,
                 })),
                 bound,
                 unbound_settings: unbound,
             },
         },
-        ...(versionMatches
-            ? {
-                  binding: {
-                      template: ref,
-                      slots,
-                      sources,
-                      step: grounding.stepId,
-                      claims: grounding.claims,
-                      ...(grounding.snapshot ? { snapshot: grounding.snapshot } : {}),
-                      // The local slots of the contract, thus the tool binds a path or a column name on the machine
-                      // without a second read of the contract.
-                      local: contract.parameters.filter((slot) => slot.local === true),
-                      adaptable: adaptable.map((slot) => slot.name),
-                  },
-              }
-            : {}),
     };
+    if (versionMatches) {
+        part.binding = {
+            template: ref,
+            slots,
+            sources,
+            step: grounding.stepId,
+            claims: grounding.claims,
+            snapshot: grounding.snapshot,
+            // The local slots of the contract, thus the tool binds a path or a column name on the machine
+            // without a second read of the contract.
+            local: contract.parameters.filter((slot) => slot.local === true),
+            adaptable: adaptable.map((slot) => slot.name),
+        };
+    }
+    return part;
 }
 
 /**
@@ -1504,7 +1505,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 runId,
                 workflowId,
                 prompt: seed.prompt,
-                ...(seed.templateBinding ? { templateBinding: seed.templateBinding } : {}),
+                templateBinding: seed.templateBinding,
             });
             const childInput: SandboxStepInput = {
                 ...baseChildInput,

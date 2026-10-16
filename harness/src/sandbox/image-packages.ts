@@ -81,7 +81,7 @@ export const ImageRBasePackageSchema = z
         version: z.string(),
         priority: z.enum(["base", "recommended"]),
     })
-    .passthrough();
+    .loose();
 
 /**
  * `image-packages.json` at schema version 1. The keys `system_tools` and

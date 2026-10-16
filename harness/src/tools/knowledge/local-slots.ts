@@ -14,18 +14,20 @@
 
 import type { TemplateParameter } from "./client.js";
 
+import { present } from "../../lib/invariants.js";
+
 /** A slot value: a scalar, or a list of strings. */
 export type LocalSlotValue = string | number | boolean | readonly string[];
 
 /** One refusal of a local value, in the shape of a render rejection issue. */
-export interface LocalSlotIssue {
+export type LocalSlotIssue = {
     readonly slot: string;
     readonly reason: string;
     readonly permitted?: readonly string[];
-}
+};
 
 /** One bound slot as the decision record keeps it: the value, its source, and the lines that carried its marker. */
-export interface BoundLocalSlot {
+export type BoundLocalSlot = {
     readonly name: string;
     readonly value: LocalSlotValue;
     readonly source: "caller" | "default";
@@ -34,7 +36,7 @@ export interface BoundLocalSlot {
     readonly lines: readonly number[];
     /** The `read` flag the service computed for the slot on the marked render, when it has a `when` condition. */
     readonly read?: boolean;
-}
+};
 
 export type BindLocalSlotsResult =
     | { readonly ok: false; readonly issues: readonly LocalSlotIssue[] }
@@ -45,6 +47,8 @@ export function localParameters(parameters: readonly TemplateParameter[]): Templ
     return parameters.filter((parameter) => parameter.local === true);
 }
 
+// The design-formula grammar of the service renderer.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the design-formula grammar of the service renderer.
 const FORMULA_PATTERN = /^~\s*[A-Za-z0-9_.+*:()\s-]+$/;
 
 /** Check one caller value against the contract of its slot, as the renderer of the service does. */
@@ -58,6 +62,7 @@ export function validateLocalSlot(parameter: TemplateParameter, value: unknown):
             if (parameter.type === "formula" && !FORMULA_PATTERN.test(value))
                 return { slot, reason: "a formula must start with ~ and hold only names, +, :, *, and parentheses" };
             if (permitted && !permitted.includes(value)) return { slot, reason: `the value "${value}" is not permitted`, permitted };
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pattern is the slot's own grammar, a contract field of the template.
             if (parameter.pattern && !new RegExp(parameter.pattern).test(value)) return { slot, reason: `the value must match ${parameter.pattern}` };
             return undefined;
         }
@@ -84,6 +89,17 @@ export function validateLocalSlot(parameter: TemplateParameter, value: unknown):
             // refused, never rendered as text, because a wrong literal is a wrong script.
             return { slot, reason: `the slot type ${parameter.type} is not one this host renders` };
     }
+}
+
+/** The value as the local slot value the contract admits: a scalar stays, a list of strings stays a list, anything else is no value. */
+function admittedLocalValue(value: unknown): LocalSlotValue | undefined {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+    if (Array.isArray(value)) {
+        const entries: readonly unknown[] = value;
+        const strings = entries.flatMap((item) => (typeof item === "string" ? [item] : []));
+        return strings.length === entries.length ? strings : undefined;
+    }
+    return undefined;
 }
 
 /** A slot value as a literal of the language: R gives `TRUE` and `c(...)`, Python gives `True` and `[...]`. */
@@ -159,25 +175,29 @@ export function bindLocalSlots(
         const given = localValues[parameter.name];
         if (given !== undefined) {
             const issue = validateLocalSlot(parameter, given);
-            if (issue) {
+            if (issue !== undefined) {
                 issues.push(issue);
                 continue;
             }
-            // Validated above: a string, a finite number, a boolean, or a list of strings.
-            const value = given as LocalSlotValue;
+            // validateLocalSlot admitted the value, so the narrow cannot miss; the throw keeps the impossible case loud.
+            const value = present(admittedLocalValue(given), "the local slot value validateLocalSlot admitted");
             values.set(parameter.name, value);
             slots.push({ name: parameter.name, value, source: "caller", adaptable: true, lines: [] });
         } else if (parameter.default !== undefined) {
-            // The contract is loose on the wire; a default is a scalar or a list of strings by the contract of the service,
-            // and the service renders whatever it holds, thus only an absent default is absent here too.
-            const value = parameter.default as LocalSlotValue;
+            const value = admittedLocalValue(parameter.default);
+            if (value === undefined) {
+                // The contract is loose on the wire; a default the slot contract does not admit (for example null)
+                // is refused, never rendered as text: a wrong literal is a wrong script.
+                issues.push({ slot: parameter.name, reason: "the local slot has a default this host cannot bind" });
+                continue;
+            }
             values.set(parameter.name, value);
             slots.push({
                 name: parameter.name,
                 value,
                 source: "default",
                 adaptable: true,
-                ...(parameter.default_source ? { default_source: parameter.default_source } : {}),
+                default_source: parameter.default_source,
                 lines: [],
             });
         } else if (parameter.required !== false) {
@@ -185,6 +205,7 @@ export function bindLocalSlots(
         }
     }
     if (issues.length > 0) return { ok: false, issues };
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the slot-marker grammar the service leaves in a marked render.
     const bound = script.replace(/\{\{([a-z][a-z0-9_]*)\}\}/g, (whole, name: string) => {
         const parameter = byName.get(name);
         if (!parameter) return whole;
@@ -196,7 +217,7 @@ export function bindLocalSlots(
     const located = slots.map((entry) => ({
         ...entry,
         lines: script.split("\n").flatMap((line, index) => (line.includes(slotMarker(entry.name)) && index < lines.length ? [index + 1] : [])),
-        ...(readByName.has(entry.name) ? { read: readByName.get(entry.name) } : {}),
+        read: readByName.get(entry.name),
     }));
     return { ok: true, script: bound, slots: located };
 }

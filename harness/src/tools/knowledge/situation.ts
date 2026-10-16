@@ -196,15 +196,10 @@ export const SituationFieldsSchema = z.object({
 
 export type SituationFields = z.infer<typeof SituationFieldsSchema>;
 
-/** The situation as the client sends it: the fields as given, with an absent optional field omitted. */
+/** The situation as the client sends it: the fields as given, without the caller preference. */
 export function toSituation(fields: SituationFields): KnowledgeSituation {
-    const situation: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(fields)) {
-        if (key === "preferred_language") continue;
-        if (value !== undefined) situation[key] = value;
-    }
-    // The schema above validated every field, thus the record has the shape of the client type.
-    return situation as unknown as KnowledgeSituation;
+    const { preferred_language: _preferred, ...situation } = fields;
+    return situation;
 }
 
 /** The preferences of the caller, beside the situation: the language of the template. */
