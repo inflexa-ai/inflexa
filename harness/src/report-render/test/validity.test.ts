@@ -14,8 +14,7 @@
 
 import { describe, expect, it } from "bun:test";
 // `csstree-validator` ships no type declarations, and the harness ignores `src/**/*.d.ts`, thus no local
-// declaration can type the module. The directive accepts the untyped import, and the cast below pins the
-// one signature that the gate uses.
+// declaration can type the module. The directive on the import accepts the untyped module.
 // @ts-expect-error the module resolves without a type declaration.
 import { validate as validateCssRaw } from "csstree-validator";
 import { HtmlValidate } from "html-validate";
@@ -31,10 +30,11 @@ import { z } from "zod";
 /** One `csstree-validator` finding. It names the property at fault, the class of the fault, and the message. */
 type CssFinding = { name: string; message: string; property?: string };
 
-/** The one signature that the gate uses. The cast gives the untyped import a precise type. */
-// SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-// oxlint-disable-next-line typescript/no-unsafe-assignment -- the package ships no types; this annotation is the boundary that types the untyped import.
-const validateCss: (css: string, filename?: string) => CssFinding[] = validateCssRaw;
+/** The one signature that the gate uses. The wrapper types the untyped import, and hands the filename to the
+ * package's third parameter. A direct alias would land the filename in the options slot, where the package
+ * cannot find it. */
+// oxlint-disable-next-line typescript/no-unsafe-call, typescript/no-unsafe-return -- the package ships no types; this wrapper is the boundary that types it.
+const validateCss: (css: string, filename?: string) => CssFinding[] = (css, filename) => validateCssRaw(css, undefined, filename);
 
 /**
  * The HTML validator with the recommended preset. Two rules turn off, because the page rejects each one on
