@@ -22,6 +22,7 @@
 
 import { CHART_INK, CHART_PAGE_TEXT_PX, COLOR_SCALE_BAND_PCT, GUIDE_LINE_COLOR } from "./design.js";
 import { optionArray, optionMemberOrUndefined, optionNumber, optionRecord } from "./option-lens.js";
+import { optionPercent } from "./option-lens.js";
 
 /** The renderer name of an interval: an error bar, a confidence interval, or the inner mark of a violin. */
 export const INTERVAL_RENDERER = "interval";
@@ -87,13 +88,13 @@ export type RenderApi = {
     visual(name: "color"): string;
 };
 
-/** One graphic element that a renderer gives back to the chart runtime. */
-export type RenderedElement = {
-    type: string;
-    shape?: Record<string, unknown>;
-    style?: Record<string, unknown>;
-    children?: RenderedElement[];
-};
+/** One graphic element that a renderer gives back to the chart runtime. The members are the kinds the renderers write, each in the shape the runtime's own element option takes for that kind. */
+export type RenderedElement =
+    | { type: "line"; shape: { x1: number; y1: number; x2: number; y2: number }; style?: { stroke?: string; lineWidth?: number } }
+    | { type: "circle"; shape: { cx: number; cy: number; r: number }; style?: { fill?: string; stroke?: string; lineWidth?: number } }
+    | { type: "rect"; shape: { x: number; y: number; width: number; height: number }; style?: { fill?: string } }
+    | { type: "polygon"; shape: { points: number[][] }; style?: { fill?: string; stroke?: string; lineWidth?: number; opacity?: number } }
+    | { type: "group"; children: RenderedElement[] };
 
 /** One straight segment in the ink of the chart. */
 function segment(x1: number, y1: number, x2: number, y2: number, width: number): RenderedElement {
@@ -118,7 +119,7 @@ export function intervalRenderer(_params: RenderParams, api: RenderApi): Rendere
     const alongX = api.value(4) === 0;
     const offset = api.value(5);
     const inner = api.value(6) === 1;
-    const clipped = Number(api.value(7)) || 0;
+    const clipped = api.value(7) || 0;
     const band = alongX ? api.size([0, 1])[1] : api.size([1, 0])[0];
     const shift = offset * band;
     const from = api.coord(alongX ? [low, y] : [x, low]);
@@ -316,8 +317,8 @@ function sizedSeries(series: unknown, sized: unknown, widthPx: number): unknown 
     const widths = optionMemberOrUndefined(fields.widths);
     const chosen = typeof widths === "object" ? widths[String(widthPx)] : undefined;
     if (!Array.isArray(fields.names) || !Array.isArray(chosen)) return series;
-    const names = fields.names as unknown[];
-    const kept = series.filter((entry: unknown) => typeof entry !== "object" || entry === null || names.indexOf((optionRecord(entry)).name) < 0);
+    const names = optionArray(fields.names);
+    const kept = series.filter((entry: unknown) => typeof entry !== "object" || entry === null || names.indexOf(optionRecord(entry).name) < 0);
     return kept.concat(chosen);
 }
 
@@ -328,7 +329,7 @@ function sizedSeries(series: unknown, sized: unknown, widthPx: number): unknown 
 function scaledAxes(axes: unknown, scale: number): unknown {
     if (Array.isArray(axes)) return axes.map((axis) => scaledAxes(axis, scale));
     if (typeof axes !== "object" || axes === null) return axes;
-    const axis = { ...(optionRecord(axes)) };
+    const axis = { ...optionRecord(axes) };
     if (typeof axis.nameGap === "number") axis.nameGap = axis.nameGap * scale;
     if (typeof axis.offset === "number") axis.offset = axis.offset * scale;
     return axis;
@@ -340,7 +341,7 @@ function scaledAxes(axes: unknown, scale: number): unknown {
  */
 function scaledGraphic(element: unknown, scale: number): unknown {
     if (typeof element !== "object" || element === null) return element;
-    const out = { ...(optionRecord(element)) };
+    const out = { ...optionRecord(element) };
     const style = optionMemberOrUndefined(out.style);
     if (style !== undefined && typeof style.fontSize === "number") out.style = { ...style, fontSize: style.fontSize * scale };
     if (Array.isArray(out.children)) out.children = out.children.map((child: unknown) => scaledGraphic(child, scale));
@@ -380,7 +381,7 @@ function fittedCategories(axis: unknown, textPx: number, widthPx: number): unkno
     const fields = optionRecord(axis);
     const data = fields.data;
     if (fields.type !== "category" || !Array.isArray(data) || data.length === 0) return axis;
-    const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? (optionRecord(fields.axisLabel)) : {};
+    const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? optionRecord(fields.axisLabel) : {};
     let rotate = label.rotate;
     if (typeof rotate !== "number" || rotate === 0) {
         let longest = 0;
@@ -428,11 +429,9 @@ function wrappedTitle(title: string, textPx: number, widthPx: number): string {
  */
 function gridWidth(grid: unknown, axis: unknown, widthPx: number): number {
     const place =
-        typeof axis === "object" && axis !== null && typeof (optionRecord(axis)).gridIndex === "number"
-            ? optionNumber(optionRecord(axis).gridIndex)
-            : 0;
+        typeof axis === "object" && axis !== null && typeof optionRecord(axis).gridIndex === "number" ? optionNumber(optionRecord(axis).gridIndex) : 0;
     const entry = Array.isArray(grid) ? grid[place] : grid;
-    const width = typeof entry === "object" && entry !== null ? (optionRecord(entry)).width : undefined;
+    const width = typeof entry === "object" && entry !== null ? optionRecord(entry).width : undefined;
     if (typeof width === "string" && width.endsWith("%")) return (widthPx * Number.parseFloat(width)) / 100;
     if (typeof width === "number") return width;
     return widthPx;
@@ -513,12 +512,12 @@ function legendLines(option: Record<string, unknown>, textPx: number, widthPx: n
     const names: string[] = [];
     if (Array.isArray(legend.data)) {
         for (const entry of legend.data) {
-            const name = typeof entry === "object" && entry !== null ? (optionRecord(entry)).name : entry;
+            const name = typeof entry === "object" && entry !== null ? optionRecord(entry).name : entry;
             if (typeof name === "string") names.push(name);
         }
     } else if (Array.isArray(option.series)) {
         for (const series of option.series) {
-            const name = typeof series === "object" && series !== null ? (optionRecord(series)).name : undefined;
+            const name = typeof series === "object" && series !== null ? optionRecord(series).name : undefined;
             if (typeof name === "string" && name !== "" && names.indexOf(name) < 0) names.push(name);
         }
     }
@@ -557,18 +556,18 @@ function facetOverLegend(option: Record<string, unknown>, textPx: number, widthP
         const bottom = panelBottom(grid);
         if (bottom <= 0) continue;
         const fields = optionRecord(grid);
-        const top = Number.parseFloat(String(fields.top));
+        const top = optionPercent(fields.top);
         if (tops.indexOf(top) < 0) tops.push(top);
         if (bottom <= lowest) continue;
         lowest = bottom;
-        height = Number.parseFloat(String(fields.height));
+        height = optionPercent(fields.height);
     }
     tops.sort((a, b) => a - b);
     const partOf = (legendPx: number): number => Math.max(0, lowest - ((heightPx - legendPx - title) / heightPx) * 100) / tops.length;
     const lines = legendLines(option, textPx, widthPx);
     let band = legendBand(lines, textPx);
     if (lines > 1 && partOf(band) > height * (1 - PANEL_MIN_SHARE)) {
-        option.legend = { ...(optionRecord(option.legend)), type: "scroll" };
+        option.legend = { ...optionRecord(option.legend), type: "scroll" };
         band = legendBand(1, textPx);
     }
     const part = partOf(band);
@@ -579,8 +578,8 @@ function facetOverLegend(option: Record<string, unknown>, textPx: number, widthP
         option.grid = grids.map((grid: unknown) => {
             if (panelBottom(grid) <= 0) return grid;
             const fields = optionRecord(grid);
-            const top = Number.parseFloat(String(fields.top));
-            return { ...fields, top: moved(top, tops.indexOf(top)), height: `${Math.round((Number.parseFloat(String(fields.height)) - part) * 1e4) / 1e4}%` };
+            const top = optionPercent(fields.top);
+            return { ...fields, top: moved(top, tops.indexOf(top)), height: `${Math.round((optionPercent(fields.height) - part) * 1e4) / 1e4}%` };
         });
     }
     if (Array.isArray(option.graphic)) {
@@ -644,12 +643,12 @@ export function exportOption(option: Record<string, unknown>, textPx: number, wi
     if (out.xAxis !== undefined) out.xAxis = fittedAxes(out.xAxis, out.grid, textPx, widthPx);
     if (Array.isArray(out.visualMap)) out.visualMap = out.visualMap.map((map: unknown) => stillScale(map, textPx, widthPx));
     else if (out.visualMap !== undefined) out.visualMap = stillScale(out.visualMap, textPx, widthPx);
-    if (typeof out.grid === "object" && out.grid !== null && !Array.isArray(out.grid) && (optionRecord(out.grid)).containLabel === true) {
+    if (typeof out.grid === "object" && out.grid !== null && !Array.isArray(out.grid) && optionRecord(out.grid).containLabel === true) {
         // The legacy containment holds the labels alone, and a name at the edge of a short export is cut.
-        out.grid = { ...(optionRecord(out.grid)), containLabel: false, outerBoundsMode: "auto", outerBoundsContain: "all" };
+        out.grid = { ...optionRecord(out.grid), containLabel: false, outerBoundsMode: "auto", outerBoundsContain: "all" };
     }
     if (holdsBottomLegend(out)) {
-        const grid = typeof out.grid === "object" && out.grid !== null ? (optionRecord(out.grid)) : {};
+        const grid = typeof out.grid === "object" && out.grid !== null ? optionRecord(out.grid) : {};
         out.grid = { ...grid, outerBoundsMode: "auto", outerBounds: { left: 0, right: 0, top: 0, bottom: Math.round(textPx * LEGEND_BAND_LINES) } };
     }
     if (holdsFacetLegend(out)) facetOverLegend(out, textPx, widthPx, heightPx);

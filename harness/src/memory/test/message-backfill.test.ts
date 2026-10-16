@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { PoolClient } from "pg";
+import { Client, type QueryResult } from "pg";
 
 import { envelopeMessage, legacyAnthropicToModelMessage, parseStoredMessageEnvelope } from "../ai-sdk-message-storage.js";
 import { backfillAiSdkMessageEnvelopes } from "../message-backfill.js";
@@ -13,38 +13,40 @@ type LegacyRow = {
     readonly content_jsonb: string | Array<Record<string, unknown>>;
 };
 
-class FakeBackfillClient {
+class FakeBackfillClient extends Client {
     legacyRows: LegacyRow[];
     remainingRows: Array<{ thread_id: string; seq: string }> = [];
     readonly updates: unknown[][] = [];
     readonly queries: string[] = [];
 
     constructor(rows: LegacyRow[]) {
+        super();
         this.legacyRows = rows;
     }
 
-    query(text: string, values?: unknown[]): Promise<{ rows: unknown[] }> {
+    override query(...args: unknown[]): Promise<QueryResult> {
+        if (typeof args[0] !== "string") return Promise.reject(new Error("unexpected config-form query"));
+        const text = args[0];
+        const values = Array.isArray(args[1]) ? args[1] : undefined;
         this.queries.push(text);
+        const done = (rows: unknown[]): Promise<QueryResult> => Promise.resolve({ rows, rowCount: rows.length, command: "", oid: 0, fields: [] });
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         if (/^UPDATE messages SET message_envelope/.test(text)) {
             this.updates.push(values ?? []);
-            return Promise.resolve({ rows: [] });
+            return done([]);
         }
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         if (/LIMIT 1/.test(text)) {
-            return Promise.resolve({ rows: this.remainingRows });
+            return done(this.remainingRows);
         }
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         if (/FROM messages/.test(text) && /message_envelope IS NULL/.test(text)) {
-            return Promise.resolve({ rows: this.legacyRows });
+            return done(this.legacyRows);
         }
         return Promise.reject(new Error(`unexpected query: ${text}`));
     }
-}
 
-function asClient(fake: FakeBackfillClient): PoolClient {
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return fake as unknown as PoolClient;
+    release(): void {}
 }
 
 describe("legacyAnthropicToModelMessage", () => {
@@ -107,32 +109,34 @@ describe("legacyAnthropicToModelMessage", () => {
     });
 
     it("fails the row on an unrepresentable assistant block instead of dropping it", () => {
-        expect(() =>
-            legacyAnthropicToModelMessage({
-                threadId: "thread-1",
-                seq: 5,
-                role: "assistant",
-                content: [
-                    { type: "text", text: "before" },
-                    { type: "redacted_thinking", data: "signed-opaque-blob" },
-                ],
-            }),
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        expect(
+            () =>
+                legacyAnthropicToModelMessage({
+                    threadId: "thread-1",
+                    seq: 5,
+                    role: "assistant",
+                    content: [
+                        { type: "text", text: "before" },
+                        { type: "redacted_thinking", data: "signed-opaque-blob" },
+                    ],
+                }),
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         ).toThrow(/thread-1\/5.*redacted_thinking/);
     });
 
     it("fails the row when a user turn mixes tool_result with other blocks", () => {
-        expect(() =>
-            legacyAnthropicToModelMessage({
-                threadId: "thread-1",
-                seq: 6,
-                role: "user",
-                content: [
-                    { type: "tool_result", tool_use_id: "toolu-1", content: "ok" },
-                    { type: "text", text: "also this" },
-                ],
-            }),
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        expect(
+            () =>
+                legacyAnthropicToModelMessage({
+                    threadId: "thread-1",
+                    seq: 6,
+                    role: "user",
+                    content: [
+                        { type: "tool_result", tool_use_id: "toolu-1", content: "ok" },
+                        { type: "text", text: "also this" },
+                    ],
+                }),
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         ).toThrow(/thread-1\/6/);
     });
 });
@@ -148,14 +152,16 @@ describe("backfillAiSdkMessageEnvelopes", () => {
             },
         ]);
 
-        await backfillAiSdkMessageEnvelopes(asClient(fake));
+        await backfillAiSdkMessageEnvelopes(fake);
         expect(fake.updates).toHaveLength(1);
-        expect(jsonParse(String(fake.updates[0][0]), z.unknown())).toEqual(
+        const envelope = fake.updates[0][0];
+        if (typeof envelope !== "string") throw new Error("the backfill passes the envelope text as the first query value");
+        expect(jsonParse(envelope, z.unknown())).toEqual(
             envelopeMessage({ role: "user", content: [{ type: "text", text: "hello", providerOptions: undefined }] }),
         );
 
         fake.legacyRows = [];
-        await backfillAiSdkMessageEnvelopes(asClient(fake));
+        await backfillAiSdkMessageEnvelopes(fake);
         expect(fake.updates).toHaveLength(1);
     });
 
@@ -170,13 +176,13 @@ describe("backfillAiSdkMessageEnvelopes", () => {
         ]);
 
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        await expect(backfillAiSdkMessageEnvelopes(asClient(fake))).rejects.toThrow(/thread-bad\/7/);
+        await expect(backfillAiSdkMessageEnvelopes(fake)).rejects.toThrow(/thread-bad\/7/);
     });
 
     it("does not query DBOS operation outputs while migrating conversation messages", async () => {
         const fake = new FakeBackfillClient([]);
 
-        await backfillAiSdkMessageEnvelopes(asClient(fake));
+        await backfillAiSdkMessageEnvelopes(fake);
 
         expect(fake.queries.join("\n")).not.toContain("operation_outputs");
     });

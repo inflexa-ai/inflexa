@@ -42,8 +42,8 @@ import type {
     ProviderOptions,
     ReasoningPolicy,
 } from "./types.js";
-import { isAbortError, isError } from "../lib/thrown.js";
-import { typedMember } from "../lib/shape.js";
+import { errorMessage, isAbortError, isError } from "../lib/thrown.js";
+import { maybeRecord, recordMember, typedMember } from "../lib/shape.js";
 
 /**
  * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
@@ -85,8 +85,8 @@ export const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
  * provider over a boot shares one sink.
  */
 function routeSdkWarningsTo(logger: Logger): void {
-    const g = globalThis as { AI_SDK_LOG_WARNINGS?: unknown };
-    if (g.AI_SDK_LOG_WARNINGS !== undefined) return;
+    const g = maybeRecord(globalThis);
+    if (g === undefined || typedMember(g, "AI_SDK_LOG_WARNINGS") !== undefined) return;
     g.AI_SDK_LOG_WARNINGS = (options: { warnings: readonly unknown[]; provider?: string; model?: string }) => {
         for (const warning of options.warnings) {
             logger.warn("ai sdk warning", { provider: options.provider, model: options.model, warning });
@@ -344,7 +344,7 @@ function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTr
     const entries = metadata?.["anthropic"]?.["inputTransformations"];
     if (!Array.isArray(entries)) return [];
     return entries.map((entry: unknown) => {
-        const fields = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+        const fields = maybeRecord(entry) ?? {};
         const text = (key: string): string | undefined => {
             const value = fields[key];
             return typeof value === "string" ? value : undefined;
@@ -361,7 +361,7 @@ function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTr
  */
 function apiCallErrorOf(error: unknown): APICallError | undefined {
     if (APICallError.isInstance(error)) return error;
-    const cause = (error as { cause?: unknown } | null | undefined)?.cause;
+    const cause = typedMember(maybeRecord(error), "cause");
     if (APICallError.isInstance(cause)) return cause;
     return undefined;
 }
@@ -528,12 +528,18 @@ export function createRetry(signal: AbortSignal | undefined, logger: Logger, max
  */
 function toChatUsage(usage: LanguageModelUsage | undefined): ChatUsage | undefined {
     if (usage === undefined) return undefined;
+    // The SDK's own usage combiner reads these detail bags with `?.` — a provider
+    // that reports totals without a breakdown arrives without them, whatever the
+    // `LanguageModelUsage` type claims.
+    const inputTokenDetails = recordMember(maybeRecord(usage), "inputTokenDetails");
+    const outputTokenDetails = recordMember(maybeRecord(usage), "outputTokenDetails");
+    const tokenCount = (value: unknown): number | undefined => (typeof value === "number" ? value : undefined);
     return {
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
-        cacheCreationInputTokens: usage.inputTokenDetails.cacheWriteTokens,
-        cacheReadInputTokens: usage.inputTokenDetails.cacheReadTokens,
-        reasoningTokens: usage.outputTokenDetails.reasoningTokens,
+        cacheCreationInputTokens: tokenCount(typedMember(inputTokenDetails, "cacheWriteTokens")),
+        cacheReadInputTokens: tokenCount(typedMember(inputTokenDetails, "cacheReadTokens")),
+        reasoningTokens: tokenCount(typedMember(outputTokenDetails, "reasoningTokens")),
     };
 }
 
@@ -637,11 +643,34 @@ function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
             if (m.content !== "") out.push(m);
             continue;
         }
-        const parts = m.content.filter((p) => p.type !== "text" || p.text !== "");
-        // The filtered parts are a subset of this message's own content, so the
-        // message remains valid for its role — the cast only re-associates the
-        // narrowed array with the union member TS can no longer correlate.
-        if (parts.length > 0) out.push({ ...m, content: parts } as ModelMessage);
+        // The switch filters the content of its own variant: one loop over the
+        // union would widen the array and drop the correlation TS needs to type
+        // the rebuilt message without an assertion.
+        switch (m.role) {
+            case "system": {
+                if (m.content !== "") out.push(m);
+                break;
+            }
+            case "user": {
+                const parts = m.content.filter((p: { type: string; text?: unknown }) => p.type !== "text" || p.text !== "");
+                if (parts.length > 0) out.push({ ...m, content: parts });
+                break;
+            }
+            case "assistant": {
+                const parts = m.content.filter((p: { type: string; text?: unknown }) => p.type !== "text" || p.text !== "");
+                if (parts.length > 0) out.push({ ...m, content: parts });
+                break;
+            }
+            case "tool": {
+                const parts = m.content.filter((p: { type: string; text?: unknown }) => p.type !== "text" || p.text !== "");
+                if (parts.length > 0) out.push({ ...m, content: parts });
+                break;
+            }
+            default: {
+                const _exhaustive: never = m;
+                return _exhaustive;
+            }
+        }
     }
     return out;
 }
@@ -713,8 +742,8 @@ const STREAM_ERROR_STATUS: Readonly<Record<string, number>> = {
  */
 function streamPartFailure(error: unknown): unknown {
     if (isError(error)) return error;
-    if (typeof error !== "object" || error === null) return new Error(String(error));
-    const reported = error as { readonly type?: unknown; readonly message?: unknown };
+    if (typeof error !== "object" || error === null) return new Error(errorMessage(error));
+    const reported = maybeRecord(error) ?? {};
     const type = typeof reported.type === "string" ? reported.type : undefined;
     const message = typeof reported.message === "string" ? reported.message : undefined;
     const failure = new Error(message ?? type ?? "The provider reported a stream error.", { cause: error });
@@ -1052,7 +1081,6 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
         const timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
         // The harness runs on Node, where a timer has `unref`. Unref the guard
         // timer, thus an armed guard does not keep a short-lived process alive.
-        // The DOM type of `setTimeout` declares no `unref`, thus guard the call.
         timer.unref();
         const clear = (): void => {
             clearTimeout(timer);
@@ -1076,6 +1104,9 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
         // at 360 seconds, because Bun pads the timer to its minute wheel, and a
         // request with the key completed after 420 seconds. The `RequestInit` type
         // declares no such member, thus the cast.
+        // SAFETY: the only extra key is the Bun-only `timeout`, which the standard
+        // `RequestInit` type omits; runtimes without it ignore the key, so the
+        // widened init is the init the wire call would have read anyway.
         const forwarded = { ...init, signal, timeout: false } as RequestInit;
         try {
             return await fetchImpl(input, forwarded);
@@ -1099,10 +1130,11 @@ function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageMod
     return wrapLanguageModel({
         model,
         middleware: {
-            transformParams: ({ params }) => Promise.resolve(({
-                ...params,
-                providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, store } },
-            })),
+            transformParams: ({ params }) =>
+                Promise.resolve({
+                    ...params,
+                    providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, store } },
+                }),
         },
     });
 }
@@ -1130,14 +1162,21 @@ export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
     const requestTimeoutMs = config.requestTimeoutMs;
-    const effectiveFetch =
-        requestTimeoutMs === undefined ? config.fetch : wrapFetchWithRequestTimeout(config.fetch ?? (globalThis.fetch), requestTimeoutMs);
+    const effectiveFetch = requestTimeoutMs === undefined ? config.fetch : wrapFetchWithRequestTimeout(config.fetch ?? globalThis.fetch, requestTimeoutMs);
+    // The ambient fetch type is a callable with a `preconnect` member beside it,
+    // so a plain wrapper function never satisfies the SDK's option structurally.
+    // The adapter carries the callable; the hint rides to the ambient
+    // realization, whose connection pool is the one every provider shares.
+    const sdkFetch: typeof fetch | undefined =
+        effectiveFetch === undefined
+            ? undefined
+            : Object.assign((input: string | URL | Request, init?: RequestInit) => effectiveFetch(input, init), { preconnect: fetch.preconnect });
 
     if (config.kind === "anthropic") {
         const provider = createAnthropic({
             baseURL: config.baseURL,
             apiKey: config.apiKey,
-            fetch: effectiveFetch as typeof fetch | undefined,
+            fetch: sdkFetch,
         });
         // The Anthropic Messages wire renders an image block inside a
         // tool_result, thus the loop can send a picture. A custom baseURL can
@@ -1174,7 +1213,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         const provider = createOpenAI({
             baseURL: config.baseURL,
             apiKey: config.apiKey,
-            fetch: effectiveFetch as typeof fetch | undefined,
+            fetch: sdkFetch,
         });
         // The Responses wire renders an image block inside a function-call
         // output, thus the loop can send a picture. A custom baseURL can front
@@ -1211,7 +1250,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         name: config.name,
         baseURL: config.baseURL,
         apiKey: config.apiKey,
-        fetch: effectiveFetch as typeof fetch | undefined,
+        fetch: sdkFetch,
         // Each call of the provider streams, `chat` included. Without this flag
         // the package asks for no usage on a stream, and the call reports none.
         includeUsage: true,

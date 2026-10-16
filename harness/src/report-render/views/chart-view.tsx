@@ -34,6 +34,7 @@ import { blockMark } from "./block-mark.js";
 import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
+import { stringOfNode } from "./node-text.js";
 
 /**
  * What the card carries beside the option: the staged names of the two SVG files, and the box of the chart
@@ -114,7 +115,7 @@ export function renderChart(
     ].join("; ");
     const stem = kebabFilename(block.title ?? block.id);
     const hybrid = card.svg === undefined && holdsPointLayer(option);
-    return String(
+    return stringOfNode(
         <div class="report-chart" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, references)}>
             <div class="report-chart-title">
                 {block.title}

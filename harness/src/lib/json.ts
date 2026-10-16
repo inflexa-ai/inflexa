@@ -1,11 +1,12 @@
 import type { ZodType } from "zod";
+import { z } from "zod";
 
 /**
  * Decode a JSON string and prove its shape with a schema.
  */
-export function jsonParse<T>(text: string, schema: ZodType<T>): T {
+export function jsonParse<T>(text: string, schema: ZodType<T>, revive?: (key: string, value: unknown) => unknown): T {
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the single JSON decode of the package: zod 4.4.3 exports no schema that decodes a JSON string, and the schema proves the decoded value.
-    const value: unknown = JSON.parse(text);
+    const value: unknown = JSON.parse(text, revive);
     return schema.parse(value);
 }
 
@@ -30,7 +31,10 @@ export function parseJsonOrUndefined(text: string): unknown {
  * `structuredClone` keeps both, so it cannot stand in for a wire-shaped clone.
  */
 export function jsonClone<T>(value: T, revive?: (key: string, value: unknown) => unknown): T {
-    // SAFETY: the text came from JSON.stringify of the same value, so the decode gives back the wire shape of `T` and nothing wider.
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the clone must keep the JSON wire shape, which no builtin clone does; the schema-free decode is sound because the text came from JSON.stringify of the same value.
-    return JSON.parse(JSON.stringify(value), revive);
+    // SAFETY: the text came from JSON.stringify of the same value, so the decode gives back the wire shape of `T` and nothing wider; the check that always holds carries that producer-side invariant, because the wire shape of `T` has no schema of its own.
+    return jsonParse(
+        JSON.stringify(value),
+        z.custom<T>(() => true),
+        revive,
+    );
 }

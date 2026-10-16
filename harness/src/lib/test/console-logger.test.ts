@@ -133,6 +133,7 @@ describe("errorFields", () => {
         // handling (pino's `err` serializer, the `exception.*` semconv) instead of
         // the shipped mapping. Overriding must reach the harness's call sites.
         const base = createConsoleLogger();
+        // oxlint-disable-next-line typescript/no-base-to-string -- the default string form of the Error is the subject this test pins.
         const custom: Logger = { ...base, errorFields: (err) => ({ "exception.message": String(err) }) };
 
         expect(custom.errorFields(new Error("boom"))).toEqual({ "exception.message": "Error: boom" });

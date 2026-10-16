@@ -20,10 +20,10 @@ import { createNoopLogger } from "../../lib/console-logger.js";
 import { STEP_SUBDIRS, type MountPlanCoords } from "../mount-plan.js";
 import { describeSandboxError, keepSuspendingRefusal, SandboxFailure, type SandboxError } from "../sandbox-error.js";
 import type { FarmSource, SandboxLabels, SandboxSpec } from "../types.js";
-import type { SpawnSession } from "../../auth/types.js";
+import type { RunSession, SpawnSession } from "../../auth/types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, stubDockerSandboxOps, stubK8sSandboxOps } from "../../lib/test/doubles.js";
 
 describe("precreateStepTree — step-tree access mode", () => {
     let root: string;
@@ -39,7 +39,7 @@ describe("precreateStepTree — step-tree access mode", () => {
         stepId: "step-a",
         analysisId: "an-1",
     };
-    const deps = (stepTreeAccess?: "world-writable") => ({ resolveWorkspaceRoot: async () => root, stepTreeAccess });
+    const deps = (stepTreeAccess?: "world-writable") => ({ resolveWorkspaceRoot: () => Promise.resolve(root), stepTreeAccess });
     const stepDir = () => join(root, "runs", "run-1", "step-a");
     /** POSIX permission bits, with the file-type bits masked off. */
     const modeOf = async (p: string): Promise<number> => (await stat(p)).mode & 0o777;
@@ -132,8 +132,7 @@ describe("createSandboxClient — the k8s libs root threading", () => {
         const spy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation((cfg) => {
             captured = cfg;
             // The client is never used — the test ends at the composed config.
-            // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-            return {} as unknown as ReturnType<typeof k8sClient.createK8sSandboxOps>;
+            return stubK8sSandboxOps();
         });
         try {
             // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
@@ -142,7 +141,7 @@ describe("createSandboxClient — the k8s libs root threading", () => {
                 env: { backend: "k8s", namespace: "sandbox" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-                resolveWorkspaceRoot: async (id) => join("/sessions", id),
+                resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
                 sessionPvc: "cortex-sessions",
                 sessionPvcRoot: "/sessions",
                 libStorePvc: "cortex-libs",
@@ -171,7 +170,7 @@ describe("createSandboxClient — the required-store fact", () => {
         pool: poolDouble(),
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
     };
 
     test("the fact reaches both backend ops, so each gate can refuse instead of degrade", () => {
@@ -181,13 +180,11 @@ describe("createSandboxClient — the required-store fact", () => {
         let dockerConfig: dockerClient.DockerClientConfig | null = null;
         const k8sSpy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation((cfg) => {
             k8sConfig = cfg;
-            // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-            return {} as unknown as ReturnType<typeof k8sClient.createK8sSandboxOps>;
+            return stubK8sSandboxOps();
         });
         const dockerSpy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation((cfg) => {
             dockerConfig = cfg;
-            // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-            return {} as unknown as ReturnType<typeof dockerClient.createDockerSandboxOps>;
+            return stubDockerSandboxOps();
         });
         try {
             createSandboxClient({
@@ -259,8 +256,7 @@ describe("createSandboxClient — the required-store fact", () => {
     });
 
     test("a k8s per-analysis source with no libs mountpoint composes, because the resolver owes the proof", () => {
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const spy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation(() => ({}) as unknown as ReturnType<typeof k8sClient.createK8sSandboxOps>);
+        const spy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation(() => stubK8sSandboxOps());
         try {
             expect(() =>
                 createSandboxClient({
@@ -269,7 +265,7 @@ describe("createSandboxClient — the required-store fact", () => {
                     sessionPvc: "cortex-sessions",
                     sessionPvcRoot: "/sessions",
                     libStorePvc: "cortex-libs",
-                    farmSource: { kind: "per-analysis", resolve: () => Promise.resolve(({ kind: "available", location: { farmPath: "farms/an-1" } })) },
+                    farmSource: { kind: "per-analysis", resolve: () => Promise.resolve({ kind: "available", location: { farmPath: "farms/an-1" } }) },
                     packageStore: "required",
                 }),
             ).not.toThrow();
@@ -291,10 +287,7 @@ describe("createSandboxClient — a spawn failure is a value", () => {
             lockError: "lock_invalid",
             cause: new Error("Unexpected token o in JSON at position 1"),
         };
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(
-            () => ({ createSandbox: () => errAsync(variant) }) as unknown as ReturnType<typeof dockerClient.createDockerSandboxOps>,
-        );
+        const spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(() => stubDockerSandboxOps({ createSandbox: () => errAsync(variant) }));
         try {
             // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
             const client = createSandboxClient({
@@ -302,7 +295,7 @@ describe("createSandboxClient — a spawn failure is a value", () => {
                 env: { backend: "docker", namespace: "default" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-                resolveWorkspaceRoot: async () => root,
+                resolveWorkspaceRoot: () => Promise.resolve(root),
                 libStorePath: "/mnt/libs",
                 farmSource: { kind: "fixed", location: { farmPath: "/mnt/libs/farms/catalog" } },
                 packageStore: "required",
@@ -326,8 +319,8 @@ describe("createSandboxClient — a spawn failure is a value", () => {
             // The barrel hands an embedder the same class, thus its `instanceof`
             // holds without a deep import.
             expect(thrown).toBeInstanceOf(BarrelSandboxFailure);
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const failure = thrown as SandboxFailure;
+            if (!(thrown instanceof SandboxFailure)) throw new Error("expected SandboxFailure");
+            const failure = thrown;
             // The message is the whole description — the head and the reason of
             // the cause — not the bare `type` a `ResultError` would render.
             expect(failure.message).toBe(describeSandboxError(variant));
@@ -358,14 +351,13 @@ describe("createSandboxClient — the label hook", () => {
         root = await mkdtemp(join(tmpdir(), "harness-labels-"));
         calls = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(
-            () =>
-                ({
-                    createSandbox: (session: SpawnSession, spec: SandboxSpec, _identity: unknown, hostLabels: SandboxLabels) => {
-                        calls.push({ session, spec, hostLabels });
-                        return okAsync(REF);
-                    },
-                }) as unknown as ReturnType<typeof dockerClient.createDockerSandboxOps>,
+        spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(() =>
+            stubDockerSandboxOps({
+                createSandbox: (session, spec, _identity, hostLabels) => {
+                    calls.push({ session, spec, hostLabels });
+                    return okAsync(REF);
+                },
+            }),
         );
     });
     afterEach(async () => {
@@ -379,7 +371,7 @@ describe("createSandboxClient — the label hook", () => {
             env: { backend: "docker", namespace: "default" },
             image: "sandbox-base:latest",
             resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-            resolveWorkspaceRoot: async () => root,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
             farmSource: { kind: "fixed", location: { farmPath: "/mnt/libs/farms/catalog" } },
             resolveSandboxLabels: resolveSandboxLabels ? resolveSandboxLabels : undefined,
         });
@@ -391,9 +383,9 @@ describe("createSandboxClient — the label hook", () => {
     });
 
     test("the hook gets the session of the spawn, and its labels reach the backend as the hook gives them", async () => {
-        const seen: SpawnSession[] = [];
+        const seen: RunSession[] = [];
         const client = clientWith((session) => {
-            seen.push(session as SpawnSession);
+            seen.push(session);
             return okAsync({ "example.com/tenant": "acme" });
         });
 
@@ -437,7 +429,7 @@ describe("createSandboxClient — engine connection threading", () => {
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
                 farmSource: { kind: "fixed", location: { farmPath: "/tmp/inflexa-test-farm" } },
-                resolveWorkspaceRoot: async (id) => join("/sessions", id),
+                resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
                 engineSocketPath: socketPath,
             });
 
@@ -458,7 +450,7 @@ describe("createSandboxClient — the toolchain on the client", () => {
         env: { backend: "docker" as const, namespace: "" },
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
-        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         farmSource: { kind: "fixed", location: { farmPath: "/store/farms/catalog" } } as const,
     };
 

@@ -30,6 +30,7 @@ import {
 } from "../thread-history.js";
 import { createThreadStore } from "../thread-store.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { optionRecord } from "../../report-render/option-lens.js";
 
 const THREAD = "analysis-thread-1";
 const ANALYSIS = "analysis-1";
@@ -66,7 +67,7 @@ function assertValidSequence(messages: readonly ModelMessage[]): void {
         for (const b of m.content) {
             if (b.type === "tool-call") seenToolUse.add(b.toolCallId);
             if (b.type === "tool-result") {
-                expect(seenToolUse.has((b).toolCallId)).toBe(true);
+                expect(seenToolUse.has(b.toolCallId)).toBe(true);
             }
         }
     }
@@ -292,8 +293,14 @@ describe("appendTurn thread activity", () => {
         // the post-append order below a real reorder rather than a coincidence.
         const before = (await store.listThreads({ analysisId: ANALYSIS }))._unsafeUnwrap();
         expect(before.threads.map((t) => t.threadId)).toEqual(["newer", "older"]);
-        const newerUpdatedAt = must(must(before, "before").threads.find((t) => t.threadId === "newer"), "must(before, \"before\").threads.find((t) => t.thr").updatedAt;
-        const olderBefore = must(must(before, "before").threads.find((t) => t.threadId === "older"), "must(before, \"before\").threads.find((t) => t.thr").updatedAt;
+        const newerUpdatedAt = must(
+            must(before, "before").threads.find((t) => t.threadId === "newer"),
+            'must(before, "before").threads.find((t) => t.thr',
+        ).updatedAt;
+        const olderBefore = must(
+            must(before, "before").threads.find((t) => t.threadId === "older"),
+            'must(before, "before").threads.find((t) => t.thr',
+        ).updatedAt;
 
         (await append("older", [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
 
@@ -302,7 +309,10 @@ describe("appendTurn thread activity", () => {
         // Assert on the touched row itself. Reading the head of the listing
         // instead compares "older" against a bound it already cleared before the
         // append — a touch that did nothing at all would still satisfy it.
-        const olderAfter = must(must(after, "after").threads.find((t) => t.threadId === "older"), "must(after, \"after\").threads.find((t) => t.threa").updatedAt;
+        const olderAfter = must(
+            must(after, "after").threads.find((t) => t.threadId === "older"),
+            'must(after, "after").threads.find((t) => t.threa',
+        ).updatedAt;
         expect(olderAfter.getTime()).toBeGreaterThan(olderBefore.getTime());
         expect(olderAfter.getTime()).toBeGreaterThan(newerUpdatedAt.getTime());
     });
@@ -524,17 +534,21 @@ describe("loadRecent overflow metric", () => {
         (await history.loadRecent(THREAD))._unsafeUnwrap();
 
         const collected = await collectMetrics();
-        const evicted = must(collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted"), "evicted");
+        const evicted = must(
+            collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted"),
+            "evicted",
+        );
         expect(evicted).toBeDefined();
         const evictedPoint = evicted.dataPoints[0];
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((evictedPoint.value as { sum: number }).sum).toBe(0);
+        expect(optionRecord(evictedPoint.value).sum).toBe(0);
         expect(evictedPoint.attributes.eviction).toBe(false);
 
-        const total = must(collected.find((m) => m.descriptor.name === "cortex.harness.thread.total_tokens"), "total");
+        const total = must(
+            collected.find((m) => m.descriptor.name === "cortex.harness.thread.total_tokens"),
+            "total",
+        );
         expect(total).toBeDefined();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((total.dataPoints[0].value as { sum: number }).sum).toBeGreaterThan(0);
+        expect(optionRecord(total.dataPoints[0].value).sum).toBeGreaterThan(0);
     });
 
     it("reports the turns before a summary marker in the sixth of eight turns", async () => {
@@ -550,11 +564,13 @@ describe("loadRecent overflow metric", () => {
         (await history.loadRecent(THREAD))._unsafeUnwrap();
 
         const collected = await collectMetrics();
-        const evicted = must(collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted"), "evicted");
+        const evicted = must(
+            collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted"),
+            "evicted",
+        );
         expect(evicted).toBeDefined();
         const evictedPoint = evicted.dataPoints[0];
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((evictedPoint.value as { sum: number }).sum).toBe(5);
+        expect(optionRecord(evictedPoint.value).sum).toBe(5);
         expect(evictedPoint.attributes.eviction).toBe(true);
     });
 });
@@ -872,11 +888,11 @@ describe("conversationRecordTurn display parts", () => {
 
         expect(turn.modelMessages).toEqual([syntheticRecordMessage(text)]);
         expect(turn.displayMessages).toHaveLength(1);
-        expect(turn.displayMessages[0]!.role).toBe("system");
-        expect(turn.displayMessages[0]!.parts.map((part) => part.type)).toEqual(["data-plan-approval", "data-run-card"]);
+        expect(turn.displayMessages[0].role).toBe("system");
+        expect(turn.displayMessages[0].parts.map((part) => part.type)).toEqual(["data-plan-approval", "data-run-card"]);
 
         (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
-        const row = (await history.loadAll(THREAD))._unsafeUnwrap().flat()[0]!;
+        const row = (await history.loadAll(THREAD))._unsafeUnwrap().flat()[0];
         expect(row.displayEnvelope?.messages).toEqual([...turn.displayMessages]);
         expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual([...turn.modelMessages]);
     });
@@ -885,7 +901,7 @@ describe("conversationRecordTurn display parts", () => {
         const text = "Run run-1 completed.";
 
         for (const turn of [conversationRecordTurn(text), conversationRecordTurn(text, [])]) {
-            expect(turn.displayMessages[0]!.parts).toEqual([{ type: "text", text, state: "done" }]);
+            expect(turn.displayMessages[0].parts).toEqual([{ type: "text", text, state: "done" }]);
         }
     });
 });
@@ -1065,8 +1081,24 @@ describe("writeTurn", () => {
         const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
         expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
         expect(rows.map((row) => row.displayEnvelope !== undefined)).toEqual([true, false, true, false, false, true, false, false]);
-        expect(must(must(must(must(rows, "rows")[2].displayEnvelope, "must(rows, \"rows\")[2].displayEnvelope").messages, "must(rows, \"rows\")[2].displayEnvelope.messages")[0], "must(rows, \"rows\")[2].displayEnvelope.messages[0").parts).toEqual([{ type: "text", text: "first round", state: "done" }]);
-        expect(must(must(must(must(rows, "rows")[5].displayEnvelope, "must(rows, \"rows\")[5].displayEnvelope").messages, "must(rows, \"rows\")[5].displayEnvelope.messages")[0], "must(rows, \"rows\")[5].displayEnvelope.messages[0").parts).toEqual([{ type: "text", text: "second round", state: "done" }]);
+        expect(
+            must(
+                must(
+                    must(must(rows, "rows")[2].displayEnvelope, 'must(rows, "rows")[2].displayEnvelope').messages,
+                    'must(rows, "rows")[2].displayEnvelope.messages',
+                )[0],
+                'must(rows, "rows")[2].displayEnvelope.messages[0',
+            ).parts,
+        ).toEqual([{ type: "text", text: "first round", state: "done" }]);
+        expect(
+            must(
+                must(
+                    must(must(rows, "rows")[5].displayEnvelope, 'must(rows, "rows")[5].displayEnvelope').messages,
+                    'must(rows, "rows")[5].displayEnvelope.messages',
+                )[0],
+                'must(rows, "rows")[5].displayEnvelope.messages[0',
+            ).parts,
+        ).toEqual([{ type: "text", text: "second round", state: "done" }]);
     });
 
     it("lands the opening, two rounds, and the close of one write in order", async () => {
@@ -1098,7 +1130,7 @@ describe("writeTurn", () => {
             { start_seq: "0", status: "failed", reason: "The model request failed.", reported_usage: ROLLUP, turn_duration_ms: "8412", closed: true },
         ]);
         const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
-        expect(must(must(rows, "rows").at(-1), "must(rows, \"rows\").at(-1)").message).toEqual(note.modelMessages[0]);
+        expect(must(must(rows, "rows").at(-1), 'must(rows, "rows").at(-1)').message).toEqual(note.modelMessages[0]);
     });
 
     it("stores a rollup with no quantity as absent, and a second close changes nothing", async () => {
@@ -1320,8 +1352,8 @@ describe("loadAll row creation time", () => {
         // `created_at` is the Postgres clock, and the test process runs on its own clock.
         // The 60-second slack on each side absorbs that skew. The bounds still reject a
         // zero, an epoch default, and a reading far in the future.
-        expect(must(must(times, "times")[0], "must(times, \"times\")[0]").getTime()).toBeGreaterThanOrEqual(before - 60_000);
-        expect(must(must(times, "times")[0], "must(times, \"times\")[0]").getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+        expect(must(must(times, "times")[0], 'must(times, "times")[0]').getTime()).toBeGreaterThanOrEqual(before - 60_000);
+        expect(must(must(times, "times")[0], 'must(times, "times")[0]').getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
     });
 });
 
@@ -1430,7 +1462,10 @@ describe("loadAll", () => {
         const turns = (await history.loadAll(THREAD))._unsafeUnwrap();
         expect(turns).toHaveLength(TURNS);
         expect(turns.flat()).toHaveLength(TURNS * 2);
-        expect(must(must(turns, "turns").at(-1), "must(turns, \"turns\").at(-1)").map((m) => m.message)).toEqual([userText(`ask ${TURNS - 1}`), assistantText(`answer ${TURNS - 1}`)]);
+        expect(must(must(turns, "turns").at(-1), 'must(turns, "turns").at(-1)').map((m) => m.message)).toEqual([
+            userText(`ask ${TURNS - 1}`),
+            assistantText(`answer ${TURNS - 1}`),
+        ]);
         // Past 200 deliberately: the read that this replaced clamped there and dropped the rest.
         expect(turns[200].map((m) => m.message)).toEqual([userText("ask 200"), assistantText("answer 200")]);
     });

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { genePreclinicalProfileTool } from "../gene-preclinical-profile.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -22,7 +22,7 @@ function json(body: unknown, status = 200): Response {
 function stubFetch(routes: Array<[string, () => Response]>): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((url) => {
-        const u = String(url);
+        const u = urlText(url);
         for (const [needle, make] of routes) {
             if (u.includes(needle)) return make();
         }
@@ -62,11 +62,18 @@ describe("genePreclinicalProfile — knockout half", () => {
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1", include: ["knockout"] }, ctx))._unsafeUnwrap();
 
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").mouseMarkerSymbol).toBe("Brca1");
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").mgiAccessionId).toBe("MGI:104537");
-        expect(must(must(must(result, "result").knockout, "must(result, \"result\").knockout").mpTerms, "must(result, \"result\").knockout.mpTerms").length).toBeGreaterThan(0);
-        expect(must(must(must(must(result, "result").knockout, "must(result, \"result\").knockout").mpTerms, "must(result, \"result\").knockout.mpTerms")[0], "must(result, \"result\").knockout.mpTerms[0]").id).toBe("MP:0001392");
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").phenotypesTrimmed).toBe(false);
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').mouseMarkerSymbol).toBe("Brca1");
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').mgiAccessionId).toBe("MGI:104537");
+        expect(
+            must(must(must(result, "result").knockout, 'must(result, "result").knockout').mpTerms, 'must(result, "result").knockout.mpTerms').length,
+        ).toBeGreaterThan(0);
+        expect(
+            must(
+                must(must(must(result, "result").knockout, 'must(result, "result").knockout').mpTerms, 'must(result, "result").knockout.mpTerms')[0],
+                'must(result, "result").knockout.mpTerms[0]',
+            ).id,
+        ).toBe("MP:0001392");
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').phenotypesTrimmed).toBe(false);
     });
 
     it("returns an empty profile when no mouse knockout exists (does not throw)", async () => {
@@ -75,11 +82,11 @@ describe("genePreclinicalProfile — knockout half", () => {
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "NOTAGENE", include: ["knockout"] }, ctx))._unsafeUnwrap();
 
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").mouseMarkerSymbol).toBeNull();
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").mgiAccessionId).toBeNull();
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").viability).toBeNull();
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").mpTerms).toEqual([]);
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").phenotypeCount).toBe(0);
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').mouseMarkerSymbol).toBeNull();
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').mgiAccessionId).toBeNull();
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').viability).toBeNull();
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').mpTerms).toEqual([]);
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').phenotypeCount).toBe(0);
     });
 
     it("trims phenotype terms to phenotypeLimit while reporting the true count", async () => {
@@ -107,11 +114,16 @@ describe("genePreclinicalProfile — knockout half", () => {
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1", include: ["knockout"], phenotypeLimit: 2 }, ctx))._unsafeUnwrap();
 
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").mpTerms).toHaveLength(2);
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").phenotypeCount).toBe(5);
-        expect(must(must(result, "result").knockout, "must(result, \"result\").knockout").phenotypesTrimmed).toBe(true);
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').mpTerms).toHaveLength(2);
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').phenotypeCount).toBe(5);
+        expect(must(must(result, "result").knockout, 'must(result, "result").knockout').phenotypesTrimmed).toBe(true);
         // Best p-value first survives the trim.
-        expect(must(must(must(must(result, "result").knockout, "must(result, \"result\").knockout").mpTerms, "must(result, \"result\").knockout.mpTerms")[0], "must(result, \"result\").knockout.mpTerms[0]").id).toBe("MP:0000000");
+        expect(
+            must(
+                must(must(must(result, "result").knockout, 'must(result, "result").knockout').mpTerms, 'must(result, "result").knockout.mpTerms')[0],
+                'must(result, "result").knockout.mpTerms[0]',
+            ).id,
+        ).toBe("MP:0000000");
     });
 
     it("throws on an upstream 5xx failure", async () => {
@@ -155,9 +167,11 @@ describe("genePreclinicalProfile — human phenotype half", () => {
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1", include: ["phenotypes"] }, ctx))._unsafeUnwrap();
 
-        expect(must(must(result, "result").phenotypes, "must(result, \"result\").phenotypes").geneCurie).toBe("HGNC:1100");
-        expect(must(must(result, "result").phenotypes, "must(result, \"result\").phenotypes").phenotypeCount).toBe(1);
-        expect(must(must(must(result, "result").phenotypes, "must(result, \"result\").phenotypes").hpoTerms, "must(result, \"result\").phenotypes.hpoTerms")[0]).toEqual({
+        expect(must(must(result, "result").phenotypes, 'must(result, "result").phenotypes').geneCurie).toBe("HGNC:1100");
+        expect(must(must(result, "result").phenotypes, 'must(result, "result").phenotypes').phenotypeCount).toBe(1);
+        expect(
+            must(must(must(result, "result").phenotypes, 'must(result, "result").phenotypes').hpoTerms, 'must(result, "result").phenotypes.hpoTerms')[0],
+        ).toEqual({
             hpoId: "HP:0003002",
             label: "Breast carcinoma",
             publications: ["PMID:12345678"],
@@ -187,7 +201,7 @@ describe("genePreclinicalProfile — human phenotype half", () => {
         const seen: string[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         globalThis.fetch = fetchDouble((url) => {
-            const u = String(url);
+            const u = urlText(url);
             seen.push(u);
             if (u.includes("ensembl")) return json({ id: "ENSG00000012048" });
             if (u.includes("bgee")) return json({ data: { calls: [] } });
@@ -210,7 +224,7 @@ describe("genePreclinicalProfile — both halves", () => {
         const seen: string[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         globalThis.fetch = fetchDouble((url) => {
-            const u = String(url);
+            const u = urlText(url);
             seen.push(u);
             if (u.includes("ensembl")) return json({ id: "ENSG00000012048" });
             if (u.includes("bgee")) return json({ data: { calls: [] } });

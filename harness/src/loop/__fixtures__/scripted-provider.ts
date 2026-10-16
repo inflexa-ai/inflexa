@@ -11,7 +11,7 @@ export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock;
 
 function mapFinishReason(
     finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal" | "unknown",
-): ChatResponse["finishReason"] {
+): ChatResponse["finishReason"] | "unknown" {
     switch (finishReason) {
         case "tool_use":
             return "tool-calls";
@@ -22,10 +22,7 @@ function mapFinishReason(
         case "refusal":
             return "content-filter";
         default:
-            // `unknown` rides through untyped on purpose: this fixture drives a finish
-            // the provider types do not model, and the loop must settle whatever arrives.
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            return finishReason as ChatResponse["finishReason"];
+            return finishReason;
     }
 }
 
@@ -35,12 +32,16 @@ export function makeMessage(
     usage?: ChatUsage,
 ): ChatResponse {
     const mapped = mapFinishReason(finishReason);
-    return {
+    const response: ChatResponse = {
         message: { role: "assistant", content },
-        finishReason: mapped,
+        finishReason: mapped === "unknown" ? "other" : mapped,
         rawFinishReason: !(mapped === finishReason) ? finishReason : undefined,
         usage,
     };
+    // The drift twin plants `"unknown"` — a finish the provider types do not model —
+    // and the loop must settle it, thus the field carries a value the type cannot name.
+    if (finishReason === "unknown") Reflect.set(response, "finishReason", "unknown");
+    return response;
 }
 
 /** Wrap-up requests reuse the loop's tools and tool choice, so only the messages tell them apart. */
@@ -108,7 +109,8 @@ export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, r
             sessions.push(session);
             const response = reply(i, request);
             return (async function* () {
-                for (const text of textDeltas(response)) yield { type: "text-delta", text };
+                const texts = await Promise.resolve(textDeltas(response));
+                for (const text of texts) yield { type: "text-delta", text };
                 yield { type: "done", response };
             })();
         },

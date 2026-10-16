@@ -8,14 +8,12 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { DBOSSpan } from "@dbos-inc/dbos-sdk";
 
 import { createCapturingLogger, silentLogger } from "../../__tests__/setup/logger.js";
 import { __resetDbosStateForTest, __setDbosStateForTest, dbosSdkConfig, dbosSdkLogger, dbosState, sweepEphemeralWorkflows, type DbosConfig } from "../dbos.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { poolDouble } from "../../lib/test/doubles.js";
-
-// SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-const stubConfig = {} as DbosConfig;
 
 const fullConfig: DbosConfig = {
     dbHost: "db.internal",
@@ -82,7 +80,7 @@ describe("launchDbos / shutdownDbos", () => {
         // the idempotent guard short-circuits before reaching the SDK.
         __setDbosStateForTest({ launched: true, recoveryStarted: true });
         const { launchDbos } = await import("../dbos.js");
-        await launchDbos({ config: stubConfig, logger: silentLogger });
+        await launchDbos({ config: fullConfig, logger: silentLogger });
         expect(dbosState().launched).toBe(true);
     });
 
@@ -124,7 +122,7 @@ describe("dbosSdkConfig", () => {
     it("routes the SDK's own logging through the harness Logger seam", () => {
         const logger = createCapturingLogger();
         const sdk = must(dbosSdkConfig(fullConfig, logger), "sdk");
-        must(must(sdk, "sdk").logger, "must(sdk, \"sdk\").logger").info("Recovering 2 workflows");
+        must(must(sdk, "sdk").logger, 'must(sdk, "sdk").logger').info("Recovering 2 workflows");
         expect(logger.records).toEqual([{ level: "info", msg: "[sdk] Recovering 2 workflows", fields: {} }]);
     });
 });
@@ -151,9 +149,13 @@ describe("dbosSdkLogger", () => {
     it("carries the stack and the operation context as fields, not in the message", () => {
         const logger = createCapturingLogger();
         const sdk = must(dbosSdkLogger(logger, "info"), "sdk");
-        const span = { attributes: { "dbos.operation.workflow_id": "wf-1", "dbos.operation.name": "executeAnalysis" } };
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        sdk.error("step failed", { stack: "Error: step failed\n    at x", span: span as never });
+        const span: DBOSSpan = {
+            attributes: { "dbos.operation.workflow_id": "wf-1", "dbos.operation.name": "executeAnalysis" },
+            setStatus: () => span,
+            setAttribute: () => span,
+            addEvent: () => span,
+        };
+        sdk.error("step failed", { stack: "Error: step failed\n    at x", span });
         expect(logger.records).toHaveLength(1);
         expect(logger.records[0].msg).toBe("[sdk] step failed");
         expect(logger.records[0].fields).toEqual({
@@ -169,9 +171,9 @@ describe("legacy ephemeral workflow migration sweep", () => {
         const queries: Array<{ text: string; values?: unknown[] }> = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         const pool = poolDouble((query: { text: string; values?: unknown[] }) => {
-                queries.push(query);
-                return Promise.resolve({ rows: [], rowCount: 2 });
-            });
+            queries.push(query);
+            return Promise.resolve({ rows: [], rowCount: 2 });
+        });
 
         await sweepEphemeralWorkflows({ pool, logger: silentLogger, executorId: "executor-1" });
 

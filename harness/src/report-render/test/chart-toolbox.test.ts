@@ -4,6 +4,7 @@ import * as echarts from "echarts";
 import type { ChartBlock, ChartType } from "../../contracts/report-blocks.js";
 import { deriveChartRender, type ChartInputs, type ChartRow } from "../chart.js";
 import { registerChartRenderers } from "../chart-renderers.js";
+import { runtimeRenderer } from "../chart-export.js";
 import { CHART_PAGE_WIDTH_PX, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
 import {
     CHART_TOOLBOX_SOURCE,
@@ -23,15 +24,14 @@ import {
     TOOLBOX_PAGE_FUNCTIONS,
     TOOLBOX_ZLEVEL,
 } from "../chart-toolbox.js";
-import { optionRecord } from "../option-lens.js";
+import { optionRecord, optionText } from "../option-lens.js";
 import { jsonClone } from "../../lib/json.js";
 import { runPageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 import { typedMember } from "../../lib/shape.js";
 
-/** The feature member of one toolbox. */
+/** The feature member of one toolbox: a record of feature records, read through the option lens. */
 function features(toolbox: Record<string, unknown>): Record<string, Record<string, unknown>> {
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return toolbox.feature as Record<string, Record<string, unknown>>;
+    return Object.fromEntries(Object.entries(optionRecord(toolbox.feature)).map(([name, feature]) => [name, optionRecord(feature)]));
 }
 
 type DataView = {
@@ -70,15 +70,21 @@ function pageFunctions(document: unknown): {
     named: Record<string, unknown>;
 } {
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return runPageScript<(arg0: unknown) => ReturnType<typeof pageFunctions>>(["document"], `${CHART_TOOLBOX_SOURCE}\nreturn { rows: reportDataViewRows, content: reportDataViewContent, bind: reportBindToolbox, open: reportOpenExportMenu, click: reportMenuClick, key: reportMenuKey, fault: reportMenuFault, named: reportToolboxFunctions };`, document);
+    return runPageScript<(arg0: unknown) => ReturnType<typeof pageFunctions>>(
+        ["document"],
+        `${CHART_TOOLBOX_SOURCE}\nreturn { rows: reportDataViewRows, content: reportDataViewContent, bind: reportBindToolbox, open: reportOpenExportMenu, click: reportMenuClick, key: reportMenuKey, fault: reportMenuFault, named: reportToolboxFunctions };`,
+        document,
+    );
 }
 
 /** A stub document that builds nodes, holds a focus, and finds one element by its id. */
 function stubDocument(byId: Record<string, StubNode> = {}): {
     document: Record<string, unknown>;
     node: (tag: string, attributes?: Record<string, string>) => StubNode;
+    elementById: (id: string) => StubNode | null;
 } {
     const document: Record<string, unknown> = { activeElement: null };
+    const elementById = (id: string): StubNode | null => byId[id] ?? null;
     function node(tag: string, attributes: Record<string, string> = {}): StubNode {
         const classes = new Set<string>();
         const self: StubNode = {
@@ -115,8 +121,8 @@ function stubDocument(byId: Record<string, StubNode> = {}): {
         return self;
     }
     document.createElement = (tag: string) => node(tag);
-    document.getElementById = (id: string) => byId[id] ?? null;
-    return { document, node };
+    document.getElementById = elementById;
+    return { document, node, elementById };
 }
 
 describe("the toolbox of a page chart", () => {
@@ -124,7 +130,7 @@ describe("the toolbox of a page chart", () => {
         const toolbox = chartToolbox("bar");
         expect(Object.keys(features(toolbox))).toEqual(["dataView", "myExport"]);
         expect(features(toolbox).myExport).toEqual(expect.objectContaining({ show: true, onclick: EXPORT_MENU_FUNCTION }));
-        expect(String(features(toolbox).myExport.icon).startsWith("path://")).toBe(true);
+        expect(optionText(features(toolbox).myExport.icon).startsWith("path://")).toBe(true);
         expect(features(toolbox).dataView).toEqual(expect.objectContaining({ readOnly: true, optionToContent: DATA_VIEW_FUNCTION }));
         expect(toolbox).toEqual(expect.objectContaining({ show: true, right: expect.any(Number), top: 0 }));
     });
@@ -169,7 +175,7 @@ describe("the canvas layer of the toolbox", () => {
         try {
             chart.setOption(option);
             const counts: Record<string, number> = {};
-            for (const element of chart.getZr().storage.getDisplayList(true)) counts[element.zlevel] = (counts[element.zlevel] ?? 0) + 1;
+            for (const element of chart.getZr().storage.getDisplayList(true)) counts[element.zlevel] = (typedMember(counts, element.zlevel) ?? 0) + 1;
             return counts;
         } finally {
             chart.dispose();
@@ -239,8 +245,7 @@ describe("the band of the toolbox", () => {
         const option = pageChartOption(render.option, block.chartType);
         pageFunctions(stubDocument().document).bind(option);
         echarts.registerTheme(ECHARTS_THEME_NAME, ECHARTS_THEME);
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        registerChartRenderers({ registerCustomSeries: (name, draw) => echarts.registerCustomSeries(name, draw as unknown as echarts.CustomSeriesRenderItem) });
+        registerChartRenderers({ registerCustomSeries: (name, draw) => echarts.registerCustomSeries(name, runtimeRenderer(draw)) });
         const chart = echarts.init(null, ECHARTS_THEME_NAME, { renderer: "svg", ssr: true, width, height: render.bodyPx });
         try {
             chart.setOption(option);
@@ -420,8 +425,7 @@ describe("the bootstrap binding of the toolbox", () => {
         // Each handler name of a toolbox is a page function, thus the bootstrap binds each one.
         for (const feature of Object.values(features(chartToolbox("qq")))) {
             for (const member of TOOLBOX_FUNCTION_MEMBERS) {
-                // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                if (typeof feature[member] === "string") expect(TOOLBOX_PAGE_FUNCTIONS).toContain(feature[member] as (typeof TOOLBOX_PAGE_FUNCTIONS)[number]);
+                if (typeof feature[member] === "string") expect(Array.from<string>(TOOLBOX_PAGE_FUNCTIONS)).toContain(feature[member]);
             }
         }
     });
@@ -635,9 +639,10 @@ describe("the download control of the card", () => {
         fault: StubNode;
         control: StubNode;
         document: Record<string, unknown>;
+        elementById: (id: string) => StubNode | null;
     } {
         const byId: Record<string, StubNode> = {};
-        const { document, node } = stubDocument(byId);
+        const { document, node, elementById } = stubDocument(byId);
         const menu = node("div", { role: "menu" });
         Object.assign(menu, { offsetWidth: 140 });
         const items = [node("a", { role: "menuitem" }), node("button", { role: "menuitem" }), node("button", { role: "menuitem" })];
@@ -650,7 +655,7 @@ describe("the download control of the card", () => {
         byId["chart-gwas-menu"] = menu;
         byId[chartMenuControlId("chart-gwas")] = control;
         byId.menu = menu;
-        return { page: pageFunctions(document), menu, items, fault, control, document };
+        return { page: pageFunctions(document), menu, items, fault, control, document, elementById };
     }
 
     it("names the control of a chart after its container", () => {
@@ -710,9 +715,8 @@ describe("the download control of the card", () => {
     });
 
     it("states the control open and gives the focus back to it when the toolbox icon opens the menu", () => {
-        const { page, control, document } = card();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        page.open({}, { getDom: () => (document.getElementById as (id: string) => unknown)("chart-gwas") }, "myExport", { event: {} });
+        const { page, control, document, elementById } = card();
+        page.open({}, { getDom: () => elementById("chart-gwas") }, "myExport", { event: {} });
         expect(control.attributes["aria-expanded"]).toBe("true");
         page.key({ key: "Escape", preventDefault: () => undefined });
         expect(document.activeElement).toBe(control);
@@ -720,9 +724,8 @@ describe("the download control of the card", () => {
     });
 
     it("shows the fault note in the open menu and gives it the focus, and the close hides the note again", () => {
-        const { page, menu, items, fault, document } = card();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        page.open({}, { getDom: () => (document.getElementById as (id: string) => unknown)("chart-gwas") }, "myExport", { event: {} });
+        const { page, menu, items, fault, document, elementById } = card();
+        page.open({}, { getDom: () => elementById("chart-gwas") }, "myExport", { event: {} });
         page.fault(items[1]);
         expect(menu.classList.contains(MENU_OPEN_CLASS)).toBe(true);
         expect(fault.classList.contains(MENU_FAULT_SHOWN_CLASS)).toBe(true);

@@ -12,7 +12,7 @@ import {
     type ToolResultPart,
     type ModelMessage,
 } from "ai";
-import type { z } from "zod";
+import { z } from "zod";
 
 import type { AgentSession, Scope } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
@@ -69,9 +69,9 @@ import {
     type KeptToolOutput,
     type ToolOutputStore,
 } from "./tool-output.js";
-import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
+import type { AgentDefinition, EmitFn, LoopMessage, RunStep } from "./types.js";
 import { errorMessage, errorName, isAbortError, isError } from "../lib/thrown.js";
-import { jsonClone } from "../lib/json.js";
+import { jsonParse } from "../lib/json.js";
 
 export type AgentFinish = {
     readonly reason: FinishReason | "aborted" | "max_iterations" | "denied";
@@ -343,8 +343,7 @@ export function openLoop(
     // AbortError is control flow, not a tool failure. Always compose it with the
     // host's fatal predicate so request cancellation cannot be converted into a
     // model-visible error result and retried by the loop.
-    const isFatalLoopError = (err: unknown): boolean =>
-        isAbortError(err) || configuredFatalLoopError(err);
+    const isFatalLoopError = (err: unknown): boolean => isAbortError(err) || configuredFatalLoopError(err);
     if (agent.tools.length > 0 && !provider.capabilities.toolCalling) {
         throw new Error(`Provider/model cannot run tool-required agent "${agent.id}"`);
     }
@@ -361,11 +360,13 @@ export function openLoop(
         sinkPending = false;
         givenCount = messages.length;
     };
-    const source: EventSource = {
+    // A source without an invocation id must not carry the key, so the absence survives the JSON round trip.
+    // The local is mutable because EventSource stamps its members readonly.
+    const source: { agentId: string; callPath: readonly string[]; invocationId?: string } = {
         agentId: session.provenance.agentId,
         callPath: session.provenance.callPath,
-        ...(opts.invocationId === undefined ? {} : { invocationId: opts.invocationId }),
     };
+    if (opts.invocationId !== undefined) source.invocationId = opts.invocationId;
     const policy = opts.compaction;
     const viewOptions = { keepFirstTurn: policy?.keepFirstTurn === true };
     const viewOf = (): LoopMessage[] => (policy === undefined ? messages : conversationView(messages, viewOptions).messages);
@@ -708,7 +709,7 @@ export function openLoop(
         return Promise.resolve(undefined);
     };
 
-    const compactOverBudget =  (index: number): Promise<RunAgentResult | undefined> => {
+    const compactOverBudget = (index: number): Promise<RunAgentResult | undefined> => {
         if (policy === undefined || continuesTruncation || compactionStopped) return Promise.resolve(undefined);
         const tokens = lastRequestInputTokens(messages);
         if (tokens === undefined) return Promise.resolve(undefined);
@@ -942,16 +943,22 @@ export function accountForChatCall(reply: ChatResponse, call: ChatCallAccounting
 
     const reported = reply.usage;
     if (reported === undefined || !hasReportedUsage(reported)) return;
-    void deliverNotice(
-        call.logger,
-        "UsageRecorder.record",
-        call.usageRecorder.record(attributionOf(call, reply, reported)),
-    );
+    void deliverNotice(call.logger, "UsageRecorder.record", call.usageRecorder.record(attributionOf(call, reply, reported)));
 }
 
 /** The attribution record of one call — each absent attribute stays an absent key. */
 function attributionOf(call: ChatCallAccounting, reply: ChatResponse, usage: ChatUsage): LlmUsageRecord {
-    const record: { recordKey: string; agentId: string; callPath: readonly string[]; scope: Scope; runId?: string; stepId?: string; requestedModelId?: string; servedModelId?: string; usage: ChatUsage } = {
+    const record: {
+        recordKey: string;
+        agentId: string;
+        callPath: readonly string[];
+        scope: Scope;
+        runId?: string;
+        stepId?: string;
+        requestedModelId?: string;
+        servedModelId?: string;
+        usage: ChatUsage;
+    } = {
         recordKey: recordKeyFor(call.session, call.invocationId, call.stepName),
         agentId: call.agentId,
         callPath: call.callPath,
@@ -1408,9 +1415,9 @@ function modeledToolError(failure: unknown): ToolError | undefined {
  * NUL in an object KEY would still reach the row, but keys come from tool result
  * types rather than scanned bytes, so nothing produces one.
  */
-function jsonValue(value: unknown) {
-    // SAFETY: the clone below encodes the value through the JSON wire, so every member that survives it is a JSON value; the cast names the output shape the wire already proved.
-    return jsonClone((value ?? null) as JSONValue, (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
+function jsonValue(value: unknown): JSONValue {
+    // The wire write proves the value is JSON: the parse re-proves it with the schema, and the reviver strips NUL from every string it holds.
+    return jsonParse(JSON.stringify(value ?? null), z.json(), (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
 }
 
 /**

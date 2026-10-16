@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import type { ChatDataPart, EmitEvent } from "../../loop/types.js";
 import type { ChatStreamEvent } from "../../providers/types.js";
+import type { AskPart, ChatPart, RunCardPart } from "../chat-parts.js";
+import type { ChatPartFrame } from "../chat-events.js";
 import { applyChatFrame, checkChatPart, toChatFrame } from "../chat-frame.js";
 import type { ChatMessage } from "../message.js";
 
@@ -90,8 +92,10 @@ describe("toChatFrame", () => {
     });
 
     test("gives no frame for the provider done envelope", () => {
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const ev = { type: "done", message: {} } as unknown as ChatStreamEvent;
+        const ev: ChatStreamEvent = {
+            type: "done",
+            response: { message: { role: "assistant", content: [{ type: "text", text: "done" }] }, finishReason: "stop" },
+        };
         expect(toChatFrame(ev, fallback)).toBeNull();
     });
 
@@ -402,8 +406,8 @@ describe("applyChatFrame", () => {
     });
 
     test("a data part of a type the registry does not know appends", () => {
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const part = { type: "data-from-a-newer-emitter", id: "x-1" } as unknown as Parameters<typeof applyChatFrame>[1];
+        const ask: AskPart = { type: "data-ask", id: "seed", title: "Seed", command: "ls", status: "pending" };
+        const part = Object.assign({ ...ask }, { type: "data-from-a-newer-emitter", id: "x-1" });
         const { messages } = applyMany([], [part, part]);
         expect(messages[0].parts).toHaveLength(2);
     });
@@ -427,17 +431,24 @@ describe("checkChatPart", () => {
     // Each frame below is loose on purpose: a part frame arrives unchecked, and the check is what types it.
     type Frame = Parameters<typeof checkChatPart>[0];
 
+    function checkLoose(part: ChatPart, loose: Record<string, unknown>) {
+        // The wire carries the members of `loose` beside the typed part, unchecked, the way a part frame
+        // arrives; the check under test is the runtime gate for exactly that shape.
+        const frame: ChatPartFrame = { ...part };
+        return checkChatPart(Object.assign(frame, loose));
+    }
+
     test("gives a valid part without the fields that its schema does not know, and keeps the source", () => {
-        const frame = { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, stale: true, source: topLevel };
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        expect(checkChatPart(frame as unknown as Frame)).toEqual({
+        const runCard: RunCardPart = { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2 };
+        const frame = Object.assign({ ...runCard }, { stale: true, source: topLevel });
+        expect(checkChatPart(frame)).toEqual({
             ok: true,
             frame: { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, source: topLevel },
         });
     });
 
     test("keeps the time of a step activity and the reply of an ask", () => {
-        const activity = {
+        const activity: Frame = {
             type: "data-step-activity",
             id: "a-1",
             runId: "r1",
@@ -446,49 +457,48 @@ describe("checkChatPart", () => {
             activity: "Running",
             at: "2026-10-12T10:00:00.000Z",
         };
-        const ask = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "always" };
-        expect(checkChatPart(activity as unknown as Frame)).toEqual({ ok: true, frame: activity as unknown as Frame });
-        expect(checkChatPart(ask as unknown as Frame)).toEqual({ ok: true, frame: ask as unknown as Frame });
+        const ask: Frame = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "always" };
+        expect(checkChatPart(activity)).toEqual({ ok: true, frame: activity });
+        expect(checkChatPart(ask)).toEqual({ ok: true, frame: ask });
     });
 
     test("accepts a step activity with no time and an ask with no reply", () => {
-        const activity = { type: "data-step-activity", id: "a-1", runId: "r1", stepId: "s1", phase: "executing", activity: "Running" };
-        const ask = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "pending" };
-        expect(checkChatPart(activity as unknown as Frame)).toEqual({ ok: true, frame: activity as unknown as Frame });
-        expect(checkChatPart(ask as unknown as Frame)).toEqual({ ok: true, frame: ask as unknown as Frame });
+        const activity: Frame = { type: "data-step-activity", id: "a-1", runId: "r1", stepId: "s1", phase: "executing", activity: "Running" };
+        const ask: Frame = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "pending" };
+        expect(checkChatPart(activity)).toEqual({ ok: true, frame: activity });
+        expect(checkChatPart(ask)).toEqual({ ok: true, frame: ask });
     });
 
     test("refuses an ask reply of an unknown kind", () => {
-        const checked = checkChatPart({ type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "maybe" } as unknown as Frame);
+        const ask: AskPart = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "always" };
+        const checked = checkChatPart(Object.assign({ ...ask }, { reply: "maybe" }));
         expect(checked.ok).toBe(false);
         if (!checked.ok) expect(checked.error).toContain("reply");
     });
 
     test("refuses a part of a known type that its schema rejects", () => {
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const checked = checkChatPart({ type: "data-ask", id: "a1", title: "Run", command: "ls", status: "maybe" } as unknown as Frame);
+        const ask: AskPart = { type: "data-ask", id: "a1", title: "Run", command: "ls", status: "pending" };
+        const checked = checkChatPart(Object.assign({ ...ask }, { status: "maybe" }));
         expect(checked.ok).toBe(false);
         if (!checked.ok) expect(checked.error).toContain("status");
     });
 
     test("gives a part of a type that the registry does not know unchanged", () => {
-        const frame = { type: "data-from-a-newer-emitter", id: "x-1", anything: 1 };
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        expect(checkChatPart(frame as unknown as Frame)).toEqual({ ok: true, frame: frame as unknown as Frame });
+        const ask: AskPart = { type: "data-ask", id: "seed", title: "Seed", command: "ls", status: "pending" };
+        const frame = Object.assign({ ...ask }, { type: "data-from-a-newer-emitter", id: "x-1", anything: 1 });
+        expect(checkChatPart(frame)).toEqual({ ok: true, frame });
     });
 
     test("refuses a part of a known type whose source is malformed", () => {
-        const frame = { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, source: {} };
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const checked = checkChatPart(frame as unknown as Frame);
+        const runCard: RunCardPart = { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2 };
+        const checked = checkLoose(runCard, { source: {} });
         expect(checked.ok).toBe(false);
         if (!checked.ok) expect(checked.error).toContain("callPath");
     });
 
     test("refuses a part of a type that the registry does not know whose source is malformed", () => {
-        const frame = { type: "data-from-a-newer-emitter", id: "x-1", source: { agentId: "root" } };
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const checked = checkChatPart(frame as unknown as Frame);
+        const ask: AskPart = { type: "data-ask", id: "seed", title: "Seed", command: "ls", status: "pending" };
+        const checked = checkLoose(ask, { type: "data-from-a-newer-emitter", id: "x-1", source: { agentId: "root" } });
         expect(checked.ok).toBe(false);
         if (!checked.ok) expect(checked.error).toContain("callPath");
     });

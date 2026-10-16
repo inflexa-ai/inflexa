@@ -444,7 +444,7 @@ describe("reference installation receipt", () => {
 
     it("changes the content digest when the content changes", () => {
         expect(referenceReceiptContentDigest({ ...content, datasetVersion: "2026.08" })).not.toBe(valid.contentDigest);
-        expect(referenceReceiptContentDigest({ ...content, artifacts: [{ ...content.artifacts[0]!, bytes: 43 }] })).not.toBe(valid.contentDigest);
+        expect(referenceReceiptContentDigest({ ...content, artifacts: [{ ...content.artifacts[0], bytes: 43 }] })).not.toBe(valid.contentDigest);
     });
 
     it("rejects a receipt whose content digest disagrees with its fields", () => {

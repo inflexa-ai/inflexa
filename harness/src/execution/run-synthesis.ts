@@ -31,6 +31,7 @@ import { z } from "zod";
 
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 import { tryFs } from "../lib/fs-result.js";
+import { parseJsonOrUndefined } from "../lib/json.js";
 import { hintForZodIssue } from "../lib/zod-issues.js";
 
 import {
@@ -45,7 +46,7 @@ import {
 } from "../schemas/run-synthesis.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import { composeSystemPrompt } from "../agents/system-prompt.js";
-import { flattenDataPart } from "../contracts/chat-frame.js";
+import { maybeRecord } from "../lib/shape.js";
 import type { RunSynthesisPart } from "../contracts/chat-parts.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { isSafeId, runDir } from "../workspace/paths.js";
@@ -54,7 +55,7 @@ import { decodeObjectString } from "../lib/zod-issues.js";
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { passthroughStep } from "../loop/run-step.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
-import type { AgentDefinition, ChatDataPart, EmitFn } from "../loop/types.js";
+import type { AgentDefinition, EmitFn } from "../loop/types.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { RunSession } from "../auth/types.js";
@@ -250,7 +251,7 @@ type SalvagedInputs = {
 };
 
 function salvageInputs(candidate: unknown): SalvagedInputs {
-    const record: Record<string, unknown> = typeof candidate === "object" && candidate !== null ? (candidate as Record<string, unknown>) : {};
+    const record: Record<string, unknown> = maybeRecord(candidate) ?? {};
 
     const runId = z.string().safeParse(record.runId);
     const findings = z.array(SynthesizedFindingSchema).safeParse(record.findings);
@@ -364,9 +365,12 @@ function buildValidateTool(ctx: InnerToolContext): Tool {
             synthesis: z.unknown().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
         }),
         describeCall: "none",
-        execute:  (input) => {
+        execute: (input) => {
             const result = fullyValidate(decodeObjectString(input.synthesis), ctx);
-            return Promise.resolve(ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues }));
+            return Promise.resolve(
+                // SAFETY: the array is empty — an empty list holds no issue, and the cast fixes the arm's type so both ternary arms share one result shape.
+                ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues }),
+            );
         },
     });
 }
@@ -386,7 +390,7 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
             "supersedes an earlier one.",
         inputSchema: z.object({ synthesis: RunSynthesisSchema }),
         describeCall: "none",
-        execute:  (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
+        execute: (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
             const result = fullyValidate(input.synthesis, ctx);
             if (!result.valid) {
                 // A rejection is not terminal — submission is last-valid-wins, so this
@@ -600,11 +604,11 @@ export async function persistSynthesis(args: PersistSynthesisInput): Promise<str
     return path;
 }
 
-export interface ReadSynthesisInput {
+export type ReadSynthesisInput = {
     /** Absolute host root of the analysis's workspace tree. */
     readonly workspaceRoot: string;
     readonly runId: string;
-}
+};
 
 /**
  * Read the text of a synthesis record under the cap, or give `undefined` when the bytes do not come back.
@@ -660,19 +664,13 @@ export async function readRunSynthesis(args: ReadSynthesisInput): Promise<RunSyn
     if (text === undefined) {
         return null;
     }
-    let json: unknown;
-    try {
-        json = JSON.parse(text);
-    } catch {
-        return null;
-    }
+    const json: unknown = parseJsonOrUndefined(text);
     const parsed = RunSynthesisSchema.safeParse(json);
     if (!parsed.success) {
         return null;
     }
-    // The payload comes from a validated `RunSynthesis`, and the builder sets each field of the part contract.
-    // The tests parse the result with `RunSynthesisPartSchema`.
-    return flattenDataPart(buildRunSynthesisPart(args.runId, parsed.data)) as unknown as RunSynthesisPart;
+    const built = buildRunSynthesisPart(args.runId, parsed.data);
+    return { ...built.data, type: built.type };
 }
 
 // ── Embedding text ──────────────────────────────────────────────────
@@ -718,7 +716,10 @@ function buildSynthesizerPrompt(planNarrative: string, summaries: readonly StepS
  * synthesizer completes successfully. The schema mirrors the harness's contracts
  * `RunSynthesisPart` interface — keep them in lockstep.
  */
-export function buildRunSynthesisPart(runId: string, synthesis: RunSynthesis): ChatDataPart {
+export function buildRunSynthesisPart(
+    runId: string,
+    synthesis: RunSynthesis,
+): { type: "data-run-synthesis"; data: { id: string; runId: string } & RunSynthesis } {
     return {
         type: "data-run-synthesis",
         data: {

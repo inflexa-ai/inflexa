@@ -10,6 +10,7 @@ const HASH = `sha256:${"a".repeat(64)}`;
  */
 function encodeUnchecked(value: unknown): string {
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- this helper deliberately feeds malformed fixtures through the wire encoder; the test pins that parseReference rejects them.
     return serializeReference(value as Reference);
 }
 
@@ -176,17 +177,21 @@ describe("parseReference — error outcomes", () => {
 
 describe("the row bound of a table binding", () => {
     /** One whole-table binding with the given row bound. */
-    function bounded(rowBound: unknown): Reference {
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        return { kind: "artifact-table", path: "runs/run-1/step-a/output/de.csv", hash: HASH, rowBound } as unknown as Reference;
+    function bounded(rowBound: unknown): unknown {
+        return { kind: "artifact-table", path: "runs/run-1/step-a/output/de.csv", hash: HASH, rowBound };
+    }
+
+    /** A bound the schema admits, so the binding itself types as a `Reference`. */
+    function validBounded(rowBound: { column: string; count: number; order?: "asc" | "desc" }): Reference {
+        return { kind: "artifact-table", path: "runs/run-1/step-a/output/de.csv", hash: HASH, rowBound };
     }
 
     it("round-trips a bound of the top rows by a column", () => {
-        expectRoundTrip(bounded({ column: "padj", count: 20, order: "asc" }));
+        expectRoundTrip(validBounded({ column: "padj", count: 20, order: "asc" }));
     });
 
     it("round-trips a bound that names no order, thus the stored document keeps the short form", () => {
-        expectRoundTrip(bounded({ column: "score", count: 20 }));
+        expectRoundTrip(validBounded({ column: "score", count: 20 }));
     });
 
     it("rejects a bound of zero rows", () => {

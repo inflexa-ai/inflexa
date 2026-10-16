@@ -140,7 +140,7 @@ const BLOCK_MARGIN_PX = 16;
 function waitForThemeReady(sentinel: string, event: string, timeout: number): Promise<void> {
     return new Promise<void>((resolve) => {
         // The sentinel name arrives as a value, thus no declared property of the global object describes it.
-        if ((window as unknown as Record<string, unknown>)[sentinel]) {
+        if (Reflect.get(window, sentinel)) {
             resolve();
             return;
         }

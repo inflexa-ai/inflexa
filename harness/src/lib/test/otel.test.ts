@@ -12,9 +12,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { metrics, trace } from "@opentelemetry/api";
-import type { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 
 import {
     __otelMeterProviderRegisteredForTest,
@@ -27,6 +25,8 @@ import {
 } from "../otel.js";
 import { untracedWorkflow } from "../otel-spans.js";
 import { jsonParse } from "../../lib/json.js";
+import { maybeRecord, recordMember } from "../../lib/shape.js";
+import { must } from "./guards.js";
 import { z } from "zod";
 
 let collector: Server;
@@ -46,8 +46,9 @@ beforeAll(async () => {
         });
     });
     await new Promise<void>((resolve) => collector.listen(0, "127.0.0.1", resolve));
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    endpoint = `http://127.0.0.1:${(collector.address() as AddressInfo).port}`;
+    const address = collector.address();
+    if (address === null || typeof address === "string") throw new Error("the collector did not listen on a TCP port");
+    endpoint = `http://127.0.0.1:${address.port}`;
 });
 
 afterAll(async () => {
@@ -85,25 +86,27 @@ afterEach(async () => {
 /** The resource attributes a span started on the registered provider carries. */
 function registeredResourceAttributes(): Record<string, unknown> {
     const span = trace.getTracer("otel-test").startSpan("probe");
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const resource = (span as unknown as ReadableSpan).resource;
+    // The API Span type does not declare the SDK's resource member; the read
+    // guards it at runtime, so an unregistered provider fails the read instead
+    // of an unproven shape claim.
+    const resource: unknown = Reflect.get(span, "resource");
     span.end();
-    return resource.attributes;
+    return must(maybeRecord(recordMember(maybeRecord(resource), "attributes")), "the registered span carries a resource with attributes");
 }
 
-/** OTLP JSON key/value list, flattened to the attribute record it encodes. */
-type OtlpKeyValue = {
-    readonly key: string;
-    readonly value: { readonly stringValue?: string };
-};
+/** The OTLP JSON the metrics exporter posts: one resource metrics document. */
+const resourceMetricsPayload = z.object({
+    resourceMetrics: z.array(
+        z.looseObject({
+            resource: z.looseObject({ attributes: z.array(z.looseObject({ key: z.string(), value: z.looseObject({ stringValue: z.string().optional() }) })) }),
+        }),
+    ),
+});
 
 /** The resource attributes on the metrics the exporter posted to the collector. */
 function exportedMetricResourceAttributes(): Record<string, unknown> {
     expect(metricBodies.length).toBeGreaterThan(0);
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    const payload = jsonParse(metricBodies[0], z.record(z.string(), z.unknown())) as {
-        resourceMetrics: readonly { resource: { attributes: readonly OtlpKeyValue[] } }[];
-    };
+    const payload = jsonParse(metricBodies[0], resourceMetricsPayload);
     const attributes: Record<string, unknown> = {};
     for (const entry of payload.resourceMetrics[0].resource.attributes) attributes[entry.key] = entry.value.stringValue;
     return attributes;

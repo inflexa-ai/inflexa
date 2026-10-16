@@ -2,9 +2,11 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
+import { must } from "../../lib/test/guards.js";
+import { maybeRecord } from "../../lib/shape.js";
 import { insertStepExecution, queryStepsByRun, seedStepExecutions, updateStepExecution } from "../step-executions.js";
 import { createBlockerHolder, createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
-import type { ToolContext } from "../../tools/define-tool.js";
+import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 
 async function seedRunning(pool: Pool, runId: string, stepId: string): Promise<void> {
     (
@@ -174,8 +176,7 @@ describe("step-executions: pending seeding", () => {
 });
 
 describe("report_blocker tool", () => {
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const ctx = {} as ToolContext;
+    const ctx = makeToolContext().ctx;
 
     it("records the blocker outcome into the holder", async () => {
         const holder = createBlockerHolder();
@@ -185,8 +186,8 @@ describe("report_blocker tool", () => {
         const result = (await tool.execute({ reason: "no usable data" }, ctx))._unsafeUnwrap();
 
         expect(holder.outcome).toEqual({ kind: "blocker", reason: "no usable data" });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((result as { recorded: boolean }).recorded).toBe(true);
+        const record = must(maybeRecord(result), "the blocker outcome record");
+        expect(record.recorded).toBe(true);
     });
 
     it("keeps the first reason when called twice", async () => {

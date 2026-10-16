@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchClinicalTrialsTool } from "../search-clinical-trials.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -108,20 +108,22 @@ describe("searchClinicalTrials — action 'details'", () => {
         const seen: string[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         globalThis.fetch = fetchDouble((input) => {
-            seen.push(String(input));
-            return Promise.resolve(trialsResponse({
-                protocolSection: {
-                    identificationModule: { nctId: "NCT01234567", briefTitle: "A Study of Imatinib in CML" },
-                    statusModule: { overallStatus: "TERMINATED", whyStopped: "Slow accrual" },
-                    outcomesModule: { primaryOutcomes: [{ measure: "Overall survival", timeFrame: "24 months" }] },
-                },
-                resultsSection: {
-                    adverseEventsModule: {
-                        eventGroups: [{ id: "EG000", title: "Imatinib" }],
-                        seriousEvents: [{ term: "Neutropenia", organSystem: "Blood", stats: [{ groupId: "EG000", numAffected: 3, numAtRisk: 40 }] }],
+            seen.push(urlText(input));
+            return Promise.resolve(
+                trialsResponse({
+                    protocolSection: {
+                        identificationModule: { nctId: "NCT01234567", briefTitle: "A Study of Imatinib in CML" },
+                        statusModule: { overallStatus: "TERMINATED", whyStopped: "Slow accrual" },
+                        outcomesModule: { primaryOutcomes: [{ measure: "Overall survival", timeFrame: "24 months" }] },
                     },
-                },
-            }));
+                    resultsSection: {
+                        adverseEventsModule: {
+                            eventGroups: [{ id: "EG000", title: "Imatinib" }],
+                            seriousEvents: [{ term: "Neutropenia", organSystem: "Blood", stats: [{ groupId: "EG000", numAffected: 3, numAtRisk: 40 }] }],
+                        },
+                    },
+                }),
+            );
         });
 
         const { ctx } = makeToolContext();
@@ -131,10 +133,17 @@ describe("searchClinicalTrials — action 'details'", () => {
         if (!("trial" in result)) throw new Error("expected the details variant");
 
         expect(seen[0]).toContain("/studies/NCT01234567");
-        expect(must(must(must(result, "result").trial, "must(result, \"result\").trial").trial, "must(result, \"result\").trial.trial").nctId).toBe("NCT01234567");
-        expect(must(must(result, "result").trial, "must(result, \"result\").trial").whyStopped).toBe("Slow accrual");
-        expect(must(must(must(must(result, "result").trial, "must(result, \"result\").trial").outcomes, "must(result, \"result\").trial.outcomes")[0], "must(result, \"result\").trial.outcomes[0]").measure).toBe("Overall survival");
-        expect(must(must(must(result, "result").trial, "must(result, \"result\").trial").adverseEvents, "must(result, \"result\").trial.adverseEvents")[0]).toMatchObject({ term: "Neutropenia", serious: true });
+        expect(must(must(must(result, "result").trial, 'must(result, "result").trial').trial, 'must(result, "result").trial.trial').nctId).toBe("NCT01234567");
+        expect(must(must(result, "result").trial, 'must(result, "result").trial').whyStopped).toBe("Slow accrual");
+        expect(
+            must(
+                must(must(must(result, "result").trial, 'must(result, "result").trial').outcomes, 'must(result, "result").trial.outcomes')[0],
+                'must(result, "result").trial.outcomes[0]',
+            ).measure,
+        ).toBe("Overall survival");
+        expect(
+            must(must(must(result, "result").trial, 'must(result, "result").trial').adverseEvents, 'must(result, "result").trial.adverseEvents')[0],
+        ).toMatchObject({ term: "Neutropenia", serious: true });
     });
 
     it("returns a null trial for an NCT id the registry does not hold (not is_error)", async () => {

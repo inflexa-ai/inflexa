@@ -5,8 +5,9 @@ import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { deriveChartRender, type ChartRow, type EchartOption } from "../chart.js";
 import { chartSvgAssets, renderChartSvg } from "../chart-export.js";
 import { CHART_RENDERERS_SOURCE, exportOption, SIZED_SERIES_MEMBER } from "../chart-renderers.js";
-import { optionNumber, optionRecord, optionRecords } from "../option-lens.js";
+import { optionNumber, optionPercent, optionRecord, optionRecords } from "../option-lens.js";
 import { jsonClone } from "../../lib/json.js";
+import { captureOf } from "../../lib/test/captures.js";
 import {
     CHART_EXPORT_SIZES,
     CHART_INK,
@@ -249,12 +250,9 @@ describe("the SVG assets of one chart", () => {
 describe("the export option", () => {
     /** The page twin of the export option. */
     // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-    const exportOnThePage = evaluatePageScript<() => (
-        option: EchartOption,
-        textPx: number,
-        widthPx: number,
-        heightPx: number,
-    ) => EchartOption>(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`);
+    const exportOnThePage = evaluatePageScript<() => (option: EchartOption, textPx: number, widthPx: number, heightPx: number) => EchartOption>(
+        `${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`,
+    );
 
     const VECTOR: readonly EchartOption[] = [
         GRADIENT_OPTION,
@@ -325,7 +323,7 @@ describe("the export option", () => {
     ];
 
     it("takes the series of the export width in place of the page series of the sized names", () => {
-        const names = (option: EchartOption): unknown[] => (optionRecords(option.series)).map((series) => [series.name, series.data]);
+        const names = (option: EchartOption): unknown[] => optionRecords(option.series).map((series) => [series.name, series.data]);
         const single = exportOption(SIZED_NAMES, CHART_PRINT_TEXT_PX, 336, 253);
         expect(names(single)).toEqual([
             ["Points", [[1, 2]]],
@@ -340,11 +338,11 @@ describe("the export option", () => {
 
     it("scales the text of each child of a graphic group, thus a size legend prints at the export text size", () => {
         const print = exportOption(VECTOR[8], CHART_PRINT_TEXT_PX, 336, 253);
-        const group = (optionRecords(print.graphic))[0];
+        const group = optionRecords(print.graphic)[0];
         const [title, circle, inner] = optionRecords(group.children);
-        expect((optionRecord(title.style)).fontSize).toBe(CHART_PRINT_TEXT_PX);
+        expect(optionRecord(title.style).fontSize).toBe(CHART_PRINT_TEXT_PX);
         expect(circle).toEqual({ type: "circle", shape: { cx: 3, cy: 20, r: 3 } });
-        expect(optionNumber((optionRecord((optionRecords(inner.children))[0].style)).fontSize)).toBe(CHART_PRINT_TEXT_PX);
+        expect(optionNumber(optionRecord(optionRecords(inner.children)[0].style).fontSize)).toBe(CHART_PRINT_TEXT_PX);
     });
 
     it("holds the lowest row of facet panels and the x title above the band of a legend that wraps at the column width", () => {
@@ -357,15 +355,15 @@ describe("the export option", () => {
             // Each panel keeps its labels inside its own box, and the box ends over the title and the legend.
             expect(grid.outerBoundsMode).toBe("same");
             expect(grid.top).toBe("10%");
-            expect(((Number.parseFloat(String(grid.top)) + Number.parseFloat(String(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
+            expect(((optionPercent(grid.top) + optionPercent(grid.height)) * 253) / 100).toBeCloseTo(room, 1);
         }
-        const title = (optionRecords(print.graphic)).find((element) => element.bottom !== undefined);
+        const title = optionRecords(print.graphic).find((element) => element.bottom !== undefined);
         expect(title?.bottom).toBe(band);
         // The slide holds the eight names on one line, and its panels keep their boxes.
         const slide = exportOption(FACETED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080);
-        expect((optionRecords(slide.grid))[0].height).toBe("70%");
-        expect(((optionRecords(slide.graphic))[1]).bottom).toBe(legendBandPx(1, CHART_SLIDE_TEXT_PX));
-        expect((optionRecord(print.legend)).type).toBeUndefined();
+        expect(optionRecords(slide.grid)[0].height).toBe("70%");
+        expect(optionRecords(slide.graphic)[1].bottom).toBe(legendBandPx(1, CHART_SLIDE_TEXT_PX));
+        expect(optionRecord(print.legend).type).toBeUndefined();
     });
 
     it("draws a legend whose lines leave a panel under half its height in one line that scrolls", () => {
@@ -375,22 +373,22 @@ describe("the export option", () => {
         const room = 253 - band - Math.round(CHART_PRINT_TEXT_PX * 1.6);
         for (const grid of optionRecords(print.grid)) {
             // The panel of the page is 70 percent high, thus the export keeps 35 percent of the height at least.
-            expect(Number.parseFloat(String(grid.height))).toBeGreaterThanOrEqual(35);
-            expect(((Number.parseFloat(String(grid.top)) + Number.parseFloat(String(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
+            expect(optionPercent(grid.height)).toBeGreaterThanOrEqual(35);
+            expect(((optionPercent(grid.top) + optionPercent(grid.height)) * 253) / 100).toBeCloseTo(room, 1);
         }
-        expect((optionRecords(print.graphic)).find((element) => element.bottom !== undefined)?.bottom).toBe(band);
+        expect(optionRecords(print.graphic).find((element) => element.bottom !== undefined)?.bottom).toBe(band);
         // The chart runtime draws the one line and the page count of the legend in the file.
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         expect(svgOf(CROWDED_LEGEND)).toMatch(/>1\/\d+<\/text>/);
         // The slide holds the twenty-eight names in lines that leave each panel its room, thus its legend wraps.
-        expect((optionRecord(exportOption(CROWDED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080).legend)).type).toBeUndefined();
+        expect(optionRecord(exportOption(CROWDED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080).legend).type).toBeUndefined();
     });
 
     it("drops the tooltip and the toolbox, stops the animation, and scales the name gap and the panel labels", () => {
         const slide = exportOption(VECTOR[5], CHART_SLIDE_TEXT_PX, 1920, 1080);
         expect(slide.animation).toBe(false);
-        expect((optionRecords(slide.xAxis))[0].nameGap).toBe(68);
-        expect((optionRecord((optionRecords(slide.graphic))[0].style)).fontSize).toBe(CHART_SLIDE_TEXT_PX);
+        expect(optionRecords(slide.xAxis)[0].nameGap).toBe(68);
+        expect(optionRecord(optionRecords(slide.graphic)[0].style).fontSize).toBe(CHART_SLIDE_TEXT_PX);
         const print = exportOption(VECTOR[1], CHART_PRINT_TEXT_PX, 336, 253);
         expect(print.tooltip).toBeUndefined();
         expect(print.toolbox).toBeUndefined();
@@ -403,8 +401,8 @@ describe("the export option", () => {
         const [terms, estimates] = optionRecords(exportOption(VECTOR[7], CHART_PRINT_TEXT_PX, 336, 253).yAxis);
         expect(terms.offset).toBeUndefined();
         expect(estimates.offset).toBe(120 * scale);
-        expect(((optionRecords(exportOption(VECTOR[7], CHART_SLIDE_TEXT_PX, 1920, 1080).yAxis))[1]).offset).toBe(240);
-        expect(((optionRecords(VECTOR[7].yAxis))[1]).offset).toBe(120);
+        expect(optionRecords(exportOption(VECTOR[7], CHART_SLIDE_TEXT_PX, 1920, 1080).yAxis)[1].offset).toBe(240);
+        expect(optionRecords(VECTOR[7].yAxis)[1].offset).toBe(120);
     });
 
     it("holds the labels and the names of a short export above the band of a bottom legend", () => {
@@ -571,11 +569,11 @@ describe("the export option at a column width", () => {
         const option = { xAxis: { type: "category", data: names, axisLabel: { interval: 0 } }, yAxis: { type: "value" }, series: [] };
         const single = exportOption(option, CHART_PRINT_TEXT_PX, CHART_EXPORT_SIZES.single.widthPx, CHART_EXPORT_SIZES.single.heightPx);
         const slide = exportOption(option, CHART_SLIDE_TEXT_PX, CHART_EXPORT_SIZES.slide.widthPx, CHART_EXPORT_SIZES.slide.heightPx);
-        expect((optionRecord((optionRecord(single.xAxis)).axisLabel)).rotate).toBe(45);
-        expect((optionRecord((optionRecord(slide.xAxis)).axisLabel)).rotate).toBeUndefined();
+        expect(optionRecord(optionRecord(single.xAxis).axisLabel).rotate).toBe(45);
+        expect(optionRecord(optionRecord(slide.xAxis).axisLabel).rotate).toBeUndefined();
         // An authored rotation stays.
         const turned = { ...option, xAxis: { ...option.xAxis, axisLabel: { interval: 0, rotate: 90 } } };
-        expect((optionRecord((optionRecord(exportOption(turned, CHART_PRINT_TEXT_PX, 336, 253).xAxis)).axisLabel)).rotate).toBe(90);
+        expect(optionRecord(optionRecord(exportOption(turned, CHART_PRINT_TEXT_PX, 336, 253).xAxis).axisLabel).rotate).toBe(90);
     });
 
     it("wraps the title of a color scale into its band, and keeps the two ends that the page prints", () => {
@@ -621,7 +619,7 @@ function textExtents(svg: string, lines: readonly string[]): number[][] {
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
     for (const match of svg.matchAll(/<text[^>]*?(?:\sx="(-?[\d.]+)")?[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*>([^<]*)<\/text>/g)) {
         if (!lines.includes(match[4])) continue;
-        const center = Number(match[2]) + Number(match[1] ?? 0);
+        const center = Number(match[2]) + Number(captureOf(match, 1) ?? 0);
         const half = (match[4].length * CHART_PRINT_TEXT_PX * 0.6) / 2;
         extents.push([center - half, center + half]);
     }
@@ -731,7 +729,7 @@ describe("the export of a faceted chart", () => {
         const exported = exportOption(facetedBars(), CHART_PRINT_TEXT_PX, CHART_EXPORT_SIZES.single.widthPx, CHART_EXPORT_SIZES.single.heightPx);
         const axes = optionRecords(exported.xAxis);
         expect(axes.length).toBe(3);
-        for (const axis of axes) expect([45, 90]).toContain(Number((optionRecord(axis.axisLabel)).rotate));
+        for (const axis of axes) expect([45, 90]).toContain(Number(optionRecord(axis.axisLabel).rotate));
     });
 
     it("takes the room of the legend band from each row of panels, and each label moves with its row", () => {
@@ -750,23 +748,20 @@ describe("the export of a faceted chart", () => {
         const size = exportSizeFor(CHART_EXPORT_SIZES.single, derived.bodyPx);
         const page = derived.inline;
         const exported = exportOption(page, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx);
-        const percentOf = (value: unknown): number => Number.parseFloat(String(value));
-        const heights = (optionRecords(exported.grid)).map((grid) => percentOf(grid.height));
+        const percentOf = (value: unknown): number => optionPercent(value);
+        const heights = optionRecords(exported.grid).map((grid) => percentOf(grid.height));
         // Four rows of three panels share the room of the band, thus each panel keeps one height.
         expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1e-3);
-        expect(Math.min(...heights)).toBeGreaterThan(percentOf((optionRecords(page.grid))[0].height) * 0.5);
+        expect(Math.min(...heights)).toBeGreaterThan(percentOf(optionRecords(page.grid)[0].height) * 0.5);
         // Each panel label keeps its gap over the top of its panel.
         const gap = (option: EchartOption, place: number): number =>
-            percentOf((optionRecords(option.grid))[place].top) - percentOf((optionRecords(option.graphic))[place].top);
+            percentOf(optionRecords(option.grid)[place].top) - percentOf(optionRecords(option.graphic)[place].top);
         for (let place = 0; place < 12; place += 1) expect(gap(exported, place)).toBeCloseTo(gap(page, place), 4);
         // The page builds the same export option.
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const onThePage = evaluatePageScript<() => (
-            option: EchartOption,
-            textPx: number,
-            widthPx: number,
-            heightPx: number,
-        ) => EchartOption>(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`);
+        const onThePage = evaluatePageScript<() => (option: EchartOption, textPx: number, widthPx: number, heightPx: number) => EchartOption>(
+            `${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`,
+        );
         expect(onThePage(optionRecord(jsonClone(page)), CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx)).toEqual(exported);
     });
 

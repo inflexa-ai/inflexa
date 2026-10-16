@@ -96,10 +96,10 @@ const TERMINAL_ROW_READ_ATTEMPTS = 4;
 const TERMINAL_ROW_READ_INTERVAL_MS = 500;
 
 /** The part of a run row that the terminal part is made from. */
-export interface RunEventRunRead {
+export type RunEventRunRead = {
     readonly status: RunStatus;
     readonly error: string | null;
-}
+};
 
 /**
  * Construction-time dependencies. The pool is the application pool the run

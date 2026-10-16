@@ -106,7 +106,7 @@ async function refuseMessageInserts(): Promise<void> {
 function watchedPool(): { watched: Pool; statements: string[] } {
     const statements: string[] = [];
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const forward = pool.query.bind(pool) as unknown as (text: unknown, values?: unknown) => Promise<QueryResult>;
+    const forward: (text: unknown, values?: unknown) => Promise<QueryResult> = pool.query.bind(pool);
     const query = (text: unknown, values?: unknown): Promise<QueryResult> => {
         statements.push(typeof text === "string" ? text : JSON.stringify(text));
         return forward(text, values);

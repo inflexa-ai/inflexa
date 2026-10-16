@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { fixtureCase, readFixture, runFixtureSuite } from "../../lib/__fixtures__/fixture-runner.js";
 import { Context7DocsResponseSchema, Context7SearchResponseSchema, queryDocsTool, resolveLibraryIdTool } from "../context7-docs.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 runFixtureSuite("context7 golden fixtures — the documentation tools", [
     fixtureCase({
@@ -61,7 +61,7 @@ function serve(body: unknown, status = 200): void {
     const text = JSON.stringify(body);
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((url) => {
-        requested.push(String(url));
+        requested.push(urlText(url));
         return Promise.resolve(new Response(text, { status, headers: { "content-type": "application/json" } }));
     });
 }

@@ -20,7 +20,7 @@ import { err, ok, type Result } from "neverthrow";
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel, type ChartComposition } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
 import type { ChartRow, EchartOption } from "../chart.js";
-import { optionCell, optionMemberOrUndefined } from "../option-lens.js";
+import { optionCell, optionMemberOrUndefined, optionText } from "../option-lens.js";
 import { CHART_BODY_PX, SEQUENTIAL_RAMP } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
@@ -130,11 +130,17 @@ function formatSource(context: FigureContext, channel: ChartChannel): [string, C
 
 /** The members of one item: the array form, or the value of the object form. */
 function itemValue(item: unknown): unknown[] | undefined {
-    if (Array.isArray(item)) return item;
+    if (Array.isArray(item)) {
+        const members: unknown[] = item;
+        return members;
+    }
     if (typeof item === "object" && item !== null) {
-                const value = optionRecord(item).value;
-                if (Array.isArray(value)) return value;
-            }
+        const value = optionRecord(item).value;
+        if (Array.isArray(value)) {
+            const members: unknown[] = value;
+            return members;
+        }
+    }
     return undefined;
 }
 
@@ -143,7 +149,7 @@ function placedItem(item: unknown, place: number): unknown {
     const value = itemValue(item);
     if (value === undefined) return item;
     const moved = [value[0], place, ...value.slice(2)];
-    return Array.isArray(item) ? moved : { ...(optionRecord(item)), value: moved };
+    return Array.isArray(item) ? moved : { ...optionRecord(item), value: moved };
 }
 
 function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
@@ -185,10 +191,11 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const option = composed.value;
 
     const places = new Map(categories.value.map((category, place) => [String(category), place]));
-    const series = (Array.isArray(option.series) ? (optionRecords(option.series)) : []).map((entry) => ({
+    const series = (Array.isArray(option.series) ? optionRecords(option.series) : []).map((entry) => ({
         ...entry,
         data: (Array.isArray(entry.data) ? entry.data : []).flatMap((item) => {
-            const place = places.get(String(itemValue(item)?.[1]));
+            const category = itemValue(item)?.[1];
+            const place = category === undefined ? undefined : places.get(optionText(category));
             return place === undefined ? [] : [placedItem(item, place)];
         }),
     }));
@@ -203,7 +210,7 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const lines = terms === undefined ? 1 : highestOf(terms.map((term) => term.split("\n").length));
     const body = (categories.value.length * (lines * DOTPLOT_LINE_PX + DOTPLOT_ROW_GAP_PX)) / DOTPLOT_PLOT_SHARE;
 
-    const maps = Array.isArray(option.visualMap) ? (optionRecords(option.visualMap)) : [];
+    const maps = Array.isArray(option.visualMap) ? optionRecords(option.visualMap) : [];
     const keys: EchartOption[] = [];
     const graphic: EchartOption[] = [];
     const colorMap = maps.find((entry) => entry.show !== false);
@@ -220,7 +227,7 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         graphic.push(sizeLegend(range, scaleTitle(context.labels, size), formatSource(context, size)[0], DOTPLOT_SIZE_PLACE, formatSource(context, size)[1]));
     }
 
-    const composedX = typeof option.xAxis === "object" && option.xAxis !== null ? (optionRecord(option.xAxis)) : {};
+    const composedX = typeof option.xAxis === "object" && option.xAxis !== null ? optionRecord(option.xAxis) : {};
     const xAxis =
         composedX.type === "value"
             ? { ...composedX, boundaryGap: [...DOTPLOT_VALUE_ROOM], axisLabel: { ...optionMemberOrUndefined(composedX.axisLabel), hideOverlap: true } }

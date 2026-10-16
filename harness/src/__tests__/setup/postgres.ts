@@ -137,8 +137,7 @@ export async function withSchema(testName: string): Promise<{
 
     // Each test gets its own scoped pool so search_path sticks on every
     // connection pulled from it.
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const cfg: PoolConfig = (base as unknown as { options?: PoolConfig }).options ?? {};
+    const cfg: PoolConfig = base.options;
     const pool = new Pool({
         host: cfg.host,
         port: cfg.port,

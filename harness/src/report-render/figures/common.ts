@@ -40,7 +40,7 @@ import {
 import { formatNumberCell, selectNumberKind, typographicExponent } from "../number-format.js";
 import { STEM_RENDERER } from "../chart-renderers.js";
 import type { RenderProblem } from "../types.js";
-import { optionRecord } from "../option-lens.js";
+import { optionArray, optionRecord } from "../option-lens.js";
 
 /** The display labels that a bound table declares, keyed by the raw column name. */
 export type ColumnLabels = ArtifactTableReference["columnLabels"];
@@ -792,7 +792,7 @@ function iconLegend(option: EchartOption): EchartOption | undefined {
     if (fields.show === false) return undefined;
     const icons = iconsByName(option);
     if (icons.size === 0) return undefined;
-    const declared = Array.isArray(fields.data) ? (fields.data as unknown[]) : [...icons.keys()];
+    const declared = Array.isArray(fields.data) ? optionArray(fields.data) : [...icons.keys()];
     const data = declared.map((entry) => {
         if (typeof entry === "object" && entry !== null && typeof (optionRecord(entry)).icon === "string") return entry;
         const name = typeof entry === "string" ? entry : typeof entry === "object" && entry !== null ? (optionRecord(entry)).name : undefined;

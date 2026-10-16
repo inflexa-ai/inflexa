@@ -297,7 +297,7 @@ function workflowInput(
         planStepById: Object.fromEntries(plan.steps.map((step) => [step.id, step])),
         agentByStepId: Object.fromEntries(plan.steps.map((step) => [step.id, step.agent ?? "unknown"])),
         resourcesByStepId: args.resourcesByStepId,
-        timeoutByStepId: Object.fromEntries(plan.steps.filter((step) => step.timeout !== undefined).map((step) => [step.id, step.timeout as number])),
+        timeoutByStepId: Object.fromEntries(plan.steps.flatMap((step): [string, number][] => (step.timeout === undefined ? [] : [[step.id, step.timeout]]))),
         budget: args.budget,
         runSession: args.runSession,
         ownsMandate: args.ownsMandate,

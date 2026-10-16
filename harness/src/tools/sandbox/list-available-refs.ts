@@ -36,6 +36,7 @@ import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { capCodePoints, DETAIL_MAX_LENGTH, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
+import { maybeRecord, recordMember, typedMember } from "../../lib/shape.js";
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
 import { REFS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
@@ -292,15 +293,16 @@ async function readLegacyEntries(root: string): Promise<unknown[]> {
         if ((await lstat(registryPath)).size > MAX_REGISTRY_BYTES) return [];
         const registry = parseJsonOrUndefined(await readFile(registryPath, "utf-8"));
         if (!registry || typeof registry !== "object") return [];
-        const byCategory = (registry as { files?: { by_category?: unknown } }).files?.by_category;
+        const byCategory = typedMember(recordMember(maybeRecord(registry), "files"), "by_category");
         if (!byCategory || typeof byCategory !== "object") return [];
         for (const category of Object.keys(byCategory).sort()) {
-            const values = (byCategory as Record<string, unknown>)[category];
+            const values = typedMember(maybeRecord(byCategory), category);
             if (!Array.isArray(values)) continue;
             for (const item of values) {
                 if (legacyEntries.length >= MAX_LEGACY_ENTRIES) break;
-                if (item && typeof item === "object" && typeof (item as { local_path?: unknown }).local_path === "string") {
-                    legacyEntries.push({ ...(item as Record<string, unknown>), category });
+                const fields = maybeRecord(item);
+                if (fields !== undefined && typeof typedMember(fields, "local_path") === "string") {
+                    legacyEntries.push({ ...fields, category });
                 }
             }
         }
@@ -473,15 +475,21 @@ function enrichEntries(entries: readonly ReferenceInventoryEntry[], raw: RawScan
             metadata.set(`${REFS_ROOT}/managed/${receipt.datasetId}/${receipt.datasetVersion}/${artifact.path}`, {
                 datasetId: receipt.datasetId,
                 version: receipt.datasetVersion,
-                title: dataset ? dataset.title : undefined, description: dataset ? dataset.description : undefined, sourceUrl: dataset ? dataset.sourceUrl : undefined, license: dataset ? dataset.license.url ?? dataset.license.identifier : undefined, category: dataset ? dataset.recommendation.group : undefined, organism: dataset ? dataset.organism ? dataset.organism : undefined : undefined,
-                format: catalogArtifact ? catalogArtifact.format : undefined, contents: catalogArtifact ? catalogArtifact.contents : undefined,
+                title: dataset ? dataset.title : undefined,
+                description: dataset ? dataset.description : undefined,
+                sourceUrl: dataset ? dataset.sourceUrl : undefined,
+                license: dataset ? (dataset.license.url ?? dataset.license.identifier) : undefined,
+                category: dataset ? dataset.recommendation.group : undefined,
+                organism: dataset ? (dataset.organism ? dataset.organism : undefined) : undefined,
+                format: catalogArtifact ? catalogArtifact.format : undefined,
+                contents: catalogArtifact ? catalogArtifact.contents : undefined,
             });
         }
     }
 
     for (const value of raw.legacyEntries ?? []) {
-        if (!value || typeof value !== "object") continue;
-        const item = value as Record<string, unknown>;
+        const item = maybeRecord(value);
+        if (item === undefined) continue;
         const localPath = stringValue(item.local_path);
         if (!localPath) continue;
         const resolved = resolveRequestedPath(localPath);

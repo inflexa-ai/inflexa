@@ -8,6 +8,7 @@
  * through a subscription.
  */
 
+import { maybeRecord } from "../lib/shape.js";
 import { reconcileKey } from "../contracts/chat-frame.js";
 import type { ChatPart } from "../contracts/chat-parts.js";
 import { PART_REGISTRY } from "../contracts/part-registry.js";
@@ -31,10 +32,13 @@ import { PART_REGISTRY } from "../contracts/part-registry.js";
  * consumer for its own check.
  */
 export function parseRunEventPart(value: unknown): ChatPart | null {
-    if (typeof value !== "object" || value === null) return null;
-    const type = (value as { type?: unknown }).type;
+    const record = maybeRecord(value);
+    if (record === undefined) return null;
+    const type = record.type;
     if (typeof type !== "string") return null;
     if (!Object.hasOwn(PART_REGISTRY, type)) return null;
+    // SAFETY: the discriminant named a member of PART_REGISTRY — the registry maps each wire type to its contract, and the producer writes those fields.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the gate validates the registry discriminant alone by design; a payload parse would change the stream semantics.
     return value as ChatPart;
 }
 

@@ -155,7 +155,7 @@ export function envelopeDisplayMessages(messages: readonly ConversationUIMessage
         kind: "ai-sdk-ui-messages",
         aiSdkMajor: 7,
         schemaVersion: SUPPORTED_DISPLAY_SCHEMA_VERSION,
-        messages: structuredClone(messages) as ConversationUIMessage[],
+        messages: structuredClone([...messages]),
     };
 }
 
@@ -186,17 +186,18 @@ function dropUnrenderableDataParts(messages: readonly unknown[], identity: strin
 
     const filtered = messages.map((message) => {
         if (!isRecord(message) || !Array.isArray(message.parts)) return message;
+        const schemas: Record<string, z.ZodType> = dataSchemas;
         const parts = message.parts.filter((part) => {
             if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("data-")) return true;
             const key = part.type.slice("data-".length);
             // `Object.hasOwn` before the index: a part typed `data-constructor`
             // would otherwise resolve up the prototype chain to something that is
             // not a schema at all, and throw where it should have been dropped.
-            if (!Object.hasOwn(dataSchemas, key)) {
+            if (!Object.hasOwn(schemas, key)) {
                 unknownKey.push(part.type);
                 return false;
             }
-            if (!(dataSchemas as Record<string, z.ZodType>)[key].safeParse(part.data).success) {
+            if (!schemas[key].safeParse(part.data).success) {
                 schemaMismatch.push(part.type);
                 return false;
             }
@@ -234,21 +235,16 @@ export async function parseStoredDisplayEnvelope(value: unknown, identity: strin
     }
 }
 
-/** The data-part key a message part is stored under — its `type` minus the `data-` prefix. */
-function displayPartType(part: Exclude<MessagePart, { type: "text" }>): `data-${keyof ConversationUIData}` {
-    return (part.type === "tool-call" ? "data-tool-call" : part.type) as `data-${keyof ConversationUIData}`;
+/** The id a part reconciles on: a tool call by its call id, a card by its own stable id. */
+function displayPartId(part: Exclude<MessagePart, { type: "text" }>): string | undefined {
+    if (part.type === "tool-call") return part.toolCallId;
+    return "id" in part && typeof part.id === "string" ? part.id : undefined;
 }
 
 function closedEntry(entry: SubAgentActivityEntry): ConversationUIData["subagent-activity"]["entries"][number] {
     if (entry.outcome !== undefined) return { ...entry, outcome: entry.outcome };
     const { endedAt: _endedAt, ...open } = entry;
     return { ...open, outcome: "incomplete" };
-}
-
-/** The id a part reconciles on: a tool call by its call id, a card by its own stable id. */
-function displayPartId(part: Exclude<MessagePart, { type: "text" }>): string | undefined {
-    if (part.type === "tool-call") return part.toolCallId;
-    return "id" in part && typeof part.id === "string" ? part.id : undefined;
 }
 
 /**
@@ -261,16 +257,65 @@ function displayPartId(part: Exclude<MessagePart, { type: "text" }>): string | u
  * absence resolves to `incomplete` at exactly this boundary — once, where the
  * lifetime changes — rather than at each reader. An entry of a sub-agent call
  * closes the same way, and an `incomplete` entry has no end time.
+ *
+ * The per-key cases keep the payload and its discriminant correlated; a run-stream
+ * part is not a display part, and reaching one is the caller's bug, not a row to
+ * write.
  */
 export function conversationDisplayPart(part: Exclude<MessagePart, { type: "text" }>): DataUIPart<ConversationUIData> {
-    const { type: _type, ...rest } = part;
-    const data =
-        part.type === "tool-call"
-            ? { ...rest, outcome: part.outcome ?? "incomplete" }
-            : part.type === "data-subagent-activity"
-              ? { ...rest, entries: part.entries.map(closedEntry) }
-              : rest;
-    return { type: displayPartType(part), id: displayPartId(part), data } as DataUIPart<ConversationUIData>;
+    const id = displayPartId(part);
+    // One case per stored key: the case narrows the part to its own member, so
+    // the payload leaves with its own discriminant re-associated, checked. A
+    // run-stream part is not a display part; reaching one is the caller's bug,
+    // not a row to write.
+    switch (part.type) {
+        case "tool-call": {
+            const { type: _type, ...call } = part;
+            return { type: "data-tool-call", id, data: { ...call, outcome: call.outcome ?? "incomplete" } };
+        }
+        case "data-subagent-activity": {
+            const { type: _type, ...activity } = part;
+            return { type: part.type, id, data: { ...activity, entries: part.entries.map(closedEntry) } };
+        }
+        case "data-presentation": {
+            const { type: _type, ...rest } = part;
+            return { type: part.type, id, data: rest };
+        }
+        case "data-plan": {
+            const { type: _type, ...rest } = part;
+            return { type: part.type, id, data: rest };
+        }
+        case "data-run-card": {
+            const { type: _type, ...rest } = part;
+            return { type: part.type, id, data: rest };
+        }
+        case "data-plan-approval": {
+            const { type: _type, ...rest } = part;
+            return { type: part.type, id, data: rest };
+        }
+        case "data-file-reference": {
+            const { type: _type, ...rest } = part;
+            return { type: part.type, id, data: rest };
+        }
+        case "data-ask": {
+            const { type: _type, ...rest } = part;
+            return { type: part.type, id, data: rest };
+        }
+        case "data-child-session-started": {
+            const { type: _type, ...rest } = part;
+            return { type: part.type, id, data: rest };
+        }
+        case "data-report-rendered": {
+            const { type: _type, ...rest } = part;
+            return { type: part.type, id, data: rest };
+        }
+        case "data-compaction": {
+            const { type: _type, ...rest } = part;
+            return { type: part.type, id, data: rest };
+        }
+        default:
+            throw new Error(`${part.type} is not a conversation display part; run-stream parts ride the run record, not the transcript`);
+    }
 }
 
 /**
@@ -293,9 +338,53 @@ export function conversationUIToChatMessages(messages: readonly ConversationUIMe
                 parts.push({ type: "tool-call", ...part.data });
                 continue;
             }
-            if (part.type.startsWith("data-")) {
-                const data = part as DataUIPart<ConversationUIData>;
-                parts.push({ type: data.type, ...(data.data as object) } as MessagePart);
+            if (!part.type.startsWith("data-")) continue;
+            // One case per stored key: the case narrows the part to its own
+            // member, so the payload spreads back onto the wire part with the
+            // discriminant re-associated, checked.
+            switch (part.type) {
+                case "data-presentation": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                case "data-plan": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                case "data-run-card": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                case "data-plan-approval": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                case "data-file-reference": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                case "data-ask": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                case "data-child-session-started": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                case "data-report-rendered": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                case "data-compaction": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                case "data-subagent-activity": {
+                    parts.push({ type: part.type, ...part.data });
+                    break;
+                }
+                default:
+                    break;
             }
         }
         if (parts.length === 0) continue;

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createDrugGeneInteractionsTool } from "../drug-gene-interactions.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -13,7 +13,7 @@ afterEach(() => {
 
 function stubFetch(response: (url: string) => Response): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(String(input))));
+    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(urlText(input))));
 }
 
 function json(body: unknown, status = 200): Response {
@@ -75,7 +75,7 @@ describe("drugGeneInteractions — DGIdb corpus", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: "EGFR", direction: "gene_to_drugs", limit: 2 }, ctx))._unsafeUnwrap();
 
-        const entry = must(must(result, "result").dgidb, "must(result, \"result\").dgidb")[0];
+        const entry = must(must(result, "result").dgidb, 'must(result, "result").dgidb')[0];
         expect(entry.found).toBe(true);
         expect(entry.totalInteractions).toBe(5);
         expect(entry.interactions).toHaveLength(2);
@@ -89,7 +89,10 @@ describe("drugGeneInteractions — DGIdb corpus", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: "EGFR", direction: "gene_to_drugs" }, ctx))._unsafeUnwrap();
 
-        const interaction = must(must(must(must(result, "result").dgidb, "must(result, \"result\").dgidb")[0], "must(result, \"result\").dgidb[0]").interactions, "must(result, \"result\").dgidb[0].interactions")[0];
+        const interaction = must(
+            must(must(must(result, "result").dgidb, 'must(result, "result").dgidb')[0], 'must(result, "result").dgidb[0]').interactions,
+            'must(result, "result").dgidb[0].interactions',
+        )[0];
         expect(interaction.attributes).toBeUndefined();
         expect(interaction.publicationCount).toBe(7);
         expect(interaction.pmids).toHaveLength(5);
@@ -101,7 +104,16 @@ describe("drugGeneInteractions — DGIdb corpus", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: "EGFR", direction: "gene_to_drugs", includeAttributes: true }, ctx))._unsafeUnwrap();
 
-        const attributes = must(must(must(must(must(must(result, "result").dgidb, "must(result, \"result\").dgidb")[0], "must(result, \"result\").dgidb[0]").interactions, "must(result, \"result\").dgidb[0].interactions")[0], "must(result, \"result\").dgidb[0].interactions[0]").attributes, "attributes");
+        const attributes = must(
+            must(
+                must(
+                    must(must(must(result, "result").dgidb, 'must(result, "result").dgidb')[0], 'must(result, "result").dgidb[0]').interactions,
+                    'must(result, "result").dgidb[0].interactions',
+                )[0],
+                'must(result, "result").dgidb[0].interactions[0]',
+            ).attributes,
+            "attributes",
+        );
         expect(attributes).toHaveLength(1);
         expect(attributes[0].value.length).toBe(160);
     });
@@ -113,7 +125,7 @@ describe("drugGeneInteractions — DGIdb corpus", () => {
         const result = (await tool.execute({ query: ["EGFR", "NOTAGENE"], direction: "gene_to_drugs" }, ctx))._unsafeUnwrap();
 
         expect(result.dgidb).toHaveLength(2);
-        expect(must(must(result, "result").dgidb, "must(result, \"result\").dgidb").every((r) => !r.found)).toBe(true);
+        expect(must(must(result, "result").dgidb, 'must(result, "result").dgidb').every((r) => !r.found)).toBe(true);
     });
 
     it("applies the minSources filter", async () => {
@@ -122,7 +134,7 @@ describe("drugGeneInteractions — DGIdb corpus", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: "EGFR", direction: "gene_to_drugs", minSources: 3 }, ctx))._unsafeUnwrap();
 
-        expect(must(must(must(result, "result").dgidb, "must(result, \"result\").dgidb")[0], "must(result, \"result\").dgidb[0]").interactions).toHaveLength(1);
+        expect(must(must(must(result, "result").dgidb, 'must(result, "result").dgidb')[0], 'must(result, "result").dgidb[0]').interactions).toHaveLength(1);
     });
 
     it("keeps a row whose directionality is null", async () => {
@@ -131,7 +143,10 @@ describe("drugGeneInteractions — DGIdb corpus", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: "EGFR", direction: "gene_to_drugs" }, ctx))._unsafeUnwrap();
 
-        const types = must(must(must(must(result, "result").dgidb, "must(result, \"result\").dgidb")[0], "must(result, \"result\").dgidb[0]").interactions, "must(result, \"result\").dgidb[0].interactions").map((i) => i.interactionTypes[0]);
+        const types = must(
+            must(must(must(result, "result").dgidb, 'must(result, "result").dgidb')[0], 'must(result, "result").dgidb[0]').interactions,
+            'must(result, "result").dgidb[0].interactions',
+        ).map((i) => i.interactionTypes[0]);
         expect(types).toHaveLength(2);
         expect(types[0].directionality).toBe("INHIBITORY");
         expect(types[1].directionality).toBeUndefined();
@@ -145,7 +160,7 @@ describe("drugGeneInteractions — DGIdb corpus", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: ["EGFR", "BRAF"], direction: "gene_to_drugs" }, ctx))._unsafeUnwrap();
 
-        expect(must(must(result, "result").dgidb, "must(result, \"result\").dgidb").map((r) => r.found)).toEqual([true, false]);
+        expect(must(must(result, "result").dgidb, 'must(result, "result").dgidb').map((r) => r.found)).toEqual([true, false]);
     });
 });
 
@@ -177,7 +192,7 @@ describe("drugGeneInteractions — DrugBank corpus", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: "DB00619", direction: "drug_to_genes", sources: ["drugbank"] }, ctx))._unsafeUnwrap();
 
-        const drug = must(must(result, "result").drugbank, "must(result, \"result\").drugbank")[0];
+        const drug = must(must(result, "result").drugbank, 'must(result, "result").drugbank')[0];
         expect(drug.drugbankId).toBe("DB00619");
         expect(drug.type).toBe("Small Molecule");
         expect(drug.groups).toEqual(["Approved"]);
@@ -193,7 +208,9 @@ describe("drugGeneInteractions — DrugBank corpus", () => {
 
         expect(result.drugbank).toEqual([]);
         expect(outcome(result.perSource, "drugbank")).toMatchObject({ status: "unavailable" });
-        expect(must(must(outcome, "outcome")(result.perSource, "drugbank"), "must(outcome, \"outcome\")(result.perSource, \"drug").detail).toContain("did not match the expected schema");
+        expect(must(must(outcome, "outcome")(result.perSource, "drugbank"), 'must(outcome, "outcome")(result.perSource, "drug').detail).toContain(
+            "did not match the expected schema",
+        );
     });
 
     it("returns the full prose on request", async () => {
@@ -204,7 +221,7 @@ describe("drugGeneInteractions — DrugBank corpus", () => {
             await tool.execute({ query: "DB00619", direction: "drug_to_genes", sources: ["drugbank"], includeDrugRecord: true }, ctx)
         )._unsafeUnwrap();
 
-        const drug = must(must(result, "result").drugbank, "must(result, \"result\").drugbank")[0];
+        const drug = must(must(result, "result").drugbank, 'must(result, "result").drugbank')[0];
         expect(drug.proseTruncated).toBe(false);
         // The parse boundary caps each prose field at 500 characters.
         expect(drug.description.length).toBe(500);
@@ -222,7 +239,7 @@ describe("drugGeneInteractions — DrugBank corpus", () => {
 
         expect(seen[0]).toContain("bonds/targets?q=polypeptides.gene_name%3AABL1");
         // One drug binds a target through more than one bond, thus the rows repeat.
-        expect(must(must(result, "result").drugbank, "must(result, \"result\").drugbank").map((d) => d.drugbankId)).toEqual(["DB00619", "DB01254"]);
+        expect(must(must(result, "result").drugbank, 'must(result, "result").drugbank').map((d) => d.drugbankId)).toEqual(["DB00619", "DB01254"]);
     });
 
     it("degrades to 'unavailable' when the key is absent, without an HTTP call", async () => {
@@ -237,7 +254,9 @@ describe("drugGeneInteractions — DrugBank corpus", () => {
 
         expect(called).toBe(false);
         expect(outcome(result.perSource, "drugbank")).toMatchObject({ status: "unavailable" });
-        expect(must(must(outcome, "outcome")(result.perSource, "drugbank"), "must(outcome, \"outcome\")(result.perSource, \"drug").detail).toContain("DRUGBANK_API_KEY");
+        expect(must(must(outcome, "outcome")(result.perSource, "drugbank"), 'must(outcome, "outcome")(result.perSource, "drug').detail).toContain(
+            "DRUGBANK_API_KEY",
+        );
     });
 
     it("says which identifier it read when handed a batch it cannot honour", async () => {
@@ -246,8 +265,10 @@ describe("drugGeneInteractions — DrugBank corpus", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: ["EGFR", "ALK"], direction: "gene_to_drugs", sources: ["dgidb", "drugbank"] }, ctx))._unsafeUnwrap();
 
-        expect(must(must(outcome, "outcome")(result.perSource, "drugbank"), "must(outcome, \"outcome\")(result.perSource, \"drug").detail).toContain("read only 'EGFR'");
-        expect(must(must(outcome, "outcome")(result.perSource, "dgidb"), "must(outcome, \"outcome\")(result.perSource, \"dgid").detail).toBeUndefined();
+        expect(must(must(outcome, "outcome")(result.perSource, "drugbank"), 'must(outcome, "outcome")(result.perSource, "drug').detail).toContain(
+            "read only 'EGFR'",
+        );
+        expect(must(must(outcome, "outcome")(result.perSource, "dgidb"), 'must(outcome, "outcome")(result.perSource, "dgid').detail).toBeUndefined();
     });
 });
 

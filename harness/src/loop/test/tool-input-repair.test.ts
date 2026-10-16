@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import type { ModelMessage, ToolResultPart } from "ai";
+import type { ToolResultPart } from "ai";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { makeSession } from "../../providers/__fixtures__/session.js";
+import { toolResultParts } from "../../lib/test/messages.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../__fixtures__/scripted-provider.js";
 import { runAgent } from "../run-agent.js";
@@ -30,7 +31,7 @@ function submitTool(): { tool: Tool; seen: unknown[] } {
             note: z.string().optional(),
         }),
         describeCall: "none",
-        execute:  (input) => {
+        execute: (input) => {
             seen.push(input);
             if (input.synthesis.findings.length === 0) {
                 return Promise.resolve(err({ error: "synthesis must contain at least one finding", retryable: true }));
@@ -56,11 +57,9 @@ async function callWith(tool: Tool, input: unknown): Promise<ToolResultPart> {
         runStep: passthroughStep,
     });
 
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    const toolMessage = messages[2] as Extract<ModelMessage, { role: "tool" }>;
+    const toolMessage = messages[2];
     expect(toolMessage.role).toBe("tool");
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return (toolMessage.content as ToolResultPart[])[0];
+    return toolResultParts(toolMessage)[0];
 }
 
 function errorText(result: ToolResultPart): string {

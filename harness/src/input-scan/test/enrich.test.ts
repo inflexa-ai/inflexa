@@ -9,9 +9,9 @@ import { observeShapes } from "../shapes.js";
 import type { ScannedFile } from "../types.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { typedMember } from "../../lib/shape.js";
+import { stubAgentSession, stubSandboxClient, stubWorkspaceFilesystem } from "../../lib/test/doubles.js";
 
-// SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-const SESSION = {} as never;
+const SESSION = stubAgentSession();
 
 function file(path: string, format: string): ScannedFile {
     const base = path.slice(path.lastIndexOf("/") + 1);
@@ -34,38 +34,38 @@ function motivatingTree(): ScannedFile[] {
 function readSeam(contents: Record<string, Buffer>): { fs: WorkspaceFilesystem; reads: { path: string; length: number }[] } {
     const reads: { path: string; length: number }[] = [];
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const fs = {
+    const fs = stubWorkspaceFilesystem({
         readBytes({ path, length }: { path: string; length: number }) {
             reads.push({ path, length });
             const bytes = typedMember(contents, path);
             return okAsync(bytes ? { kind: "ok", bytes: bytes.subarray(0, length) } : { kind: "not_found" });
         },
-    } as unknown as WorkspaceFilesystem;
+    });
     return { fs, reads };
 }
 
 function recordingSandbox(): { client: SandboxClient; submitted: ExecRequest[] } {
     const submitted: ExecRequest[] = [];
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const client = {
+    const client = stubSandboxClient({
         exec(_ref: unknown, request: ExecRequest): Promise<ExecResult> {
             submitted.push(request);
             const paths = request.command.slice(3);
             const stdout = paths.map((path) => JSON.stringify({ path, fields: { columnCount: 7 } })).join("\n");
             return Promise.resolve({ execId: "wf:7", exitCode: 0, stdout, stderr: "", durationMs: 5, timedOut: false });
         },
-    } as unknown as SandboxClient;
+    });
     return { client, submitted };
 }
 
 /** A sandbox whose decoder exec produced no usable stdout, with the outcome under test. */
 function failingSandbox(result: Partial<ExecResult>): SandboxClient {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return {
+    return stubSandboxClient({
         exec(): Promise<ExecResult> {
             return Promise.resolve({ execId: "wf:7", exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false, ...result });
         },
-    } as unknown as SandboxClient;
+    });
 }
 
 function enrichArgs(overrides: Pick<EnrichShapesArgs, "shapes" | "fs"> & Partial<EnrichShapesArgs>) {
@@ -73,8 +73,9 @@ function enrichArgs(overrides: Pick<EnrichShapesArgs, "shapes" | "fs"> & Partial
         session: SESSION,
         mountRoot: "/a1",
         deadlineMs: Date.now() + 60_000,
-        emit:  () => {    return Promise.resolve();
-},
+        emit: () => {
+            return Promise.resolve();
+        },
         ...overrides,
     };
 }
@@ -110,7 +111,11 @@ describe("enrichShapes", () => {
 
         const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs }));
 
-        expect(must(must(shapes, "shapes")[0].header, "must(shapes, \"shapes\")[0].header").fields).toMatchObject({ delimiter: "comma", columnCount: 3, columns: "subject, arm, dose" });
+        expect(must(must(shapes, "shapes")[0].header, 'must(shapes, "shapes")[0].header').fields).toMatchObject({
+            delimiter: "comma",
+            columnCount: 3,
+            columns: "subject, arm, dose",
+        });
     });
 
     it("bounds the read it issues per member", async () => {
@@ -128,7 +133,7 @@ describe("enrichShapes", () => {
 
         const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs }));
 
-        expect(must(must(shapes, "shapes")[0].header, "must(shapes, \"shapes\")[0].header").unavailable).toBe("prefix unreadable (not_found)");
+        expect(must(must(shapes, "shapes")[0].header, 'must(shapes, "shapes")[0].header').unavailable).toBe("prefix unreadable (not_found)");
     });
 
     it("sends only footer-indexed containers to the sandbox decoder", async () => {
@@ -148,9 +153,12 @@ describe("enrichShapes", () => {
         expect(submitted.map((body) => body.command.slice(3))).toEqual([["/a1/data/inputs/tables/counts_1.parquet"]]);
         expect(submitted[0].command[0]).toBe("python3");
         expect(submitted[0].command[2]).toContain("def parquet_fields(");
-        const parquet = must(shapes.find((shape) => shape.format === "parquet"), "parquet");
-        expect(must(must(parquet, "parquet").header, "must(parquet, \"parquet\").header").fields).toEqual({ columnCount: 7 });
-        expect(must(must(parquet, "parquet").header, "must(parquet, \"parquet\").header").path).toBe("data/inputs/tables/counts_1.parquet");
+        const parquet = must(
+            shapes.find((shape) => shape.format === "parquet"),
+            "parquet",
+        );
+        expect(must(must(parquet, "parquet").header, 'must(parquet, "parquet").header').fields).toEqual({ columnCount: 7 });
+        expect(must(must(parquet, "parquet").header, 'must(parquet, "parquet").header').path).toBe("data/inputs/tables/counts_1.parquet");
     });
 
     it("skips the container readout when no sandbox is wired, keeping the shape", async () => {
@@ -172,7 +180,7 @@ describe("enrichShapes", () => {
             enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
         );
 
-        expect(must(must(shapes, "shapes")[0].header, "must(shapes, \"shapes\")[0].header").unavailable).toBe("container decoder exited 1: python3: not found");
+        expect(must(must(shapes, "shapes")[0].header, 'must(shapes, "shapes")[0].header').unavailable).toBe("container decoder exited 1: python3: not found");
     });
 
     it("names a decoder timeout rather than reporting silence", async () => {
@@ -184,7 +192,7 @@ describe("enrichShapes", () => {
             enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
         );
 
-        expect(must(must(shapes, "shapes")[0].header, "must(shapes, \"shapes\")[0].header").unavailable).toBe("container decoder timed out after 120s");
+        expect(must(must(shapes, "shapes")[0].header, 'must(shapes, "shapes")[0].header').unavailable).toBe("container decoder timed out after 120s");
     });
 
     it("reports silence as silence when the decoder exited cleanly", async () => {
@@ -196,7 +204,9 @@ describe("enrichShapes", () => {
             enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
         );
 
-        expect(must(must(shapes, "shapes")[0].header, "must(shapes, \"shapes\")[0].header").unavailable).toBe("container decoder reported nothing for this member");
+        expect(must(must(shapes, "shapes")[0].header, 'must(shapes, "shapes")[0].header').unavailable).toBe(
+            "container decoder reported nothing for this member",
+        );
     });
 
     it("issues nothing when there is nothing to read", async () => {

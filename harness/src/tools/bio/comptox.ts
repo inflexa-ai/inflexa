@@ -40,10 +40,12 @@ const HAZARD_DATA_TYPES = ["toxval", "genetox", "cancer", "all"] as const;
 const EXPOSURE_DATA_TYPES = ["seem", "httk", "functional-use", "product-data", "all"] as const;
 
 function isHazardDataType(value: string | undefined): value is CtxHazardDataType {
+    // SAFETY: the cast widens the tuple for the membership test only — a true test is exactly what proves the value is a member.
     return value !== undefined && (HAZARD_DATA_TYPES as readonly string[]).includes(value);
 }
 
 function isExposureDataType(value: string | undefined): value is CtxExposureDataType {
+    // SAFETY: the cast widens the tuple for the membership test only — a true test is exactly what proves the value is a member.
     return value !== undefined && (EXPOSURE_DATA_TYPES as readonly string[]).includes(value);
 }
 

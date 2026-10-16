@@ -38,16 +38,18 @@ const resolver = createFixtureResolver();
 
 /**
  * A row promises a value for each key that it holds. A real parser gives back an empty cell as an absent
- * key, as `undefined`, or as `null`, thus the cast is the only way to build the rows that the resolver
- * must reject.
+ * key, as `undefined`, or as `null`, thus the bad cells are planted on typed rows with `Reflect`, which
+ * accepts every value without a cast.
  */
-// SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-const sparseRows = [
+const sparseRows: Array<Record<string, string | number>> = [
     { label: "blank", value: "" },
-    { label: "undefined-cell", value: undefined },
-    { label: "null-cell", value: null },
-    { label: "absent-cell" },
-] as unknown as Array<Record<string, string | number>>;
+    { label: "undefined-cell", value: 0 },
+    { label: "null-cell", value: 0 },
+    { label: "absent-cell", value: 0 },
+];
+Reflect.set(sparseRows[1], "value", undefined);
+Reflect.set(sparseRows[2], "value", null);
+Reflect.deleteProperty(sparseRows[3], "value");
 
 const snapshot: ReportSnapshot = {
     artifacts: {
@@ -1604,7 +1606,8 @@ describe("validateReport — prepare before the loop", () => {
         const resolver: ReferenceResolver = {
             prepare() {
                 prepareCount += 1;
-            return Promise.resolve();},
+                return Promise.resolve();
+            },
             async resolve(reference, snapshot) {
                 if (prepareCount === 0) {
                     resolvesBeforePrepare += 1;

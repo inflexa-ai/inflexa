@@ -8,7 +8,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_PAGE_TEXT_PX, CHART_PALETTE, CHART_WIDE_PALETTE, DIVERGING_RAMP, GUIDE_LINE_COLOR, SIZE_CHANNEL_RANGE_PX } from "../../design.js";
-import { optionRecord, optionRecords } from "../../option-lens.js";
+import { optionRecord, optionRecords, optionText } from "../../option-lens.js";
 import {
     AREA_LEGEND_ICON,
     applyFigureRules,
@@ -102,7 +102,7 @@ describe("the statistics text", () => {
         );
         const [lower] = statisticsGraphic(statistics, "bottom-left");
         expect(lower).toEqual(expect.objectContaining({ left: "12%", bottom: "24%" }));
-        expect((optionRecord(lower.style)).fontSize).toBe(CHART_PAGE_TEXT_PX);
+        expect(optionRecord(lower.style).fontSize).toBe(CHART_PAGE_TEXT_PX);
     });
 
     it("gives no element for a figure with no statistic", () => {
@@ -143,13 +143,13 @@ describe("the size legend", () => {
         const children = optionRecords(legend.children);
         const circles = children.filter((child) => child.type === "circle");
         const [small, large] = SIZE_CHANNEL_RANGE_PX;
-        expect(circles.map((circle) => (optionRecord(circle.shape)).r)).toEqual([small / 2, (small + large) / 4, large / 2]);
-        const texts = children.filter((child) => child.type === "text").map((child) => (optionRecord(child.style)).text);
+        expect(circles.map((circle) => optionRecord(circle.shape).r)).toEqual([small / 2, (small + large) / 4, large / 2]);
+        const texts = children.filter((child) => child.type === "text").map((child) => optionRecord(child.style).text);
         expect(texts).toEqual(["Genes", "10", "30", "50"]);
     });
 
     it("draws one circle for a range of one value", () => {
-        const circles = (optionRecords(sizeLegend({ min: 5, max: 5 }, "n", "n", {}).children)).filter((child) => child.type === "circle");
+        const circles = optionRecords(sizeLegend({ min: 5, max: 5 }, "n", "n", {}).children).filter((child) => child.type === "circle");
         expect(circles).toHaveLength(1);
     });
 });
@@ -177,8 +177,9 @@ describe("the categorical palette", () => {
 describe("the legend icons", () => {
     /** The icon of each legend entry of one option. */
     function icons(option: EchartOption): Record<string, unknown> {
-        const data = optionRecords((optionRecord(option.legend)).data);
-        return Object.fromEntries(data.map((entry) => [entry.name, entry.icon]));
+        const byName: Record<string, unknown> = {};
+        for (const entry of optionRecords(optionRecord(option.legend).data)) byName[optionText(entry.name)] = entry.icon;
+        return byName;
     }
 
     const rows: ChartRow[] = [

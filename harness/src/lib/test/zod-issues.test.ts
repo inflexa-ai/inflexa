@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { hintForZodIssue, repairToolInput } from "../zod-issues.js";
+import { maybeRecord, typedMember } from "../../lib/shape.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 
 /** Parse `input` against `schema` and return the issues it produced. */
@@ -250,8 +251,7 @@ describe("repairToolInput", () => {
         const schema = z.object({ note: z.string(), synthesis: z.object({ runId: z.string() }) });
         const input = { note: '{"not":"a schema object"}', synthesis: '{"runId":"run-1"}</parameter>' };
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const repaired = repairAgainst(schema, input) as { note: string; synthesis: unknown };
+        const repaired = schema.parse(repairAgainst(schema, input));
 
         expect(repaired.note).toBe('{"not":"a schema object"}');
         expect(repaired.synthesis).toEqual({ runId: "run-1" });
@@ -317,14 +317,17 @@ describe("repairToolInput", () => {
             ],
         };
 
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const repaired = repairAgainst(schema, input) as typeof input & { findings: { references: unknown }[] };
+        const repaired = repairAgainst(schema, input);
+        const parsed = schema.parse(repaired);
 
-        expect(repaired.findings[1].references).toEqual([{ pmid: "2" }]);
+        expect(parsed.findings[1].references).toEqual([{ pmid: "2" }]);
         expect(schema.safeParse(repaired).success).toBe(true);
-        // Untouched branches are shared, not copied.
-        expect(repaired.meta).toBe(input.meta);
-        expect(repaired.findings[0]).toBe(input.findings[0]);
+        // Untouched branches are shared, not copied: the reads below guard the raw object, not a parse.
+        const record = must(maybeRecord(repaired), "the repair returned an object");
+        const rawFindings: unknown = typedMember(record, "findings");
+        if (!Array.isArray(rawFindings)) throw new Error("the repair kept no findings array");
+        expect(typedMember(record, "meta")).toBe(input.meta);
+        expect(rawFindings[0]).toBe(input.findings[0]);
         expect(input.findings[1].references).toBe('[{"pmid":"2"}]</parameter>\n</invoke>');
     });
 

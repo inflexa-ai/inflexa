@@ -35,7 +35,7 @@ export const PLANNABLE_AGENT_IDS: readonly [string, ...string[]] = (() => {
     if (ids.length === 0) {
         throw new Error("PLANNABLE_AGENT_CATALOG is empty");
     }
-    return ids as [string, ...string[]];
+    return [ids[0], ...ids.slice(1)];
 })();
 
 /**

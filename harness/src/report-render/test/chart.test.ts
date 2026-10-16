@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock, ChartComposition, ChartTransform } from "../../contracts/report-blocks.js";
 import { renderChart } from "../views/chart-view.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, transformColumn, type ChartDataSource, type ChartRow, type EchartOption } from "../chart.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, transformColumn, type ChartRow, type EchartOption } from "../chart.js";
 import { MANHATTAN_P_THRESHOLD, VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "../chart-presets.js";
 import { CHART_RENDERERS_SOURCE, exportOption } from "../chart-renderers.js";
 import {
@@ -22,7 +22,7 @@ import {
 import { POINT_NAMES } from "../figures/dense.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import { ReferenceLedger } from "../references.js";
-import { optionNumber, optionRecord } from "../option-lens.js";
+import { optionNumber, optionPercent, optionRecord, optionSource, optionText } from "../option-lens.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 import { optionArray } from "../../report-render/option-lens.js";
 
@@ -607,7 +607,7 @@ describe("the axis name placement", () => {
             const derived = derive(chartBlock(entry.chartType, entry.encoding, { labels: entry.labels }), entry.rows).xAxis;
             // A box of a thin category adds the hidden slot axis after its category axis.
             const xAxis = asObj(Array.isArray(derived) ? derived[0] : derived);
-            const column = String(entry.encoding.x);
+            const column = optionText(entry.encoding.x);
             expect(xAxis.name).toBe(entry.labels?.[column] ?? column);
             // The ECharts default `nameLocation` of `"end"` puts the name at the right end of the axis, past
             // the right grid margin that the shared normalizer sets. The panel then clips the name. The
@@ -1277,7 +1277,7 @@ describe("the point labels across a series split", () => {
         const names: string[] = [];
         for (const entry of asArr(option.series)) {
             for (const point of asArr(asObj(entry).data)) {
-                if (typeof point === "object" && point !== null && "label" in point) names.push(String(asObj(point).name));
+                if (typeof point === "object" && point !== null && "label" in point) names.push(optionText(asObj(point).name));
             }
         }
         return names;
@@ -1597,7 +1597,7 @@ describe("the composition guards", () => {
         // The schema holds a composition to one series at least, thus the cast is the only way to reach the
         // guard that protects the axes of the derivation.
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const empty = { series: [] } as unknown as ChartComposition;
+        const empty: ChartComposition = { series: [] };
         const problem = deriveChartOption(composedBlock(empty, { id: "ce" }), [{ t: 1 }])._unsafeUnwrapErr();
         expect(problem.kind).toBe("invalid-chart-input");
         expect(problem.blockId).toBe("ce");
@@ -1712,9 +1712,8 @@ describe("the dense chart reads the shared payload", () => {
     const target = { key: "c1", columns: COLUMNS };
 
     /** The data source of one derived option, or `undefined` where the option carries its rows. */
-    function sourceOf(option: EchartOption): ChartDataSource | undefined {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        return option[CHART_SOURCE_MEMBER] as ChartDataSource | undefined;
+    function sourceOf(option: EchartOption) {
+        return optionSource(option[CHART_SOURCE_MEMBER]);
     }
 
     it("keeps a chart under the bound byte-identical to the inline derivation", () => {
@@ -1890,10 +1889,9 @@ describe("the channel transform", () => {
      * numbers that a chart plots, thus the test runs the fragment and calls its one entry point.
      */
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    const transformOnThePage = evaluatePageScript<() => (
-        cells: (string | number)[],
-        transform: ChartTransform,
-    ) => (number | null)[]>(`${CHART_SERIES_BUILDER}\nreturn reportTransform;`);
+    const transformOnThePage = evaluatePageScript<() => (cells: (string | number)[], transform: ChartTransform) => (number | null)[]>(
+        `${CHART_SERIES_BUILDER}\nreturn reportTransform;`,
+    );
 
     /** The server transform of one column of cells. The helper reads rows, thus each cell rides one row. */
     function transformOnTheServer(entry: Entry): (number | null)[] {
@@ -1930,12 +1928,9 @@ describe("a dense category axis", () => {
 
     /** The page twin of the export option. */
     // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-    const exportOnThePage = evaluatePageScript<() => (
-        option: EchartOption,
-        textPx: number,
-        widthPx: number,
-        heightPx: number,
-    ) => EchartOption>(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`);
+    const exportOnThePage = evaluatePageScript<() => (option: EchartOption, textPx: number, widthPx: number, heightPx: number) => EchartOption>(
+        `${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`,
+    );
 
     /**
      * The count of labels that the axis prints. A numeric interval prints every (interval + 1)th label. Any other
@@ -1970,7 +1965,7 @@ describe("a dense category axis", () => {
         expect(axes.length).toBe(2);
         for (const axis of axes) {
             const label = asObj(axis.axisLabel);
-            const panelPx = (CHART_PAGE_WIDTH_PX * Number.parseFloat(String(grids[optionNumber(axis.gridIndex)].width))) / 100;
+            const panelPx = (CHART_PAGE_WIDTH_PX * optionPercent(grids[optionNumber(axis.gridIndex)].width)) / 100;
             expect(label.rotate).toBe(90);
             expect(printedLabels(200, label)).toBeLessThanOrEqual(Math.floor(panelPx / (CHART_PAGE_TEXT_PX * LINE_SHARE)));
         }

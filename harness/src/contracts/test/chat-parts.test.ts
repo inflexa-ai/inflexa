@@ -200,7 +200,7 @@ describe("the finding of the run synthesis part", () => {
     };
 
     test("a parse keeps the references of each finding", () => {
-        expect(RunSynthesisPartSchema.parse(part).findings[0]!.references).toEqual(finding.references);
+        expect(RunSynthesisPartSchema.parse(part).findings[0].references).toEqual(finding.references);
     });
 
     test("a finding with no references fails the parse", () => {
@@ -209,7 +209,7 @@ describe("the finding of the run synthesis part", () => {
     });
 
     test("a concordance outside the four values fails the parse", () => {
-        const odd = { ...finding, references: [{ ...finding.references[0]!, concordance: "agrees" }] };
+        const odd = { ...finding, references: [{ ...finding.references[0], concordance: "agrees" }] };
         expect(RunSynthesisPartSchema.safeParse({ ...part, findings: [odd] }).success).toBe(false);
     });
 });

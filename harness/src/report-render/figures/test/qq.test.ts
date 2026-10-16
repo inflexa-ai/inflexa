@@ -10,7 +10,6 @@ import {
     CHART_SOURCE_MEMBER,
     deriveChartOption,
     deriveChartRender,
-    type ChartDataSource,
     type ChartInputs,
     type ChartOpts,
     type ChartRow,
@@ -20,8 +19,7 @@ import { CHART_INLINE_OPTION_BOUND } from "../../design.js";
 import { BELOW_RESOLUTION_SYMBOL } from "../dense.js";
 import { FIGURE_MODULES } from "../index.js";
 import { QQ_BAND_POINTS, QQ_FIGURE, QQ_POINT_PX } from "../qq.js";
-import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
-import { optionArray } from "../../../report-render/option-lens.js";
+import { optionArray, optionNumber, optionNumberOrUndefined, optionNumbers, optionRecord, optionRecords } from "../../option-lens.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -80,12 +78,10 @@ describe("the QQ figure", () => {
     it("draws the band between the two bounds in light gray under the points", () => {
         const [points, lower, upper] = seriesOf(derive());
         expect(lower.stack).toBe(upper.stack);
-        expect((optionRecord(lower.lineStyle)).opacity).toBe(0);
+        expect(optionRecord(lower.lineStyle).opacity).toBe(0);
         expect(upper.areaStyle).toBeDefined();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(optionNumber(lower.z)).toBeLessThan((points.z as number | undefined) ?? 2);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(optionNumber(upper.z)).toBeLessThan((points.z as number | undefined) ?? 2);
+        expect(optionNumber(lower.z)).toBeLessThan(optionNumberOrUndefined(points.z) ?? 2);
+        expect(optionNumber(upper.z)).toBeLessThan(optionNumberOrUndefined(points.z) ?? 2);
         // The band reads each row with both bounds, whether or not the row draws a point.
         expect(lower.data).toEqual([
             [0, 0],
@@ -96,8 +92,12 @@ describe("the QQ figure", () => {
             [6.4, 5.5],
             [6.41, 5.52],
         ]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((upper.data as number[][]).map(([x, width]) => [x, Number(width.toFixed(6))])).toEqual([
+        expect(
+            optionArray(upper.data).map((row) => {
+                const [x, width] = optionNumbers(row);
+                return [x, Number(width.toFixed(6))];
+            }),
+        ).toEqual([
             [0, 0],
             [0.3, 0.05],
             [1, 0.11],
@@ -110,8 +110,7 @@ describe("the QQ figure", () => {
 
     it("draws the identity line to the largest expected value, and gives each axis its own range", () => {
         const option = derive();
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const identity = (optionRecord(seriesOf(option)[0].markLine)).data as EchartOption[][];
+        const identity = optionArray(optionRecord(seriesOf(option)[0].markLine).data).map((pair) => optionRecords(pair));
         expect(identity).toEqual([[{ coord: [0, 0] }, { coord: [6.41, 6.41] }]]);
         const x = optionRecord(option.xAxis);
         const y = optionRecord(option.yAxis);
@@ -129,7 +128,7 @@ describe("the QQ figure", () => {
     it("prints the statistics in the top left corner", () => {
         const option = derive(block(ENCODING, { statistics: [LAMBDA] }), ROWS, { statistics: [{ label: "λ", value: 1.111615383472537 }] });
         const [text] = optionRecords(option.graphic);
-        expect((optionRecord(text.style)).text).toBe("λ = 1.11");
+        expect(optionRecord(text.style).text).toBe("λ = 1.11");
         expect(text.left).toBeDefined();
         expect(text.top).toBeDefined();
     });
@@ -149,7 +148,7 @@ describe("the QQ figure", () => {
         const triangles = seriesOf(option).filter((entry) => entry.symbol === BELOW_RESOLUTION_SYMBOL);
         expect(triangles.length).toBe(1);
         expect(triangles[0].data).toEqual([[3, 3]]);
-        expect(optionNumber((optionRecord(option.yAxis)).max)).toBeGreaterThanOrEqual(3);
+        expect(optionNumber(optionRecord(option.yAxis).max)).toBeGreaterThanOrEqual(3);
     });
 
     it("thins the band to at most 400 rows, the two ends included", () => {
@@ -160,8 +159,7 @@ describe("the QQ figure", () => {
         }
         rows.push({ expected_neg_log10_p: "400", observed_neg_log10_p: "400", ci_lower: "0", ci_upper: "1" });
         const lower = seriesOf(derive(block(), rows))[1];
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const xs = (lower.data as number[][]).map(([x]) => x);
+        const xs = optionArray(lower.data).map((row) => optionNumbers(row).at(0));
         expect(QQ_BAND_POINTS).toBe(400);
         expect(xs.length).toBeLessThanOrEqual(QQ_BAND_POINTS);
         expect(xs[0]).toBe(0);
@@ -191,9 +189,9 @@ describe("the QQ figure", () => {
         }));
         const [, lower, upper] = seriesOf(derive(block(), rows));
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(lower.data)).length).toBe(QQ_BAND_POINTS);
+        expect(optionArray(lower.data).length).toBe(QQ_BAND_POINTS);
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(upper.data)).length).toBe(QQ_BAND_POINTS);
+        expect(optionArray(upper.data).length).toBe(QQ_BAND_POINTS);
     });
 
     it("derives the same bytes two times", () => {
@@ -224,16 +222,15 @@ describe("the dense QQ plot", () => {
         const render = deriveChartRender(block(), rows, COLUMNS, { key: "qq", columns: COLUMNS }, {}, OPTS)._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
-        expect(source.series.length).toBe(1);
+        const source = optionRecord(render.option[CHART_SOURCE_MEMBER]);
+        expect(optionRecords(source.series).length).toBe(1);
         const [points, lower, upper] = seriesOf(render.option);
         expect(points.data).toEqual([]);
         // The band holds a width that no cell gives, thus it rides the page option, thinned along the axis.
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(lower.data)).length).toBeLessThanOrEqual(QQ_BAND_POINTS + 1);
+        expect(optionArray(lower.data).length).toBeLessThanOrEqual(QQ_BAND_POINTS + 1);
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(lower.data)).length).toBeGreaterThan(QQ_BAND_POINTS / 2);
+        expect(optionArray(lower.data).length).toBeGreaterThan(QQ_BAND_POINTS / 2);
         expect(upper.data).toEqual(seriesOf(render.inline)[2].data);
         expect(JSON.stringify(render.option).length).toBeLessThan(CHART_INLINE_OPTION_BOUND);
     });

@@ -31,6 +31,9 @@ import { errorMessage } from "../../lib/thrown.js";
 const SOURCES = ["dgidb", "drugbank", "pharmgkb"] as const;
 type Source = (typeof SOURCES)[number];
 
+/** The corpus the tool searches when the caller names none. */
+const DEFAULT_SOURCES: Source[] = ["dgidb"];
+
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 200;
 const MAX_INPUTS = 25;
@@ -171,7 +174,7 @@ export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; l
         describeCall: "none",
         execute: async (input) => {
             const inputs = typeof input.query === "string" ? [input.query] : input.query;
-            const selected = input.sources ?? (["dgidb"] as Source[]);
+            const selected = input.sources ?? DEFAULT_SOURCES;
             const limit = input.limit ?? DEFAULT_LIMIT;
             const isGeneSide = input.direction === "gene_to_drugs";
 

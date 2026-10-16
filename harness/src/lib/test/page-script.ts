@@ -8,7 +8,7 @@ type PageFn = (...args: never[]) => unknown;
 
 /** Compiles and runs a page script; `F` is the script's own parameter and return contract. */
 export function evaluatePageScript<F extends PageFn>(source: string, ...args: Parameters<F>): ReturnType<F> {
-    // oxlint-disable-next-line typescript/no-implied-eval,typescript/no-unsafe-call -- the helper evaluates this repo's page-source bytes, because the page runs them as script and the test's subject is the exact shipped bytes
+    // oxlint-disable-next-line typescript/no-implied-eval,typescript/no-unsafe-call,typescript/no-unsafe-return -- the helper evaluates this repo's page-source bytes, because the page runs them as script and the test's subject is the exact shipped bytes
     return new Function(source)(...args);
 }
 
@@ -16,7 +16,7 @@ export function evaluatePageScript<F extends PageFn>(source: string, ...args: Pa
 export function runPageScript<F extends PageFn>(params: string[], source: string, ...args: Parameters<F>): ReturnType<F>;
 export function runPageScript(params: string[], source: string, ...args: unknown[]): void;
 export function runPageScript(params: string[], source: string, ...args: unknown[]): unknown {
-    // oxlint-disable-next-line typescript/no-implied-eval,typescript/no-unsafe-call -- the helper evaluates this repo's page-source bytes, because the page runs them as script and the test's subject is the exact shipped bytes
+    // oxlint-disable-next-line typescript/no-implied-eval,typescript/no-unsafe-call,typescript/no-unsafe-return -- the helper evaluates this repo's page-source bytes, because the page runs them as script and the test's subject is the exact shipped bytes
     return new Function(...params, source)(...args);
 }
 

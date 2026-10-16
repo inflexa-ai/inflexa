@@ -25,7 +25,7 @@ import { runAgent, type RunAgentOptions } from "../run-agent.js";
 import { passthroughStep } from "../run-step.js";
 import type { AgentDefinition } from "../types.js";
 import { jsonParse } from "../../lib/json.js";
-import { fetchDouble } from "../../lib/test/doubles.js";
+import { fetchDouble, requestBodyText } from "../../lib/test/doubles.js";
 import { optionNumber } from "../../report-render/option-lens.js";
 
 const ANTHROPIC_5M = { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } };
@@ -315,7 +315,7 @@ describe("runAgent prompt-cache directive", () => {
     it("sends no directive when the host turns caching off", async () => {
         const chat = neverTerminating();
 
-        await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
+        await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" }));
 
         // 2 iterations + 2 wrap-up requests.
         expect(chat.calls).toHaveLength(4);
@@ -400,7 +400,7 @@ describe("runAgent cache-token metrics", () => {
         if (metric === undefined) return undefined;
         return metric.dataPoints
             .filter((dp) => Object.entries(labels).every(([key, value]) => dp.attributes[key] === value))
-            .reduce((acc, dp) => acc + (optionNumber(dp.value)), 0);
+            .reduce((acc, dp) => acc + optionNumber(dp.value), 0);
     }
 
     it("sums usage across every iteration of a run and reports it per agent, model, and provider", async () => {
@@ -506,7 +506,7 @@ describe("runAgent cache-token metrics", () => {
 function cannedOpenAiFetch(seen: Record<string, unknown>[]): typeof fetch {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return fetchDouble((_input, init) => {
-        seen.push(jsonParse(String(init?.body), z.record(z.string(), z.unknown())));
+        seen.push(jsonParse(requestBodyText(init?.body), z.record(z.string(), z.unknown())));
         const base = { id: "chatcmpl-1", object: "chat.completion.chunk", created: 1_700_000_000, model: "local-model" };
         const body = [
             `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "done" }, finish_reason: null }] })}\n\n`,
@@ -588,15 +588,17 @@ describe("prompt caching against an openai-compatible provider", () => {
 function cannedBedrockFetch(seen: Record<string, unknown>[]): typeof fetch {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return fetchDouble((_input, init) => {
-        seen.push(jsonParse(String(init?.body), z.record(z.string(), z.unknown())));
-        return Promise.resolve(new Response(
-            JSON.stringify({
-                output: { message: { role: "assistant", content: [{ text: "ok" }] } },
-                stopReason: "end_turn",
-                usage: { inputTokens: 10, outputTokens: 3, totalTokens: 13 },
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-        ));
+        seen.push(jsonParse(requestBodyText(init?.body), z.record(z.string(), z.unknown())));
+        return Promise.resolve(
+            new Response(
+                JSON.stringify({
+                    output: { message: { role: "assistant", content: [{ text: "ok" }] } },
+                    stopReason: "end_turn",
+                    usage: { inputTokens: 10, outputTokens: 3, totalTokens: 13 },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+            ),
+        );
     });
 }
 
@@ -611,7 +613,7 @@ describe("the bedrock marker on the wire", () => {
             messages: [...withPromptCacheBreakpoint([userText("first"), assistantText("second"), userText("third")], policy)],
         });
 
-        const messages = (bodies[0]?.["messages"] ?? []) as { content: Record<string, unknown>[] }[];
+        const messages = z.array(z.looseObject({ content: z.array(z.record(z.string(), z.json())) })).parse(bodies[0]?.["messages"] ?? []);
         return messages.at(-1)?.content ?? [];
     }
 
@@ -643,7 +645,7 @@ describe("the bedrock marker on the wire", () => {
             messages: [userText("first")],
         });
 
-        const system = (bodies[0]?.["system"] ?? []) as Record<string, unknown>[];
+        const system = z.array(z.record(z.string(), z.json())).parse(bodies[0]?.["system"] ?? []);
         expect(system.at(-1)).toEqual({ cachePoint: { type: "default", ttl: "5m" } });
         expect(system.at(-2)).toEqual({ text: "You are a test agent." });
     });

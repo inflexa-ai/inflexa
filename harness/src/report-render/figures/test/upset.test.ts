@@ -11,6 +11,7 @@ import { deriveChartOption, type ChartRow, type EchartOption } from "../../chart
 import { CHART_EXPORT_SIZES, CHART_INK } from "../../design.js";
 import { UPSET_INTERSECTION_LIMIT, UPSET_SET_LIMIT, upsetSummary } from "../upset.js";
 import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
+import { must } from "../../../lib/test/guards.js";
 import { optionArray, optionNumbers, optionStrings } from "../../../report-render/option-lens.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -53,7 +54,7 @@ function refusal(rows: readonly ChartRow[], encoding: Encoding = ENCODING): stri
 }
 
 function seriesById(option: EchartOption, id: string): EchartOption {
-    const found = (optionRecords(option.series)).find((entry) => entry.id === id);
+    const found = optionRecords(option.series).find((entry) => entry.id === id);
     if (found === undefined) throw new Error(`no series ${id}`);
     return found;
 }
@@ -154,9 +155,15 @@ describe("the upset figure on the LAML membership table", () => {
         const option = derive(LAML_ROWS);
         const bars = seriesById(option, "intersections");
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((optionNumbers(bars.data)).slice(0, 5)).toEqual([22, 13, 9, 9, 8]);
+        expect(optionNumbers(bars.data).slice(0, 5)).toEqual([22, 13, 9, 9, 8]);
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((optionStrings(axesOf(option, "xAxis")[optionNumber(bars.xAxisIndex)].data)).slice(0, 5)).toEqual(["FLT3", "IDH2", "DNMT3A", "TET2", "FLT3 & NPM1"]);
+        expect(optionStrings(axesOf(option, "xAxis")[optionNumber(bars.xAxisIndex)].data).slice(0, 5)).toEqual([
+            "FLT3",
+            "IDH2",
+            "DNMT3A",
+            "TET2",
+            "FLT3 & NPM1",
+        ]);
         expect(axesOf(option, "xAxis")[optionNumber(seriesById(option, "members").xAxisIndex)].name).toBeUndefined();
     });
 });
@@ -196,8 +203,8 @@ describe("the upset figure", () => {
         ]);
         expect(members.itemStyle).toEqual(expect.objectContaining({ color: CHART_INK }));
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(absent.data)).length).toBe(6 * 4 - 10);
-        expect((optionRecord(absent.itemStyle)).color).not.toBe(CHART_INK);
+        expect(optionArray(absent.data).length).toBe(6 * 4 - 10);
+        expect(optionRecord(absent.itemStyle).color).not.toBe(CHART_INK);
         // A line joins the top and the bottom member dot of each intersection of two sets or more.
         expect(joins.type).toBe("lines");
         expect(joins.data).toEqual([
@@ -263,11 +270,10 @@ describe("the upset figure", () => {
     it("sizes the dots for each export through one media rule for each export size", () => {
         const option = derive(manyIntersections(40));
         const media = optionRecords(option.media);
-        const single = media.find((rule) => (optionRecord(rule.query)).maxWidth === CHART_EXPORT_SIZES.single.widthPx);
+        const single = media.find((rule) => optionRecord(rule.query).maxWidth === CHART_EXPORT_SIZES.single.widthPx);
         expect(single).toBeDefined();
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const series = (single as { option: EchartOption }).option.series as EchartOption[];
-        const place = (optionRecords(option.series)).findIndex((entry) => entry.id === "members");
+        const series = optionRecords(optionRecord(must(single, "the media rule").option).series);
+        const place = optionRecords(option.series).findIndex((entry) => entry.id === "members");
         const pageDot = optionNumber(seriesById(option, "members").symbolSize);
         expect(optionNumber(series[place].symbolSize)).toBeLessThan(pageDot);
         expect(optionNumber(series[place].symbolSize)).toBeGreaterThan(1);

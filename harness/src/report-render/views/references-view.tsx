@@ -15,6 +15,7 @@ import { citationRecordOf, type CitationRecords } from "../../report-model/refer
 import type { ArtifactValueReference, CitationReference, Reference } from "../../contracts/report-reference.js";
 import { citationKeyOf, type ArtifactReference, type DerivationChain, type DerivationChains, type ReferenceLedger } from "../references.js";
 import { LineageControl } from "./lineage.js";
+import { stringOfNode } from "./node-text.js";
 
 /**
  * One evidence marker as a bracket number that links to its appendix entry.
@@ -33,27 +34,27 @@ export const Marker: FC<{ n: number; lineage?: number }> = ({ n, lineage }) => {
             {lineage !== undefined ? <LineageControl place={lineage} /> : null}
         </span>
     );
-}
+};
 
 /** The kind label of one reference entry. */
 const RefKind: FC<PropsWithChildren> = ({ children }) => {
     return <span class="report-ref-kind">{children}</span>;
-}
+};
 
 /** A path in a monospace code span. */
 const PathCode: FC<PropsWithChildren> = ({ children }) => {
     return <code class="report-ref-path">{children}</code>;
-}
+};
 
 /** A plain detail such as a locator or an external id. */
 const Detail: FC<PropsWithChildren> = ({ children }) => {
     return <span class="report-ref-detail">{children}</span>;
-}
+};
 
 /** The head of a content hash in a monospace span. */
 const HashCode: FC<PropsWithChildren> = ({ children }) => {
     return <code class="report-ref-hash">{children}</code>;
-}
+};
 
 /**
  * The count of hash characters that a chain line shows.
@@ -87,7 +88,7 @@ const ScriptLink: FC<{ chain: DerivationChain }> = ({ chain }) => {
             {head}
         </a>
     );
-}
+};
 
 /**
  * The chain of one derived path: each source with the head of its hash, then the head of the script hash,
@@ -123,7 +124,7 @@ const ChainLine: FC<{ chain: DerivationChain }> = ({ chain }) => {
             ) : null}
         </div>
     );
-}
+};
 
 /**
  * The one path that an artifact reference names, or `undefined` for a kind that names no single file.
@@ -188,7 +189,7 @@ const ReferenceBody: FC<{ reference: ArtifactReference }> = ({ reference }) => {
                 </>
             );
     }
-}
+};
 
 /**
  * One artifact entry: the body of its kind, and the chain of its path where the records hold one.
@@ -205,7 +206,7 @@ const ArtifactEntry: FC<{ reference: ArtifactReference; chains: DerivationChains
             {chain !== undefined ? <ChainLine chain={chain} /> : null}
         </>
     );
-}
+};
 
 /**
  * The inner markup of one literature entry: the kind tag, the short citation of the pinned record, the key,
@@ -231,12 +232,16 @@ const CitationEntry: FC<{ reference: CitationReference; records: CitationRecords
             {description !== undefined ? <div class="report-cite-description">{description}</div> : null}
         </>
     );
-}
+};
 
 /** One appendix entry. The kind of the reference selects the shape, and the two shapes share the ladder. */
-const ReferenceEntry: FC<{ reference: Reference; records: CitationRecords | undefined; chains: DerivationChains | undefined }> = ({ reference, records, chains }) => {
+const ReferenceEntry: FC<{ reference: Reference; records: CitationRecords | undefined; chains: DerivationChains | undefined }> = ({
+    reference,
+    records,
+    chains,
+}) => {
     return reference.kind === "citation" ? <CitationEntry reference={reference} records={records} /> : <ArtifactEntry reference={reference} chains={chains} />;
-}
+};
 
 /**
  * The one appendix list: one entry for each distinct reference of the page, in the order of the ladder.
@@ -254,7 +259,7 @@ export function renderReferences(ledger: ReferenceLedger, records?: CitationReco
     if (entries.length === 0) {
         return "";
     }
-    return String(
+    return stringOfNode(
         <ol class="report-references">
             {entries.map((reference, index) => (
                 <li id={`ref-${index + 1}`} class="report-ref-item">

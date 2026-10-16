@@ -5,11 +5,11 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "../../chart.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND, CHART_WIDE_PALETTE, SEQUENTIAL_RAMP } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
 import { EMBEDDING_GROUND, EMBEDDING_LARGE_CELLS, EMBEDDING_OPACITY, embeddingPointPx } from "../embedding.js";
-import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
+import { optionArray, optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -43,8 +43,8 @@ describe("the embedding figure", () => {
     const option = deriveChartOption(block({ x: "UMAP_1", y: "UMAP_2", group: "cluster" }), PBMC)._unsafeUnwrap();
 
     it("hides each axis part, and names the two dimensions in a key at the bottom left corner", () => {
-        const xAxis = (optionRecords(option.xAxis))[0];
-        const yAxis = (optionRecords(option.yAxis))[0];
+        const xAxis = optionRecords(option.xAxis)[0];
+        const yAxis = optionRecords(option.yAxis)[0];
         for (const axis of [xAxis, yAxis]) {
             expect([asObj(axis.axisLine).show, asObj(axis.axisTick).show, asObj(axis.axisLabel).show, asObj(axis.splitLine).show]).toEqual([
                 false,
@@ -58,10 +58,10 @@ describe("the embedding figure", () => {
     });
 
     it("gives the two axes one length of data on a square grid", () => {
-        const xAxis = (optionRecords(option.xAxis))[0];
-        const yAxis = (optionRecords(option.yAxis))[0];
-        expect((optionNumber(xAxis.max)) - (optionNumber(xAxis.min))).toBeCloseTo((optionNumber(yAxis.max)) - (optionNumber(yAxis.min)), 9);
-        const grid = (optionRecords(option.grid))[0];
+        const xAxis = optionRecords(option.xAxis)[0];
+        const yAxis = optionRecords(option.yAxis)[0];
+        expect(optionNumber(xAxis.max) - optionNumber(xAxis.min)).toBeCloseTo(optionNumber(yAxis.max) - optionNumber(yAxis.min), 9);
+        const grid = optionRecords(option.grid)[0];
         expect(grid.width).toBe(grid.height);
     });
 
@@ -98,7 +98,7 @@ describe("the embedding figure", () => {
 
 describe("the continuous color of an embedding", () => {
     const option = deriveChartOption(block({ x: "UMAP_1", y: "UMAP_2", color: "LYZ" }), PBMC)._unsafeUnwrap();
-    const map = (optionRecords(option.visualMap))[0];
+    const map = optionRecords(option.visualMap)[0];
 
     it("draws a zero in the gray ground and clips the scale at the 99th percentile", () => {
         // The linear 99th percentile of the seven values, between 3.218876 and 4.1.
@@ -124,7 +124,7 @@ describe("the continuous color of an embedding", () => {
         const chosen = media
             .filter((rule) => asObj(rule.query).maxWidth === undefined && optionNumber(asObj(rule.query).minHeight ?? 0) <= render.bodyPx)
             .pop();
-        const left = optionNumber((optionRecords(asObj(chosen?.option).visualMap))[0].left);
+        const left = optionNumber(optionRecords(asObj(chosen?.option).visualMap)[0].left);
         expect(optionNumber(render.widthPx)).toBeGreaterThanOrEqual(left + title.length * 12 * 0.6);
     });
 
@@ -143,8 +143,7 @@ describe("the continuous color of an embedding", () => {
     });
 
     it("draws the high values on top", () => {
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const colors = (seriesOf(option)[0].data as unknown[][]).map((item) => item[2]);
+        const colors = optionArray(seriesOf(option)[0].data).map((item) => optionArray(item)[2]);
         expect(colors).toEqual([0, 0, 0.6931472, 1.0986123, 1.3862944, 3.218876, 4.1]);
     });
 
@@ -159,16 +158,13 @@ describe("the continuous color of an embedding", () => {
         const render = deriveChartRender(dense, rows, columns, { key: "k1", columns })._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
-        expect(source.series[0].rise).toBe(true);
+        const source = optionRecord(render.option[CHART_SOURCE_MEMBER]);
+        expect(optionRecords(source.series)[0].rise).toBe(true);
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const build = evaluatePageScript<() => (
-            payload: { columns: string[]; rows: ChartRow[] },
-            descriptor: ChartDataSource["series"][number],
-            rule: unknown,
-        ) => unknown[]>(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`);
-        const page = build({ columns, rows }, source.series[0], undefined);
+        const build = evaluatePageScript<() => (payload: { columns: string[]; rows: ChartRow[] }, descriptor: EchartOption, rule: unknown) => unknown[]>(
+            `${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`,
+        );
+        const page = build({ columns, rows }, optionRecords(source.series)[0], undefined);
         expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[0].data));
     });
 });
@@ -188,22 +184,24 @@ describe("the facet of an embedding", () => {
         const grids = optionRecords(option.grid);
         expect(grids.length).toBe(2);
         expect(grids.every((grid) => grid.width === grids[0].width && grid.height === grid.width)).toBe(true);
-        const axes = (optionRecords(option.xAxis)).slice(0, 2);
+        const axes = optionRecords(option.xAxis).slice(0, 2);
         expect(axes[0].min).toBe(axes[1].min);
         expect(axes[0].max).toBe(axes[1].max);
     });
 
     it("names each panel over its square, and keys the dimensions under the first square alone", () => {
-        const names = (optionRecords(option.xAxis)).filter((axis) => axis.position === "top").map((axis) => [axis.gridIndex, axis.name]);
+        const names = optionRecords(option.xAxis)
+            .filter((axis) => axis.position === "top")
+            .map((axis) => [axis.gridIndex, axis.name]);
         expect(names).toEqual([
             [0, "control"],
             [1, "stimulated"],
         ]);
-        expect((optionRecords(option.xAxis))[1].name).toBeUndefined();
+        expect(optionRecords(option.xAxis)[1].name).toBeUndefined();
     });
 
     it("draws the zero cells of each panel in the ground", () => {
-        const map = (optionRecords(option.visualMap))[0];
+        const map = optionRecords(option.visualMap)[0];
         expect(map.seriesIndex).toEqual([0, 1]);
         expect(map.outOfRange).toEqual({ color: EMBEDDING_GROUND });
     });

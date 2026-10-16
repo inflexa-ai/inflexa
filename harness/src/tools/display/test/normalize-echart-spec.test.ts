@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { categoryCount, kebabFilename, normalizeEchartSpec } from "../normalize-echart-spec.js";
-import { optionRecord } from "../../../report-render/option-lens.js";
+import { optionRecord, optionRecords } from "../../../report-render/option-lens.js";
 
 /** A cartesian bar spec with `n` inline categories and `series` series. */
 function barSpec(n: number, series = 1): Record<string, unknown> {
@@ -14,8 +14,7 @@ function barSpec(n: number, series = 1): Record<string, unknown> {
 
 /** The normalized x-axis label options. */
 function axisLabel(spec: Record<string, unknown>): Record<string, unknown> {
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return (spec.xAxis as Record<string, Record<string, unknown>>).axisLabel;
+    return optionRecord(optionRecord(spec.xAxis).axisLabel);
 }
 
 /** The normalized grid. */
@@ -26,9 +25,7 @@ function grid(spec: Record<string, unknown>): Record<string, unknown> {
 
 /** The normalized `saveAsImage` feature. */
 function saveAsImage(spec: Record<string, unknown>): Record<string, unknown> {
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    const toolbox = spec.toolbox as { feature: { saveAsImage: Record<string, unknown> } };
-    return toolbox.feature.saveAsImage;
+    return optionRecord(optionRecord(optionRecord(spec.toolbox).feature).saveAsImage);
 }
 
 describe("normalizeEchartSpec — title", () => {
@@ -108,8 +105,7 @@ describe("normalizeEchartSpec — axis labels", () => {
     it("pins axisLabel.interval to 0 on both axes, overriding ECharts' silent label-skipping default", () => {
         const out = normalizeEchartSpec({ ...barSpec(6), xAxis: { type: "category", data: ["a"], axisLabel: { interval: "auto", color: "#333" } } }, {});
         expect(axisLabel(out)).toEqual({ interval: 0, color: "#333" });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((out.yAxis as Record<string, Record<string, unknown>>).axisLabel).toEqual({ interval: 0 });
+        expect(optionRecord(optionRecord(out.yAxis).axisLabel)).toEqual({ interval: 0 });
     });
 
     it("leaves <=10 categories horizontal", () => {
@@ -134,17 +130,14 @@ describe("normalizeEchartSpec — axis labels", () => {
 
     it("normalizes every entry of an array-valued xAxis", () => {
         const out = normalizeEchartSpec({ xAxis: [{ type: "category", data: ["a"] }, { type: "value" }], series: [{ type: "line" }] }, {});
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const axes = out.xAxis as Record<string, unknown>[];
+        const axes = optionRecords(out.xAxis);
         expect(axes).toHaveLength(2);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(axes.every((a) => (optionRecord(a.axisLabel)).interval === 0)).toBe(true);
+        expect(axes.every((a) => optionRecord(a.axisLabel).interval === 0)).toBe(true);
     });
 
     it("does not rotate y-axis labels (a horizontal bar chart's categories read left-to-right)", () => {
         const out = normalizeEchartSpec({ xAxis: { type: "value" }, yAxis: { type: "category", data: Array(30).fill("g") }, series: [{ type: "bar" }] }, {});
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const y = (out.yAxis as Record<string, Record<string, unknown>>).axisLabel;
+        const y = optionRecord(optionRecord(out.yAxis).axisLabel);
         expect(y).toEqual({ interval: 0 });
     });
 });
@@ -262,7 +255,7 @@ describe("normalizeEchartSpec — toolbox", () => {
         expect(toolbox.left).toBe(0);
         expect(toolbox.right).toBeUndefined();
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((optionRecord(toolbox.feature)).dataZoom).toEqual({});
+        expect(optionRecord(toolbox.feature).dataZoom).toEqual({});
         expect(saveAsImage(out)).toEqual({ name: "keep-me", type: "png" });
     });
 });

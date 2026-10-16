@@ -10,6 +10,7 @@ import type { Browser } from "puppeteer-core";
 
 import { getBrowser, setBrowserConnector, withPage } from "../chrome.js";
 import { sleep } from "../../lib/async-utils.js";
+import { stubBrowser } from "../../lib/test/doubles.js";
 
 /** A browser that no process backs, plus the control that fires the disconnect event of that browser. */
 type FakeBrowser = {
@@ -18,26 +19,14 @@ type FakeBrowser = {
 };
 
 function makeFakeBrowser(id: string): FakeBrowser {
-    const listeners: Array<() => void> = [];
-    const fake = {
-        connected: true,
-        on(event: string, listener: () => void) {
-            if (event === "disconnected") listeners.push(listener);
-        },
-        wsEndpoint: () => `ws://${id}`,
-        createBrowserContext: () => Promise.resolve({
-            newPage: () => Promise.resolve({}),
-            close: () => Promise.resolve({}),
-        }),
-    };
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+    // The cache reads the connected flag, it registers the disconnect listener, it logs the socket
+    // endpoint, and it opens one context for each page. The kit stub carries those members, and the
+    // endpoint member names the id so a mixed-up connection stays visible in a log.
+    const browser = stubBrowser("", { wsEndpoint: () => `ws://${id}` });
     return {
-        // The cache reads the connected flag, it registers the disconnect listener, it logs the socket
-        // endpoint, and it opens one context for each page. The fake carries those four members, thus no call
-        // of the cache reaches the gap between the fake and the class of puppeteer.
-        browser: fake as unknown as Browser,
+        browser,
         emitDisconnected() {
-            for (const listener of listeners) listener();
+            browser.emit("disconnected", undefined);
         },
     };
 }
@@ -57,7 +46,7 @@ afterEach(() => {
 describe("the connection cache", () => {
     it("holds one connection for each endpoint", async () => {
         const calls: string[] = [];
-        restoreConnector = setBrowserConnector( (browserUrl) => {
+        restoreConnector = setBrowserConnector((browserUrl) => {
             calls.push(browserUrl);
             return Promise.resolve(makeFakeBrowser(browserUrl).browser);
         });
@@ -75,7 +64,7 @@ describe("the connection cache", () => {
 
     it("reuses the connection of an endpoint that it reached already", async () => {
         let connects = 0;
-        restoreConnector = setBrowserConnector( (browserUrl) => {
+        restoreConnector = setBrowserConnector((browserUrl) => {
             connects++;
             return Promise.resolve(makeFakeBrowser(browserUrl).browser);
         });
@@ -90,7 +79,7 @@ describe("the connection cache", () => {
     it("evicts the entry of the endpoint that disconnected, and it keeps the other endpoint", async () => {
         const calls: string[] = [];
         const fakes: FakeBrowser[] = [];
-        restoreConnector = setBrowserConnector( (browserUrl) => {
+        restoreConnector = setBrowserConnector((browserUrl) => {
             calls.push(browserUrl);
             const fake = makeFakeBrowser(`${browserUrl}/${calls.length}`);
             fakes.push(fake);
@@ -135,7 +124,7 @@ describe("the connection cache", () => {
             return "page-1";
         });
         await tick();
-        const other = withPage({ browserUrl: "http://broken.test:9222", maxPages: 2 },  () => {
+        const other = withPage({ browserUrl: "http://broken.test:9222", maxPages: 2 }, () => {
             started.push("page-2");
             return Promise.resolve("page-2");
         });
@@ -187,11 +176,11 @@ describe("the connection cache", () => {
             return "busy-1";
         });
         await tick();
-        const queued = withPage(busy,  () => {
+        const queued = withPage(busy, () => {
             started.push("busy-2");
             return Promise.resolve("busy-2");
         });
-        const other = withPage(idle,  () => {
+        const other = withPage(idle, () => {
             started.push("idle-1");
             return Promise.resolve("idle-1");
         });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { unwrapOrThrow } from "../../lib/result.js";
+import { errorMessage } from "../../lib/thrown.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { createWorkspaceFilesystem, type PresignedFallback, type WorkspaceFilesystem } from "../filesystem.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
@@ -23,7 +24,7 @@ describe("createWorkspaceFilesystem", () => {
 
     beforeEach(async () => {
         sessions = await makeRoot();
-        fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessions, id) });
+        fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessions, id)) });
     });
 
     afterEach(async () => {
@@ -43,8 +44,8 @@ describe("createWorkspaceFilesystem", () => {
     // seam promises `Result` and its tools run inside live chat turns. The throw must not escape.
     describe("an unresolvable workspace root", () => {
         const unresolvable = createWorkspaceFilesystem({
-            resolveWorkspaceRoot: async () => {
-                throw new Error("analysis folder is gone");
+            resolveWorkspaceRoot: () => {
+                return Promise.reject(new Error("analysis folder is gone"));
             },
         });
 
@@ -175,7 +176,7 @@ describe("createWorkspaceFilesystem", () => {
             },
         };
         const fs2 = createWorkspaceFilesystem({
-            resolveWorkspaceRoot: async (id) => join(sessions, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(sessions, id)),
             presignedFallback: fallback,
         });
         const r = (await fs2.readFile({ session, path: "data/inputs/cold.csv" }))._unsafeUnwrap();
@@ -192,15 +193,14 @@ describe("createWorkspaceFilesystem", () => {
             },
         };
         const fs2 = createWorkspaceFilesystem({
-            resolveWorkspaceRoot: async (id) => join(sessions, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(sessions, id)),
             presignedFallback: fallback,
         });
         const result = await fs2.readFile({ session, path: "data/inputs/cold.csv" });
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
             expect(result.error.type).toBe("fetch_failed");
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            expect((result.error.cause as Error).message).toContain("upstream 502");
+            expect(errorMessage(result.error.cause)).toContain("upstream 502");
         }
         // The tool edge would `unwrapOrThrow` this Result. `fetch_failed` carries no
         // `message` field, so the thrown `ResultError.message` falls back to the
@@ -219,9 +219,15 @@ describe("createWorkspaceFilesystem", () => {
         if (r.kind === "ok") {
             const names = r.entries.map((e) => e.name).sort();
             expect(names).toEqual(["a.csv", "b.csv", "sub"]);
-            const sub = must(r.entries.find((e) => e.name === "sub"), "sub");
+            const sub = must(
+                r.entries.find((e) => e.name === "sub"),
+                "sub",
+            );
             expect(sub.type).toBe("directory");
-            const a = must(r.entries.find((e) => e.name === "a.csv"), "a");
+            const a = must(
+                r.entries.find((e) => e.name === "a.csv"),
+                "a",
+            );
             expect(a.type).toBe("file");
             expect(a.size).toBe(1);
         }

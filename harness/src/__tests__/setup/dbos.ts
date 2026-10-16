@@ -105,17 +105,16 @@ function poolConnectionEnv(pool: Pool): {
     password: string;
     database: string;
 } {
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const cfg = (pool as unknown as { options?: Record<string, unknown> }).options ?? {};
+    const cfg = pool.options;
     if (cfg.connectionString) {
-        return parseConnectionStringToEnv(String(cfg.connectionString));
+        return parseConnectionStringToEnv(cfg.connectionString);
     }
     return {
-        host: String(cfg.host ?? "127.0.0.1"),
+        host: cfg.host ?? "127.0.0.1",
         port: String(cfg.port ?? "5432"),
-        user: String(cfg.user ?? "cortex"),
+        user: cfg.user ?? "cortex",
         password: String(cfg.password ?? "cortex"),
-        database: String(cfg.database ?? "cortex"),
+        database: cfg.database ?? "cortex",
     };
 }
 
@@ -228,9 +227,9 @@ export function registerDbosLifecycle(testName: string, onReady: (rig: DbosTestR
         rig = await setupDbosForTests(testName);
         onReady(rig);
     });
-    afterEach( () => {
+    afterEach(() => {
         // No-op: per-test cleanup is the caller's job. This helper exists
         // for tests that want a single rig for an entire `describe` block.
         return Promise.resolve();
-});
+    });
 }

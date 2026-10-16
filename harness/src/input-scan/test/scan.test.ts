@@ -1,14 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { ResultAsync, ok } from "neverthrow";
 
-import type { AgentSession } from "../../auth/types.js";
 import type { FsError } from "../../lib/fs-result.js";
 import type { ListResult, ReadBytesResult, StatResult, ReadFileResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { MAX_SCANNED_FILES, renderInputScanManifest, scanInputTree } from "../scan.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { stubAgentSession } from "../../lib/test/doubles.js";
 
 // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-const SESSION = { scope: { kind: "analysis", analysisId: "a1" } } as unknown as AgentSession;
+const SESSION = stubAgentSession({ scope: { kind: "analysis", analysisId: "a1" } });
 
 function okAsync<T>(value: T): ResultAsync<T, FsError> {
     return new ResultAsync(Promise.resolve(ok(value)));
@@ -60,10 +60,18 @@ describe("scanInputTree", () => {
             root: "data/inputs",
         });
 
-        const vcf = must(scan.files.find((f) => f.path.endsWith(".vcf.gz")), "vcf");
+        const vcf = must(
+            scan.files.find((f) => f.path.endsWith(".vcf.gz")),
+            "vcf",
+        );
         expect(vcf.format).toBe("vcf");
         expect(vcf.wrapper).toBe("gzip");
-        expect(must(must(scan, "scan").files.find((f) => f.path.endsWith(".csv")), "must(scan, \"scan\").files.find((f) => f.path.ends").format).toBe("csv");
+        expect(
+            must(
+                must(scan, "scan").files.find((f) => f.path.endsWith(".csv")),
+                'must(scan, "scan").files.find((f) => f.path.ends',
+            ).format,
+        ).toBe("csv");
     });
 
     it("stops at its ceiling and says so, rather than sampling silently", async () => {

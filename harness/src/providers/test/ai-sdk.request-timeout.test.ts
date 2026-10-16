@@ -6,7 +6,9 @@ import { createConfiguredAiSdkProvider, wrapFetchWithRequestTimeout, type AiSdkP
 import { isProviderError } from "../errors.js";
 import type { ChatRequest, ChatStreamEvent, FetchLike } from "../types.js";
 import { sleep } from "../../lib/async-utils.js";
-import { errorMessage, isError } from "../../lib/thrown.js";
+import { must } from "../../lib/test/guards.js";
+import { installWritable } from "../../lib/test/writable.js";
+import { errorMessage, errorName, isError } from "../../lib/thrown.js";
 
 const request: ChatRequest = {
     system: "You are a test model.",
@@ -140,8 +142,7 @@ describe("request-timeout guard", () => {
             throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
             expect(err).toBeInstanceOf(DOMException);
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            expect((err as DOMException).name).toBe("AbortError");
+            expect(errorName(err)).toBe("AbortError");
         }
     });
 
@@ -193,18 +194,16 @@ describe("request-timeout guard", () => {
         const realClearTimeout = globalThis.clearTimeout;
         const live = new Set<ReturnType<typeof setTimeout>>();
         let lastArmed: ReturnType<typeof setTimeout> | undefined;
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+        const restoreSetTimeout = installWritable(globalThis, "setTimeout", (...args: Parameters<typeof setTimeout>) => {
             const handle = realSetTimeout(...args);
             live.add(handle);
             lastArmed = handle;
             return handle;
-        }) as typeof globalThis.setTimeout;
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        globalThis.clearTimeout = ((handle?: ReturnType<typeof setTimeout>) => {
+        });
+        const restoreClearTimeout = installWritable(globalThis, "clearTimeout", (handle?: ReturnType<typeof setTimeout>) => {
             if (handle !== undefined) live.delete(handle);
             realClearTimeout(handle);
-        }) as typeof globalThis.clearTimeout;
+        });
 
         try {
             // A body that never ends and ignores its signal. The SDK bound owns each
@@ -223,8 +222,7 @@ describe("request-timeout guard", () => {
             const response = await wrapped("http://models.local/v1", { signal: caller.signal });
 
             expect(lastArmed).toBeDefined();
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const guardTimer = lastArmed as ReturnType<typeof setTimeout>;
+            const guardTimer = must(lastArmed, "the instrumented arm saw the guard timer");
             // The fetch promise settled at the headers, thus the one armed timer
             // left the live set and cannot reach a late, pointless expiry.
             expect(live.has(guardTimer)).toBe(false);
@@ -235,8 +233,8 @@ describe("request-timeout guard", () => {
             await response.body?.cancel();
         } finally {
             for (const handle of live) realClearTimeout(handle);
-            globalThis.setTimeout = realSetTimeout;
-            globalThis.clearTimeout = realClearTimeout;
+            restoreSetTimeout();
+            restoreClearTimeout();
         }
     });
 
@@ -284,8 +282,7 @@ describe("request-timeout transport lift", () => {
 
         expect(result.isOk()).toBe(true);
         expect(inits).toHaveLength(1);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(Object.hasOwn(inits[0] as object, "timeout")).toBe(false);
+        expect(Object.hasOwn(must(inits[0], "the provider sent one init"), "timeout")).toBe(false);
     });
 });
 
@@ -315,8 +312,7 @@ describe("request-timeout advertisement", () => {
             throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
             expect(err).toBeInstanceOf(DOMException);
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            expect((err as DOMException).name).toBe("AbortError");
+            expect(errorName(err)).toBe("AbortError");
         }
     });
 });
@@ -513,8 +509,7 @@ describe("SDK chunk bound", () => {
             expect(events).toEqual([{ type: "text-delta", text: "a" }]);
             expect(isProviderError(failure)).toBe(false);
             expect(failure).toBeInstanceOf(DOMException);
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            expect((failure as DOMException).name).toBe("AbortError");
+            expect(errorName(failure)).toBe("AbortError");
         } finally {
             await endpoint.close();
         }

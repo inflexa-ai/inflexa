@@ -8,14 +8,14 @@ import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../../providers/types.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { AD_HOC_FALLBACK_AGENT_ID, defaultAdHocResources, routeAdHocRequest, validAdHocResources } from "../ad-hoc-router.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, stubChatProvider } from "../../lib/test/doubles.js";
 
 function providerReturning(input: Record<string, unknown>, capture?: { system?: string }): ChatProvider {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return {
+    return stubChatProvider({
         capabilities: { toolCalling: true },
-        chat: (request: { system: string }) => {
-            if (capture) capture.system = request.system;
+        chat: (request) => {
+            if (capture) capture.system = typeof request.system === "string" ? request.system : JSON.stringify(request.system);
             return okAsync({
                 message: {
                     role: "assistant",
@@ -25,7 +25,7 @@ function providerReturning(input: Record<string, unknown>, capture?: { system?: 
             });
         },
         chatStream: async function* () {},
-    } as ChatProvider;
+    });
 }
 
 function providerWithoutRouteCall(): ChatProvider {
@@ -43,7 +43,11 @@ function providerWaitingForAbort(): ChatProvider {
             new ResultAsync(
                 new Promise((resolve) => {
                     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-                    signal?.addEventListener("abort", () => resolve(err({ type: "aborted" } as never)), { once: true });
+                    signal?.addEventListener(
+                        "abort",
+                        () => resolve(err({ type: "provider", retryable: false, message: "aborted before the route answered" })),
+                        { once: true },
+                    );
                 }),
             ),
         chatStream: async function* () {},
@@ -51,7 +55,7 @@ function providerWaitingForAbort(): ChatProvider {
 }
 
 // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-const emptyPool = poolDouble(() => Promise.resolve(({ rows: [], rowCount: 0 })));
+const emptyPool = poolDouble(() => Promise.resolve({ rows: [], rowCount: 0 }));
 
 const policy = {
     perStep: { maxCpu: 8, maxMemoryGb: 16, maxGpuCount: 1 },
@@ -173,7 +177,7 @@ describe("ad hoc routing", () => {
                 ...common,
                 provider: {
                     capabilities: { toolCalling: true },
-                    chat: () => errAsync({ type: "provider_failed" } as never),
+                    chat: () => errAsync({ type: "provider", retryable: false, message: "provider_failed" }),
                     chatStream: async function* () {},
                 },
             },
@@ -282,13 +286,16 @@ describe("ad hoc routing — the packages of the step", () => {
                 model: "utility-model",
                 pool: emptyPool,
                 resourcePolicy: policy,
-                resolvePackages: (names) => Promise.resolve(names.map((requested) =>
-                        requested === "scanpy"
-                            ? { requested, present: true as const, name: "scanpy", section: "Python (pip)", version: "1.10.0" }
-                            : requested === "MOFA2"
-                              ? { requested, present: false as const }
-                              : { requested, present: false as const, suggestion: "Seurat" },
-                    )),
+                resolvePackages: (names) =>
+                    Promise.resolve(
+                        names.map((requested) =>
+                            requested === "scanpy"
+                                ? { requested, present: true as const, name: "scanpy", section: "Python (pip)", version: "1.10.0" }
+                                : requested === "MOFA2"
+                                  ? { requested, present: false as const }
+                                  : { requested, present: false as const, suggestion: "Seurat" },
+                        ),
+                    ),
             },
             { analysisId: "analysis-1", request: "Integrate these datasets", session: ctx.session, signal: ctx.signal },
         );
@@ -413,7 +420,7 @@ describe("ad hoc routing — the usage of the router call", () => {
             {
                 provider: {
                     capabilities: { toolCalling: true },
-                    chat: () => errAsync({ type: "provider_failed" } as never),
+                    chat: () => errAsync({ type: "provider", retryable: false, message: "provider_failed" }),
                     chatStream: async function* () {},
                 },
                 model: "utility-model",

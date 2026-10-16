@@ -175,11 +175,9 @@ describe("validatePlanDag", () => {
         } catch (err) {
             caught = err;
         }
-        expect(caught).toBeInstanceOf(MissingDependencyError);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const err = caught as MissingDependencyError;
-        expect(err.stepId).toBe("B");
-        expect(err.missingDependency).toBe("A");
+        if (!(caught instanceof MissingDependencyError)) throw new Error("expected MissingDependencyError");
+        expect(caught.stepId).toBe("B");
+        expect(caught.missingDependency).toBe("A");
     });
 
     it("throws CycleError on a 2-step self-cycle and reports the involved steps", () => {
@@ -189,17 +187,15 @@ describe("validatePlanDag", () => {
         } catch (err) {
             caught = err;
         }
-        expect(caught).toBeInstanceOf(CycleError);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const err = caught as CycleError;
-        expect(new Set(err.involvedSteps)).toEqual(new Set(["A", "B"]));
+        if (!(caught instanceof CycleError)) throw new Error("expected CycleError");
+        expect(new Set(caught.involvedSteps)).toEqual(new Set(["A", "B"]));
     });
 
     it("accepts a valid DAG and returns the step map", () => {
         const plan = [step("A"), step("B", "A"), step("C", "A", "B")];
         const stepMap = validatePlanDag(plan);
         expect(stepMap.size).toBe(3);
-        expect(must(must(stepMap, "stepMap").get("C"), "must(stepMap, \"stepMap\").get(\"C\")").depends_on).toEqual(["A", "B"]);
+        expect(must(must(stepMap, "stepMap").get("C"), 'must(stepMap, "stepMap").get("C")').depends_on).toEqual(["A", "B"]);
     });
 });
 

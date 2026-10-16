@@ -10,13 +10,9 @@ import { createRegistry } from "../../tools/registry.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { AskRejectedError } from "../../tools/approval/contract.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
-import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
-import type { RunAuthorizer } from "../../execution/run-authorizer.js";
-import type { RunLauncher } from "../../execution/run-launcher.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, stubChatProvider, stubEmbeddingProvider, stubRunAuthorizer, stubRunLauncher, stubWorkspaceFilesystem } from "../../lib/test/doubles.js";
 
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice
@@ -24,18 +20,18 @@ import { poolDouble } from "../../lib/test/doubles.js";
 function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputStore) {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return createConversationAgent({
-        provider: {} as ChatProvider,
-        utilityProvider: {} as ChatProvider,
+        provider: stubChatProvider(),
+        utilityProvider: stubChatProvider(),
         pool: poolDouble(),
-        embedding: {} as EmbeddingProvider,
-        workspaceFs: {} as WorkspaceFilesystem,
+        embedding: stubEmbeddingProvider(),
+        workspaceFs: stubWorkspaceFilesystem(),
         model: "anthropic/claude-opus-4-7",
         utilityModel: "anthropic/claude-haiku-4-5",
-        executeAnalysisWorkflow: (() => Promise.reject(new Error("not used at composition time"))),
-        anchorReportSession: (() => Promise.reject(new Error("not used at composition time"))),
+        executeAnalysisWorkflow: () => Promise.reject(new Error("not used at composition time")),
+        anchorReportSession: () => Promise.reject(new Error("not used at composition time")),
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
-        runAuthorizer: {} as RunAuthorizer,
-        runLauncher: {} as RunLauncher,
+        runAuthorizer: stubRunAuthorizer(),
+        runLauncher: stubRunLauncher(),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         skillsDir: "/skills",
         chrome: {},
@@ -92,6 +88,7 @@ describe("createConversationAgent", () => {
         const { systemPrompt } = buildAgent();
 
         // The prompt wraps its lines, thus the match reads the prompt with one space between words.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the collapse of any whitespace run to one space reads the prose whitespace grammar, which no builtin replaces
         expect(systemPrompt.replace(/\s+/g, " ")).toContain(
             "A record in the thread that says that the person approved a plan means that the run of that plan started",
         );
@@ -221,7 +218,10 @@ describe("createConversationAgent", () => {
             },
         });
         const agent = buildAgent([hostAskTool]);
-        const wired = must(agent.tools.find((t) => t.id === "host_needs_approval"), "wired");
+        const wired = must(
+            agent.tools.find((t) => t.id === "host_needs_approval"),
+            "wired",
+        );
         // The fixture wires `UnavailableAsk` — no interactive surface — so the ask
         // resolves to a denial rather than waiting on a surface that cannot answer.
         const { ctx } = makeToolContext();

@@ -3,6 +3,7 @@ import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { DbError } from "../../lib/db-result.js";
+import { poolDouble } from "../../lib/test/doubles.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { createToolOutputStore } from "../../state/tool-outputs.js";
 import { createThreadStore, type ThreadStore, type ThreadType } from "../thread-store.js";
@@ -463,8 +464,8 @@ describe("listRecentThreads", () => {
             "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_cortex_analysis_threads_recent'",
         );
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.indexdef).toContain("(updated_at DESC, thread_id)");
-        expect(rows[0]!.indexdef).toContain("WHERE (deleted_at IS NULL)");
+        expect(rows[0].indexdef).toContain("(updated_at DESC, thread_id)");
+        expect(rows[0].indexdef).toContain("WHERE (deleted_at IS NULL)");
     });
 
     it("gives the threads of two analyses in update order, with the fields of a listed thread", async () => {
@@ -475,8 +476,11 @@ describe("listRecentThreads", () => {
         const threads = (await store.listRecentThreads({ limit: 2 }))._unsafeUnwrap();
 
         expect(threads.map((t) => t.threadId)).toEqual(["a-late", "b-mid"]);
-        const listed = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap().threads.find((t) => t.threadId === "a-late");
-        expect(threads[0]).toEqual(listed!);
+        const listed = must(
+            (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap().threads.find((t) => t.threadId === "a-late"),
+            "a-late thread",
+        );
+        expect(threads[0]).toEqual(listed);
     });
 
     it("breaks a tie of the update time with the thread id, ascending", async () => {
@@ -521,12 +525,10 @@ describe("listRecentThreads", () => {
         for (let i = 0; i < 20; i++) await seedAt(`many-${i}`, `analysis-many-${i}`, "2026-10-01T10:00:00.000Z");
         let calls = 0;
         // The wrapper forwards every `query` call to the pool, and the store reads only through `query`.
-        const countingPool = {
-            query: (...args: unknown[]) => {
-                calls += 1;
-                return (pool.query as (...forwarded: unknown[]) => unknown)(...args);
-            },
-        } as unknown as Pool;
+        const countingPool = poolDouble((query, values) => {
+            calls += 1;
+            return pool.query(query.text, values);
+        });
 
         const threads = (await createThreadStore(countingPool).listRecentThreads({ limit: 50 }))._unsafeUnwrap();
 
@@ -562,8 +564,18 @@ describe("listThreads includeArchived", () => {
         expect(page.total).toBe(2);
         // Once both states share one result set, the tombstone is the only thing
         // that tells them apart — a caller has nothing else to render or filter on.
-        expect(must(must(page, "page").threads.find((t) => t.threadId === "archived"), "must(page, \"page\").threads.find((t) => t.threadI").deletedAt).toBeInstanceOf(Date);
-        expect(must(must(page, "page").threads.find((t) => t.threadId === "live"), "must(page, \"page\").threads.find((t) => t.threadI").deletedAt).toBeNull();
+        expect(
+            must(
+                must(page, "page").threads.find((t) => t.threadId === "archived"),
+                'must(page, "page").threads.find((t) => t.threadI',
+            ).deletedAt,
+        ).toBeInstanceOf(Date);
+        expect(
+            must(
+                must(page, "page").threads.find((t) => t.threadId === "live"),
+                'must(page, "page").threads.find((t) => t.threadI',
+            ).deletedAt,
+        ).toBeNull();
     });
 
     it("counts and pages the whole widened set", async () => {
@@ -612,7 +624,10 @@ describe("listThreads includeArchived", () => {
 
         const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
         expect(page.total).toBe(2);
-        const restored = must(page.threads.find((t) => t.threadId === "restore-me"), "restored");
+        const restored = must(
+            page.threads.find((t) => t.threadId === "restore-me"),
+            "restored",
+        );
         expect(restored).toBeDefined();
         expect(restored.deletedAt).toBeNull();
     });
@@ -720,13 +735,17 @@ describe("createThread integrity rules", () => {
     it("refuses a type outside the closed set", async () => {
         // The check under test is for a value that reached the store from
         // outside this package's type graph — across a package boundary, out of
-        // a JSON body — where the compile-time union never applied. Widening to
-        // `string` first is what reproduces that from inside the graph, and it
-        // is sound for the same reason the store's own widening is: the value
-        // is exactly what an untyped caller could hand in.
-        const outOfSet: string = "chronicle";
+        // a JSON body — where the compile-time union never applied. The typed
+        // literal satisfies the declared input, then the Reflect write plants
+        // the out-of-set value, which reproduces the untyped caller.
+        const input: { threadId: string; analysisId: string; type: ThreadType } = {
+            threadId: "t1",
+            analysisId: ANALYSIS_A,
+            type: "conversation",
+        };
+        Reflect.set(input, "type", "chronicle");
 
-        const failed = (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, type: outOfSet as ThreadType }))._unsafeUnwrapErr();
+        const failed = (await store.createThread(input))._unsafeUnwrapErr();
 
         expect(failed).toEqual({
             type: "unknown_thread_type",

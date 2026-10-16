@@ -12,6 +12,7 @@ import {
     queryPackages,
     readInventorySections,
     type CheckedPackage,
+    type PackagesResult,
     type Section,
 } from "../list-available-packages.js";
 import type { FarmLock } from "../../../sandbox/farm.js";
@@ -26,6 +27,24 @@ const SECTIONS: Section[] = [
     { title: "System tools (CLI)", packages: [{ name: "bcftools" }, { name: "samtools" }] },
     { title: "Node (npm)", packages: [{ name: "typescript" }] },
 ];
+
+/** Narrow a tool answer to the presence-check arm. Any other arm fails the test instead of trusting the read. */
+function checkedOf(result: PackagesResult): { available: true; checked: readonly CheckedPackage[] } {
+    if (!result.available || !("checked" in result)) throw new Error("expected a presence-check answer");
+    return result;
+}
+
+/** Narrow a tool answer to the listing arm. Any other arm fails the test instead of trusting the read. */
+function listingOf(result: PackagesResult): { available: true; total: number; returned: number; hasMore: boolean; content: string } {
+    if (!result.available || !("total" in result)) throw new Error("expected a listing answer");
+    return result;
+}
+
+/** Narrow a tool answer to the unavailable arm. Any other arm fails the test instead of trusting the read. */
+function unavailableOf(result: PackagesResult): { available: false; content: string } {
+    if (result.available) throw new Error("expected an unavailable answer");
+    return result;
+}
 
 describe("queryPackages — names (presence check)", () => {
     it("reports present/absent plus the language track, without returning the catalog", () => {
@@ -332,10 +351,9 @@ describe("list_available_packages — reading the inventory", () => {
     it("reads the inflexa.lock at the injected host path rather than assuming the container's", async () => {
         const { farmLockFile } = await makeStore();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (
-            await createListAvailablePackagesTool({ farmLockFile }).execute({ names: ["Seurat", "nonesuch"] }, makeToolContext().ctx)
-        )._unsafeUnwrap() as { available: true; checked: readonly CheckedPackage[] };
+        const result = checkedOf(
+            (await createListAvailablePackagesTool({ farmLockFile }).execute({ names: ["Seurat", "nonesuch"] }, makeToolContext().ctx))._unsafeUnwrap(),
+        );
 
         expect(result.available).toBe(true);
         // The lock records the store identity, thus the targeted check carries it.
@@ -356,12 +374,7 @@ describe("list_available_packages — reading the inventory", () => {
     it("merges the image record into the report, with a version on each row", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            total: number;
-            content: string;
-        };
+        const result = listingOf((await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap());
 
         expect(result.available).toBe(true);
         // 2 farm packages + 2 image tools + 1 image node package.
@@ -376,12 +389,7 @@ describe("list_available_packages — reading the inventory", () => {
     it("answers the cli language filter with the image tools alone", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await createListAvailablePackagesTool(deps).execute({ language: "cli" }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            total: number;
-            content: string;
-        };
+        const result = listingOf((await createListAvailablePackagesTool(deps).execute({ language: "cli" }, makeToolContext().ctx))._unsafeUnwrap());
 
         expect(result.total).toBe(2);
         expect(result.content).toContain("samtools==1.22.1");
@@ -392,12 +400,7 @@ describe("list_available_packages — reading the inventory", () => {
     it("answers the node language filter with the image packages alone", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await createListAvailablePackagesTool(deps).execute({ language: "node" }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            total: number;
-            content: string;
-        };
+        const result = listingOf((await createListAvailablePackagesTool(deps).execute({ language: "node" }, makeToolContext().ctx))._unsafeUnwrap());
 
         expect(result.total).toBe(1);
         expect(result.content).toContain("Node (npm)");
@@ -409,11 +412,9 @@ describe("list_available_packages — reading the inventory", () => {
     it("finds a tool by its executable name when the package name differs", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await createListAvailablePackagesTool(deps).execute({ names: ["eagle", "eagle2"] }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            checked: readonly CheckedPackage[];
-        };
+        const result = checkedOf(
+            (await createListAvailablePackagesTool(deps).execute({ names: ["eagle", "eagle2"] }, makeToolContext().ctx))._unsafeUnwrap(),
+        );
 
         expect(result.checked).toEqual([
             { requested: "eagle", present: true, name: "eagle", section: "System tools (CLI)", version: "2.4.1" },
@@ -466,10 +467,9 @@ describe("list_available_packages — reading the inventory", () => {
         );
         await writeFile(imagePackagesFile, JSON.stringify(IMAGE_RECORD));
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (
-            await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({ names: ["echarts"] }, makeToolContext().ctx)
-        )._unsafeUnwrap() as { available: true; checked: readonly CheckedPackage[] };
+        const result = checkedOf(
+            (await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({ names: ["echarts"] }, makeToolContext().ctx))._unsafeUnwrap(),
+        );
 
         expect(result.checked[0]).toMatchObject({ present: true, name: "echarts", version: "5.4.0", storeDir: "echarts-5.4.0-abcd1234abcd1234" });
     });
@@ -491,10 +491,9 @@ describe("list_available_packages — reading the inventory", () => {
         );
         await writeFile(imagePackagesFile, JSON.stringify(IMAGE_RECORD));
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (
-            await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({ language: "node" }, makeToolContext().ctx)
-        )._unsafeUnwrap() as { available: true; total: number; content: string };
+        const result = listingOf(
+            (await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({ language: "node" }, makeToolContext().ctx))._unsafeUnwrap(),
+        );
 
         expect(result.total).toBe(2);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
@@ -505,7 +504,8 @@ describe("list_available_packages — reading the inventory", () => {
     });
 
     it("a bound pool reader wins over the farm lock, and the listing renders name==version", async () => {
-        const readPoolInventory = () => Promise.resolve(({
+        const readPoolInventory = () =>
+            Promise.resolve({
                 kind: "sections",
                 sections: [
                     {
@@ -514,29 +514,23 @@ describe("list_available_packages — reading the inventory", () => {
                         packages: [{ name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000", hash: "b".repeat(64) }],
                     },
                 ],
-            }) as const);
+            } as const);
         // No farmLockFile: with a pool reader, the lock must not even be tried.
         const tool = createListAvailablePackagesTool({ readPoolInventory });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const listing = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap() as { available: true; content: string };
+        const listing = listingOf((await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap());
         expect(listing.content).toContain("scipy==1.16.3");
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const checked = (await tool.execute({ names: ["SCIPY"] }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            checked: readonly CheckedPackage[];
-        };
+        const checked = checkedOf((await tool.execute({ names: ["SCIPY"] }, makeToolContext().ctx))._unsafeUnwrap());
         expect(checked.checked[0]).toMatchObject({ present: true, name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000" });
     });
 
     it("an unreadable pool reads as UNKNOWN with its reason, never as empty", async () => {
         const tool = createListAvailablePackagesTool({
-            readPoolInventory: () => Promise.resolve(({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" }) as const),
+            readPoolInventory: () => Promise.resolve({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" } as const),
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap() as { available: false; content: string };
+        const result = unavailableOf((await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap());
 
         expect(result.available).toBe(false);
         expect(result.content).toContain("UNKNOWN");
@@ -550,12 +544,9 @@ describe("list_available_packages — reading the inventory", () => {
     it("still reports the farm inventory when no image record is readable", async () => {
         const { farmLockFile, imagePackagesFile } = await makeStore();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            total: number;
-            content: string;
-        };
+        const result = listingOf(
+            (await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({}, makeToolContext().ctx))._unsafeUnwrap(),
+        );
 
         expect(result.available).toBe(true);
         expect(result.total).toBe(2);
@@ -566,12 +557,7 @@ describe("list_available_packages — reading the inventory", () => {
         for (const bytes of ["## System tools (CLI)\nsamtools, bcftools\n", JSON.stringify({ ...IMAGE_RECORD, schema: 2 })]) {
             const deps = await makeStore(bytes);
 
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const result = (await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
-                available: true;
-                total: number;
-                content: string;
-            };
+            const result = listingOf((await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap());
 
             expect(result.available).toBe(true);
             expect(result.total).toBe(2);
@@ -583,11 +569,7 @@ describe("list_available_packages — reading the inventory", () => {
     // of them, and a generous guess is exactly what produces a confident bad import.
     it("reports the package set as UNKNOWN when the inventory cannot be read, naming no packages", async () => {
         const missing = join(tmpdir(), "packages-does-not-exist-xyz", "inflexa.lock");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await createListAvailablePackagesTool({ farmLockFile: missing }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: false;
-            content: string;
-        };
+        const result = unavailableOf((await createListAvailablePackagesTool({ farmLockFile: missing }).execute({}, makeToolContext().ctx))._unsafeUnwrap());
 
         expect(result.available).toBe(false);
         expect(result.content).toContain("UNKNOWN");
@@ -604,17 +586,19 @@ describe("list_available_packages — reading the inventory", () => {
             {
                 farmLockFile,
                 imagePackagesFile,
-                readPoolInventory: () => Promise.resolve(({
+                readPoolInventory: () =>
+                    Promise.resolve({
                         kind: "sections",
                         sections: [{ title: "Python (pip)", track: "python", packages: [{ name: "scipy", version: "1.16.3" }] }],
-                    }) as const),
+                    } as const),
             },
             "analysis-001",
         );
         const unreadable = await readInventorySections(
             {
                 farmLockFile,
-                readPoolInventory: () => Promise.resolve(({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" }) as const),
+                readPoolInventory: () =>
+                    Promise.resolve({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" } as const),
             },
             "analysis-001",
         );
@@ -631,10 +615,9 @@ describe("list_available_packages — reading the inventory", () => {
 
     /** The presence answer of `Seurat`, the package that only the full lock holds. */
     async function seuratPresent(deps: Parameters<typeof createListAvailablePackagesTool>[0], analysisId: string): Promise<boolean> {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await createListAvailablePackagesTool(deps).execute({ names: ["Seurat"] }, contextFor(analysisId)))._unsafeUnwrap() as {
-            checked: readonly CheckedPackage[];
-        };
+        const result = checkedOf(
+            (await createListAvailablePackagesTool(deps).execute({ names: ["Seurat"] }, contextFor(analysisId)))._unsafeUnwrap(),
+        );
         return result.checked[0]?.present ?? false;
     }
 
@@ -671,8 +654,7 @@ describe("queryPackages — a real-sized store is not truncated by default", () 
             { title: "R (CRAN)", packages: Array.from({ length: 120 }, (_, i) => ({ name: `pkg-r-${i}` })) },
         ];
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = queryPackages(sections, {}) as { available: true; total: number; returned: number; hasMore: boolean; content: string };
+        const result = listingOf(queryPackages(sections, {}));
 
         expect(result.total).toBe(300);
         expect(result.returned).toBe(300);

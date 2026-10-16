@@ -52,7 +52,7 @@ describe("write_file tool", () => {
         const out = (await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/result.csv`, content: "id,value\n1,42\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
 
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessionsBasePath, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessionsBasePath, id)) });
         const readTool = createReadFileTool(fs);
         const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/result.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");
@@ -176,7 +176,7 @@ describe("write_file tool", () => {
         expect(collector.getRecords()).toEqual([]);
 
         // A replay returns the cached value and folds its record again, into fresh process state.
-        must(must(tool, "tool").foldCallRecord, "must(tool, \"tool\").foldCallRecord")(readToolCallRecord(out));
+        must(must(tool, "tool").foldCallRecord, 'must(tool, "tool").foldCallRecord')(readToolCallRecord(out));
         const records = collector.getRecords();
         expect(records.map((record) => record.outputPath)).toEqual(["output/replay.txt"]);
         expect(records[0].outputHash).toBe(computeSha256(Buffer.from("v1", "utf8")));

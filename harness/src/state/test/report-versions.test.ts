@@ -254,10 +254,11 @@ describe("createReportVersionStore", () => {
         await seedAnalysis(analysisId);
         const threadId = "thread-malformed-snapshot";
 
-        // The cast is the deliberate simulation of a caller bug. A bad value
-        // reaches the record where the compile-time type promises a good one.
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const badSnapshot = { artifacts: "nope" } as unknown as ReportSnapshot;
+        // The write is the deliberate simulation of a caller bug: a bad value reaches
+        // the record where the compile-time type promises a good one. Reflect plants it
+        // on a typed snapshot without a cast.
+        const badSnapshot: ReportSnapshot = { artifacts: {} };
+        Reflect.set(badSnapshot, "artifacts", "nope");
         const failure = (
             await store.record({ document: validDocument, snapshot: badSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrapErr();

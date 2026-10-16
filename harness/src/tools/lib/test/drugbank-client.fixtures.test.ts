@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { BondResponseSchema, DrugResponseSchema, searchDrugbank } from "../drugbank-client.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 let requested: string[] = [];
@@ -24,7 +24,7 @@ afterEach(() => {
 function stubFetch(body: unknown): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((input) => {
-        requested.push(String(input));
+        requested.push(urlText(input));
         return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
     });
 }

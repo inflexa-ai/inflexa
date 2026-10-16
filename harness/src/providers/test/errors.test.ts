@@ -315,7 +315,7 @@ describe("toProviderError — the suspend arm", () => {
         const failure = toProviderError(apiError(402), "analysis:abc");
         const rethrown = new Error(failure.message, { cause: failure });
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(findSuspendError(rethrown)).toBe(failure as never);
+        expect(findSuspendError(rethrown)).toBe<unknown>(failure);
         expect(findSuspendError(new Error("x", { cause: toProviderError(apiError(403), "analysis:abc") }))).toBeUndefined();
     });
 });

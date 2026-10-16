@@ -195,6 +195,7 @@ describe("computeDetail", () => {
 
     it("ignores a hook that returns a non-string or an empty string", () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion, @inflexa-ai/no-double-cast -- this hook deliberately returns a non-string; the test pins the guard that ignores it.
         const nonString = toolWithHook(() => undefined as unknown as string);
         const empty = toolWithHook(() => "");
 
@@ -286,6 +287,7 @@ describe("computeResultDetail", () => {
 
     it("ignores a hook that returns a non-string or an empty string", () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion, @inflexa-ai/no-double-cast -- this hook deliberately returns a non-string; the test pins the guard that ignores it.
         const nonString = toolWithResultHook(() => undefined as unknown as string);
         const empty = toolWithResultHook(() => "");
 
@@ -297,6 +299,7 @@ describe("computeResultDetail", () => {
     // `undefined` and the guard keeps that mistake cosmetic.
     it("survives a hook that reads a field the result does not carry", () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion, @inflexa-ai/no-double-cast -- this hook deliberately reads a field the result type does not carry; the test pins the guard that tolerates it.
         const tool = toolWithResultHook((_input, result) => (result as unknown as { missing: { deep: string } }).missing.deep);
 
         expect(computeResultDetail(tool, { path: "a.csv" }, { bytes: 1 }, createNoopLogger())).toBeUndefined();

@@ -124,8 +124,7 @@ describe("tableDataAsset", () => {
     function registryOf(bytes: string): Record<string, TablePayload> {
         const window: Record<string, unknown> = {};
         runPageScript(["window"], bytes, window);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        return window[TABLE_DATA_GLOBAL] as Record<string, TablePayload>;
+        return runPageScript<(window: Record<string, unknown>) => Record<string, TablePayload>>(["window"], `return window[${JSON.stringify(TABLE_DATA_GLOBAL)}]`, window);
     }
 
     it("registers the payload under the global map, keyed by the block id", () => {

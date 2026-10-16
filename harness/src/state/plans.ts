@@ -145,7 +145,7 @@ export function loadPlan(pool: Querier, planId: string, opts: { analysisId: stri
 }
 
 /** A stored plan with its lineage, as {@link loadPlanRecord} reads it. */
-export interface PlanRecord {
+export type PlanRecord = {
     planId: string;
     /** The stored document, as the store holds it. A reader parses it. */
     plan: unknown;
@@ -153,7 +153,7 @@ export interface PlanRecord {
     /** The newest plan of the same analysis that names this plan as its parent. */
     supersededBy: string | null;
     createdAt: string;
-}
+};
 
 /**
  * Analysis-scoped read of one plan with its parent and the newest plan that
@@ -174,7 +174,7 @@ export function loadPlanRecord(pool: Querier, planId: string, opts: { analysisId
                WHERE p.plan_id = $1 AND p.analysis_id = $2`,
             values: [planId, opts.analysisId],
         });
-        const row = result.rows[0];
+        const row = result.rows.at(0);
         if (!row) return null;
         return { planId, plan: row.plan, parentPlanId: row.parent_plan_id, supersededBy: row.superseded_by, createdAt: row.created_at };
     });

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ChemblOutput } from "../chembl.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { chemblTool } from "../chembl.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -25,7 +25,7 @@ afterEach(() => {
 function stubRoutes(routes: Array<[pattern: string, body: unknown]>): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((input) => {
-        const url = String(input);
+        const url = urlText(input);
         requestedUrls.push(url);
         for (const [pattern, body] of routes) {
             if (url.includes(pattern)) {
@@ -39,7 +39,7 @@ function stubRoutes(routes: Array<[pattern: string, body: unknown]>): void {
 function stubStatus(status: number, body = "upstream said no"): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((input) => {
-        requestedUrls.push(String(input));
+        requestedUrls.push(urlText(input));
         return Promise.resolve(new Response(body, { status }));
     });
 }
@@ -57,7 +57,8 @@ type RecordsFor<K extends ResultKey> = Extract<ChemblOutput, Record<K, unknown>>
 /** Read the action's result key, failing the test if the tool returned another action's shape. */
 function resultKey<K extends ResultKey>(out: ChemblOutput, key: K): RecordsFor<K> {
     if (!(key in out)) throw new Error(`expected the '${key}' result shape, got ${JSON.stringify(out)}`);
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+    // SAFETY: the check above proves the arm that carries `key`; TS cannot correlate a generic K with its union arm, so the cast only names what the check proved.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the `in` check above proves the arm; the cast only names the correlation TS cannot express for a generic K.
     return (out as Record<K, RecordsFor<K>>)[key];
 }
 

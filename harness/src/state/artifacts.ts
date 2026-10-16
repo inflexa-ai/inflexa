@@ -141,7 +141,7 @@ export function queryInputArtifacts(pool: Querier, analysisId: string, paths: st
         const result = await pool.query<{
             path: string;
             hash: string;
-            size: number;
+            size: string | number;
             file_id: string | null;
         }>({
             text: `SELECT path, hash, size, file_id
@@ -249,7 +249,7 @@ export function queryAnalysisArtifacts(pool: Querier, analysisId: string): Resul
 export type ArtifactPageSort = "path" | "recent";
 
 /** The filters, the sort, and the window of {@link queryArtifactPage}. A filter that is absent selects each row. */
-export interface ArtifactPageQuery {
+export type ArtifactPageQuery = {
     runId?: string;
     stepId?: string;
     fileType?: string;
@@ -258,10 +258,10 @@ export interface ArtifactPageQuery {
     sort: ArtifactPageSort;
     limit: number;
     offset: number;
-}
+};
 
 /** One ledger row of {@link queryArtifactPage}. */
-export interface ArtifactPageEntry {
+export type ArtifactPageEntry = {
     /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
     path: string;
     /** Bytes. */
@@ -271,13 +271,13 @@ export interface ArtifactPageEntry {
     runId: string | null;
     stepId: string | null;
     createdAt: string;
-}
+};
 
 /** One page of the ledger, and the count of the rows that the filters select. */
-export interface ArtifactPage {
+export type ArtifactPage = {
     entries: ArtifactPageEntry[];
     total: number;
-}
+};
 
 /**
  * One page of the artifact ledger of an analysis, in two statements: the count of the rows that the filters
@@ -333,16 +333,16 @@ export function queryArtifactPage(pool: Querier, analysisId: string, query: Arti
                 stepId: r.source_step ?? null,
                 createdAt: r.created_at,
             })),
-            total: Number(countResult.rows[0]?.total ?? 0),
+            total: countResult.rows[0]?.total ?? 0,
         };
     });
 }
 
 /** The step-output count of one run, from {@link countArtifactsByRuns}. */
-export interface RunArtifactCount {
+export type RunArtifactCount = {
     runId: string;
     count: number;
-}
+};
 
 /**
  * The step-output count of each run of a list, in one statement. A run with no step output has no entry,
@@ -359,7 +359,7 @@ export function countArtifactsByRuns(pool: Querier, analysisId: string, runIds: 
           GROUP BY source_run`,
             values: [analysisId, [...runIds]],
         });
-        return result.rows.map((r) => ({ runId: r.source_run, count: Number(r.n) }));
+        return result.rows.map((r) => ({ runId: r.source_run, count: r.n }));
     });
 }
 

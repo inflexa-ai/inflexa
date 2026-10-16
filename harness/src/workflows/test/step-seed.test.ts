@@ -24,8 +24,10 @@ import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fix
 import { composeStepSeed } from "../execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput } from "../execute-analysis.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, stubChatProvider, stubEmbeddingProvider, stubRunAuthorizer } from "../../lib/test/doubles.js";
 import { optionNumber, optionString } from "../../report-render/option-lens.js";
+import { okAsync } from "neverthrow";
+import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 
 const ANALYSIS_ID = "an-1";
 const RUN_ID = "run-1";
@@ -62,7 +64,7 @@ type FakeState = {
 
 function fakePool(state: FakeState): Pool {
     // The state queries pass a config object; the working-memory store passes the text and the values apart.
-    const query =  (config: string | { text: string; values?: readonly unknown[] }, values?: readonly unknown[]) => {
+    const query = (config: string | { text: string; values?: readonly unknown[] }, values?: readonly unknown[]) => {
         const q = typeof config === "string" ? { text: config, values } : config;
         const text = q.text.trim();
         if (text.startsWith("SELECT data_profile_status")) {
@@ -101,13 +103,23 @@ function fakePool(state: FakeState): Pool {
 
 function deps(workspaceRoot: string, state: FakeState = {}, knowledge?: KnowledgeClient): ExecuteAnalysisDeps {
     const pool = fakePool(state);
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return {
         pool,
         workingMemory: createWorkingMemory(pool),
-        resolveWorkspaceRoot: () => workspaceRoot,
-        ...(knowledge ? { knowledge } : {}),
-    } as unknown as ExecuteAnalysisDeps;
+        resolveWorkspaceRoot: (_id: string) => Promise.resolve(workspaceRoot),
+        citationResolver: unusedCitationResolver,
+        provider: stubChatProvider(),
+        embedding: stubEmbeddingProvider(),
+        sandboxStepCallable: () => Promise.reject(new Error("sandboxStepCallable should not be invoked directly")),
+        synthesisModel: "test-synthesis-model",
+        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        runCharge: {
+            open: () => okAsync(undefined),
+            close: () => okAsync(undefined),
+        },
+        runAuthorizer: stubRunAuthorizer(),
+        knowledge: knowledge ? knowledge : undefined,
+    };
 }
 
 function memoryRow(overrides: Partial<WorkingMemory> = {}): WorkingMemory {

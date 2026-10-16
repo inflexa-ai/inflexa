@@ -11,10 +11,11 @@ import type {
     TerminalRunStatus,
 } from "@inflexa-ai/harness";
 
-import * as stateBarrel from "./index.js";
+import * as stateBarrel from "../index.js";
+import { poolDouble } from "../../lib/test/doubles.js";
 
 // An empty list sends no query, thus the reads never touch the querier.
-const unusedQuerier = {} as never;
+const unusedQuerier = poolDouble(() => Promise.reject(new Error("an empty id list sends no query")));
 
 describe("the exports of the grouped analysis reads", () => {
     it("reaches the reads from the package root, as the same functions of the state barrel", () => {

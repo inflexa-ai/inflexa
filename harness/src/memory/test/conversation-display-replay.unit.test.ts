@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 
 import { envelopeMessage, summaryMarkerMessage, syntheticRecordMessage } from "../ai-sdk-message-storage.js";
 import { storedMessagesToChat } from "../conversation-display-replay.js";
@@ -11,13 +12,16 @@ const SOURCE = { agentId: "conversation", callPath: ["conversation"] };
 
 describe("the stored card of a revised plan", () => {
     it("keeps parentPlanId through the recorder, the stored envelope, and its parse", async () => {
-        const card = planCardOf({
-            planId: "pln-0000000b",
-            plan: { title: "Revision", analytical_narrative: "why", created_at: "2026-10-01T00:00:00.000Z", steps: [] },
-            parentPlanId: "pln-0000000a",
-            supersededBy: null,
-            createdAt: "2026-10-02T00:00:00.000Z",
-        })!;
+        const card = must(
+            planCardOf({
+                planId: "pln-0000000b",
+                plan: { title: "Revision", analytical_narrative: "why", created_at: "2026-10-01T00:00:00.000Z", steps: [] },
+                parentPlanId: "pln-0000000a",
+                supersededBy: null,
+                createdAt: "2026-10-02T00:00:00.000Z",
+            }),
+            "card",
+        );
         const recorder = createConversationDisplayRecorder({
             userText: "show the plan",
             agentId: SOURCE.agentId,
@@ -29,7 +33,7 @@ describe("the stored card of a revised plan", () => {
 
         const stored = await parseStoredDisplayEnvelope(envelopeDisplayMessages(recorder.finish()), "test");
 
-        const part = stored.messages[1]!.parts.find((candidate) => candidate.type === "data-plan");
+        const part = stored.messages[1].parts.find((candidate) => candidate.type === "data-plan");
         expect(part).toMatchObject({ type: "data-plan", data: { planId: "pln-0000000b", parentPlanId: "pln-0000000a" } });
     });
 });
@@ -160,7 +164,7 @@ describe("recorded conversation display replay", () => {
             { seq: 0, envelope: envelopeMessage(model), message: model, displayEnvelope: envelopeDisplayMessages(recorder.finish()) },
         ]);
 
-        expect(replay[1]!.parts.filter((part) => part.type === "data-subagent-activity")).toEqual([
+        expect(replay[1].parts.filter((part) => part.type === "data-subagent-activity")).toEqual([
             {
                 type: "data-subagent-activity",
                 id: "subagent-activity-t1",
@@ -198,7 +202,7 @@ describe("recorded conversation display replay", () => {
             { seq: 0, envelope: envelopeMessage(model), message: model, displayEnvelope: envelopeDisplayMessages(recorder.finish()) },
         ]);
 
-        expect(replay[1]!.parts).toEqual([{ type: "data-ask", ...base, status: "resolved", reply: "always" }]);
+        expect(replay[1].parts).toEqual([{ type: "data-ask", ...base, status: "resolved", reply: "always" }]);
     });
 
     it("folds a stored rollup onto the append's assistant reply", () => {

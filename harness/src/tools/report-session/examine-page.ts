@@ -67,7 +67,7 @@ import { reportSessionDir, type ResolveWorkspaceRoot } from "../../workspace/pat
 import { defineTool, withToolResultImages, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 import { digestPageFaults, type ConsoleErrorEntry, type FailedRequestEntry } from "./page-faults.js";
-import { errorMessage, isError } from "../../lib/thrown.js";
+import { errorMessage, errnoCode, isError } from "../../lib/thrown.js";
 
 // The capture shapes live beside the chrome connection. The tool keeps them on its own surface, thus a
 // consumer of the tool imports one module.
@@ -423,7 +423,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
             try {
                 await access(pagePath);
             } catch (cause) {
-                if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+                if (errnoCode(cause) === "ENOENT") {
                     // No preview wrote the page yet. The agent runs the preview first.
                     return ok({ outcome: "no-page" });
                 }

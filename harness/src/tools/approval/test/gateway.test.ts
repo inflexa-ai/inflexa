@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import type { Pool } from "pg";
+import { z } from "zod";
 
 import { withSchema } from "../../../__tests__/setup/postgres.js";
 import type { EmitFn } from "../../../loop/types.js";
@@ -25,6 +27,22 @@ type StartedAsk = {
     readonly parts: AskPartData[];
     readonly controller: AbortController;
 };
+
+/** The `data-ask` payload read at the emit boundary: the flat fields a surface reads, everything else passed through. */
+const askPartDataSchema = z.looseObject({
+    id: z.string(),
+    title: z.string(),
+    command: z.string(),
+    detail: z.string().optional(),
+    status: z.string(),
+    reply: z.string().optional(),
+});
+
+/** The one ledger row `selectRow` reads. The reply column holds the stored answer, null when the ask ended without one. */
+const askRowStateSchema = z.object({ status: z.string(), reply: z.looseObject({ kind: z.string() }).nullable().optional() });
+
+/** The one row `countAsks` reads. */
+const countRowSchema = z.object({ n: z.number() });
 
 // A fresh schema per test isolates the whole-ledger reads (`pending`,
 // `sweepExpired`) so their assertions can be exact.
@@ -63,8 +81,7 @@ function startAsk(request: AskRequest, analysisId = "analysis-A", userId = USER_
     const controller = new AbortController();
     const parts: AskPartData[] = [];
     const emit: EmitFn = (event) => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        if (event.type === "data-ask") parts.push((event).data as AskPartData);
+        if (event.type === "data-ask") parts.push(askPartDataSchema.parse(event.data));
     };
     const ctx: AskContext = { analysisId, userId, signal: controller.signal, emit };
     const promise = gateway.ask(request, ctx);
@@ -88,16 +105,15 @@ async function waitForPendingId(analysisId?: string): Promise<string> {
     }
 }
 
-async function selectRow(id: string): Promise<{ status: string; reply: unknown } | undefined> {
+async function selectRow(id: string): Promise<{ status: string; reply?: { kind: string } | null } | undefined> {
     const res = await pool.query({ text: `SELECT status, reply FROM cortex_asks WHERE id = $1`, values: [id] });
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return res.rows[0] as { status: string; reply: unknown } | undefined;
+    const row: unknown = res.rows.at(0);
+    return row === undefined ? undefined : askRowStateSchema.parse(row);
 }
 
 async function countAsks(where = ""): Promise<number> {
     const res = await pool.query(`SELECT count(*)::int AS n FROM cortex_asks ${where}`);
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return (res.rows[0] as { n: number }).n;
+    return countRowSchema.parse(res.rows[0]).n;
 }
 
 // ── 5.1 — deferred round-trip, one case per reply variant ────────────
@@ -141,9 +157,10 @@ describe("createAskGateway — deferred round-trip", () => {
             (e: unknown) => e,
         );
         expect(caught).toBeInstanceOf(AskRejectedError);
-        expect((caught as AskRejectedError).feedback).toBe("not this time");
+        if (!(caught instanceof AskRejectedError)) throw new Error("expected the ask to reject with AskRejectedError");
+        expect(caught.feedback).toBe("not this time");
         // The part shows the kind of the reply, and never the feedback, which is for the model.
-        const terminal = started.parts.at(-1)!;
+        const terminal = must(started.parts.at(-1), "terminal part");
         expect(terminal).toMatchObject({ status: "rejected", reply: "reject" });
         expect(JSON.stringify(terminal)).not.toContain("not this time");
     });
@@ -155,7 +172,7 @@ describe("createAskGateway — deferred round-trip", () => {
         started.controller.abort();
         await started.promise.catch(() => {});
 
-        const terminal = started.parts.at(-1)!;
+        const terminal = must(started.parts.at(-1), "terminal part");
         expect(terminal.status).toBe("aborted");
         expect(terminal).not.toHaveProperty("reply");
     });
@@ -230,7 +247,7 @@ describe("createAskGateway — standing grants", () => {
             text: `SELECT count(*)::int AS n FROM cortex_ask_grants WHERE analysis_id = $1 AND grant_key = $2 AND user_id = $3`,
             values: [analysisId, grantKey, userId],
         });
-        return (res.rows[0] as { n: number }).n;
+        return countRowSchema.parse(res.rows[0]).n;
     }
 
     it("records a grant on always, then auto-approves a matching ask without pausing and logs the audit row", async () => {
@@ -246,13 +263,15 @@ describe("createAskGateway — standing grants", () => {
         const controller = new AbortController();
         const parts: AskPartData[] = [];
         const emit: EmitFn = (event) => {
-            if (event.type === "data-ask") parts.push((event).data as AskPartData);
+            if (event.type === "data-ask") parts.push(askPartDataSchema.parse(event.data));
         };
         const reply = await gateway.ask(GRANTED, { analysisId: "analysis-A", userId: USER_A, signal: controller.signal, emit });
 
         expect(reply).toEqual({ kind: "always" });
         // No prompt: the one part is already settled, thus the transcript shows the standing grant.
-        expect(parts).toEqual([{ id: expect.any(String), title: GRANTED.title, command: GRANTED.command, status: "resolved", reply: "always" }]);
+        const part = must(parts.at(0), "the settled part");
+        expect(typeof part.id).toBe("string");
+        expect(part).toEqual({ id: part.id, title: GRANTED.title, command: GRANTED.command, status: "resolved", reply: "always" });
         expect(await gateway.pending()).toHaveLength(0);
         // The short-circuit still records a resolved audit row.
         expect(await countAsks(`WHERE status = 'resolved'`)).toBe(beforeResolved + 1);
@@ -344,13 +363,15 @@ describe("createAskGateway — standing grants", () => {
         const beforeResolved = await countAsks(`WHERE status = 'resolved'`);
         const parts: AskPartData[] = [];
         const emit: EmitFn = (event) => {
-            if (event.type === "data-ask") parts.push((event).data as AskPartData);
+            if (event.type === "data-ask") parts.push(askPartDataSchema.parse(event.data));
         };
         const later: AskRequest = { title: "Write a file", command: "write_file report/b.txt", grantKey: WIDE_KEY };
         const reply = await gateway.ask(later, { analysisId: "analysis-A", userId: USER_A, signal: new AbortController().signal, emit });
 
         expect(reply).toEqual({ kind: "always" });
-        expect(parts).toEqual([{ id: expect.any(String), title: later.title, command: later.command, status: "resolved", reply: "always" }]);
+        const part = must(parts.at(0), "the settled part");
+        expect(typeof part.id).toBe("string");
+        expect(part).toEqual({ id: part.id, title: later.title, command: later.command, status: "resolved", reply: "always" });
         expect(await gateway.pending()).toHaveLength(0);
         expect(await countAsks(`WHERE status = 'resolved'`)).toBe(beforeResolved + 1);
 

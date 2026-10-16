@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pool } from "pg";
-import type { Browser } from "puppeteer-core";
+import { z } from "zod";
 
 import type { ThreadAgentResolver, UnregisteredThreadType } from "@inflexa-ai/harness";
 
@@ -21,7 +21,6 @@ import { setBrowserConnector, type ChromeConfig } from "../../lib/chrome.js";
 import type { AcquireEyes, EyesScope } from "../../lib/eyes.js";
 import { createThreadHistory } from "../../memory/thread-history.js";
 import { createThreadStore } from "../../memory/thread-store.js";
-import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
 import { upsertAnalysis } from "../../state/analyses.js";
 import { upsertPlan } from "../../state/plans.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
@@ -29,9 +28,6 @@ import type { ReportSessionStateStore } from "../../state/report-session-state.j
 import type { ReportVersionStore } from "../../state/report-versions.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } from "../../tools/report-authoring/authoring-tools.js";
-import type { ExaminePageResult } from "../../tools/report-session/index.js";
-import type { StartReportSessionResult } from "../../tools/start-report-session.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import {
     assembleCoreRuntime,
     createThreadAgentResolver,
@@ -43,7 +39,17 @@ import {
 } from "../assemble.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ThreadStore, ThreadType } from "../../memory/thread-store.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import {
+    poolDouble,
+    stubBrowser,
+    stubRunSession,
+    stubChatProvider,
+    stubEmbeddingProvider,
+    stubRunAuthorizer,
+    stubRunLauncher,
+    stubSandboxClient,
+    stubWorkspaceFilesystem,
+} from "../../lib/test/doubles.js";
 
 // A bare `AgentDefinition` stands in for the assembled conversation agent: the
 // resolver only ever hands back the object the registry holds, so its internals
@@ -219,63 +225,112 @@ function eyesGateway(): ReportSessionStateGateway {
 }
 
 /**
- * Make a browser that no process backs, and give the screenshot that its one page returns.
- *
- * The capture reads the connected flag, it registers the disconnect listener, it opens one context, it sizes
- * one page, it emulates the media features of that page, it drives the page, and it closes the context. The
- * fake carries those members alone. The two-step assertion names the type of puppeteer, because a fake of a
- * class with private members is no structural match.
- */
-function fakeBrowser(screenshot: string): Browser {
-    const page = {
-        on: () => {},
-        setViewport: () => Promise.resolve(),
-        emulateMediaFeatures: () => Promise.resolve(),
-        goto: () => Promise.resolve(),
-        evaluate: () => Promise.resolve(),
-        screenshot: () => Promise.resolve(screenshot),
-    };
-    const fake = {
-        connected: true,
-        on: () => {},
-        wsEndpoint: () => "ws://fake",
-        createBrowserContext: () =>
-            Promise.resolve({
-                newPage: () => Promise.resolve(page),
-                close: () => Promise.resolve(),
-            }),
-    };
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return fake as unknown as Browser;
-}
-
-/**
  * Build the report agent over the eyes of one composition, the same wiring as the assembly.
  *
  * A case runs the eyes tool alone, and that tool reads the gateway, the workspace root, the chrome config,
  * and the eyes. Each of the four is real here. No factory of the roster reads one of the other deps at
- * construction. Thus an empty stub stands for each of them, and no case reaches the gap between a stub and
- * its interface.
+ * construction — the green runs are the proof, and an unwired member fails loudly if that ever changes.
+ * Thus an unwired stub stands for each of the remaining deps, and no case reaches a member of them.
  */
 function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, root: string): AgentDefinition {
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return createReportSessionAgent({
         model: "test/model",
         pool: poolDouble(),
-        embedding: {} as EmbeddingProvider,
-        workspaceFs: {} as WorkspaceFilesystem,
+        embedding: stubEmbeddingProvider(),
+        workspaceFs: stubWorkspaceFilesystem(),
         gateway: eyesGateway(),
-        resolveWorkspaceRoot: async () => root,
-        store: {} as ReportVersionStore,
-        threads: {} as Pick<ThreadStore, "getThread" | "setAutoTitle">,
+        resolveWorkspaceRoot: () => Promise.resolve(root),
+        store: unwiredStore(),
+        threads: unwiredTitleStore(),
         chrome,
-        derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
+        derivations: unwiredDerivationStore(),
         eyes: eyes ? eyes : undefined,
     });
 }
 
+function unwired(where: string): never {
+    throw new Error(`${where}: read without a stub`);
+}
+
+function unwiredStore(): ReportVersionStore {
+    return {
+        record: () => unwired("unwiredStore.record"),
+        getVersion: () => unwired("unwiredStore.getVersion"),
+        getThreadVersion: () => unwired("unwiredStore.getThreadVersion"),
+    };
+}
+
+function unwiredTitleStore(): Pick<ThreadStore, "getThread" | "setAutoTitle"> {
+    return {
+        getThread: () => unwired("unwiredTitleStore.getThread"),
+        setAutoTitle: () => unwired("unwiredTitleStore.setAutoTitle"),
+    };
+}
+
+function unwiredDerivationStore(): Pick<ReportSessionStateStore, "appendDerivation"> {
+    return {
+        appendDerivation: () => unwired("unwiredDerivationStore.appendDerivation"),
+    };
+}
+
+/**
+ * The workflow deps of the assembly. `assembleCoreRuntime` spreads each bag into the closure it
+ * registers and runs no workflow in these cases, so each member stands for its seam: the stubs of
+ * the test rig, the resolver and registry that register nothing, and the callable threading of
+ * `buildExecuteAnalysis`, which receives the registered sandbox step and hands it back as the
+ * dispatch seam of the analysis body.
+ */
+function workflowDeps(): CoreWorkflowDeps {
+    return {
+        sandboxStep: {
+            pool: poolDouble(),
+            provider: stubChatProvider(),
+            embedding: stubEmbeddingProvider(),
+            sandboxClient: stubSandboxClient(),
+            artifactRegistry: {
+                register: () => okAsync({ registered: [], failed: [], failedCount: 0 }),
+                sync: () => okAsync(undefined),
+            },
+            workspaceFs: stubWorkspaceFilesystem(),
+            resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+            model: "test/model",
+            buildAgent: () => Promise.resolve(conversationAgent),
+            resolveWritePrefix: (stepInput) => Promise.resolve(join("/sessions", stepInput.runId, stepInput.stepId)),
+        },
+        buildExecuteAnalysis: (sandboxStep) => ({
+            pool: poolDouble(),
+            provider: stubChatProvider(),
+            embedding: stubEmbeddingProvider(),
+            sandboxStepCallable: sandboxStep,
+            resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+            synthesisModel: "test/model",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            runCharge: {
+                open: () => okAsync(undefined),
+                close: () => okAsync(undefined),
+            },
+            runAuthorizer: stubRunAuthorizer(),
+        }),
+        dataProfile: {
+            provider: stubChatProvider(),
+            pool: poolDouble(),
+            sandboxClient: stubSandboxClient(),
+            workspaceFs: stubWorkspaceFilesystem(),
+            resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+            model: "test/model",
+            runAuthorizer: stubRunAuthorizer(),
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            embedding: stubEmbeddingProvider(),
+            skillsDir: "/skills",
+        },
+    };
+}
+
+/** The one member of a tool outcome the wiring cases read: the outcome arm. */
+const OutcomeArm = z.looseObject({ outcome: z.string() });
+
 /** Look at the page of one thread through the eyes tool of a built agent. */
-async function look(agent: AgentDefinition, threadId: string): Promise<ExaminePageResult> {
+async function look(agent: AgentDefinition, threadId: string): Promise<{ outcome: string }> {
     const found = agent.tools.filter((each) => each.id === "examine_page");
     // The roster holds one eyes tool. A wiring that drops it empties this list, thus the assertion fails
     // here and no line below reads an absent member.
@@ -286,8 +341,7 @@ async function look(agent: AgentDefinition, threadId: string): Promise<ExaminePa
     const outcome = await tool.execute({}, { ...ctx, session: { ...ctx.session, scope } });
     // The roster types each tool as `Tool<unknown, unknown>`. The id above selects the one factory that
     // makes the eyes tool, thus the ok value is the outcome of that tool and a case reads its arm by name.
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return outcome._unsafeUnwrap() as ExaminePageResult;
+    return OutcomeArm.parse(outcome._unsafeUnwrap());
 }
 
 describe("the eyes of the composition", () => {
@@ -310,7 +364,7 @@ describe("the eyes of the composition", () => {
         const connected: string[] = [];
         restoreConnector = setBrowserConnector((browserUrl) => {
             connected.push(browserUrl);
-            return Promise.resolve(fakeBrowser("STATICPNG"));
+            return Promise.resolve(stubBrowser("STATICPNG"));
         });
 
         const result = await look(reportAgentOver(resolveCompositionEyes(undefined, chrome), chrome, root), threadId);
@@ -341,7 +395,7 @@ describe("the eyes of the composition", () => {
         const connected: string[] = [];
         restoreConnector = setBrowserConnector((browserUrl) => {
             connected.push(browserUrl);
-            return Promise.resolve(fakeBrowser("SEAMPNG"));
+            return Promise.resolve(stubBrowser("SEAMPNG"));
         });
 
         const result = await look(reportAgentOver(resolveCompositionEyes(seam, chrome), chrome, root), threadId);
@@ -384,18 +438,18 @@ const START_BRIEF = {
 function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, pool: Pool): AgentDefinition {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return createConversationAgent({
-        provider: {} as ChatProvider,
-        utilityProvider: {} as ChatProvider,
+        provider: stubChatProvider(),
+        utilityProvider: stubChatProvider(),
         pool,
-        embedding: {} as EmbeddingProvider,
-        workspaceFs: {} as WorkspaceFilesystem,
+        embedding: stubEmbeddingProvider(),
+        workspaceFs: stubWorkspaceFilesystem(),
         model: "test/model",
         utilityModel: "test/utility-model",
         executeAnalysisWorkflow: () => Promise.reject(new Error("not used at composition time")),
         anchorReportSession: createReportSessionRuntime({ pool }).ensureSessionState,
-        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
-        runAuthorizer: {} as RunAuthorizer,
-        runLauncher: {} as RunLauncher,
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+        runAuthorizer: stubRunAuthorizer(),
+        runLauncher: stubRunLauncher(),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         skillsDir: "/skills",
         chrome,
@@ -422,7 +476,7 @@ async function seedParent(pool: Pool, analysisId: string, parentThreadId: string
 }
 
 /** Start a report session through the start tool of a built agent. */
-async function startSession(agent: AgentDefinition, analysisId: string, parentThreadId: string): Promise<StartReportSessionResult> {
+async function startSession(agent: AgentDefinition, analysisId: string, parentThreadId: string): Promise<{ outcome: string }> {
     const found = agent.tools.filter((each) => each.id === "start_report_session");
     // The roster holds one start tool. A wiring that drops it empties this list, thus the assertion fails
     // here and no line below reads an absent member.
@@ -432,9 +486,8 @@ async function startSession(agent: AgentDefinition, analysisId: string, parentTh
     const scope: Scope = { kind: "analysis", analysisId, threadId: parentThreadId };
     const outcome = await tool.execute(START_BRIEF, { ...ctx, session: { ...ctx.session, scope } });
     // The roster types each tool as `Tool<unknown, unknown>`. The id above selects the one factory that
-    // makes the start tool. Thus the ok value is the outcome of that tool.
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return outcome._unsafeUnwrap() as StartReportSessionResult;
+    // makes the start tool. Thus the ok value is the outcome of that tool, and a case reads its arm by name.
+    return OutcomeArm.parse(outcome._unsafeUnwrap());
 }
 
 describe("the eyes of the start tool", () => {
@@ -502,7 +555,7 @@ describe("one resolved answer", () => {
         const connected: string[] = [];
         restoreConnector = setBrowserConnector((browserUrl) => {
             connected.push(browserUrl);
-            return Promise.resolve(fakeBrowser("BOTHPNG"));
+            return Promise.resolve(stubBrowser("BOTHPNG"));
         });
 
         // The one resolution. Each consumer below reads this value, thus a second resolution never runs.
@@ -521,30 +574,24 @@ describe("one resolved answer", () => {
 describe("the tool output store of the composition", () => {
     /** Each dep that the assembly reads at construction. No agent and no workflow runs in this case. */
     function coreDeps(): CoreRuntimeDeps {
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         const conversation: ConversationAssemblyDeps = {
-            provider: {} as ChatProvider,
-            utilityProvider: {} as ChatProvider,
+            provider: stubChatProvider(),
+            utilityProvider: stubChatProvider(),
             pool: poolDouble(),
-            embedding: {} as EmbeddingProvider,
-            workspaceFs: {} as WorkspaceFilesystem,
+            embedding: stubEmbeddingProvider(),
+            workspaceFs: stubWorkspaceFilesystem(),
             model: "test/model",
             utilityModel: "test/utility-model",
-            resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
-            runAuthorizer: {} as RunAuthorizer,
-            runLauncher: {} as RunLauncher,
+            resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+            runAuthorizer: stubRunAuthorizer(),
+            runLauncher: stubRunLauncher(),
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
             skillsDir: "/skills",
             chrome: {},
         };
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         return {
             conversation,
-            workflows: {
-                sandboxStep: {} as CoreWorkflowDeps["sandboxStep"],
-                buildExecuteAnalysis: () => ({}) as ReturnType<CoreWorkflowDeps["buildExecuteAnalysis"]>,
-                dataProfile: {} as CoreWorkflowDeps["dataProfile"],
-            },
+            workflows: workflowDeps(),
         };
     }
 
@@ -621,41 +668,37 @@ describe("the approval of the composition", () => {
     it("starts the run through the run launcher of the conversation deps", async () => {
         const launched: string[] = [];
         const runLauncher: RunLauncher = {
-            launch: async (_workflow, options) => {
+            launch: (_workflow, options) => {
                 launched.push(options.workflowId);
+                return Promise.resolve();
             },
         };
         const runAuthorizer: RunAuthorizer = {
-            authorize: () => okAsync({ runSession: {} as never, ownsMandate: true }),
+            authorize: () => okAsync({ runSession: stubRunSession({ runFrame: { runId: "run-composed" } }), ownsMandate: true }),
             revoke: () => okAsync(undefined),
             revokeByJti: () => okAsync(undefined),
         };
         const deps: CoreRuntimeDeps = {
             conversation: {
-                provider: {} as ChatProvider,
-                utilityProvider: {} as ChatProvider,
+                provider: stubChatProvider(),
+                utilityProvider: stubChatProvider(),
                 pool,
-                embedding: {} as EmbeddingProvider,
-                workspaceFs: {} as WorkspaceFilesystem,
+                embedding: stubEmbeddingProvider(),
+                workspaceFs: stubWorkspaceFilesystem(),
                 model: "test/model",
                 utilityModel: "test/utility-model",
-                resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+                resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
                 runAuthorizer,
                 runLauncher,
                 bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
                 skillsDir: "/skills",
                 chrome: {},
             },
-            workflows: {
-                sandboxStep: {} as CoreWorkflowDeps["sandboxStep"],
-                buildExecuteAnalysis: () => ({}) as ReturnType<CoreWorkflowDeps["buildExecuteAnalysis"]>,
-                dataProfile: {} as CoreWorkflowDeps["dataProfile"],
-            },
+            workflows: workflowDeps(),
         };
         const dbos = await import("@dbos-inc/dbos-sdk");
-        const register = dbos.DBOS.registerWorkflow;
         // The registry of DBOS is global to the process, and a launched engine refuses a registration.
-        (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = (workflow: unknown) => workflow;
+        const restoreRegisterWorkflow = installWritable(dbos.DBOS, "registerWorkflow", (workflow: unknown) => workflow);
         try {
             const runtime = assembleCoreRuntime(deps);
 
@@ -672,7 +715,7 @@ describe("the approval of the composition", () => {
             expect(approval.started).toBe(true);
             expect(launched).toEqual([approval.runId]);
         } finally {
-            (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = register;
+            restoreRegisterWorkflow();
         }
     });
 });

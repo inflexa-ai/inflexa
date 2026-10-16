@@ -3,9 +3,9 @@ import { describe, expect, it } from "bun:test";
 import { loadPlanRecord, planGraphOf, planPartOf, queryRunIdsByPlan } from "@inflexa-ai/harness";
 import type { PlanGraphStep, PlanRecord } from "@inflexa-ai/harness";
 
-import * as cardBuilders from "../memory/card-builders.js";
-import * as graph from "../workflows/plan/graph.js";
-import * as stateBarrel from "./index.js";
+import * as cardBuilders from "../../memory/card-builders.js";
+import * as graph from "../../workflows/plan/graph.js";
+import * as stateBarrel from "../index.js";
 
 describe("the exports of the plan reads", () => {
     it("reaches the reads from the package root, as the same functions of their modules", () => {

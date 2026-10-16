@@ -37,12 +37,12 @@ runFixtureSuite("string golden fixtures", [
 
 describe("the STRING enrichment twin", () => {
     it("breaks preferredNames into the comma-joined form of the tsv renderer", () => {
-        // The `/api/json` renderer sends an array on every row. The twin holds
+        // The `/api/json` renderer sends an array on every row but the twin's row 0. The twin holds
         // the string form, thus the reject assertion above guards the schema
         // against a widening back onto a union.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const drift = readFixture("string", "enrichment_gabaa.drift.json") as { preferredNames: unknown }[];
+        const rows = z.array(z.json()).parse(readFixture("string", "enrichment_gabaa.drift.json"));
+        const drift = z.looseObject({ preferredNames: z.string() }).parse(rows[0]);
 
-        expect(typeof drift[0].preferredNames).toBe("string");
+        expect(typeof drift.preferredNames).toBe("string");
     });
 });

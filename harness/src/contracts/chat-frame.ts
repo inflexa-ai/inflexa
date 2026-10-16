@@ -16,14 +16,16 @@ export type ApplyFrameResult = {
     terminal: TurnTerminal;
 };
 
-export type ChatPartCheck = { readonly ok: true; readonly frame: ChatPartFrame } | { readonly ok: false; readonly error: string };
+export type ChatPartCheck = { readonly ok: true; readonly frame: ChatFrame } | { readonly ok: false; readonly error: string };
 
+// A source without an invocation id must not carry the key, so the absence survives the JSON round trip.
 function toSource(source: EmitEvent["source"]): EventSource {
-    return {
+    const out: EventSource = {
         agentId: source.agentId,
         callPath: [...source.callPath],
-        ...(source.invocationId === undefined ? {} : { invocationId: source.invocationId }),
     };
+    if (source.invocationId !== undefined) out.invocationId = source.invocationId;
+    return out;
 }
 
 /**
@@ -31,11 +33,9 @@ function toSource(source: EmitEvent["source"]): EventSource {
  * and the run streams use this one rule.
  */
 export function flattenDataPart(part: Pick<ChatDataPart, "type" | "data">): { type: `data-${string}` } & Record<string, unknown> {
-    // The payload is `unknown`, and the spread is not checked here. The chat stream checks each frame with `checkChatPart`.
-    // On the run stream the producer builds the payload with the fields of its part contract, and the synthesis-sink test
-    // parses the result with `RunSynthesisPartSchema`.
-    const data = (part.data ?? {}) as Record<string, unknown>;
-    return { ...data, type: part.type };
+    // The producer builds the payload with the fields of its part contract — the spread is not checked here, and the chat
+    // stream checks each frame with `checkChatPart`; on the run stream the synthesis-sink test parses the result with `RunSynthesisPartSchema`.
+    return Object.assign({}, part.data, { type: part.type });
 }
 
 /**
@@ -77,8 +77,9 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
             return { type: "text-delta", text: event.text, source: toSource(fallbackSource) };
 
         default: {
-            // The cast names the frame that the type claims. `checkChatPart` is the check.
             const part = flattenDataPart(event);
+            // SAFETY: the cast names the frame that the type claims — `checkChatPart` is the check that runs where the frame arrives.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the producer gate deliberately forwards parts that fail their schema (documented contract); the flatten output is typed by the gate's contract, not by a parse.
             return { ...part, source: !(event.source === undefined) ? toSource(event.source) : undefined } as ChatPartFrame;
         }
     }
@@ -89,7 +90,7 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
  * does not know. A type that the registry does not know passes unchanged, because a newer emitter can send it. The
  * source is checked for each type, because {@link isRootFrame} reads its call path.
  */
-export function checkChatPart(frame: ChatPartFrame): ChatPartCheck {
+export function checkChatPart(frame: ChatFrame): ChatPartCheck {
     const { source, ...part } = frame;
     if (source !== undefined) {
         const checkedSource = EventSourceSchema.safeParse(source);

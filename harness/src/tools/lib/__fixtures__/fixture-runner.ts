@@ -42,7 +42,7 @@ export type FixtureCase<S extends z.ZodType> = {
      * The assertion over the parsed fixture. A client that maps the payload calls
      * its own mapper here and asserts the mapped record.
      */
-    assertOutput?: (output: z.infer<S>) => void;
+    assertOutput?(output: z.infer<S>): void;
 };
 
 /**
@@ -61,8 +61,7 @@ export type ErasedFixtureCase = FixtureCase<z.ZodType>;
  * each row through this function, and never through a bare object literal.
  */
 export function fixtureCase<S extends z.ZodType>(testCase: FixtureCase<S>): ErasedFixtureCase {
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return testCase as unknown as ErasedFixtureCase;
+    return testCase;
 }
 
 /** Read one fixture file of a provider directory and parse it as JSON. */
@@ -83,10 +82,9 @@ export function runFixtureSuite(suiteName: string, cases: readonly ErasedFixture
                     expect(parsed.success ? [] : describeIssues(parsed.error)).toEqual([]);
                 });
 
-                const assertOutput = testCase.assertOutput;
-                if (assertOutput) {
+                if (testCase.assertOutput) {
                     it("maps the positive fixture to the expected output", () => {
-                        assertOutput(testCase.schema.parse(readFixture(testCase.provider, testCase.fixture)));
+                        testCase.assertOutput?.(testCase.schema.parse(readFixture(testCase.provider, testCase.fixture)));
                     });
                 }
 

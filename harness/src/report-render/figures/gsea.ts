@@ -39,6 +39,7 @@ import {
     valueAxisTitle,
 } from "./common.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
+import { optionPercent } from "../option-lens.js";
 
 /**
  * The count of vertices that the thinning aims at for one curve, before it adds the vertices of shape.
@@ -449,8 +450,8 @@ function panelGrids(legendLines: number): EchartOption[] {
  * empty, and a set that dips under zero leaves the bottom left empty.
  */
 function statisticsText(context: FigureContext, panel: EchartOption, corner: "top-right" | "bottom-left"): EchartOption[] {
-    const top = Number.parseFloat(String(panel.top));
-    const height = Number.parseFloat(String(panel.height));
+    const top = optionPercent(panel.top);
+    const height = optionPercent(panel.height);
     return statisticsGraphic(context.statistics, corner).map((element) =>
         corner === "top-right"
             ? { ...element, right: percent(GRID_RIGHT + STATISTICS_INSET), top: percent(top + STATISTICS_INSET) }

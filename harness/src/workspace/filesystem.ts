@@ -40,6 +40,7 @@ import type { AgentSession } from "../auth/types.js";
 import { scopeResource } from "../auth/types.js";
 import { type FsError, tryFetch, tryFs } from "../lib/fs-result.js";
 import { classifyWithinRoot } from "../lib/fs-helpers.js";
+import { errnoCode } from "../lib/thrown.js";
 import { resolveWorkspacePath, type ResolvedPath, type ResolveWorkspaceRoot } from "./paths.js";
 import { splitLines } from "../lib/text.js";
 
@@ -341,7 +342,8 @@ function collectEntries(dir: string, dirents: readonly { name: string; isDirecto
  * off-tree, re-opening the read-exfiltration hole for the length of the race
  * (CWE-367). `O_NOFOLLOW` makes the leaf open atomic — a symlinked final
  * component fails `ELOOP` in the same syscall that opens it, so there is no
- * check/use gap. `?? 0` keeps the mask valid on a platform that lacks the flag.
+ * check/use gap. On a platform that lacks the flag, `|` coerces it to 0
+ * (ToInt32), so the mask stays valid with no guard.
  *
  * This refuses EVERY leaf symlink, including an in-tree one the persistent check
  * would allow: pure Node cannot express "follow only if it stays in-tree" (that
@@ -351,7 +353,7 @@ function collectEntries(dir: string, dirents: readonly { name: string; isDirecto
  * exposes no `openat2`); the upstream realpath check still rejects the
  * persistent case of that.
  */
-const READ_NO_FOLLOW = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW);
+const READ_NO_FOLLOW = fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
 
 type OpenedFile = { readonly kind: "ok"; readonly fh: FileHandle } | { readonly kind: "out_of_scope" };
 
@@ -370,7 +372,7 @@ function openReadNoFollow(absolute: string): ResultAsync<OpenedFile, FsError> {
             try {
                 return { kind: "ok", fh: await fsOpen(absolute, READ_NO_FOLLOW) };
             } catch (cause) {
-                if ((cause as NodeJS.ErrnoException).code === "ELOOP") return { kind: "out_of_scope" };
+                if (errnoCode(cause) === "ELOOP") return { kind: "out_of_scope" };
                 throw cause;
             }
         },

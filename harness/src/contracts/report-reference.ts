@@ -308,8 +308,12 @@ function sortKeysDeep(value: unknown): unknown {
     }
     if (value !== null && typeof value === "object") {
         const sorted: Record<string, unknown> = {};
-        for (const key of Object.keys(value).sort()) {
-            sorted[key] = sortKeysDeep((value as Record<string, unknown>)[key]);
+        // SAFETY: the enumeration below runs on this object — the entry tuples are its own keys and members, typed as unknown for the recursion.
+        const entries = Object.entries(value) as [string, unknown][];
+        // The keys sort here, so the serialization order holds no trace of the insertion order.
+        entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+        for (const [key, member] of entries) {
+            sorted[key] = sortKeysDeep(member);
         }
         return sorted;
     }

@@ -10,7 +10,16 @@ import { deriveChartOption, type ChartInputs, type ChartRow, type EchartOption }
 import { STEM_RENDERER } from "../../chart-renderers.js";
 import { firstFreeLanes } from "../common.js";
 import { ALTERATION_CLASS_COLORS } from "../oncoprint.js";
-import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
+import {
+    optionMember,
+    optionNumber,
+    optionNumbers,
+    optionRecord,
+    optionRecordPairs,
+    optionRecords,
+    optionString,
+} from "../../option-lens.js";
+import { must } from "../../../lib/test/guards.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -69,14 +78,13 @@ function stemSeries(option: EchartOption): EchartOption[] {
 
 function axisList(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption[] {
     const axes = option[key];
-    return Array.isArray(axes) ? (optionRecords(axes)) : [optionRecord(axes)];
+    return Array.isArray(axes) ? optionRecords(axes) : [optionRecord(axes)];
 }
 
 /** The mark areas of the band: each one as its two corners. */
 function bandAreas(option: EchartOption): Array<[EchartOption, EchartOption]> {
     const carrier = seriesOf(option).find((entry) => entry.markArea !== undefined);
-    // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-    return ((carrier?.markArea as EchartOption | undefined)?.data ?? []) as Array<[EchartOption, EchartOption]>;
+    return optionRecordPairs(optionMember(carrier?.markArea).data ?? []);
 }
 
 describe("the lollipop figure", () => {
@@ -84,13 +92,12 @@ describe("the lollipop figure", () => {
         const option = derive();
         const stems = stemSeries(option);
         expect(stems.map((entry) => entry.name)).toEqual(["Missense Mutation", "Nonsense Mutation", "Frame Shift Del"]);
-        expect(stems.map((entry) => (optionRecord(entry.itemStyle)).color)).toEqual([
+        expect(stems.map((entry) => optionRecord(entry.itemStyle).color)).toEqual([
             ALTERATION_CLASS_COLORS.Missense_Mutation,
             ALTERATION_CLASS_COLORS.Nonsense_Mutation,
             ALTERATION_CLASS_COLORS.Frame_Shift_Del,
         ]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const missense = (stems[0].data as Array<{ value: number[] }>).map((item) => item.value);
+        const missense = optionRecords(stems[0].data).map((item) => optionNumbers(item.value));
         // The largest count draws first, thus a smaller head at one position draws over the stem of a larger one.
         expect(missense).toEqual([
             [882, 19],
@@ -143,7 +150,7 @@ describe("the lollipop figure", () => {
         expect(lanes[2]).toBe(lanes[0]);
         expect(areas[3][0].name).toBe("SAM-dependent MTase C5-type");
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect((optionRecord(areas[3][0].label)).formatter).toMatch(/^SAM-dependent/);
+        expect(optionRecord(areas[3][0].label).formatter).toMatch(/^SAM-dependent/);
         // The band axis carries the position title, and the stem axis above it carries no tick label.
         const [stemAxis, bandAxis] = axisList(option, "xAxis");
         expect(stemAxis.axisLabel).toEqual(expect.objectContaining({ show: false }));
@@ -159,34 +166,30 @@ describe("the lollipop figure", () => {
         const option = derive();
         const labels = bandAreas(option)
             .slice(1)
-            .map(([from]) => (optionRecord(from.label)).formatter);
+            .map(([from]) => optionRecord(from.label).formatter);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         expect(labels[0]).toMatch(/^Interaction.*…$/);
         expect(labels[1]).toBe("PWWP");
         const tiny = derive(lollipop(), { track: { rows: [{ start: 591, end: 597, name: "Juxtamembrane", protein_length: 993 }] } });
-        expect((optionRecord(bandAreas(tiny)[1][0].label)).show).toBe(false);
+        expect(optionRecord(bandAreas(tiny)[1][0].label).show).toBe(false);
     });
 
     it("labels the three largest counts with the label column", () => {
         const option = derive();
         const labels = seriesOf(option).find((entry) => entry.type === "scatter");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((labels as { data: Array<{ name: string }> }).data.map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
+        expect(optionRecords(must(labels, "the label series").data).map((item) => optionString(item.name))).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
     });
 
     it("draws no stem and no label for a row with no class", () => {
         const rows = [...ROWS, { aa_position: 900, protein_change: "p.S900F", variant_classification: "", count: 50 }];
         const option = derive(lollipop(), INPUTS, rows);
         const labels = seriesOf(option).find((entry) => entry.type === "scatter");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((labels as { data: Array<{ name: string }> }).data.map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(stemSeries(option).flatMap((entry) => (entry.data as Array<{ name: string }>).map((item) => item.name))).not.toContain("p.S900F");
+        expect(optionRecords(must(labels, "the label series").data).map((item) => optionString(item.name))).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
+        expect(stemSeries(option).flatMap((entry) => optionRecords(entry.data).map((item) => optionString(item.name)))).not.toContain("p.S900F");
     });
 
     it("names the legend by the classes", () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const legend = derive().legend as { data: Array<{ name: string; icon: string }> };
+        const legend = optionRecord(derive().legend);
         expect(legend.data).toEqual([
             { name: "Missense Mutation", icon: "circle" },
             { name: "Nonsense Mutation", icon: "circle" },

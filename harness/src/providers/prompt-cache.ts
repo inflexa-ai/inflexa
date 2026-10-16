@@ -212,6 +212,7 @@ function canHostBreakpoint(message: ModelMessage): boolean {
     if (!Array.isArray(content)) return false;
     const last: unknown = content.at(-1);
     if (typeof last !== "object" || last === null) return false;
+    // SAFETY: the object guard bounds the read — the cast only reaches the block's discriminant, and the comparison below is the whole decision.
     return (last as { readonly type?: unknown }).type !== "reasoning";
 }
 
@@ -245,8 +246,7 @@ function withoutBreakpoint<M extends ModelMessage>(message: M): M {
     if (!carriesBreakpoint(message)) return message;
     let remaining: Record<string, Record<string, unknown>> = { ...message.providerOptions };
     for (const [namespace, key] of BREAKPOINT_SITES) {
-        // providerOptions may lack a namespace at runtime, whatever its type claims.
-        const bag: Record<string, unknown> | undefined = remaining[namespace];
+        const bag = typedMember(remaining, namespace);
         if (bag === undefined || bag[key] === undefined) continue;
         const { [key]: _dropped, ...rest } = bag;
         if (Object.keys(rest).length === 0) {

@@ -6,12 +6,18 @@
 
 /** The message of a thrown value: the `Error` message when there is one, the string form otherwise. */
 export function errorMessage(err: unknown): string {
+    // oxlint-disable-next-line typescript/no-base-to-string -- the default string form of an arbitrary non-Error thrown value is this normalizer's specified fallback.
     return err instanceof Error ? err.message : String(err);
 }
 
 /** The name a thrown value carries when it is an `Error`; `undefined` for any other value. */
 export function errorName(err: unknown): string | undefined {
     return err instanceof Error ? err.name : undefined;
+}
+
+/** The errno string a Node fs or network failure carries on `.code`; `undefined` for any other value. */
+export function errnoCode(err: unknown): string | undefined {
+    return isError(err) && "code" in err && typeof err.code === "string" ? err.code : undefined;
 }
 
 /** Whether a thrown value is an `Error` at runtime; the one `instanceof Error` the package performs. */

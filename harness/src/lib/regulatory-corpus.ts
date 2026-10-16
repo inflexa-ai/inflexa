@@ -58,10 +58,14 @@ export function chunkText(text: string, opts: ChunkOptions = {}): RawChunk[] {
 
     // parts[0] is always the lead-in text before the first heading (may be
     // empty when the document opens with a heading).
+    // SAFETY: the lead-in before the first heading carries no heading — the literal's `null` widens to the RawChunk member type.
     const sections =
         parts.length > 1
             ? parts.map((p, i) => {
-                  if (i === 0) return { heading: null as string | null, body: p };
+                  if (i === 0) {
+                      // SAFETY: the lead-in carries no heading — the literal's `null` widens to the RawChunk member type.
+                      return { heading: null as string | null, body: p };
+                  }
                   const nl = p.indexOf("\n");
                   if (nl === -1) return { heading: p.trim(), body: "" };
                   return { heading: p.slice(0, nl).trim(), body: p.slice(nl + 1) };

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { pubchemTool } from "../pubchem.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -12,7 +12,7 @@ afterEach(() => {
 
 function stubFetch(response: (url: string) => Response): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    globalThis.fetch = fetchDouble((url) => Promise.resolve(response(String(url))));
+    globalThis.fetch = fetchDouble((url) => Promise.resolve(response(urlText(url))));
 }
 
 function json(body: unknown, status = 200): Response {

@@ -76,6 +76,7 @@ const CONSTRAINT_SQLSTATE: Record<string, string> = {
 
 function sqlstate(cause: unknown): string | undefined {
     if (cause && typeof cause === "object" && "code" in cause) {
+        // SAFETY: the `in` guard proved the property exists — the cast types the read, and the typeof below rejects a non-string.
         const code = (cause as { code?: unknown }).code;
         return typeof code === "string" ? code : undefined;
     }
@@ -85,6 +86,7 @@ function sqlstate(cause: unknown): string | undefined {
 /** pg surfaces the tripped constraint's name on `.constraint`. */
 function constraintName(cause: unknown): string {
     if (cause && typeof cause === "object" && "constraint" in cause) {
+        // SAFETY: the `in` guard proved the property exists — the cast types the read, and the typeof and length tests reject everything else.
         const name = (cause as { constraint?: unknown }).constraint;
         if (typeof name === "string" && name.length > 0) return name;
     }

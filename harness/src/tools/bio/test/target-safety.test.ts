@@ -5,7 +5,7 @@ import { targetSafetyTool } from "../target-safety.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { jsonParse } from "../../../lib/json.js";
 import { z } from "zod";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, requestBodyText, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -23,7 +23,7 @@ function stubOpenTargets(responder: () => Response): Record<string, unknown>[] {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((_url, init) => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = jsonParse(String(init?.body ?? "{}"), z.object({ variables: z.record(z.string(), z.unknown()) }));
+        const body = jsonParse(requestBodyText(init?.body ?? "{}"), z.object({ variables: z.record(z.string(), z.unknown()) }));
         seen.push(body.variables);
         return Promise.resolve(responder());
     });
@@ -54,7 +54,9 @@ describe("targetSafety — curated panel", () => {
         expect(result.summary.panelMatched).toBe(1);
         expect(result.summary.bySeverity.high).toBe(1);
         expect(result.summary.byOrgan.cardiac).toBe(1);
-        expect(must(must(result, "result").targets[0].panelEntry, "must(result, \"result\").targets[0].panelEntry").clinical_consequence).toContain("valvulopathy");
+        expect(must(must(result, "result").targets[0].panelEntry, 'must(result, "result").targets[0].panelEntry').clinical_consequence).toContain(
+            "valvulopathy",
+        );
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         expect(result.panelVersion).toMatch(/^\d+\.\d+\.\d+$/);
     });
@@ -116,11 +118,11 @@ describe("targetSafety — Open Targets liabilities", () => {
         const seen: string[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         globalThis.fetch = fetchDouble((url, init) => {
-            const u = String(url);
+            const u = urlText(url);
             seen.push(u);
             if (u.includes("ensembl")) return new Response(JSON.stringify({ id: "ENSG00000141510" }), { status: 200 });
             // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const body = jsonParse(String(init?.body ?? "{}"), z.object({ variables: z.record(z.string(), z.unknown()) }));
+            const body = jsonParse(requestBodyText(init?.body ?? "{}"), z.object({ variables: z.record(z.string(), z.unknown()) }));
             expect(body.variables).toEqual({ ensemblId: "ENSG00000141510" });
             return Promise.resolve(gqlResponse({ target: { id: "ENSG00000141510", approvedSymbol: "TP53", safetyLiabilities: [] } }));
         });

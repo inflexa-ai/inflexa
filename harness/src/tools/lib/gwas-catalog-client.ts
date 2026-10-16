@@ -104,27 +104,27 @@ export const GwasSnpSearchResponseSchema = z.object({
 
 export function mapAssociation(a: RawGwasAssociation): GwasAssociation {
     const loci = a.loci ?? [];
-    const riskAlleles: string[] = loci.flatMap((l) => l.strongestRiskAlleles?.map((ra) => String(ra.riskAlleleName ?? "")) ?? []);
-    const genes: string[] = loci.flatMap((l) => l.authorReportedGenes?.map((g) => String(g.geneName ?? "")) ?? []);
-    const traits = (a.efoTraits ?? []).map((t) => String(t.trait ?? ""));
+    const riskAlleles: string[] = loci.flatMap((l) => l.strongestRiskAlleles?.map((ra) => ra.riskAlleleName ?? "") ?? []);
+    const genes: string[] = loci.flatMap((l) => l.authorReportedGenes?.map((g) => g.geneName ?? "") ?? []);
+    const traits = (a.efoTraits ?? []).map((t) => t.trait ?? "");
     const study: RawGwasStudy = a.study ?? {};
     const pMantissa: number = a.pvalueMantissa ?? 0;
     const pExponent: number = a.pvalueExponent ?? 0;
 
     return {
-        rsId: String(a._snpRsId ?? riskAlleles[0]?.split("-")[0]),
+        rsId: a._snpRsId ?? riskAlleles[0]?.split("-")[0],
         pValue: pMantissa * Math.pow(10, pExponent),
         pValueMantissa: pMantissa,
         pValueExponent: pExponent,
         riskAllele: riskAlleles.join(", "),
-        riskFrequency: String(a.riskFrequency ?? ""),
-        orBeta: (a.orPerCopyNum ?? a.betaNum ?? null),
-        ci: String(a.range ?? ""),
+        riskFrequency: a.riskFrequency ?? "",
+        orBeta: a.orPerCopyNum ?? a.betaNum ?? null,
+        ci: a.range ?? "",
         trait: traits.join("; "),
-        mappedGenes: [...new Set(genes)] as string[],
-        studyAccession: String(study.accessionId ?? ""),
-        pubmedId: String(study.publicationInfo?.pubmedId ?? ""),
-        sampleSize: String(study.initialSampleSize ?? ""),
+        mappedGenes: [...new Set(genes)],
+        studyAccession: study.accessionId ?? "",
+        pubmedId: study.publicationInfo?.pubmedId ?? "",
+        sampleSize: study.initialSampleSize ?? "",
     };
 }
 

@@ -44,6 +44,7 @@ import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { jsonParse } from "../../lib/json.js";
 import { z } from "zod";
+import type { Tool } from "../../tools/define-tool.js";
 
 const RUN_ID = "run-001";
 
@@ -66,7 +67,7 @@ function makeToolCtx(): ToolContext {
         session: makeRunSession(),
         signal: new AbortController().signal,
         emit: () => {},
-        ask:  () => Promise.reject(new Error("ask should not be reached")),
+        ask: () => Promise.reject(new Error("ask should not be reached")),
     };
 }
 
@@ -75,7 +76,7 @@ function makeToolCtx(): ToolContext {
  * semantic checks (stepId in known set, theme references match findings,
  * keyReferences cited by findings, PMIDs numeric).
  */
-function validSynthesisPayload(): Record<string, unknown> {
+function validSynthesisPayload(): RunSynthesis {
     return {
         runId: RUN_ID,
         overview: "A test run analyzed gene expression in T-cells.",
@@ -116,6 +117,31 @@ function validSynthesisPayload(): Record<string, unknown> {
     };
 }
 
+// The `Tool` interface erases a tool's output to `unknown`, so each read parses the output with the
+// shape the tool's own execute promises, and a guard narrows the union member the test asserts.
+const IssueSchema = z.object({ path: z.string(), code: z.enum(["schema", "semantic"]), message: z.string(), hint: z.string().optional() });
+const SubmitOutputSchema = z.discriminatedUnion("accepted", [
+    z.object({ accepted: z.literal(true) }),
+    z.object({ accepted: z.literal(false), issues: z.array(IssueSchema) }),
+]);
+const ValidateOutputSchema = z.discriminatedUnion("valid", [
+    z.object({ valid: z.literal(true), issues: z.array(z.never()) }),
+    z.object({ valid: z.literal(false), issues: z.array(IssueSchema) }),
+]);
+const BlockerOutputSchema = z.object({ recorded: z.literal(true), message: z.string() });
+
+async function submitOutput(submit: Tool, synthesis: unknown): Promise<z.infer<typeof SubmitOutputSchema>> {
+    return SubmitOutputSchema.parse((await submit.execute({ synthesis }, makeToolCtx()))._unsafeUnwrap());
+}
+
+async function validateOutput(validate: Tool, synthesis: unknown): Promise<z.infer<typeof ValidateOutputSchema>> {
+    return ValidateOutputSchema.parse((await validate.execute({ synthesis }, makeToolCtx()))._unsafeUnwrap());
+}
+
+async function blockerOutput(blocker: Tool, input: { reason: string }): Promise<z.infer<typeof BlockerOutputSchema>> {
+    return BlockerOutputSchema.parse((await blocker.execute(input, makeToolCtx()))._unsafeUnwrap());
+}
+
 describe("submit_synthesis inner tool", () => {
     it("accepts a valid payload and captures the outcome", async () => {
         const { submit, holder } = __buildInnerToolsForTest({
@@ -123,10 +149,9 @@ describe("submit_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap() as { accepted: true };
+        const result = await submitOutput(submit, validSynthesisPayload());
+        if (!result.accepted) throw new Error("expected acceptance");
 
-        expect(result.accepted).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
         if (holder.outcome?.kind === "submitted") {
             expect(holder.outcome.synthesis.runId).toBe(RUN_ID);
@@ -140,17 +165,12 @@ describe("submit_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        const bad = validSynthesisPayload();
         bad.findings[0].stepId = "T9S9";
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            accepted: false;
-            issues: { path: string; code: string }[];
-        };
+        const result = await submitOutput(submit, bad);
+        if (result.accepted) throw new Error("expected rejection");
 
-        expect(result.accepted).toBe(false);
         expect(result.issues.some((i) => i.code === "semantic")).toBe(true);
         expect(holder.outcome).toBeNull();
     });
@@ -160,21 +180,13 @@ describe("submit_synthesis inner tool", () => {
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const bad = validSynthesisPayload() as {
-            findings: { references: { pmid: string }[] }[];
-            keyReferences: { pmid: string }[];
-        };
+        const bad = validSynthesisPayload();
         bad.findings[0].references[0].pmid = "PMC123";
         bad.keyReferences[0].pmid = "PMC123";
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            accepted: false;
-            issues: { path: string }[];
-        };
+        const result = await submitOutput(submit, bad);
+        if (result.accepted) throw new Error("expected rejection");
 
-        expect(result.accepted).toBe(false);
         expect(result.issues.some((i) => i.path.includes("pmid"))).toBe(true);
     });
 
@@ -185,23 +197,17 @@ describe("submit_synthesis inner tool", () => {
         });
         (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const bad = validSynthesisPayload() as { findings: { stepId: string }[]; overview: string };
+        const bad = validSynthesisPayload();
         bad.findings[0].stepId = "T9S9";
         bad.overview = "clobbered";
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const second = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            accepted: false;
-            issues: { code: string }[];
-        };
+        const second = await submitOutput(submit, bad);
+        if (second.accepted) throw new Error("expected rejection");
 
-        expect(second.accepted).toBe(false);
         expect(second.issues.some((i) => i.code === "semantic")).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
         if (holder.outcome?.kind === "submitted") {
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            expect(holder.outcome.synthesis.overview).toBe((validSynthesisPayload() as { overview: string }).overview);
+            expect(holder.outcome.synthesis.overview).toBe(validSynthesisPayload().overview);
         }
     });
 
@@ -212,14 +218,12 @@ describe("submit_synthesis inner tool", () => {
         });
         (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const revised = validSynthesisPayload() as { overview: string };
+        const revised = validSynthesisPayload();
         revised.overview = "The revised, real synthesis of the run.";
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const second = (await submit.execute({ synthesis: revised }, makeToolCtx()))._unsafeUnwrap() as { accepted: true };
+        const second = await submitOutput(submit, revised);
+        if (!second.accepted) throw new Error("expected acceptance");
 
-        expect(second.accepted).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
         if (holder.outcome?.kind === "submitted") {
             expect(holder.outcome.synthesis.overview).toBe("The revised, real synthesis of the run.");
@@ -234,10 +238,9 @@ describe("submit_synthesis inner tool", () => {
         (await blocker.execute({ reason: "nothing to synthesize" }, makeToolCtx()))._unsafeUnwrap();
         expect(holder.outcome?.kind).toBe("blocker");
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap() as { accepted: true };
+        const result = await submitOutput(submit, validSynthesisPayload());
+        if (!result.accepted) throw new Error("expected acceptance");
 
-        expect(result.accepted).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
     });
 });
@@ -249,13 +252,9 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await validate.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: true;
-            issues: unknown[];
-        };
+        const result = await validateOutput(validate, validSynthesisPayload());
+        if (!result.valid) throw new Error("expected a valid candidate");
 
-        expect(result.valid).toBe(true);
         expect(result.issues).toHaveLength(0);
         expect(holder.outcome).toBeNull();
     });
@@ -266,22 +265,11 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const plain = (await validate.execute({ synthesis: JSON.stringify(validSynthesisPayload()) }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: boolean;
-            issues: unknown[];
-        };
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const fenced = (
-            await validate.execute({ synthesis: "```json\n" + JSON.stringify(validSynthesisPayload()) + "\n```" }, makeToolCtx())
-        )._unsafeUnwrap() as {
-            valid: boolean;
-            issues: unknown[];
-        };
+        const plain = await validateOutput(validate, JSON.stringify(validSynthesisPayload()));
+        const fenced = await validateOutput(validate, "```json\n" + JSON.stringify(validSynthesisPayload()) + "\n```");
+        if (!plain.valid || !fenced.valid) throw new Error("expected both candidates valid");
 
-        expect(plain.valid).toBe(true);
         expect(plain.issues).toHaveLength(0);
-        expect(fenced.valid).toBe(true);
         expect(fenced.issues).toHaveLength(0);
         expect(holder.outcome).toBeNull();
     });
@@ -292,15 +280,9 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (
-            await validate.execute({ synthesis: JSON.stringify({ ...validSynthesisPayload(), runId: "other-run" }) }, makeToolCtx())
-        )._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string; hint?: string }[];
-        };
+        const result = await validateOutput(validate, JSON.stringify({ ...validSynthesisPayload(), runId: "other-run" }));
+        if (result.valid) throw new Error("expected issues");
 
-        expect(result.valid).toBe(false);
         expect(result.issues).toHaveLength(1);
         expect(result.issues[0]?.path).toBe("synthesis.runId");
         expect(result.issues[0]?.code).toBe("semantic");
@@ -312,13 +294,9 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await validate.execute({ synthesis: { overview: 42, findings: "not an array" } }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string }[];
-        };
+        const result = await validateOutput(validate, { overview: 42, findings: "not an array" });
+        if (result.valid) throw new Error("expected issues");
 
-        expect(result.valid).toBe(false);
         expect(result.issues.length).toBeGreaterThan(0);
         // Nothing in this candidate is salvageable, so every field-level issue is
         // a schema issue; the only semantic entry is the deferred-checks notice.
@@ -333,21 +311,12 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const bad = validSynthesisPayload() as {
-            conclusions?: string;
-            findings: { references: { pmid: string }[] }[];
-        };
-        delete bad.conclusions;
-        bad.findings[0].references[0].pmid = "PMC123";
+        const { conclusions: _dropped, ...withoutConclusions } = validSynthesisPayload();
+        withoutConclusions.findings[0].references[0].pmid = "PMC123";
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string; hint?: string }[];
-        };
+        const result = await validateOutput(validate, withoutConclusions);
+        if (result.valid) throw new Error("expected issues");
 
-        expect(result.valid).toBe(false);
         expect(result.issues.some((i) => i.code === "schema" && i.path === "synthesis.conclusions")).toBe(true);
         expect(result.issues.some((i) => i.code === "semantic" && i.path === "synthesis.findings[0].references[0].pmid")).toBe(true);
         // keyReferences[0].pmid is no longer cited by any finding either.
@@ -368,21 +337,12 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const bad = validSynthesisPayload() as {
-            overview?: string;
-            findings: { stepId: string }[];
-        };
-        delete bad.overview;
-        bad.findings[0].stepId = "T9S9";
+        const { overview: _omitted, ...withoutOverview } = validSynthesisPayload();
+        withoutOverview.findings[0].stepId = "T9S9";
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string; hint?: string }[];
-        };
+        const result = await validateOutput(validate, withoutOverview);
+        if (result.valid) throw new Error("expected issues");
 
-        expect(result.valid).toBe(false);
         expect(result.issues.some((i) => i.code === "schema" && i.path === "synthesis.overview")).toBe(true);
         const stepIdIssue = result.issues.find((i) => i.path === "synthesis.findings[0].stepId");
         expect(stepIdIssue?.code).toBe("semantic");
@@ -398,18 +358,12 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const bad = validSynthesisPayload() as { findings: unknown; keyReferences: { pmid: string }[] };
-        bad.findings = [{ stepId: 7 }];
+        const bad = { ...validSynthesisPayload(), findings: [{ stepId: 7 }] };
         bad.keyReferences[0].pmid = "PMC999";
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string; hint?: string }[];
-        };
+        const result = await validateOutput(validate, bad);
+        if (result.valid) throw new Error("expected issues");
 
-        expect(result.valid).toBe(false);
         expect(result.issues.some((i) => i.code === "schema" && i.path.startsWith("synthesis.findings."))).toBe(true);
         // runId + keyReferences PMID format still parsed on their own, so their
         // checks ran: the malformed PMID is reported.
@@ -434,24 +388,15 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const bad = validSynthesisPayload() as {
-            runId: string;
-            findings: { stepId: string; references: { pmid: string }[] }[];
-            keyReferences: { pmid: string }[];
-        };
+        const bad = validSynthesisPayload();
         bad.runId = "run-999";
         bad.findings[0].stepId = "T9S9";
         bad.findings[0].references[0].pmid = "PMC1";
         bad.keyReferences[0].pmid = "PMC2";
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string }[];
-        };
+        const result = await validateOutput(validate, bad);
+        if (result.valid) throw new Error("expected issues");
 
-        expect(result.valid).toBe(false);
         expect(result.issues.every((i) => i.code === "semantic")).toBe(true);
         expect(result.issues.map((i) => i.path)).toEqual([
             "synthesis.runId",
@@ -471,17 +416,12 @@ describe("validate_synthesis inner tool", () => {
         });
         (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        const bad = validSynthesisPayload();
         bad.findings[0].stepId = "T9S9";
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { code: string }[];
-        };
+        const result = await validateOutput(validate, bad);
+        if (result.valid) throw new Error("expected issues");
 
-        expect(result.valid).toBe(false);
         expect(result.issues.some((i) => i.code === "semantic")).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
     });
@@ -494,7 +434,7 @@ describe("report_blocker inner tool", () => {
             runId: RUN_ID,
         });
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await blocker.execute({ reason: "no synthesizable content" }, makeToolCtx()))._unsafeUnwrap() as { recorded: true };
+        const result = await blockerOutput(blocker, { reason: "no synthesizable content" });
         expect(result.recorded).toBe(true);
         expect(holder.outcome?.kind).toBe("blocker");
         if (holder.outcome?.kind === "blocker") {
@@ -807,10 +747,7 @@ describe("persistSynthesis", () => {
                 synthesis,
             });
             expect(path.endsWith("synthesis.json")).toBe(true);
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const written = jsonParse(await readFile(path, "utf8"), z.record(z.string(), z.unknown())) as {
-                runId: string;
-            };
+            const written = jsonParse(await readFile(path, "utf8"), z.object({ runId: z.string() }));
             expect(written.runId).toBe(RUN_ID);
         } finally {
             await rm(tempDir, { recursive: true, force: true });
@@ -831,8 +768,7 @@ describe("buildRunSynthesisPart + formatSynthesisEmbeddingText", () => {
         };
         const part = buildRunSynthesisPart(RUN_ID, synthesis);
         expect(part.type).toBe("data-run-synthesis");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const data = part.data as { id: string; runId: string };
+        const data = RunSynthesisPartSchema.parse(flattenDataPart(part));
         expect(data.id).toBe(`synthesis-${RUN_ID}`);
         expect(data.runId).toBe(RUN_ID);
     });
@@ -897,10 +833,10 @@ describe("readRunSynthesis", () => {
 
         const part = await readRunSynthesis({ workspaceRoot: root, runId: RUN_ID });
 
-        expect(part).toEqual(flattenDataPart(buildRunSynthesisPart(RUN_ID, synthesis)) as never);
+        expect(part).toEqual<unknown>(flattenDataPart(buildRunSynthesisPart(RUN_ID, synthesis)));
         expect(part).toMatchObject({ type: "data-run-synthesis", id: `synthesis-${RUN_ID}` });
         expect(RunSynthesisPartSchema.safeParse(part).success).toBe(true);
-        expect(part?.findings[0]?.references).toEqual(synthesis.findings[0]!.references);
+        expect(part?.findings[0]?.references).toEqual(synthesis.findings[0].references);
     });
 
     it("gives null when no record is on disk", async () => {
@@ -908,7 +844,7 @@ describe("readRunSynthesis", () => {
     });
 
     it("gives null for a record whose findings have no references", async () => {
-        const finding = { ...synthesis.findings[0]!, references: undefined };
+        const finding = { ...synthesis.findings[0], references: undefined };
         await writeRecord("run-no-refs", JSON.stringify({ ...synthesis, runId: "run-no-refs", findings: [finding] }));
 
         expect(await readRunSynthesis({ workspaceRoot: root, runId: "run-no-refs" })).toBeNull();

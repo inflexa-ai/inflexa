@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { ModelMessage, ToolResultPart } from "ai";
+import type { ModelMessage } from "ai";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -36,6 +36,7 @@ import { suspensionOfFailure } from "../../workflows/suspension.js";
 import { openChatTurn, prepareChatTurn, runChatTurn, type RunChatTurnParams } from "../chat-turn.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { poolDouble } from "../../lib/test/doubles.js";
+import { toolResultParts } from "../../lib/test/messages.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -190,13 +191,12 @@ describe("prepareChatTurn", () => {
     it("injects an unavailable state when only the activity read fails", async () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         const activityFailingPool = poolDouble((query: string | { text: string; values?: unknown[] }, values?: unknown[]) => {
-                const text = typeof query === "string" ? query : query.text;
-                if (text.includes("status = 'running'")) {
-                    return Promise.reject(new Error("activity unavailable"));
-                }
-                // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                return pool.query(query as never, values as never);
-            });
+            const text = typeof query === "string" ? query : query.text;
+            if (text.includes("status = 'running'")) {
+                return Promise.reject(new Error("activity unavailable"));
+            }
+            return pool.query(typeof query === "string" ? { text: query, values } : { text: query.text, values: query.values });
+        });
 
         const result = await prepareChatTurn({ pool: activityFailingPool }, { analysisId: ANALYSIS_A, threadId: "unavailable-thread", userInput: "hello" });
         expect(result.kind).toBe("ok");
@@ -430,7 +430,7 @@ describe("runChatTurn", () => {
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "assistant"]);
         expect(rows.slice(1, 3).map((row) => contextRecordOf(row.message)?.kind)).toEqual(["run-activity", "working-memory"]);
         expect(rows[0].turn).toMatchObject({ status: "done", usage: { inputTokens: 220, outputTokens: 30 } });
-        expect(must(must(rows, "rows")[0].turn, "must(rows, \"rows\")[0].turn").durationMs).toBeGreaterThanOrEqual(1_000);
+        expect(must(must(rows, "rows")[0].turn, 'must(rows, "rows")[0].turn').durationMs).toBeGreaterThanOrEqual(1_000);
     });
 
     it("reads a stored turn back as one user message and one assistant message", async () => {
@@ -458,7 +458,7 @@ describe("runChatTurn", () => {
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The model endpoint refused the credential." } });
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "assistant", "tool", "user"]);
-        expect(must(must(must(rows, "rows").at(-1), "must(rows, \"rows\").at(-1)").message, "must(rows, \"rows\").at(-1).message").content).toBe(
+        expect(must(must(must(rows, "rows").at(-1), 'must(rows, "rows").at(-1)').message, 'must(rows, "rows").at(-1).message').content).toBe(
             "[Turn Failed]\nThe turn stopped before it finished. Reason: The model endpoint refused the credential.\nThe rounds above this note ran, and their results are stored.",
         );
         expect(JSON.stringify(rows.map((row) => row.message))).not.toContain("sk-secret-123");
@@ -529,7 +529,7 @@ describe("runChatTurn", () => {
             description: "Throws an AbortError that no abort of the turn caused.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => Promise.reject(new DOMException("The operation was aborted", "AbortError")),
+            execute: () => Promise.reject(new DOMException("The operation was aborted", "AbortError")),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "stall", {})], "tool_use")]);
 
@@ -538,8 +538,7 @@ describe("runChatTurn", () => {
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The turn stopped on an internal error." } });
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "user"]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const answer = rows[4].message.content as ToolResultPart[];
+        const answer = toolResultParts(rows[4].message);
         expect(answer.map((part) => [part.toolCallId, part.output])).toEqual([["tu-1", { type: "error-text", value: NOT_RUN_TOOL_RESULT }]]);
     });
 
@@ -645,16 +644,21 @@ describe("runChatTurn", () => {
 
         await runChatTurn({ pool, agents: resolverFor(agentWith([long, createReadToolOutputTool(createToolOutputStore(pool))])) }, params(provider));
 
-        const round = must((await storedRows()).find((row) => row.message.role === "tool"), "round");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const output = (round.message.content as ToolResultPart[])[0].output;
+        const round = must(
+            (await storedRows()).find((row) => row.message.role === "tool"),
+            "round",
+        );
+        const output = toolResultParts(round.message)[0].output;
         expect(output.type).toBe("text");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const excerpt = (output as { value: string }).value;
+        if (output.type !== "text") throw new Error("expected a text output");
+        const excerpt = output.value;
         expect(excerpt.startsWith("[Tool result cut: 50002 characters")).toBe(true);
         expect(excerpt.length).toBeLessThan(text.length);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const ref = must(must(/reference "(to_[0-9a-f]{20})"/, "/reference \"(to_[0-9a-f]{20})\"/").exec(excerpt), "must(/reference \"(to_[0-9a-f]{20})\"/, \"/referenc")[1];
+        const ref = must(
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            must(/reference "(to_[0-9a-f]{20})"/, '/reference "(to_[0-9a-f]{20})"/').exec(excerpt),
+            'must(/reference "(to_[0-9a-f]{20})"/, "/referenc',
+        )[1];
         const { rows } = await pool.query<{ thread_id: string | null; content: string; total_length: number }>(
             "SELECT thread_id, content, total_length FROM cortex_tool_outputs WHERE analysis_id = $1 AND ref = $2",
             [ANALYSIS_A, ref],
@@ -669,7 +673,15 @@ describe("runChatTurn", () => {
 
         const request = provider.calls[0];
         expect(systemDirective(request)).toEqual({ type: "ephemeral", ttl: "1h" });
-        expect(must(must(must(must(request, "request").messages.at(-1), "must(request, \"request\").messages.at(-1)").providerOptions, "must(request, \"request\").messages.at(-1).provide")["anthropic"], "must(request, \"request\").messages.at(-1).provide")["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
+        expect(
+            must(
+                must(
+                    must(must(request, "request").messages.at(-1), 'must(request, "request").messages.at(-1)').providerOptions,
+                    'must(request, "request").messages.at(-1).provide',
+                )["anthropic"],
+                'must(request, "request").messages.at(-1).provide',
+            )["cacheControl"],
+        ).toEqual({ type: "ephemeral", ttl: "1h" });
     });
 
     it("sends the cache directive of a host policy", async () => {
@@ -718,21 +730,26 @@ describe("runChatTurn", () => {
             get(target, prop, receiver) {
                 if (prop !== "connect") {
                     const value: unknown = Reflect.get(target, prop, receiver);
-                    return typeof value === "function" ? value.bind(target) : value;
+                    const bound: unknown = typeof value === "function" ? value.bind(target) : value;
+                    return bound;
                 }
                 return async () => {
                     const client = await target.connect();
                     return new Proxy(client, {
                         get(inner, key, innerReceiver) {
                             const value: unknown = Reflect.get(inner, key, innerReceiver);
-                            if (key !== "query" || typeof value !== "function") return typeof value === "function" ? value.bind(inner) : value;
+                            if (key !== "query" || typeof value !== "function") {
+                                const bound: unknown = typeof value === "function" ? value.bind(inner) : value;
+                                return bound;
+                            }
                             return (text: unknown, values?: unknown[]) => {
                                 // The first row of the first round takes seq 3, after the three rows of the opening.
                                 if (!failed && typeof text === "string" && text.includes("INSERT INTO messages") && values?.[1] === 3) {
                                     failed = true;
                                     return Promise.reject(new Error("simulated insert failure"));
                                 }
-                                return value.call(inner, text, values);
+                                const answered: unknown = value.call(inner, text, values);
+                                return answered;
                             };
                         },
                     });
@@ -748,11 +765,7 @@ describe("runChatTurn", () => {
         expect("storeError" in result).toBe(false);
         const rows = await storedRows();
         expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(rows.filter((row) => row.message.role === "tool").map((row) => (row.message.content as ToolResultPart[])[0].toolCallId)).toEqual([
-            "tu-1",
-            "tu-2",
-        ]);
+        expect(rows.filter((row) => row.message.role === "tool").map((row) => toolResultParts(row.message)[0].toolCallId)).toEqual(["tu-1", "tu-2"]);
     });
 });
 
@@ -909,7 +922,7 @@ describe("runChatTurn — compaction", () => {
         const sent = next.calls[0].messages;
         expect(sent.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "assistant", "user"]);
         expect(sent[0].content).toBe(`[Conversation Summary]\n${SUMMARY}`);
-        expect(must(must(sent, "sent").at(-1), "must(sent, \"sent\").at(-1)").content).toBe("and now?");
+        expect(must(must(sent, "sent").at(-1), 'must(sent, "sent").at(-1)').content).toBe("and now?");
     });
 
     it("sends no text delta of the exchange to the emit of the host", async () => {
@@ -940,8 +953,15 @@ describe("runChatTurn — compaction", () => {
         const rows = (await storedRows()).map((row) => row.message);
         const afterMarker = rows.slice(rows.findIndex((message) => compactionMarkerOf(message) !== undefined) + 1);
         const memory = afterMarker.find((message) => contextRecordOf(message)?.kind === "working-memory");
-        expect(String(memory?.content)).toContain("Use an FDR of 0.01.");
-        expect(must(must(must(provider, "provider").calls.at(-1), "must(provider, \"provider\").calls.at(-1)").messages, "must(provider, \"provider\").calls.at(-1).messages").some((message) => String(message.content).includes("Use an FDR of 0.01."))).toBe(true);
+        const memoryContent = memory?.content;
+        if (typeof memoryContent !== "string") throw new Error("the working-memory record holds string content");
+        expect(memoryContent).toContain("Use an FDR of 0.01.");
+        expect(
+            must(
+                must(must(provider, "provider").calls.at(-1), 'must(provider, "provider").calls.at(-1)').messages,
+                'must(provider, "provider").calls.at(-1).messages',
+            ).some((message) => typeof message.content === "string" && message.content.includes("Use an FDR of 0.01.")),
+        ).toBe(true);
     });
 
     it("keeps the seed and the summary marker first on a report turn, runs no tool in the exchange, and adds no working-memory record", async () => {
@@ -956,12 +976,11 @@ describe("runChatTurn — compaction", () => {
         await runChatTurn({ pool, agents: agents() }, params(provider));
 
         const exchange = provider.calls.filter(isExchangeRequest);
-        expect(must(must(exchange, "exchange")[0].messages.at(-1), "must(exchange, \"exchange\")[0].messages.at(-1)").content).toBe(SUMMARY_COMPACTION_REQUEST);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const refused = must(must(exchange, "exchange")[1].messages.at(-1), "must(exchange, \"exchange\")[1].messages.at(-1)").content as ToolResultPart[];
+        expect(must(must(exchange, "exchange")[0].messages.at(-1), 'must(exchange, "exchange")[0].messages.at(-1)').content).toBe(SUMMARY_COMPACTION_REQUEST);
+        const refused = toolResultParts(must(must(exchange, "exchange")[1].messages.at(-1), 'must(exchange, "exchange")[1].messages.at(-1)'));
         expect(refused[0].output).toMatchObject({ type: "error-text" });
         expect(JSON.stringify(refused[0].output)).toContain("No tool can run for this request");
-        const after = must(must(must(provider, "provider").calls.at(-1), "must(provider, \"provider\").calls.at(-1)").messages, "after");
+        const after = must(must(must(provider, "provider").calls.at(-1), 'must(provider, "provider").calls.at(-1)').messages, "after");
         expect(after.map(kindOf)).toEqual(["user", "summary-marker", "run-activity"]);
         expect(after[0].content).toBe("[Report Brief]\nDraft the methods section.");
     });
@@ -1006,13 +1025,13 @@ describe("runChatTurn — compaction", () => {
         const [first, task] = replies.calls;
         expect(isExchangeRequest(first)).toBe(true);
         expect(first.messages.map(kindOf)).toEqual(["user", "assistant", "user"]);
-        expect(must(must(first, "first").messages.at(-1), "must(first, \"first\").messages.at(-1)").content).toBe(MEMORY_COMPACTION_REQUEST);
+        expect(must(must(first, "first").messages.at(-1), 'must(first, "first").messages.at(-1)').content).toBe(MEMORY_COMPACTION_REQUEST);
         expect(storedAtRequest).toEqual([
             ["user", "assistant"],
             ["user", "assistant", "exchange-user", "exchange-assistant", "summary-marker", "run-activity", "working-memory", "user"],
         ]);
         expect(task.messages.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "user"]);
-        expect(must(must(task, "task").messages.at(-1), "must(task, \"task\").messages.at(-1)").content).toBe("compare the two groups");
+        expect(must(must(task, "task").messages.at(-1), 'must(task, "task").messages.at(-1)').content).toBe("compare the two groups");
         const marker = (await storedRows()).map((row) => compactionMarkerOf(row.message)).find((found) => found !== undefined);
         expect(marker).toMatchObject({ kind: "summary", tokensBefore: OVER, trigger: "turn-start" });
     });
@@ -1064,7 +1083,7 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("runs no turn-start compaction at the turn-start budget of the agent", async () => {
-        await storeMeasuredTurn(must(must(CONVERSATION_RULES, "CONVERSATION_RULES").turnStartBudget, "must(CONVERSATION_RULES, \"CONVERSATION_RULES\").t"));
+        await storeMeasuredTurn(must(must(CONVERSATION_RULES, "CONVERSATION_RULES").turnStartBudget, 'must(CONVERSATION_RULES, "CONVERSATION_RULES").t'));
         const provider = compactingProvider([text("done")], []);
 
         await runChatTurn({ pool, agents: agents() }, params(provider));

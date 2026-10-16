@@ -147,10 +147,11 @@ runFixtureSuite("CompTox golden fixtures", [
 
 describe("the CompTox oracles and the corrected fields", () => {
     function oracleSchemas(domain: string): Record<string, { properties: Record<string, unknown> }> {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const spec = readFixture("comptox", `openapi-${domain}.excerpt.json`) as {
-            components: { schemas: Record<string, { properties: Record<string, unknown> }> };
-        };
+        const spec = z
+            .looseObject({
+                components: z.looseObject({ schemas: z.record(z.string(), z.looseObject({ properties: z.record(z.string(), z.json()) })) }),
+            })
+            .parse(readFixture("comptox", `openapi-${domain}.excerpt.json`));
         return spec.components.schemas;
     }
 
@@ -183,8 +184,7 @@ describe("the CompTox oracles and the corrected fields", () => {
     });
 
     it("declares hitc as a double, thus the active predicate is a threshold", () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const hitc = oracleSchemas("bioactivity").BioactivityDataAll.properties.hitc as { type: string; format: string };
+        const hitc = z.looseObject({ type: z.string(), format: z.string() }).parse(oracleSchemas("bioactivity").BioactivityDataAll.properties.hitc);
         expect(hitc.type).toBe("number");
         expect(hitc.format).toBe("double");
     });

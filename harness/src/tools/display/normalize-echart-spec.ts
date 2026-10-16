@@ -182,7 +182,7 @@ export function normalizeEchartSpec(spec: Record<string, unknown>, opts: Normali
         const axis = out[key];
         // A malformed entry is passed through rather than dropped — normalization rewrites layout,
         // never the shape of the spec it was handed.
-        if (Array.isArray(axis)) out[key] = axis.map((entry) => (isRecord(entry) ? normalizeAxis(entry, key === "xAxis") : entry));
+        if (Array.isArray(axis)) out[key] = axis.map((entry): unknown => (isRecord(entry) ? normalizeAxis(entry, key === "xAxis") : entry));
         else if (isRecord(axis)) out[key] = normalizeAxis(axis, key === "xAxis");
     }
 

@@ -10,6 +10,7 @@
  * `null`. The OpenAPI document gives the modifier of each field.
  */
 
+import { maybeRecord } from "../../lib/shape.js";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -51,24 +52,27 @@ const GithubReposResponseSchema = z.object({
 });
 
 export function parseGithubReposResponse(raw: unknown): GithubRepo[] {
-    const items = (raw as { items?: unknown[] } | undefined)?.items;
+    // `raw` is the untyped API body — the reach is optional-chained and the Array.isArray guard below degrades a mismatch to empty.
+    const items = maybeRecord(raw)?.items;
     if (!Array.isArray(items)) return [];
-    return items
-        .filter(
-            (i): i is Record<string, unknown> =>
-                typeof i === "object" &&
-                i !== null &&
-                typeof (i as { html_url?: unknown }).html_url === "string" &&
-                typeof (i as { full_name?: unknown }).full_name === "string",
-        )
-        .map((i) => ({
-            url: String(i.html_url),
-            fullName: String(i.full_name),
-            description: typeof i.description === "string" ? i.description : undefined,
-            stars: typeof i.stargazers_count === "number" ? i.stargazers_count : 0,
-            language: typeof i.language === "string" ? i.language : undefined,
-            lastUpdated: typeof i.updated_at === "string" ? i.updated_at : undefined,
-        }));
+    // An item that names no html_url and full_name is dropped; the typeof in the same conjunct is the test that proves it.
+    return items.flatMap((item) => {
+        const record = maybeRecord(item);
+        if (record === undefined) return [];
+        const url = record.html_url;
+        const fullName = record.full_name;
+        if (typeof url !== "string" || typeof fullName !== "string") return [];
+        return [
+            {
+                url,
+                fullName,
+                description: typeof record.description === "string" ? record.description : undefined,
+                stars: typeof record.stargazers_count === "number" ? record.stargazers_count : 0,
+                language: typeof record.language === "string" ? record.language : undefined,
+                lastUpdated: typeof record.updated_at === "string" ? record.updated_at : undefined,
+            },
+        ];
+    });
 }
 
 export function createSearchGithubReposTool(deps: { githubToken?: string }) {

@@ -63,6 +63,7 @@ const PERMISSION_CODES = new Set(["EACCES", "EPERM"]);
 
 function errnoOf(cause: unknown): string | undefined {
     if (cause && typeof cause === "object" && "code" in cause) {
+        // SAFETY: the `in` guard proved the property exists — the cast types the read, and the typeof below rejects a non-string.
         const code = (cause as { code?: unknown }).code;
         return typeof code === "string" ? code : undefined;
     }

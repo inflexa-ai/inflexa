@@ -14,6 +14,7 @@ import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { EmitFn } from "../../loop/types.js";
+import type { AskPart } from "../../contracts/chat-parts.js";
 import { AskRejectedError, type AskApproval, type AskReply, type AskRequest } from "./contract.js";
 import {
     answerAsk,
@@ -154,17 +155,16 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
 
 /** Emit (or reconcile, under the same id) the ask's `data-ask` chat part. */
 function emitAskPart(emit: EmitFn, id: string, request: AskRequest, status: AskStatus, reply?: AskReply["kind"]): void | Promise<void> {
-    return emit({
-        type: "data-ask",
-        data: {
-            id,
-            title: request.title,
-            command: request.command,
-            detail: request.detail !== undefined ? request.detail : undefined,
-            status,
-            ...(reply !== undefined ? { reply } : {}),
-        },
-    });
+    // A terminal part without a reply must not carry the key, so the absence survives the JSON round trip.
+    const data: Omit<AskPart, "type"> = {
+        id,
+        title: request.title,
+        command: request.command,
+        detail: request.detail !== undefined ? request.detail : undefined,
+        status,
+    };
+    if (reply !== undefined) data.reply = reply;
+    return emit({ type: "data-ask", data });
 }
 
 /**

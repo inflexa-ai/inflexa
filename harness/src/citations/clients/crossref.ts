@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "../types.js";
 import { encodeDoiPath, firstNonEmpty, parseYear, sourceOutcome } from "./common.js";
-import { requestJson, type SourceHttpOptions } from "../../literature/sources/http.js";
+import { requestJson, type SourceHttpOptions, type SourceHttpResult } from "../../literature/sources/http.js";
 
 const CrossrefItemSchema = z
     .object({
@@ -17,8 +17,28 @@ const CrossrefItemSchema = z
         page: z.string().optional(),
     })
     .loose();
+type CrossrefItem = z.infer<typeof CrossrefItemSchema>;
+
 const ExactSchema = z.object({ message: CrossrefItemSchema });
 const SearchSchema = z.object({ message: z.object({ items: z.array(CrossrefItemSchema) }).loose() });
+
+/**
+ * Read the items of one Crossref response. The caller pairs the schema with the reader of the
+ * parsed value, so the one generic instantiation keeps the pair correlated: the `exact` lookup
+ * answers one item, the bibliographic search answers the items array.
+ */
+async function crossrefItems<S extends z.ZodType>(
+    url: string,
+    schema: S,
+    options: SourceHttpOptions,
+    signal: AbortSignal | undefined,
+    headers: Record<string, string>,
+    itemsOf: (value: z.infer<S>) => CrossrefItem[],
+): Promise<SourceHttpResult<CrossrefItem[]>> {
+    const result = await requestJson(url, schema, options, signal, { headers });
+    if (result.status !== "ok") return result;
+    return { status: "ok", value: itemsOf(result.value) };
+}
 
 export type CrossrefClientOptions = SourceHttpOptions & {
     readonly mailto?: string;
@@ -93,12 +113,11 @@ export function createCrossrefClient(options: CrossrefClientOptions = {}): Citat
                       if (options.mailto) params.set("mailto", options.mailto);
                       return `https://api.crossref.org/works?${params}`;
                   })();
-            const result = exact
-                ? await requestJson(url, ExactSchema, options, signal, { headers })
-                : await requestJson(url, SearchSchema, options, signal, { headers });
-            if (result.status !== "ok") return sourceOutcome("crossref", request.plan.operation, result.status, 1, [], result.detail);
-            const items = exact ? [(result.value).message] : (result.value as z.infer<typeof SearchSchema>).message.items;
-            const records = items.flatMap((item, index) => {
+            const fetched = exact
+                ? await crossrefItems(url, ExactSchema, options, signal, headers, (value) => [value.message])
+                : await crossrefItems(url, SearchSchema, options, signal, headers, (value) => value.message.items);
+            if (fetched.status !== "ok") return sourceOutcome("crossref", request.plan.operation, fetched.status, 1, [], fetched.detail);
+            const records = fetched.value.flatMap((item, index) => {
                 const record = crossrefRecord(item, index);
                 return record === undefined ? [] : [record];
             });

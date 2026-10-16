@@ -8,17 +8,8 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import {
-    CHART_SOURCE_MEMBER,
-    deriveChartOption,
-    deriveChartRender,
-    type ChartDataSource,
-    type ChartInputs,
-    type ChartOpts,
-    type ChartRow,
-    type EchartOption,
-} from "../../chart.js";
-import { optionArray, optionNumbers, optionRecord, optionRecords } from "../../option-lens.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartInputs, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
+import { optionArray, optionMember, optionNumbers, optionPercent, optionRecord, optionRecords, optionRecordsOrEmpty } from "../../option-lens.js";
 import { CHART_RENDERERS_SOURCE, exportOption } from "../../chart-renderers.js";
 import { CHART_BODY_MAX_PX, CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
@@ -110,7 +101,7 @@ function named(option: EchartOption, name: string): EchartOption {
 
 function axes(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption[] {
     const value = option[key];
-    return Array.isArray(value) ? (optionRecords(value)) : [optionRecord(value)];
+    return Array.isArray(value) ? optionRecords(value) : [optionRecord(value)];
 }
 
 /** The pair of each item of one series, whether the item is a bare pair or an object. */
@@ -164,7 +155,7 @@ describe("the regional association plot", () => {
         const r2 = pairs(points).map((pair) => pair[2]);
         expect(r2).toEqual([...r2].sort((a, b) => a - b));
         const gray = named(option, LD_MISSING_NAME);
-        expect((optionRecord(gray.itemStyle)).color).toBe(LD_MISSING_COLOR);
+        expect(optionRecord(gray.itemStyle).color).toBe(LD_MISSING_COLOR);
         expect(gray.z).toBeLessThan(2);
         expect(gray.data).toEqual([{ name: "rs7185735", value: [54010000, -Math.log10(0.4)] }]);
     });
@@ -172,7 +163,7 @@ describe("the regional association plot", () => {
     it("draws the lead variant as a purple diamond with its name on top", () => {
         const lead = named(derive(), LEAD_VARIANT_NAME);
         expect(lead.symbol).toBe("diamond");
-        expect((optionRecord(lead.itemStyle)).color).toBe(LEAD_VARIANT_COLOR);
+        expect(optionRecord(lead.itemStyle).color).toBe(LEAD_VARIANT_COLOR);
         expect(LEAD_VARIANT_COLOR).toBe("#9632b8");
         expect(lead.data).toEqual([{ name: "rs1558902", value: [53803574, -Math.log10(7.5e-153)] }]);
         expect(lead.label).toMatchObject({ show: true, position: "top", formatter: "{b}" });
@@ -183,7 +174,7 @@ describe("the regional association plot", () => {
         const line = named(option, RECOMBINATION_NAME);
         expect(line.type).toBe("line");
         expect(line.yAxisIndex).toBe(1);
-        expect((optionRecord(line.lineStyle)).color).toBe(RECOMBINATION_COLOR);
+        expect(optionRecord(line.lineStyle).color).toBe(RECOMBINATION_COLOR);
         expect(line.showSymbol).toBe(false);
         expect(pairs(line).map((pair) => pair[0])).toEqual([53650000, 53750000, 53797000, 53803574, 53820527, 53900000, 54010000, 54080000]);
         const right = axes(option, "yAxis")[1];
@@ -192,18 +183,17 @@ describe("the regional association plot", () => {
         expect(right.min).toBe(0);
         // The largest rate is 31, and the axis ends at the round number past it.
         expect(right.max).toBe(40);
-        expect((optionRecord(right.splitLine)).show).toBe(false);
+        expect(optionRecord(right.splitLine).show).toBe(false);
     });
 
     it("marks the genome-wide line at 5 × 10⁻⁸, and ends the p axis at a round number past the lead", () => {
         const option = derive();
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const lines = seriesOf(option).flatMap((entry) => ((entry.markLine as EchartOption | undefined)?.data as EchartOption[] | undefined) ?? []);
+        const lines = seriesOf(option).flatMap((entry) => optionRecordsOrEmpty(optionMember(entry.markLine).data));
         const guide = lines.find((line) => line.yAxis !== undefined);
         expect(guide?.yAxis).toBe(-Math.log10(5e-8));
         // The line itself names nothing, and a series of its own places the name at a free spot.
         expect(guide?.label).toEqual({ show: false });
-        expect((optionRecords(named(option, GUIDE_LABEL).data))[0].name).toBe("p 5 × 10⁻⁸");
+        expect(optionRecords(named(option, GUIDE_LABEL).data)[0].name).toBe("p 5 × 10⁻⁸");
         const left = axes(option, "yAxis")[0];
         expect(left.name).toBe("−log10(p)");
         expect(left.min).toBe(0);
@@ -216,13 +206,13 @@ describe("the regional association plot", () => {
         // The window spans 53.65 to 54.08 Mb, thus the ticks step by 0.1 Mb, and the axis ends at the rows.
         expect(x.min).toBe(53650000);
         expect(x.max).toBe(54080000);
-        expect((optionRecord(x.axisLabel)).show).toBe(false);
+        expect(optionRecord(x.axisLabel).show).toBe(false);
         // The runtime counts its ticks from the minimum, thus the axis hides them and the tick series draws each mark.
-        expect((optionRecord(x.axisTick)).show).toBe(false);
+        expect(optionRecord(x.axisTick).show).toBe(false);
         expect(x.name).toBe("Position on chr16 (Mb)");
         const ticks = named(option, POSITION_TICKS);
         expect(ticks.symbol).toBe("rect");
-        expect((optionRecords(ticks.data)).map((item) => item.name)).toEqual(["53.7", "53.8", "53.9", "54.0"]);
+        expect(optionRecords(ticks.data).map((item) => item.name)).toEqual(["53.7", "53.8", "53.9", "54.0"]);
         expect(optionRecords(ticks.data).map((item) => optionNumbers(item.value)[0])).toEqual([53700000, 53800000, 53900000, 54000000]);
     });
 
@@ -235,12 +225,14 @@ describe("the regional association plot", () => {
         const option = derive();
         const genes = named(option, GENE_NAMES);
         expect(genes.xAxisIndex).toBe(1);
-        const names = (optionRecords(genes.data)).map((item) => item.name);
+        const names = optionRecords(genes.data).map((item) => item.name);
         // AKTIP and IRX3 lie outside the window, thus they draw nothing.
         expect(names).toEqual(["RPGRIP1L", "MIR1972", "FTO"]);
         expect(genes.label).toMatchObject({ show: true, position: "bottom", fontStyle: "italic" });
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const spans = ((optionRecord(genes.markLine)).data as EchartOption[][]).map(([from, to]) => [from.coord, to.coord] as number[][]);
+        const spans = optionArray(optionRecord(genes.markLine).data).map((pair) => {
+            const [from, to] = optionRecords(pair);
+            return [optionNumbers(from.coord), optionNumbers(to.coord)];
+        });
         const lanes = spans.map(([from]) => from[1]);
         // The clipped FTO ends at the window, and each overlapping pair sits in two lanes.
         expect(spans[2][1][0]).toBe(54080000);
@@ -255,8 +247,8 @@ describe("the regional association plot", () => {
             const genes = Array.from({ length: count }, (_, index) => ({ gene: `G${index}`, start: 53650000, end: 54080000 }));
             const inputs: ChartInputs = { track: { rows: genes, columns: ["gene", "start", "end"] } };
             const render = deriveChartRender(locuszoom(), ROWS, undefined, { key: "lz", columns: [] }, inputs, OPTS)._unsafeUnwrap();
-            const plot = (optionRecords(render.option.grid))[0];
-            const share = 100 - Number.parseFloat(String(plot.top)) - Number.parseFloat(String(plot.bottom));
+            const plot = optionRecords(render.option.grid)[0];
+            const share = 100 - optionPercent(plot.top) - optionPercent(plot.bottom);
             return { bodyPx: render.bodyPx, plotPx: (render.bodyPx * share) / 100 };
         };
         const grown = layout(10);
@@ -270,7 +262,7 @@ describe("the regional association plot", () => {
         const option = derive(locuszoom(), rows);
         const zero = seriesOf(option).find((entry) => entry.symbol === BELOW_RESOLUTION_SYMBOL);
         expect(zero?.data).toEqual([{ name: "rs0", value: [53810000, -Math.log10(7.5e-153)], itemStyle: { color: "#ff0000" } }]);
-        expect((optionRecords(named(option, LEAD_VARIANT_NAME).data))[0].name).toBe("rs0");
+        expect(optionRecords(named(option, LEAD_VARIANT_NAME).data)[0].name).toBe("rs0");
     });
 
     it("draws the plot alone with no track, no metric, and no chromosome", () => {
@@ -351,11 +343,11 @@ describe("the LD legend of an export", () => {
 
     it("keeps the row of bins at each column size, on the server and on the page", () => {
         const option = derive();
-        const legend = (optionRecords(option.visualMap))[0];
+        const legend = optionRecords(option.visualMap)[0];
         for (const size of [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double]) {
             for (const exported of [exportOption, exportOnThePage]) {
                 // A continuous scale grows its bar in an export, and a row of pieces keeps the size of its icons.
-                expect((optionRecords(exported(option, size.textPx, size.widthPx, size.heightPx).visualMap))[0]).toEqual(legend);
+                expect(optionRecords(exported(option, size.textPx, size.widthPx, size.heightPx).visualMap)[0]).toEqual(legend);
             }
         }
     });
@@ -420,21 +412,18 @@ describe("the dense regional association plot", () => {
     }
 
     // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-    const seriesDataOnThePage = evaluatePageScript<() => (
-        payload: { columns: string[]; rows: ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[]>(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`);
+    const seriesDataOnThePage = evaluatePageScript<() => (payload: { columns: string[]; rows: ChartRow[] }, source: EchartOption, rule: unknown) => unknown[]>(
+        `${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`,
+    );
 
     it("reads the payload past the bound for the points and the recombination line, and the page builds them as the server does", () => {
         const rows = denseRows(20000);
         const render = deriveChartRender(locuszoom(ENCODING, {}), rows, COLUMNS, { key: "fto", columns: COLUMNS }, {}, OPTS)._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
-        expect(source.series.length).toBe(2);
-        for (const [index, entry] of source.series.entries()) {
+        const source = optionRecord(render.option[CHART_SOURCE_MEMBER]);
+        expect(optionRecords(source.series).length).toBe(2);
+        for (const [index, entry] of optionRecords(source.series).entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
             expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index].data));
         }

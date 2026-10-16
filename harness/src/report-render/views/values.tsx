@@ -37,6 +37,7 @@ import { formatNumberCell, formatTableCell, holdsANumber, selectColumnKind, sele
 import { citationKeyOf, type ReferenceLedger } from "../references.js";
 import type { ColumnDisplay, ColumnFilter } from "../table-data.js";
 import type { RenderValue } from "../types.js";
+import { stringOfNode } from "./node-text.js";
 
 /**
  * The attribute that marks the grid mount of a table card, and that names the block of its data.
@@ -96,7 +97,7 @@ type FigureValue = Extract<RenderValue, { type: "figure" }>;
 export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value: ScalarValue, view: ViewOptions = DEFAULT_VIEW_OPTIONS): string {
     const n = ledger.mark(block.value);
     const shown = formatNumberCell(value.value, selectNumberKind(block.label, value.value));
-    return String(
+    return stringOfNode(
         <div class="stat-card corner-accents" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [block.value])}>
             <div class="stat-card-value" title={shown.full}>
                 {shown.text}
@@ -115,7 +116,7 @@ export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value:
  * stagger, thus the run reveals after the band around it.
  */
 export function renderMetricGrid(cardsHtml: string): string {
-    return String(
+    return stringOfNode(
         <div class="report-metric-grid fade-in" data-delay="100">
             {raw(cardsHtml)}
         </div>,
@@ -255,7 +256,7 @@ export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount
     const n = ledger.mark(binding);
     const download = tableSidecarName(binding.hash, binding.path);
     const bound = boundText(binding);
-    return String(
+    return stringOfNode(
         <div class="report-table" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [binding])}>
             <div class="report-table-title">
                 {block.title}
@@ -296,7 +297,7 @@ export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount
 export function renderFigure(block: FigureBlock, ledger: ReferenceLedger, value: FigureValue, view: ViewOptions = DEFAULT_VIEW_OPTIONS): string {
     const n = ledger.mark(block.binding);
     const caption = block.caption;
-    return String(
+    return stringOfNode(
         <figure class="report-figure corner-accents" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [block.binding])}>
             <img src={value.src} alt={caption !== undefined ? caption : ""} class="report-figure-image" />
             <figcaption class="report-caption">
@@ -329,7 +330,7 @@ export function renderCitation(block: CitationBlock, ledger: ReferenceLedger, re
     const n = ledger.mark(block.binding);
     const binding = block.binding;
     const key = citationKeyOf(binding);
-    return String(
+    return stringOfNode(
         <div class="report-citation corner-accents" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [binding])}>
             <Marker n={n} lineage={lineagePlace(view.lineage, binding)} />
             {record !== undefined ? (

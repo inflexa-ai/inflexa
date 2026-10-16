@@ -1,13 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
+import { z } from "zod";
 import type { Pool } from "pg";
 
 import type { EmbeddingProvider } from "../../../providers/types.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { dataPartOf } from "../../__fixtures__/tool-context.js";
 import { showFileTool } from "../show-file.js";
 import { createShowPlanTool } from "../show-plan.js";
 import { showUserTool } from "../../display/show-user.js";
 import { createWorkspaceSearchTool } from "../workspace-search.js";
+import { optionMember } from "../../../report-render/option-lens.js";
 import { poolDouble } from "../../../lib/test/doubles.js";
 
 const fakeEmbedding: EmbeddingProvider = {
@@ -18,12 +21,14 @@ const fakeEmbedding: EmbeddingProvider = {
 describe("createWorkspaceSearchTool (dependency-bearing factory)", () => {
     it("ranks results from the injected pool + embedding", async () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const fakePool = poolDouble(() => Promise.resolve(({
+        const fakePool = poolDouble(() =>
+            Promise.resolve({
                 rows: [
                     { id: "v1", score: 0.92, metadata: { path: "out/a.csv", type: "output" } },
                     { id: "v2", score: 0.71, metadata: { path: "out/b.csv", type: "output" } },
                 ],
-            })));
+            }),
+        );
 
         const tool = createWorkspaceSearchTool(fakePool, fakeEmbedding);
         const { ctx } = makeToolContext();
@@ -36,9 +41,13 @@ describe("createWorkspaceSearchTool (dependency-bearing factory)", () => {
 
     it("returns an empty list when the index table does not exist yet", async () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const fakePool = poolDouble(() => Promise.reject(Object.assign(new Error('relation "search_x" does not exist'), {
+        const fakePool = poolDouble(() =>
+            Promise.reject(
+                Object.assign(new Error('relation "search_x" does not exist'), {
                     code: "42P01",
-                })));
+                }),
+            ),
+        );
 
         const tool = createWorkspaceSearchTool(fakePool, fakeEmbedding);
         const { ctx } = makeToolContext();
@@ -59,16 +68,19 @@ describe("showUser", () => {
         const result = (await showUserTool.execute({ kind: "markdown", title: "Findings", body: "## Hello" }, ctx))._unsafeUnwrap();
 
         expect(emitted).toHaveLength(1);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const event = emitted[0] as {
-            type: string;
-            data: { id: string; title?: string; content: { kind: string; body?: string } };
-        };
-        expect(event.type).toBe("data-presentation");
-        expect(event.data.id).toBe(shownId(result));
-        expect(event.data.title).toBe("Findings");
-        expect(event.data.content.kind).toBe("markdown");
-        expect(event.data.content.body).toBe("## Hello");
+        const part = dataPartOf(emitted[0]);
+        expect(part.type).toBe("data-presentation");
+        const data = z
+            .looseObject({
+                id: z.string(),
+                title: z.string().optional(),
+                content: z.looseObject({ kind: z.string(), body: z.string().optional() }),
+            })
+            .parse(part.data);
+        expect(data.id).toBe(shownId(result));
+        expect(data.title).toBe("Findings");
+        expect(data.content.kind).toBe("markdown");
+        expect(data.content.body).toBe("## Hello");
     });
 
     it("derives a stable id — identical content emits the same id", async () => {
@@ -96,9 +108,10 @@ describe("showUser", () => {
         expect(shownId(r1)).toBe(shownId(r2));
         expect(shownId(r1)).not.toBe(shownId(r3));
         // The emitted card content carries the dataPath reference.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const event = a.emitted[0] as { data: { content: { dataPath?: string } } };
-        expect(event.data.content.dataPath).toBe(base.dataPath);
+        const data = z
+            .looseObject({ content: z.looseObject({ dataPath: z.string().optional() }) })
+            .parse(dataPartOf(a.emitted[0]).data).content;
+        expect(data.dataPath).toBe(base.dataPath);
     });
 
     it("returns the invalid_path variant for a traversal dataPath and does not emit", async () => {
@@ -112,27 +125,29 @@ describe("showUser", () => {
 
     it("emits an echart whose spec is layout-normalized (the renderer owns the layout, not the model)", async () => {
         const { ctx, emitted } = makeToolContext();
-        (await showUserTool.execute(
-            {
-                kind: "echart",
-                title: "Top Variable Genes",
-                spec: {
-                    title: { text: "Top Variable Genes" },
-                    xAxis: { type: "category", data: Array.from({ length: 24 }, (_, i) => `gene-${i}`) },
-                    yAxis: { type: "value" },
-                    series: [{ type: "bar", name: "vst" }],
+        (
+            await showUserTool.execute(
+                {
+                    kind: "echart",
+                    title: "Top Variable Genes",
+                    spec: {
+                        title: { text: "Top Variable Genes" },
+                        xAxis: { type: "category", data: Array.from({ length: 24 }, (_, i) => `gene-${i}`) },
+                        yAxis: { type: "value" },
+                        series: [{ type: "bar", name: "vst" }],
+                    },
                 },
-            },
-            ctx,
-        ))._unsafeUnwrap();
+                ctx,
+            )
+        )._unsafeUnwrap();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const spec = (emitted[0] as { data: { content: { spec: Record<string, unknown> } } }).data.content.spec;
+        const data = z
+            .looseObject({ content: z.looseObject({ spec: z.record(z.string(), z.json()) }) })
+            .parse(dataPartOf(emitted[0]).data).content;
+        const spec = data.spec;
         expect("title" in spec).toBe(false);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((spec.xAxis as Record<string, Record<string, unknown>>).axisLabel).toEqual({ interval: 0, rotate: 90 });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((spec.grid as Record<string, unknown>).bottom).toBe("25%");
+        expect(optionMember(spec.xAxis).axisLabel).toEqual({ interval: 0, rotate: 90 });
+        expect(optionMember(spec.grid).bottom).toBe("25%");
         expect(spec.toolbox).toEqual({ right: 0, top: 0, feature: { saveAsImage: { type: "png", name: "top-variable-genes" } } });
     });
 });
@@ -143,13 +158,12 @@ describe("showFile", () => {
         const result = (await showFileTool.execute({ files: [{ path: "runs/run-abc/step-1/figures/volcano.png" }] }, ctx))._unsafeUnwrap();
 
         expect(result.shown).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const event = emitted[0] as {
-            type: string;
-            data: { files: Array<{ path: string; runId?: string }> };
-        };
-        expect(event.type).toBe("data-file-reference");
-        expect(event.data.files[0].runId).toBe("run-abc");
+        const part = dataPartOf(emitted[0]);
+        expect(part.type).toBe("data-file-reference");
+        const data = z
+            .looseObject({ files: z.array(z.looseObject({ path: z.string(), runId: z.string().optional() })) })
+            .parse(part.data);
+        expect(data.files[0]?.runId).toBe("run-abc");
     });
 
     it("returns the invalid_path variant for a traversal path and does not emit", async () => {
@@ -165,7 +179,7 @@ describe("showFile", () => {
 describe("createShowPlanTool (dependency-bearing factory)", () => {
     it("returns the plan_not_found variant when the plan is absent", async () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const fakePool = poolDouble(() => Promise.resolve(({ rows: [] })));
+        const fakePool = poolDouble(() => Promise.resolve({ rows: [] }));
 
         const tool = createShowPlanTool(fakePool);
         const { ctx, emitted } = makeToolContext();
@@ -184,11 +198,11 @@ describe("createShowPlanTool (dependency-bearing factory)", () => {
     };
 
     function poolWithPlanRow(parentPlanId: string | null): Pool {
-        return {
-            query: async () => ({
+        return poolDouble(() =>
+            Promise.resolve({
                 rows: [{ plan: storedPlan, parent_plan_id: parentPlanId, created_at: "2026-10-02T00:00:00.000Z", superseded_by: null }],
             }),
-        } as unknown as Pool;
+        );
     }
 
     it("emits the parentPlanId of a revision", async () => {
@@ -196,9 +210,10 @@ describe("createShowPlanTool (dependency-bearing factory)", () => {
         const { ctx, emitted } = makeToolContext();
         (await tool.execute({ planId: "pln-0000000b" }, ctx))._unsafeUnwrap();
 
-        const event = emitted[0] as { type: string; data: Record<string, unknown> };
-        expect(event.type).toBe("data-plan");
-        expect(event.data.parentPlanId).toBe("pln-0000000a");
+        const part = dataPartOf(emitted[0]);
+        expect(part.type).toBe("data-plan");
+        const data = z.looseObject({ parentPlanId: z.string() }).parse(part.data);
+        expect(data.parentPlanId).toBe("pln-0000000a");
     });
 
     it("emits no parentPlanId key for a first plan", async () => {
@@ -206,8 +221,8 @@ describe("createShowPlanTool (dependency-bearing factory)", () => {
         const { ctx, emitted } = makeToolContext();
         (await tool.execute({ planId: "pln-0000000a" }, ctx))._unsafeUnwrap();
 
-        const event = emitted[0] as { data: Record<string, unknown> };
-        expect(event.data).not.toHaveProperty("parentPlanId");
+        expect(dataPartOf(emitted[0]).type).toBe("data-plan");
+        expect(dataPartOf(emitted[0]).data).not.toHaveProperty("parentPlanId");
     });
 });
 
@@ -219,11 +234,11 @@ describe("showUser — structure", () => {
         const result = (await showUserTool.execute({ kind: "structure", title: "Hemoglobin α", url }, ctx))._unsafeUnwrap();
 
         expect(emitted).toHaveLength(1);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const event = emitted[0] as { type: string; data: { id: string; content: Record<string, unknown> } };
-        expect(event.type).toBe("data-presentation");
-        expect(event.data.id).toBe(shownId(result));
-        expect(event.data.content).toEqual({ kind: "structure", format: "pdb", url, provider: "alphafold", accession: "P69905", version: 6 });
+        const part = dataPartOf(emitted[0]);
+        expect(part.type).toBe("data-presentation");
+        const data = z.looseObject({ id: z.string(), content: z.record(z.string(), z.json()) }).parse(part.data);
+        expect(data.id).toBe(shownId(result));
+        expect(data.content).toEqual({ kind: "structure", format: "pdb", url, provider: "alphafold", accession: "P69905", version: 6 });
     });
 
     it("reports a URL outside the grammar as invalid_source and emits nothing", async () => {

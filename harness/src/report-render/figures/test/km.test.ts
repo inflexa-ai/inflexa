@@ -12,7 +12,7 @@ import { deriveChartOption, deriveChartRender, type ChartInputs, type ChartRow, 
 import { CHART_BODY_MAX_PX, CHART_BODY_PX, CHART_PALETTE } from "../../design.js";
 import { FIGURE_MODULES } from "../index.js";
 import { KM_FIGURE } from "../km.js";
-import { optionRecord, optionRecords } from "../../option-lens.js";
+import { optionMemberOrUndefined, optionNumberMatrix, optionPercent, optionRecord, optionRecords } from "../../option-lens.js";
 
 const HASH = `sha256:${"a".repeat(64)}`;
 
@@ -87,7 +87,7 @@ describe("the km figure", () => {
             [426, 0.489],
             [765, 0.083],
         ]);
-        expect(lines.map((series) => (optionRecord(series.lineStyle)).color)).toEqual([CHART_PALETTE[0], CHART_PALETTE[1]]);
+        expect(lines.map((series) => optionRecord(series.lineStyle).color)).toEqual([CHART_PALETTE[0], CHART_PALETTE[1]]);
     });
 
     it("starts a curve at 1 at time 0 where the table holds no row at time 0", () => {
@@ -113,8 +113,7 @@ describe("the km figure", () => {
             [270, 0.406],
             [883, 0.009],
         ]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((band[1].data as number[][]).map(([time, span]) => [time, Number(span.toFixed(3))])).toEqual([
+        expect(optionNumberMatrix(band[1].data).map(([time, span]) => [time, Number(span.toFixed(3))])).toEqual([
             [0, 0],
             [11, 0.065],
             [270, 0.17],
@@ -147,15 +146,15 @@ describe("the km figure", () => {
         expect([xAxes[1].min, xAxes[1].max, xAxes[1].interval]).toEqual([0, 883, 200]);
         // The axis ends at the last time, and a label there would crowd the tick at 800.
         expect(xAxes[0].axisLabel).toEqual({ showMaxLabel: false, interval: 0 });
-        expect((optionRecords(option.graphic)).map((element) => (optionRecord(element.style)).text)).toEqual(["Number at risk"]);
-        const table = (optionRecords(option.yAxis))[1];
+        expect(optionRecords(option.graphic).map((element) => optionRecord(element.style).text)).toEqual(["Number at risk"]);
+        const table = optionRecords(option.yAxis)[1];
         expect(table.inverse).toBe(true);
         expect(table.data).toEqual([
             { value: "Female", textStyle: { color: CHART_PALETTE[0] } },
             { value: "Male", textStyle: { color: CHART_PALETTE[1] } },
         ]);
         // The risk of the first row at or after each tick, and 0 past the last row of the group.
-        const counts = onGrid(option, 1).map((series) => (optionRecords(series.data)).map((item) => [item.value, item.name]));
+        const counts = onGrid(option, 1).map((series) => optionRecords(series.data).map((item) => [item.value, item.name]));
         expect(counts).toEqual([
             [
                 [[0, 0], "90"],
@@ -181,10 +180,9 @@ describe("the km figure", () => {
             { arm: "A", time: 0.6, surv: 0.6, n_risk: 5 },
         ];
         const option = derive(kmBlock({ x: "time", y: "surv", group: "arm", risk: "n_risk" }), rows);
-        const time = (optionRecords(option.xAxis))[0];
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect([time.max, time.interval, (time.axisLabel as EchartOption | undefined)?.showMaxLabel]).toEqual([0.6, 0.2, undefined]);
-        const counts = onGrid(option, 1).map((series) => (optionRecords(series.data)).map((item) => [item.value, item.name]));
+        const time = optionRecords(option.xAxis)[0];
+        expect([time.max, time.interval, optionMemberOrUndefined(time.axisLabel)?.showMaxLabel]).toEqual([0.6, 0.2, undefined]);
+        const counts = onGrid(option, 1).map((series) => optionRecords(series.data).map((item) => [item.value, item.name]));
         expect(counts).toEqual([
             [
                 [[0, 0], "10"],
@@ -203,8 +201,8 @@ describe("the km figure", () => {
             ]).flat();
             const block = kmBlock({ x: "time", y: "surv", group: "arm", risk: "n_risk" });
             const render = deriveChartRender(block, rows, undefined, { key: "km1", columns: [] }, {}, { figures: { km: KM_FIGURE } })._unsafeUnwrap();
-            const plot = (optionRecords(render.option.grid))[0];
-            const share = 100 - Number.parseFloat(String(plot.top)) - Number.parseFloat(String(plot.bottom));
+            const plot = optionRecords(render.option.grid)[0];
+            const share = 100 - optionPercent(plot.top) - optionPercent(plot.bottom);
             return { bodyPx: render.bodyPx, plotPx: (render.bodyPx * share) / 100 };
         };
         const three = layout(3);
@@ -247,21 +245,21 @@ describe("the km figure", () => {
     it("prints the statistics at the top right of the plot", () => {
         const option = derive(kmBlock(ENCODING, { statistics: LOGRANK }), ROWS, { statistics: [{ label: "Log-rank p", value: 0.00131116452035549 }] });
         const [text, title] = optionRecords(option.graphic);
-        expect([text.right, text.top, (optionRecord(text.style)).text]).toEqual(["7%", "12%", "Log-rank p = 1.3 × 10⁻³"]);
-        expect((optionRecord(title.style)).text).toBe("Number at risk");
+        expect([text.right, text.top, optionRecord(text.style).text]).toEqual(["7%", "12%", "Log-rank p = 1.3 × 10⁻³"]);
+        expect(optionRecord(title.style).text).toBe("Number at risk");
     });
 
     it("holds the survival axis from 0 to 1", () => {
         const option = derive(kmBlock());
-        const survival = (optionRecords(option.yAxis))[0];
+        const survival = optionRecords(option.yAxis)[0];
         expect([survival.type, survival.min, survival.max, survival.name]).toEqual(["value", 0, 1, "surv"]);
     });
 
     it("shows the legend at the top for two groups, and no legend for one curve", () => {
-        expect((optionRecord(derive(kmBlock()).legend)).top).toBe(0);
+        expect(optionRecord(derive(kmBlock()).legend).top).toBe(0);
         const single = derive(kmBlock({ x: "time", y: "surv", risk: "n_risk" }), ROWS.slice(0, 6));
         expect(single.legend).toEqual({ show: false });
-        expect((optionRecords(single.yAxis))[1].data).toEqual([{ value: "", textStyle: { color: CHART_PALETTE[0] } }]);
+        expect(optionRecords(single.yAxis)[1].data).toEqual([{ value: "", textStyle: { color: CHART_PALETTE[0] } }]);
     });
 });
 

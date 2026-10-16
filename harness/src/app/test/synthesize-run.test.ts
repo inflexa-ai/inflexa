@@ -44,18 +44,18 @@ function makeRunSession(): RunSession {
 /** A pool stub that returns no rows — `queryRun` → null → empty narrative. */
 function emptyPool(): Pool {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return poolDouble(() => Promise.resolve(({ rows: [], rowCount: 0 })));
+    return poolDouble(() => Promise.resolve({ rows: [], rowCount: 0 }));
 }
 
-/** A valid synthesis payload (schema + semantic checks); mirrors run-synthesis.test. */
-function validSynthesisPayload(): unknown {
+/** A valid synthesis payload (schema + semantic checks); mirrors run-synthesis.test. `stepId` defaults to the real one, so a test can plant an unknown id. */
+function validSynthesisPayload(stepId: string = STEP_ID): unknown {
     return {
         runId: RUN_ID,
         overview: "A test run analyzed gene expression in T-cells.",
         conclusions: "The analysis establishes a novel signature.",
         findings: [
             {
-                stepId: STEP_ID,
+                stepId,
                 title: "Upregulation of FOXP3",
                 description: "FOXP3 is upregulated in stimulated cells.",
                 confidence: "high",
@@ -74,7 +74,7 @@ function validSynthesisPayload(): unknown {
         themes: [
             {
                 name: "Regulatory T-cell program",
-                findings: [{ stepId: STEP_ID, title: "Upregulation of FOXP3" }],
+                findings: [{ stepId, title: "Upregulation of FOXP3" }],
                 narrative: "FOXP3 expression marks the regulatory program.",
             },
         ],
@@ -136,7 +136,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
         dimensions: 1536,
         embed: (texts) => {
             embedderCalls++;
-            return okAsync(texts.map(() => new Array(1536).fill(0.01)));
+            return okAsync(texts.map(() => Array.from({ length: 1536 }, () => 0.01)));
         },
     };
     const logs: LoggedRecord[] = [];
@@ -146,7 +146,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             pool: emptyPool(),
             provider,
             embedding,
-            resolveWorkspaceRoot: async (id) => join(base, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)),
             synthesisModel: "claude-test",
             bioKeys: BIO_KEYS,
             citationResolver: unusedCitationResolver,
@@ -283,9 +283,7 @@ describe("synthesizeRun", () => {
     });
 
     it("skips on a blocker that follows a rejected submission, writing nothing", async () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
-        bad.findings[0].stepId = "UNKNOWN";
+        const bad = validSynthesisPayload("UNKNOWN");
         const provider = scriptedProvider((i) => {
             if (i === 0) return makeMessage([toolUseBlock("tu-0", "submit_synthesis", { synthesis: bad })], "tool_use");
             if (i === 1) return makeMessage([toolUseBlock("tu-b", "report_blocker", { reason: "cannot reconcile references" })], "tool_use");

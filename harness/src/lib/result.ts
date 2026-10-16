@@ -40,6 +40,7 @@
  * directly from `neverthrow`; this module owns only the cortex-specific glue.
  */
 
+import { maybeRecord } from "./shape.js";
 import { Err, Ok, type Result } from "neverthrow";
 import { isError } from "./thrown.js";
 
@@ -71,15 +72,28 @@ export class ResultError extends Error {
 
 function describe(value: unknown): string {
     if (isError(value)) return value.message;
-    if (value && typeof value === "object" && "type" in value) {
+    const record = maybeRecord(value);
+    if (record !== undefined && "type" in record) {
         // Prefer a human `message` field when the structured error carries one
         // (e.g. a `ProviderError`) so the wrapped `Error.message` names the
         // failure; fall back to the `type` discriminant otherwise.
-        const message = (value as { message?: unknown }).message;
+        const message = record.message;
         if (typeof message === "string" && message.length > 0) return message;
-        return String((value as DomainError).type);
+        return typeText(record.type);
     }
+    // oxlint-disable-next-line typescript/no-base-to-string -- the default string form is the specified fallback for a thrown value with no readable members.
     return String(value);
+}
+
+/** The text of an arbitrary discriminant: strings stand as they are, and the JSON form names the rest. */
+function typeText(value: unknown): string {
+    if (typeof value === "string") return value;
+    return jsonText(value) ?? "undefined";
+}
+
+// JSON.stringify claims `string`, but a symbol or a function reads undefined; the declared result keeps that honest.
+function jsonText(value: unknown): string | undefined {
+    return JSON.stringify(value);
 }
 
 /**

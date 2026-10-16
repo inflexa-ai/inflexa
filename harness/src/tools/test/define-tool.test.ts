@@ -61,15 +61,16 @@ describe("defineTool", () => {
             z.object({ kind: z.literal("b"), b: z.number() }),
         ]);
 
-        expect(() =>
-            defineTool({
-                id: "union-tool",
-                description: "A tool with a union input.",
-                inputSchema: unionSchema,
-                describeCall: "none",
-                execute: () => Promise.resolve(ok({})),
-            }),
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        expect(
+            () =>
+                defineTool({
+                    id: "union-tool",
+                    description: "A tool with a union input.",
+                    inputSchema: unionSchema,
+                    describeCall: "none",
+                    execute: () => Promise.resolve(ok({})),
+                }),
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         ).toThrow(/union-tool.*type.*object/s);
     });
 
@@ -152,7 +153,7 @@ describe("defineTool", () => {
                 description: "Declares only `path`.",
                 inputSchema: z.object({ path: z.string() }),
                 // @ts-expect-error -- `query` is absent from this tool's inputSchema.
-                describeCall: (input) => input.query,
+                describeCall: (input): unknown => input.query,
                 execute: () => Promise.resolve(ok({})),
             });
 
@@ -252,7 +253,7 @@ describe("defineTool", () => {
                 inputSchema: z.object({ path: z.string() }),
                 describeCall: "none",
                 // @ts-expect-error -- `versionId` is absent from this tool's output.
-                describeResult: (_input, result) => result.versionId,
+                describeResult: (_input, result): unknown => result.versionId,
                 execute: () => Promise.resolve(ok({ page: "index.html" })),
             });
 

@@ -94,10 +94,137 @@ type CreateOpts = {
 };
 
 function notFound(): Error & { statusCode: number } {
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    const err = new Error("no such container") as Error & { statusCode: number };
-    err.statusCode = 404;
-    return err;
+    return Object.assign(new Error("no such container"), { statusCode: 404 });
+}
+
+function unavailable(): Error & { statusCode: number } {
+    return Object.assign(new Error("server unavailable"), { statusCode: 503 });
+}
+
+/**
+ * A Dockerode double the compiler checks: a real subclass instance, so no cast
+ * stands between the test and the seam. Each member the ops drive is assigned
+ * on the instance; an unassigned member reports itself instead of reaching the
+ * real client.
+ */
+class StubDocker extends Docker {
+    override createContainer(_options: Docker.ContainerCreateOptions): Promise<Docker.Container> {
+        throw new Error("unstubbed createContainer");
+    }
+    override getContainer(_id: string): Docker.Container {
+        throw new Error("unstubbed getContainer");
+    }
+    override listContainers(_options?: Docker.ContainerListOptions | ((error?: unknown, result?: Docker.ContainerInfo[]) => void)): Promise<Docker.ContainerInfo[]> {
+        throw new Error("unstubbed listContainers");
+    }
+    // The new topology creates no networks; a call here is a regression, so it fails here instead of at a socket.
+    override createNetwork(_options: Docker.NetworkCreateOptions): Promise<Docker.Network> {
+        throw new Error("unstubbed createNetwork");
+    }
+}
+
+/** The container half of the same double: a real `Docker.Container` subclass instance, members assigned per test. */
+class StubContainer extends Docker.Container {
+    override start(): Promise<void> {
+        throw new Error("unstubbed start");
+    }
+    override stop(_options?: Docker.ContainerStopOptions | ((error?: unknown, result?: unknown) => void)): Promise<void> {
+        throw new Error("unstubbed stop");
+    }
+    override remove(): Promise<void> {
+        throw new Error("unstubbed remove");
+    }
+    override inspect(): Promise<Docker.ContainerInspectInfo> {
+        throw new Error("unstubbed inspect");
+    }
+}
+
+function stubContainer(): StubContainer {
+    return new StubContainer(undefined, "stub");
+}
+
+/**
+ * A full inspect answer the compiler checks: the daemon always sends these
+ * members, thus the double holds them with inert defaults, and each test names
+ * only what the ops read — the labels, the published ports, and the run state.
+ */
+function inspectInfo(parts: {
+    labels?: Record<string, string>;
+    ports?: Docker.ContainerInspectInfo["NetworkSettings"]["Ports"];
+    running?: boolean;
+    oomKilled?: boolean;
+}): Docker.ContainerInspectInfo {
+    return {
+        Id: "stub",
+        Created: "1970-01-01T00:00:00Z",
+        Path: "/stub",
+        Args: [],
+        State: {
+            Status: parts.running ? "running" : "exited",
+            Running: parts.running ?? false,
+            Paused: false,
+            Restarting: false,
+            OOMKilled: parts.oomKilled ?? false,
+            Dead: false,
+            Pid: 1,
+            ExitCode: 0,
+            Error: "",
+            StartedAt: "1970-01-01T00:00:00Z",
+            FinishedAt: "1970-01-01T00:00:00Z",
+            Health: undefined,
+        },
+        Image: "sandbox-base:latest",
+        ResolvConfPath: "",
+        HostnamePath: "",
+        HostsPath: "",
+        LogPath: "",
+        Name: "/stub",
+        RestartCount: 0,
+        Driver: "overlay2",
+        Platform: "linux",
+        MountLabel: "",
+        ProcessLabel: "",
+        AppArmorProfile: "",
+        HostConfig: { LogConfig: undefined },
+        GraphDriver: { Name: "overlay2", Data: { DeviceId: "", DeviceName: "", DeviceSize: "" } },
+        Mounts: [],
+        Config: {
+            Hostname: "stub",
+            Domainname: "",
+            User: "",
+            AttachStdin: false,
+            AttachStdout: false,
+            AttachStderr: false,
+            ExposedPorts: {},
+            Tty: false,
+            OpenStdin: false,
+            StdinOnce: false,
+            Env: [],
+            Cmd: [],
+            Image: "sandbox-base:latest",
+            Volumes: {},
+            WorkingDir: "",
+            Labels: parts.labels ?? {},
+        },
+        NetworkSettings: {
+            Bridge: "",
+            SandboxID: "stub",
+            HairpinMode: false,
+            LinkLocalIPv6Address: "",
+            LinkLocalIPv6PrefixLen: 0,
+            Ports: parts.ports ?? {},
+            SandboxKey: "",
+            EndpointID: "",
+            Gateway: "",
+            GlobalIPv6Address: "",
+            GlobalIPv6PrefixLen: 0,
+            IPAddress: "",
+            IPPrefixLen: 0,
+            IPv6Gateway: "",
+            MacAddress: "",
+            Networks: {},
+        },
+    };
 }
 
 /** The one sandbox container the ops create (there is no sidecar). */
@@ -131,64 +258,63 @@ function stubDocker(): {
     const createdNetworks: string[] = [];
     const labelsByName = new Map<string, Record<string, string>>();
 
-    const makeContainer = (id: string) => ({
-        id,
-        start:  () => {
+    const makeContainer = (id: string): Docker.Container => {
+        const container = stubContainer();
+        container.start = () => {
             running.set(id, true);
             return Promise.resolve();
-},
-        inspect:  () => {
+        };
+        container.inspect = () => {
             if (!running.has(id)) throw notFound();
             // The sandbox publishes its own exec port to loopback — there is no gateway.
-            return Promise.resolve({
-                Config: { Labels: labelsByName.get(id) ?? {} },
-                NetworkSettings: {
-                    Ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] },
-                },
-                State: { Running: running.get(id) === true, OOMKilled: oomKilled.has(id) },
-            });
-        },
-        stop:  () => {
+            return Promise.resolve(
+                inspectInfo({
+                    labels: labelsByName.get(id) ?? {},
+                    ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] },
+                    running: running.get(id) === true,
+                    oomKilled: oomKilled.has(id),
+                }),
+            );
+        };
+        container.stop = () => {
             running.set(id, false);
             return Promise.resolve();
-},
-        remove:  () => {
+        };
+        container.remove = () => {
             removed.push(id);
             running.delete(id);
             return Promise.resolve();
-},
-    });
+        };
+        return container;
+    };
 
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const docker = {
-        createContainer:  (opts: CreateOpts) => {
-            created.push({
-                name: opts.name,
-                image: opts.Image,
-                env: opts.Env,
-                binds: opts.HostConfig?.Binds ?? [],
-                labels: opts.Labels,
-                workingDir: opts.WorkingDir,
-                platform: opts.platform,
-                hasPlatformKey: Object.prototype.hasOwnProperty.call(opts, "platform"),
-                user: opts.User,
-                capDrop: opts.HostConfig?.CapDrop,
-                capAdd: opts.HostConfig?.CapAdd,
-                securityOpt: opts.HostConfig?.SecurityOpt,
-                portBindings: opts.HostConfig?.PortBindings,
-                memory: opts.HostConfig?.Memory,
-                memorySwap: opts.HostConfig?.MemorySwap,
-            });
-            labelsByName.set(opts.name, opts.Labels ?? {});
-            return Promise.resolve(makeContainer(opts.name));
-        },
-        getContainer: (id: string) => makeContainer(id),
-        // The new topology creates no networks; a call here would be a regression.
-        createNetwork:  (opts: { Name: string }) => {
-            createdNetworks.push(opts.Name);
-            return Promise.resolve({});
-        },
-    } as unknown as Docker;
+    const docker = new StubDocker();
+    docker.createContainer = (opts: CreateOpts) => {
+        created.push({
+            name: opts.name,
+            image: opts.Image,
+            env: opts.Env,
+            binds: opts.HostConfig?.Binds ?? [],
+            labels: opts.Labels,
+            workingDir: opts.WorkingDir,
+            platform: opts.platform,
+            hasPlatformKey: Object.prototype.hasOwnProperty.call(opts, "platform"),
+            user: opts.User,
+            capDrop: opts.HostConfig?.CapDrop,
+            capAdd: opts.HostConfig?.CapAdd,
+            securityOpt: opts.HostConfig?.SecurityOpt,
+            portBindings: opts.HostConfig?.PortBindings,
+            memory: opts.HostConfig?.Memory,
+            memorySwap: opts.HostConfig?.MemorySwap,
+        });
+        labelsByName.set(opts.name, opts.Labels ?? {});
+        return Promise.resolve(makeContainer(opts.name));
+    };
+    docker.getContainer = (id: string) => makeContainer(id);
+    docker.createNetwork = (opts: { Name: string }) => {
+        createdNetworks.push(opts.Name);
+        throw new Error("the sandbox topology creates no networks");
+    };
 
     return { docker, created, removed, running, oomKilled, createdNetworks, labelsByName };
 }
@@ -202,12 +328,13 @@ describe("docker createSandbox — confinement", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -233,12 +360,13 @@ describe("docker createSandbox — confinement", () => {
         const { docker, created, createdNetworks } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -247,7 +375,13 @@ describe("docker createSandbox — confinement", () => {
         expect(created).toHaveLength(1);
         expect(createdNetworks).toEqual([]);
 
-        const binding = must(must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").portBindings, "must(sandboxOf, \"sandboxOf\")(created).portBindin")["8765/tcp"], "must(sandboxOf, \"sandboxOf\")(created).portBindin")[0];
+        const binding = must(
+            must(
+                must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').portBindings,
+                'must(sandboxOf, "sandboxOf")(created).portBindin',
+            )["8765/tcp"],
+            'must(sandboxOf, "sandboxOf")(created).portBindin',
+        )[0];
         expect(binding.HostIp).toBe("127.0.0.1");
         // The SandboxRef carries the mapped host port the daemon assigned.
         expect(ref.host).toBe("127.0.0.1");
@@ -259,16 +393,16 @@ describe("docker createSandbox — confinement", () => {
         const registered: Array<{ runId: string; stepId: string; sandboxId: string }> = [];
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             refStorePath: refsRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  (session, _spec, ref) => {
+            registerSandbox: (session, _spec, ref) => {
                 registered.push({ runId: session.runFrame.runId, stepId: session.runFrame.stepId, sandboxId: ref.sandboxId });
                 return Promise.resolve();
-},
+            },
         });
 
         const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -297,12 +431,13 @@ describe("docker createSandbox — confinement", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -310,7 +445,7 @@ describe("docker createSandbox — confinement", () => {
         // A fork copies the pool size of its parent, thus a pool at the quota
         // runs workers * quota threads. One thread per pool is the safe
         // default, and the agent raises it per command through the exec env.
-        const env = envMapOf(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)"));
+        const env = envMapOf(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)'));
         expect(env.OMP_NUM_THREADS).toBe("1");
         expect(env.OPENBLAS_NUM_THREADS).toBe("1");
         expect(env.BIOCPARALLEL_WORKER_NUMBER).toBe("2");
@@ -323,12 +458,13 @@ describe("docker createSandbox — confinement", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -339,7 +475,7 @@ describe("docker createSandbox — confinement", () => {
             )
         )._unsafeUnwrap();
 
-        const env = envMapOf(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)"));
+        const env = envMapOf(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)'));
         expect(env.BIOCPARALLEL_WORKER_NUMBER).toBe("1");
         expect(env.OPENBLAS_NUM_THREADS).toBe("1");
         expect(env.OMP_NUM_THREADS).toBe("8");
@@ -349,12 +485,13 @@ describe("docker createSandbox — confinement", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -376,8 +513,9 @@ describe("docker createSandbox — confinement", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -412,13 +550,14 @@ describe("docker createSandbox — confinement", () => {
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const binds = must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds;
+        const binds = must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds;
         expect(binds).toContain(`${join(wsRoot, ".cpu", ref.sandboxId, "online")}:/sys/devices/system/cpu/online:ro`);
         expect(binds.some((b) => b.endsWith(":/proc/cpuinfo:ro"))).toBe(false);
         expect(logger.records.some((r) => r.level === "debug" && r.msg.includes("no host /proc/cpuinfo"))).toBe(true);
@@ -435,15 +574,21 @@ describe("docker createSandbox — confinement", () => {
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         // The sandbox still starts: the thread env limits each library, and only
         // the two base calls report the host.
-        expect(must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds, "must(sandboxOf, \"sandboxOf\")(created).binds").some((b) => b.includes(".cpu"))).toBe(false);
+        expect(
+            must(
+                must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds,
+                'must(sandboxOf, "sandboxOf")(created).binds',
+            ).some((b) => b.includes(".cpu")),
+        ).toBe(false);
         expect(existsSync(join(wsRoot, "absent"))).toBe(false);
         expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("cpu files not written"))).toBe(true);
     });
@@ -451,39 +596,38 @@ describe("docker createSandbox — confinement", () => {
     test("a container that maps no host port is stopped, removed, and reported failed", async () => {
         const { docker, removed } = stubDocker();
         // A daemon that starts the container but publishes no port for 8765/tcp.
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        (docker as unknown as { getContainer: (id: string) => unknown }).getContainer = (id: string) => ({
-            id,
-            start:  () => {    return Promise.resolve();
-},
-            stop:  () => {    return Promise.resolve();
-},
-            remove:  () => {
+        docker.getContainer = (id: string) => {
+            const container = stubContainer();
+            container.start = () => Promise.resolve();
+            container.stop = () => Promise.resolve();
+            container.remove = () => {
                 removed.push(id);
                 return Promise.resolve();
-},
-            inspect: () => Promise.resolve(({ Config: { Labels: {} }, NetworkSettings: { Ports: {} }, State: { Running: true } })),
-        });
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        (docker as unknown as { createContainer: (o: CreateOpts) => unknown }).createContainer = (opts: CreateOpts) => Promise.resolve({
-            id: opts.name,
-            start: () => Promise.resolve({}),
-            stop: () => Promise.resolve({}),
-            remove: () => {
-                removed.push(opts.name);
-                return Promise.resolve({});
-            },
-            inspect: () => Promise.resolve({ Config: { Labels: {} }, NetworkSettings: { Ports: {} }, State: { Running: true } }),
-        });
+            };
+            container.inspect = () => Promise.resolve(inspectInfo({ running: true }));
+            return container;
+        };
+        docker.createContainer = (opts) => {
+            const container = stubContainer();
+            container.start = () => Promise.resolve();
+            container.stop = () => Promise.resolve();
+            container.remove = () => {
+                removed.push(opts.name ?? "");
+                return Promise.resolve();
+            };
+            container.inspect = () => Promise.resolve(inspectInfo({ running: true }));
+            return Promise.resolve(container);
+        };
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
@@ -498,12 +642,13 @@ describe("docker createSandbox — the label set", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
         return { ops, created };
     }
@@ -513,7 +658,7 @@ describe("docker createSandbox — the label set", () => {
         const identity = mintSandboxIdentity("run-1");
         (await ops.createSandbox(...splitSpawn(META), identity, {}))._unsafeUnwrap();
 
-        expect(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").labels).toEqual({
+        expect(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').labels).toEqual({
             "app.kubernetes.io/managed-by": "cortex",
             role: "sandbox",
             "cortex/sandbox-id": identity.sandboxId,
@@ -535,7 +680,7 @@ describe("docker createSandbox — the label set", () => {
             })
         )._unsafeUnwrap();
 
-        const labels = must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").labels, "labels");
+        const labels = must(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').labels, "labels");
         expect(labels["cortex/run-id"]).toBe("run-1");
         expect(labels["cortex/owner-workflow-id"]).toBe("run-1-0");
         expect(labels["example.com/tenant"]).toBe("acme");
@@ -548,12 +693,13 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -571,50 +717,53 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             platform: "linux/arm64",
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").hasPlatformKey).toBe(true);
-        expect(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").platform).toBe("linux/arm64");
+        expect(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').hasPlatformKey).toBe(true);
+        expect(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').platform).toBe("linux/arm64");
     });
 
     test("omits the platform key entirely when no platform is configured", async () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").hasPlatformKey).toBe(false);
-        expect(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").platform).toBeUndefined();
+        expect(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').hasPlatformKey).toBe(false);
+        expect(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').platform).toBeUndefined();
     });
 
     test("readOnly omits the rw step bind and pins WorkingDir to the RO tree", async () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -632,21 +781,31 @@ describe("docker createSandbox — mounts and platform", () => {
             )
         )._unsafeUnwrap();
 
-        expect(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`, `${farmDir}:/mnt/libs/current:ro`]);
-        expect(must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds, "must(sandboxOf, \"sandboxOf\")(created).binds").some((b) => b.endsWith(":rw"))).toBe(false);
-        expect(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").workingDir).toBe("/an-1");
+        expect(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds).toEqual([
+            "/sessions/an-1:/an-1:ro",
+            `${libRoot}:/mnt/libs:ro`,
+            `${farmDir}:/mnt/libs/current:ro`,
+        ]);
+        expect(
+            must(
+                must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds,
+                'must(sandboxOf, "sandboxOf")(created).binds',
+            ).some((b) => b.endsWith(":rw")),
+        ).toBe(false);
+        expect(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').workingDir).toBe("/an-1");
     });
 
     test("binds a declared write tail in place of the step directory", async () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -669,12 +828,13 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         // The mount builders validate each segment, thus a traversal never becomes a bind source. The
@@ -692,19 +852,25 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const env = envMapOf(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)"));
-        expect(must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds, "must(sandboxOf, \"sandboxOf\")(created).binds").some((b) => b.includes("/mnt/libs"))).toBe(false);
+        const env = envMapOf(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)'));
+        expect(
+            must(
+                must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds,
+                'must(sandboxOf, "sandboxOf")(created).binds',
+            ).some((b) => b.includes("/mnt/libs")),
+        ).toBe(false);
         expect(env.R_LIBS_SITE).toBeUndefined();
     });
 
@@ -715,14 +881,15 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(wsRoot, id)),
             farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -740,13 +907,14 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         // The unusable-store path logs; with no logger injected it must take the
@@ -760,18 +928,24 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds, "must(sandboxOf, \"sandboxOf\")(created).binds").some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(
+            must(
+                must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds,
+                'must(sandboxOf, "sandboxOf")(created).binds',
+            ).some((b) => b.includes("/mnt/libs")),
+        ).toBe(false);
     });
 
     test("a required package store refuses an unparseable lock, and no container is made", async () => {
@@ -781,15 +955,16 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             packageStore: "required",
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
@@ -816,14 +991,15 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             packageStore: "required",
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
@@ -842,18 +1018,24 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds, "must(sandboxOf, \"sandboxOf\")(created).binds").some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(
+            must(
+                must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds,
+                'must(sandboxOf, "sandboxOf")(created).binds',
+            ).some((b) => b.includes("/mnt/libs")),
+        ).toBe(false);
     });
 
     test("no configured store means the farm source is not called", async () => {
@@ -862,24 +1044,30 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource: {
                 kind: "per-analysis",
-                resolve:  () => {
+                resolve: () => {
                     resolverCalls += 1;
                     return Promise.resolve({ kind: "available", location: { farmPath: farmDir } });
                 },
             },
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(resolverCalls).toBe(0);
-        expect(must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds, "must(sandboxOf, \"sandboxOf\")(created).binds").some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(
+            must(
+                must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds,
+                'must(sandboxOf, "sandboxOf")(created).binds',
+            ).some((b) => b.includes("/mnt/libs")),
+        ).toBe(false);
     });
 
     test("a per-analysis resolver refusal returns farm_unavailable with the embedder reason, and no container is made", async () => {
@@ -888,12 +1076,13 @@ describe("docker createSandbox — mounts and platform", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
-            farmSource: { kind: "per-analysis", resolve: () => Promise.resolve(({ kind: "unavailable", reason: "the store download is in progress" })) },
+            farmSource: { kind: "per-analysis", resolve: () => Promise.resolve({ kind: "unavailable", reason: "the store download is in progress" }) },
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
@@ -911,16 +1100,17 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource: {
                 kind: "per-analysis",
-                resolve:  () => Promise.reject(new Error("boom")),
+                resolve: () => Promise.reject(new Error("boom")),
             },
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
@@ -936,10 +1126,10 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource: {
                 kind: "per-analysis",
-                resolve:  (analysisId) => {
+                resolve: (analysisId) => {
                     resolvedFor.push(analysisId);
                     return Promise.resolve({ kind: "available", location: { farmPath: farmDir } });
                 },
@@ -947,14 +1137,15 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(resolvedFor).toEqual(["an-1"]);
-        expect(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds).toContain(`${farmDir}:/mnt/libs/current:ro`);
+        expect(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds).toContain(`${farmDir}:/mnt/libs/current:ro`);
     });
 
     test("a cache location on the farm resolution mounts read-write at /mnt/libs/cache, after the two store binds", async () => {
@@ -964,14 +1155,15 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource: { kind: "fixed", location: { farmPath: farmDir, cachePath: cacheDir } },
             toolchainSource: "image",
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -994,14 +1186,15 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             toolchainSource: "image",
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -1028,19 +1221,25 @@ describe("docker createSandbox — ref store re-check", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(wsRoot, id)),
             farmSource,
             refStorePath: missing,
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds, "must(sandboxOf, \"sandboxOf\")(created).binds").some((b) => b.includes("/mnt/refs"))).toBe(false);
+        expect(
+            must(
+                must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds,
+                'must(sandboxOf, "sandboxOf")(created).binds',
+            ).some((b) => b.includes("/mnt/refs")),
+        ).toBe(false);
         // The harness must never materialize the bind source: a real bind would make Docker
         // auto-create a root-owned dir here, bricking a later reference download.
         expect(existsSync(missing)).toBe(false);
@@ -1055,20 +1254,21 @@ describe("docker createSandbox — ref store re-check", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             refStorePath: installedLater,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         await mkdir(installedLater, { recursive: true });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds).toContain(`${installedLater}:/mnt/refs:ro`);
+        expect(must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds).toContain(`${installedLater}:/mnt/refs:ro`);
     });
 
     test("skips the /mnt/refs mount when the configured path is a symlink, even to a real directory", async () => {
@@ -1082,18 +1282,24 @@ describe("docker createSandbox — ref store re-check", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             refStorePath: link,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(must(must(must(sandboxOf, "sandboxOf")(created), "must(sandboxOf, \"sandboxOf\")(created)").binds, "must(sandboxOf, \"sandboxOf\")(created).binds").some((b) => b.includes("/mnt/refs"))).toBe(false);
+        expect(
+            must(
+                must(must(sandboxOf, "sandboxOf")(created), 'must(sandboxOf, "sandboxOf")(created)').binds,
+                'must(sandboxOf, "sandboxOf")(created).binds',
+            ).some((b) => b.includes("/mnt/refs")),
+        ).toBe(false);
     });
 });
 
@@ -1102,12 +1308,13 @@ describe("docker teardown / isAlive", () => {
         const { docker, removed } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
@@ -1119,11 +1326,12 @@ describe("docker teardown / isAlive", () => {
         const { docker } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
         const result = await ops.teardown({ sandboxId: "sbx-missing", host: "127.0.0.1", port: 9999, backend: "docker" });
         expect(result.isOk()).toBe(true);
@@ -1133,11 +1341,12 @@ describe("docker teardown / isAlive", () => {
         const { docker, running } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         // 404 (never created) → dead.
@@ -1163,11 +1372,12 @@ describe("docker teardown / isAlive", () => {
         const { docker, running, oomKilled } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         running.set("oomed", false);
@@ -1179,25 +1389,21 @@ describe("docker teardown / isAlive", () => {
     });
 
     test("isAlive errs on non-404 errors so callers can retry", async () => {
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const erroringDocker = {
-            getContainer: () => ({
-                inspect: () => {
-                    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                    const err = new Error("server unavailable") as Error & { statusCode: number };
-                    err.statusCode = 503;
-                    return Promise.reject(err);
-                },
-            }),
-        } as unknown as Docker;
+        const erroringDocker = new StubDocker();
+        erroringDocker.getContainer = () => {
+            const container = stubContainer();
+            container.inspect = () => Promise.reject(unavailable());
+            return container;
+        };
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker: erroringDocker,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const result = await ops.isAlive({ sandboxId: "x", host: "h", port: 1, backend: "docker" });
@@ -1226,49 +1432,47 @@ function reconcileDocker(opts: { createStatus: number; standing: { labels: Recor
     let standing = opts.standing;
     let attempts = 0;
 
-    const container = (id: string) => ({
-        id,
-        start:  () => {
+    const container = (id: string): Docker.Container => {
+        const stub = stubContainer();
+        stub.start = () => {
             if (standing) standing.running = true;
             return Promise.resolve();
-},
-        stop:  () => {
+        };
+        stub.stop = () => {
             if (standing) standing.running = false;
             return Promise.resolve();
-},
-        remove:  () => {
+        };
+        stub.remove = () => {
             removed.push(id);
             standing = null;
             return Promise.resolve();
-},
-        inspect:  () => {
+        };
+        stub.inspect = () => {
             if (!standing) throw notFound();
-            return Promise.resolve({
-                Config: { Labels: standing.labels },
-                NetworkSettings: { Ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] } },
-                State: { Running: standing.running, OOMKilled: false },
-            });
-        },
-    });
+            return Promise.resolve(
+                inspectInfo({
+                    labels: standing.labels,
+                    ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] },
+                    running: standing.running,
+                }),
+            );
+        };
+        return stub;
+    };
 
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const docker = {
-        createContainer:  (o: CreateOpts) => {
-            attempts += 1;
-            // The first create is the one that races the standing container; a
-            // later attempt is a post-removal recreate and lands cleanly.
-            if (attempts === 1) {
-                // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                const e = new Error("that name is already in use") as Error & { statusCode: number };
-                e.statusCode = opts.createStatus;
-                throw e;
-            }
-            created.push(o.name);
-            standing = { labels: o.Labels ?? {}, running: false };
-            return Promise.resolve(container(o.name));
-        },
-        getContainer: (id: string) => container(id),
-    } as unknown as Docker;
+    const docker = new StubDocker();
+    docker.createContainer = (o: CreateOpts) => {
+        attempts += 1;
+        // The first create is the one that races the standing container; a
+        // later attempt is a post-removal recreate and lands cleanly.
+        if (attempts === 1) {
+            throw Object.assign(new Error("that name is already in use"), { statusCode: opts.createStatus });
+        }
+        created.push(o.name);
+        standing = { labels: o.Labels ?? {}, running: false };
+        return Promise.resolve(container(o.name));
+    };
+    docker.getContainer = (id: string) => container(id);
 
     return { docker, created, removed };
 }
@@ -1279,12 +1483,13 @@ describe("docker createSandbox — recovery reconciliation", () => {
     const reconcileOps = (docker: Docker) =>
         createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
     // The health-re-verification test advances the mocked clock; restore real time after
@@ -1390,12 +1595,13 @@ describe("docker createSandbox — recovery reconciliation", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: unhealthyFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
@@ -1426,13 +1632,14 @@ describe("docker createSandbox — engine connection", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             engineSocketPath: "/nonexistent/should-not-be-dialed.sock",
             docker,
             fetch: okFetch,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();

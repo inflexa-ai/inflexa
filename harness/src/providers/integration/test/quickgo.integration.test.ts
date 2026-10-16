@@ -25,8 +25,8 @@ describe.skipIf(!LIVE)("live QuickGO", () => {
         const output = (await lookupAnnotationTool.execute({ vocabulary: "go", goId: ROOT_TERM }, ctx))._unsafeUnwrap();
 
         expect(output).toHaveProperty("terms");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const terms = (output as { terms?: { id: string; name: string; definition?: string; aspect?: string }[] }).terms ?? [];
+        if (!("terms" in output)) throw new Error("expected the terms arm");
+        const terms = output.terms ?? [];
         expect(terms.length).toBeGreaterThan(0);
         expect(terms[0].id).toBe(ROOT_TERM);
         expect(terms[0].name.length).toBeGreaterThan(0);

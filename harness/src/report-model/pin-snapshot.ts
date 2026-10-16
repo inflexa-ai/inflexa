@@ -95,7 +95,7 @@ function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
         if (typeof reference !== "object" || reference === null) {
             continue;
         }
-        const pmid = (reference).pmid;
+        const pmid = reference.pmid;
         if (typeof pmid !== "string") {
             continue;
         }
@@ -128,14 +128,16 @@ function citationsOf(text: string): CitationEntry[] {
         return [];
     }
     const entries: CitationEntry[] = [];
+    // SAFETY: the object guard bounds the read — the member goes to pushPmidCitations, which tests each entry before use.
     pushPmidCitations((parsed as { keyReferences?: unknown }).keyReferences, entries);
+    // SAFETY: the object guard bounds the read, and the Array.isArray check below rejects a non-array.
     const findings = (parsed as { findings?: unknown }).findings;
     if (Array.isArray(findings)) {
         for (const finding of findings) {
             if (typeof finding !== "object" || finding === null) {
                 continue;
             }
-            pushPmidCitations((finding).references, entries);
+            pushPmidCitations(finding.references, entries);
         }
     }
     return entries;

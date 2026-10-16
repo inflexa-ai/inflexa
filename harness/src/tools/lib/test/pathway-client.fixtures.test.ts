@@ -13,7 +13,7 @@ import {
     ReactomeSearchResponseSchema,
     selectKeggGeneId,
 } from "../pathway-client.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -66,7 +66,7 @@ describe("KEGG golden fixtures", () => {
         const seen: string[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         globalThis.fetch = fetchDouble((input) => {
-            const url = String(input);
+            const url = urlText(input);
             seen.push(url);
             if (url.includes("/find/hsa/")) return new Response(readTextFixture("kegg", "find-hsa-TP53.txt"));
             if (url.includes("/link/pathway/")) return new Response(readTextFixture("kegg", "link-pathway-hsa7157.txt"));

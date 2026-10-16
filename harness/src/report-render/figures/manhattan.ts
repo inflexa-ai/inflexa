@@ -61,7 +61,7 @@ import {
 } from "./dense.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
 import { placeLeaderNames, textWidthPx, type Box, type NamedPoint, type NameFrame } from "./label-room.js";
-import { optionRecord, optionRecords } from "../option-lens.js";
+import { optionRecord, optionRecords, optionText } from "../option-lens.js";
 import { typedMember } from "../../lib/shape.js";
 
 /** The two colors that alternate between the chromosomes: the blue of the palette and the muted gray. */
@@ -278,12 +278,12 @@ function leads(index: number, other: number, xs: readonly (number | null)[], ys:
 
 /** The guide lines of a mark member, with the label of the genome-wide line over the line. */
 function guideOverLine(markLine: EchartOption, line: number): EchartOption {
-    const data = Array.isArray(markLine.data) ? (optionRecords(markLine.data)) : [];
+    const data = Array.isArray(markLine.data) ? optionRecords(markLine.data) : [];
     return {
         ...markLine,
         data: data.map((entry) =>
             entry.yAxis === line && typeof entry.label === "object" && entry.label !== null
-                ? { ...entry, label: { ...(optionRecord(entry.label)), position: GUIDE_OVER_LINE } }
+                ? { ...entry, label: { ...optionRecord(entry.label), position: GUIDE_OVER_LINE } }
                 : entry,
         ),
     };
@@ -347,7 +347,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
     // The composition splits the series in the order of the rows, thus each series takes the color of the
     // genome place of its chromosome, and never of its place in the series list.
     const places = new Map(found.map((chromosome, place) => [categoryName(chromosome.name), place]));
-    const colorOf = (name: unknown): string => MANHATTAN_COLORS[(places.get(String(name)) ?? 0) % MANHATTAN_COLORS.length];
+    const colorOf = (name: unknown): string => MANHATTAN_COLORS[(places.get(optionText(name)) ?? 0) % MANHATTAN_COLORS.length];
     const low = smallest(found.map((chromosome) => chromosome.low));
     const high = largest(found.map((chromosome) => chromosome.high));
     const top = niceCeiling(Math.max(peak, line, zeroRows.length > 0 ? zeroY : 0));
@@ -368,7 +368,8 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
         legend: { show: false },
         xAxis: {
             ...axisOf(option, "xAxis"),
-            min: low !== undefined && high !== undefined ? low : undefined, max: low !== undefined && high !== undefined ? high : undefined,
+            min: low !== undefined && high !== undefined ? low : undefined,
+            max: low !== undefined && high !== undefined ? high : undefined,
             axisLabel: { show: false, formatter: GENOME_POSITION_FUNCTION },
             axisTick: { show: false },
             [GENOME_MEMBER]: genomeAxis(found),

@@ -22,12 +22,13 @@ export function recordMember(container: Record<string, unknown> | undefined, key
 }
 
 /**
- * The member at `key` with the `undefined` a missing key returns at runtime.
- * The index-signature read without `noUncheckedIndexedAccess` claims the member
- * is always present, so a guard on the direct read reads as dead to the linter.
+ * The member at `key` with the `undefined` a missing key or an absent container
+ * returns at runtime. The index-signature read without `noUncheckedIndexedAccess`
+ * claims the member is always present, so a guard on the direct read reads as
+ * dead to the linter.
  */
-export function typedMember<T>(record: Record<string, T>, key: string): T | undefined {
-    return record[key];
+export function typedMember<T>(record: Record<string, T> | undefined, key: string | number): T | undefined {
+    return record?.[key];
 }
 
 /**

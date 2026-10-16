@@ -22,10 +22,9 @@ describe.skipIf(!LIVE)("live Context7", () => {
         const output = (await resolveLibraryIdTool.execute({ libraryName: "scanpy", query: "differential expression" }, ctx))._unsafeUnwrap();
 
         expect(output.found).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const resolved = output as { found: true; libraryId: string; name: string; description: string };
-        expect(resolved.libraryId.length).toBeGreaterThan(0);
-        expect(resolved.name.length).toBeGreaterThan(0);
-        expect(typeof resolved.description).toBe("string");
+        if (!output.found) throw new Error("expected the canonical-library arm");
+        expect(output.libraryId.length).toBeGreaterThan(0);
+        expect(output.name.length).toBeGreaterThan(0);
+        expect(typeof output.description).toBe("string");
     }, 60_000);
 });

@@ -4,8 +4,9 @@ import * as echarts from "echarts";
 import { CHART_RENDERERS_SOURCE } from "../chart-renderers.js";
 import { CHART_EXPORT_SIZES, CHART_PRINT_THEME_NAME, CHART_PRINT_TEXT_PX, chartTheme } from "../design.js";
 import { composeHybridSvg, holdsPointLayer, HYBRID_SVG_SOURCE, isPointLayer, millimeterRoot, type PointLayerImage, type SvgRootSize } from "../hybrid-svg.js";
-import { optionArray, optionNumbers, optionRecord, optionRecords } from "../option-lens.js";
+import { optionArray, optionMember, optionNumbers, optionRecord, optionRecords } from "../option-lens.js";
 import { runPageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
+import { must } from "../../lib/test/guards.js";
 
 /** The page functions of the fragment, as the bootstrap runs them. The export option comes from the renderer fragment. */
 function pageTwin(document?: unknown): {
@@ -18,7 +19,11 @@ function pageTwin(document?: unknown): {
     hybrid: (runtime: unknown, option: Record<string, unknown>, size: Record<string, unknown>) => string | null;
 } {
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return runPageScript<(arg0: unknown) => ReturnType<typeof pageTwin>>(["document"], `${CHART_RENDERERS_SOURCE}\n${HYBRID_SVG_SOURCE}\nreturn { isPointLayer: reportIsPointLayer, millimeterRoot: reportMillimeterRoot, compose: reportComposeHybridSvg, vector: reportHybridVectorOption, raster: reportHybridRasterOption, box: reportPointLayerBox, hybrid: reportHybridSvg };`, document);
+    return runPageScript<(arg0: unknown) => ReturnType<typeof pageTwin>>(
+        ["document"],
+        `${CHART_RENDERERS_SOURCE}\n${HYBRID_SVG_SOURCE}\nreturn { isPointLayer: reportIsPointLayer, millimeterRoot: reportMillimeterRoot, compose: reportComposeHybridSvg, vector: reportHybridVectorOption, raster: reportHybridRasterOption, box: reportPointLayerBox, hybrid: reportHybridSvg };`,
+        document,
+    );
 }
 
 type Box = {
@@ -197,9 +202,9 @@ describe("the two draws of a hybrid SVG", () => {
         const raster = pageTwin().raster(denseOption(), layer);
         const series = optionRecords(raster.series);
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect(series.map((entry) => (optionArray(entry.data)).length)).toEqual([2, 2, 0]);
+        expect(series.map((entry) => optionArray(entry.data).length)).toEqual([2, 2, 0]);
         // The labeled row draws its point in the raster, and its name draws in the vector file alone.
-        expect((optionRecords(series[0].data))[1]).toEqual({ value: ["300", 9], name: "rs2" });
+        expect(optionRecords(series[0].data)[1]).toEqual({ value: ["300", 9], name: "rs2" });
         for (const entry of series) {
             expect(entry.markLine).toBeUndefined();
             expect(entry.label).toEqual({ show: false });
@@ -227,20 +232,16 @@ describe("the two draws of a hybrid SVG", () => {
         const empty = measured(pageTwin().vector(denseOption()));
         // The grid stands 60 from the left, 24 from the right and the top, and 48 from the bottom. The layer
         // reaches past it by half of the symbol of 3 pixels, up to a whole pixel, thus an edge point keeps its symbol.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const grid = empty?.boxes[0] as Box;
+        const grid = must(empty?.boxes[0], "the first grid box");
         expect([grid.x, grid.y, grid.x + grid.width, grid.y + grid.height].map((edge) => Math.round(edge * 100) / 100)).toEqual([60, 24, 312, 205]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const box = empty?.box as Box;
+        const box = must(empty?.box, "the layer box");
         expect([box.x, box.y, box.x + box.width, box.y + box.height].map((edge) => Math.round(edge * 100) / 100)).toEqual([58, 22, 314, 207]);
         // The x axis rounds the extent of its data to 0 and 1000. The anchors keep that extent in the draw with
         // no point, thus each point of the raster lands where the full draw puts it.
         const [x] = empty?.extents.xAxis ?? [];
         expect([x?.min, x?.max].map((end) => Math.round(end ?? NaN))).toEqual([0, 1000]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(empty?.extents).toEqual(full?.extents as LayerBox["extents"]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(empty?.box).toEqual(full?.box as Box);
+        expect(empty?.extents).toEqual(full?.extents);
+        expect(empty?.box).toEqual(full?.box);
     });
 });
 
@@ -294,8 +295,7 @@ describe("the grid of a facet panel with an empty layer", () => {
     it("seeds each grid from a layer that holds rows, thus a panel whose first layer is empty keeps its rectangle", () => {
         const layer = measured(facetOption());
         expect(layer).not.toBeNull();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const [left, right] = [layer?.boxes[0] as Box, layer?.boxes[1] as Box];
+        const [left, right] = [must(layer?.boxes[0], "the first grid box"), must(layer?.boxes[1], "the second grid box")];
         expect([left.x, left.x + left.width].map((edge) => Math.round(edge))).toEqual([40, 160]);
         expect([right.x, right.x + right.width].map((edge) => Math.round(edge))).toEqual([196, 316]);
         expect(layer?.extents.xAxis.map((extent) => extent !== undefined)).toEqual([true, true]);
@@ -314,13 +314,13 @@ describe("the grid of a facet panel with an empty layer", () => {
 
     it("measures nothing for an option whose each point layer is empty", () => {
         const option = facetOption();
-        option.series = (optionRecords(option.series)).map((entry) => ({ ...entry, data: [] }));
+        option.series = optionRecords(option.series).map((entry) => ({ ...entry, data: [] }));
         expect(measured(option)).toBeNull();
     });
 
     it("keeps an empty layer a point layer in both twins, because the payload fills the rows on the page", () => {
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const empty = (optionArray(facetOption().series))[3];
+        const empty = optionArray(facetOption().series)[3];
         expect(isPointLayer(empty)).toBe(true);
         expect(pageTwin().isPointLayer(empty)).toBe(true);
     });
@@ -346,8 +346,7 @@ describe("the grid of a facet panel with an empty layer", () => {
         };
         const layer = measured(option);
         expect(layer).not.toBeNull();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const boxes = lefts.map((_left, index) => layer?.boxes[index] as Box);
+        const boxes = lefts.map((_left, index) => must(layer?.boxes[index], `the grid box ${index}`));
         expect(boxes.map((box) => [box.x, box.x + box.width].map((edge) => Math.round(edge)))).toEqual(lefts.map((left) => [left, left + 60]));
     });
 });
@@ -379,8 +378,7 @@ describe("the reach of the point layer past its grid", () => {
         const chart = echarts.init(null, undefined, { renderer: "svg", ssr: true, width: 336, height: 253 });
         try {
             chart.setOption(page.vector(option));
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const box = page.box(chart, option, 336, 253)?.box as Box;
+            const box = must(page.box(chart, option, 336, 253)?.box, "the crop box");
             return [box.x, box.y, box.x + box.width, box.y + box.height].map((edge) => Math.round(edge));
         } finally {
             chart.dispose();
@@ -474,11 +472,9 @@ describe("the page build of a hybrid SVG", () => {
         );
         // The raster holds the points alone: the axes draw nothing, and the grid stands where the vector grid
         // stands. The image reaches two pixels past the grid, the half of the symbol of 3 pixels rounded up.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const grid = (raster.option as { grid: Record<string, unknown>[] }).grid[0];
+        const grid = must(optionRecords(optionRecord(raster.option).grid)[0], "the raster grid");
         expect([grid.left, grid.top].map((v) => Math.round(Number(v)))).toEqual([Math.round(ix) + 2, Math.round(iy) + 2]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((raster.option as { xAxis: Record<string, unknown> }).xAxis.show).toBe(false);
+        expect(optionMember(optionRecord(raster.option).xAxis).show).toBe(false);
     });
 
     it("builds nothing for an option with no point layer", () => {

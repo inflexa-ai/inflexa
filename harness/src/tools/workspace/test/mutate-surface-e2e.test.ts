@@ -85,7 +85,7 @@ describe("mutate surface — end-to-end", () => {
             runId: RUN,
             stepId: STEP,
         });
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessionsBasePath, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessionsBasePath, id)) });
         return { sandbox, workspaceRoot, workingDir, fs };
     }
 

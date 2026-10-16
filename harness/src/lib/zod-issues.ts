@@ -257,7 +257,7 @@ function resolvePath(input: unknown, path: readonly PropertyKey[]): unknown {
         if (current === null || (typeof current !== "object" && typeof current !== "function")) {
             return undefined;
         }
-        current = (current as Record<PropertyKey, unknown>)[key];
+        current = Reflect.get(current, key);
     }
     return current;
 }
@@ -272,12 +272,10 @@ function setAtPath(root: unknown, path: readonly PropertyKey[], value: unknown):
     const [key, ...rest] = path;
     if (root === null || typeof root !== "object") return root;
 
-    const container = root as Record<PropertyKey, unknown>;
-    const child = setAtPath(container[key], rest, value);
+    const child = setAtPath(Reflect.get(root, key), rest, value);
     if (Array.isArray(root)) {
         const copy = [...root];
-        copy[key as number] = child;
-        return copy;
+        return Object.assign(copy, { [key]: child });
     }
-    return { ...container, [key]: child };
+    return { ...root, [key]: child };
 }

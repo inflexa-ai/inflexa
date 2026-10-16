@@ -15,7 +15,7 @@
  */
 
 import { locate } from "./draft-operations.js";
-import type { AuthoringAtomBlock } from "./authoring-grammar.js";
+import { AuthoringBlockSchema, type AuthoringAtomBlock } from "./authoring-grammar.js";
 import type { DraftBlock, DraftDocument } from "./draft.js";
 import { stripReferenceHashes } from "./reference-stamp.js";
 
@@ -157,7 +157,9 @@ export function readBlock(draft: DraftDocument, id: string): ReadableBlock | und
     if (found.kind === "section") {
         return { kind: "section", id: found.id, title: found.title, childIds: found.blocks.map((child) => child.id) };
     }
-    // The stored atom and the read atom differ in the stamped hash alone, and the walk removes that field.
-    // Thus the assertion states what the walk did.
-    return stripReferenceHashes(found) as AuthoringAtomBlock;
+    // The stored atom and the read atom differ in the stamped hash alone; the walk removes that field, and
+    // the authoring grammar parse proves the read shape.
+    const parsed = AuthoringBlockSchema.safeParse(stripReferenceHashes(found));
+    if (!parsed.success || parsed.data.kind === "section") return undefined;
+    return parsed.data;
 }

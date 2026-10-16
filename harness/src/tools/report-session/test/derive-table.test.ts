@@ -36,7 +36,13 @@ import type { Logger } from "../../../lib/logger.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ToolContext } from "../../define-tool.js";
 import type { ProvenanceSeam, SessionProvenanceEvent } from "../../../provenance/seam.js";
-import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../../report-authoring/authoring-tools.js";
+import type {
+    ReportSessionState,
+    ReportSessionStateGateway,
+    SessionStateLoad,
+    SessionStatePersist,
+    StampResult,
+} from "../../report-authoring/authoring-tools.js";
 import {
     buildDerivationExec,
     createDeriveTableTool,
@@ -190,7 +196,7 @@ function makeSandbox(args: {
                 throw new Error("the poll loop broke");
             }
             if (args.write !== undefined) {
-                await args.write(hostSideOf(args.root, must(must(request, "request").env, "must(request, \"request\").env")[DERIVE_OUTPUT_ENV]));
+                await args.write(hostSideOf(args.root, must(must(request, "request").env, 'must(request, "request").env')[DERIVE_OUTPUT_ENV]));
             }
             return args.reply ?? execResult({});
         },
@@ -274,7 +280,7 @@ function makeTool(args: {
     const auth = makeAuthorizer();
     const tool = createDeriveTableTool({
         gateway,
-        resolveWorkspaceRoot: async () => args.root,
+        resolveWorkspaceRoot: () => Promise.resolve(args.root),
         derivations: ledger,
         // The composition realizes the runner over a registered workflow. The test drives the same body,
         // with a fixed clock, thus the seam calls under test are the seam calls in production.
@@ -315,7 +321,7 @@ describe("a suspended derivation", () => {
                 gateway.seed("t1", pinnedSnapshot());
                 return gateway;
             })(),
-            resolveWorkspaceRoot: async () => root,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
             derivations: makeLedger(),
             runDerivation: () => {
                 throw new Error("a refused authorization starts no derivation");
@@ -408,9 +414,13 @@ describe("the derived table", () => {
         // The working directory is the write mount, thus the script writes beside where it stands.
         expect(body.cwd).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived`);
         // Each declared input rides as the path that the container reads, with the hash of the membership.
-        expect(jsonParse(must(must(body, "body").env, "must(body, \"body\").env")[DERIVE_INPUT_ENV], z.unknown())).toEqual([{ path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH }]);
+        expect(jsonParse(must(must(body, "body").env, 'must(body, "body").env')[DERIVE_INPUT_ENV], z.unknown())).toEqual([
+            { path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH },
+        ]);
         // The output path rides too, thus the script names no directory of its own.
-        expect(must(must(body, "body").env, "must(body, \"body\").env")[DERIVE_OUTPUT_ENV]).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived/yield.csv`);
+        expect(must(must(body, "body").env, 'must(body, "body").env')[DERIVE_OUTPUT_ENV]).toBe(
+            `/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived/yield.csv`,
+        );
     });
 
     it("gives the derived path as the result line, and the output name as the call line", async () => {
@@ -418,9 +428,9 @@ describe("the derived table", () => {
         const { tool } = makeTool({ root });
         const input = { script: SCRIPT, inputs: [PINNED_PATH], output: "yield.csv" };
 
-        expect(must(must(tool, "tool").describeCall, "must(tool, \"tool\").describeCall")(input)).toBe("derive yield.csv");
+        expect(must(must(tool, "tool").describeCall, 'must(tool, "tool").describeCall')(input)).toBe("derive yield.csv");
         const result = await derive(tool, {});
-        expect(must(must(tool, "tool").describeResult, "must(tool, \"tool\").describeResult")(input, result)).toBe(`${reportSessionDir("t1")}/derived/yield.csv`);
+        expect(must(must(tool, "tool").describeResult, 'must(tool, "tool").describeResult')(input, result)).toBe(`${reportSessionDir("t1")}/derived/yield.csv`);
     });
 });
 
@@ -530,12 +540,12 @@ describe("a derivation that gives no table", () => {
         expect(auth.revoked).toEqual(["derive-table-failed"]);
     });
 
-    it("gives a timeout and a dead sandbox as a failed exec",  () => {
+    it("gives a timeout and a dead sandbox as a failed exec", () => {
         expect(describeExecFailure(execResult({ timedOut: true }))).toContain("deadline");
         expect(describeExecFailure(execResult({ syntheticFailure: { reason: "sandbox-dead" } }))).toContain("sandbox-dead");
         expect(describeExecFailure(execResult({}))).toBeUndefined();
         return Promise.resolve();
-});
+    });
 
     it("gives no-output for a green script that wrote no file", async () => {
         const root = await makeRoot();
@@ -639,7 +649,7 @@ describe("a composition with no sandbox", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", pinnedSnapshot());
-        const tool = createDeriveTableTool({ gateway, resolveWorkspaceRoot: async () => root, derivations: makeLedger() });
+        const tool = createDeriveTableTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), derivations: makeLedger() });
 
         const result = (await tool.execute({ script: SCRIPT, inputs: [PINNED_PATH], output: "yield.csv" }, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -761,7 +771,9 @@ describe("buildDerivationExec", () => {
         expect(body.command).toEqual(["python3", "-c", "print(1)"]);
         expect(body.cwd).toBe("/an-1/report-sessions/t1/derived");
         expect(body.timeoutSeconds).toBe(300);
-        expect(jsonParse(must(must(body, "body").env, "must(body, \"body\").env")[DERIVE_INPUT_ENV], z.unknown())).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);
-        expect(must(must(body, "body").env, "must(body, \"body\").env")[DERIVE_OUTPUT_ENV]).toBe("/an-1/report-sessions/t1/derived/y.csv");
+        expect(jsonParse(must(must(body, "body").env, 'must(body, "body").env')[DERIVE_INPUT_ENV], z.unknown())).toEqual([
+            { path: "/an-1/data/x.csv", hash: "sha256:h1" },
+        ]);
+        expect(must(must(body, "body").env, 'must(body, "body").env')[DERIVE_OUTPUT_ENV]).toBe("/an-1/report-sessions/t1/derived/y.csv");
     });
 });

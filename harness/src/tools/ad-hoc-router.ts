@@ -1,3 +1,4 @@
+import { maybeRecord } from "../lib/shape.js";
 import { jsonSchema, tool as aiTool, type ToolCallPart } from "ai";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -160,7 +161,7 @@ async function routePackages(
     const seen = new Set<string>();
     for (const element of entries) {
         if (typeof element !== "string") {
-            droppedPackages.push({ entry: String(element), reason: "unparsable" });
+            droppedPackages.push({ entry: errorMessage(element), reason: "unparsable" });
             continue;
         }
         const entry = element.trim();
@@ -218,6 +219,8 @@ function routeTool() {
     return {
         submit_route: aiTool({
             description: "Submit the single specialist, the resource recommendation, and the packages of the step. This is the only valid response.",
+            // SAFETY: z.toJSONSchema emits the JSON Schema document that the AI SDK jsonSchema helper wraps — the two describe the same schema by construction.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion, @inflexa-ai/no-double-cast -- zod's JSON-Schema output type and the target package's input type describe the same document; neither third-party declaration is ours to align.
             inputSchema: jsonSchema(z.toJSONSchema(routeSchema) as unknown as Parameters<typeof jsonSchema>[0]),
         }),
     };
@@ -297,7 +300,7 @@ export async function routeAdHocRequest(
         logger.warn("ad hoc route fell back", { failure, error: errorMessage(error) });
     }
 
-    const candidate = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const candidate = maybeRecord(raw) ?? {};
     const requestedAgent = typeof candidate.agentId === "string" ? candidate.agentId : undefined;
     const validAgent = requestedAgent !== undefined && PLANNABLE_AGENT_CATALOG.some((agent) => agent.id === requestedAgent);
     const agentId = validAgent ? requestedAgent : AD_HOC_FALLBACK_AGENT_ID;

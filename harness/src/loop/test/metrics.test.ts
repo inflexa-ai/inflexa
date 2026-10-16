@@ -16,7 +16,7 @@ import { runAgent } from "../run-agent.js";
 import { passthroughStep } from "../run-step.js";
 import type { AgentDefinition, RunStep } from "../types.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { optionNumber } from "../../report-render/option-lens.js";
+import { optionNumber, optionRecord } from "../../report-render/option-lens.js";
 
 const ITERATIONS_METRIC = "cortex.harness.agent.iterations";
 const CAP_HITS_METRIC = "cortex.harness.agent.cap_hits";
@@ -98,11 +98,13 @@ describe("runAgent metrics", () => {
         await runAgent(agentDef(8), GO, makeSession(), runOpts(chat));
 
         const collected = await collectMetrics();
-        const iterations = must(collected.find((m) => m.descriptor.name === ITERATIONS_METRIC), "iterations");
+        const iterations = must(
+            collected.find((m) => m.descriptor.name === ITERATIONS_METRIC),
+            "iterations",
+        );
         expect(iterations).toBeDefined();
         expect(iterations.dataPoints).toHaveLength(1);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const value = iterations.dataPoints[0].value as { count: number; sum: number };
+        const value = optionRecord(iterations.dataPoints[0].value);
         expect(value.count).toBe(1);
         expect(value.sum).toBe(3);
 
@@ -110,7 +112,7 @@ describe("runAgent metrics", () => {
         const capHits = collected.find((m) => m.descriptor.name === CAP_HITS_METRIC);
         if (capHits !== undefined) {
             // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const total = capHits.dataPoints.reduce((acc, dp) => acc + (optionNumber(dp.value)), 0);
+            const total = capHits.dataPoints.reduce((acc, dp) => acc + optionNumber(dp.value), 0);
             expect(total).toBe(0);
         }
     });
@@ -125,15 +127,20 @@ describe("runAgent metrics", () => {
         await runAgent(agentDef(2), GO, makeSession(), runOpts(chat));
 
         const collected = await collectMetrics();
-        const capHits = must(collected.find((m) => m.descriptor.name === CAP_HITS_METRIC), "capHits");
+        const capHits = must(
+            collected.find((m) => m.descriptor.name === CAP_HITS_METRIC),
+            "capHits",
+        );
         expect(capHits).toBeDefined();
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const total = capHits.dataPoints.reduce((acc, dp) => acc + (optionNumber(dp.value)), 0);
+        const total = capHits.dataPoints.reduce((acc, dp) => acc + optionNumber(dp.value), 0);
         expect(total).toBe(1);
 
-        const iterations = must(collected.find((m) => m.descriptor.name === ITERATIONS_METRIC), "iterations");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const value = iterations.dataPoints[0].value as { sum: number };
+        const iterations = must(
+            collected.find((m) => m.descriptor.name === ITERATIONS_METRIC),
+            "iterations",
+        );
+        const value = optionRecord(iterations.dataPoints[0].value);
         expect(value.sum).toBe(2);
     });
 });
@@ -190,8 +197,10 @@ describe("runAgent token counters for each call", () => {
             capabilities: { toolCalling: true },
             chat: () => {
                 calls += 1;
-                // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-                if (calls === 3) return errAsync({ type: "provider", retryable: false, message: "upstream exploded" } as ProviderError);
+                if (calls === 3) {
+                    // SAFETY: a hand-built double of the seam under test — the object names the provider arm of the error union, and the run's classifier reads only that arm.
+                    return errAsync({ type: "provider", retryable: false, message: "upstream exploded" } as ProviderError);
+                }
                 return okAsync(toolCall(calls));
             },
         };
@@ -220,8 +229,11 @@ describe("runAgent token counters for each call", () => {
         // Mimics DBOS replay: a stored step returns its value and skips the body.
         const stored = new Map<string, unknown>();
         const replayingStep: RunStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            if (stored.has(name)) return stored.get(name) as T;
+            if (stored.has(name)) {
+                // SAFETY: the stored value is what a previous call to this same step wrote — a fixture or a double answer the test itself determined.
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- this wrapper wrote the value at this step name under the same T.
+                return stored.get(name) as T;
+            }
             const value = await fn();
             stored.set(name, value);
             return value;
@@ -263,7 +275,10 @@ describe("runAgent token counters for each call", () => {
         );
 
         expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: { ...LABELS, agent_id: "step-summary-writer" }, value: 100 }]);
-        const iterations = must((await collectMetrics()).find((m) => m.descriptor.name === ITERATIONS_METRIC), "iterations");
+        const iterations = must(
+            (await collectMetrics()).find((m) => m.descriptor.name === ITERATIONS_METRIC),
+            "iterations",
+        );
         expect(iterations.dataPoints.map((dp) => dp.attributes["agent_id"])).toEqual(["step-summary-writer"]);
     });
 });

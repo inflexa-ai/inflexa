@@ -17,6 +17,7 @@ import { blockMark } from "./block-mark.js";
 import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
 import type { FC } from "hono/jsx";
+import { stringOfNode } from "./node-text.js";
 
 /** The paragraph class of a text block and a claim block. The paragraph fills the content column. */
 const PARAGRAPH_CLASS = "report-prose";
@@ -63,7 +64,7 @@ const TextListView: FC<{ list: TextList; mark: Record<string, string> }> = ({ li
             {items}
         </ul>
     );
-}
+};
 
 /**
  * Render a text block as escaped paragraphs, and then its list.
@@ -76,7 +77,7 @@ export function renderText(block: TextBlock): string {
     const paragraphs = splitParagraphs(block.content.prose);
     const list = block.content.list;
     const mark = blockMark(block.id);
-    return String(
+    return stringOfNode(
         <>
             {paragraphs.map((paragraph) => (
                 <p class={PARAGRAPH_CLASS} {...mark}>
@@ -120,7 +121,7 @@ export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger, view: Vi
                 ))}
             </>
         );
-    return String(
+    return stringOfNode(
         view.lineage ? (
             <div {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, block.bindings)}>
                 {body}
@@ -144,7 +145,7 @@ function headingClass(level: number): string {
 export function renderSection(section: SectionBlock, depth: number, childrenHtml: string): string {
     const level = Math.min(depth + 2, 4);
     const Heading = level === 2 ? "h2" : level === 3 ? "h3" : "h4";
-    return String(
+    return stringOfNode(
         <section id={section.id} class="report-section" {...blockMark(section.id)}>
             <Heading class={headingClass(level)}>{section.title}</Heading>
             {raw(childrenHtml)}
@@ -158,7 +159,7 @@ export function renderSection(section: SectionBlock, depth: number, childrenHtml
  * The `report-sidebar` id is the hook of the layout shift on a large viewport.
  */
 export function renderNav(topSections: SectionBlock[]): string {
-    return String(
+    return stringOfNode(
         <aside id="report-sidebar" class="report-nav" aria-label="Report navigation">
             <div class="report-nav-brand">
                 <a class="report-nav-brand-name" href={BRAND_HREF}>

@@ -6,25 +6,28 @@
 
 import { describe, expect, it } from "bun:test";
 
-import type { ChatPart } from "../../contracts/chat-parts.js";
+import type { ChatPart, StepPhase } from "../../contracts/chat-parts.js";
 import { foldRunEventParts, parseRunEventPart, pipeFoldedRunEvents } from "../run-event-parts.js";
 import { sleep } from "../../lib/async-utils.js";
 
-// SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-const activity = (id: string, phase: string, text: string): ChatPart =>
-    ({ type: "data-step-activity", id, runId: "run-1", stepId: "T1S1", phase, activity: text }) as ChatPart;
+const activity = (id: string, phase: StepPhase, text: string): ChatPart => ({
+    type: "data-step-activity",
+    id,
+    runId: "run-1",
+    stepId: "T1S1",
+    phase,
+    activity: text,
+});
 
-// The cast gives `phase` its union type: the callers pass only phases of `StepPhase`.
-const entry = (seq: number, phase: string, text: string): ChatPart =>
-    ({
-        type: "data-activity-entry",
-        id: `activity-entry-run-1-T1S1-${seq}`,
-        runId: "run-1",
-        stepId: "T1S1",
-        phase,
-        activity: text,
-        at: `2026-10-12T10:00:0${seq}.000Z`,
-    }) as ChatPart;
+const entry = (seq: number, phase: StepPhase, text: string): ChatPart => ({
+    type: "data-activity-entry",
+    id: `activity-entry-run-1-T1S1-${seq}`,
+    runId: "run-1",
+    stepId: "T1S1",
+    phase,
+    activity: text,
+    at: `2026-10-12T10:00:0${seq}.000Z`,
+});
 
 const summary = (stepId: string, markdown: string): ChatPart => ({
     type: "data-step-summary",
@@ -34,6 +37,14 @@ const summary = (stepId: string, markdown: string): ChatPart => ({
     agentId: "bio",
     markdown,
 });
+
+/** A part as an older writer sent it, with no reconciliation id: the delete mints the invalid shape from a real part. */
+function withoutId(part: ChatPart): ChatPart {
+    Reflect.deleteProperty(part, "id");
+    return part;
+}
+
+const idless = withoutId(activity("step-activity-run-1-T1S1", "executing", "x"));
 
 describe("parseRunEventPart", () => {
     it("accepts a value whose type the part registry classifies", () => {
@@ -134,9 +145,6 @@ describe("foldRunEventParts", () => {
     });
 
     it("passes through a reconciling part carrying no id rather than dropping it", () => {
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const idless = { type: "data-step-activity", runId: "run-1", stepId: "T1S1", phase: "executing", activity: "x" } as ChatPart;
-
         expect(foldRunEventParts([idless, idless])).toEqual([idless, idless]);
     });
 
@@ -161,10 +169,10 @@ describe("pipeFoldedRunEvents", () => {
         const out: T[] = [];
         await pipeFoldedRunEvents(
             entries,
-             (entry) => {
+            (entry) => {
                 out.push(entry);
                 return Promise.resolve();
-},
+            },
             flushMs,
         );
         return out;
@@ -258,9 +266,6 @@ describe("pipeFoldedRunEvents", () => {
     });
 
     it("delivers each reconciling part that carries no id", async () => {
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const idless = { type: "data-step-activity", runId: "run-1", stepId: "T1S1", phase: "executing", activity: "x" } as ChatPart;
-
         expect(await delivered(burst([idless, idless]))).toEqual([idless, idless]);
     });
 });

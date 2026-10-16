@@ -109,7 +109,16 @@ import {
 import { SHAPED_SCATTER_FIGURE } from "./figures/pca.js";
 import { formatNumberCell, selectNumberKind } from "./number-format.js";
 import type { RenderProblem, RenderStatistic, RenderTrack, RenderTrees } from "./types.js";
-import { optionArray, optionCell, optionCells, optionMemberOrUndefined, optionNullableNumbers, optionRecord, optionStrings } from "./option-lens.js";
+import {
+    optionArray,
+    optionCell,
+    optionCells,
+    optionMemberOrUndefined,
+    optionNullableNumbers,
+    optionRecord,
+    optionStrings,
+    optionText,
+} from "./option-lens.js";
 import { typedMember } from "../lib/shape.js";
 
 export { transformColumn } from "./figures/common.js";
@@ -325,7 +334,7 @@ function bodyPxOf(raw: EchartOption, option: EchartOption): number {
     if (typeof stated === "number") return Math.max(CHART_BODY_PX, stated);
     const grids = option.grid;
     if (!Array.isArray(grids)) return CHART_BODY_PX;
-    const panels = grids.filter((grid) => typeof grid === "object" && grid !== null && (optionRecord(grid)).outerBoundsMode === FACET_BOUNDS_MODE).length;
+    const panels = grids.filter((grid) => typeof grid === "object" && grid !== null && optionRecord(grid).outerBoundsMode === FACET_BOUNDS_MODE).length;
     const rows = panels <= 2 ? 1 : Math.ceil(panels / FACET_COLUMNS);
     return CHART_BODY_PX + (rows - 1) * FACET_ROW_PX;
 }
@@ -466,7 +475,7 @@ function describesLead(series: readonly unknown[], collector: SourceCollector): 
         composed !== undefined &&
         composed.length === described &&
         described < series.length &&
-        composed.every((name, index) => (optionRecord(series[index])).name === name)
+        composed.every((name, index) => optionRecord(series[index]).name === name)
     );
 }
 
@@ -505,7 +514,7 @@ function sourcedOption(option: EchartOption, series: readonly unknown[], collect
     };
     return {
         ...option,
-        series: series.map((entry, index) => (index < collector.series.length ? { ...(optionRecord(entry)), data: [] } : entry)),
+        series: series.map((entry, index) => (index < collector.series.length ? { ...optionRecord(entry), data: [] } : entry)),
         [CHART_SOURCE_MEMBER]: source,
     };
 }
@@ -633,10 +642,31 @@ function declaresMember(block: ChartBlock, member: FigureMember): boolean {
     }
 }
 
+/** The members of the encoding, in the order of the grammar. The `satisfies` check drops this list from the compile the day the contracts rename or remove one. */
+const ENCODING_MEMBERS = [
+    "x",
+    "y",
+    "group",
+    "value",
+    "label",
+    "color",
+    "size",
+    "low",
+    "high",
+    "facet",
+    "shape",
+    "p",
+    "censor",
+    "risk",
+    "hit",
+    "metric",
+    "tracks",
+] as const satisfies readonly (keyof ChartEncoding)[];
+
 /** Each member that one block declares, in the order of the grammar. */
 function declaredMembers(block: ChartBlock): FigureMember[] {
     const members: FigureMember[] = [];
-    for (const key of Object.keys(block.encoding ?? {}) as Array<keyof ChartEncoding>) {
+    for (const key of ENCODING_MEMBERS) {
         if (block.encoding?.[key] !== undefined) members.push(key);
     }
     for (const member of ["statistics", "track", "trees", "focus"] as const) {
@@ -733,7 +763,7 @@ function deriveFigure(
             if (described !== undefined && option.isOk()) {
                 // The names of the composition output let the pass tell it apart from a series that the
                 // figure adds after it.
-                described.composed = Array.isArray(option.value.series) ? option.value.series.map((entry) => String((optionRecord(entry)).name)) : [];
+                described.composed = Array.isArray(option.value.series) ? option.value.series.map((entry) => optionText(optionRecord(entry).name)) : [];
             }
             return option;
         },
@@ -1145,7 +1175,12 @@ function deriveBar(
         if (stacked.isErr()) return err(stacked.error);
         series = stacked.value;
     }
-    const valueAxis = { type: "value", min: mode === "normalized" ? 0 : undefined, max: mode === "normalized" ? 1 : undefined, ...labelRoom(series, horizontal) };
+    const valueAxis = {
+        type: "value",
+        min: mode === "normalized" ? 0 : undefined,
+        max: mode === "normalized" ? 1 : undefined,
+        ...labelRoom(series, horizontal),
+    };
 
     if (horizontal) {
         return ok({
@@ -1609,13 +1644,16 @@ function slotSeries(
         ...pointSeries(points, name),
         itemStyle: { color: color !== undefined ? color : undefined, opacity: DISTRIBUTION_POINT_OPACITY },
         xAxisIndex: 1,
-        markLine: medians.length > 0 ? {
+        markLine:
+            medians.length > 0
+                ? {
                       silent: true,
                       symbol: "none",
                       label: { show: false },
                       lineStyle: { width: MEDIAN_LINE_WIDTH_PX, type: "solid", opacity: 1 },
                       data: medians.map((line) => [...line]),
-                  } : undefined,
+                  }
+                : undefined,
     };
 }
 
@@ -2456,7 +2494,7 @@ function labeledSeries(context: CompositionContext, emitted: readonly EmittedSer
 
 /** The names of the drawn series, in series order. An auxiliary series names no entry of its own. */
 function drawnNames(emitted: readonly EmittedSeries[]): string[] {
-    return emitted.filter((entry) => !entry.auxiliary).map((entry) => String(entry.option.name));
+    return emitted.filter((entry) => !entry.auxiliary).map((entry) => optionText(entry.option.name));
 }
 
 /**
@@ -2524,7 +2562,7 @@ function drawnMembers(emitted: readonly EmittedSeries[], seriesIndex: readonly n
         const data = emitted[index].option.data;
         if (!Array.isArray(data)) continue;
         for (const item of data) {
-            const value = Array.isArray(item) ? item : typeof item === "object" && item !== null ? (optionRecord(item)).value : undefined;
+            const value = Array.isArray(item) ? item : typeof item === "object" && item !== null ? optionRecord(item).value : undefined;
             const member = Array.isArray(value) ? toNumber(optionCell(value[dimension])) : null;
             if (member !== null) members.push(member);
         }
@@ -2562,7 +2600,7 @@ function intervalAlongX(entry: ResolvedSeries, axes: AxisPair): boolean {
 /** The place of each category of one axis, keyed by the text of the category, or `undefined` for a value axis. */
 function categoryPlaces(axis: EchartOption): Map<string, number> | undefined {
     if (axis.type !== "category" || !Array.isArray(axis.data)) return undefined;
-    return new Map((axis.data as unknown[]).map((category: unknown, place) => [String(category), place]));
+    return new Map(optionArray(axis.data).map((category, place) => [optionText(category), place]));
 }
 
 /**
@@ -2771,9 +2809,12 @@ function facetLayout(names: readonly (Cell | undefined)[], shared: AxisPair, leg
  * turned label still covers its neighbor. `widthPx` is the panel width on the page, and an x axis alone states it.
  */
 function panelAxis(axis: EchartOption, widthPx?: number): EchartOption {
-    const label = typeof axis.axisLabel === "object" && axis.axisLabel !== null ? (optionRecord(axis.axisLabel)) : {};
+    const label = typeof axis.axisLabel === "object" && axis.axisLabel !== null ? optionRecord(axis.axisLabel) : {};
     const base = { ...withoutName(axis), splitNumber: FACET_SPLIT_NUMBER };
     if (axis.type !== "category" || !Array.isArray(axis.data)) return { ...base, axisLabel: { ...label, hideOverlap: true } };
+    // SAFETY: the encoding layer authors a category axis's data from the track's label column, so each element is
+    // a category label (a Cell). categoryTurn reads each element through categoryName, which stringifies its
+    // argument, so a foreign element degrades to its string form here exactly as the read below would.
     const turn = widthPx === undefined || label.rotate !== undefined ? undefined : categoryTurn(axis.data as readonly Cell[], widthPx);
     return { ...base, axisLabel: { ...label, interval: 0, rotate: turn !== undefined ? turn : undefined } };
 }
@@ -2811,7 +2852,7 @@ function thinnedLabels(option: EchartOption): EchartOption {
     const thin = (axis: unknown): unknown => {
         if (typeof axis !== "object" || axis === null || Array.isArray(axis)) return axis;
         const fields = optionRecord(axis);
-        const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? (optionRecord(fields.axisLabel)) : {};
+        const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? optionRecord(fields.axisLabel) : {};
         if (fields.type !== "category" || !Array.isArray(fields.data) || label.rotate !== 90 || label.show === false) return axis;
         const interval = categoryInterval(fields.data.length, CHART_PAGE_TEXT_PX, pagePlotWidth(option.grid, fields));
         if (interval === 0) return axis;
@@ -2832,7 +2873,7 @@ function thinnedLabels(option: EchartOption): EchartOption {
  */
 function pagePlotWidth(grid: unknown, axis: EchartOption): number {
     const entry = Array.isArray(grid) ? grid[typeof axis.gridIndex === "number" ? axis.gridIndex : 0] : grid;
-    const fields = typeof entry === "object" && entry !== null ? (optionRecord(entry)) : {};
+    const fields = typeof entry === "object" && entry !== null ? optionRecord(entry) : {};
     const stated = pagePx(fields.width);
     return stated > 0 ? stated : CHART_PAGE_WIDTH_PX - pagePx(fields.left) - pagePx(fields.right);
 }
@@ -3884,7 +3925,7 @@ function withValueLabels(
         if (!labeled(entry) || !labelable(index)) return entry;
         const data = optionArray(entry.data).map((item) => {
             // A bar item is a pair or an object whose value is the pair, thus the two forms read one field.
-            const fields: EchartOption = typeof item === "object" && item !== null && !Array.isArray(item) ? (optionRecord(item)) : { value: item };
+            const fields: EchartOption = typeof item === "object" && item !== null && !Array.isArray(item) ? optionRecord(item) : { value: item };
             if (fields.label !== undefined || !Array.isArray(fields.value)) return item;
             const cell = optionCells(fields.value)[horizontal ? 0 : 1];
             return { ...fields, label: { show: true, position: labelPosition(cell, horizontal), formatter: textOf(cell, index) } };
@@ -3911,9 +3952,9 @@ function labelRoom(series: readonly EchartOption[], horizontal: boolean): Echart
     let positive = false;
     for (const entry of series) {
         if (entry.type !== "bar" || !Array.isArray(entry.data)) continue;
-        for (const item of entry.data as unknown[]) {
-            if (typeof item !== "object" || item === null || Array.isArray(item) || (optionRecord(item)).label === undefined) continue;
-            const value = (optionRecord(item)).value;
+        for (const item of optionArray(entry.data)) {
+            if (typeof item !== "object" || item === null || Array.isArray(item) || optionRecord(item).label === undefined) continue;
+            const value = optionRecord(item).value;
             // The sign rule of `labelPosition`: a bar under zero puts its label at its lower end.
             if ((toNumber(Array.isArray(value) ? optionCell(value[horizontal ? 0 : 1]) : null) ?? 0) < 0) negative = true;
             else positive = true;

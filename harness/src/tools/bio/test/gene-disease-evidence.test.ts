@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createGeneDiseaseEvidenceTool } from "../gene-disease-evidence.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -13,7 +13,7 @@ afterEach(() => {
 
 function stubFetch(response: (url: string) => Response): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(String(input))));
+    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(urlText(input))));
 }
 
 function stubFetchSequence(responses: (() => Response)[]): void {
@@ -56,7 +56,7 @@ describe("geneDiseaseEvidence — GWAS Catalog corpus", () => {
         const result = (await tool.execute({ query: "rs11591147", queryType: "variant", sources: ["gwas"] }, ctx))._unsafeUnwrap();
 
         expect(result.gwas).toHaveLength(1);
-        const assoc = must(must(result, "result").gwas, "must(result, \"result\").gwas")[0];
+        const assoc = must(must(result, "result").gwas, 'must(result, "result").gwas')[0];
         expect(assoc.trait).toBe("LDL cholesterol");
         expect(assoc.mappedGenes).toEqual(["PCSK9"]);
         expect(assoc.orBeta).toBe(2.5);
@@ -74,7 +74,7 @@ describe("geneDiseaseEvidence — GWAS Catalog corpus", () => {
         const result = (await tool.execute({ query: "LDL cholesterol", queryType: "disease", sources: ["gwas"] }, ctx))._unsafeUnwrap();
 
         expect(result.gwas).toHaveLength(1);
-        expect(must(must(must(result, "result").gwas, "must(result, \"result\").gwas")[0], "must(result, \"result\").gwas[0]").trait).toBe("LDL cholesterol");
+        expect(must(must(must(result, "result").gwas, 'must(result, "result").gwas')[0], 'must(result, "result").gwas[0]').trait).toBe("LDL cholesterol");
     });
 
     it("walks SNP-by-gene then per-SNP associations for queryType 'gene'", async () => {
@@ -87,7 +87,7 @@ describe("geneDiseaseEvidence — GWAS Catalog corpus", () => {
         const result = (await tool.execute({ query: "PCSK9", queryType: "gene", sources: ["gwas"] }, ctx))._unsafeUnwrap();
 
         expect(result.gwas).toHaveLength(1);
-        expect(must(must(must(result, "result").gwas, "must(result, \"result\").gwas")[0], "must(result, \"result\").gwas[0]").rsId).toBe("rs11591147");
+        expect(must(must(must(result, "result").gwas, 'must(result, "result").gwas')[0], 'must(result, "result").gwas[0]').rsId).toBe("rs11591147");
     });
 
     it("reports no_data rather than an error when nothing matches", async () => {
@@ -127,7 +127,13 @@ describe("geneDiseaseEvidence — DisGeNET corpus", () => {
         const result = (await tool.execute({ query: "PCSK9", queryType: "gene", sources: ["disgenet"] }, ctx))._unsafeUnwrap();
 
         expect(result.disgenet).toHaveLength(1);
-        expect(must(must(result, "result").disgenet, "must(result, \"result\").disgenet")[0]).toMatchObject({ geneSymbol: "PCSK9", diseaseId: "C0020443", score: 0.8, evidenceIndex: 1, nPmids: 42 });
+        expect(must(must(result, "result").disgenet, 'must(result, "result").disgenet')[0]).toMatchObject({
+            geneSymbol: "PCSK9",
+            diseaseId: "C0020443",
+            score: 0.8,
+            evidenceIndex: 1,
+            nPmids: 42,
+        });
         expect(outcome(result.perSource, "disgenet")).toMatchObject({ status: "ok", totalFound: 137 });
     });
 
@@ -154,7 +160,9 @@ describe("geneDiseaseEvidence — DisGeNET corpus", () => {
 
         expect(called).toBe(false);
         expect(outcome(result.perSource, "disgenet")).toMatchObject({ status: "unavailable" });
-        expect(must(must(outcome, "outcome")(result.perSource, "disgenet"), "must(outcome, \"outcome\")(result.perSource, \"disg").detail).toContain("DISGENET_API_KEY");
+        expect(must(must(outcome, "outcome")(result.perSource, "disgenet"), 'must(outcome, "outcome")(result.perSource, "disg').detail).toContain(
+            "DISGENET_API_KEY",
+        );
     });
 
     it("is marked not_applicable for queryType 'variant'", async () => {
@@ -195,8 +203,12 @@ describe("geneDiseaseEvidence — ClinVar corpus", () => {
         const result = (await tool.execute({ query: "PCSK9", queryType: "gene", sources: ["clinvar"] }, ctx))._unsafeUnwrap();
 
         expect(result.clinvar).toHaveLength(1);
-        expect(must(must(must(result, "result").clinvar, "must(result, \"result\").clinvar")[0], "must(result, \"result\").clinvar[0]").clinicalSignificance).toBe("Pathogenic");
-        expect(must(must(must(result, "result").clinvar, "must(result, \"result\").clinvar")[0], "must(result, \"result\").clinvar[0]").conditions).toEqual(["Hypercholesterolemia"]);
+        expect(must(must(must(result, "result").clinvar, 'must(result, "result").clinvar')[0], 'must(result, "result").clinvar[0]').clinicalSignificance).toBe(
+            "Pathogenic",
+        );
+        expect(must(must(must(result, "result").clinvar, 'must(result, "result").clinvar')[0], 'must(result, "result").clinvar[0]').conditions).toEqual([
+            "Hypercholesterolemia",
+        ]);
         // totalFound is the corpus count, not the post-filter count.
         expect(outcome(result.perSource, "clinvar")).toMatchObject({ status: "ok", returned: 1, totalFound: 2 });
     });

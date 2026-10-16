@@ -146,6 +146,8 @@ const typesOf = (parts: readonly ChatPart[]): string[] => parts.map((p) => p.typ
 
 const activitiesOf = (parts: readonly ChatPart[]): StepActivityPart[] => parts.filter((p): p is StepActivityPart => p.type === "data-step-activity");
 
+const summariesOf = (parts: readonly ChatPart[]): string[] => parts.flatMap((p) => (p.type === "data-step-summary" ? [p.markdown] : []));
+
 // ── Data-profile fixtures ────────────────────────────────────────────
 
 /**
@@ -186,8 +188,7 @@ describe("run-event stream — one workflow", () => {
         );
 
         expect(typesOf(seen)).toEqual(["data-dag-state", "data-step-summary", "data-step-summary", "data-run-completed"]);
-        expect((seen[1] as { markdown: string }).markdown).toBe("first");
-        expect((seen[2] as { markdown: string }).markdown).toBe("second");
+        expect(summariesOf(seen)).toEqual(["first", "second"]);
     });
 
     it("drops values that are not chat data parts and keeps reading", async () => {
@@ -292,7 +293,7 @@ describe("run-event stream — parent and child fan-in", () => {
         await settlesWithin(stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }), 20_000, "fan-in subscription");
 
         // Ordering holds within a stream, not across them — assert on the set.
-        const summaries = seen.filter((p) => p.type === "data-step-summary").map((p) => (p as { markdown: string }).markdown);
+        const summaries = summariesOf(seen);
         expect(summaries.sort()).toEqual(["A", "B"]);
         expect(typesOf(seen).filter((t) => t === "data-run-completed")).toHaveLength(1);
         expect(typesOf(seen).filter((t) => t === "data-step-activity")).toHaveLength(1);
@@ -323,7 +324,7 @@ describe("run-event stream — parent and child fan-in", () => {
         await parent.getResult();
         await settlesWithin(subscription, 20_000, "subscription after the run finished");
 
-        expect((seen.find((p) => p.type === "data-step-summary") as { markdown: string }).markdown).toBe("late child");
+        expect(summariesOf(seen).at(0)).toBe("late child");
         expect(typesOf(seen)).toContain("data-run-completed");
     });
 
@@ -437,10 +438,9 @@ describe("run-event stream — lifecycle", () => {
 
         // The history the subscriber missed is replayed...
         expect(typesOf(seen)).toContain("data-dag-state");
-        expect((seen.find((p) => p.type === "data-step-summary") as { markdown: string }).markdown).toBe("early summary");
+        expect(summariesOf(seen).at(0)).toBe("early summary");
         // ...and the reconciling activity ends on the run's current value.
-        const activities = seen.filter((p) => p.type === "data-step-activity");
-        expect((activities.at(-1) as { phase: string }).phase).toBe("complete");
+        expect(activitiesOf(seen).at(-1)?.phase).toBe("complete");
         expect(typesOf(seen)).toContain("data-run-completed");
     });
 });
@@ -456,7 +456,8 @@ function rowReads(reads: readonly (RunEventRunRead | null)[]): NonNullable<RunEv
     return Object.assign(read, { count: () => index });
 }
 
-const noWait =  (): Promise<void> => {    return Promise.resolve();
+const noWait = (): Promise<void> => {
+    return Promise.resolve();
 };
 
 const canceledPart = (runId: string): ChatPart => ({ type: "data-run-failed", runId, error: "Run canceled", reason: "canceled" });
@@ -545,8 +546,8 @@ describe("run-event stream — a run with a run row", () => {
 
     it("gives a suspended run the reason of the host, with no workflow read", async () => {
         const runId = await endedRunWithNoTerminalPart("run-suspended-");
-        const readWorkflowStatus = async (): Promise<string | null> => {
-            throw new Error("a settled row must not read the workflow");
+        const readWorkflowStatus = (): Promise<string | null> => {
+            return Promise.reject(new Error("a settled row must not read the workflow"));
         };
 
         const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("suspended_insufficient_funds", "budget_exceeded")]), readWorkflowStatus });
@@ -599,7 +600,7 @@ describe("run-event stream — a run with a run row", () => {
     it("gives a wedged run a failed part when the workflow ended in ERROR", async () => {
         const runId = await endedRunWithNoTerminalPart("run-wedged-");
 
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => "ERROR" });
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve("ERROR") });
 
         expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "Run ended without a terminal status" });
     });
@@ -608,7 +609,7 @@ describe("run-event stream — a run with a run row", () => {
         for (const workflowStatus of ["SUCCESS", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"]) {
             const runId = await endedRunWithNoTerminalPart("run-wedged-other-");
 
-            const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => workflowStatus });
+            const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve(workflowStatus) });
 
             expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "Run ended without a terminal status" });
         }
@@ -617,7 +618,7 @@ describe("run-event stream — a run with a run row", () => {
     it("gives a canceled part when the row never leaves running and the workflow is CANCELLED", async () => {
         const runId = await endedRunWithNoTerminalPart("run-late-canceler-");
 
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => "CANCELLED" });
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve("CANCELLED") });
 
         expect(seen.at(-1)).toEqual(canceledPart(runId));
     });
@@ -626,7 +627,7 @@ describe("run-event stream — a run with a run row", () => {
         const runId = await endedRunWithNoTerminalPart("run-read-count-");
         const readRun = rowReads([row("running"), row("running"), row("running"), row("running"), row("canceled")]);
 
-        const seen = await subscribeToEndedRun(runId, { readRun, readWorkflowStatus: async () => null });
+        const seen = await subscribeToEndedRun(runId, { readRun, readWorkflowStatus: () => Promise.resolve(null) });
 
         expect(readRun.count()).toBe(4);
         expect(typesOf(seen)).toEqual(["data-dag-state"]);
@@ -636,7 +637,7 @@ describe("run-event stream — a run with a run row", () => {
         const runId = await endedRunWithNoTerminalPart("run-active-");
         const logger = createCapturingLogger();
 
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => "PENDING" }, logger);
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve("PENDING") }, logger);
 
         expect(typesOf(seen)).toEqual(["data-dag-state"]);
         expect(logger.records.some((r) => r.level === "warn" && r.fields.workflowStatus === "PENDING")).toBe(true);
@@ -645,7 +646,7 @@ describe("run-event stream — a run with a run row", () => {
     it("adds no part when the row stays running and no workflow exists", async () => {
         const runId = await endedRunWithNoTerminalPart("run-no-workflow-");
 
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => null });
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve(null) });
 
         expect(typesOf(seen)).toEqual(["data-dag-state"]);
     });
@@ -653,8 +654,8 @@ describe("run-event stream — a run with a run row", () => {
     it("adds no part and logs when the workflow status read fails", async () => {
         const runId = await endedRunWithNoTerminalPart("run-status-read-fails-");
         const logger = createCapturingLogger();
-        const readWorkflowStatus = async (): Promise<string | null> => {
-            throw new Error("engine unreachable");
+        const readWorkflowStatus = (): Promise<string | null> => {
+            return Promise.reject(new Error("engine unreachable"));
         };
 
         const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus }, logger);

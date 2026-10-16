@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createComptoxTool } from "../comptox.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -19,7 +19,7 @@ function json(body: unknown, status = 200): Response {
 function stubFetch(routes: Array<[string, () => Response]>): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((url) => {
-        const u = String(url);
+        const u = urlText(url);
         for (const [needle, make] of routes) {
             if (u.includes(needle)) return make();
         }
@@ -124,12 +124,16 @@ describe("comptox tool — dataset 'hazard'", () => {
         expect(result.found).toBe(true);
         if (result.found && "toxval" in result) {
             expect(result.toxval).toHaveLength(1); // capped
-            expect(must(must(must(result, "result").toxval, "must(result, \"result\").toxval")[0], "must(result, \"result\").toxval[0]").toxvalNumeric).toBe(5);
+            expect(must(must(must(result, "result").toxval, 'must(result, "result").toxval')[0], 'must(result, "result").toxval[0]').toxvalNumeric).toBe(5);
             expect(result.genetox).toHaveLength(1);
-            expect(must(must(must(result, "result").genetox, "must(result, \"result\").genetox")[0], "must(result, \"result\").genetox[0]").genetoxCall).toBe("negative");
+            expect(must(must(must(result, "result").genetox, 'must(result, "result").genetox')[0], 'must(result, "result").genetox[0]').genetoxCall).toBe(
+                "negative",
+            );
             expect(result.cancer).toHaveLength(2); // NOT capped
-            expect(must(must(must(result, "result").cancer, "must(result, \"result\").cancer")[1], "must(result, \"result\").cancer[1]").cancerCall).toBe("R");
-            expect(must(must(must(result, "result").cancer, "must(result, \"result\").cancer")[1], "must(result, \"result\").cancer[1]").exposureRoute).toBe("inhalation");
+            expect(must(must(must(result, "result").cancer, 'must(result, "result").cancer')[1], 'must(result, "result").cancer[1]').cancerCall).toBe("R");
+            expect(must(must(must(result, "result").cancer, 'must(result, "result").cancer')[1], 'must(result, "result").cancer[1]').exposureRoute).toBe(
+                "inhalation",
+            );
         }
     });
 
@@ -161,7 +165,9 @@ describe("comptox tool — dataset 'chemical'", () => {
             expect(result.detail.casrn).toBe("80-05-7");
             expect(result.detail.pubchemCid).toBe(6623);
             expect(result.properties).toHaveLength(1);
-            expect(must(must(must(result, "result").properties, "must(result, \"result\").properties")[0], "must(result, \"result\").properties[0]").propName).toBe("logP");
+            expect(must(must(must(result, "result").properties, 'must(result, "result").properties')[0], 'must(result, "result").properties[0]').propName).toBe(
+                "logP",
+            );
         }
     });
 
@@ -201,12 +207,17 @@ describe("comptox tool — dataset 'exposure'", () => {
         const result = (await comptox.execute({ dataset: "exposure", query: DTXSID }, ctx))._unsafeUnwrap();
 
         if (result.found && "seem" in result) {
-            expect(must(must(result, "result").seem, "must(result, \"result\").seem").productionVolume).toBe(1000);
-            expect(must(must(result, "result").seem, "must(result, \"result\").seem").probabilityDietary).toBe(0.9);
-            expect(must(must(result, "result").seem, "must(result, \"result\").seem").probabilityPesticide).toBe(0.1); // read from the misspelled wire field
+            expect(must(must(result, "result").seem, 'must(result, "result").seem').productionVolume).toBe(1000);
+            expect(must(must(result, "result").seem, 'must(result, "result").seem').probabilityDietary).toBe(0.9);
+            expect(must(must(result, "result").seem, 'must(result, "result").seem').probabilityPesticide).toBe(0.1); // read from the misspelled wire field
             expect(result.httk).toHaveLength(1);
-            expect(must(must(must(result, "result").functionalUse, "must(result, \"result\").functionalUse")[0], "must(result, \"result\").functionalUse[0]").functionCategory).toBe("plasticizer");
-            expect(must(must(must(result, "result").productData, "must(result, \"result\").productData")[0], "must(result, \"result\").productData[0]").productName).toBe("epoxy resin");
+            expect(
+                must(must(must(result, "result").functionalUse, 'must(result, "result").functionalUse')[0], 'must(result, "result").functionalUse[0]')
+                    .functionCategory,
+            ).toBe("plasticizer");
+            expect(
+                must(must(must(result, "result").productData, 'must(result, "result").productData')[0], 'must(result, "result").productData[0]').productName,
+            ).toBe("epoxy resin");
         }
     });
 
@@ -217,7 +228,7 @@ describe("comptox tool — dataset 'exposure'", () => {
         const result = (await comptox.execute({ dataset: "exposure", query: DTXSID, dataType: "seem" }, ctx))._unsafeUnwrap();
 
         if (result.found && "seem" in result) {
-            expect(must(must(result, "result").seem, "must(result, \"result\").seem").productionVolume).toBe(5);
+            expect(must(must(result, "result").seem, 'must(result, "result").seem').productionVolume).toBe(5);
             expect(result.httk).toBeUndefined();
             expect(result.functionalUse).toBeUndefined();
         }

@@ -6,13 +6,14 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock, ChartComposition } from "../../contracts/report-blocks.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "../chart.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../chart.js";
 import { INTERVAL_RENDERER, OUTLINE_RENDERER, VIOLIN_GRID_POINTS } from "../chart-renderers.js";
 import { CHART_BODY_PX, CHART_INLINE_OPTION_BOUND, DIVERGING_RAMP, FACET_ROW_PX, FOCUS_CHART_COLOR, MUTED_CHART_COLOR, SEQUENTIAL_RAMP } from "../design.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import type { RenderProblem } from "../types.js";
-import { optionRecord } from "../option-lens.js";
+import { optionPercent, optionRecord, optionSource, optionText } from "../option-lens.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
+import { must } from "../../lib/test/guards.js";
 import { optionArray, optionNumbers } from "../../report-render/option-lens.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -194,12 +195,9 @@ describe("the payload of a dense colored scatter", () => {
     const target = { key: "c1", columns: COLUMNS };
 
     /** The page twin of the series build. */
-    // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-    const seriesDataOnThePage = evaluatePageScript<() => (
-        payload: { columns: string[]; rows: ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[]>(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`);
+    const seriesDataOnThePage = evaluatePageScript<
+        () => (payload: { columns: string[]; rows: ChartRow[] }, source: Record<string, unknown>, rule: unknown) => unknown[]
+    >(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`);
 
     it("names the color and the size columns in the descriptor, and the page builds the four-member items", () => {
         const rows = embedding(9000);
@@ -208,8 +206,7 @@ describe("the payload of a dense colored scatter", () => {
 
         expect(JSON.stringify(derive(block, rows, COLUMNS)).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = must(optionSource(render.option[CHART_SOURCE_MEMBER]), "the render's data source");
         expect(source.series[0].color).toEqual({ column: 3 });
         expect(source.series[0].size).toEqual({ column: 5 });
 
@@ -224,8 +221,10 @@ describe("the payload of a dense colored scatter", () => {
     it("drops a row whose color cell is not numeric on the page too", () => {
         const rows = embedding(9000).map((row, index) => (index === 1 ? { ...row, expr: "NA" } : row));
         const block = quick("scatter", { x: "umap1", y: "umap2", color: "expr" });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const source = deriveChartRender(block, rows, COLUMNS, target)._unsafeUnwrap().option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = must(
+            optionSource(deriveChartRender(block, rows, COLUMNS, target)._unsafeUnwrap().option[CHART_SOURCE_MEMBER]),
+            "the render's data source",
+        );
         const page = seriesDataOnThePage({ columns: COLUMNS, rows }, source.series[0], undefined);
         expect(JSON.stringify(page)).toBe(JSON.stringify(asArr(seriesOf(derive(block, rows, COLUMNS))[0].data)));
         expect(page.length).toBe(8999);
@@ -617,8 +616,8 @@ describe("the facet", () => {
         const xAxes = asArr(option.xAxis).map(asObj);
         const yAxes = asArr(option.yAxis).map(asObj);
         expect(xAxes.length).toBe(4);
-        expect(new Set(xAxes.map((axis) => `${String(axis.min)}:${String(axis.max)}`)).size).toBe(1);
-        expect(new Set(yAxes.map((axis) => `${String(axis.min)}:${String(axis.max)}`)).size).toBe(1);
+        expect(new Set(xAxes.map((axis) => `${optionText(axis.min)}:${optionText(axis.max)}`)).size).toBe(1);
+        expect(new Set(yAxes.map((axis) => `${optionText(axis.min)}:${optionText(axis.max)}`)).size).toBe(1);
         expect(yAxes[0].max).toBeGreaterThanOrEqual(16);
         const series = seriesOf(option);
         expect(series.map((entry) => entry.xAxisIndex)).toEqual([0, 1, 2, 3]);
@@ -987,7 +986,7 @@ describe("the second review round", () => {
         }
         const option = derive(quick("scatter", { x: "x", y: "y", color: "c", facet: "sample" }), rows);
         const grids = asArr(option.grid).map(asObj);
-        const ends = grids.map((grid) => Number.parseFloat(String(grid.left)) + Number.parseFloat(String(grid.width)));
+        const ends = grids.map((grid) => optionPercent(grid.left) + optionPercent(grid.width));
         // The scale stands at the right edge in a band of 18 percent, thus every panel ends before the band.
         expect(Math.max(...ends)).toBeLessThanOrEqual(82);
         expect(mapsOf(option)[0].right).toBe(0);

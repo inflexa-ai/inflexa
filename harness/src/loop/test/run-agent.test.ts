@@ -23,6 +23,7 @@ import type { ProviderError } from "../../providers/errors.js";
 import type { AgentChat, ChatRequest, ChatResponse, ChatUsage } from "../../providers/types.js";
 import { AskRejectedError } from "../../tools/approval/contract.js";
 import { defineTool, withToolCallRecord, withToolResultImage, withToolResultImages, type Tool } from "../../tools/define-tool.js";
+import { CompactionPartSchema } from "../../contracts/schemas/chat-parts.js";
 import {
     isWrapUpRequest,
     makeMessage,
@@ -79,9 +80,10 @@ function recordingStep(): { runStep: RunStep; names: string[] } {
 
 function toolResultParts(message: ModelMessage | undefined): ToolResultPart[] {
     expect(message).toBeDefined();
-    expect(must(message, "message").role).toBe("tool");
-    expect(Array.isArray(must(message, "message").content)).toBe(true);
-    return must(message, "message").content as ToolResultPart[];
+    const { content, role } = must(message, "message");
+    expect(role).toBe("tool");
+    if (typeof content === "string" || !content.every((part) => part.type === "tool-result")) throw new Error("expected tool-result content");
+    return content;
 }
 
 function outputValue(result: ToolResultPart): unknown {
@@ -111,6 +113,12 @@ function echoTool(): Tool {
 
 // ── 5.1 — signed provider metadata round-trip (invariant 1) ──────────
 
+/** The tool output text the test planted; the seam types the value unknown. */
+function textOf(value: unknown): string {
+    if (typeof value !== "string") throw new Error(`expected a string tool output, got ${typeof value}`);
+    return value;
+}
+
 describe("runAgent — invariant 1: provider metadata", () => {
     it("round-trips signed reasoning provider metadata byte-for-byte", async () => {
         const provider = scriptedProvider([makeMessage([thinkingBlock("let me reason", "SIG-abc-123"), textBlock("answer")], "end_turn")]);
@@ -119,7 +127,8 @@ describe("runAgent — invariant 1: provider metadata", () => {
 
         const assistant = must(messages.at(-1), "assistant");
         expect(assistant.role).toBe("assistant");
-        const content = assistant.content as Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>;
+        const { content } = assistant;
+        if (typeof content === "string") throw new Error("expected assistant content parts");
         const reasoning = content.find((b) => b.type === "reasoning");
         expect(reasoning).toMatchObject({
             type: "reasoning",
@@ -256,7 +265,11 @@ describe("runAgent — call records", () => {
      */
     function cachingStep(cache: Map<string, unknown>): RunStep {
         return async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
-            if (cache.has(name)) return cache.get(name) as T;
+            if (cache.has(name)) {
+                // SAFETY: this wrapper wrote every cached value itself from the `T` of the step of the same name, so the read at that name is that value.
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the wrapper wrote the cached value at this name under the same `T` (ruling 9: the generic step-cache family).
+                return cache.get(name) as T;
+            }
             const value = await fn();
             cache.set(name, name.startsWith("tool-") ? jsonClone(value) : value);
             return value;
@@ -319,7 +332,7 @@ describe("runAgent — max-iteration wrap-up", () => {
             description: "Echo the label back.",
             inputSchema: z.object({ label: z.string() }),
             describeCall: "none",
-            execute:  ({ label }) => {
+            execute: ({ label }) => {
                 count++;
                 return Promise.resolve(ok({ label }));
             },
@@ -350,7 +363,8 @@ describe("runAgent — max-iteration wrap-up", () => {
         expect(wrapUpRequest.content).toBe(WRAP_UP_REQUEST);
         const last = must(messages.at(-1), "last");
         expect(last.role).toBe("assistant");
-        const content = last.content as Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>;
+        const { content } = last;
+        if (typeof content === "string") throw new Error("expected assistant content parts");
         expect(content.some((b) => b.type === "text" && b.text === "here is where I reached")).toBe(true);
         expect(finish).toMatchObject({ reason: "max_iterations", cappedOut: true });
     });
@@ -366,8 +380,8 @@ describe("runAgent — max-iteration wrap-up", () => {
         expect(runs()).toBe(3);
         const refused = toolResultParts(messages.at(-2))[0];
         expect(refused.toolCallId).toBe("tu-3");
-        expect(String(outputValue(refused))).toContain("No tool can run for this request");
-        expect(must(must(messages, "messages").at(-1), "must(messages, \"messages\").at(-1)").content).toEqual([{ type: "text", text: "answer" }]);
+        expect(textOf(outputValue(refused))).toContain("No tool can run for this request");
+        expect(must(must(messages, "messages").at(-1), 'must(messages, "messages").at(-1)').content).toEqual([{ type: "text", text: "answer" }]);
         expect(finish).toMatchObject({ reason: "max_iterations", cappedOut: true });
     });
 
@@ -416,7 +430,7 @@ describe("runAgent — tool-error boundary", () => {
             description: "Always throws.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => Promise.reject(new Error("kaboom")),
+            execute: () => Promise.reject(new Error("kaboom")),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "boom", {})], "tool_use"), makeMessage([textBlock("recovered")], "end_turn")]);
 
@@ -424,8 +438,8 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = toolResultParts(messages[2])[0];
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).toContain("kaboom");
-        expect(must(must(messages, "messages").at(-1), "must(messages, \"messages\").at(-1)").role).toBe("assistant");
+        expect(textOf(outputValue(result))).toContain("kaboom");
+        expect(must(must(messages, "messages").at(-1), 'must(messages, "messages").at(-1)').role).toBe("assistant");
     });
 
     it("unwraps an ok(value) Result into a non-error tool_result", async () => {
@@ -472,7 +486,7 @@ describe("runAgent — tool-error boundary", () => {
             description: "Throws with stderr quoted verbatim.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => Promise.reject(new Error(`segfault${NUL} core dumped`)),
+            execute: () => Promise.reject(new Error(`segfault${NUL} core dumped`)),
         });
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "noisy_tool", {})], "tool_use"),
@@ -483,7 +497,7 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = toolResultParts(messages[2])[0];
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).toContain("segfault core dumped");
+        expect(textOf(outputValue(result))).toContain("segfault core dumped");
         expect(JSON.stringify(messages)).not.toContain("\\u0000");
     });
 
@@ -501,7 +515,7 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = toolResultParts(messages[2])[0];
         expect(isErrorResult(result)).toBe(true);
-        expect(jsonParse(String(outputValue(result)), z.unknown())).toEqual({
+        expect(jsonParse(textOf(outputValue(result)), z.unknown())).toEqual({
             error: "upstream down",
             retryable: true,
         });
@@ -524,8 +538,8 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = toolResultParts(messages[2])[0];
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).not.toContain("[object Object]");
-        expect(jsonParse(String(outputValue(result)), z.unknown())).toEqual({
+        expect(textOf(outputValue(result))).not.toContain("[object Object]");
+        expect(jsonParse(textOf(outputValue(result)), z.unknown())).toEqual({
             error: "sandbox refused the exec",
             retryable: false,
         });
@@ -538,7 +552,7 @@ describe("runAgent — tool-error boundary", () => {
             description: "Needs a number.",
             inputSchema: z.object({ n: z.number() }),
             describeCall: "none",
-            execute:  () => {
+            execute: () => {
                 executed = true;
                 return Promise.resolve(ok({ ok: true }));
             },
@@ -553,7 +567,7 @@ describe("runAgent — tool-error boundary", () => {
         expect(executed).toBe(false);
         const result = toolResultParts(messages[2])[0];
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).toContain("input validation failed");
+        expect(textOf(outputValue(result))).toContain("input validation failed");
     });
 
     it("re-raises a fatal error of an inline tool instead of returning an error tool result", async () => {
@@ -564,7 +578,7 @@ describe("runAgent — tool-error boundary", () => {
             executionMode: "inline",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => Promise.reject(fatal),
+            execute: () => Promise.reject(fatal),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "inline_fatal", {})], "tool_use")]);
 
@@ -587,7 +601,7 @@ describe("runAgent — tool-error boundary", () => {
             description: "Aborts.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => Promise.reject(aborted),
+            execute: () => Promise.reject(aborted),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "abort", {})], "tool_use")]);
 
@@ -620,12 +634,15 @@ function slicingEyesTool(): Tool {
         description: "Look at a tall page and give its slices in document order.",
         inputSchema: z.object({}),
         describeCall: "none",
-        execute: () => Promise.resolve(ok(
-                withToolResultImages({ faults: ["boom"] }, [
-                    { base64: "TILE-ONE", mediaType: "image/png" },
-                    { base64: "TILE-TWO", mediaType: "image/png" },
-                ]),
-            )),
+        execute: () =>
+            Promise.resolve(
+                ok(
+                    withToolResultImages({ faults: ["boom"] }, [
+                        { base64: "TILE-ONE", mediaType: "image/png" },
+                        { base64: "TILE-TWO", mediaType: "image/png" },
+                    ]),
+                ),
+            ),
     });
 }
 
@@ -636,14 +653,17 @@ describe("runAgent — a picture on a tool result", () => {
         const { messages } = await runAgent(agentDef([eyesTool()]), GO, makeSession(), opts(provider));
 
         const result = toolResultParts(messages[2])[0];
-        expect(result.output.type).toBe("content");
-        const parts = (result.output as { type: "content"; value: Array<{ type: string }> }).value;
+        const { output } = result;
+        if (output.type !== "content") throw new Error("expected content output");
+        const parts = output.value;
         // The text part carries the faults, and it holds no bytes.
-        const textPart = parts.find((p) => p.type === "text") as { type: "text"; text: string };
+        const textPart = parts.find((p) => "text" in p);
+        if (textPart === undefined) throw new Error("expected a text part");
         expect(jsonParse(textPart.text, z.unknown())).toEqual({ faults: ["boom"] });
         expect(textPart.text).not.toContain("PNGBYTES");
         // The file part carries the picture bytes and the media type.
-        const filePart = parts.find((p) => p.type === "file") as { type: "file"; mediaType: string; data: unknown };
+        const filePart = parts.find((p) => "data" in p);
+        if (filePart === undefined) throw new Error("expected a file part");
         expect(filePart.mediaType).toBe("image/png");
         expect(filePart.data).toEqual({ type: "data", data: "PNGBYTES" });
     });
@@ -855,7 +875,7 @@ describe("runAgent — a picture on a user message", () => {
         expect(results.map((r) => r.toolCallId)).toEqual(["tu-1", "tu-cut"]);
         expect(results[0].output).toEqual({ type: "json", value: { faults: ["boom"] } });
         expect(isErrorResult(results[1])).toBe(true);
-        expect(String(outputValue(results[1]))).toContain("cut off");
+        expect(textOf(outputValue(results[1]))).toContain("cut off");
         // One fallback message trails the tool message, and it names the call that ran.
         const fallback = messages[3];
         expect(userParts(fallback)).toEqual([
@@ -876,7 +896,7 @@ describe("runAgent — max_tokens recovery", () => {
             description: "Writes a payload.",
             inputSchema: z.object({ body: z.string() }),
             describeCall: "none",
-            execute:  () => {
+            execute: () => {
                 executed = true;
                 return Promise.resolve(ok({ ok: true }));
             },
@@ -898,12 +918,12 @@ describe("runAgent — max_tokens recovery", () => {
         expect(result.type).toBe("tool-result");
         expect(result.toolCallId).toBe("tu-cut");
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).toContain("cut off");
+        expect(textOf(outputValue(result))).toContain("cut off");
 
         // The loop continued to a clean terminal reply and counted the recovery.
         expect(finish.reason).toBe("stop");
         expect(finish.truncationRecoveries).toBe(1);
-        expect(must(must(messages, "messages").at(-1), "must(messages, \"messages\").at(-1)").role).toBe("assistant");
+        expect(must(must(messages, "messages").at(-1), 'must(messages, "messages").at(-1)').role).toBe("assistant");
     });
 
     it("dispatches earlier complete tool_uses but refuses the truncated trailing one", async () => {
@@ -933,7 +953,7 @@ describe("runAgent — max_tokens recovery", () => {
         expect(messages).toHaveLength(4);
         const steer = messages[2];
         expect(steer.role).toBe("user");
-        expect(String(steer.content)).toContain("cut off");
+        expect(textOf(steer.content)).toContain("cut off");
         // The steer must be marked synthetic. It carries the `user` role only because the wire format
         // demands one after a truncated assistant message — a reader that took it for user input would
         // see a turn boundary in the middle of this turn, and a tail-turn removal would cut there.
@@ -955,7 +975,7 @@ describe("runAgent — tool mask and budget", () => {
             description: `Counts each call of ${id}.`,
             inputSchema: z.object({ label: z.string() }),
             describeCall: "none",
-            execute:  ({ label }) => {
+            execute: ({ label }) => {
                 counts.set(id, (counts.get(id) ?? 0) + 1);
                 return Promise.resolve(ok({ label }));
             },
@@ -987,7 +1007,7 @@ describe("runAgent — tool mask and budget", () => {
         const [refused, ran] = toolResultParts(messages[2]);
         expect(refused.toolCallId).toBe("tu-w");
         expect(isErrorResult(refused)).toBe(true);
-        expect(String(outputValue(refused))).toContain("writer is not available for this request");
+        expect(textOf(outputValue(refused))).toContain("writer is not available for this request");
         expect(isErrorResult(ran)).toBe(false);
         // Each request still declares both tools: the mask limits what runs, not the prefix.
         expect(provider.calls.map((call) => Object.keys(call.tools))).toEqual([
@@ -1015,7 +1035,7 @@ describe("runAgent — tool mask and budget", () => {
         const fourth = toolResultParts(messages[8])[0];
         expect(fourth.toolCallId).toBe("tu-3");
         expect(isErrorResult(fourth)).toBe(true);
-        expect(String(outputValue(fourth))).toContain("limit of 3 calls");
+        expect(textOf(outputValue(fourth))).toContain("limit of 3 calls");
     });
 
     it("counts the earlier calls of the same round against the budget", async () => {
@@ -1050,10 +1070,12 @@ describe("runAgent — tool mask and budget", () => {
             steps[slot].value = value;
             return value;
         };
-        const replay: RunStep =  <T>(name: string, _fn: () => Promise<T>): Promise<T> => {
+        const replay: RunStep = <T>(name: string, _fn: () => Promise<T>): Promise<T> => {
             const step = steps.at(position++);
             if (step === undefined) throw new Error(`the replay started the step ${name}, which the recording does not hold`);
             if (step.name !== name) throw new Error(`the replay started the step ${name} where the recording holds ${step.name}`);
+            // SAFETY: the recording stored this step's own settled value at this name, so the replay of the name returns that value.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the recording wrote the settled value at this name under the caller's `T` (ruling 9: the generic step-cache family).
             return Promise.resolve(step.value as T);
         };
         return { record, replay, names: () => steps.map((step) => step.name) };
@@ -1082,7 +1104,7 @@ describe("runAgent — tool mask and budget", () => {
 
         expect(rec.names).toEqual(["llm-0", "tool-echo-tu-1", "llm-1"]);
         expect(counts.get("echo")).toBeUndefined();
-        expect(String(outputValue(toolResultParts(messages[2])[0]))).toContain("No tool can run for this request");
+        expect(textOf(outputValue(toolResultParts(messages[2])[0]))).toContain("No tool can run for this request");
     });
 
     it("keeps the step sequence of a round the same with and without the mask", async () => {
@@ -1161,7 +1183,7 @@ describe("runAgent — tool mask and budget", () => {
         expect(store.names()).toEqual(["llm-0", "tool-echo-tu-1", "llm-1"]);
         expect(counts.get("echo")).toBeUndefined();
         // The cached result of the earlier build is the result of the replay.
-        expect(String(outputValue(toolResultParts(messages[2])[0]))).toContain("unknown tool: echo");
+        expect(textOf(outputValue(toolResultParts(messages[2])[0]))).toContain("unknown tool: echo");
         expect(finish.reason).toBe("stop");
     });
 
@@ -1181,8 +1203,8 @@ describe("runAgent — tool mask and budget", () => {
 
         expect(counts.size).toBe(0);
         const [refused, cut] = toolResultParts(messages[2]);
-        expect(String(outputValue(refused))).toContain("writer is not available for this request");
-        expect(String(outputValue(cut))).toContain("cut off");
+        expect(textOf(outputValue(refused))).toContain("writer is not available for this request");
+        expect(textOf(outputValue(cut))).toContain("cut off");
     });
 
     it("dispatches each call as before with no mask and no budget", async () => {
@@ -1250,7 +1272,7 @@ describe("runAgent — aborted terminal path", () => {
             description: "Honors the abort signal by throwing.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => Promise.reject(new Error("aborted mid-tool")),
+            execute: () => Promise.reject(new Error("aborted mid-tool")),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "boom", {})], "tool_use"), abortedReply("")]);
 
@@ -1276,7 +1298,7 @@ describe("runAgent — aborted terminal path", () => {
         const { messages, finish } = await runAgent(agentDef([]), GO, makeSession(), opts(provider));
 
         expect(finish.reason).toBe("stop");
-        expect(isInterruptedMessage(must(must(messages, "messages").at(-1), "must(messages, \"messages\").at(-1)"))).toBe(false);
+        expect(isInterruptedMessage(must(must(messages, "messages").at(-1), 'must(messages, "messages").at(-1)'))).toBe(false);
     });
 });
 
@@ -1315,8 +1337,8 @@ describe("runAgent — aborted wrap-up path", () => {
         expect(finish.cappedOut).toBe(true);
 
         // No empty assistant shell appended — the tail is the wrap-up request.
-        expect(must(must(messages, "messages").at(-1), "must(messages, \"messages\").at(-1)").role).toBe("user");
-        expect(isSyntheticUserMessage(must(must(messages, "messages").at(-1), "must(messages, \"messages\").at(-1)"))).toBe(true);
+        expect(must(must(messages, "messages").at(-1), 'must(messages, "messages").at(-1)').role).toBe("user");
+        expect(isSyntheticUserMessage(must(must(messages, "messages").at(-1), 'must(messages, "messages").at(-1)'))).toBe(true);
 
         expect(messages.some((m) => isInterruptedMessage(m))).toBe(false);
     });
@@ -1333,7 +1355,7 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
             description: "Record that the loop executed this call.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => {
+            execute: () => {
                 executed = true;
                 return Promise.resolve(ok({}));
             },
@@ -1400,7 +1422,7 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
         // [user, assistant(tu-x), tool(result), assistant("done")] — the round ran and the loop continued.
         expect(messages).toHaveLength(4);
         expect(toolResultParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-x"]);
-        expect(must(must(messages, "messages").at(-1), "must(messages, \"messages\").at(-1)").content).toEqual([{ type: "text", text: "done" }]);
+        expect(must(must(messages, "messages").at(-1), 'must(messages, "messages").at(-1)').content).toEqual([{ type: "text", text: "done" }]);
     });
 
     it("settles a call that rides an unknown finish", async () => {
@@ -1409,7 +1431,7 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
 
         const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider));
 
-        expect(String(finish.reason)).toBe("unknown");
+        expect(finish.reason).toEqual<unknown>("unknown");
         expect(wasExecuted()).toBe(false);
         // [user, assistant(tu-x), tool(not run)]
         expect(messages).toHaveLength(3);
@@ -1514,8 +1536,9 @@ function guardedTool(): Tool {
 }
 
 function deniedReason(result: ToolResultPart): string {
-    expect(result.output.type).toBe("execution-denied");
-    return (result.output as { type: "execution-denied"; reason: string }).reason;
+    const { output } = result;
+    if (output.type !== "execution-denied") throw new Error("expected an execution-denied output");
+    return must(output.reason, "denial reason");
 }
 
 describe("runAgent — approval denial", () => {
@@ -1546,7 +1569,7 @@ describe("runAgent — approval denial", () => {
             GO,
             makeSession(),
             opts(provider, {
-                ask:  () => Promise.reject(new AskRejectedError("nope")),
+                ask: () => Promise.reject(new AskRejectedError("nope")),
             }),
         );
 
@@ -1567,7 +1590,12 @@ describe("runAgent — approval denial", () => {
     it("does not terminate the turn when the approval returns once", async () => {
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "guarded", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
 
-        const { messages, finish } = await runAgent(agentDef([guardedTool()]), GO, makeSession(), opts(provider, { ask: () => Promise.resolve(({ kind: "once" })) }));
+        const { messages, finish } = await runAgent(
+            agentDef([guardedTool()]),
+            GO,
+            makeSession(),
+            opts(provider, { ask: () => Promise.resolve({ kind: "once" }) }),
+        );
 
         const result = toolResultParts(messages[2])[0];
         expect(isErrorResult(result)).toBe(false);
@@ -1598,7 +1626,7 @@ describe("runAgent — event provenance", () => {
             session,
             opts(provider, {
                 emit: (e) => {
-                    events.push(e as EmitEvent);
+                    if (e.type === "iteration" || e.type === "tool-started" || e.type === "tool-finished") events.push(e);
                 },
             }),
         );
@@ -1628,7 +1656,7 @@ describe("runAgent — event provenance", () => {
                 invocationId: "tu-parent",
                 emit: (e) => {
                     // The scripted provider does not stream, so the loop emits only events with a source and no provider text.
-                    events.push(e as EmitEvent);
+                    if (e.type === "iteration" || e.type === "tool-started" || e.type === "tool-finished") events.push(e);
                 },
             }),
         );
@@ -1653,7 +1681,7 @@ describe("runAgent — event provenance", () => {
             opts(provider, {
                 emit: (e) => {
                     // The scripted provider does not stream, so the loop emits only events with a source and no provider text.
-                    events.push(e as EmitEvent);
+                    if (e.type === "iteration" || e.type === "tool-started" || e.type === "tool-finished") events.push(e);
                 },
             }),
         );
@@ -1684,7 +1712,7 @@ async function runCapturingToolEvents(
         opts(provider, {
             ...overrides,
             emit: (e) => {
-                events.push(e as EmitEvent);
+                if (e.type === "iteration" || e.type === "tool-started" || e.type === "tool-finished") events.push(e);
             },
         }),
     );
@@ -1698,7 +1726,7 @@ function describedRead(fail = false): Tool {
         description: "Read a path.",
         inputSchema: z.object({ path: z.string() }),
         describeCall: ({ path }) => path,
-        execute:  ({ path }) => {
+        execute: ({ path }) => {
             if (fail) throw new Error("disk on fire");
             return Promise.resolve(ok({ path }));
         },
@@ -1719,7 +1747,7 @@ function describedRender(options: { fail?: boolean; breakHook?: boolean } = {}):
             if (options.breakHook === true) throw new Error("result hook is broken");
             return `page ${page}`;
         },
-        execute:  ({ path }) => {
+        execute: ({ path }) => {
             if (options.fail === true) throw new Error("disk on fire");
             return Promise.resolve(ok({ page: `${path}.html` }));
         },
@@ -1768,7 +1796,7 @@ describe("runAgent — tool call detail", () => {
         ]);
 
         const events = await runCapturingToolEvents([noisy], provider);
-        const detail = (events[0] as { detail?: string }).detail;
+        const detail = events[0].detail;
 
         expect(detail).not.toContain("\n");
         expect(detail).toHaveLength(120);
@@ -1867,7 +1895,7 @@ describe("runAgent — tool result detail", () => {
         ]);
 
         const events = await runCapturingToolEvents([noisy], provider);
-        const detail = (events[1] as { detail?: string }).detail;
+        const detail = events[1].detail;
 
         expect(must(detail, "detail").startsWith("wrote line one")).toBe(true);
         expect(detail).not.toContain("\n");
@@ -1891,7 +1919,10 @@ describe("runAgent — tool result detail", () => {
         ]);
 
         const events = await runCapturingToolEvents([describedRender(), echoTool()], provider);
-        const finished = must(events.filter((event) => event.type === "tool-finished"), "finished");
+        const finished = must(
+            events.filter((event) => event.type === "tool-finished"),
+            "finished",
+        );
 
         expect(finished).toHaveLength(3);
         expect(finished[0]).toMatchObject({ toolUseId: "tu-1", detail: "page first.html" });
@@ -1904,10 +1935,13 @@ describe("runAgent — tool result detail", () => {
     // the body. This step stands for such a replay: it drops the pair and gives the bare value back.
     it("reads a replayed step that cached the bare result, and keeps the started detail", async () => {
         const replayBareResult: RunStep = async (_name, fn) => {
-            const settled = (await fn()) as { result?: unknown };
-            // The cast restates the shape the body returns. The step store is untyped across two
-            // builds of the loop, thus only the read site can state which of the two it holds.
-            return (settled.result ?? settled) as never;
+            const settled = await fn();
+            const bare = typeof settled === "object" && settled !== null && "result" in settled ? settled.result : settled;
+            // SAFETY: the legacy step store is untyped across two builds of the loop, and the replay must
+            // hand the bare result back as the `T` the caller declared; no runtime check can prove a stored
+            // `unknown` to be that `T` (ruling-4 record).
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the store is untyped across two builds of the loop, and the replay hands the bare result back as the caller's `T` (ruling 9).
+            return bare as never;
         };
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "render", { path: "draft" })], "tool_use"),
@@ -1952,7 +1986,7 @@ describe("runAgent — tool-finished outcome", () => {
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "guarded", {})], "tool_use")]);
 
         const events = await runCapturingToolEvents([guardedTool()], provider, {
-            ask:  () => Promise.reject(new AskRejectedError("nope")),
+            ask: () => Promise.reject(new AskRejectedError("nope")),
         });
 
         expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "denied" });
@@ -1965,7 +1999,7 @@ describe("runAgent — tool-finished outcome", () => {
             description: "Requires a numeric count.",
             inputSchema: z.object({ count: z.number() }),
             describeCall: "none",
-            execute:  () => {
+            execute: () => {
                 executed = true;
                 return Promise.resolve(ok({}));
             },
@@ -2080,10 +2114,10 @@ function recordingSink(): { onRound: (round: AgentRound) => Promise<void>; round
     const rounds: LoopMessage[][] = [];
     return {
         rounds,
-        onRound:  (round) => {
+        onRound: (round) => {
             rounds.push([...round.messages]);
             return Promise.resolve();
-},
+        },
     };
 }
 
@@ -2140,7 +2174,9 @@ describe("runAgent — round sink", () => {
         let heldAtWrapUp: boolean | undefined;
         const provider = scriptedProvider((callIndex, request) => {
             if (!isWrapUpRequest(request)) return echoCall(`tu-${callIndex}`);
-            heldAtWrapUp ??= must(must(sink, "sink").rounds.at(-1), "must(sink, \"sink\").rounds.at(-1)").some((m) => m.role === "user" && m.content === WRAP_UP_REQUEST);
+            heldAtWrapUp ??= must(must(sink, "sink").rounds.at(-1), 'must(sink, "sink").rounds.at(-1)').some(
+                (m) => m.role === "user" && m.content === WRAP_UP_REQUEST,
+            );
             return makeMessage([textBlock("here is where I reached")], "end_turn");
         });
 
@@ -2157,7 +2193,7 @@ describe("runAgent — round sink", () => {
             executionMode: "inline",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => Promise.reject(fatal),
+            execute: () => Promise.reject(fatal),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "inline_fatal", {})], "tool_use")]);
         const sink = recordingSink();
@@ -2398,7 +2434,7 @@ describe("runAgent — compaction", () => {
             const isExchange = isExchangeRequest(request);
             sent.push({
                 exchange: isExchange,
-                messages: jsonClone(request.messages) as ModelMessage[],
+                messages: jsonClone([...request.messages]),
                 toolNames: Object.keys(request.tools),
                 system: request.system,
             });
@@ -2410,7 +2446,15 @@ describe("runAgent — compaction", () => {
     }
 
     function policyOf(provider: AgentChat, overrides: Partial<CompactionPolicy> = {}): CompactionPolicy {
-        return { budget: 1_000, provider, request: COMPACT, mask: { allow: ["echo"] }, keepFirstTurn: false, recordsAfter: () => Promise.resolve([RECORD]), ...overrides };
+        return {
+            budget: 1_000,
+            provider,
+            request: COMPACT,
+            mask: { allow: ["echo"] },
+            keepFirstTurn: false,
+            recordsAfter: () => Promise.resolve([RECORD]),
+            ...overrides,
+        };
     }
 
     function failingChat(error: ProviderError): AgentChat {
@@ -2424,13 +2468,14 @@ describe("runAgent — compaction", () => {
         cause: { status: 400 },
     };
 
-    function compactionParts(
-        events: readonly Parameters<EmitFn>[0][],
-    ): { id: string; status: string; tokensBefore: number; durationMs?: number; trigger?: string }[] {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        return events
-            .filter((event) => event.type === "data-compaction")
-            .map((event) => (event as { data: { id: string; status: string; tokensBefore: number } }).data);
+    function compactionParts(events: readonly Parameters<EmitFn>[0][]) {
+        const parts: z.infer<typeof CompactionPartSchema>[] = [];
+        for (const event of events) {
+            if (event.type !== "data-compaction") continue;
+            const data = typeof event.data === "object" && event.data !== null ? event.data : {};
+            parts.push(CompactionPartSchema.parse({ ...data, type: event.type }));
+        }
+        return parts;
     }
 
     function markersOf(messages: readonly ModelMessage[]): string[] {
@@ -2567,7 +2612,12 @@ describe("runAgent — compaction", () => {
         expect(exchanges[1].messages[0].content).toBe("[Conversation Summary]\nfirst summary");
         expect(exchanges[1].messages.filter((message) => message.content === COMPACT)).toHaveLength(1);
         expect(markersOf(messages)).toEqual(["summary", "summary"]);
-        expect(must(must(must(must(sent, "sent").at(-1), "must(sent, \"sent\").at(-1)").messages, "must(sent, \"sent\").at(-1).messages")[0], "must(sent, \"sent\").at(-1).messages[0]").content).toBe("[Conversation Summary]\nsecond summary");
+        expect(
+            must(
+                must(must(must(sent, "sent").at(-1), 'must(sent, "sent").at(-1)').messages, 'must(sent, "sent").at(-1).messages')[0],
+                'must(sent, "sent").at(-1).messages[0]',
+            ).content,
+        ).toBe("[Conversation Summary]\nsecond summary");
     });
 
     it("compacts no more, and warns, when the first request after a summary still passes the budget", async () => {
@@ -2592,7 +2642,9 @@ describe("runAgent — compaction", () => {
 
         await runAgent(agentDef([echoTool()]), [seed, ...GO], makeSession(), opts(provider, { compaction: policyOf(provider, { keepFirstTurn: true }) }));
 
-        expect(must(must(must(sent, "sent").at(-1), "must(sent, \"sent\").at(-1)").messages, "must(sent, \"sent\").at(-1).messages").map((message) => message.content)).toEqual([seed.content, `[Conversation Summary]\n${SUMMARY}`, RECORD.content]);
+        expect(
+            must(must(must(sent, "sent").at(-1), 'must(sent, "sent").at(-1)').messages, 'must(sent, "sent").at(-1).messages').map((message) => message.content),
+        ).toEqual([seed.content, `[Conversation Summary]\n${SUMMARY}`, RECORD.content]);
     });
 
     it("refuses a tool outside the mask during the exchange", async () => {
@@ -2602,7 +2654,7 @@ describe("runAgent — compaction", () => {
             description: "Counts each write.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => {
+            execute: () => {
                 writes++;
                 return Promise.resolve(ok({ written: true }));
             },
@@ -2617,7 +2669,7 @@ describe("runAgent — compaction", () => {
         expect(writes).toBe(0);
         const [refused] = toolResultParts(messages[5]);
         expect(isErrorResult(refused)).toBe(true);
-        expect(String(outputValue(refused))).toContain("writer is not available for this request");
+        expect(textOf(outputValue(refused))).toContain("writer is not available for this request");
     });
 
     it("writes no marker and keeps the view when the exchange calls a tool in each of its requests", async () => {
@@ -2635,7 +2687,7 @@ describe("runAgent — compaction", () => {
         expect(markersOf(messages)).toEqual([]);
         expect(finish.reason).toBe("stop");
         expect(messages.slice(3, -1).every((message) => compactionExchangeOf(message) !== undefined)).toBe(true);
-        expect(JSON.stringify(must(must(sent, "sent").at(-1), "must(sent, \"sent\").at(-1)").messages)).toBe(JSON.stringify(messages.slice(0, 3)));
+        expect(JSON.stringify(must(must(sent, "sent").at(-1), 'must(sent, "sent").at(-1)').messages)).toBe(JSON.stringify(messages.slice(0, 3)));
     });
 
     it("gives no summary on a 400 refusal of the exchange, logs an error with the status and the error text, and does not throw", async () => {
@@ -2816,7 +2868,12 @@ describe("runAgent — compaction", () => {
         expect(running).toMatchObject({ status: "running", tokensBefore: OVER });
         expect(done).toMatchObject({ id: running.id, status: "done", tokensBefore: OVER, durationMs: expect.any(Number) });
         expect(done).not.toHaveProperty("tokensAfter");
-        expect(markerIn(messages)).toEqual(must({ kind: "summary", id: running.id, tokensBefore: OVER, durationMs: must(done.durationMs, "the duration of the done run"), trigger: "mid-turn" }, "{ kind: \"summary\", id: running.id, tokensBefore:"));
+        expect(markerIn(messages)).toEqual(
+            must(
+                { kind: "summary", id: running.id, tokensBefore: OVER, durationMs: must(done.durationMs, "the duration of the done run"), trigger: "mid-turn" },
+                '{ kind: "summary", id: running.id, tokensBefore:',
+            ),
+        );
         const exchangeEvents = events.filter((event) => event.type === "tool-started" && event.toolUseId === "tu-m");
         expect(exchangeEvents.map((event) => ("source" in event ? event.source?.callPath : undefined))).toEqual([["tui-chat", "test-agent-compaction"]]);
         for (const event of exchangeEvents) expect(Object.hasOwn("source" in event && event.source ? event.source : {}, "invocationId")).toBe(false);

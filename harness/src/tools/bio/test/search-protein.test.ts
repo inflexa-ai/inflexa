@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchProteinTool } from "../search-protein.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -22,7 +23,7 @@ afterEach(() => {
 function stubResponse(status: number, body: unknown): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((input) => {
-        requestedUrls.push(String(input));
+        requestedUrls.push(urlText(input));
         return Promise.resolve(new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
     });
 }
@@ -191,8 +192,7 @@ describe("searchProtein — no match", () => {
 
 describe("searchProtein — the bound on the answer", () => {
     it("trims to the limit and reports that more rows existed", async () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const row = (readFixture("uniprot", "search_BRCA1_reviewed.json") as { results: unknown[] }).results[0];
+        const row = z.looseObject({ results: z.array(z.json()) }).parse(readFixture("uniprot", "search_BRCA1_reviewed.json")).results[0];
         // The client asks for `limit + 1` rows, thus three rows for a limit of 2
         // is what "UniProt held more" looks like on the wire.
         stubResponse(200, { results: [row, row, row] });
@@ -224,6 +224,11 @@ describe("searchProtein — an upstream failure", () => {
 
 describe("searchProtein — describeCall", () => {
     it("names the query", () => {
-        expect(must(must(searchProteinTool, "searchProteinTool").describeCall, "must(searchProteinTool, \"searchProteinTool\").des")({ ...DEFAULTS, query: "BRCA1" })).toBe("BRCA1");
+        expect(
+            must(
+                must(searchProteinTool, "searchProteinTool").describeCall,
+                'must(searchProteinTool, "searchProteinTool").des',
+            )({ ...DEFAULTS, query: "BRCA1" }),
+        ).toBe("BRCA1");
     });
 });

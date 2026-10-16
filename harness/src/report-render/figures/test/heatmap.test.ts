@@ -10,8 +10,7 @@ import { chartSvgAssets } from "../../chart-export.js";
 import { deriveChartOption, deriveChartRender, type ChartInputs, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_BODY_MAX_PX, CHART_BODY_PX, CHART_INK, CHART_PALETTE, DIVERGING_RAMP, MUTED_CHART_COLOR, SEQUENTIAL_RAMP } from "../../design.js";
 import { HEATMAP_CELL_GAP_PX, HEATMAP_LABEL_LIMIT, HEATMAP_ROW_PX, TRACK_BAND_GAP_PX, TRACK_LEGEND_LINE_PX } from "../heatmap.js";
-import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
-import { optionArray } from "../../../report-render/option-lens.js";
+import { optionArray, optionNumber, optionPercent, optionRecord, optionRecords, optionString } from "../../option-lens.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -70,25 +69,25 @@ describe("the heatmap with annotation tracks", () => {
     const maps = optionRecords(option.visualMap);
 
     it("draws the matrix in the run order, top-down, on the diverging ramp", () => {
-        const [xAxis, yAxis] = [(optionRecords(option.xAxis))[0], (optionRecords(option.yAxis))[0]];
+        const [xAxis, yAxis] = [optionRecords(option.xAxis)[0], optionRecords(option.yAxis)[0]];
         expect(xAxis.data).toEqual(["treated1", "treated2", "treated3", "untreated1", "untreated4", "untreated2", "untreated3"]);
         expect(yAxis.data).toEqual(["Treh", "Kal1"]);
         expect(yAxis.inverse).toBe(true);
         expect(maps[0]).toEqual(expect.objectContaining({ seriesIndex: 0, inRange: { color: [...DIVERGING_RAMP] } }));
-        expect(maps[0].min).toBe(-(optionNumber(maps[0].max)));
+        expect(maps[0].min).toBe(-optionNumber(maps[0].max));
         expect(maps[0].text).toEqual(["z-score\n1.17", "−1.17"]);
     });
 
     it("separates the cells with a thin white gap, and draws no axis line", () => {
         expect(series[0].itemStyle).toEqual({ borderColor: "#ffffff", borderWidth: HEATMAP_CELL_GAP_PX });
-        const xAxis = (optionRecords(option.xAxis))[0];
+        const xAxis = optionRecords(option.xAxis)[0];
         expect([asObj(xAxis.axisLine).show, asObj(xAxis.axisTick).show]).toEqual([false, false]);
     });
 
     it("draws one strip of category colors for each track over the matrix, in the x order", () => {
         const grids = optionRecords(option.grid);
         expect(grids.length).toBe(2);
-        expect((optionNumber(grids[1].top)) < (optionNumber(grids[0].top))).toBe(true);
+        expect(optionNumber(grids[1].top) < optionNumber(grids[0].top)).toBe(true);
         expect(grids[0].left).toBe(grids[1].left);
         expect(series.slice(1).map((entry) => [entry.name, entry.xAxisIndex, entry.data])).toEqual([
             [
@@ -118,7 +117,7 @@ describe("the heatmap with annotation tracks", () => {
                 ],
             ],
         ]);
-        expect((optionRecords(option.yAxis))[1].data).toEqual(["condition", "type"]);
+        expect(optionRecords(option.yAxis)[1].data).toEqual(["condition", "type"]);
     });
 
     it("keys each track in a legend of its own, with colors that no other track takes", () => {
@@ -147,7 +146,7 @@ describe("the heatmap with annotation tracks", () => {
 
     it("gives the track legends a band of their own, one line apart, clear of the strips", () => {
         const legends = maps.slice(1).map((map) => optionNumber(map.top));
-        const strips = optionNumber((optionRecords(option.grid))[1].top);
+        const strips = optionNumber(optionRecords(option.grid)[1].top);
         expect(legends[1] - legends[0]).toBe(TRACK_LEGEND_LINE_PX);
         expect(strips - legends[1]).toBe(TRACK_LEGEND_LINE_PX + TRACK_BAND_GAP_PX);
     });
@@ -168,7 +167,7 @@ describe("the heatmap with annotation tracks", () => {
             batch: `B${index % 8}`,
         }));
         const tracked = deriveChartOption(block({ x: "sample", y: "gene_symbol", value: "zscore", tracks: ["tissue", "batch"] }), rows)._unsafeUnwrap();
-        const batch = optionRecords((optionRecords(tracked.visualMap))[2].pieces);
+        const batch = optionRecords(optionRecords(tracked.visualMap)[2].pieces);
         expect(batch.map((piece) => piece.color).slice(4)).toEqual([MUTED_CHART_COLOR, MUTED_CHART_COLOR, MUTED_CHART_COLOR, MUTED_CHART_COLOR]);
     });
 
@@ -220,9 +219,9 @@ describe("the height of a heatmap of many rows", () => {
     /** The height of one matrix row on the page, in pixels. */
     function rowPx(rows: ChartRow[], genes: number): number {
         const render = deriveChartRender(block(TRACKED), rows, undefined, { key: "h1", columns: [] })._unsafeUnwrap();
-        const grid = (optionRecords(render.option.grid))[0];
-        const bottom = (Number.parseFloat(String(grid.bottom)) * render.bodyPx) / 100;
-        return (render.bodyPx - (optionNumber(grid.top)) - bottom) / genes;
+        const grid = optionRecords(render.option.grid)[0];
+        const bottom = (optionPercent(grid.bottom) * render.bodyPx) / 100;
+        return (render.bodyPx - optionNumber(grid.top) - bottom) / genes;
     }
 
     it("states a body tall enough that each row takes one line of text, thus each row name prints", () => {
@@ -288,7 +287,7 @@ function treeSeries(option: EchartOption): Array<{ series: EchartOption; grid: E
     const grids = optionRecords(option.grid);
     const xAxes = optionRecords(option.xAxis);
     const yAxes = optionRecords(option.yAxis);
-    return (optionRecords(option.series))
+    return optionRecords(option.series)
         .filter((entry) => entry.type === "lines")
         .map((series) => {
             const xAxis = xAxes[optionNumber(series.xAxisIndex)];
@@ -302,8 +301,8 @@ describe("the dendrograms of the heatmap", () => {
     const grids = optionRecords(option.grid);
 
     it("puts each axis in the depth-first leaf order of its tree", () => {
-        expect((optionRecords(option.xAxis))[0].data).toEqual(["treated1", "treated2", "treated3", "untreated1", "untreated4", "untreated2", "untreated3"]);
-        expect((optionRecords(option.yAxis))[0].data).toEqual(["Kal1", "Treh"]);
+        expect(optionRecords(option.xAxis)[0].data).toEqual(["treated1", "treated2", "treated3", "untreated1", "untreated4", "untreated2", "untreated3"]);
+        expect(optionRecords(option.yAxis)[0].data).toEqual(["Kal1", "Treh"]);
     });
 
     it("draws each edge as one elbow from the child up to the height of the parent and across to the place of the parent", () => {
@@ -316,8 +315,7 @@ describe("the dendrograms of the heatmap", () => {
                 lineStyle: expect.objectContaining({ color: CHART_INK, opacity: 1 }),
             }),
         );
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const elbows = (xTree.series.data as Array<{ coords: number[][] }>).map((item) => item.coords);
+        const elbows = optionRecords(xTree.series.data).map((item) => optionArray(item.coords));
         expect(elbows).toHaveLength(SAMPLE_TREE.length);
         // The root joins s10 (over treated1 and the pair of treated2 and treated3) and s11 (over the untreated samples).
         expect(elbows[0]).toEqual([
@@ -335,26 +333,27 @@ describe("the dendrograms of the heatmap", () => {
 
     it("draws the tree of x above the tracks and the matrix, across the columns of the matrix", () => {
         const strips = grids[1];
-        expect((optionNumber(xTree.grid.top)) + (optionNumber(xTree.grid.height))).toBeLessThan(optionNumber(strips.top));
-        expect((optionNumber(strips.top)) < (optionNumber(grids[0].top))).toBe(true);
+        expect(optionNumber(xTree.grid.top) + optionNumber(xTree.grid.height)).toBeLessThan(optionNumber(strips.top));
+        expect(optionNumber(strips.top) < optionNumber(grids[0].top)).toBe(true);
         expect([xTree.grid.left, xTree.grid.right]).toEqual([grids[0].left, grids[0].right]);
         expect([xTree.xAxis.min, xTree.xAxis.max, xTree.yAxis.min, xTree.yAxis.max]).toEqual([-0.5, 6.5, 0, 11.738902]);
         expect([xTree.xAxis.show, xTree.yAxis.show]).toEqual([false, false]);
     });
 
     it("draws the tree of y at the left of the row names, over the rows of the matrix, with the root at the left", () => {
-        expect((optionNumber(yTree.grid.left)) + (optionNumber(yTree.grid.width))).toBeLessThan(optionNumber(grids[0].left));
+        expect(optionNumber(yTree.grid.left) + optionNumber(yTree.grid.width)).toBeLessThan(optionNumber(grids[0].left));
         expect([yTree.grid.top, yTree.grid.bottom]).toEqual([grids[0].top, grids[0].bottom]);
         expect([yTree.yAxis.min, yTree.yAxis.max, yTree.yAxis.inverse]).toEqual([-0.5, 1.5, true]);
         expect([yTree.xAxis.min, yTree.xAxis.max, yTree.xAxis.inverse]).toEqual([0, 4.86, true]);
         // Each row name starts beside the leaves, thus a smaller export text keeps the names at the tree.
-        const names = asObj((optionRecords(option.yAxis))[0].axisLabel);
+        const names = asObj(optionRecords(option.yAxis)[0].axisLabel);
         expect(names.align).toBe("left");
-        expect((optionNumber(grids[0].left)) - (optionNumber(names.margin))).toBe((optionNumber(yTree.grid.left)) + (optionNumber(yTree.grid.width)) + 4);
-        const legends = (optionRecords(option.visualMap)).slice(1).map((map) => map.left);
-        expect(legends).toEqual([(optionNumber(grids[0].left)) - (optionNumber(names.margin)), (optionNumber(grids[0].left)) - (optionNumber(names.margin))]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const elbows = (yTree.series.data as Array<{ coords: number[][] }>).map((item) => item.coords);
+        expect(optionNumber(grids[0].left) - optionNumber(names.margin)).toBe(optionNumber(yTree.grid.left) + optionNumber(yTree.grid.width) + 4);
+        const legends = optionRecords(option.visualMap)
+            .slice(1)
+            .map((map) => map.left);
+        expect(legends).toEqual([optionNumber(grids[0].left) - optionNumber(names.margin), optionNumber(grids[0].left) - optionNumber(names.margin)]);
+        const elbows = optionRecords(yTree.series.data).map((item) => optionArray(item.coords));
         // Along y the place is the second coordinate, and the height is the first.
         expect(elbows[0]).toEqual([
             [0, 0],
@@ -364,7 +363,7 @@ describe("the dendrograms of the heatmap", () => {
     });
 
     it("keeps the strips and their legends in the x order of the tree", () => {
-        const condition = (optionRecords(option.series)).find((entry) => entry.name === "condition");
+        const condition = optionRecords(option.series).find((entry) => entry.name === "condition");
         expect(condition?.data).toEqual([
             [0, 0, 0],
             [1, 0, 0],
@@ -406,10 +405,10 @@ describe("the dendrograms of the heatmap", () => {
         const distances = treed({ x: tree, y: tree }, { x: "sample_a", y: "sample_b", value: "distance" });
         const drawn = deriveChartOption(distances, rows, undefined, { trees: { x: { rows: distanceTree }, y: { rows: distanceTree } } })._unsafeUnwrap();
         const order = ["treated1", "treated2", "treated3", "untreated1", "untreated2", "untreated3", "untreated4"];
-        expect((optionRecords(drawn.xAxis))[0].data).toEqual(order);
-        expect((optionRecords(drawn.yAxis))[0].data).toEqual(order);
+        expect(optionRecords(drawn.xAxis)[0].data).toEqual(order);
+        expect(optionRecords(drawn.yAxis)[0].data).toEqual(order);
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect(treeSeries(drawn).map((entry) => (optionArray(entry.series.data)).length)).toEqual([12, 12]);
+        expect(treeSeries(drawn).map((entry) => optionArray(entry.series.data).length)).toEqual([12, 12]);
         expect(asObj(drawn.legend).show).toBe(false);
     });
 
@@ -442,9 +441,9 @@ describe("the dendrograms of the heatmap", () => {
         const render = deriveChartRender(tall, rows, undefined, { key: "h1", columns: [] }, { trees: { y: { rows: edgeRows(edges) } } })._unsafeUnwrap();
         expect(render.bodyPx).toBeGreaterThan(CHART_BODY_PX);
         const [yTall] = treeSeries(render.option);
-        const matrixGrid = (optionRecords(render.option.grid))[0];
+        const matrixGrid = optionRecords(render.option.grid)[0];
         expect([yTall.grid.top, yTall.grid.bottom]).toEqual([matrixGrid.top, matrixGrid.bottom]);
-        expect((optionRecords(render.option.yAxis))[0].data).toEqual(Array.from({ length: genes }, (_gene, index) => `G${index}`));
+        expect(optionRecords(render.option.yAxis)[0].data).toEqual(Array.from({ length: genes }, (_gene, index) => `G${index}`));
     });
 });
 
@@ -457,7 +456,10 @@ describe("the refusals of a heatmap tree", () => {
 
     it("refuses a leaf that is no category, and a category that no leaf names", () => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const extra = edgeRows([...SAMPLE_TREE.map((row) => [row.parent, row.child, row.height] as [string, string, number]), ["s9", "untreated5", 1.563189]]);
+        const extra = edgeRows([
+            ...SAMPLE_TREE.map((row): [string, string, number] => [optionString(row.parent), optionString(row.child), optionNumber(row.height)]),
+            ["s9", "untreated5", 1.563189],
+        ]);
         expect(refusal(extra)).toBe('The tree of x holds the leaf "untreated5", which is no category of the x axis.');
         const missing = SAMPLE_TREE.filter((row) => row.child !== "untreated3");
         expect(refusal(missing)).toBe('The tree of x holds no leaf for the x category "untreated3".');

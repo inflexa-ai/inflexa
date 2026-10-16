@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { walkStepArtifacts } from "./post-step.js";
+import { walkStepArtifacts } from "../post-step.js";
 
 describe("walkStepArtifacts", () => {
     let base: string | undefined;

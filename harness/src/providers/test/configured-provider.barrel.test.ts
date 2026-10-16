@@ -22,6 +22,7 @@ import { DEFAULT_PROMPT_CACHE, withSystemPromptBreakpoint } from "../prompt-cach
 import type { FetchLike } from "../types.js";
 import { jsonParse } from "../../lib/json.js";
 import { z } from "zod";
+import { requestBodyText } from "../../lib/test/doubles.js";
 
 /** One `text/event-stream` body: each arm of the provider reads the wire as SSE. */
 function sse(events: readonly string[]): Response {
@@ -81,9 +82,9 @@ type CapturedRequest = {
 /** Captures each request so a test can assert on the wire model, since the request itself carries no model field. */
 function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; requests: CapturedRequest[] } {
     const requests: CapturedRequest[] = [];
-    const fetch: FetchLike =  (_input, init) => {
+    const fetch: FetchLike = (_input, init) => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = init?.body ? jsonParse(String(init.body), z.record(z.string(), z.unknown())) : {};
+        const body = init?.body ? jsonParse(requestBodyText(init.body), z.record(z.string(), z.unknown())) : {};
         // `Headers` folds each name to lowercase, thus an assertion does not
         // depend on the spelling that the SDK forwards.
         const headers = Object.fromEntries(new Headers(init?.headers));
@@ -476,8 +477,8 @@ describe("output-token ceiling", () => {
         const result = await provider.chat(request, makeSession());
 
         expect(result.isOk()).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        return cap.requests[0]?.body["max_tokens"] as number | undefined;
+        const maxTokens = cap.requests.at(0)?.body["max_tokens"];
+        return typeof maxTokens === "number" ? maxTokens : undefined;
     }
 
     const anthropicModel =

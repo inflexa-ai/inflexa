@@ -32,6 +32,7 @@ import {
 } from "./common.js";
 import type { FigureContext, FigureModule, FigureTrack } from "./index.js";
 import { classColors, classOf, legendClasses } from "./oncoprint.js";
+import { optionText } from "../option-lens.js";
 
 /** The semantic title of the position axis and of the count axis. */
 const POSITION_TITLE = "Amino-acid position";
@@ -138,7 +139,7 @@ function deriveLollipop(block: ChartBlock, rows: readonly ChartRow[], context: F
         itemWidth: LEGEND_ICON_PX,
         itemHeight: LEGEND_ICON_PX,
         itemGap: LEGEND_GAP_PX,
-        data: series.filter((entry) => entry.renderItem === STEM_RENDERER).map((entry) => String(entry.name)),
+        data: series.filter((entry) => entry.renderItem === STEM_RENDERER).map((entry) => optionText(entry.name)),
     };
     if (boxes.value === undefined) {
         return ok({ tooltip: { trigger: "item" }, xAxis: valueAxis("x", positionTitle, { min: 0, max: length }), yAxis: countAxis, series, legend });

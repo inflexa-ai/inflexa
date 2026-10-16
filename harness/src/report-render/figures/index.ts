@@ -62,7 +62,8 @@ export type FigurePresetType = (typeof FIGURE_PRESET_TYPES)[number];
 
 /** True when the chart type exists as a figure module alone. */
 export function isFigurePresetType(chartType: ChartType): chartType is FigurePresetType {
-    return (FIGURE_PRESET_TYPES as readonly string[]).includes(chartType);
+    const known: readonly ChartType[] = FIGURE_PRESET_TYPES;
+    return known.includes(chartType);
 }
 
 /**
@@ -78,7 +79,8 @@ export type ModuleOnlyType = (typeof MODULE_ONLY_TYPES)[number];
 
 /** True when the chart type draws through a figure module alone. */
 export function isModuleOnlyType(chartType: ChartType): chartType is ModuleOnlyType {
-    return (MODULE_ONLY_TYPES as readonly string[]).includes(chartType);
+    const known: readonly ChartType[] = MODULE_ONLY_TYPES;
+    return known.includes(chartType);
 }
 
 /**

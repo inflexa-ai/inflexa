@@ -19,13 +19,12 @@ import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
 import { silentLogger } from "../../__tests__/setup/logger.js";
 import { makeMessage, scriptedProvider, textBlock } from "../../loop/__fixtures__/scripted-provider.js";
-import type { ChatProvider } from "../../providers/types.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SandboxError } from "../../sandbox/sandbox-error.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { runDataProfileBody, type DataProfileDeps } from "../data-profile.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, stubChatProvider, stubSandboxClient } from "../../lib/test/doubles.js";
 
 const ANALYSIS_ID = "an-profile";
 const OTHER_ANALYSIS_ID = "an-profile-other";
@@ -58,15 +57,10 @@ afterEach(async () => {
 
 function statementPool(): { pool: Pool; statements: Array<{ text: string; values: readonly unknown[] }> } {
     const statements: Array<{ text: string; values: readonly unknown[] }> = [];
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const pool = poolDouble((arg: unknown, params?: unknown[]) => {
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const text = typeof arg === "string" ? arg : ((arg as { text?: string }).text ?? "");
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const values = typeof arg === "object" && arg !== null && "values" in arg ? ((arg as { values?: unknown[] }).values ?? []) : (params ?? []);
-            statements.push({ text, values });
-            return Promise.resolve({ rows: [], rowCount: 0 });
-        });
+    const pool = poolDouble((query) => {
+        statements.push({ text: query.text, values: query.values ?? [] });
+        return Promise.resolve({ rows: [], rowCount: 0 });
+    });
     return { pool, statements };
 }
 
@@ -84,11 +78,11 @@ function deps(pool: Pool, sandboxClient: SandboxClient, revoked: string[]): Data
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return {
         logger: silentLogger,
-        provider: {} as ChatProvider,
+        provider: stubChatProvider(),
         pool,
         sandboxClient,
-        workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(root, id) }),
-        resolveWorkspaceRoot: async (id) => join(root, id),
+        workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
+        resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)),
         model: "test-model",
         runAuthorizer: {
             authorize: () => {
@@ -111,9 +105,9 @@ describe("the data profile — a refused spawn", () => {
         const { pool, statements } = statementPool();
         const revoked: string[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const refusing = {
+        const refusing = stubSandboxClient({
             createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true }),
-        } as unknown as SandboxClient;
+        });
 
         await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
@@ -130,16 +124,16 @@ describe("the data profile — a refused spawn", () => {
         const { pool, statements } = statementPool();
         const revoked: string[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const refusing = {
+        const refusing = stubSandboxClient({
             createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
-        } as unknown as SandboxClient;
+        });
 
         await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         const failed = statements.filter((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text));
         expect(failed).toHaveLength(1);
-        expect(String(failed[0].values.find((v) => typeof v === "string" && v.includes("labels_unavailable")))).toContain("labels_unavailable");
+        expect(failed[0].values.some((v) => typeof v === "string" && v.includes("labels_unavailable"))).toBe(true);
         expect(revoked).toEqual(["data-profile-failed"]);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         expect(statements.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(false);
@@ -150,9 +144,9 @@ describe("the data profile — a refused spawn", () => {
         const revoked: string[] = [];
         const cancel = new DBOSErrors.DBOSWorkflowCancelledError("wf-profile");
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const cancelled = {
+        const cancelled = stubSandboxClient({
             createSandbox: () => new ResultAsync<SandboxRef, SandboxError>(Promise.reject(cancel)),
-        } as unknown as SandboxClient;
+        });
 
         const outcome = await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, cancelled, revoked)).then(
             () => "completed",

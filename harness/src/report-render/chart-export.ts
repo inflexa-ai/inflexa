@@ -15,7 +15,7 @@ import type * as Echarts from "echarts";
 import { err, ok, type Result } from "neverthrow";
 
 import type { EchartOption } from "./chart.js";
-import { exportOption, OUTLINE_RENDERER, registerChartRenderers } from "./chart-renderers.js";
+import { exportOption, OUTLINE_RENDERER, registerChartRenderers, type ChartRenderer, type RenderApi } from "./chart-renderers.js";
 import {
     CHART_BODY_PX,
     CHART_EXPORT_SIZES,
@@ -75,13 +75,42 @@ export type ChartSvgs = {
  * throw becomes the message of an `err`. The instance is disposed in every case, thus no render leaves a timer
  * behind.
  */
+/**
+ * The renderer function that the chart runtime calls: it narrows the runtime's read of one item dimension
+ * to the number that the derivation writes, and it hands the element that the renderer built back unchanged.
+ *
+ * Each item that the derivation writes for a named renderer holds numbers alone, so a non-number read is a
+ * broken item: it stops the render instead of drawing one point in a wrong place.
+ */
+export function runtimeRenderer(render: ChartRenderer): Echarts.CustomSeriesRenderItem {
+    return (params, api) => render({ itemPayload: params.itemPayload }, runtimeApi(api));
+}
+
+/** The part of the runtime's render API that the renderers read, narrowed to the shapes they read it as. */
+function runtimeApi(api: Echarts.CustomSeriesRenderItemAPI): RenderApi {
+    return {
+        value: (dimension) => {
+            const read = api.value(dimension);
+            if (typeof read !== "number") throw new Error(`the renderer read the item dimension ${dimension} as ${typeof read}, not a number.`);
+            return read;
+        },
+        coord: (point) => api.coord(point),
+        size: (delta) => {
+            const sized = api.size?.(delta);
+            if (!Array.isArray(sized)) throw new Error("the renderer read the band size as one scalar, not a pair.");
+            return sized;
+        },
+        visual: (name) => {
+            const visual = api.visual(name);
+            if (typeof visual !== "string") throw new Error("the renderer read the series color as no string.");
+            return visual;
+        },
+    };
+}
+
 export function renderChartSvg(echarts: ChartRuntime, option: EchartOption, size: ChartExportSize): Result<string, string> {
     echarts.registerTheme(CHART_PRINT_THEME_NAME, chartTheme(CHART_PRINT_TEXT_PX));
-    registerChartRenderers({
-        // The runtime types each item dimension as a string or a number. Each item that the derivation writes
-        // for a named renderer holds numbers alone, thus the renderer reads a number at each dimension.
-        registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, render as unknown as Echarts.CustomSeriesRenderItem),
-    });
+    registerChartRenderers({ registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, runtimeRenderer(render)) });
     let chart: Echarts.ECharts | undefined;
     // The axis jitter of the chart runtime places a point that finds no free place with `Math.random`. The
     // render below runs to its end in one synchronous call, thus the seeded sequence serves this render alone,
@@ -171,7 +200,7 @@ function plottedPoints(option: EchartOption): number {
 
 /** True when one item draws a coordinate: a number, or a value whose members hold no empty slot. */
 function drawnItem(item: unknown): boolean {
-    const value = typeof item === "object" && item !== null && !Array.isArray(item) ? (optionRecord(item)).value : item;
+    const value = typeof item === "object" && item !== null && !Array.isArray(item) ? optionRecord(item).value : item;
     if (typeof value === "number") return true;
     return Array.isArray(value) && value.every((member) => member !== null && member !== undefined && member !== "-");
 }
@@ -190,7 +219,7 @@ const OUTLINE_LEAD_MEMBERS = 4;
 
 /** The count of coordinates that one radar polygon draws: each member of its value that is not empty. */
 function polygonCoordinates(item: unknown): number {
-    const value = typeof item === "object" && item !== null ? (optionRecord(item)).value : undefined;
+    const value = typeof item === "object" && item !== null ? optionRecord(item).value : undefined;
     return Array.isArray(value) ? value.filter((member) => member !== null && member !== undefined).length : 0;
 }
 

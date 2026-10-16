@@ -4,7 +4,7 @@ import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { openTargetsTool } from "../opentargets.js";
 import { jsonParse } from "../../../lib/json.js";
 import { z } from "zod";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, requestBodyText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -27,7 +27,7 @@ function stubOpenTargets(responder: (req: GqlRequest) => Response): GqlRequest[]
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((_url, init) => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = jsonParse(String(init?.body ?? "{}"), z.object({ query: z.string(), variables: z.record(z.string(), z.unknown()) }));
+        const body = jsonParse(requestBodyText(init?.body ?? "{}"), z.object({ query: z.string(), variables: z.record(z.string(), z.unknown()) }));
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         const operation = /query (\w+)/.exec(body.query)?.[1] ?? "";
         const req: GqlRequest = { operation, variables: body.variables };

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { getFamily, getFamilyHeterodimers, IupharDatabaseLinkSchema, IupharFamilySchema, IupharTargetSchema } from "../iuphar-client.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -14,7 +14,7 @@ afterEach(() => {
 
 function stubFetch(response: (url: string) => Response): void {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(String(input))));
+    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(urlText(input))));
 }
 
 function json(body: unknown, status = 200): Response {
@@ -145,6 +145,6 @@ describe("getFamily", () => {
 
     it("gives the record of a known family", async () => {
         stubFetch(() => json(readFixture("iuphar", "family_11.json")));
-        expect(must(must((await getFamily(11)), "(await getFamily(11))").targetIds, "(await getFamily(11)).targetIds")).toContain(44);
+        expect(must(must(await getFamily(11), "(await getFamily(11))").targetIds, "(await getFamily(11)).targetIds")).toContain(44);
     });
 });

@@ -6,6 +6,7 @@ import { defineTool } from "../../tools/define-tool.js";
 import { createDetailResolver } from "../../tools/detail-resolver.js";
 import { createEditFileTool } from "../../tools/workspace/edit-file.js";
 import { createWriteFileTool } from "../../tools/workspace/write-file.js";
+import { stubWorkspaceFilesystem, stubWorkspaceMutator } from "../../lib/test/doubles.js";
 import { ChatPartSchema } from "../../contracts/schemas/chat-parts.js";
 import { activityForTool, applyTreeDelta, sandboxTreeDelta, stepPartId, synthesisEmission } from "../sandbox-step-translate.js";
 
@@ -37,8 +38,8 @@ describe("activityForTool", () => {
     // The real sandbox mutate tools, so this covers the hooks a step actually calls.
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     const resolveDetail = createDetailResolver([
-        createWriteFileTool({ mutator: {} as never }),
-        createEditFileTool({ mutator: {} as never, workspaceFilesystem: {} as never, workingDir: "/a/runs/r1/s1" }),
+        createWriteFileTool({ mutator: stubWorkspaceMutator() }),
+        createEditFileTool({ mutator: stubWorkspaceMutator(), workspaceFilesystem: stubWorkspaceFilesystem(), workingDir: "/a/runs/r1/s1" }),
         // Deliberately NOT a real tool id. The fallback needs a hookless tool to exercise, and
         // borrowing a shipped name would assert that tool is hookless — a claim that goes stale the
         // moment it gains one, while the test keeps passing on the fabricated stand-in.

@@ -4,6 +4,7 @@ import { readFixture } from "../__fixtures__/fixture-runner.js";
 import { getUniProtRecord } from "../uniprot-client.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { fetchDouble } from "../../../lib/test/doubles.js";
+import { z } from "zod";
 
 const realFetch = globalThis.fetch;
 
@@ -24,7 +25,7 @@ describe("uniprot golden fixtures", () => {
     it("accepts the positive fixture and maps the EGFR entry", async () => {
         stubFetch(readFixture("uniprot", "entry_P00533_EGFR.json"));
 
-        const record = must((await getUniProtRecord("P00533")), "record");
+        const record = must(await getUniProtRecord("P00533"), "record");
 
         expect(record.primaryAccession).toBe("P00533");
         expect(record.uniProtkbId).toBe("EGFR_HUMAN");
@@ -37,7 +38,7 @@ describe("uniprot golden fixtures", () => {
     it("maps an entry that omits the genes and the comments", async () => {
         stubFetch(readFixture("uniprot", "entry_Q6ZQY7_obscure.json"));
 
-        const record = must((await getUniProtRecord("Q6ZQY7")), "record");
+        const record = must(await getUniProtRecord("Q6ZQY7"), "record");
 
         // UniProt omits the key of an absent value, and it never sends null.
         expect(record.primaryAccession).toBe("Q6ZQY7");
@@ -58,10 +59,16 @@ describe("the UniProtKB oracle", () => {
         // The published OpenAPI document is the evidence that the all-optional
         // record schema is contract-correct, and not a widening without a
         // reason.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const oracle = readFixture("uniprot", "uniprotkb_openapi.json") as {
-            components: { schemas: Record<string, { required?: string[]; properties?: Record<string, unknown> }> };
-        };
+        const oracle = z
+            .looseObject({
+                components: z.looseObject({
+                    schemas: z.record(
+                        z.string(),
+                        z.looseObject({ required: z.array(z.string()).optional(), properties: z.record(z.string(), z.json()).optional() }),
+                    ),
+                }),
+            })
+            .parse(readFixture("uniprot", "uniprotkb_openapi.json"));
         const entry = oracle.components.schemas["UniProtKBEntry"];
 
         expect(entry.required).toBeUndefined();

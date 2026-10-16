@@ -9,6 +9,7 @@ import { createDetailResolver } from "../../tools/detail-resolver.js";
 import { createExecuteCommandTool } from "../../tools/workspace/execute-command.js";
 import { createReadFileTool } from "../../tools/workspace/read-file.js";
 import { createWriteFileTool } from "../../tools/workspace/write-file.js";
+import { stubSandboxClient, stubWorkspaceFilesystem, stubWorkspaceMutator } from "../../lib/test/doubles.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "../data-profile-activity.js";
 
 // The data-profile workflow body is not reachable from a unit test — it needs a launched durability
@@ -31,13 +32,13 @@ const FRAME = { runId: "data-profile", stepId: "profile" } as const;
 // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
 const resolveDetail = createDetailResolver([
     createExecuteCommandTool({
-        sandboxClient: {} as never,
-        sandbox: {} as never,
+        sandboxClient: stubSandboxClient(),
+        sandbox: { sandboxId: "sbx-data-profile", host: "127.0.0.1", port: 8765, backend: "docker" },
         deadlineMs: () => 0,
         defaultCwd: "/analysis/runs/data-profile/profile",
     }),
-    createReadFileTool({} as never, "/analysis/runs/data-profile/profile"),
-    createWriteFileTool({ mutator: {} as never }),
+    createReadFileTool(stubWorkspaceFilesystem(), "/analysis/runs/data-profile/profile"),
+    createWriteFileTool({ mutator: stubWorkspaceMutator() }),
     defineTool({
         id: "submit_profile",
         description: "Submit the profiling results. Declares no hook.",
@@ -53,23 +54,34 @@ const ENTRY_ID = "activity-entry-data-profile-profile";
 
 type Recorded = { type: string; id: string; runId: string; stepId: string; phase: string; activity: string; at?: string };
 
+/** Reads a part the emitter hands to the write seam, which declares it `unknown`. */
+const recordedSchema = z.looseObject({
+    type: z.string(),
+    id: z.string(),
+    runId: z.string(),
+    stepId: z.string(),
+    phase: z.string(),
+    activity: z.string(),
+    at: z.string().optional(),
+});
+const recordedOf = (part: unknown): Recorded => recordedSchema.parse(part);
+
 const CLOCK_START = Date.parse("2026-10-12T10:00:00.000Z");
 
 /** A checkpointed clock stand-in: each read gives one second more than the read before. */
 function stepClock(): () => Promise<number> {
     let reads = 0;
-    return async () => CLOCK_START + 1000 * reads++;
+    return () => Promise.resolve(CLOCK_START + 1000 * reads++);
 }
 
 /** Collect what a profile would have reported, in order, without a durability engine. */
 function recorder(): { parts: Recorded[]; emitter: ProfileActivityEmitter } {
     const parts: Recorded[] = [];
     const emitter = createProfileActivityEmitter(
-         (part) => {
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            parts.push(part as Recorded);
+        (part) => {
+            parts.push(recordedOf(part));
             return Promise.resolve();
-},
+        },
         FRAME,
         createNoopLogger(),
         stepClock(),
@@ -202,14 +214,14 @@ describe("profile activity emitter — a failed write never fails the profile", 
         const parts: unknown[] = [];
         let firstCall = true;
         const emitter = createProfileActivityEmitter(
-             (part) => {
+            (part) => {
                 if (firstCall) {
                     firstCall = false;
                     throw new Error("transient");
                 }
                 parts.push(part);
                 return Promise.resolve();
-},
+            },
             FRAME,
             createNoopLogger(),
             stepClock(),
@@ -226,14 +238,14 @@ describe("profile activity emitter — a failed write never fails the profile", 
         const parts: Recorded[] = [];
         let rejectActivity = true;
         const emitter = createProfileActivityEmitter(
-            async (part) => {
-                // The emitter writes only the parts that `activityEmission` builds, and each of them has the fields of `Recorded`.
-                const recorded = part as Recorded;
+            (part) => {
+                const recorded = recordedOf(part);
                 if (rejectActivity && recorded.type === "data-step-activity") {
                     rejectActivity = false;
                     throw new Error("transient");
                 }
                 parts.push(recorded);
+                return Promise.resolve();
             },
             FRAME,
             createNoopLogger(),
@@ -250,14 +262,14 @@ describe("profile activity emitter — a failed write never fails the profile", 
         const parts: Recorded[] = [];
         let rejectEntry = true;
         const emitter = createProfileActivityEmitter(
-            async (part) => {
-                // The emitter writes only the parts that `activityEmission` builds, and each of them has the fields of `Recorded`.
-                const recorded = part as Recorded;
+            (part) => {
+                const recorded = recordedOf(part);
                 if (rejectEntry && recorded.type === "data-activity-entry") {
                     rejectEntry = false;
                     throw new Error("transient");
                 }
                 parts.push(recorded);
+                return Promise.resolve();
             },
             FRAME,
             createNoopLogger(),

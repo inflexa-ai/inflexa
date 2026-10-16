@@ -59,7 +59,7 @@ async function checkFreshness(pool: Pool, intervalDays: number): Promise<{ stale
     );
     const row = rows[0];
     const lastIndexedAt = row.last_indexed_at ?? null;
-    const ageDays = row.age_days != null ? Number(row.age_days) : null;
+    const ageDays = row.age_days;
     const stale = lastIndexedAt === null || (ageDays ?? Infinity) >= intervalDays;
     return { stale, lastIndexedAt, ageDays };
 }
@@ -177,7 +177,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
     void (async () => {
         try {
             const result = await refresh({
-                ...(deps.refreshOptions),
+                ...deps.refreshOptions,
                 pool,
                 embedder: dispatchEmbedder,
             });

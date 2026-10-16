@@ -12,7 +12,7 @@ async function countPlans(pool: Pool, planId: string): Promise<number> {
         text: "SELECT count(*)::int AS n FROM cortex_plans WHERE plan_id = $1",
         values: [planId],
     });
-    return Number(r.rows[0].n);
+    return r.rows[0].n;
 }
 
 describe("upsertPlan", () => {
@@ -190,10 +190,12 @@ describe("the plan and run indexes", () => {
     }
 
     it("indexes the plans by their parent", async () => {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion reads the engine's index DDL, whose grammar (qualified table, method, column list) no builtin parses
         expect(await indexDefinition("idx_cortex_plans_parent")).toMatch(/ON \S*cortex_plans USING btree \(parent_plan_id\)$/);
     });
 
     it("indexes the runs by analysis, plan, start time, and run id", async () => {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion reads the engine's index DDL, whose grammar (qualified table, method, column list) no builtin parses
         expect(await indexDefinition("idx_cortex_runs_plan")).toMatch(/ON \S*cortex_runs USING btree \(analysis_id, plan_id, started_at DESC, run_id DESC\)$/);
     });
 });

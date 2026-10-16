@@ -155,8 +155,8 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
         return err({ reason: "malformed-block", detail: "the payload is not an object" });
     }
     // The id stamp sets the target id on the payload before the parse. Thus an id mismatch is
-    // unrepresentable, and a replacement always keeps the id of its target.
-    const withId = { ...(payload as Record<string, unknown>), id: operation.targetId };
+    // unrepresentable, and a replacement always keeps the id of its target; the DraftBlockSchema parse below is the check.
+    const withId = Object.assign({}, payload, { id: operation.targetId });
     // The hash stamp then fills each absent reference hash from the snapshot, thus the grammar reads a
     // complete pin. The two stamps are independent, because one reads the block and one reads a reference.
     const hashed = stampReferenceHashes(withId, snapshot);
@@ -386,10 +386,30 @@ function getChildren(document: DraftDocument, containerPath: number[]): DraftBlo
 /** Rebuild the document with new children at a container path, and share each untouched branch. */
 function setChildren(document: DraftDocument, containerPath: number[], children: DraftBlock[]): DraftDocument {
     if (containerPath.length === 0) {
-        // The root holds sections only. Each operation enforces that rule before it builds a candidate.
+        // SAFETY: the root holds sections only, and each operation enforces that rule before it builds a candidate.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the operation layer validated sections-at-root before the candidate build; the walk's input type cannot carry that proof.
         return { ...document, sections: children as DraftSectionBlock[] };
     }
-    return { ...document, sections: setChildrenInBlocks(document.sections, containerPath, children) as DraftSectionBlock[] };
+    return { ...document, sections: setChildSections(document.sections, containerPath, children) };
+}
+
+/**
+ * Rebuild the top-level sections with new children at a container path. The input is the section
+ * list of the document, so the copy stays a section list: each replaced element is a section by
+ * construction, and the deeper walk keeps the block-level check.
+ */
+function setChildSections(sections: DraftSectionBlock[], containerPath: number[], children: DraftBlock[]): DraftSectionBlock[] {
+    const head = containerPath[0];
+    const rest = containerPath.slice(1);
+    const target = sections.at(head);
+    if (target === undefined) {
+        throw new TypeError(`a container path names no section: ${containerPath.join("/")}`);
+    }
+    const updated: DraftSectionBlock =
+        rest.length === 0 ? { ...target, blocks: children } : { ...target, blocks: setChildrenInBlocks(target.blocks, rest, children) };
+    const copy = sections.slice();
+    copy[head] = updated;
+    return copy;
 }
 
 function setChildrenInBlocks(blocks: DraftBlock[], containerPath: number[], children: DraftBlock[]): DraftBlock[] {

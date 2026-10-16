@@ -10,6 +10,7 @@
  * give one hash, and a marker survives a round trip through storage.
  */
 
+import { maybeRecord } from "../lib/shape.js";
 import { createHash } from "node:crypto";
 
 import type { DraftDocument } from "./draft.js";
@@ -24,10 +25,11 @@ function canonicalize(value: unknown): unknown {
     if (Array.isArray(value)) {
         return value.map(canonicalize);
     }
-    if (value !== null && typeof value === "object") {
+    const record = maybeRecord(value);
+    if (record !== undefined) {
         const sorted: Record<string, unknown> = {};
-        for (const key of Object.keys(value).sort()) {
-            sorted[key] = canonicalize((value as Record<string, unknown>)[key]);
+        for (const key of Object.keys(record).sort()) {
+            sorted[key] = canonicalize(record[key]);
         }
         return sorted;
     }

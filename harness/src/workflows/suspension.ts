@@ -49,6 +49,7 @@ export async function cancelSelf(stepName: string): Promise<never> {
     // SAFETY: inside a real DBOS workflow the ambient id is always set; the
     // test rig mocks DBOS without one and its cancel mock reads no id, so the
     // assertion narrows only the type, never a runtime value the SDK reads.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- inside a real DBOS workflow the workflowID is always set; the test rig mocks DBOS without one and its cancel mock reads no id.
     await DBOS.cancelWorkflow(DBOS.workflowID as string);
     await DBOS.runStep(() => Promise.resolve(undefined), { name: stepName });
     throw new Error(`unreachable: ${stepName} did not raise the cancellation`);

@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
-import { countingQuerier } from "../__tests__/setup/counting-querier.js";
-import { withSchema } from "../__tests__/setup/postgres.js";
-import { queryDataProfileStatusByAnalyses, queryLatestRunsByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "./analyses-metrics.js";
+import { countingQuerier } from "../../__tests__/setup/counting-querier.js";
+import { withSchema } from "../../__tests__/setup/postgres.js";
+import { queryDataProfileStatusByAnalyses, queryLatestRunsByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "../analyses-metrics.js";
 
 async function seedAnalysis(pool: Pool, analysisId: string, dataProfileStatus: string | null = "pending"): Promise<void> {
     const now = new Date().toISOString();
@@ -66,7 +66,7 @@ describe("the indexes on the runs", () => {
             "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_cortex_runs_analysis_started'",
         );
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.indexdef).toContain("(analysis_id, started_at DESC, run_id DESC)");
+        expect(rows[0].indexdef).toContain("(analysis_id, started_at DESC, run_id DESC)");
     });
 
     it("has an index on the completion time and the run id after the migrations", async () => {
@@ -74,7 +74,7 @@ describe("the indexes on the runs", () => {
             "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_cortex_runs_completed'",
         );
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.indexdef).toContain("(completed_at DESC, run_id DESC)");
+        expect(rows[0].indexdef).toContain("(completed_at DESC, run_id DESC)");
     });
 });
 
@@ -128,7 +128,7 @@ describe("queryLatestRunsByAnalyses", () => {
         await seedRun(pool, { runId: "steps-new", analysisId: "steps-a", startedAt: "2026-10-02T10:00:00.000Z" });
         await seedSteps(pool, "steps-new", "steps-a", ["completed", "completed", "running", "pending", "pending"]);
 
-        const [entry] = (await queryLatestRunsByAnalyses(pool, ["steps-a"]))._unsafeUnwrap();
+        const entry = (await queryLatestRunsByAnalyses(pool, ["steps-a"]))._unsafeUnwrap().at(0);
 
         expect(entry?.runId).toBe("steps-new");
         expect(entry?.totalSteps).toBe(5);
@@ -140,7 +140,7 @@ describe("queryLatestRunsByAnalyses", () => {
         await seedPlan(pool, "pln-title001", "title-a", { title: "  Differential expression  ", steps: [] });
         await seedRun(pool, { runId: "title-r", analysisId: "title-a", startedAt: "2026-10-01T10:00:00.000Z", planId: "pln-title001" });
 
-        const [entry] = (await queryLatestRunsByAnalyses(pool, ["title-a"]))._unsafeUnwrap();
+        const entry = (await queryLatestRunsByAnalyses(pool, ["title-a"]))._unsafeUnwrap().at(0);
 
         expect(entry?.planTitle).toBe("Differential expression");
     });
@@ -166,7 +166,7 @@ describe("queryLatestRunsByAnalyses", () => {
         await seedPlan(pool, "pln-scope0001", "scope-other", { title: "Not mine" });
         await seedRun(pool, { runId: "scope-r", analysisId: "scope-a", startedAt: "2026-10-01T10:00:00.000Z", planId: "pln-scope0001" });
 
-        const [entry] = (await queryLatestRunsByAnalyses(pool, ["scope-a"]))._unsafeUnwrap();
+        const entry = (await queryLatestRunsByAnalyses(pool, ["scope-a"]))._unsafeUnwrap().at(0);
 
         expect(entry?.runId).toBe("scope-r");
         expect(entry?.planTitle).toBeNull();
@@ -290,7 +290,7 @@ describe("queryRunProgressByRuns", () => {
         await seedPlan(pool, "pln-pscope001", "scope-other", { title: "Not mine" });
         await seedRun(pool, { runId: "pscope-r", analysisId: "scope-a", startedAt: "2026-10-01T10:00:00.000Z", planId: "pln-pscope001" });
 
-        const [entry] = (await queryRunProgressByRuns(pool, ["pscope-r"]))._unsafeUnwrap();
+        const entry = (await queryRunProgressByRuns(pool, ["pscope-r"]))._unsafeUnwrap().at(0);
 
         expect(entry?.runId).toBe("pscope-r");
         expect(entry?.planTitle).toBeNull();

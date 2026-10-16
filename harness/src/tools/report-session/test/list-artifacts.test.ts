@@ -15,7 +15,13 @@ import { dirname, join } from "node:path";
 
 import type { Scope } from "../../../auth/types.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
-import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../../report-authoring/authoring-tools.js";
+import type {
+    ReportSessionState,
+    ReportSessionStateGateway,
+    SessionStateLoad,
+    SessionStatePersist,
+    StampResult,
+} from "../../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ToolContext } from "../../define-tool.js";
 import { createListPinnedArtifactsTool, type ListPinnedArtifactsResult, type PinnedArtifact } from "../list-artifacts.js";
@@ -99,7 +105,7 @@ describe("the listing order", () => {
                 "runs/r1/figures/plot.png": { hash: "sha256:ccc", fileType: "figure" },
             },
         });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -131,7 +137,7 @@ describe("the listing cap", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", stagedInputs(250));
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -150,7 +156,7 @@ describe("the listing cap", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", stagedInputs(3));
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -174,7 +180,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/step-a/output/de.csv", "gene, padj ,log2fc\nTP53,0.01,2.5\n");
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "runs/r1/step-a/output/de.csv");
 
@@ -186,7 +192,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/step-a/output/de.tsv", "gene\tpadj\tlog2fc\nTP53\t0.01\t2.5\n");
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.tsv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "runs/r1/step-a/output/de.tsv");
 
@@ -198,7 +204,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/step-a/output/DE.CSV", "gene,padj\nTP53,0.01\n");
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/DE.CSV": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "runs/r1/step-a/output/DE.CSV");
 
@@ -211,7 +217,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/step-a/output/results.json", '{"gene":"TP53","padj":0.01,"log2fc":2.5}\n');
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/results.json": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "runs/r1/step-a/output/results.json");
 
@@ -225,7 +231,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/step-a/output/quoted.csv", '"gene, symbol",padj\nTP53,0.01\n');
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/quoted.csv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "runs/r1/step-a/output/quoted.csv");
 
@@ -239,7 +245,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/step-a/output/wide.csv", `gene,${names.join(",")}\nTP53\n`);
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/wide.csv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "runs/r1/step-a/output/wide.csv");
 
@@ -257,7 +263,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/step-a/output/one.csv", `${"g".repeat(20000)}\n`);
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/one.csv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "runs/r1/step-a/output/one.csv");
 
@@ -268,7 +274,7 @@ describe("the columns", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/gone.csv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "runs/r1/step-a/output/gone.csv");
 
@@ -284,7 +290,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/figures/plot.png", "not,a,header\n");
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/figures/plot.png": { hash: "sha256:ccc", fileType: "figure" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "runs/r1/figures/plot.png");
 
@@ -297,7 +303,7 @@ describe("the columns", () => {
         const gateway = makeFakeGateway();
         // The ledger accepts any path, thus a registered `../../` path is a legal snapshot key.
         gateway.seed("t1", { artifacts: { "../../escape.csv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const artifact = await artifactAt(tool, "../../escape.csv");
 
@@ -309,8 +315,8 @@ describe("the columns", () => {
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
         const tool = createListPinnedArtifactsTool({
             gateway,
-            resolveWorkspaceRoot: async () => {
-                throw new Error("the workspace root did not resolve");
+            resolveWorkspaceRoot: () => {
+                return Promise.reject(new Error("the workspace root did not resolve"));
             },
         });
 
@@ -325,7 +331,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/step-a/output/de.csv", "gene,padj,log2fc\nTP53,0.01,2.5\n");
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -346,7 +352,7 @@ describe("the columns", () => {
         await writeUnder(root, "runs/r1/step-a/output/other.csv", "gene\nTP53\n");
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({ path: "runs/r1/step-a/output/other.csv" }, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -363,7 +369,7 @@ describe("the pinned citations", () => {
             artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } },
             citations: ["pmid:12345", "pmid:42", "pmid:999"],
         });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -383,7 +389,7 @@ describe("the pinned citations", () => {
             citations: ["pmid:26997480", "pmid:999"],
             citationRecords: { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } },
         });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -399,7 +405,7 @@ describe("the pinned citations", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -413,7 +419,7 @@ describe("the pinned citations", () => {
 describe("the session refusal", () => {
     it("refuses a call whose scope carries no thread id", async () => {
         const root = await makeRoot();
-        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve(root) });
         // The default fixture scope is an analysis scope with no thread id.
         const { ctx } = makeToolContext();
 
@@ -427,7 +433,7 @@ describe("the session refusal", () => {
 
     it("refuses a thread with no stored state", async () => {
         const root = await makeRoot();
-        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("absent")))._unsafeUnwrap();
 
@@ -451,14 +457,14 @@ describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
     function detailOf(tool: ReturnType<typeof createListPinnedArtifactsTool>, result: ListPinnedArtifactsResult): string {
         expect(tool.describeResult).toBeDefined();
-        return must(must(tool, "tool").describeResult, "must(tool, \"tool\").describeResult")({}, result);
+        return must(must(tool, "tool").describeResult, 'must(tool, "tool").describeResult')({}, result);
     }
 
     it("names the listed count of a whole listing", async () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", stagedInputs(3));
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -470,7 +476,7 @@ describe("the result detail", () => {
         const gateway = makeFakeGateway();
         gateway.seed("one", stagedInputs(1));
         gateway.seed("none", stagedInputs(0));
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const one = (await tool.execute({}, ctxForThread("one")))._unsafeUnwrap();
         const none = (await tool.execute({}, ctxForThread("none")))._unsafeUnwrap();
@@ -484,7 +490,7 @@ describe("the result detail", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", stagedInputs(250));
-        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -493,7 +499,7 @@ describe("the result detail", () => {
 
     it("names the outcome kind of a refusal", async () => {
         const root = await makeRoot();
-        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: async () => root });
+        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve(root) });
 
         const result = (await tool.execute({}, ctxForThread("absent")))._unsafeUnwrap();
 

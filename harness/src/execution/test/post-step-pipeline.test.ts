@@ -20,7 +20,7 @@ import type { RunSession } from "../../auth/types.js";
 import type { Logger } from "../../lib/logger.js";
 import { ProvenanceCollector } from "../../provenance/collector.js";
 import type { ProviderError } from "../../providers/errors.js";
-import type { AgentChat, EmbeddingProvider } from "../../providers/types.js";
+import type { EmbeddingProvider } from "../../providers/types.js";
 import type { ArtifactManifestEntry } from "../../schemas/artifact-manifest.js";
 import type { StepSummary } from "../../schemas/step-summary.js";
 import { createFileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
@@ -29,8 +29,9 @@ import type { ArtifactRegistry } from "../artifact-registry.js";
 import type { FileMetadataEntry } from "../artifact-metadata.js";
 import { vectorIndexStepOutputs, type PostStepPipelineDeps } from "../post-step-pipeline.js";
 import type { PostStepArtifacts, PostStepContext, SandboxStepInput } from "../../workflows/sandbox-step.js";
+import type { SpawnSession } from "../../auth/types.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, stubChatProvider } from "../../lib/test/doubles.js";
 
 const RUN_ID = "run-vec";
 const STEP_ID = "T1S1";
@@ -54,12 +55,29 @@ function makeRunSession(analysisId: string): RunSession {
     };
 }
 
+function makeInput(analysisId: string): SandboxStepInput {
+    return {
+        analysisId,
+        runId: RUN_ID,
+        stepId: STEP_ID,
+        agentId: AGENT_ID,
+        level: 0,
+        prompt: "unused",
+        parentWorkflowId: "wf-vec-parent",
+        resources: { cpu: 1, memoryGb: 1 },
+        runSession: makeSpawnSession(analysisId),
+    };
+}
+
+function makeSpawnSession(analysisId: string): SpawnSession {
+    return { ...makeRunSession(analysisId), runFrame: { runId: RUN_ID, stepId: STEP_ID } };
+}
+
 function makePostCtx(analysisId: string): PostStepContext {
     // The vector-index stage reads only `input.{analysisId,runId,stepId,agentId}`
     // and `session`; the remaining `SandboxStepInput` fields, the agent, and the
     // file-metadata cell never reach it.
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const input = { analysisId, runId: RUN_ID, stepId: STEP_ID, agentId: AGENT_ID } as unknown as SandboxStepInput;
+    const input = makeInput(analysisId);
     return {
         input,
         session: makeRunSession(analysisId),
@@ -72,17 +90,27 @@ function makePostCtx(analysisId: string): PostStepContext {
     };
 }
 
+function unwired(where: string): never {
+    throw new Error(`${where}: read without a stub`);
+}
+
+function unwiredArtifactRegistry(): ArtifactRegistry {
+    return {
+        register: () => unwired("unwiredArtifactRegistry.register"),
+        sync: () => unwired("unwiredArtifactRegistry.sync"),
+    };
+}
+
 function makeDeps(pool: Pool, embedding: EmbeddingProvider, logger: Logger): PostStepPipelineDeps {
     // The vector-index stage consumes only pool, logger, and embedding; the other
     // post-step seams are never touched here.
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return {
         pool,
         logger,
         embedding,
-        provider: {} as AgentChat,
-        artifactRegistry: {} as ArtifactRegistry,
-        resolveWorkspaceRoot: async (id) => id,
+        provider: stubChatProvider(),
+        artifactRegistry: unwiredArtifactRegistry(),
+        resolveWorkspaceRoot: (id) => Promise.resolve(id),
     };
 }
 
@@ -256,13 +284,19 @@ describe("vectorIndexStepOutputs — per-item isolation", () => {
 
         const warns = logger.records.filter((r) => r.level === "warn");
 
-        const itemWarn = must(warns.find((r) => r.msg === "[post-step.vector-index] indexing failed"), "itemWarn");
+        const itemWarn = must(
+            warns.find((r) => r.msg === "[post-step.vector-index] indexing failed"),
+            "itemWarn",
+        );
         expect(itemWarn).toBeDefined();
         expect(itemWarn.fields.id).toBe(vectorId(analysisId, "output/bad.csv"));
         expect(itemWarn.fields.textLength).toBe(poisonDesc.length);
 
         // ok.csv + summary.md landed; bad.csv did not.
-        const summaryWarn = must(warns.find((r) => r.msg === "[post-step.vector-index] indexed with failures"), "summaryWarn");
+        const summaryWarn = must(
+            warns.find((r) => r.msg === "[post-step.vector-index] indexed with failures"),
+            "summaryWarn",
+        );
         expect(summaryWarn).toBeDefined();
         expect(summaryWarn.fields.indexed).toBe(2);
         expect(summaryWarn.fields.failed).toBe(1);

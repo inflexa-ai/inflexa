@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { inferArtifactType } from "./artifact-manifest.js";
+import { inferArtifactType } from "../artifact-manifest.js";
 
 describe("inferArtifactType", () => {
     it("gives the type of a top-level folder of the step", () => {

@@ -16,6 +16,7 @@
  * both `err` and a thrown error to one `tool_result { is_error: true }`.
  */
 
+import { maybeRecord } from "../lib/shape.js";
 import type { Result } from "neverthrow";
 import { z } from "zod";
 
@@ -50,7 +51,8 @@ export type ToolExecutionMode = "step" | "inline";
 
 /** Runtime guard — does a `Result`'s error value carry the `ToolError` shape? */
 export function isToolError(value: unknown): value is ToolError {
-    return typeof value === "object" && value !== null && typeof (value as ToolError).error === "string" && typeof (value as ToolError).retryable === "boolean";
+    const record = maybeRecord(value);
+    return record !== undefined && typeof record.error === "string" && typeof record.retryable === "boolean";
 }
 
 /**
@@ -96,6 +98,7 @@ export function withToolResultImages<T extends object>(value: T, images: readonl
 /** Does one entry under the reserved key carry the picture shape? */
 function isToolResultImage(entry: unknown): entry is ToolResultImage {
     if (typeof entry !== "object" || entry === null) return false;
+    // SAFETY: the object guard bounds the read — the destructured members are tested by the typeof in the return below.
     const { base64, mediaType } = entry as Partial<ToolResultImage>;
     return typeof base64 === "string" && typeof mediaType === "string";
 }
@@ -108,6 +111,7 @@ function isToolResultImage(entry: unknown): entry is ToolResultImage {
  */
 export function readToolResultImages(value: unknown): ToolResultImage[] {
     if (typeof value !== "object" || value === null) return [];
+    // SAFETY: the object guard bounds the read — the symbol key reaches the reserved member the ok-value builder wrote, and the filter below tests each entry.
     const carried = (value as { [toolResultImageKey]?: unknown })[toolResultImageKey];
     const entries = Array.isArray(carried) ? carried : [carried];
     return entries.filter(isToolResultImage);
@@ -142,6 +146,7 @@ export function withToolCallRecord<T extends object, R>(value: T, record: R): Wi
 /** Read the call record that a tool ok value carries, or `undefined` when it carries none. */
 export function readToolCallRecord(value: unknown): unknown {
     if (typeof value !== "object" || value === null) return undefined;
+    // SAFETY: the object guard bounds the read — the symbol key reaches the reserved member, and the unknown return keeps the caller's test in charge.
     return (value as { [toolCallRecordKey]?: unknown })[toolCallRecordKey];
 }
 
@@ -183,7 +188,7 @@ export type ToolContext = {
 export type Tool<Input = unknown, Output = unknown> = {
     readonly id: string;
     readonly description: string;
-    readonly inputSchema: z.ZodType;
+    readonly inputSchema: z.ZodType<Input>;
     readonly jsonSchema: Record<string, unknown>;
     readonly executionMode: ToolExecutionMode;
     /** See {@link ToolDefinition.describeCall}. Absent when the tool declares none. */
@@ -198,7 +203,7 @@ export type Tool<Input = unknown, Output = unknown> = {
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
-export type ToolDefinition<Schema extends z.ZodType, Output> = {
+export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> = {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: Schema;
@@ -289,7 +294,8 @@ export type ToolDefinition<Schema extends z.ZodType, Output> = {
  * the first LLM call). Union-shaped inputs must be modelled as a flat object
  * with a discriminator field.
  */
-export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition<Schema, Output>): Tool<z.infer<Schema>, Output> {
+export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(def: ToolDefinition<Schema, Output>): Tool<z.infer<Schema>, Output> {
+    // SAFETY: z.toJSONSchema emits a JSON Schema document — an object whose members the checks below read.
     const jsonSchema = z.toJSONSchema(def.inputSchema) as Record<string, unknown>;
     delete jsonSchema.$schema;
 

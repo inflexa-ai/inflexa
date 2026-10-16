@@ -34,6 +34,7 @@ type BenchmarksFile = {
     indication_to_therapeutic_area: { patterns: string[]; therapeutic_area: string }[];
 };
 
+// SAFETY: the JSON import is the curated file this module ships — BenchmarksFile names its shape, and the `in` checks below guard the load-bearing members.
 const dataset = benchmarksData as BenchmarksFile;
 
 if (!("phase_transitions" in dataset) || !("all" in dataset.phase_transitions)) {

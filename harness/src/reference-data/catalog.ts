@@ -145,6 +145,8 @@ function deepFreeze<T>(value: T): DeepReadonly<T> {
         for (const nested of Object.values(value)) deepFreeze(nested);
         Object.freeze(value);
     }
+    // SAFETY: the freeze above ran on every nested object of this value — the cast names the deep-readonly view of the same object that came in.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `Object.freeze` at every depth proves at runtime the deep immutability the `DeepReadonly` view asserts; TS has no type-level mapping for it.
     return value as DeepReadonly<T>;
 }
 
@@ -1490,7 +1492,8 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 description:
                     "Reference map of human CD8+ tumour-infiltrating T cells for ProjecTILs: 11,021 single-cell transcriptomes from 20 samples across 7 tumour types. Projecting onto it places query cells in a fixed, curated state space — naive through effector-memory, tissue-resident and exhausted — rather than in de novo clusters, so results are comparable across datasets. The route to exhaustion and precursor-exhausted phenotyping, which unsupervised clustering names inconsistently. ~258 MB, opt-in.",
                 organism: "human",
-                sourceUrl: "https://figshare.com/articles/dataset/ProjecTILs_human_reference_atlas_of_CD8_tumor-infiltrating_T_cells_CD8_TIL_version_1/23608308",
+                sourceUrl:
+                    "https://figshare.com/articles/dataset/ProjecTILs_human_reference_atlas_of_CD8_tumor-infiltrating_T_cells_CD8_TIL_version_1/23608308",
                 license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
                 recommendation: { group: "cell-typing", recommended: false },
                 artifacts: [

@@ -37,6 +37,7 @@ import type { CitationRecords } from "../../report-model/reference-resolver.js";
 import type { DerivationChains, ReferenceLedger } from "../references.js";
 import { renderReferences } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
+import { stringOfNode } from "./node-text.js";
 
 /** The constant eyebrow of the hero. The render reads no clock, thus the hero carries no date. */
 const HERO_EYEBROW = "INFLEXA · ANALYSIS REPORT";
@@ -70,7 +71,7 @@ ${CHART_THEMES.map((theme) => `  echarts.registerTheme(${JSON.stringify(theme.na
  */
 export function renderBand(index: number, inner: string): string {
     const surface = index % 2 === 0 ? "report-band-white texture-dots" : "report-band-slate texture-grid";
-    return String(
+    return stringOfNode(
         <section class={`report-band ${surface} texture-noise`}>
             <div class="report-container fade-in">
                 <div class="report-content">{raw(inner)}</div>
@@ -95,7 +96,7 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
     if (references === "") {
         return "";
     }
-    const heading = String(<h2 class="report-heading report-heading-3 report-ref-title">{REFERENCES_TITLE}</h2>);
+    const heading = stringOfNode(<h2 class="report-heading report-heading-3 report-ref-title">{REFERENCES_TITLE}</h2>);
     return renderBand(index, heading + references);
 }
 
@@ -136,7 +137,7 @@ export type PageAssets = {
 export function assemblePage(title: string, nav: string, content: string, references: string, { dataAssets, grids, provenanceAssets }: PageAssets): string {
     return (
         "<!doctype html>" +
-        String(
+        stringOfNode(
             <html lang="en">
                 <head>
                     <meta charset="utf-8" />

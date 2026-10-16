@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import type { ToolResultPart } from "ai";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
@@ -11,6 +10,7 @@ import { passthroughStep } from "../run-step.js";
 import { runToTerminal } from "../run-to-terminal.js";
 import type { AgentDefinition, RunStep } from "../types.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { toolResultParts } from "../../lib/test/messages.js";
 import { jsonParse } from "../../lib/json.js";
 
 const GO = [{ role: "user" as const, content: "go" }];
@@ -23,7 +23,7 @@ function submitTool(cell: { value: string | null }): Tool {
         description: "Record the final answer.",
         inputSchema: z.object({ answer: z.string() }),
         describeCall: "none",
-        execute:  ({ answer }) => {
+        execute: ({ answer }) => {
             cell.value = answer;
             return Promise.resolve(ok({ accepted: true }));
         },
@@ -37,7 +37,7 @@ function countedTool(id: string): { tool: Tool; runs: () => number } {
         description: `The ${id} tool.`,
         inputSchema: z.object({}),
         describeCall: "none",
-        execute:  () => {
+        execute: () => {
             runs++;
             return Promise.resolve(ok({ ran: id }));
         },
@@ -57,7 +57,13 @@ function agentDef(tools: Tool[], maxIterations = 4): AgentDefinition {
 
 function recordingStep(): { runStep: RunStep; names: string[] } {
     const names: string[] = [];
-    return { runStep: (name, fn) => { names.push(name); return fn(); }, names };
+    return {
+        runStep: (name, fn) => {
+            names.push(name);
+            return fn();
+        },
+        names,
+    };
 }
 
 describe("runToTerminal", () => {
@@ -342,11 +348,13 @@ describe("runToTerminal", () => {
 
         expect(search.runs()).toBe(0);
         expect(cell.value).toBe("salvaged");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const refused = must(messages.flatMap((m) => (m.role === "tool" ? (m.content as ToolResultPart[]) : [])).find((r) => r.toolCallId === "s1"), "refused");
+        const refused = must(
+            messages.flatMap((m) => toolResultParts(m)).find((r) => r.toolCallId === "s1"),
+            "refused",
+        );
         expect(refused.output.type).toBe("error-text");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(jsonParse((refused.output as { value: string }).value, z.unknown())).toEqual({
+        if (refused.output.type !== "error-text") throw new Error("expected an error-text output");
+        expect(jsonParse(refused.output.value, z.unknown())).toEqual({
             error: "The tool search is not available for this request, thus it did not run. The tools that can run now: submit.",
             retryable: false,
         });

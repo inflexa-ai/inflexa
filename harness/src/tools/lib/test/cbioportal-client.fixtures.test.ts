@@ -50,8 +50,7 @@ runFixtureSuite("cBioPortal golden fixtures", [
 
 describe("the cBioPortal oracle and the wire", () => {
     it("shows no mutationCount on any observed mutation row", () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const rows = readFixture("cbioportal", "mutations-fetch-SUMMARY.json") as Record<string, unknown>[];
+        const rows = z.array(z.record(z.string(), z.json())).parse(readFixture("cbioportal", "mutations-fetch-SUMMARY.json"));
         for (const row of rows) expect("mutationCount" in row).toBe(false);
     });
 
@@ -59,23 +58,20 @@ describe("the cBioPortal oracle and the wire", () => {
         // The Swagger of the provider declares `TypeOfCancer.cancerTypeId`, and
         // the DETAILED payload serves `id`. The sampled wire is the oracle for
         // this one field, thus the schema reads `id` and keeps the fallback.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const oracle = readFixture("cbioportal", "openapi-v2.json") as {
-            definitions: { TypeOfCancer: { properties: Record<string, unknown> } };
-        };
+        const oracle = z
+            .looseObject({ definitions: z.looseObject({ TypeOfCancer: z.looseObject({ properties: z.record(z.string(), z.json()) }) }) })
+            .parse(readFixture("cbioportal", "openapi-v2.json"));
         expect(Object.keys(oracle.definitions.TypeOfCancer.properties)).toContain("cancerTypeId");
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const detailed = readFixture("cbioportal", "studies-DETAILED.json") as { cancerType: Record<string, unknown> }[];
+        const detailed = z.array(z.looseObject({ cancerType: z.record(z.string(), z.json()) })).parse(readFixture("cbioportal", "studies-DETAILED.json"));
         expect(Object.keys(detailed[0].cancerType)).toContain("id");
         expect(Object.keys(detailed[0].cancerType)).not.toContain("cancerTypeId");
     });
 
     it("declares no mutationCount in the published Mutation definition", () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const oracle = readFixture("cbioportal", "openapi-v2.json") as {
-            definitions: { Mutation: { properties: Record<string, unknown> } };
-        };
+        const oracle = z
+            .looseObject({ definitions: z.looseObject({ Mutation: z.looseObject({ properties: z.record(z.string(), z.json()) }) }) })
+            .parse(readFixture("cbioportal", "openapi-v2.json"));
         expect(Object.keys(oracle.definitions.Mutation.properties)).not.toContain("mutationCount");
     });
 });

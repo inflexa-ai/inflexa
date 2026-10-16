@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { maybeRecord } from "../../lib/shape.js";
 
 import type { PlanRecord } from "../../state/index.js";
 import { buildPresentationCardData, planCardOf, planPartOf } from "../card-builders.js";
 
 function planDocument(title?: string) {
     return {
-        ...(title !== undefined ? { title } : {}),
+        title,
         analytical_narrative: "why",
         created_at: "2026-10-01T00:00:00.000Z",
         steps: [
@@ -80,18 +82,21 @@ describe("buildPresentationCardData", () => {
     // emit and the reconstruct-on-read path both go through it, so normalizing here is what makes the
     // ECharts layout an invariant rather than a rule the model has to remember.
     it("normalizes an echart spec: strips the duplicate title, places the legend, injects grid + toolbox", () => {
-        const card = buildPresentationCardData({
-            kind: "echart",
-            title: "DE Genes",
-            spec: {
-                title: { text: "DE Genes", subtext: "padj < 0.05" },
-                xAxis: { type: "category", data: ["a", "b"] },
-                yAxis: { type: "value" },
-                series: [{ type: "bar" }],
-            },
-        });
+        const card = must(
+            buildPresentationCardData({
+                kind: "echart",
+                title: "DE Genes",
+                spec: {
+                    title: { text: "DE Genes", subtext: "padj < 0.05" },
+                    xAxis: { type: "category", data: ["a", "b"] },
+                    yAxis: { type: "value" },
+                    series: [{ type: "bar" }],
+                },
+            }),
+            "card",
+        );
 
-        const spec = (card!.content as { spec: Record<string, unknown> }).spec;
+        const spec = must(maybeRecord(card.content.spec), "the card builder wraps the chart in content.spec");
         expect("title" in spec).toBe(false);
         expect(spec.legend).toEqual({ show: false });
         expect(spec.grid).toEqual({ top: "8%", bottom: "20%", left: "10%", right: "5%" });
@@ -100,21 +105,22 @@ describe("buildPresentationCardData", () => {
 
     it("keys the id off the raw input, so normalization never moves a card's identity", () => {
         const input = { kind: "echart", title: "T", spec: { title: { text: "dup" }, series: [{ type: "line" }] } };
-        const a = buildPresentationCardData(input);
-        const b = buildPresentationCardData(structuredClone(input));
+        const a = must(buildPresentationCardData(input), "card a");
+        const b = must(buildPresentationCardData(structuredClone(input)), "card b");
 
-        expect(a!.id).toBe(b!.id);
-        expect(a!.id).toMatch(/^pres-[0-9a-f]{16}$/);
+        expect(a.id).toBe(b.id);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion reads the pres- id grammar (prefix plus 16 hex digits) that uuidv7 minting owns
+        expect(a.id).toMatch(/^pres-[0-9a-f]{16}$/);
     });
 
     it("carries a non-echart kind through untouched", () => {
-        const card = buildPresentationCardData({ kind: "markdown", title: "Findings", body: "## Hello" });
-        expect(card!.content).toEqual({ kind: "markdown", body: "## Hello" });
+        const card = must(buildPresentationCardData({ kind: "markdown", title: "Findings", body: "## Hello" }), "card");
+        expect(card.content).toEqual({ kind: "markdown", body: "## Hello" });
     });
 
     it("carries an echart without a spec through untouched (there is no spec to invent)", () => {
-        const card = buildPresentationCardData({ kind: "echart", dataPath: "runs/run-a/step-1/output/de.csv" });
-        expect(card!.content).toEqual({ kind: "echart", dataPath: "runs/run-a/step-1/output/de.csv" });
+        const card = must(buildPresentationCardData({ kind: "echart", dataPath: "runs/run-a/step-1/output/de.csv" }), "card");
+        expect(card.content).toEqual({ kind: "echart", dataPath: "runs/run-a/step-1/output/de.csv" });
     });
 });
 
@@ -122,9 +128,9 @@ describe("buildPresentationCardData — structure", () => {
     const url = "https://alphafold.ebi.ac.uk/files/AF-P38398-F1-model_v6.cif";
 
     it("normalizes an admitted AlphaFold URL into the derived source fields", () => {
-        const card = buildPresentationCardData({ kind: "structure", title: "BRCA1", url });
-        expect(card!.title).toBe("BRCA1");
-        expect(card!.content).toEqual({ kind: "structure", format: "mmcif", url, provider: "alphafold", accession: "P38398", version: 6 });
+        const card = must(buildPresentationCardData({ kind: "structure", title: "BRCA1", url }), "card");
+        expect(card.title).toBe("BRCA1");
+        expect(card.content).toEqual({ kind: "structure", format: "mmcif", url, provider: "alphafold", accession: "P38398", version: 6 });
     });
 
     it("refuses a URL the grammar does not admit — no card on the live path or on replay", () => {
@@ -133,15 +139,16 @@ describe("buildPresentationCardData — structure", () => {
     });
 
     it("does not let a stray field of the flat tool input ride along", () => {
-        const card = buildPresentationCardData({ kind: "structure", url, body: "## stray", spec: { series: [] } });
-        expect(Object.keys(card!.content).sort()).toEqual(["accession", "format", "kind", "provider", "url", "version"]);
+        const card = must(buildPresentationCardData({ kind: "structure", url, body: "## stray", spec: { series: [] } }), "card");
+        expect(Object.keys(card.content).sort()).toEqual(["accession", "format", "kind", "provider", "url", "version"]);
     });
 
     it("keys the id off the raw input and rebuilds identically from a clone", () => {
         const input = { kind: "structure", title: "BRCA1", url };
-        const a = buildPresentationCardData(input);
-        const b = buildPresentationCardData(structuredClone(input));
+        const a = must(buildPresentationCardData(input), "card a");
+        const b = must(buildPresentationCardData(structuredClone(input)), "card b");
         expect(a).toEqual(b);
-        expect(a!.id).toMatch(/^pres-[0-9a-f]{16}$/);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion reads the pres- id grammar (prefix plus 16 hex digits) that uuidv7 minting owns
+        expect(a.id).toMatch(/^pres-[0-9a-f]{16}$/);
     });
 });

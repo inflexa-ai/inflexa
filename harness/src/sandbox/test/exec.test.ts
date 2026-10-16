@@ -13,7 +13,7 @@ import type { ExecResult, SandboxLiveness, SandboxRef } from "../types.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { jsonParse } from "../../lib/json.js";
 import { z } from "zod";
-import { fetchDouble } from "../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../lib/test/doubles.js";
 import { optionString } from "../../report-render/option-lens.js";
 
 const EXEC_ID = "an-1:run-1-0:7";
@@ -56,7 +56,7 @@ function sandbox(polls: (Record<string, unknown> | "unavailable")[], seen: SeenR
     let i = 0;
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return fetchDouble((input, init) => {
-        seen.push({ url: String(input), init: init ? init : undefined });
+        seen.push({ url: urlText(input), init: init ? init : undefined });
         if (init?.method === "POST") return new Response(JSON.stringify({ status: "started" }), { status: 202 });
         const item = i < polls.length ? polls[i++] : polls[polls.length - 1];
         return Promise.resolve(item === "unavailable" ? new Response("unknown execId", { status: 404 }) : pollResponse(item));
@@ -64,8 +64,13 @@ function sandbox(polls: (Record<string, unknown> | "unavailable")[], seen: SeenR
 }
 
 /** Deps that never really sleep and never see a cancel. */
-const BASE: ExecDeps = { now: () => NOW_MS, sleep:  () => {    return Promise.resolve();
-}, isCancelled: () => Promise.resolve(false) };
+const BASE: ExecDeps = {
+    now: () => NOW_MS,
+    sleep: () => {
+        return Promise.resolve();
+    },
+    isCancelled: () => Promise.resolve(false),
+};
 
 /** A sleep that advances the mock clock, thus a deadline-bounded loop ends. */
 function tickingClock(stepMs = 1000) {
@@ -73,10 +78,10 @@ function tickingClock(stepMs = 1000) {
     return {
         clock,
         now: () => clock.nowMs,
-        sleep:  () => {
+        sleep: () => {
             clock.nowMs += stepMs;
             return Promise.resolve();
-},
+        },
     };
 }
 
@@ -87,10 +92,13 @@ describe("the submit", () => {
         const seen: SeenRequest[] = [];
         await runExec(REF, EXEC_ID, { command: ["echo", "hi"], cwd: "/an-1" }, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
 
-        const post = must(seen.find((r) => r.init?.method === "POST"), "post");
+        const post = must(
+            seen.find((r) => r.init?.method === "POST"),
+            "post",
+        );
         expect(post.url).toBe("http://127.0.0.1:8765/exec");
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(jsonParse(optionString(must(must(post, "post").init, "must(post, \"post\").init").body), z.record(z.string(), z.unknown()))).toEqual({
+        expect(jsonParse(optionString(must(must(post, "post").init, 'must(post, "post").init').body), z.record(z.string(), z.unknown()))).toEqual({
             command: ["echo", "hi"],
             execId: EXEC_ID,
             cwd: "/an-1",
@@ -104,7 +112,7 @@ describe("the submit", () => {
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = jsonParse(optionString(must(must(seen, "seen")[0].init, "must(seen, \"seen\")[0].init").body), z.record(z.string(), z.unknown()));
+        const body = jsonParse(optionString(must(must(seen, "seen")[0].init, 'must(seen, "seen")[0].init').body), z.record(z.string(), z.unknown()));
         expect(body.stdoutByteCap).toBe(1_048_576);
         expect(body.stderrByteCap).toBe(1_048_576);
     });
@@ -114,7 +122,7 @@ describe("the submit", () => {
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, execStreamByteCap: 1234, fetch: sandbox([completed], seen) });
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = jsonParse(optionString(must(must(seen, "seen")[0].init, "must(seen, \"seen\")[0].init").body), z.record(z.string(), z.unknown()));
+        const body = jsonParse(optionString(must(must(seen, "seen")[0].init, 'must(seen, "seen")[0].init').body), z.record(z.string(), z.unknown()));
         expect(body.stdoutByteCap).toBe(1234);
         expect(body.stderrByteCap).toBe(1234);
     });
@@ -123,7 +131,7 @@ describe("the submit", () => {
         const seen: SeenRequest[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         const failing = fetchDouble((input, init) => {
-            seen.push({ url: String(input), init: init ? init : undefined });
+            seen.push({ url: urlText(input), init: init ? init : undefined });
             return Promise.resolve(new Response("boom", { status: 503 }));
         });
         await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: failing })).rejects.toThrow("503");
@@ -224,10 +232,10 @@ describe("the poll loop", () => {
         const running = { status: "running", events: [], cursor: 0 };
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
             ...BASE,
-            sleep:  (ms) => {
+            sleep: (ms) => {
                 sleeps.push(ms);
                 return Promise.resolve();
-},
+            },
             fetch: sandbox([...Array.from({ length: 41 }, () => running), completed]),
         });
         expect(sleeps).toHaveLength(41);
@@ -300,7 +308,7 @@ describe("the liveness escalation", () => {
             now,
             sleep,
             fetch: sandbox(["unavailable"]),
-            isAlive:  () => {
+            isAlive: () => {
                 probes++;
                 return Promise.resolve({ alive: false, oomKilled: false });
             },
@@ -318,7 +326,7 @@ describe("the liveness escalation", () => {
             now,
             sleep,
             fetch: sandbox(["unavailable"]),
-            isAlive: () => Promise.resolve(({ alive: false, oomKilled: true })),
+            isAlive: () => Promise.resolve({ alive: false, oomKilled: true }),
         });
         expect(result.syntheticFailure?.reason).toBe("sandbox-oom-killed");
     });
@@ -332,7 +340,7 @@ describe("the liveness escalation", () => {
                 now,
                 sleep,
                 fetch: sandbox(["unavailable"]),
-                isAlive:  () => {
+                isAlive: () => {
                     probes++;
                     return Promise.resolve({ alive: true, oomKilled: false });
                 },
@@ -351,7 +359,7 @@ describe("the liveness escalation", () => {
                 ...Array.from({ length: T - 1 }, () => "unavailable" as const),
                 completed,
             ]),
-            isAlive:  () => {
+            isAlive: () => {
                 probes++;
                 return Promise.resolve({ alive: true, oomKilled: false });
             },
@@ -416,7 +424,7 @@ describe("the cancel read", () => {
             sleep,
             // 20 running polls at 1.5 s each span 28.5 s of the clock: reads at 10.5 s and at 21 s.
             fetch: sandbox([...Array.from({ length: 20 }, () => running), completed]),
-            isCancelled:  () => {
+            isCancelled: () => {
                 reads++;
                 return Promise.resolve(false);
             },
@@ -429,7 +437,7 @@ describe("the cancel read", () => {
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
             ...BASE,
             fetch: sandbox([running, completed]),
-            isCancelled:  () => {
+            isCancelled: () => {
                 reads++;
                 return Promise.resolve(false);
             },

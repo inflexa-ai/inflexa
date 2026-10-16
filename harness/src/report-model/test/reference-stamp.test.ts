@@ -14,6 +14,8 @@ import { describe, expect, it } from "bun:test";
 import type { ReportSnapshot } from "../reference-resolver.js";
 import { stampReferenceHashes, stripReferenceHashes } from "../reference-stamp.js";
 import { jsonParse } from "../../lib/json.js";
+import { maybeRecord, typedMember } from "../../lib/shape.js";
+import { must } from "../../lib/test/guards.js";
 import { z } from "zod";
 
 const OUTPUT_PATH = "runs/run-1/step-a/output/de.csv";
@@ -37,8 +39,7 @@ function field(value: unknown, ...keys: Array<string | number>): unknown {
         if (current === null || typeof current !== "object") {
             return undefined;
         }
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        current = (current as Record<string | number, unknown>)[key];
+        current = typedMember(maybeRecord(current), key);
     }
     return current;
 }
@@ -230,8 +231,7 @@ describe("the faithful copy", () => {
 
         expect(field(stamped, "binding", "hash")).toBe(OUTPUT_HASH);
         // A plain assignment at this key reaches the prototype setter, thus the copy would lose the key.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(Object.hasOwn(stamped as object, "__proto__")).toBe(true);
+        expect(Object.hasOwn(must(maybeRecord(stamped), "the stamp returned an object"), "__proto__")).toBe(true);
         expect(field(stamped, "__proto__", "note")).toBe("an own key");
         expect(Object.getPrototypeOf(stamped)).toBe(Object.prototype);
     });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import { ATOM_BLOCK_SCHEMAS, ReportDocumentSchema } from "../../contracts/report-blocks.js";
 import { DraftBlockSchema, DraftDocumentSchema, DraftSectionBlockSchema } from "../draft.js";
@@ -52,11 +53,12 @@ describe("the draft grammar", () => {
         // contract and not here would be unauthorable, and nothing in the build would say so.
         const contractKinds = ATOM_BLOCK_SCHEMAS.map((schema) => schema.shape.kind.value);
         // `DraftBlockSchema` is annotated as the bare `ZodType` for its own recursion, which erases
-        // `options`; the runtime value is the discriminated union built one line above the annotation.
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const draftKinds = (DraftBlockSchema as unknown as { options: readonly { shape: { kind: { value: string } } }[] }).options.map(
-            (option) => option.shape.kind.value,
-        );
+        // `options`; the runtime value is the discriminated union built one line above the annotation,
+        // and the parse reads it with that shape at runtime.
+        const options = z
+            .array(z.looseObject({ shape: z.looseObject({ kind: z.looseObject({ value: z.string() }) }) }))
+            .parse(Reflect.get(DraftBlockSchema, "options"));
+        const draftKinds = options.map((option) => option.shape.kind.value);
 
         expect(draftKinds.sort()).toEqual([...contractKinds, "section"].sort());
     });

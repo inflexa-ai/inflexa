@@ -71,11 +71,15 @@ function keptPaths(detected: DetectedSets): Set<string> {
  */
 function annotationOf(group: DataProfileGroup, kept: ReadonlySet<string>): GroupAnnotation {
     const annotations = (group.memberAnnotations ?? []).filter((entry) => kept.has(entry.path));
+    // SAFETY: the row held the vocabulary id when the profile wrote it — the contract widened it to `string` for old-row rendering
+    // only, and a replay records what the profile already said instead of re-adjudicating it against today's catalogue.
     return {
         name: group.name,
         memberRepresents: group.memberRepresents,
         description: group.description,
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the row contract deliberately widens the vocabulary id to `string` so retired ids still render.
         role: group.role as GroupRole,
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the row contract deliberately widens the vocabulary id to `string` so retired ids still render.
         category: group.category as GroupCategory,
         categoryLabel: group.categoryLabel ? group.categoryLabel : undefined,
         subtype: group.subtype ? group.subtype : undefined,
@@ -175,12 +179,16 @@ function replayDimension(ctx: ReplayContext, dimension: DataProfileDimension): P
 
     return {
         label: dimension.label,
+        // SAFETY: the row held the vocabulary id when the profile wrote it — the contract widened it to `string` for old-row rendering
+        // only, and a replay records what the profile already said instead of re-adjudicating it against today's catalogue.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the replay carries what the profile recorded without re-adjudicating it.
         category: dimension.category as DimensionCategory,
         categoryLabel: dimension.categoryLabel ? dimension.categoryLabel : undefined,
         scope: dimension.scope,
         description: dimension.description ? dimension.description : undefined,
         observations,
-        reconciliations: dimension.reconciliations && dimension.reconciliations.length > 0 ? dimension.reconciliations.map((entry) => ({ ...entry })) : undefined,
+        reconciliations:
+            dimension.reconciliations && dimension.reconciliations.length > 0 ? dimension.reconciliations.map((entry) => ({ ...entry })) : undefined,
         nestsUnder: dimension.nestsUnder ? { ...dimension.nestsUnder } : undefined,
         treatmentReason: dimension.treatmentReason ? dimension.treatmentReason : undefined,
     };

@@ -20,6 +20,7 @@ import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../../works
 
 import { generateStepSummary, type GenerateStepSummaryOptions } from "../step-summary.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { outputValue, toolResultParts } from "../../lib/test/messages.js";
 import { isError } from "../../lib/thrown.js";
 
 type RecordedCall = {
@@ -118,7 +119,7 @@ function options(provider: ChatProvider, over: Partial<GenerateStepSummaryOption
 }
 
 function toolResults(request: ChatRequest): ToolResultPart[] {
-    return request.messages.flatMap((m) => (m.role === "tool" ? m.content : [])).filter((part): part is ToolResultPart => part.type === "tool-result");
+    return request.messages.flatMap((m) => toolResultParts(m));
 }
 
 describe("generateStepSummary", () => {
@@ -150,8 +151,8 @@ describe("generateStepSummary", () => {
     it("appends the artifact list to the summary request", async () => {
         const { provider, calls } = makeProvider([textMessage("summary")]);
         await generateStepSummary(options(provider));
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const last = calls[0].req.messages.at(-1) as { content: string };
+        const last = calls[0].req.messages.at(-1);
+        if (last?.role !== "user" || typeof last.content !== "string") throw new Error("expected the string-content summary request");
         for (const path of ARTIFACT_PATHS) {
             expect(last.content).toContain(path);
         }
@@ -163,7 +164,7 @@ describe("generateStepSummary", () => {
         const outDir = join(stepDir, "output");
         await mkdir(outDir, { recursive: true });
         await writeFile(join(outDir, "de-results.csv"), "gene,log2fc,padj\nTP53,2.3,0.001\nMYC,-1.8,0.004\n");
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) });
 
         const { provider, calls } = makeProvider([readFileCall("t1", "output/de-results.csv"), textMessage("# DE\n\n- 2 significant genes: TP53, MYC")]);
 
@@ -182,7 +183,7 @@ describe("generateStepSummary", () => {
         const stepDir = join(base, "analysis-001", "runs", "run-1", "step-1");
         await mkdir(join(stepDir, "output"), { recursive: true });
         await writeFile(join(stepDir, "output", "de-results.csv"), "gene,padj\nTP53,0.001\n");
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) });
         const target = join(stepDir, "output", "notes.md");
         const writeProbe = defineTool({
             id: "write_file",
@@ -226,7 +227,7 @@ describe("generateStepSummary", () => {
         const stepDir = join(base, "analysis-001", "runs", "run-1", "step-1");
         await mkdir(join(stepDir, "output"), { recursive: true });
         await writeFile(join(stepDir, "output", "long.txt"), "x".repeat(90_000));
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) });
         const kept: KeptToolOutput[] = [];
         const store: ToolOutputStore = {
             put: (output) => {
@@ -242,10 +243,17 @@ describe("generateStepSummary", () => {
                 requests.push({ ...req, messages: [...req.messages] });
                 if (requests.length === 1) return okAsync(readFileCall("r1", "output/long.txt"));
                 if (requests.length === 2) {
-                    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                    const excerpt = must(must(toolResults, "toolResults")(req).find((r) => r.toolCallId === "r1"), "must(toolResults, \"toolResults\")(req).find((r) =").output as { value: string };
-                    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-                    const ref = must(must(/reference "(to_[0-9a-f]{20})"/, "/reference \"(to_[0-9a-f]{20})\"/").exec(excerpt.value), "must(/reference \"(to_[0-9a-f]{20})\"/, \"/referenc")[1];
+                    const found = must(
+                        toolResults(req).find((r) => r.toolCallId === "r1"),
+                        'toolResults(req).find((r) => r.toolCallId === "r1")',
+                    );
+                    if (found.output.type !== "text" && found.output.type !== "error-text") throw new Error("expected a text-carrying output");
+                    const excerpt = found.output;
+                    const ref = must(
+                        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+                        must(/reference "(to_[0-9a-f]{20})"/, '/reference "(to_[0-9a-f]{20})"/').exec(excerpt.value),
+                        'must(/reference "(to_[0-9a-f]{20})"/, "/referenc',
+                    )[1];
                     return okAsync(makeMessage([toolUseBlock("k1", "read_tool_output", { ref, offset: 60_000 })], "tool_use"));
                 }
                 return okAsync(textMessage("# Long\n\n- all read"));
@@ -261,10 +269,12 @@ describe("generateStepSummary", () => {
 
         expect(out?.markdown).toContain("all read");
         expect(kept).toHaveLength(1);
-        const page = must(toolResults(requests[2]).find((r) => r.toolCallId === "k1"), "page");
+        const page = must(
+            toolResults(requests[2]).find((r) => r.toolCallId === "k1"),
+            "page",
+        );
         expect(page.output.type).toBe("json");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((page.output as { value: unknown }).value).toMatchObject({ status: "ok", offset: 60_000 });
+        expect(outputValue(page.output)).toMatchObject({ status: "ok", offset: 60_000 });
     });
 
     it("produces an honest no-output summary for an empty-artifact step (no fabrication)", async () => {
@@ -274,8 +284,8 @@ describe("generateStepSummary", () => {
         const out = await generateStepSummary(options(provider, { artifactPaths: [] }));
         expect(out?.markdown).toContain("no output files");
         // The request must signal the empty state to the model.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const prompt = calls[0].req.messages.at(-1) as { content: string };
+        const prompt = calls[0].req.messages.at(-1);
+        if (prompt?.role !== "user" || typeof prompt.content !== "string") throw new Error("expected the string-content summary request");
         expect(prompt.content).toContain("none");
     });
 

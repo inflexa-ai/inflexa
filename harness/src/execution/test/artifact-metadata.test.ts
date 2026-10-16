@@ -146,7 +146,9 @@ describe("generateFileMetadata", () => {
         expect(JSON.stringify(first.messages.slice(0, TRANSCRIPT.length))).toBe(JSON.stringify(TRANSCRIPT));
         expect(out.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
         expect(isSyntheticUserMessage(out.messages[0])).toBe(true);
-        expect(String(out.messages[0].content)).toContain("- b.csv");
+        const firstContent = out.messages[0].content;
+        if (typeof firstContent !== "string") throw new Error("the synthetic user message holds string content");
+        expect(firstContent).toContain("- b.csv");
     });
 
     it("matches descriptions to files by PATH, not array position", async () => {
@@ -187,7 +189,10 @@ describe("generateFileMetadata", () => {
         // Every file still produces an entry; only one was model-described.
         expect(out.entries).toHaveLength(3);
         expect(out.indexed).toBe(1);
-        const b = must(out.entries.find((e) => e.dbPath === "p/b.csv"), "b");
+        const b = must(
+            out.entries.find((e) => e.dbPath === "p/b.csv"),
+            "b",
+        );
         expect(b.description).toContain("b.csv");
         expect(b.description).toContain("automated description unavailable");
         expect(b.metadata).toMatchObject({ format: "csv" });
@@ -215,7 +220,7 @@ describe("generateFileMetadata", () => {
         const outDir = join(stepDir, "output");
         await mkdir(outDir, { recursive: true });
         await writeFile(join(outDir, "a.csv"), "gene,count\nTP53,42\n");
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) });
 
         const { provider, calls } = makeProvider([
             // Inspect the real file before describing.
@@ -242,7 +247,10 @@ describe("generateFileMetadata", () => {
         const afterRead = JSON.stringify(calls[1].req.messages);
         expect(afterRead).toContain("TP53");
         // Undescribed files still get a deterministic fallback (lossless guarantee).
-        const b = must(out.entries.find((e) => e.dbPath === "p/b.csv"), "b");
+        const b = must(
+            out.entries.find((e) => e.dbPath === "p/b.csv"),
+            "b",
+        );
         expect(b.description).toContain("automated description unavailable");
     });
 
@@ -253,7 +261,7 @@ describe("generateFileMetadata", () => {
             description: "Run a command.",
             inputSchema: z.object({ command: z.array(z.string()) }),
             describeCall: "none",
-            execute:  () => {
+            execute: () => {
                 ran = true;
                 return Promise.resolve(ok({ exitCode: 0 }));
             },

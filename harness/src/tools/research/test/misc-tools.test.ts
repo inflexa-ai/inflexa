@@ -96,18 +96,19 @@ describe("inspectRun (dependency-bearing factory)", () => {
         });
     }
 
-    /** List runs for the session's analysis, unwrapping to the `{ runs }` variant. */
+    /** List runs for the session's analysis, failing the test on any other variant. */
     async function listRuns(pool: Pool): Promise<Array<Record<string, unknown>>> {
         const { ctx } = makeToolContext();
         const result = (await createInspectRunTool(pool).execute({}, ctx))._unsafeUnwrap();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        return (result as { runs: Array<Record<string, unknown>> }).runs;
+        if (!("runs" in result)) throw new Error("expected the runs variant of the inspect-run output");
+        return result.runs;
     }
 
     it("derives the analysis id from the Session and lists runs via the injected pool", async () => {
         const fakePool = poolDouble((query) =>
             // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            Promise.resolve(/COUNT\(\*\)/i.test(query.text) ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 }));
+            Promise.resolve(/COUNT\(\*\)/i.test(query.text) ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 }),
+        );
 
         const tool = createInspectRunTool(fakePool);
         const { ctx } = makeToolContext();
@@ -233,19 +234,17 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const pool = poolForRunDetail(runRow({ status: "running", synthesis_status: "produced", completed_at: null }), [stepRow({ status: "completed" })]);
         const { ctx } = makeToolContext();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
         const result = (
-            await createInspectRunTool(pool, { now: () => Date.parse("2026-01-01T00:00:05.000Z"), wait:  () => {    return Promise.resolve();
-} }).execute({ runId: "run-1" }, ctx)
-        )._unsafeUnwrap() as {
-            inspectionState: string;
-            message: string;
-            elapsedMs: number;
-            run: Record<string, unknown>;
-            steps: Array<Record<string, unknown>>;
-        };
+            await createInspectRunTool(pool, {
+                now: () => Date.parse("2026-01-01T00:00:05.000Z"),
+                wait: () => {
+                    return Promise.resolve();
+                },
+            }).execute({ runId: "run-1" }, ctx)
+        )._unsafeUnwrap();
+        if (!("inspectionState" in result)) throw new Error("expected an inspection variant of the inspect-run output");
+        if (result.inspectionState !== "in_progress") throw new Error(`expected in_progress, got ${result.inspectionState}`);
 
-        expect(result.inspectionState).toBe("in_progress");
         expect(result.message).toContain("Results are not ready");
         expect(result.elapsedMs).toBe(5_000);
         expect(result.run).toMatchObject({ status: "running", synthesisPath: null });
@@ -290,10 +289,10 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const result = (
             await createInspectRunTool(pool, {
                 now: () => now,
-                wait:  (ms) => {
+                wait: (ms) => {
                     now += ms;
                     return Promise.resolve();
-},
+                },
             }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
         )._unsafeUnwrap();
 
@@ -312,10 +311,10 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const result = (
             await createInspectRunTool(pool, {
                 now: () => now,
-                wait:  (ms) => {
+                wait: (ms) => {
                     now += ms;
                     return Promise.resolve();
-},
+                },
             }).execute({ runId: "run-1", waitForTerminalSeconds: 2 }, ctx)
         )._unsafeUnwrap();
 
@@ -333,7 +332,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
         await expect(
             createInspectRunTool(pool, {
                 now: () => 0,
-                wait:  () => Promise.reject(aborted),
+                wait: () => Promise.reject(aborted),
             }).execute({ runId: "run-1", waitForTerminalSeconds: 2 }, ctx),
         ).rejects.toBe(aborted);
     });
@@ -347,10 +346,10 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const result = (
             await createInspectRunTool(pool, {
                 now: () => 0,
-                wait:  () => {
+                wait: () => {
                     waits++;
                     return Promise.resolve();
-},
+                },
             }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
         )._unsafeUnwrap();
 

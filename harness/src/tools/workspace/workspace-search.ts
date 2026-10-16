@@ -11,6 +11,7 @@
  * exist) is an expected outcome — an empty result list, not an error.
  */
 
+import { maybeRecord } from "../../lib/shape.js";
 import { err, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -26,6 +27,7 @@ const UNDEFINED_TABLE = "42P01";
 
 /** True when a captured driver cause is the "undefined_table" SQLSTATE. */
 function isUndefinedTable(cause: unknown): boolean {
+    // SAFETY: the object guard bounds the read — the cast only reaches the `.code` property, and the exact-string comparison rejects every other shape.
     return !!cause && typeof cause === "object" && (cause as { code?: unknown }).code === UNDEFINED_TABLE;
 }
 
@@ -50,7 +52,7 @@ const PATTERN_TYPES = new Set(["input-group", "input-dimension", "input-kind"]);
  * segment. The consumer branches on presence, nothing else.
  */
 export function fileTargetOf(id: string, metadata: unknown): string | undefined {
-    const meta = metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
+    const meta = maybeRecord(metadata) ?? {};
     const type = typeof meta.type === "string" ? meta.type : undefined;
     if (type !== undefined && PATTERN_TYPES.has(type)) return undefined;
     if (type === "input" && meta.entity !== undefined) return undefined;

@@ -117,12 +117,12 @@ const MAX_SUBMIT_ROUNDS = 2;
 const STAGED_INPUT_ROOT = "data/inputs";
 
 /** The settle of one profile claim: the ledger row left `running`, and the terminal write stamped it. */
-export interface DataProfileSettlement {
+export type DataProfileSettlement = {
     readonly analysisId: string;
     readonly status: "completed" | "failed";
     /** The `data_profile_completed_at` that the terminal write stamped, as an ISO 8601 string. */
     readonly completedAt: string;
-}
+};
 
 /** The notice of a profile settle. The workflow body calls it one time for each settled claim. */
 export type NotifyDataProfileSettled = (settlement: DataProfileSettlement) => ResultAsync<void, NoticeFailure>;
@@ -275,8 +275,9 @@ async function readSetHeaders(args: {
             sandbox,
             mountRoot: `/${analysisId}`,
             deadlineMs,
-            emit:  () => {    return Promise.resolve();
-},
+            emit: () => {
+                return Promise.resolve();
+            },
         });
     } catch (err) {
         if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
@@ -740,7 +741,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     "the errors; the repair is a FULL resubmit of the whole operation list.",
                 inputSchema: ProfileSubmissionSchema,
                 describeCall: "none",
-                execute:  (input): Promise<Result<SubmitOutcome, ToolError>> => {
+                execute: (input): Promise<Result<SubmitOutcome, ToolError>> => {
                     rounds++;
                     // The last round resolves as final: nothing that follows can repair an
                     // overlap, so a contested file sweeps rather than being awarded to whichever
@@ -751,13 +752,15 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                         return Promise.resolve(ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) }));
                     }
                     accepted = { submission: input, resolution };
-                    return Promise.resolve(ok({
-                        status: "accepted",
-                        groups: resolution.groups.length,
-                        keptFiles: resolution.partition.keptFiles,
-                        unclassifiedFiles: resolution.partition.unclassifiedFiles,
-                        unresolvedOperations: resolution.errors.length,
-                    }));
+                    return Promise.resolve(
+                        ok({
+                            status: "accepted",
+                            groups: resolution.groups.length,
+                            keptFiles: resolution.partition.keptFiles,
+                            unclassifiedFiles: resolution.partition.unclassifiedFiles,
+                            unresolvedOperations: resolution.errors.length,
+                        }),
+                    );
                 },
             });
 

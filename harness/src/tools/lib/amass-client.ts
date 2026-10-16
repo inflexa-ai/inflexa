@@ -120,6 +120,7 @@ function urlOf(path: string, params: Record<string, string | number | boolean | 
     for (const [key, value] of Object.entries(params)) {
         if (value === undefined) continue;
         if (Array.isArray(value)) {
+            // SAFETY: the parameter's array arm is `readonly string[]` — Array.isArray cannot narrow a readonly array, so the cast names the arm the guard proved.
             for (const item of value as readonly string[]) url.searchParams.append(key, item);
         } else {
             url.searchParams.append(key, String(value));

@@ -545,7 +545,7 @@ describe("AnalysisStep field-coverage guard", () => {
     // whether the sandbox agent needs to see it. It does not assert layout, so
     // wording/format changes to the renderer never break it.
 
-    const schemaKeys = Object.keys(AnalysisStepSchema.shape) as (keyof AnalysisStep)[];
+    const schemaKeys = Object.keys(AnalysisStepSchema.shape);
 
     it("classifies every schema field as task or non-task", () => {
         const task = new Set<string>(STEP_TASK_FIELDS);
@@ -561,11 +561,12 @@ describe("AnalysisStep field-coverage guard", () => {
     });
 
     it("keeps the analysis memory out of the plan step, because it comes from the working memory at dispatch", () => {
-        expect(schemaKeys as string[]).not.toContain("memory");
+        expect(schemaKeys).not.toContain("memory");
     });
 
     it("never classifies a field as both task and non-task", () => {
-        const overlap = STEP_TASK_FIELDS.filter((f) => (STEP_NON_TASK_FIELDS as readonly string[]).includes(f));
+        const nonTask = new Set<string>(STEP_NON_TASK_FIELDS);
+        const overlap = STEP_TASK_FIELDS.filter((f) => nonTask.has(f));
         expect(overlap).toEqual([]);
     });
 

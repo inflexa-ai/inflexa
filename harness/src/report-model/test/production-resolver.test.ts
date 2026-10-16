@@ -13,7 +13,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ArtifactTableReference, ArtifactValueReference, Reference } from "../../contracts/report-reference.js";
-import { computeSha256File } from "../../lib/fs-helpers.js";
 import { createFixtureResolver } from "../fixture-resolver.js";
 import {
     coerceCell,
@@ -23,7 +22,8 @@ import {
     type ExtractionArtifact,
     type ExtractionRequest,
 } from "../production-resolver.js";
-import type { ArtifactSnapshot, ReportSnapshot } from "../reference-resolver.js";
+import { computeSha256File } from "../../lib/fs-helpers.js";
+import type { ArtifactSnapshot, ReportSnapshot, ResolvedValue } from "../reference-resolver.js";
 import { typedMember } from "../../lib/shape.js";
 
 type Row = Record<string, string | number>;
@@ -70,6 +70,14 @@ function valueRef(
 /** Build a whole-table reference, or a projected-table reference when `columns` is present. */
 function tableRef(path: string, hash: string, columns?: string[]): ArtifactTableReference {
     return { kind: "artifact-table", path, hash, columns: columns ? columns : undefined };
+}
+
+/** Narrow a resolver value to its table arm. A test that reads rows or the total asked for the table; any other arm is a failure the test reports. */
+function tableOf(value: ResolvedValue): { type: "table"; rows: Row[]; columns?: string[]; total?: number } {
+    if (value.type !== "table") {
+        throw new Error(`expected a resolved table, got the ${value.type} arm`);
+    }
+    return value;
 }
 
 /** Build a snapshot from the given entries. The fixture reads the `rows`, and the production reads the file. */
@@ -391,10 +399,7 @@ describe("production resolver, the row bound", () => {
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
         const reference: ArtifactTableReference = { ...tableRef("bound.csv", hash), rowBound: { column: "score", count: 20 } };
 
-        const result = await resolver.resolve(reference, snapshotOf([{ path: "bound.csv", hash }]));
-
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const resolved = result._unsafeUnwrap() as { type: "table"; rows: Row[]; total?: number };
+        const resolved = tableOf((await resolver.resolve(reference, snapshotOf([{ path: "bound.csv", hash }])))._unsafeUnwrap());
         // The resolved table is the bounded table. Thus the card, the data asset, and the gate read one set.
         expect(resolved.rows.length).toBe(20);
         expect(resolved.rows[0].gene).toBe("G0");
@@ -419,11 +424,10 @@ describe("production resolver, the row bound", () => {
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
         const reference: ArtifactTableReference = { ...tableRef("padj.csv", hash), rowBound: { column: "padj", count: 2, order: "asc" } };
 
-        const result = await resolver.resolve(reference, snapshotOf([{ path: "padj.csv", hash }]));
+        const resolved = (await resolver.resolve(reference, snapshotOf([{ path: "padj.csv", hash }])))._unsafeUnwrap();
 
         // A CSV holds each cell as text. A text compare would rank `0.02` before `1e-9`.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["B", "C"]);
+        expect(tableOf(resolved).rows.map((row) => row.gene)).toEqual(["B", "C"]);
     });
 
     test("a tie keeps the order of the file, thus two runs give one result", async () => {
@@ -435,8 +439,7 @@ describe("production resolver, the row bound", () => {
         const first = await resolver.resolve(reference, snapshot);
         const second = await resolver.resolve(reference, snapshot);
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((first._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["A", "B", "C"]);
+        expect(tableOf(first._unsafeUnwrap()).rows.map((row) => row.gene)).toEqual(["A", "B", "C"]);
         expect(second._unsafeUnwrap()).toEqual(first._unsafeUnwrap());
     });
 
@@ -445,13 +448,12 @@ describe("production resolver, the row bound", () => {
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
         const reference: ArtifactTableReference = { ...tableRef("case.csv", hash), rowBound: { column: "label", count: 3, order: "asc" } };
 
-        const result = await resolver.resolve(reference, snapshotOf([{ path: "case.csv", hash }]));
+        const resolved = (await resolver.resolve(reference, snapshotOf([{ path: "case.csv", hash }])))._unsafeUnwrap();
 
         // The code-unit order puts each capital before each lowercase letter. An ICU collation ranks `a`
         // before `A`, and it varies with the host. The bounded rows reach the bytes of the data asset,
         // thus the order of the bound is part of the content address of that asset.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.label)).toEqual(["A", "B", "a"]);
+        expect(tableOf(resolved).rows.map((row) => row.label)).toEqual(["A", "B", "a"]);
         expect("a".localeCompare("A", "en")).toBeLessThan(0);
     });
 
@@ -460,12 +462,11 @@ describe("production resolver, the row bound", () => {
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
         const reference: ArtifactTableReference = { ...tableRef("sentinel.csv", hash), rowBound: { column: "score", count: 2 } };
 
-        const result = await resolver.resolve(reference, snapshotOf([{ path: "sentinel.csv", hash }]));
+        const resolved = (await resolver.resolve(reference, snapshotOf([{ path: "sentinel.csv", hash }])))._unsafeUnwrap();
 
         // The column is numeric, thus `NA` is the absence of a measurement. A bound of the top two rows
         // gives the two measurements, and never the two sentinels.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["C", "A"]);
+        expect(tableOf(resolved).rows.map((row) => row.gene)).toEqual(["C", "A"]);
     });
 
     test("a sentinel stays last under an ascending bound too", async () => {
@@ -473,11 +474,10 @@ describe("production resolver, the row bound", () => {
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
         const reference: ArtifactTableReference = { ...tableRef("sentinel-asc.csv", hash), rowBound: { column: "score", count: 3, order: "asc" } };
 
-        const result = await resolver.resolve(reference, snapshotOf([{ path: "sentinel-asc.csv", hash }]));
+        const resolved = (await resolver.resolve(reference, snapshotOf([{ path: "sentinel-asc.csv", hash }])))._unsafeUnwrap();
 
         // The direction orders the measurements. It never lifts a row that holds no rank.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["C", "B", "A"]);
+        expect(tableOf(resolved).rows.map((row) => row.gene)).toEqual(["C", "B", "A"]);
     });
 
     test("a column where nothing parses ranks by its text", async () => {
@@ -485,10 +485,9 @@ describe("production resolver, the row bound", () => {
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
         const reference: ArtifactTableReference = { ...tableRef("labels.csv", hash), rowBound: { column: "label", count: 2, order: "asc" } };
 
-        const result = await resolver.resolve(reference, snapshotOf([{ path: "labels.csv", hash }]));
+        const resolved = (await resolver.resolve(reference, snapshotOf([{ path: "labels.csv", hash }])))._unsafeUnwrap();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["B", "A"]);
+        expect(tableOf(resolved).rows.map((row) => row.gene)).toEqual(["B", "A"]);
     });
 
     test("a bound over an inherited member of a plain object refuses, and it throws nothing", async () => {
@@ -520,10 +519,9 @@ describe("production resolver, the row bound", () => {
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
         const reference: ArtifactTableReference = { ...tableRef("subset.csv", hash, ["gene"]), rowBound: { column: "score", count: 1 } };
 
-        const result = await resolver.resolve(reference, snapshotOf([{ path: "subset.csv", hash }]));
+        const resolved = (await resolver.resolve(reference, snapshotOf([{ path: "subset.csv", hash }])))._unsafeUnwrap();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows).toEqual([{ gene: "B" }]);
+        expect(tableOf(resolved).rows).toEqual([{ gene: "B" }]);
     });
 
     test("the fixture realization bounds the same rows as the production one", async () => {

@@ -12,13 +12,13 @@ import { describe, expect, it } from "bun:test";
 
 import { readFixture } from "../__fixtures__/fixture-runner.js";
 import { buildViabilityCalls, derivedViability, parsePhenotypeResponse } from "../impc-client.js";
+import { z } from "zod";
 
 describe("IMPC golden fixtures", () => {
     it("resolves the mouse marker of a human symbol", () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = readFixture("impc", "gene-select-TP53.json") as {
-            response: { numFound: number; docs: Record<string, unknown>[] };
-        };
+        const body = z
+            .looseObject({ response: z.looseObject({ numFound: z.number(), docs: z.array(z.record(z.string(), z.json())) }) })
+            .parse(readFixture("impc", "gene-select-TP53.json"));
         expect(body.response.numFound).toBe(1);
         expect(body.response.docs[0].marker_symbol).toBe("Trp53");
         expect(body.response.docs[0].mgi_accession_id).toBe("MGI:98834");
@@ -34,10 +34,9 @@ describe("IMPC golden fixtures", () => {
     });
 
     it("serves p_value as a float and sex as a string", () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = readFixture("impc", "gp-select-Trp53-rows5.json") as {
-            response: { docs: Record<string, unknown>[] };
-        };
+        const body = z
+            .looseObject({ response: z.looseObject({ docs: z.array(z.record(z.string(), z.json())) }) })
+            .parse(readFixture("impc", "gp-select-Trp53-rows5.json"));
         for (const doc of body.response.docs) {
             if ("p_value" in doc) expect(typeof doc.p_value).toBe("number");
             if ("sex" in doc) expect(typeof doc.sex).toBe("string");

@@ -116,8 +116,13 @@ export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, ca
 
     const place = new Map<string, number>(leaves.map((leaf, index) => [leaf, index]));
     // The reverse of the preorder meets each child before its parent, and the walk met each node, thus each
-    // lookup below finds a place.
-    const placeOf = (node: string): number => place.get(node) as number;
+    // lookup below finds a place: every leaf takes its place above, and every parent takes the middle of its
+    // children in the walk below.
+    const placeOf = (node: string): number => {
+        const found = place.get(node);
+        if (found === undefined) throw new Error(`the node "${node}" holds no place on the ${axis} axis.`);
+        return found;
+    };
     for (let index = preorder.length - 1; index >= 0; index -= 1) {
         const node = preorder[index];
         const children = childrenOf.get(node);

@@ -128,13 +128,16 @@ export function pointNameSeries(names: readonly NamedPoint[], placed: readonly (
  * `exportOption` reads. `names` are the names of the series that `build` can give, thus an export drops each page
  * series of those names, and a size where no text finds a place draws none.
  */
+/** The kinds of export size, in the order of the size table. The `satisfies` check drops this list from the compile the day the size table renames or removes one. */
+const EXPORT_SIZE_KINDS = ["single", "double", "slide"] as const satisfies readonly (keyof typeof CHART_EXPORT_SIZES)[];
+
 export function sizedSeries(
     names: readonly string[],
     build: (frame: NameFrame) => EchartOption[],
 ): { readonly page: EchartOption[]; readonly member: EchartOption } {
     const widths: Record<string, EchartOption[]> = {};
-    for (const [kind, size] of Object.entries(CHART_EXPORT_SIZES)) {
-        widths[String(size.widthPx)] = build(EXPORT_PLOT_FRAMES[kind as keyof typeof CHART_EXPORT_SIZES]);
+    for (const kind of EXPORT_SIZE_KINDS) {
+        widths[String(CHART_EXPORT_SIZES[kind].widthPx)] = build(EXPORT_PLOT_FRAMES[kind]);
     }
     const sized: SizedSeries = { names, widths };
     return { page: build(PAGE_PLOT_FRAME), member: { [SIZED_SERIES_MEMBER]: sized } };
@@ -219,7 +222,7 @@ export function seriesOf(option: EchartOption): EchartOption[] {
 /** The axis of an option as one object. A composition of one grid gives one object for each axis. */
 export function axisOf(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption {
     const axis = option[key];
-    return typeof axis === "object" && axis !== null && !Array.isArray(axis) ? (optionRecord(axis)) : {};
+    return typeof axis === "object" && axis !== null && !Array.isArray(axis) ? optionRecord(axis) : {};
 }
 
 /** The fields of one layer of points: the fill, the opacity, the symbol size, and the drawing order. */

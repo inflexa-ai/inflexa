@@ -6,32 +6,63 @@ import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { createReportSessionAgent, REPORT_SESSION_AGENT_ID } from "../report-session-agent.js";
 import { reportSessionPrompt } from "../../prompts/report-session.js";
 import { createRegistry } from "../../tools/registry.js";
-import type { EmbeddingProvider } from "../../providers/types.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
 import type { ReportSessionStateStore } from "../../state/report-session-state.js";
 import type { ReportVersionStore } from "../../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../../tools/report-authoring/authoring-tools.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, stubEmbeddingProvider, stubWorkspaceFilesystem } from "../../lib/test/doubles.js";
 
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice for
 // asserting the assembled `AgentDefinition`'s shape.
 function buildAgent(toolOutputStore?: ToolOutputStore) {
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return createReportSessionAgent({
         model: "anthropic/claude-opus-4-8",
         pool: poolDouble(),
-        embedding: {} as EmbeddingProvider,
-        workspaceFs: {} as WorkspaceFilesystem,
-        gateway: {} as ReportSessionStateGateway,
-        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
-        store: {} as ReportVersionStore,
-        threads: {} as Pick<ThreadStore, "getThread" | "setAutoTitle">,
+        embedding: stubEmbeddingProvider(),
+        workspaceFs: stubWorkspaceFilesystem(),
+        gateway: unwiredGateway(),
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+        store: unwiredStore(),
+        threads: unwiredTitleStore(),
         chrome: {},
-        derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
+        derivations: unwiredDerivationStore(),
         toolOutputStore: toolOutputStore ? toolOutputStore : undefined,
     });
+}
+
+function unwired(where: string): never {
+    throw new Error(`${where}: read without a stub`);
+}
+
+function unwiredGateway(): ReportSessionStateGateway {
+    return {
+        load: () => unwired("unwiredGateway.load"),
+        persist: () => unwired("unwiredGateway.persist"),
+        stampRendered: () => unwired("unwiredGateway.stampRendered"),
+        stampSeen: () => unwired("unwiredGateway.stampSeen"),
+    };
+}
+
+function unwiredStore(): ReportVersionStore {
+    return {
+        record: () => unwired("unwiredStore.record"),
+        getVersion: () => unwired("unwiredStore.getVersion"),
+        getThreadVersion: () => unwired("unwiredStore.getThreadVersion"),
+    };
+}
+
+function unwiredTitleStore(): Pick<ThreadStore, "getThread" | "setAutoTitle"> {
+    return {
+        getThread: () => unwired("unwiredTitleStore.getThread"),
+        setAutoTitle: () => unwired("unwiredTitleStore.setAutoTitle"),
+    };
+}
+
+function unwiredDerivationStore(): Pick<ReportSessionStateStore, "appendDerivation"> {
+    return {
+        appendDerivation: () => unwired("unwiredDerivationStore.appendDerivation"),
+    };
 }
 
 // The read surface toward the analysis. The roster roams the tree read-only.

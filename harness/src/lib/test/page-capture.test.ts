@@ -6,10 +6,12 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import type { Browser, MediaFeature, ScreenshotOptions, Viewport } from "puppeteer-core";
+import { Browser, BrowserContext, type EvaluateFunc, type MediaFeature, Page, type ScreenshotOptions, type Viewport } from "puppeteer-core";
 
+import { must } from "./guards.js";
 import { setBrowserConnector } from "../chrome.js";
 import { capturePage } from "../page-capture.js";
+import { isError } from "../thrown.js";
 
 /**
  * The steps that the capture drove, in order, the arguments that it gave to each of the three setters, and
@@ -48,64 +50,338 @@ type ShotPlan = {
 const FULL_PAGE_SHOT = "c2hvdA==";
 const VIEWPORT_SHOT = "dmlld3BvcnQ=";
 
+/** The loud answer of a member the capture never drives. */
+function unstubbed(where: string): never {
+    throw new Error(`${where}: the capture does not drive this member`);
+}
+
+/**
+ * The page, the context, and the browser of one capture, as real puppeteer subclasses.
+ *
+ * The puppeteer classes carry an `EventEmitter` base that holds a `#private`
+ * field, so no object literal types as one and a subclass instance is the only
+ * cast-free double (the kit pattern of `src/lib/test/doubles.ts`). The page
+ * answers the members the capture drives: each setter records its step and its
+ * argument, each evaluation is dispatched by the name of the function the
+ * capture sends, and each screenshot call records its options and answers the
+ * plan. Every other member fails loudly.
+ */
+class RecordingPage extends Page {
+    readonly #recorder: Recorder;
+    readonly #plan: ShotPlan;
+    constructor(recorder: Recorder, plan: ShotPlan) {
+        super();
+        this.#recorder = recorder;
+        this.#plan = plan;
+    }
+    override setViewport(viewport: Viewport): Promise<void> {
+        this.#recorder.steps.push("viewport");
+        this.#recorder.viewports.push(viewport);
+        return Promise.resolve();
+    }
+    override emulateMediaFeatures(features: MediaFeature[]): Promise<void> {
+        this.#recorder.steps.push("emulate");
+        this.#recorder.features.push(features);
+        return Promise.resolve();
+    }
+    override goto(): Promise<null> {
+        this.#recorder.steps.push("goto");
+        return Promise.resolve(null);
+    }
+    override evaluate<Params extends unknown[], Func extends EvaluateFunc<Params>>(
+        pageFunction: Func | string,
+        ...args: Params
+    ): Promise<Awaited<ReturnType<Func>>>;
+    override evaluate(...args: unknown[]): Promise<unknown> {
+        const body = args.at(0);
+        if (typeof body === "function" && body.name === "measureScrollHeight") {
+            this.#recorder.steps.push("measure");
+            return Promise.resolve(this.#plan.scrollHeight);
+        }
+        if (typeof body === "function" && body.name === "measureBlock") {
+            this.#recorder.steps.push("measure-block");
+            this.#recorder.blockMeasures.push(args.slice(1));
+            return Promise.resolve(this.#plan.blockArea ?? null);
+        }
+        this.#recorder.steps.push("evaluate");
+        return Promise.resolve(undefined);
+    }
+    override waitForSelector(): Promise<never> {
+        return unstubbed("RecordingPage.waitForSelector");
+    }
+    override screenshot(options?: Readonly<ScreenshotOptions> & { encoding: "base64" }): Promise<string>;
+    override screenshot(options?: Readonly<ScreenshotOptions>): Promise<Uint8Array>;
+    override screenshot(options?: Readonly<ScreenshotOptions>): Promise<string | Uint8Array> {
+        const shot = must(options, "screenshot options");
+        this.#recorder.steps.push("screenshot");
+        this.#recorder.shots.push(shot);
+        if (shot.clip !== undefined) {
+            if (this.#plan.failTile !== undefined) return Promise.reject(this.#plan.failTile);
+            return Promise.resolve(`TILE-${shot.clip.y}`);
+        }
+        const refusal = shot.fullPage === true ? this.#plan.failFullPage : this.#plan.failViewport;
+        if (refusal !== undefined) return Promise.reject(refusal);
+        return Promise.resolve(shot.fullPage === true ? FULL_PAGE_SHOT : VIEWPORT_SHOT);
+    }
+    override close(): Promise<void> {
+        return Promise.resolve();
+    }
+
+    override isServiceWorkerBypassed(): boolean {
+        return unstubbed("RecordingPage.isServiceWorkerBypassed");
+    }
+    override isDragInterceptionEnabled(): boolean {
+        return unstubbed("RecordingPage.isDragInterceptionEnabled");
+    }
+    override isJavaScriptEnabled(): boolean {
+        return unstubbed("RecordingPage.isJavaScriptEnabled");
+    }
+    override waitForFileChooser(): Promise<never> {
+        return unstubbed("RecordingPage.waitForFileChooser");
+    }
+    override setGeolocation(): Promise<void> {
+        return unstubbed("RecordingPage.setGeolocation");
+    }
+    override target(): never {
+        return unstubbed("RecordingPage.target");
+    }
+    override browser(): never {
+        return unstubbed("RecordingPage.browser");
+    }
+    override browserContext(): never {
+        return unstubbed("RecordingPage.browserContext");
+    }
+    override mainFrame(): never {
+        return unstubbed("RecordingPage.mainFrame");
+    }
+    override createCDPSession(): Promise<never> {
+        return unstubbed("RecordingPage.createCDPSession");
+    }
+    override get keyboard(): never {
+        return unstubbed("RecordingPage.keyboard");
+    }
+    override get touchscreen(): never {
+        return unstubbed("RecordingPage.touchscreen");
+    }
+    override get coverage(): never {
+        return unstubbed("RecordingPage.coverage");
+    }
+    override get tracing(): never {
+        return unstubbed("RecordingPage.tracing");
+    }
+    override get mouse(): never {
+        return unstubbed("RecordingPage.mouse");
+    }
+    override frames(): never[] {
+        return unstubbed("RecordingPage.frames");
+    }
+    override workers(): never[] {
+        return unstubbed("RecordingPage.workers");
+    }
+    override setRequestInterception(): Promise<void> {
+        return unstubbed("RecordingPage.setRequestInterception");
+    }
+    override setBypassServiceWorker(): Promise<void> {
+        return unstubbed("RecordingPage.setBypassServiceWorker");
+    }
+    override setDragInterception(): Promise<void> {
+        return unstubbed("RecordingPage.setDragInterception");
+    }
+    override setOfflineMode(): Promise<void> {
+        return unstubbed("RecordingPage.setOfflineMode");
+    }
+    override emulateNetworkConditions(): Promise<void> {
+        return unstubbed("RecordingPage.emulateNetworkConditions");
+    }
+    override setDefaultNavigationTimeout(): void {
+        unstubbed("RecordingPage.setDefaultNavigationTimeout");
+    }
+    override setDefaultTimeout(): void {
+        unstubbed("RecordingPage.setDefaultTimeout");
+    }
+    override getDefaultTimeout(): number {
+        return unstubbed("RecordingPage.getDefaultTimeout");
+    }
+    override getDefaultNavigationTimeout(): number {
+        return unstubbed("RecordingPage.getDefaultNavigationTimeout");
+    }
+    override queryObjects(): Promise<never> {
+        return unstubbed("RecordingPage.queryObjects");
+    }
+    override cookies(): Promise<never[]> {
+        return unstubbed("RecordingPage.cookies");
+    }
+    override deleteCookie(): Promise<void> {
+        return unstubbed("RecordingPage.deleteCookie");
+    }
+    override setCookie(): Promise<void> {
+        return unstubbed("RecordingPage.setCookie");
+    }
+    override exposeFunction(): Promise<void> {
+        return unstubbed("RecordingPage.exposeFunction");
+    }
+    override removeExposedFunction(): Promise<void> {
+        return unstubbed("RecordingPage.removeExposedFunction");
+    }
+    override authenticate(): Promise<void> {
+        return unstubbed("RecordingPage.authenticate");
+    }
+    override setExtraHTTPHeaders(): Promise<void> {
+        return unstubbed("RecordingPage.setExtraHTTPHeaders");
+    }
+    override setUserAgent(): Promise<void> {
+        return unstubbed("RecordingPage.setUserAgent");
+    }
+    override metrics(): Promise<never> {
+        return unstubbed("RecordingPage.metrics");
+    }
+    override reload(): Promise<null> {
+        return unstubbed("RecordingPage.reload");
+    }
+    override goBack(): Promise<null> {
+        return unstubbed("RecordingPage.goBack");
+    }
+    override goForward(): Promise<null> {
+        return unstubbed("RecordingPage.goForward");
+    }
+    override bringToFront(): Promise<void> {
+        return unstubbed("RecordingPage.bringToFront");
+    }
+    override setJavaScriptEnabled(): Promise<void> {
+        return unstubbed("RecordingPage.setJavaScriptEnabled");
+    }
+    override setBypassCSP(): Promise<void> {
+        return unstubbed("RecordingPage.setBypassCSP");
+    }
+    override emulateMediaType(): Promise<void> {
+        return unstubbed("RecordingPage.emulateMediaType");
+    }
+    override emulateCPUThrottling(): Promise<void> {
+        return unstubbed("RecordingPage.emulateCPUThrottling");
+    }
+    override emulateTimezone(): Promise<void> {
+        return unstubbed("RecordingPage.emulateTimezone");
+    }
+    override emulateIdleState(): Promise<void> {
+        return unstubbed("RecordingPage.emulateIdleState");
+    }
+    override emulateVisionDeficiency(): Promise<void> {
+        return unstubbed("RecordingPage.emulateVisionDeficiency");
+    }
+    override viewport(): null {
+        return unstubbed("RecordingPage.viewport");
+    }
+    override evaluateOnNewDocument(): Promise<never> {
+        return unstubbed("RecordingPage.evaluateOnNewDocument");
+    }
+    override removeScriptToEvaluateOnNewDocument(): Promise<void> {
+        return unstubbed("RecordingPage.removeScriptToEvaluateOnNewDocument");
+    }
+    override setCacheEnabled(): Promise<void> {
+        return unstubbed("RecordingPage.setCacheEnabled");
+    }
+    override createPDFStream(): Promise<never> {
+        return unstubbed("RecordingPage.createPDFStream");
+    }
+    override pdf(): Promise<Uint8Array> {
+        return unstubbed("RecordingPage.pdf");
+    }
+    override isClosed(): boolean {
+        return unstubbed("RecordingPage.isClosed");
+    }
+    override waitForDevicePrompt(): Promise<never> {
+        return unstubbed("RecordingPage.waitForDevicePrompt");
+    }
+}
+
+class RecordingContext extends BrowserContext {
+    readonly #page: RecordingPage;
+    constructor(recorder: Recorder, plan: ShotPlan) {
+        super();
+        this.#page = new RecordingPage(recorder, plan);
+    }
+    override newPage(): Promise<Page> {
+        return Promise.resolve(this.#page);
+    }
+    override close(): Promise<void> {
+        return Promise.resolve();
+    }
+    override targets(): never[] {
+        return unstubbed("RecordingContext.targets");
+    }
+    override pages(): Promise<Page[]> {
+        return unstubbed("RecordingContext.pages");
+    }
+    override overridePermissions(): Promise<void> {
+        return unstubbed("RecordingContext.overridePermissions");
+    }
+    override clearPermissionOverrides(): Promise<void> {
+        return unstubbed("RecordingContext.clearPermissionOverrides");
+    }
+    override browser(): never {
+        return unstubbed("RecordingContext.browser");
+    }
+    override cookies(): Promise<never[]> {
+        return unstubbed("RecordingContext.cookies");
+    }
+    override setCookie(): Promise<void> {
+        return unstubbed("RecordingContext.setCookie");
+    }
+}
+
+class RecordingBrowser extends Browser {
+    readonly #context: RecordingContext;
+    constructor(recorder: Recorder, plan: ShotPlan) {
+        super();
+        this.#context = new RecordingContext(recorder, plan);
+    }
+    override get connected(): boolean {
+        return true;
+    }
+    override get debugInfo() {
+        return { pendingProtocolErrors: [] };
+    }
+    // A browser reached over CDP holds no child process, so `null` is the honest answer.
+    override process(): null {
+        return null;
+    }
+    override createBrowserContext(): Promise<BrowserContext> {
+        return Promise.resolve(this.#context);
+    }
+    override browserContexts(): BrowserContext[] {
+        return [this.#context];
+    }
+    override defaultBrowserContext(): BrowserContext {
+        return this.#context;
+    }
+    override wsEndpoint(): string {
+        return "ws://capture.test";
+    }
+    override newPage(): Promise<Page> {
+        return this.#context.newPage();
+    }
+    override version(): Promise<string> {
+        return Promise.resolve("stub");
+    }
+    override userAgent(): Promise<string> {
+        return Promise.resolve("stub");
+    }
+    override close(): Promise<void> {
+        return Promise.resolve();
+    }
+    override disconnect(): Promise<void> {
+        return Promise.resolve();
+    }
+    override targets(): never[] {
+        return unstubbed("RecordingBrowser.targets");
+    }
+    override target(): never {
+        return unstubbed("RecordingBrowser.target");
+    }
+}
+
 function makeFakeBrowser(recorder: Recorder, plan: ShotPlan = {}): Browser {
-    const page = {
-        on: () => {},
-        setViewport:  (viewport: Viewport) => {
-            recorder.steps.push("viewport");
-            recorder.viewports.push(viewport);
-            return Promise.resolve();
-},
-        emulateMediaFeatures:  (features: MediaFeature[]) => {
-            recorder.steps.push("emulate");
-            recorder.features.push(features);
-            return Promise.resolve();
-        },
-        goto: () => {
-            recorder.steps.push("goto");
-            return Promise.resolve();
-        },
-        // Each evaluation of the capture is a named function, thus the fake reads the name, and each
-        // evaluation gets its own step name and answer.
-        evaluate: (body: { name: string }, ...args: unknown[]) => {
-            if (body.name === "measureScrollHeight") {
-                recorder.steps.push("measure");
-                return Promise.resolve(plan.scrollHeight);
-            }
-            if (body.name === "measureBlock") {
-                recorder.steps.push("measure-block");
-                recorder.blockMeasures.push(args);
-                return Promise.resolve(plan.blockArea ?? null);
-            }
-            recorder.steps.push("evaluate");
-            return Promise.resolve(undefined);
-        },
-        screenshot: (options: ScreenshotOptions) => {
-            recorder.steps.push("screenshot");
-            recorder.shots.push(options);
-            if (options.clip !== undefined) {
-                if (plan.failTile !== undefined) return Promise.reject(plan.failTile);
-                return Promise.resolve(`TILE-${options.clip.y}`);
-            }
-            const refusal = options.fullPage === true ? plan.failFullPage : plan.failViewport;
-            if (refusal !== undefined) return Promise.reject(refusal);
-            return Promise.resolve(options.fullPage === true ? FULL_PAGE_SHOT : VIEWPORT_SHOT);
-        },
-    };
-    const fake = {
-        connected: true,
-        on: () => {},
-        wsEndpoint: () => "ws://capture.test",
-        createBrowserContext: () => Promise.resolve({
-            newPage: () => Promise.resolve(page),
-            close: () => Promise.resolve({}),
-        }),
-    };
-    // The capture reads seven members of a page, and the connection cache reads four members of a browser.
-    // The fake carries those members, thus no call of the capture reaches the gap between the fake and the
-    // class of puppeteer.
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return fake as unknown as Browser;
+    return new RecordingBrowser(recorder, plan);
 }
 
 let restoreConnector: (() => void) | undefined;
@@ -207,7 +483,8 @@ describe("the tiled capture", () => {
 
     it("retries at the window when a tile bitmap fails, and names the viewport coverage", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 5000, failTile: new Error("the compositor refused the bitmap") })),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 5000, failTile: new Error("the compositor refused the bitmap") })),
         );
 
         const capture = await capturePage({ browserUrl: "http://capture-tile-fail.test:9222" }, "http://page.test/report");
@@ -223,7 +500,9 @@ describe("the tiled capture", () => {
 describe("the degraded capture", () => {
     it("retries at the window when the full-page bitmap fails, and names the viewport coverage", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { failFullPage: new Error("the compositor refused the bitmap") })));
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { failFullPage: new Error("the compositor refused the bitmap") })),
+        );
 
         const capture = await capturePage({ browserUrl: "http://capture-degrade.test:9222" }, "http://page.test/report");
 
@@ -239,7 +518,8 @@ describe("the degraded capture", () => {
     it("propagates the fault when the window bitmap also fails", async () => {
         const recorder = makeRecorder();
         const refusedFullPage = new Error("the compositor refused the bitmap");
-        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { failFullPage: refusedFullPage, failViewport: new Error("the browser is broken") })),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { failFullPage: refusedFullPage, failViewport: new Error("the browser is broken") })),
         );
 
         const capture = capturePage({ browserUrl: "http://capture-broken.test:9222" }, "http://page.test/report");
@@ -248,8 +528,8 @@ describe("the degraded capture", () => {
         await expect(capture).rejects.toThrow("the browser is broken");
         // The report of a dead look names the second refusal, thus the first one rides on it as the cause.
         const thrown = await capture.catch((cause: unknown) => cause);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((thrown as Error).cause).toBe(refusedFullPage);
+        const thrownError = isError(thrown) ? thrown : undefined;
+        expect(thrownError?.cause).toBe(refusedFullPage);
         expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }, { encoding: "base64" }]);
     });
 });
@@ -257,7 +537,8 @@ describe("the degraded capture", () => {
 describe("the block capture", () => {
     it("clips the measured box of the block, and names the block coverage", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 16000, blockArea: { x: 300, width: 900, fromY: 5200, toY: 5700 } })),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 16000, blockArea: { x: 300, width: 900, fromY: 5200, toY: 5700 } })),
         );
 
         const capture = await capturePage({ browserUrl: "http://capture-block.test:9222" }, "http://page.test/report", { blockId: "sec-results" });
@@ -272,7 +553,8 @@ describe("the block capture", () => {
 
     it("slices a tall block, and cuts it at the budget", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 40000, blockArea: { x: 0, width: 1440, fromY: 1000, toY: 26000 } })),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 40000, blockArea: { x: 0, width: 1440, fromY: 1000, toY: 26000 } })),
         );
 
         const capture = await capturePage({ browserUrl: "http://capture-block-tall.test:9222" }, "http://page.test/report", { blockId: "s1" });
@@ -296,10 +578,13 @@ describe("the block capture", () => {
 
     it("propagates a refused slice of a block, because the window does not show the block", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, {
-                blockArea: { x: 0, width: 1440, fromY: 3000, toY: 3400 },
-                failTile: new Error("the compositor refused the bitmap"),
-            })),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(
+                makeFakeBrowser(recorder, {
+                    blockArea: { x: 0, width: 1440, fromY: 3000, toY: 3400 },
+                    failTile: new Error("the compositor refused the bitmap"),
+                }),
+            ),
         );
 
         const capture = capturePage({ browserUrl: "http://capture-block-fail.test:9222" }, "http://page.test/report", { blockId: "b1" });

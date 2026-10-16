@@ -31,8 +31,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { errAsync, okAsync } from "neverthrow";
-import type { Pool } from "pg";
-import { ChatPartSchema, RunSynthesisPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
+import { ChatPartSchema, DagStatePartSchema, RunFailedPartSchema, RunSynthesisPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { createWorkingMemory } from "../../memory/working-memory.js";
@@ -44,7 +43,6 @@ import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation } from "
 import type { RunProvenanceEvent } from "../../provenance/seam.js";
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "../sandbox-step.js";
 import { __resetWorkflowMetricsForTest } from "../metrics.js";
-import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
 import type { AnalysisStep } from "../../schemas/workflow-state.js";
 import type { KnowledgeClient } from "../../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fixtures__/fake-client.js";
@@ -53,7 +51,7 @@ import { captureMetrics } from "../../__tests__/setup/metrics.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { isError } from "../../lib/thrown.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, stubChatProvider, stubEmbeddingProvider } from "../../lib/test/doubles.js";
 import { optionRecord } from "../../report-render/option-lens.js";
 
 // ── Fake DBOS surface ────────────────────────────────────────────────
@@ -251,30 +249,22 @@ beforeEach(async () => {
 
 // ── Fake pool ────────────────────────────────────────────────────────
 
-type FakePool = {
-    readonly queries: Array<{ text: string; values?: readonly unknown[] }>;
-    query: Pool["query"];
-};
+type PoolQuery = { text: string; values?: readonly unknown[] };
 
-function makeFakePool(rowByText: Record<string, unknown[]> = {}): FakePool {
-    const queries: FakePool["queries"] = [];
-    const query = (mock as unknown as <T>(fn: (q: { text: string; values?: readonly unknown[] }) => Promise<T>) => unknown)(
-        (q: { text: string; values?: readonly unknown[] }) => {
-            queries.push(q);
-            // Crude prefix match — returns the configured rows for the first
-            // prefix that hits, otherwise an empty rowset.
-            for (const prefix of Object.keys(rowByText)) {
-                if (q.text.trim().startsWith(prefix)) {
-                    return Promise.resolve({
-                        rows: rowByText[prefix],
-                        rowCount: rowByText[prefix].length,
-                    });
-                }
+function makeFakePool(rowByText: Record<string, unknown[]> = {}) {
+    const queries: PoolQuery[] = [];
+    const pool = poolDouble((query) => {
+        queries.push(query);
+        // Crude prefix match — returns the configured rows for the first
+        // prefix that hits, otherwise an empty rowset.
+        for (const prefix of Object.keys(rowByText)) {
+            if (query.text.trim().startsWith(prefix)) {
+                return { rows: rowByText[prefix], rowCount: rowByText[prefix].length };
             }
-            return Promise.resolve({ rows: [], rowCount: 0 });
-        },
-    );
-    return { queries, query: query as Pool["query"] };
+        }
+        return { rows: [], rowCount: 0 };
+    });
+    return { pool, queries };
 }
 
 /**
@@ -301,9 +291,14 @@ function synthesisSuspendError(reason: string): Error {
 }
 
 /** Suspend-analysis writes the body issues in-line on the suspension path. */
-function suspendWrites(pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> {
+/** Every `data-dag-state` part a run emitted, parsed with the part's own schema. */
+function dagPartsOf(emittedParts: FakeDepsRecord["emittedParts"]) {
+    return emittedParts.filter((p) => p.type === "data-dag-state").map((p) => DagStatePartSchema.parse(p));
+}
+
+function suspendWrites(queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> {
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-    return pool.queries.filter((q) => /UPDATE\s+cortex_analysis_state\s+SET\s+status\s*=\s*'suspended_insufficient_funds'/i.test(q.text));
+    return queries.filter((q) => /UPDATE\s+cortex_analysis_state\s+SET\s+status\s*=\s*'suspended_insufficient_funds'/i.test(q.text));
 }
 
 // ── Fake handle factory ──────────────────────────────────────────────
@@ -330,7 +325,7 @@ type FakeDepsRecord = {
 
 function makeDeps(opts: {
     childResults: Map<string, SandboxStepResult | Error>;
-    pool: FakePool;
+    pool: ExecuteAnalysisDeps["pool"];
     emitRunEvent?: (event: RunProvenanceEvent, session: RunSession) => void;
     observeRun?: (observation: RunObservation) => void;
     knowledge?: KnowledgeClient;
@@ -350,9 +345,9 @@ function makeDeps(opts: {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     const deps: ExecuteAnalysisDeps = {
         citationResolver: unusedCitationResolver,
-        pool: poolDouble(opts.pool.query),
-        provider: {} as unknown as ChatProvider,
-        embedding: {} as unknown as EmbeddingProvider,
+        pool: opts.pool,
+        provider: stubChatProvider(),
+        embedding: stubEmbeddingProvider(),
         sandboxStepCallable: () => Promise.reject(new Error("sandboxStepCallable should not be invoked directly")),
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/tmp/cortex-execute-analysis-test", id)),
         workingMemory: createWorkingMemory(poolDouble(() => Promise.resolve({ rows: [], rowCount: 0 }))),
@@ -437,7 +432,7 @@ function input(
 
 describe("executeAnalysis body", () => {
     it("10.7 failure isolation: B fails → A and C run to completion; status partial, charge=ok", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         // A/B/C dispatch together; B fails on its own merits. Nothing depends
         // on B, so A and C keep running and complete — the parent cancels
         // nothing.
@@ -459,14 +454,14 @@ describe("executeAnalysis body", () => {
         expect(dbosState.cancelled.size).toBe(0);
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
-        expect(suspendWrites(pool)).toEqual([]);
+        expect(suspendWrites(queries)).toEqual([]);
         const terminal = record.emittedParts.find((p) => p.type === "data-run-failed" || p.type === "data-run-completed");
         expect(terminal?.type).toBe("data-run-completed");
-        expect((terminal as { status?: string } | undefined)?.status).toBe("partial");
+        expect(terminal?.status).toBe("partial");
     });
 
     it("blocked isolation: B blocked → A and C still complete; only B's dependents are doomed", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -497,7 +492,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("failure isolation: a diamond plan continues its independent branch; doomed dependents show skipped", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         // A → B → D and A → C → E. B fails while C is in flight: D is doomed
         // (never dispatched — no configured result, so the startWorkflow mock
@@ -532,9 +527,7 @@ describe("executeAnalysis body", () => {
 
         // The failure settlement marks D skipped in the very same dag emission
         // that shows B failed, while C (independent, still in flight) runs on.
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{
-            steps: Array<{ id: string; status: string }>;
-        }>;
+        const dagParts = dagPartsOf(record.emittedParts);
         const afterFailure = must(
             dagParts.find((p) => p.steps.some((s) => s.id === "B" && s.status === "failed")),
             "afterFailure",
@@ -561,7 +554,7 @@ describe("executeAnalysis body", () => {
 
         // Stream-only doom-marking: D's ledger row is touched by the pending
         // seed and the terminal sweep, never mid-run.
-        const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
+        const sweeps = queries.filter((q) => q.text.includes("SET status = 'skipped'"));
         expect(sweeps.length).toBe(1);
 
         // Surviving siblings settle with their own provenance; D emits nothing.
@@ -582,7 +575,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("multiple independent failures: run lands partial with the FIRST failure as the run-level reason", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -600,14 +593,14 @@ describe("executeAnalysis body", () => {
         // Run-level failureReason is the first failure in settlement order; the
         // per-step detail lives on the step ledger and the dag snapshot.
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const statusWrite = pool.queries.find((q) => /UPDATE cortex_runs\s+SET status/.test(q.text) && q.values?.[0] === "partial");
+        const statusWrite = queries.find((q) => /UPDATE cortex_runs\s+SET status/.test(q.text) && q.values?.[0] === "partial");
         expect(statusWrite?.values?.[2]).toBe("first boom");
     });
 
     // ── waitFirst: multi-child completion ──────────────────────────────
 
     it("waitFirst settles one child per iteration → all-complete sets, status completed", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -629,7 +622,7 @@ describe("executeAnalysis body", () => {
     // ── Budget admission ────────────────────────────────────────────────
 
     it("budget admission serializes dispatch, surfaces queued steps, and completes the run", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -647,7 +640,7 @@ describe("executeAnalysis body", () => {
         expect([...result.completedSteps].sort()).toEqual(["A", "B", "C"]);
         expect(result.failedSteps).toEqual([]);
 
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string }> }>;
+        const dagParts = dagPartsOf(record.emittedParts);
         const statusesOf = (id: string) =>
             dagParts.map(
                 (p) =>
@@ -670,7 +663,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("dag snapshot: each step carries its plan name, not its id", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -678,9 +671,7 @@ describe("executeAnalysis body", () => {
 
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{
-            steps: Array<{ id: string; name: string; artifactCount?: number; summary?: string }>;
-        }>;
+        const dagParts = dagPartsOf(record.emittedParts);
         expect(dagParts.length).toBeGreaterThan(0);
         for (const part of dagParts) {
             const step = must(
@@ -698,7 +689,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("budget admission: a step that can never fit fails the run with a budget-naming error", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         // No childResults — nothing may be dispatched.
         const { deps, record } = makeDeps({ pool, childResults: new Map() });
 
@@ -706,18 +697,16 @@ describe("executeAnalysis body", () => {
 
         expect(result.status).toBe("failed");
         expect(result.failedSteps).toEqual(["A"]);
-        const terminal = record.emittedParts.find((p) => p.type === "data-run-failed") as { error?: string } | undefined;
+        const terminal = record.emittedParts.find((p) => p.type === "data-run-failed");
         expect(terminal?.error).toContain("budget");
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{
-            steps: Array<{ id: string; status: string; error?: string }>;
-        }>;
+        const dagParts = dagPartsOf(record.emittedParts);
         const last = dagParts[dagParts.length - 1];
         expect(last.steps[0].status).toBe("failed");
         expect(last.steps[0].error).toContain("machine budget");
     });
 
     it("budget admission: a failed step frees capacity for a held step", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -733,7 +722,7 @@ describe("executeAnalysis body", () => {
         expect(result.status).toBe("partial");
         expect(result.completedSteps).toEqual(["B"]);
         expect(result.failedSteps).toEqual(["A"]);
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string }> }>;
+        const dagParts = dagPartsOf(record.emittedParts);
         const statusesOf = (id: string) =>
             dagParts.map(
                 (p) =>
@@ -747,7 +736,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("no budget in the workflow input keeps the legacy full fan-out", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -760,7 +749,7 @@ describe("executeAnalysis body", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }]), deps);
 
         expect(result.status).toBe("completed");
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string }> }>;
+        const dagParts = dagPartsOf(record.emittedParts);
         // First snapshot after dispatch: all three running at once, none queued.
         const first = dagParts[0];
         expect(first.steps.map((s) => s.status)).toEqual(["running", "running", "running"]);
@@ -772,7 +761,7 @@ describe("executeAnalysis body", () => {
     // ── 10.8 External cancel cascade ───────────────────────────────────
 
     it("10.8 external cancel: every child returns canceled (no failure) → status canceled, mandate workflow-canceled", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         // Operator cancelled the parent — propagated cancel to every child.
         // No child failed; no child reported budget_exceeded.
         const { deps, record } = makeDeps({
@@ -804,13 +793,13 @@ describe("executeAnalysis body", () => {
         expect(result.status).toBe("canceled");
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "canceled" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-canceled" }]);
-        expect(suspendWrites(pool)).toEqual([]);
+        expect(suspendWrites(queries)).toEqual([]);
     });
 
     // ── 10.10 Stream emission ──────────────────────────────────────────
 
     it("10.10 every UI part flows through emitStreamPart; cortex_runs.parts is never written", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -837,7 +826,7 @@ describe("executeAnalysis body", () => {
 
         // No UPDATE on cortex_runs.parts.
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const partsWrites = pool.queries.filter((q) => /UPDATE\s+cortex_runs\s+SET\s+parts/i.test(q.text));
+        const partsWrites = queries.filter((q) => /UPDATE\s+cortex_runs\s+SET\s+parts/i.test(q.text));
         expect(partsWrites).toEqual([]);
     });
 
@@ -852,7 +841,7 @@ describe("executeAnalysis body", () => {
     // keep the emitter conformant don't break it.
 
     it("conformance: every part from a completed run validates against the wire schema", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -883,7 +872,7 @@ describe("executeAnalysis body", () => {
     // ── Run-completed usage aggregate ──────────────────────────────────
 
     it("run-completed carries the sum of the steps' rollups", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         // Each child's rollup rides on its durable result — the only source the
         // parent reads, and the one a recovered parent reads back unchanged.
         const { deps, record } = makeDeps({
@@ -930,7 +919,7 @@ describe("executeAnalysis body", () => {
     it("run-completed carries no usage when no step reported one", async () => {
         // Absent, never an all-zero figure: a run whose providers said nothing
         // must stay distinguishable from one that genuinely spent nothing.
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -947,7 +936,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("run-completed aggregates only what settled children reported — a child that threw contributes nothing", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -967,7 +956,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("conformance: data-run-failed from a failed run carries a string error", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }]]),
@@ -979,13 +968,13 @@ describe("executeAnalysis body", () => {
         expect(failed).toBeDefined();
         expect(ChatPartSchema.safeParse(failed).success).toBe(true);
         expect(typeof failed?.error).toBe("string");
-        expect((failed as { error: string }).error.length).toBeGreaterThan(0);
+        expect(RunFailedPartSchema.parse(must(failed, "failed")).error.length).toBeGreaterThan(0);
     });
 
     // ── 10.11 Terminal billing close paths ─────────────────────────────
 
     it("10.11 success path closes charge with `ok` + revokes mandate workflow-completed", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1008,7 +997,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("10.11 a suspended child: the charge closes with the reason, the revoke is workflow-suspended, the analysis is marked, and the parent self-cancels", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", suspendChild("A", 0, "payment_required")]]),
@@ -1018,9 +1007,9 @@ describe("executeAnalysis body", () => {
 
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "payment_required" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
-        expect(suspendWrites(pool).length).toBe(1);
+        expect(suspendWrites(queries).length).toBe(1);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
+        const statusWrite = queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
         expect(statusWrite?.values).toContain("suspended_insufficient_funds");
         expect(statusWrite?.values).toContain("payment_required");
         // The terminal failed part carries the reason of the host, unread.
@@ -1032,7 +1021,7 @@ describe("executeAnalysis body", () => {
         const capture = captureMetrics();
         __resetWorkflowMetricsForTest();
         try {
-            const pool = makeFakePool();
+            const { pool } = makeFakePool();
             const { deps, record } = makeDeps({
                 pool,
                 childResults: new Map<string, SandboxStepResult | Error>([
@@ -1053,7 +1042,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("a child that fails with the text budget_exceeded and sends no typed suspension is a failed step", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1067,7 +1056,7 @@ describe("executeAnalysis body", () => {
         expect(result.status).toBe("partial");
         expect(result.failedSteps).toEqual(["A"]);
         expect(result.completedSteps).toEqual(["B"]);
-        expect(suspendWrites(pool)).toEqual([]);
+        expect(suspendWrites(queries)).toEqual([]);
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
     });
 
@@ -1075,7 +1064,7 @@ describe("executeAnalysis body", () => {
         // A completes (so synthesis runs); B depends on A and suspends. A
         // synthesis throw must win: the run fails (charge=error,
         // mandate=workflow-failed), is NOT suspended, and the workflow re-throws.
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1089,11 +1078,11 @@ describe("executeAnalysis body", () => {
 
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "error" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-failed" }]);
-        expect(suspendWrites(pool)).toEqual([]);
+        expect(suspendWrites(queries)).toEqual([]);
     });
 
     it("a refused charge fails the run before a step starts, with the reason of the host", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps, record } = makeDeps({ pool, childResults: new Map() });
         const refusing: ExecuteAnalysisDeps = { ...deps, runCharge: { ...deps.runCharge, open: () => errAsync({ reason: "charge_refused", suspend: false }) } };
 
@@ -1102,15 +1091,15 @@ describe("executeAnalysis body", () => {
         expect(result.status).toBe("failed");
         expect(dbosState.childInputs).toEqual([]);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
+        const statusWrite = queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
         expect(statusWrite?.values).toContain("failed");
         expect(statusWrite?.values).toContain("charge_refused");
-        expect(suspendWrites(pool)).toEqual([]);
+        expect(suspendWrites(queries)).toEqual([]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-failed" }]);
     });
 
     it("a refused charge with the suspend flag suspends the run before a step starts", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps, record } = makeDeps({ pool, childResults: new Map() });
         const refusing: ExecuteAnalysisDeps = { ...deps, runCharge: { ...deps.runCharge, open: () => errAsync({ reason: "no_funds", suspend: true }) } };
         dbosState.throwErrorOnStep.set("self-cancel-suspended", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
@@ -1118,10 +1107,10 @@ describe("executeAnalysis body", () => {
         await expect(runExecuteAnalysisBody(input([{ id: "A" }]), refusing)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
 
         expect(dbosState.childInputs).toEqual([]);
-        expect(suspendWrites(pool).length).toBe(1);
+        expect(suspendWrites(queries).length).toBe(1);
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "no_funds" } }]);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
+        const statusWrite = queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
         expect(statusWrite?.values).toContain("suspended_insufficient_funds");
         expect(statusWrite?.values).toContain("no_funds");
     });
@@ -1136,12 +1125,12 @@ describe("executeAnalysis body", () => {
     // workflow's persistence wiring: the recorded query text + values, and that
     // the write is absent when synthesis never ran.
 
-    const synthesisWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+    const synthesisWrites = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        pool.queries.filter((q) => /UPDATE\s+cortex_runs\s+SET\s+synthesis_status/i.test(q.text));
+        queries.filter((q) => /UPDATE\s+cortex_runs\s+SET\s+synthesis_status/i.test(q.text));
 
     it("produced synthesis → records synthesis_status 'produced' with a null reason; run completed", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1155,14 +1144,14 @@ describe("executeAnalysis body", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
         expect(result.status).toBe("completed");
-        const writes = synthesisWrites(pool);
+        const writes = synthesisWrites(queries);
         expect(writes.length).toBe(1);
         expect(writes[0].values).toEqual(["produced", null, "run-test"]);
     });
 
     it("blocker synthesis → records synthesis_status 'skipped_blocker' with the reason; run still completed", async () => {
         const BLOCKER_REASON = "all step summaries were empty";
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1177,13 +1166,13 @@ describe("executeAnalysis body", () => {
 
         // A skipped synthesis does not fail the run — the steps still completed.
         expect(result.status).toBe("completed");
-        const writes = synthesisWrites(pool);
+        const writes = synthesisWrites(queries);
         expect(writes.length).toBe(1);
         expect(writes[0].values).toEqual(["skipped_blocker", BLOCKER_REASON, "run-test"]);
     });
 
     it("failed synthesis → records synthesis_status 'failed' with the error message before re-throwing", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1194,13 +1183,13 @@ describe("executeAnalysis body", () => {
 
         // The terminal block persists the failure outcome even though the body
         // re-throws afterward to drive the workflow record to ERROR.
-        const writes = synthesisWrites(pool);
+        const writes = synthesisWrites(queries);
         expect(writes.length).toBe(1);
         expect(writes[0].values).toEqual(["failed", "synth boom", "run-test"]);
     });
 
     it("synthesis disabled → no synthesis_status write (ledger columns stay NULL) even when a step completed", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         // Ad hoc execution explicitly disables synthesis in its durable input.
         const { deps } = makeDeps({
             pool,
@@ -1210,7 +1199,7 @@ describe("executeAnalysis body", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
 
         expect(result.status).toBe("completed");
-        expect(synthesisWrites(pool)).toEqual([]);
+        expect(synthesisWrites(queries)).toEqual([]);
     });
 
     // ── The run-phase `synthesis` ledger row ───────────────────────────
@@ -1224,32 +1213,32 @@ describe("executeAnalysis body", () => {
     // point-in-time ledger state, not a call-count.
 
     /** The one seed insert (`ON CONFLICT … DO NOTHING`) — its VALUES are 5-wide row tuples. */
-    const seedWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+    const seedWrites = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO NOTHING/i.test(q.text));
+        queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO NOTHING/i.test(q.text));
 
     /** The mark-running upsert (`ON CONFLICT … DO UPDATE`) for the synthesis row. */
-    const synthesisMarkRunning = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+    const synthesisMarkRunning = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO UPDATE/i.test(q.text) && (q.values ?? []).includes("synthesis"));
+        queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO UPDATE/i.test(q.text) && (q.values ?? []).includes("synthesis"));
 
     /** The synthesis row's terminal `updateStepExecution` write (`SET status = $1`). */
-    const synthesisStepUpdates = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+    const synthesisStepUpdates = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        pool.queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = \$1/i.test(q.text) && (q.values ?? []).includes("synthesis"));
+        queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = \$1/i.test(q.text) && (q.values ?? []).includes("synthesis"));
 
     /** The terminal sweep (`pending` → `skipped`). */
-    const sweepWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+    const sweepWrites = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        pool.queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = 'skipped'/i.test(q.text));
+        queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = 'skipped'/i.test(q.text));
 
     /** The run row's status write (`updateRunStatus`). */
-    const runStatusWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+    const runStatusWrites = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        pool.queries.filter((q) => /UPDATE cortex_runs\s+SET status = \$1/i.test(q.text));
+        queries.filter((q) => /UPDATE cortex_runs\s+SET status = \$1/i.test(q.text));
 
     it("seeds the synthesis row with the DAG, last wave, when synthesis is enabled", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1261,7 +1250,7 @@ describe("executeAnalysis body", () => {
 
         await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
 
-        const seeds = seedWrites(pool);
+        const seeds = seedWrites(queries);
         expect(seeds.length).toBe(1);
         const values = [...(seeds[0].values ?? [])];
         // 2 DAG rows + the synthesis row, 5 values per tuple (runId, stepId, analysisId, wave, agentId).
@@ -1274,7 +1263,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("does not seed a synthesis row when synthesis is disabled", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1282,7 +1271,7 @@ describe("executeAnalysis body", () => {
 
         await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
 
-        const seeds = seedWrites(pool);
+        const seeds = seedWrites(queries);
         expect(seeds.length).toBe(1);
         const values = [...(seeds[0].values ?? [])];
         expect(values.length).toBe(5);
@@ -1290,7 +1279,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("marks the row running, then stamps it completed BEFORE the run row's terminal write", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1299,11 +1288,11 @@ describe("executeAnalysis body", () => {
 
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
-        const marks = synthesisMarkRunning(pool);
+        const marks = synthesisMarkRunning(queries);
         expect(marks.length).toBe(1);
         expect(marks[0].values).toContain("run-synthesizer");
 
-        const updates = synthesisStepUpdates(pool);
+        const updates = synthesisStepUpdates(queries);
         expect(updates.length).toBe(1);
         const [status, completedAt, durationMs, error, runId, stepId] = updates[0].values ?? [];
         expect(status).toBe("completed");
@@ -1317,10 +1306,10 @@ describe("executeAnalysis body", () => {
 
         // Ordering: at the moment the step row's terminal write executed, no run-row
         // status write had been recorded — the run row was still `running`.
-        const stepIdx = pool.queries.indexOf(updates[0]);
-        const runWrites = runStatusWrites(pool);
+        const stepIdx = queries.indexOf(updates[0]);
+        const runWrites = runStatusWrites(queries);
         expect(runWrites.length).toBe(1);
-        expect(stepIdx).toBeLessThan(pool.queries.indexOf(runWrites[0]));
+        expect(stepIdx).toBeLessThan(queries.indexOf(runWrites[0]));
     });
 
     it("skipped_no_summaries → row skipped; skipped_blocker → row blocked with the reason", async () => {
@@ -1328,7 +1317,7 @@ describe("executeAnalysis body", () => {
             ["skipped_no_summaries", null, "skipped"],
             ["skipped_blocker", "all step summaries were empty", "blocked"],
         ] as const) {
-            const pool = makeFakePool();
+            const { pool, queries } = makeFakePool();
             const { deps } = makeDeps({
                 pool,
                 childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1337,7 +1326,7 @@ describe("executeAnalysis body", () => {
 
             await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
-            const updates = synthesisStepUpdates(pool);
+            const updates = synthesisStepUpdates(queries);
             expect(updates.length).toBe(1);
             const values = [...(updates[0].values ?? [])];
             expect(values[0]).toBe(expectStatus);
@@ -1347,7 +1336,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("failed synthesis → row failed with the same reason as cortex_runs, stamped before the run fails", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1356,18 +1345,18 @@ describe("executeAnalysis body", () => {
 
         await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toThrow("synth boom");
 
-        const updates = synthesisStepUpdates(pool);
+        const updates = synthesisStepUpdates(queries);
         expect(updates.length).toBe(1);
         const [status, , , error] = updates[0].values ?? [];
         expect(status).toBe("failed");
         expect(error).toBe("synth boom");
-        const runWrites = runStatusWrites(pool);
+        const runWrites = runStatusWrites(queries);
         expect(runWrites.length).toBe(1);
-        expect(pool.queries.indexOf(updates[0])).toBeLessThan(pool.queries.indexOf(runWrites[0]));
+        expect(queries.indexOf(updates[0])).toBeLessThan(queries.indexOf(runWrites[0]));
     });
 
     it("cancellation mid-synthesis re-propagates with the row untouched and no outcome persisted", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1379,14 +1368,14 @@ describe("executeAnalysis body", () => {
         // The row was marked running and then left exactly there: no terminal
         // stamp, no cortex_runs synthesis outcome, no run-status write at all —
         // both ledgers stay `running` under the CANCELLED workflow (D7).
-        expect(synthesisMarkRunning(pool).length).toBe(1);
-        expect(synthesisStepUpdates(pool)).toEqual([]);
-        expect(synthesisWrites(pool)).toEqual([]);
-        expect(runStatusWrites(pool)).toEqual([]);
+        expect(synthesisMarkRunning(queries).length).toBe(1);
+        expect(synthesisStepUpdates(queries)).toEqual([]);
+        expect(synthesisWrites(queries)).toEqual([]);
+        expect(runStatusWrites(queries)).toEqual([]);
     });
 
     it("gate never passes (zero completed steps) → no mark-running; the terminal sweep runs", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "step died" }]]),
@@ -1395,14 +1384,14 @@ describe("executeAnalysis body", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
 
         expect(result.status).toBe("failed");
-        expect(synthesisMarkRunning(pool)).toEqual([]);
-        expect(synthesisStepUpdates(pool)).toEqual([]);
+        expect(synthesisMarkRunning(queries)).toEqual([]);
+        expect(synthesisStepUpdates(queries)).toEqual([]);
         // The seeded synthesis row is finalized by the sweep (`pending` → `skipped`).
-        expect(sweepWrites(pool).length).toBe(1);
+        expect(sweepWrites(queries).length).toBe(1);
     });
 
     it("a suspension: the synthesis row is already terminal and the sweep does not run", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1416,16 +1405,16 @@ describe("executeAnalysis body", () => {
             DBOSErrors.DBOSWorkflowCancelledError,
         );
 
-        const updates = synthesisStepUpdates(pool);
+        const updates = synthesisStepUpdates(queries);
         expect(updates.length).toBe(1);
         expect(updates[0].values?.[0]).toBe("completed");
         // The resumable suspension preserves pending DAG rows — no sweep — and the
         // synthesis row needs none: it reached its terminal before the suspension.
-        expect(sweepWrites(pool)).toEqual([]);
+        expect(sweepWrites(queries)).toEqual([]);
     });
 
     it("a suspend error of the synthesis suspends the run, cancels the synthesis row with the reason, and records no outcome", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1437,21 +1426,21 @@ describe("executeAnalysis body", () => {
 
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "payment_required" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
-        expect(suspendWrites(pool).length).toBe(1);
-        const runWrites = runStatusWrites(pool);
+        expect(suspendWrites(queries).length).toBe(1);
+        const runWrites = runStatusWrites(queries);
         expect(runWrites.length).toBe(1);
         expect(runWrites[0].values).toContain("suspended_insufficient_funds");
         expect(runWrites[0].values).toContain("payment_required");
-        const updates = synthesisStepUpdates(pool);
+        const updates = synthesisStepUpdates(queries);
         expect(updates.length).toBe(1);
         const [status, , , error] = updates[0].values ?? [];
         expect(status).toBe("canceled");
         expect(error).toBe("payment_required");
-        expect(synthesisWrites(pool)).toEqual([]);
+        expect(synthesisWrites(queries)).toEqual([]);
     });
 
     it("a suspend error of the synthesis after a suspended step keeps the suspension of the step", async () => {
-        const pool = makeFakePool();
+        const { pool, queries } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1467,13 +1456,13 @@ describe("executeAnalysis body", () => {
 
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "quota_exhausted" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
-        expect(suspendWrites(pool).length).toBe(1);
+        expect(suspendWrites(queries).length).toBe(1);
     });
 
     // ── Pending seed + terminal sweep ──────────────────────────────────
 
     it("seeds every plan step as pending at run start", async () => {
-        const pool = makeFakePool({
+        const { pool, queries } = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
         const { deps } = makeDeps({
@@ -1487,7 +1476,7 @@ describe("executeAnalysis body", () => {
         await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }], undefined, false), deps);
 
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const seeds = pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && q.text.includes("'pending'"));
+        const seeds = queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && q.text.includes("'pending'"));
         expect(seeds.length).toBe(1);
         // One 5-value tuple per step (runId, stepId, analysisId, wave, agentId);
         // B's wave is 1 (depends on A) and both carry the shared agent fallback map.
@@ -1496,7 +1485,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("unreachable dependents are swept to skipped; an all-failed run closes charge=error", async () => {
-        const pool = makeFakePool({
+        const { pool, queries } = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
         const { deps, record } = makeDeps({
@@ -1511,13 +1500,13 @@ describe("executeAnalysis body", () => {
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "error" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-failed" }]);
 
-        const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
+        const sweeps = queries.filter((q) => q.text.includes("SET status = 'skipped'"));
         expect(sweeps.length).toBe(1);
         expect(sweeps[0].values?.[0]).toBe("run-test");
     });
 
     it("a suspension preserves pending rows (no sweep), and dooms no dependent", async () => {
-        const pool = makeFakePool({
+        const { pool, queries } = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
         const { deps, record } = makeDeps({
@@ -1528,18 +1517,18 @@ describe("executeAnalysis body", () => {
         await expect(runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps)).rejects.toBeInstanceOf(
             DBOSErrors.DBOSWorkflowCancelledError,
         );
-        expect(suspendWrites(pool).length).toBe(1);
-        const dag = [...record.emittedParts].reverse().find((p) => p.type === "data-dag-state") as { steps: Array<{ id: string; status: string }> };
+        expect(suspendWrites(queries).length).toBe(1);
+        const dag = must(dagPartsOf(record.emittedParts).at(-1), "dag");
         expect(dag.steps.find((step) => step.id === "B")?.status).toBe("pending");
 
-        const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
+        const sweeps = queries.filter((q) => q.text.includes("SET status = 'skipped'"));
         expect(sweeps).toEqual([]);
     });
 
     // ── 10.14 No conversation-thread write ─────────────────────────────
 
     it("10.14 collectAndComplete writes nothing to the conversation thread", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1564,7 +1553,7 @@ describe("executeAnalysis body", () => {
     // ── Run-lifecycle provenance callback ──────────────────────────────
 
     it("without the run emit the run completes (absent member changes nothing)", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1576,7 +1565,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("the run emit collects run_started, step_completed, then run_completed on the success path with stub-sourced times", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
@@ -1613,7 +1602,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("the run emit gives step_completed(failed) and run_completed(failed) on the failed path", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
@@ -1647,7 +1636,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("step_completed records completed/failed/canceled per settled child; a never-dispatched dependent emits nothing", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         // A/B/C dispatch together at level 0; D depends on the failing B. A
         // completes, B fails (siblings are NOT cancelled — C's canceled result
@@ -1690,7 +1679,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("a zero-artifact completed step still emits step_completed(completed) — settlement is registration-independent", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         // Body-level settlement observes only the child's status — there is no
         // ArtifactRegistry in this path, so a step producing no artifact still
@@ -1710,7 +1699,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("a DBOS-recovery re-execution re-emits identical timestamps (values come from the checkpointed clock, not Date.now())", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
@@ -1742,7 +1731,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("every emit site delivers the workflow input's runSession alongside the event", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         const sessions: RunSession[] = [];
         const { deps } = makeDeps({
@@ -1769,7 +1758,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("a throwing run emit does not fail the run", async () => {
-        const pool = makeFakePool();
+        const { pool } = makeFakePool();
         const { deps } = makeDeps({
             pool,
             emitRunEvent: () => {
@@ -1787,7 +1776,7 @@ describe("executeAnalysis body", () => {
 
 describe("executeAnalysis child seed", () => {
     it("dispatches each child with a seed composed from its plan step, not a prompt frozen in the workflow input", async () => {
-        const pool = makeFakePool({
+        const { pool } = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
         const { deps } = makeDeps({
@@ -1817,7 +1806,7 @@ describe("executeAnalysis child seed", () => {
     });
 
     it("fails the step dispatch when the plan data for a step is missing from the workflow input", async () => {
-        const pool = makeFakePool({
+        const { pool } = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
         const { deps } = makeDeps({
@@ -1835,7 +1824,7 @@ describe("executeAnalysis child input projection", () => {
         // The child seeds its lineage collector from this field, and lineage
         // classification admits a same-run sibling edge only on declaration —
         // so a dropped projection here silently deletes every upstream edge.
-        const pool = makeFakePool({
+        const { pool } = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
         const { deps } = makeDeps({
@@ -1981,21 +1970,21 @@ describe("executeAnalysis run observation", () => {
         const obsOnly: RunObservation[] = [];
 
         const withProv = makeDeps({
-            pool: makeFakePool(),
+            pool: makeFakePool().pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
             emitRunEvent: (e) => provOnly.push(e),
         });
         const provResult = await runExecuteAnalysisBody(input([{ id: "A" }]), withProv.deps);
 
         const withObs = makeDeps({
-            pool: makeFakePool(),
+            pool: makeFakePool().pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
             observeRun: (o) => obsOnly.push(o),
         });
         const obsResult = await runExecuteAnalysisBody(input([{ id: "A" }]), withObs.deps);
 
         const neither = makeDeps({
-            pool: makeFakePool(),
+            pool: makeFakePool().pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
         const bareResult = await runExecuteAnalysisBody(input([{ id: "A" }]), neither.deps);
@@ -2014,7 +2003,7 @@ describe("executeAnalysis run observation", () => {
         const seen: RunObservation[] = [];
         // B depends on A, so B is still pending while A runs — it must appear anyway.
         const { deps } = makeDeps({
-            pool: makeFakePool(),
+            pool: makeFakePool().pool,
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
                 ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
@@ -2050,7 +2039,7 @@ describe("executeAnalysis run observation", () => {
     it("a throwing observer is swallowed and the run still reaches its terminal status", async () => {
         let calls = 0;
         const { deps } = makeDeps({
-            pool: makeFakePool(),
+            pool: makeFakePool().pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
             observeRun: () => {
                 calls += 1;
@@ -2069,7 +2058,7 @@ describe("executeAnalysis run observation", () => {
     it("re-delivering the snapshot sequence lands a latest-wins consumer in the same state", async () => {
         const seen: RunObservation[] = [];
         const { deps } = makeDeps({
-            pool: makeFakePool(),
+            pool: makeFakePool().pool,
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
                 ["B", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }],
@@ -2120,7 +2109,7 @@ describe("run and step outcome metrics", () => {
         try {
             // A completed and wrote its row. B failed and C was cancelled before either child reached its
             // terminal step, so their rows carry no completed_at. D never dispatched.
-            const pool = makeFakePool({
+            const { pool } = makeFakePool({
                 "SELECT run_id, analysis_id, thread_id": [
                     {
                         run_id: "run-test",
@@ -2200,7 +2189,7 @@ describe("synthesizeFindings run stream", () => {
             const provider = scriptedProvider((i) =>
                 i === 0 ? makeMessage([toolUseBlock("tu-1", "submit_synthesis", { synthesis })], "tool_use") : makeMessage([textBlock("done")], "end_turn"),
             );
-            const { deps } = makeDeps({ pool: makeFakePool(), childResults: new Map() });
+            const { deps } = makeDeps({ pool: makeFakePool().pool, childResults: new Map() });
 
             const result = await synthesizeFindings({
                 analysisId: "a1",
@@ -2211,7 +2200,7 @@ describe("synthesizeFindings run stream", () => {
                     ...deps,
                     provider,
                     embedding: { dimensions: 4, embed: (texts) => okAsync(texts.map(() => [0, 0, 0, 0])) },
-                    resolveWorkspaceRoot: async (id) => join(base, id),
+                    resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)),
                 },
             });
 

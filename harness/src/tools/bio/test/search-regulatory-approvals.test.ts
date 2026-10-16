@@ -6,7 +6,7 @@ import { createSearchRegulatoryApprovalsTool } from "../search-regulatory-approv
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { jsonParse } from "../../../lib/json.js";
 import { z } from "zod";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -36,7 +36,7 @@ function stubFetch(routes: Array<[string, (request: SeenRequest) => Response]>):
     globalThis.fetch = fetchDouble((input, init) => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
         const request: SeenRequest = {
-            url: new URL(String(input)),
+            url: new URL(urlText(input)),
             method: init?.method ?? "GET",
             authorization: new Headers(init?.headers).get("authorization"),
             body: typeof init?.body === "string" ? jsonParse(init.body, z.unknown()) : undefined,
@@ -58,7 +58,7 @@ async function run(input: Record<string, unknown>) {
     // `Tool` erases the schema generic, so `parse` hands back `unknown`; the schema
     // and the execute input type come from one declaration in the tool module.
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return tool.execute(tool.inputSchema.parse(input) as Parameters<typeof tool.execute>[0], ctx);
+    return tool.execute(tool.inputSchema.parse(input), ctx);
 }
 
 const GLEEVEC = "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg";
@@ -82,7 +82,7 @@ describe("search_regulatory_approvals — the key", () => {
         const { ctx } = makeToolContext();
         // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }) as Parameters<typeof keyless.execute>[0], ctx)).rejects.toThrow(
+        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow(
             // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
             /AMASS_API_KEY/,
         );
@@ -92,8 +92,7 @@ describe("search_regulatory_approvals — the key", () => {
 
 describe("search_regulatory_approvals — action 'search'", () => {
     it("keeps 5 matched sections of a record, grouped by document, with the true count", async () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const base = (readFixture("amass", "regulatory-search.json") as { data: Array<Record<string, unknown>> }).data[0];
+        const base = z.looseObject({ data: z.array(z.record(z.string(), z.json())) }).parse(readFixture("amass", "regulatory-search.json")).data[0];
         const label = { docType: "FDA_LABEL", textType: "Label", sourceUrl: "https://example.test/label.pdf", sourceDate: "2026-07-15" };
         const sections = Array.from({ length: 16 }, (_, i) => ({
             ...label,
@@ -164,7 +163,10 @@ describe("search_regulatory_approvals — action 'details'", () => {
             items: [{ fdaApplicationNumber: "NDA021588" }, { fdaApplicationNumber: "BLA021588" }, { fdaApplicationNumber: "ANDA021588" }],
         });
         expect(result).toMatchObject({ status: "found", authorization: { amassId: GLEEVEC, sectionCount: 120 } });
-        const get = must(seen.find((request) => request.url.pathname.endsWith(GLEEVEC)), "get");
+        const get = must(
+            seen.find((request) => request.url.pathname.endsWith(GLEEVEC)),
+            "get",
+        );
         expect(get.url.searchParams.getAll("include")).toEqual(["fdaDetails", "emaDetails"]);
     });
 
@@ -187,8 +189,7 @@ describe("search_regulatory_approvals — action 'details'", () => {
     });
 
     it("gives not_found for an in-band lookup miss, with no get request", async () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const lookup = readFixture("amass", "regulatory-lookup.json") as { data: Array<{ error?: unknown }> };
+        const lookup = z.looseObject({ data: z.array(z.looseObject({ error: z.json().optional() })) }).parse(readFixture("amass", "regulatory-lookup.json"));
         const seen = stubFetch([["/records/lookup", () => json({ data: lookup.data.filter((item) => item.error !== undefined) })]]);
 
         const result = (await run({ action: "details", emaProductNumber: "EMEA/H/C/999999" }))._unsafeUnwrap();
@@ -222,8 +223,9 @@ describe("search_regulatory_approvals — action 'details'", () => {
 
 describe("search_regulatory_approvals — action 'section'", () => {
     it("gives the full text of one section", async () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const fixture = readFixture("amass", "regulatory-section.json") as { data: { amassId: string; documentSectionId: string } };
+        const fixture = z
+            .looseObject({ data: z.looseObject({ amassId: z.string(), documentSectionId: z.string() }) })
+            .parse(readFixture("amass", "regulatory-section.json"));
         const { amassId, documentSectionId } = fixture.data;
         stubFetch([[`/document-sections/${documentSectionId}`, () => json(fixture)]]);
 

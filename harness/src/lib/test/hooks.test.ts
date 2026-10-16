@@ -36,6 +36,7 @@ describe("passGate", () => {
         // thenable whose settled value has the methods of a `Result`, but not the class of the harness.
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         const foreign = <T>(settled: object): ResultAsync<T, GateFailure> =>
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion, @inflexa-ai/no-double-cast -- a structural thenable standing in for a foreign neverthrow copy; the test's subject is that interop, not the harness class.
             ({ then: (resolve: (value: unknown) => unknown) => resolve(settled) }) as unknown as ResultAsync<T, GateFailure>;
 
         const opened = await passGate("RunCharge.open", foreign<number>({ isOk: () => true, value: 7 }));

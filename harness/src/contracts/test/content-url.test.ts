@@ -15,15 +15,13 @@ import { buildReportSessionUrl, reportSessionResourceId } from "../content-url.j
 import { jsonParse } from "../../lib/json.js";
 import { z } from "zod";
 
-type ReportSessionVector = {
-    analysisId: string;
-    threadId: string;
-    expectedRes: string;
-};
+const ReportSessionVectorSchema = z.looseObject({ analysisId: z.string(), threadId: z.string(), expectedRes: z.string() });
 
-function readFixture(name: string): { vectors: ReportSessionVector[] } {
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return jsonParse(readFileSync(new URL(`../../__tests__/fixtures/${name}`, import.meta.url), "utf8"), z.unknown()) as { vectors: ReportSessionVector[] };
+function readFixture(name: string) {
+    return jsonParse(
+        readFileSync(new URL(`../../__tests__/fixtures/${name}`, import.meta.url), "utf8"),
+        z.looseObject({ vectors: z.array(ReportSessionVectorSchema) }),
+    );
 }
 
 const reportSessionFixture = readFixture("report-session-res.json");

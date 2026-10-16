@@ -11,20 +11,17 @@ import { upsertArtifacts, type RegisterArtifactInput } from "../artifacts.js";
  * a fake Querier captures statements, so no database is needed.
  */
 
+import { poolDouble } from "../../lib/test/doubles.js";
+
 type Captured = { text: string; values: unknown[] };
 
 function capturingQuerier(): { querier: Querier; captured: Captured[] } {
     const captured: Captured[] = [];
-    const fake = {
-        query:  (q: Captured) => {
-            captured.push(q);
-            return Promise.resolve({ rows: [], rowCount: 0 });
-        },
-    };
-    // The functions under test only ever call `.query`; the cast narrows the
-    // fake to the Pool|PoolClient union without dragging in a live pool.
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return { querier: fake as unknown as Querier, captured };
+    const querier = poolDouble((query) => {
+        captured.push({ text: query.text, values: query.values ?? [] });
+        return { rows: [], rowCount: 0 };
+    });
+    return { querier, captured };
 }
 
 function entry(i: number): RegisterArtifactInput {

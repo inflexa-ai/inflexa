@@ -137,7 +137,13 @@ describe("add_block", () => {
             expect(value.changed).toEqual([{ children: [{ id: "s1", kind: "section", depth: 0, label: "Intro" }] }]);
         }
         // The gateway holds the new document, thus the persist ran before the tool reported the landing.
-        expect(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec").map((section) => section.id)).toEqual(["s1"]);
+        expect(
+            must(
+                must(must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document, 'must(gateway, "gateway").peek("t1").document')
+                    .sections,
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).map((section) => section.id),
+        ).toEqual(["s1"]);
     });
 
     it("refuses a reference outside the snapshot, and the gateway document stays unchanged", async () => {
@@ -159,8 +165,22 @@ describe("add_block", () => {
             expect(value.refusal.reason).toBe("unresolved-reference");
         }
         // The refusal ran no persist, thus the row stays the seeded draft.
-        expect(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections).toHaveLength(1);
-        expect(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").blocks).toEqual([]);
+        expect(
+            must(must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document, 'must(gateway, "gateway").peek("t1").document')
+                .sections,
+        ).toHaveLength(1);
+        expect(
+            must(
+                must(
+                    must(
+                        must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                        'must(gateway, "gateway").peek("t1").document',
+                    ).sections,
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                )[0],
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).blocks,
+        ).toEqual([]);
     });
 
     it("refuses `before` and `after` together, and names the conflict", async () => {
@@ -179,7 +199,10 @@ describe("add_block", () => {
             expect(value.refusal.reason).toBe("conflicting-destination");
             expect(value.refusal.detail).toContain("before");
         }
-        expect(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections).toEqual([]);
+        expect(
+            must(must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document, 'must(gateway, "gateway").peek("t1").document')
+                .sections,
+        ).toEqual([]);
     });
 
     it("publishes the block grammar in its JSON schema", () => {
@@ -213,7 +236,19 @@ describe("add_block", () => {
         const value = (await tools.add_block.execute({ block, parentId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
-        const landed = must(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").blocks, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0];
+        const landed = must(
+            must(
+                must(
+                    must(
+                        must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                        'must(gateway, "gateway").peek("t1").document',
+                    ).sections,
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                )[0],
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).blocks,
+            'must(gateway, "gateway").peek("t1").document.sec',
+        )[0];
         expect(landed.kind === "table" ? landed.binding.hash : undefined).toBe(PINNED_HASH);
     });
 
@@ -226,7 +261,21 @@ describe("add_block", () => {
         const value = (await tools.add_block.execute({ block: encoded, parentId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
-        expect(must(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").blocks, "must(gateway, \"gateway\").peek(\"t1\").document.sec").map((block) => block.id)).toEqual(["t1"]);
+        expect(
+            must(
+                must(
+                    must(
+                        must(
+                            must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                            'must(gateway, "gateway").peek("t1").document',
+                        ).sections,
+                        'must(gateway, "gateway").peek("t1").document.sec',
+                    )[0],
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                ).blocks,
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).map((block) => block.id),
+        ).toEqual(["t1"]);
     });
 
     it("lands a text block that carries a typed list, and the gateway holds each item", async () => {
@@ -240,7 +289,19 @@ describe("add_block", () => {
         expect(value.applied).toBe(true);
         // The draft grammar composes from the contract atoms, thus the field reaches the tool with no
         // payload of its own and the stored draft keeps it.
-        const landed = must(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").blocks, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0];
+        const landed = must(
+            must(
+                must(
+                    must(
+                        must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                        'must(gateway, "gateway").peek("t1").document',
+                    ).sections,
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                )[0],
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).blocks,
+            'must(gateway, "gateway").peek("t1").document.sec',
+        )[0];
         expect(landed.kind === "text" ? landed.content.list : undefined).toEqual({ ordered: true, items: ["One.", "Two."] });
     });
 
@@ -253,7 +314,18 @@ describe("add_block", () => {
         const value = (await tools.add_block.execute({ block, parentId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(false);
-        expect(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").blocks).toEqual([]);
+        expect(
+            must(
+                must(
+                    must(
+                        must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                        'must(gateway, "gateway").peek("t1").document',
+                    ).sections,
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                )[0],
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).blocks,
+        ).toEqual([]);
     });
 
     it("accepts an explicit null in each destination field that the call does not use", async () => {
@@ -267,7 +339,21 @@ describe("add_block", () => {
 
         const value = (await tools.add_block.execute(input, ctxForThread("t1")))._unsafeUnwrap();
         expect(value.applied).toBe(true);
-        expect(must(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").blocks, "must(gateway, \"gateway\").peek(\"t1\").document.sec").map((block) => block.id)).toEqual(["t1"]);
+        expect(
+            must(
+                must(
+                    must(
+                        must(
+                            must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                            'must(gateway, "gateway").peek("t1").document',
+                        ).sections,
+                        'must(gateway, "gateway").peek("t1").document.sec',
+                    )[0],
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                ).blocks,
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).map((block) => block.id),
+        ).toEqual(["t1"]);
     });
 });
 
@@ -359,7 +445,18 @@ describe("the tool-layer refusal", () => {
             expect(value.refusal.detail).toBe("the persist failed");
         }
         // The persist failed after the add landed, thus the row keeps the old draft with an empty section.
-        expect(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").blocks).toEqual([]);
+        expect(
+            must(
+                must(
+                    must(
+                        must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                        'must(gateway, "gateway").peek("t1").document',
+                    ).sections,
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                )[0],
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).blocks,
+        ).toEqual([]);
     });
 
     it("refuses a scope whose analysis differs from the analysis that owns the thread, and nothing persists", async () => {
@@ -378,7 +475,18 @@ describe("the tool-layer refusal", () => {
             expect(value.refusal.detail).toContain("analysis-999");
         }
         // The mismatch ran no persist, thus the seeded draft stays.
-        expect(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").blocks).toEqual([]);
+        expect(
+            must(
+                must(
+                    must(
+                        must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                        'must(gateway, "gateway").peek("t1").document',
+                    ).sections,
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                )[0],
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).blocks,
+        ).toEqual([]);
     });
 
     it("refuses a wrong thread type with a permanent reason", async () => {
@@ -433,18 +541,24 @@ describe("change_block", () => {
         gateway.seed("t1", { document: oneSectionDraft(), snapshot });
         const tools = createReportAuthoringTools(gateway);
         // The loop validates against `inputSchema` before it runs `execute`, thus the retitle call must
-        // pass the schema with the `block` key absent.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+        // pass the schema with the `block` key absent. The parse types the call input.
         const input = jsonParse('{"targetId":"s1","title":"Results"}', z.record(z.string(), z.unknown()));
         expect(tools.change_block.inputSchema.safeParse(input).success).toBe(true);
-
-        // `parse` hands back `unknown` (`Tool` erases the schema generic); the safeParse
-        // above proves the shape against the same schema the execute reads.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const value = (await tools.change_block.execute(input as Parameters<typeof tools.change_block.execute>[0], ctxForThread("t1")))._unsafeUnwrap();
+        const value = (await tools.change_block.execute(tools.change_block.inputSchema.parse(input), ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
-        expect(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").title).toBe("Results");
+        expect(
+            must(
+                must(
+                    must(
+                        must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                        'must(gateway, "gateway").peek("t1").document',
+                    ).sections,
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                )[0],
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).title,
+        ).toBe("Results");
     });
 
     it("retitles a section when the unused block field arrives as null", async () => {
@@ -456,7 +570,18 @@ describe("change_block", () => {
         const value = (await tools.change_block.execute({ targetId: "s1", title: "Results", block: null }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
-        expect(must(must(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").sections, "must(gateway, \"gateway\").peek(\"t1\").document.sec")[0], "must(gateway, \"gateway\").peek(\"t1\").document.sec").title).toBe("Results");
+        expect(
+            must(
+                must(
+                    must(
+                        must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document,
+                        'must(gateway, "gateway").peek("t1").document',
+                    ).sections,
+                    'must(gateway, "gateway").peek("t1").document.sec',
+                )[0],
+                'must(gateway, "gateway").peek("t1").document.sec',
+            ).title,
+        ).toBe("Results");
     });
 
     it("refuses a change that names neither a title nor a block", async () => {
@@ -689,8 +814,20 @@ describe("thread isolation", () => {
         expect("outline" in outlineB && outlineB.outline.map((entry) => entry.id)).toEqual(["sB"]);
 
         // Each row holds only its own block.
-        expect(must(must(must(must(gateway, "gateway").peek("tA"), "must(gateway, \"gateway\").peek(\"tA\")").document, "must(gateway, \"gateway\").peek(\"tA\").document").sections, "must(gateway, \"gateway\").peek(\"tA\").document.sec").map((section) => section.id)).toEqual(["sA"]);
-        expect(must(must(must(must(gateway, "gateway").peek("tB"), "must(gateway, \"gateway\").peek(\"tB\")").document, "must(gateway, \"gateway\").peek(\"tB\").document").sections, "must(gateway, \"gateway\").peek(\"tB\").document.sec").map((section) => section.id)).toEqual(["sB"]);
+        expect(
+            must(
+                must(must(must(gateway, "gateway").peek("tA"), 'must(gateway, "gateway").peek("tA")').document, 'must(gateway, "gateway").peek("tA").document')
+                    .sections,
+                'must(gateway, "gateway").peek("tA").document.sec',
+            ).map((section) => section.id),
+        ).toEqual(["sA"]);
+        expect(
+            must(
+                must(must(must(gateway, "gateway").peek("tB"), 'must(gateway, "gateway").peek("tB")').document, 'must(gateway, "gateway").peek("tB").document')
+                    .sections,
+                'must(gateway, "gateway").peek("tB").document.sec',
+            ).map((section) => section.id),
+        ).toEqual(["sB"]);
     });
 });
 
@@ -756,10 +893,8 @@ describe("the call detail", () => {
     const tools = createReportAuthoringTools(makeFakeGateway());
 
     /** Run a tool's call hook, asserting that the tool declares one. */
-    function detailOf(tool: { describeCall?: (input: never) => string }, input: unknown): string {
-        expect(tool.describeCall).toBeDefined();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        return must(must(tool, "tool").describeCall, "must(tool, \"tool\").describeCall")(input as never);
+    function detailOf(tool: { describeCall?(input: unknown): string }, input: unknown): string {
+        return must(tool.describeCall, "the tool declares describeCall")(input);
     }
 
     /** A whole-table reference onto one pinned path. */
@@ -985,7 +1120,10 @@ describe("the report observation", () => {
         const value = (await tools.set_title.execute({ title: "Report" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
-        expect(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").title).toBe("Report");
+        expect(
+            must(must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document, 'must(gateway, "gateway").peek("t1").document')
+                .title,
+        ).toBe("Report");
     });
 
     // Each member of the seam is optional alone, thus a composition that records the run alone binds a
@@ -996,7 +1134,10 @@ describe("the report observation", () => {
         const value = (await tools.set_title.execute({ title: "Report" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
-        expect(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").title).toBe("Report");
+        expect(
+            must(must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document, 'must(gateway, "gateway").peek("t1").document')
+                .title,
+        ).toBe("Report");
     });
 
     it("logs a throw of the seam, and the mutation still lands", async () => {
@@ -1014,7 +1155,10 @@ describe("the report observation", () => {
 
         // The act landed before the emit, thus a defect of the host costs the event alone.
         expect(value.applied).toBe(true);
-        expect(must(must(must(gateway, "gateway").peek("t1"), "must(gateway, \"gateway\").peek(\"t1\")").document, "must(gateway, \"gateway\").peek(\"t1\").document").title).toBe("Report");
+        expect(
+            must(must(must(gateway, "gateway").peek("t1"), 'must(gateway, "gateway").peek("t1")').document, 'must(gateway, "gateway").peek("t1").document')
+                .title,
+        ).toBe("Report");
         const record = logger.records.find((held) => held.msg.includes("the session emit of the provenance seam threw"));
         expect(record?.level).toBe("error");
         expect(record?.fields).toMatchObject({ analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", event: "set-title", err: "the recorder is down" });

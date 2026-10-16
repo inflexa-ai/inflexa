@@ -3,11 +3,12 @@ import { describe, expect, it } from "bun:test";
 import { countArtifactsByRuns, queryArtifactPage, readRunSynthesis } from "@inflexa-ai/harness";
 import type { ArtifactPage, ArtifactPageEntry, ArtifactPageQuery, RunArtifactCount } from "@inflexa-ai/harness";
 
-import * as runSynthesis from "../execution/run-synthesis.js";
-import * as stateBarrel from "./index.js";
+import * as runSynthesis from "../../execution/run-synthesis.js";
+import * as stateBarrel from "../index.js";
+import { poolDouble } from "../../lib/test/doubles.js";
 
 // An empty list sends no query, thus the read never touches the querier.
-const unusedQuerier = {} as never;
+const unusedQuerier = poolDouble(() => Promise.reject(new Error("an empty id list sends no query")));
 
 describe("the exports of the artifact reads", () => {
     it("reaches the reads from the package root, as the same functions of their modules", () => {

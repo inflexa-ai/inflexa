@@ -9,6 +9,7 @@
 import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 
 import { captureMetrics } from "../../__tests__/setup/metrics.js";
 import type { AgentSession } from "../../auth/types.js";
@@ -80,25 +81,25 @@ function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails
     let stepReads = 0;
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     const pool = poolDouble(({ text, values }: { text: string; values?: unknown[] }) => {
-            if (text.includes("FROM cortex_runs")) return { rows: state.run === null ? [] : [state.run], rowCount: state.run === null ? 0 : 1 };
-            if (text.includes("SET status = 'canceled'")) {
-                const active = state.run !== null && state.run.status === "running";
-                if (!active || state.run === null) return { rowCount: 0 };
-                state.run = { ...state.run, status: "canceled", completed_at: values?.[1], error: values?.[2] };
-                return { rowCount: 1 };
-            }
-            if (text.includes("FROM cortex_step_executions")) {
-                const batch = stepBatches[Math.min(stepReads, stepBatches.length - 1)] ?? [];
-                stepReads += 1;
-                return { rows: batch };
-            }
-            if (text.includes("SET status = 'skipped'")) {
-                if (opts.sweepFails) throw new Error("sweep exploded");
-                state.swept += 1;
-                return { rowCount: 0 };
-            }
-            return Promise.reject(new Error(`unexpected query: ${text}`));
-        });
+        if (text.includes("FROM cortex_runs")) return { rows: state.run === null ? [] : [state.run], rowCount: state.run === null ? 0 : 1 };
+        if (text.includes("SET status = 'canceled'")) {
+            const active = state.run !== null && state.run.status === "running";
+            if (!active || state.run === null) return { rowCount: 0 };
+            state.run = { ...state.run, status: "canceled", completed_at: values?.[1], error: values?.[2] };
+            return { rowCount: 1 };
+        }
+        if (text.includes("FROM cortex_step_executions")) {
+            const batch = stepBatches[Math.min(stepReads, stepBatches.length - 1)] ?? [];
+            stepReads += 1;
+            return { rows: batch };
+        }
+        if (text.includes("SET status = 'skipped'")) {
+            if (opts.sweepFails) throw new Error("sweep exploded");
+            state.swept += 1;
+            return { rowCount: 0 };
+        }
+        return Promise.reject(new Error(`unexpected query: ${text}`));
+    });
     return { pool, state };
 }
 
@@ -141,11 +142,11 @@ function recordingCancel(onCall?: (ids: readonly string[]) => void): { cancelWor
     const cancelled: string[][] = [];
     return {
         cancelled,
-        cancelWorkflows:  (ids) => {
+        cancelWorkflows: (ids) => {
             cancelled.push([...ids]);
             onCall?.(ids);
             return Promise.resolve();
-},
+        },
     };
 }
 
@@ -267,8 +268,7 @@ describe("createRunCanceler", () => {
         // write must refuse the clobber and the result must report the truth.
         const db = fakeDb(runRow());
         const { cancelWorkflows } = recordingCancel(() => {
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            db.state.run = { ...(db.state.run as Row), status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
+            db.state.run = { ...must(db.state.run, "the run row exists"), status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
         });
         const { charge } = recordingCharge();
         const { authorizer } = recordingAuthorizer();
@@ -318,7 +318,7 @@ describe("createRunCanceler", () => {
             pool: db.pool,
             runCharge: charge,
             runAuthorizer: authorizer,
-            cancelWorkflows:  () => Promise.reject(new Error("engine unreachable")),
+            cancelWorkflows: () => Promise.reject(new Error("engine unreachable")),
         });
 
         await expect(canceler.cancel("run-1", session)).rejects.toThrow("engine unreachable");

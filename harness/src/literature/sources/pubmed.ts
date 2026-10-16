@@ -127,7 +127,7 @@ export function parseEsummary(xml: string): PubMedSummary[] {
     return documents.map((document) => {
         const publicationDate = getItemValue(document.Item, "PubDate");
         return {
-            pmid: String(document.Id ?? ""),
+            pmid: document.Id ?? "",
             title: getItemValue(document.Item, "Title"),
             journal: getItemValue(document.Item, "FullJournalName") || getItemValue(document.Item, "Source"),
             year: publicationDate.slice(0, 4),
@@ -151,22 +151,22 @@ export function parseEfetch(xml: string): ArticleDetail[] {
         const articleData = recordMember(citation, "Article");
         const pmidValue = citation?.PMID;
         const pmidRecord = maybeRecord(pmidValue);
-        const pmid = pmidRecord !== undefined ? String(pmidRecord["#text"] ?? "") : String(pmidValue ?? "");
+        const pmid = pmidRecord !== undefined ? textOf(pmidRecord["#text"]) : textOf(pmidValue);
         const abstractValue = recordMember(articleData, "Abstract")?.AbstractText;
         const abstract = (abstractValue === undefined ? [] : Array.isArray(abstractValue) ? abstractValue : [abstractValue])
             .map((value) => {
                 if (typeof value === "string") return value;
                 const object = maybeRecord(value);
-                if (object === undefined) return String(value);
-                const text = String(object["#text"] ?? "");
-                return object["@_Label"] === undefined ? text : `${String(object["@_Label"])}: ${text}`;
+                if (object === undefined) return textOf(value);
+                const text = textOf(object["#text"]);
+                return object["@_Label"] === undefined ? text : `${textOf(object["@_Label"])}: ${text}`;
             })
             .join("\n\n");
         const authorValue = recordMember(articleData, "AuthorList")?.Author;
         const authorName = (author: unknown): string => {
             const object = maybeRecord(author);
             if (object === undefined) return "";
-            if (object.CollectiveName !== undefined) return String(object.CollectiveName);
+            if (object.CollectiveName !== undefined) return textOf(object.CollectiveName);
             return [object.ForeName ?? object.Initials, object.LastName].filter(Boolean).map(String).join(" ");
         };
         const authors = (authorValue === undefined ? [] : Array.isArray(authorValue) ? authorValue : [authorValue]).map(authorName);
@@ -177,22 +177,22 @@ export function parseEfetch(xml: string): ArticleDetail[] {
         for (const id of articleIds === undefined ? [] : Array.isArray(articleIds) ? articleIds : [articleIds]) {
             const idRecord = maybeRecord(id);
             if (idRecord !== undefined && idRecord["@_IdType"] === "doi") {
-                doi = String(idRecord["#text"] ?? "");
+                doi = textOf(idRecord["#text"]);
             }
         }
         const meshValue = recordMember(citation, "MeshHeadingList")?.MeshHeading;
         const meshTerm = (heading: unknown): string => {
             const descriptor = maybeRecord(heading)?.DescriptorName;
-            return typeof descriptor === "string" ? descriptor : String(maybeRecord(descriptor)?.["#text"] ?? "");
+            return typeof descriptor === "string" ? descriptor : textOf(maybeRecord(descriptor)?.["#text"]);
         };
         const meshTerms = (meshValue === undefined ? [] : Array.isArray(meshValue) ? meshValue : [meshValue]).map(meshTerm).filter(Boolean);
         return {
             pmid,
-            title: String(articleData?.ArticleTitle ?? ""),
+            title: textOf(articleData?.ArticleTitle),
             abstract,
             authors,
-            journal: String(journalData?.Title ?? journalData?.ISOAbbreviation ?? ""),
-            year: String(publicationDate?.Year ?? ""),
+            journal: textOf(journalData?.Title ?? journalData?.ISOAbbreviation),
+            year: textOf(publicationDate?.Year),
             doi,
             meshTerms,
             pmcId: null,
@@ -208,6 +208,11 @@ export function parseIdConvResponse(data: unknown): Map<string, string> {
     return result;
 }
 
+/** The text of an XML member: a text node is text or a number, and anything else renders as nothing. */
+function textOf(value: unknown): string {
+    return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
 function flattenTextContent(node: unknown): string {
     if (typeof node === "string" || typeof node === "number") return String(node);
     const object = maybeRecord(node);
@@ -215,7 +220,7 @@ function flattenTextContent(node: unknown): string {
     return Object.entries(object)
         .flatMap(([key, value]) => {
             if (key.startsWith("@_") || key === "fig" || key === "table-wrap" || key === "supplementary-material") return [];
-            if (key === "#text") return [String(value)];
+            if (key === "#text") return [textOf(value)];
             return Array.isArray(value) ? value.map(flattenTextContent) : [flattenTextContent(value)];
         })
         .filter(Boolean)
@@ -323,10 +328,10 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
             const result = await requestText(url(`${NCBI_BASE}/ecitmatch.cgi`, { db: "pubmed", rettype: "xml", bdata }), options, signal);
             if (result.status !== "ok") return result;
             const pmids = splitLines(result.value.trim()).flatMap((line) => {
-                    const value = line.split("|").at(-1)?.trim();
-                    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubMed grammar: its markup has no builtin parser.
-                    return value !== undefined && /^\d+$/.test(value) ? [value] : [];
-                });
+                const value = line.split("|").at(-1)?.trim();
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubMed grammar: its markup has no builtin parser.
+                return value !== undefined && /^\d+$/.test(value) ? [value] : [];
+            });
             return { status: "ok", value: pmids };
         },
         fetchArticles,

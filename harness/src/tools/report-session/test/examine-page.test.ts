@@ -19,7 +19,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Browser } from "puppeteer-core";
+import { Browser, BrowserContext, type EvaluateFunc, Page, type ScreenshotOptions } from "puppeteer-core";
 
 import type { AuthContext, Scope } from "../../../auth/types.js";
 import { setBrowserConnector } from "../../../lib/chrome.js";
@@ -181,35 +181,312 @@ function makeFakeEyes(options: { browserUrl: string; failAcquire?: Error; failRe
     };
 }
 
+/** The loud answer of a member the capture never drives. */
+function unstubbed(where: string): never {
+    throw new Error(`${where}: the capture does not drive this member`);
+}
+
 /**
- * Make a browser that no process backs, and give the screenshot that its one page returns.
+ * The page, the context, and the browser of one look, as real puppeteer subclasses.
  *
- * The capture reads the connected flag, it registers the disconnect listener, it opens one context, it sizes
- * one page, it emulates the media features of that page, it drives the page, and it closes the context. The
- * fake carries those members alone, thus no call of the capture reaches the gap between the fake and the
- * class of puppeteer.
+ * The puppeteer classes carry an `EventEmitter` base that holds a `#private`
+ * field, so no object literal types as one and a subclass instance is the only
+ * cast-free double (the kit pattern of `src/lib/test/doubles.ts`). The page
+ * answers the members the capture drives: the setters and the navigation
+ * resolve, the evaluation answers `undefined` (the page signals nothing, so a
+ * short page holds and the capture takes the full-page shot), and the
+ * screenshot returns the configured picture. Every other member fails loudly.
  */
+class LookPage extends Page {
+    readonly #screenshot: string;
+    constructor(screenshot: string) {
+        super();
+        this.#screenshot = screenshot;
+    }
+    override setViewport(): Promise<void> {
+        return Promise.resolve();
+    }
+    override emulateMediaFeatures(): Promise<void> {
+        return Promise.resolve();
+    }
+    override goto(): Promise<null> {
+        return Promise.resolve(null);
+    }
+    override evaluate<Params extends unknown[], Func extends EvaluateFunc<Params>>(
+        pageFunction: Func | string,
+        ...args: Params
+    ): Promise<Awaited<ReturnType<Func>>>;
+    override evaluate(): Promise<unknown> {
+        return Promise.resolve(undefined);
+    }
+    override screenshot(options?: Readonly<ScreenshotOptions> & { encoding: "base64" }): Promise<string>;
+    override screenshot(options?: Readonly<ScreenshotOptions>): Promise<Uint8Array>;
+    override screenshot(options?: Readonly<ScreenshotOptions>): Promise<string | Uint8Array> {
+        if (options?.encoding !== "base64") return Promise.reject(new Error("LookPage.screenshot: the bytes form is not stubbed"));
+        return Promise.resolve(this.#screenshot);
+    }
+    override close(): Promise<void> {
+        return Promise.resolve();
+    }
+
+    override waitForSelector(): Promise<never> {
+        return unstubbed("LookPage.waitForSelector");
+    }
+    override isServiceWorkerBypassed(): boolean {
+        return unstubbed("LookPage.isServiceWorkerBypassed");
+    }
+    override isDragInterceptionEnabled(): boolean {
+        return unstubbed("LookPage.isDragInterceptionEnabled");
+    }
+    override isJavaScriptEnabled(): boolean {
+        return unstubbed("LookPage.isJavaScriptEnabled");
+    }
+    override waitForFileChooser(): Promise<never> {
+        return unstubbed("LookPage.waitForFileChooser");
+    }
+    override setGeolocation(): Promise<void> {
+        return unstubbed("LookPage.setGeolocation");
+    }
+    override target(): never {
+        return unstubbed("LookPage.target");
+    }
+    override browser(): never {
+        return unstubbed("LookPage.browser");
+    }
+    override browserContext(): never {
+        return unstubbed("LookPage.browserContext");
+    }
+    override mainFrame(): never {
+        return unstubbed("LookPage.mainFrame");
+    }
+    override createCDPSession(): Promise<never> {
+        return unstubbed("LookPage.createCDPSession");
+    }
+    override get keyboard(): never {
+        return unstubbed("LookPage.keyboard");
+    }
+    override get touchscreen(): never {
+        return unstubbed("LookPage.touchscreen");
+    }
+    override get coverage(): never {
+        return unstubbed("LookPage.coverage");
+    }
+    override get tracing(): never {
+        return unstubbed("LookPage.tracing");
+    }
+    override get mouse(): never {
+        return unstubbed("LookPage.mouse");
+    }
+    override frames(): never[] {
+        return unstubbed("LookPage.frames");
+    }
+    override workers(): never[] {
+        return unstubbed("LookPage.workers");
+    }
+    override setRequestInterception(): Promise<void> {
+        return unstubbed("LookPage.setRequestInterception");
+    }
+    override setBypassServiceWorker(): Promise<void> {
+        return unstubbed("LookPage.setBypassServiceWorker");
+    }
+    override setDragInterception(): Promise<void> {
+        return unstubbed("LookPage.setDragInterception");
+    }
+    override setOfflineMode(): Promise<void> {
+        return unstubbed("LookPage.setOfflineMode");
+    }
+    override emulateNetworkConditions(): Promise<void> {
+        return unstubbed("LookPage.emulateNetworkConditions");
+    }
+    override setDefaultNavigationTimeout(): void {
+        unstubbed("LookPage.setDefaultNavigationTimeout");
+    }
+    override setDefaultTimeout(): void {
+        unstubbed("LookPage.setDefaultTimeout");
+    }
+    override getDefaultTimeout(): number {
+        return unstubbed("LookPage.getDefaultTimeout");
+    }
+    override getDefaultNavigationTimeout(): number {
+        return unstubbed("LookPage.getDefaultNavigationTimeout");
+    }
+    override queryObjects(): Promise<never> {
+        return unstubbed("LookPage.queryObjects");
+    }
+    override cookies(): Promise<never[]> {
+        return unstubbed("LookPage.cookies");
+    }
+    override deleteCookie(): Promise<void> {
+        return unstubbed("LookPage.deleteCookie");
+    }
+    override setCookie(): Promise<void> {
+        return unstubbed("LookPage.setCookie");
+    }
+    override exposeFunction(): Promise<void> {
+        return unstubbed("LookPage.exposeFunction");
+    }
+    override removeExposedFunction(): Promise<void> {
+        return unstubbed("LookPage.removeExposedFunction");
+    }
+    override authenticate(): Promise<void> {
+        return unstubbed("LookPage.authenticate");
+    }
+    override setExtraHTTPHeaders(): Promise<void> {
+        return unstubbed("LookPage.setExtraHTTPHeaders");
+    }
+    override setUserAgent(): Promise<void> {
+        return unstubbed("LookPage.setUserAgent");
+    }
+    override metrics(): Promise<never> {
+        return unstubbed("LookPage.metrics");
+    }
+    override reload(): Promise<null> {
+        return unstubbed("LookPage.reload");
+    }
+    override goBack(): Promise<null> {
+        return unstubbed("LookPage.goBack");
+    }
+    override goForward(): Promise<null> {
+        return unstubbed("LookPage.goForward");
+    }
+    override bringToFront(): Promise<void> {
+        return unstubbed("LookPage.bringToFront");
+    }
+    override setJavaScriptEnabled(): Promise<void> {
+        return unstubbed("LookPage.setJavaScriptEnabled");
+    }
+    override setBypassCSP(): Promise<void> {
+        return unstubbed("LookPage.setBypassCSP");
+    }
+    override emulateMediaType(): Promise<void> {
+        return unstubbed("LookPage.emulateMediaType");
+    }
+    override emulateCPUThrottling(): Promise<void> {
+        return unstubbed("LookPage.emulateCPUThrottling");
+    }
+    override emulateTimezone(): Promise<void> {
+        return unstubbed("LookPage.emulateTimezone");
+    }
+    override emulateIdleState(): Promise<void> {
+        return unstubbed("LookPage.emulateIdleState");
+    }
+    override emulateVisionDeficiency(): Promise<void> {
+        return unstubbed("LookPage.emulateVisionDeficiency");
+    }
+    override viewport(): null {
+        return unstubbed("LookPage.viewport");
+    }
+    override evaluateOnNewDocument(): Promise<never> {
+        return unstubbed("LookPage.evaluateOnNewDocument");
+    }
+    override removeScriptToEvaluateOnNewDocument(): Promise<void> {
+        return unstubbed("LookPage.removeScriptToEvaluateOnNewDocument");
+    }
+    override setCacheEnabled(): Promise<void> {
+        return unstubbed("LookPage.setCacheEnabled");
+    }
+    override createPDFStream(): Promise<never> {
+        return unstubbed("LookPage.createPDFStream");
+    }
+    override pdf(): Promise<Uint8Array> {
+        return unstubbed("LookPage.pdf");
+    }
+    override isClosed(): boolean {
+        return unstubbed("LookPage.isClosed");
+    }
+    override waitForDevicePrompt(): Promise<never> {
+        return unstubbed("LookPage.waitForDevicePrompt");
+    }
+}
+
+class LookContext extends BrowserContext {
+    readonly #page: LookPage;
+    constructor(screenshot: string) {
+        super();
+        this.#page = new LookPage(screenshot);
+    }
+    override newPage(): Promise<Page> {
+        return Promise.resolve(this.#page);
+    }
+    override close(): Promise<void> {
+        return Promise.resolve();
+    }
+    override targets(): never[] {
+        return unstubbed("LookContext.targets");
+    }
+    override pages(): Promise<Page[]> {
+        return unstubbed("LookContext.pages");
+    }
+    override overridePermissions(): Promise<void> {
+        return unstubbed("LookContext.overridePermissions");
+    }
+    override clearPermissionOverrides(): Promise<void> {
+        return unstubbed("LookContext.clearPermissionOverrides");
+    }
+    override browser(): never {
+        return unstubbed("LookContext.browser");
+    }
+    override cookies(): Promise<never[]> {
+        return unstubbed("LookContext.cookies");
+    }
+    override setCookie(): Promise<void> {
+        return unstubbed("LookContext.setCookie");
+    }
+}
+
+class LookBrowser extends Browser {
+    readonly #context: LookContext;
+    constructor(screenshot: string) {
+        super();
+        this.#context = new LookContext(screenshot);
+    }
+    override get connected(): boolean {
+        return true;
+    }
+    override get debugInfo() {
+        return { pendingProtocolErrors: [] };
+    }
+    // A browser reached over CDP holds no child process, so `null` is the honest answer.
+    override process(): null {
+        return null;
+    }
+    override createBrowserContext(): Promise<BrowserContext> {
+        return Promise.resolve(this.#context);
+    }
+    override browserContexts(): BrowserContext[] {
+        return [this.#context];
+    }
+    override defaultBrowserContext(): BrowserContext {
+        return this.#context;
+    }
+    override wsEndpoint(): string {
+        return "ws://fake";
+    }
+    override newPage(): Promise<Page> {
+        return this.#context.newPage();
+    }
+    override version(): Promise<string> {
+        return Promise.resolve("stub");
+    }
+    override userAgent(): Promise<string> {
+        return Promise.resolve("stub");
+    }
+    override close(): Promise<void> {
+        return Promise.resolve();
+    }
+    override disconnect(): Promise<void> {
+        return Promise.resolve();
+    }
+    override targets(): never[] {
+        return unstubbed("LookBrowser.targets");
+    }
+    override target(): never {
+        return unstubbed("LookBrowser.target");
+    }
+}
+
 function makeFakeBrowser(screenshot: string): Browser {
-    const page = {
-        on: () => {},
-        setViewport: () => Promise.resolve(),
-        emulateMediaFeatures: () => Promise.resolve(),
-        goto: () => Promise.resolve(),
-        evaluate: () => Promise.resolve(),
-        screenshot: () => Promise.resolve(screenshot),
-    };
-    const fake = {
-        connected: true,
-        on: () => {},
-        wsEndpoint: () => "ws://fake",
-        createBrowserContext: () =>
-            Promise.resolve({
-                newPage: () => Promise.resolve(page),
-                close: () => Promise.resolve(),
-            }),
-    };
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return fake as unknown as Browser;
+    return new LookBrowser(screenshot);
 }
 
 /**
@@ -267,7 +544,7 @@ describe("the no-browser outcome", () => {
         await writePage(root, threadId);
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {} });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {} });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -287,7 +564,12 @@ describe("the no-browser outcome", () => {
         gateway.seed(threadId, "rendered-hash");
         const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: { browserUrl: "http://localhost:9222" }, capture });
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            chrome: { browserUrl: "http://localhost:9222" },
+            capture,
+        });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -301,7 +583,7 @@ describe("the no-page outcome", () => {
         const gateway = makeFakeGateway();
         gateway.seed("t1", null);
         const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when no page exists"));
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -321,7 +603,7 @@ describe("the missed stamp", () => {
         gateway.seed(threadId, null);
         const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -350,7 +632,7 @@ describe("the seen-stamp copy", () => {
             capturedUrl = url;
             return Promise.resolve(stub);
         };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -385,7 +667,7 @@ describe("the seen-stamp copy", () => {
         // The browser refused the full-page bitmap, thus the capture gives the window alone.
         const stub: PageCapture = { screenshots: [{ base64: "VIEWPORTPNG" }], coverage: { kind: "viewport" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -417,7 +699,7 @@ describe("the seen-stamp copy", () => {
             failedRequests: [],
         };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -456,7 +738,7 @@ describe("the fault digest", () => {
             consoleErrors: [font, font, font],
             failedRequests: [],
         };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture: () => Promise.resolve(stub) });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture: () => Promise.resolve(stub) });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -487,7 +769,7 @@ describe("the block look", () => {
             asked.push(options?.blockId);
             return Promise.resolve(stub);
         };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
 
         const result = (await tool.execute({ blockId: "sec-results" }, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -514,7 +796,7 @@ describe("the block look", () => {
             asked.push(options?.blockId);
             return Promise.resolve(stub);
         };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
 
         const result = (await tool.execute({ blockId: null }, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -529,7 +811,7 @@ describe("the block look", () => {
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
         const stub: PageCapture = { screenshots: [], coverage: { kind: "no-block" }, consoleErrors: [], failedRequests: [] };
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture: () => Promise.resolve(stub) });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture: () => Promise.resolve(stub) });
 
         const result = (await tool.execute({ blockId: "gone" }, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -539,11 +821,11 @@ describe("the block look", () => {
     });
 
     it("names the block in the call detail, and the page when the input names none", () => {
-        const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: async () => "/unused", chrome: {} });
+        const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve("/unused"), chrome: {} });
 
         expect(tool.describeCall).toBeDefined();
-        expect(must(must(tool, "tool").describeCall, "must(tool, \"tool\").describeCall")({ blockId: "sec-results" })).toBe("look at sec-results");
-        expect(must(must(tool, "tool").describeCall, "must(tool, \"tool\").describeCall")({})).toBe("look at the page");
+        expect(must(must(tool, "tool").describeCall, 'must(tool, "tool").describeCall')({ blockId: "sec-results" })).toBe("look at sec-results");
+        expect(must(must(tool, "tool").describeCall, 'must(tool, "tool").describeCall')({})).toBe("look at the page");
     });
 });
 
@@ -560,7 +842,7 @@ describe("the lease of one look", () => {
             return Promise.resolve(makeFakeBrowser("LEASEPNG"));
         });
         const eyes = makeFakeEyes({ browserUrl: LEASE_ENDPOINT });
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, eyes: eyes.acquire });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, eyes: eyes.acquire });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -583,7 +865,7 @@ describe("the lease of one look", () => {
         // The browser of the lease refuses the connection, thus the capture fails after the acquire.
         restoreConnector = setBrowserConnector(() => Promise.reject(new Error("connect refused")));
         const eyes = makeFakeEyes({ browserUrl: CAPTURE_FAULT_ENDPOINT });
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, eyes: eyes.acquire });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, eyes: eyes.acquire });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -605,7 +887,7 @@ describe("the lease of one look", () => {
         restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser("KEPTPNG")));
         const eyes = makeFakeEyes({ browserUrl: RELEASE_FAULT_ENDPOINT, failRelease: new Error("the browser did not stop") });
         const { logger, warns } = recordingLogger();
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, eyes: eyes.acquire, logger });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, eyes: eyes.acquire, logger });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -625,7 +907,7 @@ describe("the lease of one look", () => {
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
         const eyes = makeFakeEyes({ browserUrl: "http://examine-unreached.test:9222", failAcquire: new Error("no browser started") });
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, eyes: eyes.acquire });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, eyes: eyes.acquire });
 
         const outcome = await tool.execute({}, ctxForThread(threadId));
 
@@ -649,7 +931,7 @@ describe("the lease of one look", () => {
         const eyes = makeFakeEyes({ browserUrl: "http://examine-acquire-hang.test:9222", hangAcquire: true });
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: async () => root,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
             chrome: {},
             eyes: eyes.acquire,
             deadlines: { acquireMs: HUNG_DEADLINE_MS },
@@ -678,7 +960,7 @@ describe("the lease of one look", () => {
         const { logger, warns } = recordingLogger();
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: async () => root,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
             chrome: {},
             eyes: eyes.acquire,
             logger,
@@ -709,7 +991,7 @@ describe("the transport precedence", () => {
         const eyes = makeFakeEyes({ browserUrl: "http://examine-unused.test:9222" });
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: async () => root,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
             chrome: { browserUrl: CONFIGURED_ENDPOINT },
             eyes: eyes.acquire,
             capture,
@@ -734,7 +1016,7 @@ describe("the transport precedence", () => {
             connected.push(browserUrl);
             return Promise.resolve(makeFakeBrowser("STATICPNG"));
         });
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: { browserUrl: CONFIGURED_ENDPOINT } });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: { browserUrl: CONFIGURED_ENDPOINT } });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -750,7 +1032,7 @@ describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
     function detailOf(tool: ReturnType<typeof createExaminePageTool>, result: ExaminePageResult): string {
         expect(tool.describeResult).toBeDefined();
-        return must(must(tool, "tool").describeResult, "must(tool, \"tool\").describeResult")({}, result);
+        return must(must(tool, "tool").describeResult, 'must(tool, "tool").describeResult')({}, result);
     }
 
     it("names the look outcome of a capture", async () => {
@@ -761,7 +1043,7 @@ describe("the result detail", () => {
         gateway.seed(threadId, "rendered-hash");
         const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -773,7 +1055,7 @@ describe("the result detail", () => {
         const gateway = makeFakeGateway();
         gateway.seed("t1", null);
         const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when no page exists"));
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -787,7 +1069,13 @@ describe("the result detail", () => {
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
         const capture: CapturePage = () => Promise.reject(new Error("the browser refused the page"));
-        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: async () => root, chrome: {}, capture, logger: recordingLogger().logger });
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            chrome: {},
+            capture,
+            logger: recordingLogger().logger,
+        });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -813,7 +1101,7 @@ describe("the URL seam", () => {
         };
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: async () => root,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
             chrome: {},
             capture,
             resolvePageUrl: (args) => {
@@ -851,7 +1139,7 @@ describe("the URL seam", () => {
         const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when the URL did not resolve"));
         const tool = createExaminePageTool({
             gateway,
-            resolveWorkspaceRoot: async () => root,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
             chrome: {},
             capture,
             resolvePageUrl,

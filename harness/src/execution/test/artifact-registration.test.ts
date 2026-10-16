@@ -13,12 +13,11 @@ import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
-import type { AgentSession } from "../../auth/types.js";
 import { ProvenanceCollector } from "../../provenance/collector.js";
 import type { ArtifactManifestEntry } from "../../schemas/artifact-manifest.js";
 import { registerStepArtifacts } from "../artifact-registration.js";
 import type { ArtifactRegistry, ExternalRegistrationResult } from "../artifact-registry.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, stubAgentSession } from "../../lib/test/doubles.js";
 
 const RID = "an-1";
 const RUN = "run-1";
@@ -28,7 +27,7 @@ const HASH = `sha256:${"a".repeat(64)}`;
 
 /** Every write this module makes is fire-and-forget SQL, and none of it is read back. */
 // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-const stubDb = (): Pool => poolDouble(() => Promise.resolve(({ rows: [], rowCount: 0 })));
+const stubDb = (): Pool => poolDouble(() => Promise.resolve({ rows: [], rowCount: 0 }));
 
 const manifest = (): ArtifactManifestEntry[] => [{ stepId: STEP, runId: RUN, path: "output/out.csv", size: 40, type: "output", hash: HASH }];
 
@@ -42,7 +41,7 @@ const run = async (result: ExternalRegistrationResult) => {
             stubDb(),
             registryReturning(result),
             { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
-            {} as AgentSession,
+            stubAgentSession(),
             logger,
         )
     )._unsafeUnwrap();
@@ -103,9 +102,9 @@ describe("registerStepArtifacts — a refusal of the register gate", () => {
         const statements: string[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         const db = poolDouble((query: string | { text: string }) => {
-                statements.push(typeof query === "string" ? query : query.text);
-                return Promise.resolve({ rows: [], rowCount: 0 });
-            });
+            statements.push(typeof query === "string" ? query : query.text);
+            return Promise.resolve({ rows: [], rowCount: 0 });
+        });
         const refusing: ArtifactRegistry = { register: () => errAsync({ reason: "r", suspend: false }), sync: () => okAsync(undefined) };
 
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
@@ -113,7 +112,7 @@ describe("registerStepArtifacts — a refusal of the register gate", () => {
             db,
             refusing,
             { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
-            {} as AgentSession,
+            stubAgentSession(),
         );
 
         expect(registration._unsafeUnwrapErr()).toEqual({ kind: "refused", refusal: { kind: "failed", gate: "ArtifactRegistry.register", reason: "r" } });
@@ -132,7 +131,7 @@ describe("registerStepArtifacts — a failed ledger write", () => {
             failing,
             registryReturning(accepted),
             { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
-            {} as AgentSession,
+            stubAgentSession(),
         );
 
         const failure = registration._unsafeUnwrapErr();

@@ -12,7 +12,7 @@ import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "../chart.js";
 import { renderChartSvg } from "../chart-export.js";
 import { CHART_EXPORT_SIZES, CHART_INK } from "../design.js";
-import { optionRecord, optionRecords } from "../option-lens.js";
+import { optionMemberOrUndefined, optionNumberMatrix, optionNumbers, optionRecord, optionRecordPairs, optionRecords } from "../option-lens.js";
 import { optionArray } from "../../report-render/option-lens.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -42,8 +42,7 @@ function seriesOf(option: EchartOption): EchartOption[] {
 
 function pointsOf(option: EchartOption): number[][] {
     const points = seriesOf(option).find((entry) => entry.type === "scatter" && entry.silent === true);
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return (points?.data ?? []) as number[][];
+    return optionNumberMatrix(points?.data ?? []);
 }
 
 describe("the points of a box and of a violin", () => {
@@ -143,14 +142,14 @@ function slotSeries(option: EchartOption): EchartOption[] {
 
 /** The median lines of an option as `[from x, to x, y]`. */
 function medianLines(option: EchartOption): number[][] {
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return slotSeries(option).flatMap((entry) =>
-        (((entry.markLine as EchartOption | undefined)?.data ?? []) as Array<Array<{ coord: number[] }>>).map(([from, to]) => [
-            from.coord[0],
-            to.coord[0],
-            from.coord[1],
-        ]),
-    );
+    return slotSeries(option).flatMap((entry) => {
+        const markLine = optionMemberOrUndefined(entry.markLine);
+        if (markLine === undefined) return [];
+        return optionRecordPairs(markLine.data).map(([from, to]) => {
+            const fromCoord = optionNumbers(from.coord);
+            return [fromCoord[0], optionNumbers(to.coord)[0], fromCoord[1]];
+        });
+    });
 }
 
 describe("the thin slots of a box and of a violin", () => {
@@ -159,15 +158,13 @@ describe("the thin slots of a box and of a violin", () => {
             const option = deriveChartOption(block(chartType, { x: "gene", y: "count", group: "condition" }), COUNTS)._unsafeUnwrap();
             const axes = optionRecords(option.xAxis);
             expect(axes[1]).toEqual(expect.objectContaining({ type: "value", min: -0.5, max: 1.5, show: false }));
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const points = slotSeries(option).map((entry) => [entry.name, (entry.data as number[][]).length]);
+            const points = slotSeries(option).map((entry) => [entry.name, optionNumberMatrix(entry.data).length]);
             expect(points).toEqual([
                 ["untreated", 7],
                 ["treated", 6],
             ]);
             // The untreated slot sits left of the center of each category, and the treated slot right of it.
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const [untreated, treated] = slotSeries(option).map((entry) => entry.data as number[][]);
+            const [untreated, treated] = slotSeries(option).map((entry) => optionNumberMatrix(entry.data));
             for (const [x] of untreated) expect(x - Math.round(x)).toBeLessThan(0);
             for (const [x] of treated) expect(x - Math.round(x)).toBeGreaterThan(0);
             expect(untreated.map((point) => point[1]).sort((a, b) => a - b)).toEqual([364.08, 396.19, 429.57, 1140.91, 1237.78, 1238.69, 1341.43]);

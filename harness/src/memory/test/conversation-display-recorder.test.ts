@@ -226,7 +226,7 @@ describe("conversation display recorder — sub-agent activity", () => {
         await recorder.emit({ type: "tool-finished", source: PLANNER, toolUseId: "s1", name: "search_pubmed", outcome: "ok", durationMs: 250 });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "generate_plan", outcome: "ok" });
 
-        const parts = recorder.finish()[1]!.parts;
+        const parts = recorder.finish()[1].parts;
         const stored = parts.find((part) => part.type === "data-subagent-activity");
         expect(stored).toEqual({
             type: "data-subagent-activity",
@@ -257,7 +257,7 @@ describe("conversation display recorder — sub-agent activity", () => {
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
         await recorder.emit({ type: "data-presentation", source: PLANNER, data: { id: "hidden", content: { kind: "markdown", body: "child" } } });
 
-        expect(recorder.finish()[1]!.parts).toEqual([
+        expect(recorder.finish()[1].parts).toEqual([
             { type: "data-tool-call", id: "t1", data: { toolCallId: "t1", toolName: "generate_plan", outcome: "incomplete" } },
         ]);
     });
@@ -269,7 +269,7 @@ describe("conversation display recorder — sub-agent activity", () => {
         await recorder.emit({ type: "tool-started", source: compaction, toolUseId: "c1", name: "read_file", input: {} });
         await recorder.emit({ type: "tool-finished", source: compaction, toolUseId: "c1", name: "read_file", outcome: "ok" });
 
-        expect(recorder.finish()[1]!.parts.map((part) => part.type)).toEqual(["data-tool-call"]);
+        expect(recorder.finish()[1].parts.map((part) => part.type)).toEqual(["data-tool-call"]);
     });
 
     it("closes an unfinished entry as incomplete", async () => {
@@ -277,7 +277,7 @@ describe("conversation display recorder — sub-agent activity", () => {
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
         await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed", input: {} });
 
-        const stored = recorder.takeRound([{ role: "assistant", content: "" }])[0]!.parts.find((part) => part.type === "data-subagent-activity");
+        const stored = recorder.takeRound([{ role: "assistant", content: "" }])[0].parts.find((part) => part.type === "data-subagent-activity");
         expect(stored).toMatchObject({
             data: { toolCallId: "t1", entries: [{ tool: "search_pubmed", outcome: "incomplete", startedAt: new Date(T0 + 1000).toISOString() }] },
         });

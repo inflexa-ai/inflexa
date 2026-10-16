@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { errorMessage } from "../../../lib/thrown.js";
 import type { ReadFileResult, WorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { createReadFileTool } from "../read-file.js";
 
@@ -116,8 +117,7 @@ describe("createReadFileTool", () => {
             (await tool.execute({ path: "data/inputs/cold.csv" }, ctx))._unsafeUnwrap();
         } catch (e) {
             threw = true;
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            expect((e as Error).message).toContain("upstream 502");
+            expect(errorMessage(e)).toContain("upstream 502");
         }
         expect(threw).toBe(true);
     });

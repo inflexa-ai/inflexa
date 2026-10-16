@@ -7,6 +7,7 @@ import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakp
 import type { ChatRequest, ChatStreamEvent, FetchLike } from "../types.js";
 import { jsonParse } from "../../lib/json.js";
 import { z } from "zod";
+import { requestBodyText } from "../../lib/test/doubles.js";
 
 const request: ChatRequest = {
     system: "You are a test model.",
@@ -45,7 +46,7 @@ function capturingFetch(respond: () => Response): { readonly fetch: FetchLike; r
     const bodies: ResponsesRequestBody[] = [];
     const fetch: FetchLike = (_input, init) => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        bodies.push(init?.body === undefined || init.body === null ? {} : jsonParse(String(init.body), z.record(z.string(), z.unknown())));
+        bodies.push(init?.body === undefined || init.body === null ? {} : jsonParse(requestBodyText(init.body), z.record(z.string(), z.unknown())));
         return Promise.resolve(respond());
     };
     return { fetch, bodies };

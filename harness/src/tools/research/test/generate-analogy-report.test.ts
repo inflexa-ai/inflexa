@@ -7,6 +7,7 @@ import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import type { ChatRequest } from "../../../providers/types.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../../loop/__fixtures__/scripted-provider.js";
+import { AnalogicalReasonerOutputSchema } from "@inflexa-ai/harness/contracts/analogy-report.js";
 import type { ToolContext } from "../../define-tool.js";
 import { buildResearchPrompt, createGenerateAnalogyReportTool } from "../generate-analogy-report.js";
 
@@ -50,7 +51,7 @@ const ctxFor = (sessionAgentId = "conversation-agent"): ToolContext => ({
     }),
     signal: new AbortController().signal,
     emit: () => {},
-    ask:  () => Promise.reject(new Error("ask should not be reached")),
+    ask: () => Promise.reject(new Error("ask should not be reached")),
 });
 
 const submitReport = (id: string, report: unknown) => makeMessage([toolUseBlock(id, "submit_analogy_report", report)], "tool_use");
@@ -165,11 +166,10 @@ describe("generateAnalogyReport sub-agent tool", () => {
         const provider = scriptedProvider(() => makeMessage([textBlock("Still prose, no report.")], "end_turn"));
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap() as {
-            schemaVersion: "1";
-            error: { kind: string; message: string };
-        };
+        const result = AnalogicalReasonerOutputSchema.parse(
+            (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap(),
+        );
+        if (!("error" in result)) throw new Error("expected the error envelope, got a report");
 
         expect(result.error.kind).toBe("extraction-failed");
         expect(result.error.message).toContain("submitted no report and no blocker");
@@ -190,13 +190,13 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(JSON.stringify(rejected?.output)).toContain("input validation failed");
     });
 
-    it("rejects empty problem at the input-schema boundary",  () => {
+    it("rejects empty problem at the input-schema boundary", () => {
         const provider = scriptedProvider([]);
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
         const parse = tool.inputSchema.safeParse({ problem: "" });
         expect(parse.success).toBe(false);
         return Promise.resolve();
-});
+    });
 });
 
 describe("buildResearchPrompt", () => {

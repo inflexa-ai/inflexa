@@ -22,7 +22,7 @@ import { createFixtureResolver } from "../../../report-model/fixture-resolver.js
 import { parseDelimited } from "../../../report-model/production-resolver.js";
 import { walkBlocks } from "../../../report-model/block-walk.js";
 import { validateReport } from "../../../report-model/validate.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "../../chart.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND } from "../../design.js";
 import { categoricalPalette, statisticText } from "../../figures/common.js";
 import { FIGURE_MODULES, isFigurePresetType } from "../../figures/index.js";
@@ -32,10 +32,20 @@ import { CHART_SERIES_BUILDER } from "../../page.js";
 import { renderReportPage } from "../../render.js";
 import type { RenderTrees } from "../../types.js";
 import { GALLERY_DATA_HINT, GALLERY_DIR, GALLERY_DOCUMENT, hasGalleryData, loadGallery, type GalleryLoad } from "../gallery.js";
-import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
+import {
+    optionMemberOrUndefined,
+    optionNumber,
+    optionNumberMatrix,
+    optionRecord,
+    optionRecords,
+    optionRecordsOrEmpty,
+    optionSource,
+    optionText,
+} from "../../option-lens.js";
 import { jsonParse } from "../../../lib/json.js";
 import { z } from "zod";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
+import { must } from "../../../lib/test/guards.js";
 import { optionArray, optionNumbers, optionStrings } from "../../../report-render/option-lens.js";
 
 /** The suffix of the name of each group that reads the tables. It names the command that rebuilds absent tables. */
@@ -61,6 +71,22 @@ type ManifestEntry = {
     thinning: string;
 };
 
+/** The manifest schema, read from the gallery's manifest.json. */
+const manifestSchema = z.object({
+    field: z.string(),
+    table: z.string(),
+    path: z.string(),
+    rows: z.number(),
+    bytes: z.number(),
+    sha256: z.string(),
+    dataset: z.object({ name: z.string(), citation: z.string() }),
+    license: z.object({ name: z.string(), url: z.string(), quote: z.string() }),
+    source_urls: z.array(z.string()),
+    script: z.string(),
+    derivation: z.string(),
+    thinning: z.string(),
+});
+
 /** Every block of a tree, in document order. A section contributes itself and then its children. */
 function everyBlock(blocks: readonly Block[]): Block[] {
     return blocks.flatMap((block) => (block.kind === "section" ? [block, ...everyBlock(block.blocks)] : [block]));
@@ -79,8 +105,7 @@ let gallery: GalleryLoad;
 let manifest: ManifestEntry[];
 
 beforeAll(async () => {
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    manifest = jsonParse(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8"), z.array(z.record(z.string(), z.unknown()))) as ManifestEntry[];
+    manifest = jsonParse(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8"), z.array(manifestSchema));
     if (!NO_DATA) gallery = (await loadGallery())._unsafeUnwrap();
 });
 
@@ -120,14 +145,14 @@ function seriesOf(option: EchartOption): EchartOption[] {
 /** One axis of an option: the only axis, or the axis at an index of a list. */
 function axisOf(option: EchartOption, key: "xAxis" | "yAxis", index = 0): EchartOption {
     const axis = option[key];
-    return optionRecord((Array.isArray(axis) ? axis[index] : axis));
+    return optionRecord(Array.isArray(axis) ? axis[index] : axis);
 }
 
 /** The text of each `text` element of the graphic of an option, children included. */
 function graphicTexts(option: EchartOption): string[] {
     const walk = (elements: unknown): string[] =>
         (Array.isArray(elements) ? elements : []).flatMap((element: EchartOption) => [
-            ...(element.type === "text" ? [String((optionRecord(element.style)).text)] : []),
+            ...(element.type === "text" ? [optionText(optionRecord(element.style).text)] : []),
             ...walk(element.children),
         ]);
     return walk(option.graphic);
@@ -165,8 +190,7 @@ function treeSeries(option: EchartOption, axis: "x" | "y"): EchartOption {
  * that starts at height zero. The tree of y draws the height on x.
  */
 function leafPlaces(tree: EchartOption, axis: "x" | "y"): number[] {
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    const starts = (optionRecords(tree.data)).map((edge) => (edge.coords as number[][])[0]);
+    const starts = optionRecords(tree.data).map((edge) => optionNumberMatrix(edge.coords)[0]);
     return starts.flatMap(([a, b]) => ((axis === "x" ? b : a) === 0 ? [axis === "x" ? a : b] : []));
 }
 
@@ -359,12 +383,9 @@ describe.skipIf(NO_DATA)(`the gallery render${NEEDS_DATA}`, () => {
 });
 
 describe.skipIf(NO_DATA)(`the page build of each dense chart${NEEDS_DATA}`, () => {
-    // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-    const seriesDataOnThePage = evaluatePageScript<() => (
-        payload: { columns: readonly string[]; rows: readonly ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[]>(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`);
+    const seriesDataOnThePage = evaluatePageScript<
+        () => (payload: { columns: readonly string[]; rows: readonly ChartRow[] }, source: Record<string, unknown>, rule: unknown) => unknown[]
+    >(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`);
 
     /** The largest count of copies of a table that the dense form of a small chart reads. */
     const COPY_LIMIT = 400;
@@ -385,8 +406,7 @@ describe.skipIf(NO_DATA)(`the page build of each dense chart${NEEDS_DATA}`, () =
             const render = deriveChartRender(block, rows, value.columns, target, inputs);
             if (render.isErr() || !render.value.readsPayload) continue;
             built.push(block.id);
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const source = render.value.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+            const source = must(optionSource(render.value.option[CHART_SOURCE_MEMBER]), "the render's data source");
             const inline = seriesOf(render.value.inline);
             for (const [index, entry] of source.series.entries()) {
                 const page = seriesDataOnThePage({ columns, rows }, entry, source.rule);
@@ -411,8 +431,8 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const names = seriesOf(option).map((series) => series.name);
         expect(names.slice(0, 2)).toEqual([`Down (${down})`, `Up (${up})`]);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(String(names[2])).toMatch(/^Not significant \([\d,]+\)$/);
-        expect(axisOf(option, "xAxis").min).toBe(-(optionNumber(axisOf(option, "xAxis").max)));
+        expect(optionText(names[2])).toMatch(/^Not significant \([\d,]+\)$/);
+        expect(axisOf(option, "xAxis").min).toBe(-optionNumber(axisOf(option, "xAxis").max));
     });
 
     it("ma: draws the mean on a log axis, the significant genes apart, and a line at zero", () => {
@@ -421,19 +441,16 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const significant = seriesOf(option)[0];
         expect(significant.name).toBe("Adjusted p-value < 0.05");
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(significant.data)).length).toBe(countRows("bulk-ma", (row) => numberOf(row.padj) < 0.05));
-        expect((optionRecords((optionRecord(significant.markLine)).data))[0].yAxis).toBe(0);
-        expect(axisOf(option, "yAxis").min).toBe(-(optionNumber(axisOf(option, "yAxis").max)));
+        expect(optionArray(significant.data).length).toBe(countRows("bulk-ma", (row) => numberOf(row.padj) < 0.05));
+        expect(optionRecords(optionRecord(significant.markLine).data)[0].yAxis).toBe(0);
+        expect(axisOf(option, "yAxis").min).toBe(-optionNumber(axisOf(option, "yAxis").max));
     });
 
     it("pca: sets the symbol by the shape channel, labels each sample, and shares one range on both axes", () => {
         const option = optionOf("bulk-pca");
-        const legend = optionRecords((optionRecord(option.legend)).data);
+        const legend = optionRecords(optionRecord(option.legend).data);
         expect(legend.find((entry) => entry.name === "paired-end")?.icon).toBe("triangle");
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const labeled = seriesOf(option).flatMap((series) =>
-            (series.label as EchartOption | undefined)?.show === true ? (optionRecords(series.data)) : [],
-        );
+        const labeled = seriesOf(option).flatMap((series) => (optionMemberOrUndefined(series.label)?.show === true ? optionRecords(series.data) : []));
         expect(labeled.map((point) => point.name).sort()).toEqual(
             valueOf("bulk-pca")
                 .rows.map((row) => String(row.sample))
@@ -464,9 +481,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const yTree = treeSeries(option, "y");
         if (trees?.x === undefined || trees.y === undefined) throw new Error("expected both trees");
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(xTree.data)).length).toBe(trees.x.rows.length);
+        expect(optionArray(xTree.data).length).toBe(trees.x.rows.length);
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(yTree.data)).length).toBe(trees.y.rows.length);
+        expect(optionArray(yTree.data).length).toBe(trees.y.rows.length);
         expect(leafPlaces(xTree, "x").sort((a, b) => a - b)).toEqual(samples.map((_name, place) => place));
         expect(leafPlaces(yTree, "y").sort((a, b) => a - b)).toEqual(genes.map((_name, place) => place));
     });
@@ -485,27 +502,29 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
             const treeRows = trees?.[axis]?.rows;
             if (treeRows === undefined) throw new Error(`expected a tree for ${axis}`);
             // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-            expect((optionArray(tree.data)).length).toBe(treeRows.length);
+            expect(optionArray(tree.data).length).toBe(treeRows.length);
             expect(leafPlaces(tree, axis).sort((a, b) => a - b)).toEqual(rows.map((_name, place) => place));
         }
     });
 
     it("embedding: hides the axes, names each cluster on the data, and draws no legend", () => {
         const option = optionOf("single-cell-clusters");
-        expect((optionRecord(axisOf(option, "xAxis").axisLabel)).show).toBe(false);
+        expect(optionRecord(axisOf(option, "xAxis").axisLabel).show).toBe(false);
         expect(axisOf(option, "xAxis").name).toBe("UMAP 1 →");
-        expect((optionRecord(option.legend)).show).toBe(false);
+        expect(optionRecord(option.legend).show).toBe(false);
         const names = seriesOf(option).find((series) => series.name === "Category names");
-        expect((optionRecords((names?.data ?? []))).map((point) => point.name).sort()).toEqual(
-            [...new Set(valueOf("single-cell-clusters").rows.map((row) => String(row.cluster)))].sort(),
-        );
+        expect(
+            optionRecords(names?.data ?? [])
+                .map((point) => point.name)
+                .sort(),
+        ).toEqual([...new Set(valueOf("single-cell-clusters").rows.map((row) => String(row.cluster)))].sort());
     });
 
     it("embedding: draws one panel for each condition under one continuous color scale", () => {
         const option = optionOf("single-cell-isg15");
-        expect((optionRecords(option.grid)).length).toBe(2);
+        expect(optionRecords(option.grid).length).toBe(2);
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect(seriesOf(option).map((series) => (optionArray(series.data)).length)).toEqual([3000, 3000]);
+        expect(seriesOf(option).map((series) => optionArray(series.data).length)).toEqual([3000, 3000]);
         expect(option.visualMap).toBeDefined();
     });
 
@@ -518,7 +537,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const largest = rows.reduce((best, row) => (Number(row.gene_ratio) > Number(best.gene_ratio) ? row : best));
         // A long term wraps to two lines and ends with an ellipsis, thus the first category reads the head of the term.
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const first = String((optionArray(axisOf(option, "yAxis").data))[0]);
+        const first = optionText(optionArray(axisOf(option, "yAxis").data)[0]);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         expect(String(largest.term).startsWith(first.replaceAll("\n", " ").replace(/…$/, ""))).toBe(true);
         expect(option.visualMap).toBeDefined();
@@ -530,10 +549,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         expect(series.filter((entry) => entry.type === "line" && entry.name !== undefined).every((entry) => entry.step === "end")).toBe(true);
         for (const group of ["Female", "Male"]) {
             const marks = series.find((entry) => entry.type === "scatter" && entry.name === group);
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            expect((marks as { data: unknown[] }).data.length).toBe(countRows("clinical-km", (row) => row.strata === group && Number(row.n_censor) > 0));
+            expect(optionArray(marks?.data ?? []).length).toBe(countRows("clinical-km", (row) => row.strata === group && Number(row.n_censor) > 0));
         }
-        const risk = series.filter((entry) => entry.xAxisIndex === 1).map((entry) => (optionRecords(entry.data)).map((cell) => cell.name));
+        const risk = series.filter((entry) => entry.xAxisIndex === 1).map((entry) => optionRecords(entry.data).map((cell) => cell.name));
         expect(risk).toEqual([
             ["90", "53", "21", "3", "0"],
             ["138", "62", "20", "7", "2"],
@@ -547,7 +565,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     it("forest: draws the ratio on a log axis around a solid line at one, with the estimate and the p columns", () => {
         const option = optionOf("clinical-forest");
         expect(axisOf(option, "xAxis").type).toBe("log");
-        expect((optionRecord(seriesOf(option)[0].markLine)).data).toEqual([{ xAxis: 1 }]);
+        expect(optionRecord(seriesOf(option)[0].markLine).data).toEqual([{ xAxis: 1 }]);
         expect(axisOf(option, "yAxis", 1).data).toContain("0.53 (0.38–0.75)");
         const sex = valueOf("clinical-forest").rows.find((row) => row.term === "Female vs male");
         expect(axisOf(option, "yAxis", 2).data).toContain(statisticText(sex?.pvalue ?? "", "pvalue"));
@@ -557,8 +575,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const option = optionOf("clinical-roc");
         expect([axisOf(option, "xAxis").min, axisOf(option, "xAxis").max, axisOf(option, "yAxis").min, axisOf(option, "yAxis").max]).toEqual([0, 1, 0, 1]);
         expect(JSON.stringify(seriesOf(option).find((entry) => entry.markLine !== undefined)?.markLine)).toContain('[{"coord":[0,0]},{"coord":[1,1]}]');
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const names = seriesOf(option).flatMap((entry) => ((entry.data as EchartOption[] | undefined) ?? []).map((item) => item.name));
+        const names = seriesOf(option).flatMap((entry) => optionRecordsOrEmpty(entry.data).map((item) => item.name));
         expect(names).toContain("AUC, ECOG + Karnofsky + age = 0.627\nAUC, ECOG alone = 0.619");
         expect(valueOf("clinical-roc").statistics?.map((statistic) => statistic.value)).toEqual(["0.626761473820297", "0.619166666666667"]);
     });
@@ -568,7 +585,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const series = seriesOf(option);
         const chromosomes = [...new Set(valueOf("gwas-manhattan").rows.map((row) => String(row.chrom)))];
         expect(series.slice(0, chromosomes.length).map((entry) => entry.name)).toEqual(chromosomes);
-        const lines = optionRecords((optionRecord(series[0].markLine)).data);
+        const lines = optionRecords(optionRecord(series[0].markLine).data);
         expect(lines.map((line) => line.yAxis)).toEqual([-Math.log10(5e-8), 5]);
         expect(series.some((entry) => entry.name === "Chromosome names")).toBe(true);
     });
@@ -586,7 +603,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     it("gsea: prints the enrichment statistics over the running score, the hit ticks, and the ranked metric", () => {
         const option = optionOf("enrichment-gsea");
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(option.grid)).length).toBe(3);
+        expect(optionArray(option.grid).length).toBe(3);
         const hits = countRows("enrichment-gsea", (row) => row.hit === "1");
         const names = seriesOf(option).map((entry) => entry.name);
         expect(names.at(-1)).toBe("Wald statistic");
@@ -604,10 +621,10 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const samples = new Set(valueOf("mutations-oncoprint").rows.map((row) => row.sample)).size;
         expect(series[0].renderItem).toBe("cell-glyph");
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(series[0].data)).length).toBe(genes * samples);
+        expect(optionArray(series[0].data).length).toBe(genes * samples);
         expect(series.some((entry) => entry.type === "bar" && entry.name === "Missense Mutation")).toBe(true);
         const share = optionRecord(series.at(-1));
-        expect((optionRecord((optionRecords(share.data))[0].label)).formatter).toBe("27%");
+        expect(optionRecord(optionRecords(share.data)[0].label).formatter).toBe("27%");
     });
 
     it("lollipop: draws each mutation as a stem, ends the axis at the protein length, and labels the hotspot", () => {
@@ -615,9 +632,8 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const series = seriesOf(option);
         expect(series.filter((entry) => entry.type === "custom").every((entry) => entry.renderItem === "stem")).toBe(true);
         expect(axisOf(option, "xAxis").max).toBe(912);
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const labels = series.find((entry) => entry.type === "scatter" && (entry.label as EchartOption | undefined)?.show === true);
-        expect((optionRecords((labels?.data ?? []))).map((point) => point.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
+        const labels = series.find((entry) => entry.type === "scatter" && optionMemberOrUndefined(entry.label)?.show === true);
+        expect(optionRecords(labels?.data ?? []).map((point) => point.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
     });
 
     it("upset: counts each exact combination of the mutated genes one time, and sorts the intersections and the sets by size", () => {
@@ -655,7 +671,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         expect(axisOf(option, "yAxis", optionNumber(setBars.yAxisIndex)).data).toEqual(sets);
         expect(setBars.data).toEqual(sets.map((gene) => setSizes.get(gene)));
         // Each intersection draws, thus the matrix states no hidden count.
-        expect(axisOf(option, "xAxis", optionNumber((optionRecord(series.find((entry) => entry.id === "members"))).xAxisIndex)).name).toBeUndefined();
+        expect(axisOf(option, "xAxis", optionNumber(optionRecord(series.find((entry) => entry.id === "members")).xAxisIndex)).name).toBeUndefined();
     });
 
     it("sankey: keeps the node order of the table in three stages, and colors each stage from the start of the palette", () => {
@@ -676,14 +692,14 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
             const palette = categoricalPalette(members.length);
             const drawn = nodes.filter((node) => node.depth === depth);
             expect(drawn.map((node) => node.name)).toEqual(members);
-            expect(drawn.map((node) => (optionRecord(node.itemStyle)).color)).toEqual(members.map((_name, place) => palette[place % palette.length]));
+            expect(drawn.map((node) => optionRecord(node.itemStyle).color)).toEqual(members.map((_name, place) => palette[place % palette.length]));
         }
         // Each flow takes the color of its source, and the last stage puts its labels at the left of its nodes.
         expect(sankey.lineStyle).toEqual({ color: "source", opacity: SANKEY_LINK_OPACITY });
-        expect((optionRecords(sankey.links)).map((link) => [link.source, link.target, link.value])).toEqual(
+        expect(optionRecords(sankey.links).map((link) => [link.source, link.target, link.value])).toEqual(
             rows.map((row) => [String(row.source), String(row.target), Number(row.value)]),
         );
-        expect(nodes.filter((node) => (optionRecord(node.label)).position === "left").map((node) => node.name)).toEqual(["Alive", "Deceased"]);
+        expect(nodes.filter((node) => optionRecord(node.label).position === "left").map((node) => node.name)).toEqual(["Alive", "Deceased"]);
         expect(sankey.name).toBe("Patients");
     });
 
@@ -692,16 +708,15 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const series = seriesOf(option);
         const rows = valueOf("gwas-locuszoom").rows;
         // The legend states the five LocusZoom bins, highest first, and the gray of a missing r².
-        const pieces = (optionRecords((optionRecords(option.visualMap))[0].pieces)).map((piece) => [piece.label, piece.color]);
+        const pieces = optionRecords(optionRecords(option.visualMap)[0].pieces).map((piece) => [piece.label, piece.color]);
         expect(pieces).toEqual([...[...LD_BINS].reverse().map((bin) => [`${bin.low}–${bin.high}`, bin.color]), [LD_MISSING_NAME, LD_MISSING_COLOR]]);
         const missing = series.find((entry) => entry.name === LD_MISSING_NAME);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((missing as { data: unknown[] }).data.length).toBe(rows.filter((row) => row.r2 === "").length);
+        expect(optionArray(missing?.data ?? []).length).toBe(rows.filter((row) => row.r2 === "").length);
         // The lead variant is the row of the smallest p, a purple diamond with its name.
         const lead = rows.reduce((best, row) => (Number(row.pvalue) < Number(best.pvalue) ? row : best));
         const diamond = optionRecord(series.find((entry) => entry.name === LEAD_VARIANT_NAME));
-        expect([diamond.symbol, (optionRecord(diamond.itemStyle)).color]).toEqual(["diamond", LEAD_VARIANT_COLOR]);
-        expect((optionRecords(diamond.data)).map((point) => point.name)).toEqual([String(lead.variant)]);
+        expect([diamond.symbol, optionRecord(diamond.itemStyle).color]).toEqual(["diamond", LEAD_VARIANT_COLOR]);
+        expect(optionRecords(diamond.data).map((point) => point.name)).toEqual([String(lead.variant)]);
         expect(lead.variant).toBe("rs1421085");
         // The recombination rate draws on a right axis in cM/Mb, and the position axis reads in megabases.
         const rate = optionRecord(series.find((entry) => entry.name === RECOMBINATION_NAME));
@@ -711,7 +726,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         // The genes draw in the order of their starts, and two genes of one lane never overlap.
         const genes = optionRecord(series.find((entry) => entry.name === GENE_NAMES));
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const placed = (optionRecords(genes.data)).map((gene) => ({ name: String(gene.name), lane: (optionNumbers(gene.value))[1] }));
+        const placed = optionRecords(genes.data).map((gene) => ({ name: optionText(gene.name), lane: optionNumbers(gene.value)[1] }));
         expect(placed.map((gene) => gene.name)).toEqual(["RBL2", "AKTIP", "RPGRIP1L", "FTO"]);
         const spans = new Map((valueOf("gwas-locuszoom").track?.rows ?? []).map((row) => [String(row.gene), [Number(row.start), Number(row.end)]]));
         for (const [place, gene] of placed.entries()) {
@@ -738,7 +753,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
             const option = optionOf(id);
             expect(graphicTexts(option).slice(0, 2)).toEqual(["control", "stimulated"]);
             // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-            expect((optionArray(option.xAxis)).length).toBe(2);
+            expect(optionArray(option.xAxis).length).toBe(2);
         }
     });
 });

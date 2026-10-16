@@ -275,42 +275,52 @@ function applyFindingOp(findings: Findings, op: FindingOp): Result<Findings, Wor
     }
 }
 
-/**
- * Pure section-addressable amendment. Sibling sections are never touched; a
+function applyGoalUpdate(wm: WorkingMemory, value: SectionValue["goal"]): Result<WorkingMemory, WorkingMemoryRejection> {
+    const text = value.text.trim();
+    if (text.length > WORKING_MEMORY_LIMITS.goalChars) {
+        return reject(
+            `the goal is ${text.length} characters — the cap is ${WORKING_MEMORY_LIMITS.goalChars}. It was NOT ` +
+                `recorded. State the objective in a sentence or two; the supporting detail belongs in ` +
+                `constraints and findings, not in the goal.`,
+        );
+    }
+    return ok({ ...wm, goal: text });
+}
+
+function applyConstraintUpdate(wm: WorkingMemory, value: SectionValue["constraint"]): Result<WorkingMemory, WorkingMemoryRejection> {
+    const origin = value.op === "add" ? value.origin : "agent";
+    return applyEntryOp<Constraint>(wm.constraints, value, "constraints", WORKING_MEMORY_LIMITS.constraints, (text) => ({
+        id: newId(),
+        text,
+        origin,
+    })).map((constraints) => ({ ...wm, constraints }));
+}
+
+function applyHypothesisUpdate(wm: WorkingMemory, value: SectionValue["hypothesis"]): Result<WorkingMemory, WorkingMemoryRejection> {
+    return applyEntryOp<Hypothesis>(wm.hypotheses, value, "hypotheses", WORKING_MEMORY_LIMITS.hypotheses, (text) => ({
+        id: newId(),
+        text,
+    })).map((hypotheses) => ({ ...wm, hypotheses }));
+}
+
+function applyFindingSectionUpdate(wm: WorkingMemory, value: SectionValue["finding"]): Result<WorkingMemory, WorkingMemoryRejection> {
+    return applyFindingOp(wm.findings, value).map((findings) => ({ ...wm, findings }));
+}
+
+const SECTION_UPDATERS: {
+    readonly [S in Section]: (wm: WorkingMemory, value: SectionValue[S]) => Result<WorkingMemory, WorkingMemoryRejection>;
+} = {
+    goal: applyGoalUpdate,
+    constraint: applyConstraintUpdate,
+    hypothesis: applyHypothesisUpdate,
+    finding: applyFindingSectionUpdate,
+};
+
+/** Pure section-addressable amendment. Sibling sections are never touched; a
  * refused write returns `err` and the caller writes nothing.
  */
 function applySectionUpdate<S extends Section>(wm: WorkingMemory, section: S, value: SectionValue[S]): Result<WorkingMemory, WorkingMemoryRejection> {
-    switch (section) {
-        case "goal": {
-            const text = (value as SectionValue["goal"]).text.trim();
-            if (text.length > WORKING_MEMORY_LIMITS.goalChars) {
-                return reject(
-                    `the goal is ${text.length} characters — the cap is ${WORKING_MEMORY_LIMITS.goalChars}. It was NOT ` +
-                        `recorded. State the objective in a sentence or two; the supporting detail belongs in ` +
-                        `constraints and findings, not in the goal.`,
-                );
-            }
-            return ok({ ...wm, goal: text });
-        }
-        case "constraint": {
-            const op = value as SectionValue["constraint"];
-            const origin = op.op === "add" ? op.origin : "agent";
-            return applyEntryOp<Constraint>(wm.constraints, op, "constraints", WORKING_MEMORY_LIMITS.constraints, (text) => ({
-                id: newId(),
-                text,
-                origin,
-            })).map((constraints) => ({ ...wm, constraints }));
-        }
-        case "hypothesis":
-            return applyEntryOp<Hypothesis>(wm.hypotheses, value as SectionValue["hypothesis"], "hypotheses", WORKING_MEMORY_LIMITS.hypotheses, (text) => ({
-                id: newId(),
-                text,
-            })).map((hypotheses) => ({ ...wm, hypotheses }));
-        case "finding":
-            return applyFindingOp(wm.findings, value as SectionValue["finding"]).map((findings) => ({ ...wm, findings }));
-    }
-    // Unreachable — `section` is exhaustively a `Section`.
-    return ok(wm);
+    return SECTION_UPDATERS[section](wm, value);
 }
 
 /** A finding lifted out of its run bucket, carrying the run it references. */
@@ -425,15 +435,17 @@ export function createWorkingMemory(pool: Pool): WorkingMemoryStore {
                     // rejection is lifted back into the error channel below.
                     amended.isErr()
                         ? okAsync<Result<void, WorkingMemoryRejection>, DbError>(err(amended.error))
-                        : tryMutation("working-memory.updateSection.upsert", () =>
-                              client.query(
-                                  `INSERT INTO cortex_working_memory (analysis_id, data, updated_at)
+                        : tryMutation(
+                              "working-memory.updateSection.upsert",
+                              () =>
+                                  client.query(
+                                      `INSERT INTO cortex_working_memory (analysis_id, data, updated_at)
                VALUES ($1, $2::jsonb, NOW())
                ON CONFLICT (analysis_id)
                DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-                                  [analysisId, JSON.stringify(amended.value)],
-                              ),
-                          // oxlint-disable-next-line typescript/no-invalid-void-type -- neverthrow's ok<void, E> / ResultAsync<void, E> is the idiom of the seam contracts; re-typing the contracts to undefined changes the published surface beyond this change
+                                      [analysisId, JSON.stringify(amended.value)],
+                                  ),
+                              // oxlint-disable-next-line typescript/no-invalid-void-type -- neverthrow's ok<void, E> / ResultAsync<void, E> is the idiom of the seam contracts; re-typing the contracts to undefined changes the published surface beyond this change
                           ).map(() => ok<void, WorkingMemoryRejection>(undefined)),
                 ),
         ).andThen((written) => written);

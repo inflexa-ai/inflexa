@@ -30,7 +30,6 @@ import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 
 import { okAsync } from "neverthrow";
 
-import type { ChatProvider, EmbeddingProvider } from "../../../../providers/types.js";
 import { unusedCitationResolver } from "../../../../citations/__fixtures__/resolver.js";
 import { createWorkingMemory } from "../../../../memory/working-memory.js";
 import { insertRun, queryRun, upsertAnalysis } from "../../../../state/index.js";
@@ -42,6 +41,7 @@ import { runExecuteAnalysisBody, type ExecuteAnalysisDeps } from "../../../execu
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "../../../sandbox-step.js";
 import type { AnalysisStep } from "../../../../schemas/workflow-state.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { stubChatProvider, stubEmbeddingProvider } from "../../../../lib/test/doubles.js";
 
 /** The plan data the parent composes S1's seed from at dispatch. */
 const S1_PLAN_STEP: AnalysisStep = {
@@ -76,8 +76,7 @@ const testCChild = DBOS.registerWorkflow(
         await DBOS.runStep(
             () => {
                 const err = new Error("billing gateway: budget_exceeded for VK vk_test");
-                // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                (err as { statusCode?: number }).statusCode = 402;
+                Object.assign(err, { statusCode: 402 });
                 return Promise.reject(err);
             },
             { name: "llm" },
@@ -99,30 +98,32 @@ const testCDepsRef: { value: ExecuteAnalysisDeps | undefined } = {
     value: undefined,
 };
 const testCParent = DBOS.registerWorkflow(
-     (input: { analysisId: string; planId: string; threadId: string | null }) => {
+    (input: { analysisId: string; planId: string; threadId: string | null }) => {
         const deps = testCDepsRef.value;
         if (!deps) throw new Error("testCParent: deps not set");
-        return Promise.resolve(runExecuteAnalysisBody(
-            {
-                analysisId: input.analysisId,
-                planId: input.planId,
-                planSummary: "test plan",
-                threadId: input.threadId,
-                steps: [{ id: "S1", depends_on: [] }],
-                planStepById: { S1: S1_PLAN_STEP },
-                agentByStepId: { S1: "scientific-executor" },
-                resourcesByStepId: { S1: { cpu: 2, memoryGb: 4 } },
-                synthesisEnabled: false,
-                runSession: {
-                    identity: { user: "u-1" },
-                    scope: { kind: "analysis", analysisId: input.analysisId },
-                    provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
-                    runFrame: { runId: DBOS.workflowID ?? "test-run" },
-                    auth: makeLocalAuth(),
+        return Promise.resolve(
+            runExecuteAnalysisBody(
+                {
+                    analysisId: input.analysisId,
+                    planId: input.planId,
+                    planSummary: "test plan",
+                    threadId: input.threadId,
+                    steps: [{ id: "S1", depends_on: [] }],
+                    planStepById: { S1: S1_PLAN_STEP },
+                    agentByStepId: { S1: "scientific-executor" },
+                    resourcesByStepId: { S1: { cpu: 2, memoryGb: 4 } },
+                    synthesisEnabled: false,
+                    runSession: {
+                        identity: { user: "u-1" },
+                        scope: { kind: "analysis", analysisId: input.analysisId },
+                        provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
+                        runFrame: { runId: DBOS.workflowID ?? "test-run" },
+                        auth: makeLocalAuth(),
+                    },
                 },
-            },
-            deps,
-        ));
+                deps,
+            ),
+        );
     },
     { name: "test-c-execute-analysis-parent" },
 );
@@ -137,7 +138,12 @@ const testCParent = DBOS.registerWorkflow(
 const testDChild = DBOS.registerWorkflow(
     async (input: SandboxStepInput): Promise<SandboxStepResult> => {
         const childWorkflowId = DBOS.workflowID;
-        const message: ChildSuspended = { kind: "suspended", childWorkflowId: must(childWorkflowId, "childWorkflowId"), stepId: input.stepId, reason: "payment_required" };
+        const message: ChildSuspended = {
+            kind: "suspended",
+            childWorkflowId: must(childWorkflowId, "childWorkflowId"),
+            stepId: input.stepId,
+            reason: "payment_required",
+        };
         await DBOS.runStep(() => DBOS.send(input.parentWorkflowId, message, CHILD_SUSPENDED_TOPIC), { name: "notify-parent-suspended" });
         await DBOS.cancelWorkflow(must(childWorkflowId, "childWorkflowId"));
         // Post-cancel runStep raises DBOSWorkflowCancelledError — the same
@@ -158,30 +164,32 @@ const testDDepsRef: { value: ExecuteAnalysisDeps | undefined } = {
     value: undefined,
 };
 const testDParent = DBOS.registerWorkflow(
-     (input: { analysisId: string; planId: string; threadId: string | null }) => {
+    (input: { analysisId: string; planId: string; threadId: string | null }) => {
         const deps = testDDepsRef.value;
         if (!deps) throw new Error("testDParent: deps not set");
-        return Promise.resolve(runExecuteAnalysisBody(
-            {
-                analysisId: input.analysisId,
-                planId: input.planId,
-                planSummary: "test plan",
-                threadId: input.threadId,
-                steps: [{ id: "S1", depends_on: [] }],
-                planStepById: { S1: S1_PLAN_STEP },
-                agentByStepId: { S1: "scientific-executor" },
-                resourcesByStepId: { S1: { cpu: 2, memoryGb: 4 } },
-                synthesisEnabled: false,
-                runSession: {
-                    identity: { user: "u-1" },
-                    scope: { kind: "analysis", analysisId: input.analysisId },
-                    provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
-                    runFrame: { runId: DBOS.workflowID ?? "test-run" },
-                    auth: makeLocalAuth(),
+        return Promise.resolve(
+            runExecuteAnalysisBody(
+                {
+                    analysisId: input.analysisId,
+                    planId: input.planId,
+                    planSummary: "test plan",
+                    threadId: input.threadId,
+                    steps: [{ id: "S1", depends_on: [] }],
+                    planStepById: { S1: S1_PLAN_STEP },
+                    agentByStepId: { S1: "scientific-executor" },
+                    resourcesByStepId: { S1: { cpu: 2, memoryGb: 4 } },
+                    synthesisEnabled: false,
+                    runSession: {
+                        identity: { user: "u-1" },
+                        scope: { kind: "analysis", analysisId: input.analysisId },
+                        provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
+                        runFrame: { runId: DBOS.workflowID ?? "test-run" },
+                        auth: makeLocalAuth(),
+                    },
                 },
-            },
-            deps,
-        ));
+                deps,
+            ),
+        );
     },
     { name: "test-d-execute-analysis-parent" },
 );
@@ -215,10 +223,10 @@ describe("the suspension cascade — parent self-cancel", () => {
         const deps: ExecuteAnalysisDeps = {
             citationResolver: unusedCitationResolver,
             pool: rig.pool,
-            provider: {} as unknown as ChatProvider,
-            embedding: {} as unknown as EmbeddingProvider,
+            provider: stubChatProvider(),
+            embedding: stubEmbeddingProvider(),
             sandboxStepCallable: testCChild,
-            resolveWorkspaceRoot: async (id: string) => join(SUSPENSION_TEST_SESSIONS_DIR, id),
+            resolveWorkspaceRoot: (id: string) => Promise.resolve(join(SUSPENSION_TEST_SESSIONS_DIR, id)),
             workingMemory: createWorkingMemory(rig.pool),
             synthesisModel: "test-model",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
@@ -283,10 +291,10 @@ describe("the suspension cascade — parent self-cancel", () => {
         const deps: ExecuteAnalysisDeps = {
             citationResolver: unusedCitationResolver,
             pool: rig.pool,
-            provider: {} as unknown as ChatProvider,
-            embedding: {} as unknown as EmbeddingProvider,
+            provider: stubChatProvider(),
+            embedding: stubEmbeddingProvider(),
             sandboxStepCallable: testDChild,
-            resolveWorkspaceRoot: async (id: string) => join(SUSPENSION_TEST_SESSIONS_DIR, id),
+            resolveWorkspaceRoot: (id: string) => Promise.resolve(join(SUSPENSION_TEST_SESSIONS_DIR, id)),
             workingMemory: createWorkingMemory(rig.pool),
             synthesisModel: "test-model",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },

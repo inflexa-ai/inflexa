@@ -20,6 +20,7 @@
  * with no hash. Thus one module holds both directions, and the two agree on which object carries a pin.
  */
 
+import { maybeRecord } from "../lib/shape.js";
 import { err, ok, type Result } from "neverthrow";
 
 import type { Reference, UnresolvedReference } from "../contracts/report-reference.js";
@@ -90,11 +91,10 @@ function stampValue(value: unknown, snapshot: ReportSnapshot, missing: MissingPi
         }
         return changed ? next : value;
     }
-    if (value === null || typeof value !== "object") {
+    const record = maybeRecord(value);
+    if (record === undefined) {
         return value;
     }
-
-    const record = value as Record<string, unknown>;
     let changed = false;
     const next: Record<string, unknown> = {};
     for (const key of Object.keys(record)) {
@@ -137,6 +137,8 @@ export function stampReferenceHashes(payload: unknown, snapshot: ReportSnapshot)
         // The payload reaches the stamp before the parse, thus the object holds the fields of a reference
         // as the author wrote them. The refusal names that object, and this assertion is the one place
         // where the pre-parse shape enters the parsed reference type.
+        // SAFETY: the unvalidated object is exactly the payload this refusal reports — the refusal exists because no parse proved it.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion, @inflexa-ai/no-double-cast -- the refusal arm carries the author's pre-parse record member by contract; the parse that would prove it never ran, and a parse there would change the refusal.
         reference: pin.record as unknown as Reference,
         reason: "artifact-missing",
         detail: `no artifact at ${pin.path}`,
@@ -170,11 +172,10 @@ export function stripReferenceHashes(value: unknown): unknown {
         }
         return changed ? next : value;
     }
-    if (value === null || typeof value !== "object") {
+    const record = maybeRecord(value);
+    if (record === undefined) {
         return value;
     }
-
-    const record = value as Record<string, unknown>;
     const pinned = holdsPin(record);
     let changed = false;
     const next: Record<string, unknown> = {};

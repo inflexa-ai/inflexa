@@ -5,7 +5,9 @@ import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { createSearchPatentsTool } from "../search-patents.js";
 import { jsonParse } from "../../../lib/json.js";
 import { z } from "zod";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
+
+const lookupFixture = z.looseObject({ data: z.array(z.json()) }).parse(readFixture("amass", "patent-lookup.json"));
 
 const realFetch = globalThis.fetch;
 
@@ -29,7 +31,7 @@ function stubFetch(routes: Array<[string, () => Response]>): SeenRequest[] {
     globalThis.fetch = fetchDouble((input, init) => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
         const request: SeenRequest = {
-            url: new URL(String(input)),
+            url: new URL(urlText(input)),
             body: typeof init?.body === "string" ? jsonParse(init.body, z.unknown()) : undefined,
         };
         seen.push(request);
@@ -49,7 +51,7 @@ async function run(input: Record<string, unknown>) {
     // `Tool` erases the schema generic, so `parse` hands back `unknown`; the schema
     // and the execute input type come from one declaration in the tool module.
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return tool.execute(tool.inputSchema.parse(input) as Parameters<typeof tool.execute>[0], ctx);
+    return tool.execute(tool.inputSchema.parse(input), ctx);
 }
 
 const PATENT = "AMPC_EzkKarMF7cIFSt3SZg13CV1tr3M";
@@ -77,10 +79,8 @@ describe("search_patents — action 'search'", () => {
 
 describe("search_patents — action 'details'", () => {
     it("resolves a publication number, then asks for the claims only when told to", async () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const lookup = readFixture("amass", "patent-lookup.json") as { data: unknown[] };
         const seen = stubFetch([
-            ["/patentcore/records/lookup", () => json({ data: [lookup.data[0]] })],
+            ["/patentcore/records/lookup", () => json({ data: [lookupFixture.data[0]] })],
             [`/patentcore/records/${PATENT}`, () => json(readFixture("amass", "patent-record.json"))],
         ]);
 
@@ -92,9 +92,7 @@ describe("search_patents — action 'details'", () => {
     });
 
     it("gives the candidates of an application number with two publications", async () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const lookup = readFixture("amass", "patent-lookup.json") as { data: unknown[] };
-        const seen = stubFetch([["/patentcore/records/lookup", () => json({ data: [lookup.data[1]] })]]);
+        const seen = stubFetch([["/patentcore/records/lookup", () => json({ data: [lookupFixture.data[1]] })]]);
 
         const result = (await run({ action: "details", applicationNumber: "CN-201310332334-A" }))._unsafeUnwrap();
 
@@ -103,9 +101,7 @@ describe("search_patents — action 'details'", () => {
     });
 
     it("gives not_found for an in-band lookup miss, with no get request", async () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const lookup = readFixture("amass", "patent-lookup.json") as { data: unknown[] };
-        const seen = stubFetch([["/patentcore/records/lookup", () => json({ data: [lookup.data[2]] })]]);
+        const seen = stubFetch([["/patentcore/records/lookup", () => json({ data: [lookupFixture.data[2]] })]]);
 
         const result = (await run({ action: "details", publicationNumber: "US-0000000-B2" }))._unsafeUnwrap();
 
@@ -125,7 +121,7 @@ describe("search_patents — the key", () => {
         const { ctx } = makeToolContext();
         // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }) as Parameters<typeof keyless.execute>[0], ctx)).rejects.toThrow(
+        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow(
             // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
             /AMASS_API_KEY/,
         );

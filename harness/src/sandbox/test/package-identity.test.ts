@@ -12,9 +12,7 @@ import {
     rIdentity,
     resolveQuery,
     type PackageIdentity,
-    type PackageQuery,
     type PoolIndex,
-    type Track,
 } from "../package-identity.js";
 
 /**
@@ -35,9 +33,8 @@ describe("package-identity — the conformance fixture", () => {
         for (const entry of fixture.parse) {
             parseQuery(entry.entry).match(
                 (query) => {
-                    if ("error" in entry) throw new Error(`"${entry.entry}" parsed, and the fixture expects the error "${entry.error}"`);
-                    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                    expect(query).toEqual(entry.query as PackageQuery);
+                    if ("error" in entry) throw new Error(`"${entry.entry}" parsed, and the fixture expects the error "${String(entry.error)}"`);
+                    expect(query).toEqual<unknown>(entry.query);
                 },
                 (issue) => {
                     const expectedError = "error" in entry ? entry.error : undefined;
@@ -52,8 +49,8 @@ describe("package-identity — the conformance fixture", () => {
 
     it("mints the name, the key, and the address of each identity of the fixture", () => {
         for (const entry of fixture.identity) {
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const identity = identityOf(entry.track as Track, entry.input);
+            if (entry.track !== "python" && entry.track !== "r") throw new Error(`fixture names an unknown track: ${entry.track}`);
+            const identity = identityOf(entry.track, entry.input);
             expect(entry.name).toBe(identity.name);
             expect(identityKey(identity)).toBe(entry.key);
             expect(identityAddress(identity)).toBe(entry.address);
@@ -62,10 +59,9 @@ describe("package-identity — the conformance fixture", () => {
 
     it("round-trips each query of the fixture", () => {
         for (const entry of fixture.round_trip) {
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const query = entry.query as PackageQuery;
+            const query = parseQuery(entry.formatted)._unsafeUnwrap();
             expect(formatQuery(query)).toBe(entry.formatted);
-            expect(parseQuery(entry.formatted)._unsafeUnwrap()).toEqual(query);
+            expect(query).toEqual<unknown>(entry.query);
         }
     });
 });

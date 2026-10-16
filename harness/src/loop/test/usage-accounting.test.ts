@@ -68,7 +68,11 @@ function cachingStep(): { runStep: RunStep; names: string[] } {
     const names: string[] = [];
     const runStep: RunStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
         names.push(name);
-        if (cache.has(name)) return cache.get(name) as T;
+        if (cache.has(name)) {
+            // SAFETY: the cached value is what a previous call to this same step wrote — the test itself put it there.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- this wrapper wrote the value at this step name under the same T.
+            return cache.get(name) as T;
+        }
         const value = await fn();
         cache.set(name, value);
         return value;
@@ -455,8 +459,8 @@ describe("runAgent usage — sub-agent runs", () => {
         expect(finish.turnUsage).toEqual({ inputTokens: 115, outputTokens: 23 });
 
         // The child created no accumulator, so it is not the root and reports no turn total.
-        expect(must(must(capture, "capture").finish, "must(capture, \"capture\").finish").usage).toEqual({ inputTokens: 100, outputTokens: 20 });
-        expect(must(must(capture, "capture").finish, "must(capture, \"capture\").finish").turnUsage).toBeUndefined();
+        expect(must(must(capture, "capture").finish, 'must(capture, "capture").finish').usage).toEqual({ inputTokens: 100, outputTokens: 20 });
+        expect(must(must(capture, "capture").finish, 'must(capture, "capture").finish').turnUsage).toBeUndefined();
     });
 
     it("keeps parallel invocations of one sub-agent disjoint", async () => {

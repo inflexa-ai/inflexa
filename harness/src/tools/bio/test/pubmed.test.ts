@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createPubMedTool } from "../pubmed.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -22,7 +22,7 @@ function stubNcbi(responder: (url: URL) => Response): URL[] {
     const seen: URL[] = [];
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     globalThis.fetch = fetchDouble((url) => {
-        const parsed = new URL(String(url));
+        const parsed = new URL(urlText(url));
         seen.push(parsed);
         return Promise.resolve(responder(parsed));
     });
@@ -157,16 +157,18 @@ describe("pubmed — action 'search'", () => {
 
         const explicit = stubNcbi((url) => (url.pathname.endsWith("esearch.fcgi") ? json({ esearchresult: { idlist: [], count: "0" } }) : xml(ESUMMARY_XML)));
 
-        (await tool.execute(
-            {
-                action: "search",
-                query: "BRCA1",
-                maxResults: 3,
-                sort: "date",
-                dateRange: { from: "2020/01/01", to: "2021/12/31" },
-            },
-            ctx,
-        ))._unsafeUnwrap();
+        (
+            await tool.execute(
+                {
+                    action: "search",
+                    query: "BRCA1",
+                    maxResults: 3,
+                    sort: "date",
+                    dateRange: { from: "2020/01/01", to: "2021/12/31" },
+                },
+                ctx,
+            )
+        )._unsafeUnwrap();
 
         expect(explicit[0].searchParams.get("retmax")).toBe("3");
         expect(explicit[0].searchParams.get("sort")).toBe("pub+date");
@@ -235,7 +237,10 @@ describe("pubmed — action 'details'", () => {
         if (!("articles" in result)) throw new Error("expected the details variant");
 
         // The 'details' action reaches efetch (db=pubmed) and the PMC ID converter.
-        const efetch = must(seen.find((u) => u.pathname.endsWith("efetch.fcgi")), "efetch");
+        const efetch = must(
+            seen.find((u) => u.pathname.endsWith("efetch.fcgi")),
+            "efetch",
+        );
         expect(efetch.searchParams.get("db")).toBe("pubmed");
         expect(efetch.searchParams.get("id")).toBe("12345678,99999999");
         expect(seen.some((u) => u.pathname.includes("idconv"))).toBe(true);

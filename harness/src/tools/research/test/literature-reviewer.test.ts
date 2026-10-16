@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
+import { z } from "zod";
 
 import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
@@ -32,11 +33,12 @@ describe("literatureReviewer sub-agent tool", () => {
             emit: (event) => {
                 emitted.push(event);
             },
-            ask:  () => Promise.reject(new Error("ask should not be reached")),
+            ask: () => Promise.reject(new Error("ask should not be reached")),
         };
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const result = (await tool.execute({ brief: "Investigate BRCA1." }, ctx))._unsafeUnwrap() as { report: string };
+        const result = z.object({ report: z.string() }).parse(
+            (await tool.execute({ brief: "Investigate BRCA1." }, ctx))._unsafeUnwrap(),
+        );
 
         // The child's final report is surfaced as the tool result.
         expect(result.report).toBe("Evidence report: BRCA1 is a tumour suppressor.");

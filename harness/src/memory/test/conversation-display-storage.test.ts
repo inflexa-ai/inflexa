@@ -43,10 +43,10 @@ describe("stored conversation display envelope", () => {
         ["AI SDK major", { ...envelopeDisplayMessages(messages), aiSdkMajor: 8 }],
         ["display version", { ...envelopeDisplayMessages(messages), schemaVersion: 2 }],
         ["messages", { ...envelopeDisplayMessages(messages), messages: [{ id: "x", role: "assistant", parts: [{ type: "text" }] }] }],
-    ])("rejects an unsupported or malformed %s",  (_label, value) => {
+    ])("rejects an unsupported or malformed %s", (_label, value) => {
         expect(parseStoredDisplayEnvelope(value, "thread-1/0/display")).rejects.toThrow("Invalid stored conversation display envelope");
         return Promise.resolve();
-});
+    });
 
     it("keeps a stale field inside a known data payload rather than failing the read", async () => {
         const value = {
@@ -74,7 +74,7 @@ describe("a stored display part the vocabulary can no longer render", () => {
     it("drops a part whose key has been retired, keeping the rest of the turn", async () => {
         const parsed = await parseStoredDisplayEnvelope(envelopeWithParts([{ type: "data-retired-card", data: { x: 1 } }, known]), "t/0/display");
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(parsed.messages[0].parts).toEqual([known] as never);
+        expect(parsed.messages[0].parts).toEqual<unknown>([known]);
     });
 
     it("drops a part whose payload no longer satisfies its schema", async () => {
@@ -82,14 +82,12 @@ describe("a stored display part the vocabulary can no longer render", () => {
         // under the current schema even though its key still exists.
         const stale = { type: "data-file-reference", data: { id: "files-2" } };
         const parsed = await parseStoredDisplayEnvelope(envelopeWithParts([stale, known]), "t/0/display");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(parsed.messages[0].parts).toEqual([known] as never);
+        expect(parsed.messages[0].parts).toEqual<unknown>([known]);
     });
 
     it("does not resolve a part key up the prototype chain", async () => {
         const parsed = await parseStoredDisplayEnvelope(envelopeWithParts([{ type: "data-constructor", data: {} }, known]), "t/0/display");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(parsed.messages[0].parts).toEqual([known] as never);
+        expect(parsed.messages[0].parts).toEqual<unknown>([known]);
     });
 
     it("reports each drop with the row identity and the reason", async () => {
@@ -112,11 +110,11 @@ describe("a stored display part the vocabulary can no longer render", () => {
         expect(logger.records).toEqual([]);
     });
 
-    it("leaves structural corruption to fail, having no part it can identify",  () => {
+    it("leaves structural corruption to fail, having no part it can identify", () => {
         const value = { ...envelopeDisplayMessages(messages), messages: [{ id: "a1", role: "assistant", parts: [{ data: { x: 1 } }] }] };
         expect(parseStoredDisplayEnvelope(value, "t/0/display")).rejects.toThrow("Invalid stored conversation display envelope");
         return Promise.resolve();
-});
+    });
 });
 
 describe("a stored tool call", () => {
@@ -130,7 +128,7 @@ describe("a stored tool call", () => {
         const parts = conversationUIToChatMessages((await parseStoredDisplayEnvelope(value, "t/0/display")).messages)[0].parts;
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(parts).toEqual([{ type: "tool-call", ...call }] as never);
+        expect(parts).toEqual<unknown>([{ type: "tool-call", ...call }]);
         expect(parts[0]).not.toHaveProperty("durationMs");
     });
 });
@@ -163,10 +161,10 @@ describe("a stored sub-agent activity part", () => {
     it("round-trips field for field", async () => {
         const stored: ConversationUIMessage = { id: "a1", role: "assistant", parts: [conversationDisplayPart(part)] };
 
-        const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))) as unknown, "t/0/display");
+        const parsed = await parseStoredDisplayEnvelope(jsonClone(envelopeDisplayMessages([stored])), "t/0/display");
 
         expect(parsed.messages).toEqual([stored]);
-        expect(conversationUIToChatMessages(parsed.messages)[0]!.parts).toEqual([part]);
+        expect(conversationUIToChatMessages(parsed.messages)[0].parts).toEqual([part]);
     });
 
     it("stores an open entry as incomplete, with no end time", () => {
@@ -200,7 +198,7 @@ describe("a stored sub-agent activity part", () => {
 
         const parsed = await parseStoredDisplayEnvelope(value, "t/0/display");
 
-        expect(parsed.messages[0]!.parts).toEqual([{ type: "text", text: "kept" }]);
+        expect(parsed.messages[0].parts).toEqual([{ type: "text", text: "kept" }]);
     });
 });
 
@@ -210,9 +208,9 @@ describe("a stored plan-approval part", () => {
     it("round-trips field for field", async () => {
         const stored: ConversationUIMessage = { id: "s1", role: "system", parts: [conversationDisplayPart(part)] };
 
-        const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))) as unknown, "t/0/display");
+        const parsed = await parseStoredDisplayEnvelope(jsonClone(envelopeDisplayMessages([stored])), "t/0/display");
 
         expect(parsed.messages).toEqual([stored]);
-        expect(conversationUIToChatMessages(parsed.messages)[0]!.parts).toEqual([part]);
+        expect(conversationUIToChatMessages(parsed.messages)[0].parts).toEqual([part]);
     });
 });

@@ -14,7 +14,7 @@ import { CHART_PALETTE, GUIDE_LINE_COLOR, MUTED_CHART_COLOR, SCATTER_CROWD_ROWS 
 import { statisticText } from "../common.js";
 import { GSEA_FIGURE, GSEA_STRIDE_TARGET } from "../gsea.js";
 import { FIGURE_MODULES } from "../index.js";
-import { optionArray, optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
+import { optionArray, optionNumber, optionPercent, optionRecord, optionRecords } from "../../option-lens.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -90,13 +90,12 @@ function panelSeries(option: EchartOption, panel: number): EchartOption[] {
 
 /** The drawn points of one series: each item whose members are all numbers. */
 function drawn(series: EchartOption): number[][] {
-    // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-    return (series.data as unknown[][]).filter((item) => item.every((member) => typeof member === "number"));
+    return optionArray(series.data).flatMap((item) => (Array.isArray(item) && item.every((member) => typeof member === "number") ? [item.map(Number)] : []));
 }
 
 /** The grid of one panel as numbers: the top, the height, the left, and the right, in percent. */
 function place(grid: EchartOption): { top: number; height: number; left: number; right: number } {
-    const read = (value: unknown): number => Number.parseFloat(String(value));
+    const read = (value: unknown): number => optionPercent(value);
     return { top: read(grid.top), height: read(grid.height), left: read(grid.left), right: read(grid.right) };
 }
 
@@ -127,13 +126,13 @@ describe("the gsea figure", () => {
             [2, 1, 1000],
         ]);
         expect(xAxes.map((axis) => axis.name)).toEqual([undefined, undefined, "Rank in ordered dataset"]);
-        expect(xAxes.map((axis) => (optionRecord(axis.axisLabel)).show)).toEqual([false, false, undefined]);
+        expect(xAxes.map((axis) => optionRecord(axis.axisLabel).show)).toEqual([false, false, undefined]);
         expect(xAxes[2]).toEqual(expect.objectContaining({ type: "value", nameLocation: "middle" }));
     });
 
     it("draws the running score of each set in the top panel, in the palette color and in table order", () => {
         const top = panelSeries(derive(SMALL), 0);
-        expect(top.map((series) => [series.type, series.name, (optionRecord(series.lineStyle)).color])).toEqual([
+        expect(top.map((series) => [series.type, series.name, optionRecord(series.lineStyle).color])).toEqual([
             ["line", "cell-cell junction assembly (GO:0007043)", CHART_PALETTE[0]],
             ["line", "septate junction assembly", CHART_PALETTE[1]],
         ]);
@@ -144,15 +143,15 @@ describe("the gsea figure", () => {
 
     it("draws a line at zero and a dashed mark at the maximum deviation of each set", () => {
         const top = panelSeries(derive(SMALL), 0);
-        const zero = optionArray((optionRecord(top[0].markLine)).data);
+        const zero = optionArray(optionRecord(top[0].markLine).data);
         expect(zero[0]).toEqual(expect.objectContaining({ yAxis: 0 }));
-        expect((optionRecord(top[0].markLine)).lineStyle).toEqual(expect.objectContaining({ color: GUIDE_LINE_COLOR }));
+        expect(optionRecord(top[0].markLine).lineStyle).toEqual(expect.objectContaining({ color: GUIDE_LINE_COLOR }));
         for (const [index, series] of top.entries()) {
             const points = drawn(series);
             let peak = points[0];
             for (const point of points) if (Math.abs(point[1]) > Math.abs(peak[1])) peak = point;
             // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-            const marks = optionArray((optionRecord(series.markLine)).data);
+            const marks = optionArray(optionRecord(series.markLine).data);
             const mark = optionRecords(marks[marks.length - 1]);
             expect(mark.map((end) => end.coord)).toEqual([
                 [peak[0], 0],
@@ -164,7 +163,7 @@ describe("the gsea figure", () => {
 
     it("draws one tick at each hit of each set in the middle panel, one row for each set in its color", () => {
         const middle = panelSeries(derive(SMALL), 1);
-        expect(middle.map((series) => [series.name, (optionRecord(series.lineStyle)).color, series.silent])).toEqual([
+        expect(middle.map((series) => [series.name, optionRecord(series.lineStyle).color, series.silent])).toEqual([
             ["cell-cell junction assembly (GO:0007043)", CHART_PALETTE[0], true],
             ["septate junction assembly", CHART_PALETTE[1], true],
         ]);
@@ -190,7 +189,7 @@ describe("the gsea figure", () => {
         );
         expect(drawn(metric)).toHaveLength(1000);
         expect(drawn(metric)[0]).toEqual([1, optionNumber(SMALL[0].ranked_metric)]);
-        expect((optionRecords((optionRecord(metric.markLine)).data))[0]).toEqual(expect.objectContaining({ yAxis: 0 }));
+        expect(optionRecords(optionRecord(metric.markLine).data)[0]).toEqual(expect.objectContaining({ yAxis: 0 }));
         const yAxes = list(option, "yAxis");
         expect([yAxes[0].name, yAxes[2].name]).toEqual(["Enrichment score", "Ranked metric"]);
         expect([yAxes[0].nameRotate, yAxes[2].nameRotate]).toEqual([90, 90]);
@@ -213,7 +212,7 @@ describe("the gsea figure", () => {
 
     it("names each set in the legend with a line icon, and draws no legend for one set", () => {
         const legend = optionRecord(derive(SMALL).legend);
-        expect((optionRecords(legend.data)).map((entry) => entry.name)).toEqual(["cell-cell junction assembly (GO:0007043)", "septate junction assembly"]);
+        expect(optionRecords(legend.data).map((entry) => entry.name)).toEqual(["cell-cell junction assembly (GO:0007043)", "septate junction assembly"]);
         const single = derive(gseaRows(200, [{ name: "one", hits: [3, 7, 11] }]), block({ x: "rank", y: "running_es", hit: "hit", metric: "ranked_metric" }));
         expect(single.legend).toEqual({ show: false });
         expect(panelSeries(single, 0)).toHaveLength(1);
@@ -233,19 +232,19 @@ describe("the gsea figure", () => {
         expect(style.text).toBe("NES = 2.22\nFDR = 1.6 × 10⁻³");
         expect(style.align).toBe("right");
         const top = place(list(option, "grid")[0]);
-        const offset = Number.parseFloat(String(text.top));
+        const offset = optionPercent(text.top);
         expect(offset).toBeGreaterThan(top.top);
         expect(offset).toBeLessThan(top.top + top.height / 2);
-        expect(Number.parseFloat(String(text.right))).toBeGreaterThan(top.right);
+        expect(optionPercent(text.right)).toBeGreaterThan(top.right);
     });
 
     it("prints the statistics at the bottom left of the top panel for a set that dips under zero", () => {
         const rows = gseaRows(1000, [{ name: "down", hits: [700, 800, 900, 950, 990, 995, 999, 1000] }]);
         const option = derive(rows, block(ENCODING, { statistics: [statistic("NES", "NES")] }), { statistics: [{ label: "NES", value: -1.9 }] });
         const [text] = list(option, "graphic");
-        expect((optionRecord(text.style)).align).toBe("left");
+        expect(optionRecord(text.style).align).toBe("left");
         const top = place(list(option, "grid")[0]);
-        const fromBottom = Number.parseFloat(String(text.bottom));
+        const fromBottom = optionPercent(text.bottom);
         expect(100 - fromBottom).toBeLessThan(top.top + top.height);
         expect(100 - fromBottom).toBeGreaterThan(top.top + top.height / 2);
     });

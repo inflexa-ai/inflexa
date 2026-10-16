@@ -17,6 +17,7 @@
  * nested union. A conflict between the flat fields refuses before the core runs.
  */
 
+import { maybeRecord } from "../../lib/shape.js";
 import { err, ok, type Result } from "neverthrow";
 import { basename } from "node:path";
 import { z } from "zod";
@@ -452,7 +453,7 @@ function readId(block: unknown): string | undefined {
 
 /** Read one field of an untyped payload, or `undefined` when the payload is not an object. */
 function fieldOf(value: unknown, field: string): unknown {
-    return value !== null && typeof value === "object" ? (value as Record<string, unknown>)[field] : undefined;
+    return maybeRecord(value)?.[field];
 }
 
 function readStringField(block: unknown, field: string): string | undefined {

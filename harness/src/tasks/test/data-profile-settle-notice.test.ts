@@ -11,15 +11,16 @@ import { join } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
-import { withSchema } from "../__tests__/setup/postgres.js";
-import { silentLogger } from "../__tests__/setup/logger.js";
-import { makeLocalAuth } from "../auth/local-auth-context.js";
-import type { RunSession } from "../auth/types.js";
-import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
-import type { SandboxClient } from "../sandbox/client.js";
-import { loadDataProfileStatus, tryStartDataProfile } from "../state/data-profile.js";
-import { createWorkspaceFilesystem } from "../workspace/filesystem.js";
-import { runDataProfileBody, type DataProfileDeps, type DataProfileSettlement, type NotifyDataProfileSettled } from "./data-profile.js";
+import { withSchema } from "../../__tests__/setup/postgres.js";
+import { must } from "../../lib/test/guards.js";
+import { silentLogger } from "../../__tests__/setup/logger.js";
+import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import type { RunSession } from "../../auth/types.js";
+import type { SandboxClient } from "../../sandbox/client.js";
+import { loadDataProfileStatus, tryStartDataProfile } from "../../state/data-profile.js";
+import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
+import { runDataProfileBody, type DataProfileDeps, type DataProfileSettlement, type NotifyDataProfileSettled } from "../data-profile.js";
+import { stubChatProvider, stubSandboxClient } from "../../lib/test/doubles.js";
 
 const stagedInputs = [
     {
@@ -84,11 +85,11 @@ describe("the settle notice of the data profile", () => {
         return {
             logger: silentLogger,
             // The profile body reaches the provider only inside the sandbox agent loop, which no case here enters.
-            provider: {} as ChatProvider,
+            provider: stubChatProvider(),
             pool,
             sandboxClient,
-            workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(root, id) }),
-            resolveWorkspaceRoot: async (id) => join(root, id),
+            workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)),
             model: "test-model",
             runAuthorizer: {
                 authorize: () => {
@@ -99,18 +100,18 @@ describe("the settle notice of the data profile", () => {
             },
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
             // The embedder is read only when the body indexes a profile, which no case here reaches.
-            embedding: { dimensions: 3, embed: () => okAsync([]) } as unknown as EmbeddingProvider,
+            embedding: { dimensions: 3, embed: () => okAsync([]) },
             skillsDir: root,
-            ...(notifyDataProfileSettled === undefined ? {} : { notifyDataProfileSettled }),
+            notifyDataProfileSettled,
         };
     }
 
     // The body calls only `createSandbox` of the client before it fails, thus a stand-in with that one method is enough.
-    const refusingSandbox = {
+    const refusingSandbox = stubSandboxClient({
         createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
-    } as unknown as SandboxClient;
+    });
     // The empty-manifest path settles before any sandbox call, thus no method of the client is read.
-    const unusedSandbox = {} as unknown as SandboxClient;
+    const unusedSandbox = stubSandboxClient();
 
     function recordingNotice(): { notify: NotifyDataProfileSettled; settlements: DataProfileSettlement[] } {
         const settlements: DataProfileSettlement[] = [];
@@ -131,7 +132,13 @@ describe("the settle notice of the data profile", () => {
 
         const row = (await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap();
         expect(row?.status).toBe("completed");
-        expect(settlements).toEqual([{ analysisId, status: "completed", completedAt: row?.completedAt as string }]);
+        expect(settlements).toEqual([
+            {
+                analysisId,
+                status: "completed",
+                completedAt: must(row?.completedAt, "the settled row stamp"),
+            },
+        ]);
     });
 
     it("sends one settlement of a failed claim, with the stamped time", async () => {
@@ -142,7 +149,13 @@ describe("the settle notice of the data profile", () => {
 
         const row = (await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap();
         expect(row?.status).toBe("failed");
-        expect(settlements).toEqual([{ analysisId, status: "failed", completedAt: row?.completedAt as string }]);
+        expect(settlements).toEqual([
+            {
+                analysisId,
+                status: "failed",
+                completedAt: must(row?.completedAt, "the settled row stamp"),
+            },
+        ]);
     });
 
     it("sends nothing when the guard refuses the stamp", async () => {

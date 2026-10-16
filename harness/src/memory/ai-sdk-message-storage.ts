@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { modelMessageSchema, type AssistantModelMessage, type ModelMessage, type UserContent } from "ai";
+import { modelMessageSchema, type AssistantModelMessage, type JSONValue, type ModelMessage, type UserContent } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
@@ -272,6 +272,15 @@ export function compactionMarkerOf(message: ModelMessage): CompactionMarker | un
 
 type LegacyContent = string | Array<Record<string, unknown>>;
 
+function jsonText(value: unknown): string | undefined {
+    return JSON.stringify(value);
+}
+
+/** The text of an arbitrary block discriminant: strings stand as they are, and the JSON form names the rest. */
+function typeText(value: unknown): string {
+    return typeof value === "string" ? value : (jsonText(value) ?? "undefined");
+}
+
 export type LegacyMessageRow = {
     readonly threadId: string;
     readonly seq: number;
@@ -279,15 +288,20 @@ export type LegacyMessageRow = {
     readonly content: LegacyContent;
 };
 
+// The legacy thinking block carried the signed signature and the cache control as plain
+// members; both must survive for valid continuation.
+const LegacyAnthropicBlockSchema = z.looseObject({
+    signature: z.string().optional(),
+    cache_control: z.record(z.string(), z.json()).optional(),
+});
+
 function providerOptionsFromLegacy(block: Record<string, unknown>): ProviderOptions | undefined {
-    // A block may carry both a signed thinking signature and cache_control;
-    // both are required for valid continuation, so both must survive.
-    const anthropic: Record<string, unknown> = {};
-    if (typeof block.signature === "string") anthropic.signature = block.signature;
-    if (typeof block.cache_control === "object" && block.cache_control !== null) {
-        anthropic.cacheControl = block.cache_control;
-    }
-    return Object.keys(anthropic).length > 0 ? ({ anthropic } as ProviderOptions) : undefined;
+    const parsed = LegacyAnthropicBlockSchema.safeParse(block);
+    if (!parsed.success) return undefined;
+    const anthropic: Record<string, JSONValue> = {};
+    if (parsed.data.signature !== undefined) anthropic.signature = parsed.data.signature;
+    if (parsed.data.cache_control !== undefined) anthropic.cacheControl = parsed.data.cache_control;
+    return Object.keys(anthropic).length > 0 ? { anthropic } : undefined;
 }
 
 export function legacyAnthropicToModelMessage(row: LegacyMessageRow): ModelMessage {
@@ -320,19 +334,24 @@ export function legacyAnthropicToModelMessage(row: LegacyMessageRow): ModelMessa
         const unrepresentable = content.find((block) => !(block.type === "text" && typeof block.text === "string"));
         if (unrepresentable !== undefined) {
             throw new Error(
-                `Legacy user row ${row.threadId}/${row.seq} contains unrepresentable block type "${String(unrepresentable.type)}"; failing rather than writing a lossy envelope`,
+                `Legacy user row ${row.threadId}/${row.seq} contains unrepresentable block type "${typeText(unrepresentable.type)}"; failing rather than writing a lossy envelope`,
             );
         }
-        const userContent = content.map((block) => ({ type: "text" as const, text: String(block.text), providerOptions: providerOptionsFromLegacy(block) }));
+        const userContent = content.map((block) => {
+            if (typeof block.text !== "string")
+                throw new Error(`Legacy user row ${row.threadId}/${row.seq} holds a text block without text; failing rather than writing a lossy envelope`);
+            return { type: "text" as const, text: block.text, providerOptions: providerOptionsFromLegacy(block) };
+        });
         return {
             role: "user",
+            // SAFETY: each block above maps to a text block with the fields the AI SDK user-content member declares — the cast names that member for the envelope.
             content: userContent as Extract<ModelMessage, { role: "user" }>["content"],
         };
     }
 
     if (row.role === "assistant") {
         if (typeof content === "string") return { role: "assistant", content };
-        const assistantContent: unknown[] = [];
+        const assistantContent: AssistantModelMessage["content"] = [];
         for (const block of content) {
             if (block.type === "text" && typeof block.text === "string") {
                 assistantContent.push({ type: "text" as const, text: block.text, providerOptions: providerOptionsFromLegacy(block) });
@@ -358,12 +377,12 @@ export function legacyAnthropicToModelMessage(row: LegacyMessageRow): ModelMessa
             // Any other block (e.g. redacted_thinking) may carry signed provider
             // data required for continuation; fail the row instead of dropping it.
             throw new Error(
-                `Legacy assistant row ${row.threadId}/${row.seq} contains unrepresentable block type "${String(block.type)}"; failing rather than writing a lossy envelope`,
+                `Legacy assistant row ${row.threadId}/${row.seq} contains unrepresentable block type "${typeText(block.type)}"; failing rather than writing a lossy envelope`,
             );
         }
         return {
             role: "assistant",
-            content: assistantContent as Extract<ModelMessage, { role: "assistant" }>["content"],
+            content: assistantContent,
         };
     }
 

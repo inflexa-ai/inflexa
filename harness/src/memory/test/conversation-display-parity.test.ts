@@ -226,7 +226,7 @@ describe("the known differences between the live path and the replay", () => {
             entries,
             dropped: 0,
         });
-        const part = (messages: ChatMessage[]): unknown[] => messages[1]!.parts.filter((p) => p.type === "data-subagent-activity");
+        const part = (messages: ChatMessage[]): unknown[] => messages[1].parts.filter((p) => p.type === "data-subagent-activity");
 
         expect(part(live(rounds))).toEqual([activity([entry])]);
         expect(part(await replay(rounds))).toEqual([activity([{ ...entry, outcome: "incomplete" }])]);

@@ -10,10 +10,11 @@
  *   - `regulatory-corpus-boot-refresh.ts` — automatic 90-day-stale boot trigger
  */
 
+import { z } from "zod";
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../lib/result.js";
-import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaCenter, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
+import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
 import { fetchIchListing, fetchAndExtractIchDoc, type IchStub } from "../lib/regulatory-corpus/fetch-ich.js";
 import { chunkText, upsertChunks, type ChunkRow } from "../lib/regulatory-corpus.js";
 import { errorMessage } from "../lib/thrown.js";
@@ -63,6 +64,8 @@ export type RefreshOptions = {
  * `OPENAI_API_KEY` (a real OpenAI key, NOT a billing-gateway virtual key — direct
  * calls to api.openai.com would 401 against a `sk-billing-*` value).
  */
+const embeddingsResponse = z.object({ data: z.array(z.object({ embedding: z.array(z.number()) })) });
+
 export function buildMaintenanceEmbedder(opts: { apiKey?: string; embeddingModel?: string }): ((text: string) => Promise<number[]>) | null {
     const { apiKey } = opts;
     if (!apiKey) return null;
@@ -86,7 +89,7 @@ export function buildMaintenanceEmbedder(opts: { apiKey?: string; embeddingModel
             const body = await res.text();
             throw new Error(`buildMaintenanceEmbedder: openai /embeddings ${res.status}: ${body}`);
         }
-        const data = (await res.json()) as { data: Array<{ embedding: number[] }> };
+        const data = embeddingsResponse.parse(await res.json());
         const embedding = data.data.at(0)?.embedding;
         if (!embedding) throw new Error("buildMaintenanceEmbedder: empty response");
         return embedding;
@@ -96,23 +99,26 @@ export function buildMaintenanceEmbedder(opts: { apiKey?: string; embeddingModel
 async function listForSource(source: RegulatoryCorpusSource): Promise<Array<FdaDocStub | IchStub>> {
     switch (source) {
         case "FDA-CDER":
-            return (await fetchFdaGuidanceListing("CDER")).map((s) => ({
+            return (await fetchFdaGuidanceListing("CDER")).map((s): FdaDocStub => ({
                 ...s,
-                center: "CDER" as FdaCenter,
+                center: "CDER",
             }));
         case "FDA-CBER":
-            return (await fetchFdaGuidanceListing("CBER")).map((s) => ({
+            return (await fetchFdaGuidanceListing("CBER")).map((s): FdaDocStub => ({
                 ...s,
-                center: "CBER" as FdaCenter,
+                center: "CBER",
             }));
         case "ICH":
             return await fetchIchListing();
     }
 }
 
-async function fetchOne(source: RegulatoryCorpusSource, stub: FdaDocStub | IchStub) {
-    if (source === "ICH") return await fetchAndExtractIchDoc(stub as IchStub);
-    return await fetchAndExtractFdaDoc(stub as FdaDocStub);
+async function fetchOne(stub: FdaDocStub | IchStub) {
+    // The stub shapes carry their own discriminant: an ICH listing names its series, an FDA listing names its center.
+    if ("series" in stub) {
+        return await fetchAndExtractIchDoc(stub);
+    }
+    return await fetchAndExtractFdaDoc(stub);
 }
 
 async function indexSource(
@@ -130,7 +136,7 @@ async function indexSource(
 
     for (const stub of stubs) {
         try {
-            const doc = await fetchOne(source, stub);
+            const doc = await fetchOne(stub);
             const rawChunks = chunkText(doc.text);
             if (rawChunks.length === 0) {
                 log.error(`  SKIP ${doc.doc_id}: no chunks emitted`);

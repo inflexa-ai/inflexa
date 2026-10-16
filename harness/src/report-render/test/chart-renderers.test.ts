@@ -20,6 +20,7 @@ import {
     type RenderApi,
     type RenderedElement,
 } from "../chart-renderers.js";
+import { runtimeRenderer } from "../chart-export.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 
 /** The band of one category under the stub: 20 pixels along x and 16 pixels along y. */
@@ -87,15 +88,43 @@ const STEM_ITEMS: readonly number[][] = [
 
 /** The page twin of the renderers and of the registration step, as the bootstrap runs them. */
 // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-const onThePage = evaluatePageScript<() => {
-    interval: (params: unknown, api: RenderApi) => RenderedElement;
-    outline: (params: unknown, api: RenderApi) => RenderedElement;
-    glyph: (params: unknown, api: RenderApi) => RenderedElement;
-    stem: (params: unknown, api: RenderApi) => RenderedElement;
-    register: (runtime: { registerCustomSeries(name: string, render: unknown): void }) => void;
-}>(`${CHART_RENDERERS_SOURCE}\nreturn { interval: reportIntervalRenderer, outline: reportOutlineRenderer, glyph: reportCellGlyphRenderer, stem: reportStemRenderer, register: reportRegisterRenderers };`);
+const onThePage = evaluatePageScript<
+    () => {
+        interval: (params: unknown, api: RenderApi) => RenderedElement;
+        outline: (params: unknown, api: RenderApi) => RenderedElement;
+        glyph: (params: unknown, api: RenderApi) => RenderedElement;
+        stem: (params: unknown, api: RenderApi) => RenderedElement;
+        register: (runtime: { registerCustomSeries(name: string, render: unknown): void }) => void;
+    }
+>(
+    `${CHART_RENDERERS_SOURCE}\nreturn { interval: reportIntervalRenderer, outline: reportOutlineRenderer, glyph: reportCellGlyphRenderer, stem: reportStemRenderer, register: reportRegisterRenderers };`,
+);
 
 describe("the named renderers", () => {
+    /** The children of the group that a renderer gave back. */
+    function childrenOf(element: RenderedElement): RenderedElement[] {
+        if (element.type !== "group") throw new Error(`the renderer gave back a lone ${element.type}, not a group.`);
+        return element.children;
+    }
+
+    /** The polygon that a renderer gave back. */
+    function polygonOf(element: RenderedElement): Extract<RenderedElement, { type: "polygon" }> {
+        if (element.type !== "polygon") throw new Error(`the renderer gave back a ${element.type}, not a polygon.`);
+        return element;
+    }
+
+    /** The rect that a renderer gave back. */
+    function rectOf(element: RenderedElement): Extract<RenderedElement, { type: "rect" }> {
+        if (element.type !== "rect") throw new Error(`the renderer gave back a ${element.type}, not a rect.`);
+        return element;
+    }
+
+    /** The drawn element with its shape: the runtime draws the group's children, and a group holds no shape. */
+    function shapedOf(element: RenderedElement): Exclude<RenderedElement, { type: "group" }> {
+        if (element.type === "group") throw new Error("the renderer gave back a group where a drawn element was due.");
+        return element;
+    }
+
     it("draws an error bar as one line between the bounds and two caps", () => {
         const element = intervalRenderer({}, stubApi([2, 5, 4, 7, 1, 0, 0]));
         expect(element).toEqual({
@@ -110,7 +139,7 @@ describe("the named renderers", () => {
 
     it("shifts an interval along x by its offset of the y band", () => {
         const element = intervalRenderer({}, stubApi([1.5, 3, 0.8, 2.2, 0, 0.2, 0]));
-        const line = (element.children ?? [])[0];
+        const line = shapedOf(childrenOf(element)[0]);
         // The offset is a fraction of one band, thus 0.2 of a band of 16 pixels moves the line 3.2 pixels.
         expect(line.shape).toEqual({ x1: 0.8, y1: 3 + 0.2 * BAND_Y, x2: 2.2, y2: 3 + 0.2 * BAND_Y });
     });
@@ -118,10 +147,10 @@ describe("the named renderers", () => {
     it("draws an arrow in place of the cap at each clipped end of an interval", () => {
         // The low end is clipped and the high end is not.
         const element = intervalRenderer({}, stubApi([1.5, 3, 0.8, 2.2, 0, 0, 0, 1]));
-        const [line, ...ends] = element.children ?? [];
-        expect(line.shape).toEqual({ x1: 0.8, y1: 3, x2: 2.2, y2: 3 });
+        const [line, ...ends] = childrenOf(element);
+        expect(shapedOf(line).shape).toEqual({ x1: 0.8, y1: 3, x2: 2.2, y2: 3 });
         // The two strokes of the arrow meet at the low end and open toward the high end.
-        expect(ends.map((end) => end.shape)).toEqual([
+        expect(ends.map((end) => shapedOf(end).shape)).toEqual([
             { x1: 0.8 + INTERVAL_ARROW_PX, y1: 3 - INTERVAL_CAP_PX, x2: 0.8, y2: 3 },
             { x1: 0.8 + INTERVAL_ARROW_PX, y1: 3 + INTERVAL_CAP_PX, x2: 0.8, y2: 3 },
             { x1: 2.2, y1: 3 - INTERVAL_CAP_PX, x2: 2.2, y2: 3 + INTERVAL_CAP_PX },
@@ -130,16 +159,14 @@ describe("the named renderers", () => {
 
     it("draws the inner mark of a violin as a line and one point at the median, with no cap", () => {
         const element = intervalRenderer({}, stubApi([0, 10, 8, 12, 1, -0.2, 1]));
-        const children = element.children ?? [];
+        const children = childrenOf(element);
         expect(children.map((child) => child.type)).toEqual(["line", "circle"]);
-        expect(children[1].shape).toEqual(expect.objectContaining({ cx: -0.2 * BAND_X, cy: 10 }));
+        expect(shapedOf(children[1]).shape).toEqual(expect.objectContaining({ cx: -0.2 * BAND_X, cy: 10 }));
     });
 
     it("draws an outline as one closed polygon, symmetric about its center", () => {
-        const element = outlineRenderer({}, stubApi(outlineItem(3, -0.2)));
-        expect(element.type).toBe("polygon");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const points = (element.shape as { points: number[][] }).points;
+        const polygon = polygonOf(outlineRenderer({}, stubApi(outlineItem(3, -0.2))));
+        const points = polygon.shape.points;
         expect(points.length).toBe(2 * VIOLIN_GRID_POINTS);
         const center = 3 - 0.2 * BAND_X;
         // The right side runs up the grid and the left side runs down it, thus the two mirror each other.
@@ -149,13 +176,12 @@ describe("the named renderers", () => {
             expect(right[1]).toBe(left[1]);
             expect(right[0] - center).toBeCloseTo(center - left[0], 10);
         }
-        expect(element.style).toEqual(expect.objectContaining({ fill: SERIES_COLOR }));
+        expect(polygon.style).toEqual(expect.objectContaining({ fill: SERIES_COLOR }));
     });
 
     it("draws a cell with no alteration as the gray ground alone, one gap inside its band", () => {
         const element = cellGlyphRenderer(GLYPH_PARAMS, stubApi([0, 0, -1]));
-        expect(element.type).toBe("group");
-        const children = element.children ?? [];
+        const children = childrenOf(element);
         expect(children.length).toBe(1);
         const width = BAND_X - CELL_GAP_PX;
         const height = BAND_Y - CELL_GAP_PX;
@@ -164,26 +190,24 @@ describe("the named renderers", () => {
 
     it("draws an altered cell as the ground and one glyph in the color of its class, centered in the cell", () => {
         const element = cellGlyphRenderer(GLYPH_PARAMS, stubApi([7, 2, 1]));
-        const children = element.children ?? [];
-        expect(children.map((child) => child.style?.fill)).toEqual(["#e0e0e0", "#d55e00"]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const ground = children[0].shape as { x: number; y: number; width: number; height: number };
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const glyph = children[1].shape as { x: number; y: number; width: number; height: number };
+        const children = childrenOf(element);
+        expect(children.map((child) => rectOf(child).style?.fill)).toEqual(["#e0e0e0", "#d55e00"]);
+        const ground = rectOf(children[0]);
+        const glyph = rectOf(children[1]);
         // The glyph spans the width of the ground and a share of its height, thus the gray shows above and below it.
-        expect(glyph.width).toBe(ground.width);
-        expect(glyph.height).toBeCloseTo(ground.height * CELL_GLYPH_SHARE, 10);
-        expect(glyph.y + glyph.height / 2).toBeCloseTo(2, 10);
-        expect(glyph.x + glyph.width / 2).toBeCloseTo(7, 10);
+        expect(glyph.shape.width).toBe(ground.shape.width);
+        expect(glyph.shape.height).toBeCloseTo(ground.shape.height * CELL_GLYPH_SHARE, 10);
+        expect(glyph.shape.y + glyph.shape.height / 2).toBeCloseTo(2, 10);
+        expect(glyph.shape.x + glyph.shape.width / 2).toBeCloseTo(7, 10);
     });
 
     it("draws a stem from zero to the count and one head at the count, in the color of the series", () => {
         const element = stemRenderer({}, stubApi([882, 27]));
-        const children = element.children ?? [];
+        const children = childrenOf(element);
         expect(children.map((child) => child.type)).toEqual(["line", "circle"]);
-        expect(children[0].shape).toEqual({ x1: 882, y1: 0, x2: 882, y2: 27 });
-        expect(children[1].shape).toEqual({ cx: 882, cy: 27, r: STEM_HEAD_RADIUS_PX });
-        expect(children[1].style).toEqual(expect.objectContaining({ fill: SERIES_COLOR }));
+        expect(shapedOf(children[0]).shape).toEqual({ x1: 882, y1: 0, x2: 882, y2: 27 });
+        expect(shapedOf(children[1]).shape).toEqual({ cx: 882, cy: 27, r: STEM_HEAD_RADIUS_PX });
+        expect(shapedOf(children[1]).style).toEqual(expect.objectContaining({ fill: SERIES_COLOR }));
     });
 
     it("gives the same elements on the page as on the server, for every item", () => {
@@ -221,8 +245,7 @@ describe("the named renderers", () => {
  */
 function ssrSvg(option: Record<string, unknown>): string {
     // Each item of these options holds numbers alone, thus each renderer reads a number at each dimension.
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    registerChartRenderers({ registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, render as unknown as echarts.CustomSeriesRenderItem) });
+    registerChartRenderers({ registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, runtimeRenderer(render)) });
     const chart = echarts.init(null, null, { renderer: "svg", ssr: true, width: 400, height: 300 });
     try {
         chart.setOption({ animation: false, ...option });

@@ -7,7 +7,7 @@ import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import type { StagedInput } from "../../execution/staged-input.js";
 import { loadDataProfileStatus, tryRetryDataProfile } from "../../state/data-profile.js";
-import { computeInputSignature } from "../../execution/input-signature.js";
+import { computeInputSignature, type SignableInput } from "../../execution/input-signature.js";
 import { runDataProfile, triggerDataProfile, type DataProfileTriggerDeps } from "../data-profile.js";
 import { sleep } from "../../lib/async-utils.js";
 import { poolDouble } from "../../lib/test/doubles.js";
@@ -35,10 +35,9 @@ function stagedInput(fileId: string): StagedInput {
  * absent from the deserialized object despite the required-`number` type. This is
  * the recovered-legacy shape the input signature has to digest around.
  */
-function legacyStagedInput(fileId: string): StagedInput {
+function legacyStagedInput(fileId: string): SignableInput {
     const { mtimeMs: _dropped, ...legacy } = stagedInput(fileId);
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return legacy as StagedInput;
+    return legacy;
 }
 
 /**

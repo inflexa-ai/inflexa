@@ -77,9 +77,11 @@ function fakePool(): FakePool {
     const reconciled: string[] = [];
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     const pool = poolDouble((arg: { values?: unknown[] }) => {
-            reconciled.push(String(arg.values?.[0]));
-            return Promise.resolve({ rowCount: 1 });
-        });
+        const id = arg.values?.[0];
+        if (typeof id !== "string") throw new Error("the reaper binds one run id");
+        reconciled.push(id);
+        return Promise.resolve({ rowCount: 1 });
+    });
     return { pool, reconciled };
 }
 
@@ -103,12 +105,12 @@ describe("reapOnce", () => {
             sandboxClient: {
                 listManagedSandboxes: () => Promise.resolve(managedList),
                 isAliveById: () => Promise.resolve(DEAD),
-                teardownById:  (id) => {
+                teardownById: (id) => {
                     tornDown.push(id);
                     return Promise.resolve();
-},
+                },
             },
-            getStatus: (wf) => Promise.resolve((statuses[wf] ? { status: statuses[wf] } : null)),
+            getStatus: (wf) => Promise.resolve(statuses[wf] ? { status: statuses[wf] } : null),
             graceMs: GRACE,
             nowMs: () => NOW,
         });
@@ -136,10 +138,10 @@ describe("reapOnce", () => {
             sandboxClient: {
                 listManagedSandboxes: () => Promise.resolve([managed("sbx-live-orphan", "wf-unresolvable", NOW - GRACE * 10)]),
                 isAliveById: () => Promise.resolve(ALIVE),
-                teardownById:  (id) => {
+                teardownById: (id) => {
                     tornDown.push(id);
                     return Promise.resolve();
-},
+                },
             },
             getStatus: () => Promise.resolve(null),
             graceMs: GRACE,
@@ -161,11 +163,11 @@ describe("reapOnce", () => {
             pool,
             sandboxClient: {
                 listManagedSandboxes: () => Promise.resolve([managed("sbx-unknown", null, NOW - GRACE - 1)]),
-                isAliveById:  () => Promise.reject(new Error("API server unreachable")),
-                teardownById:  (id) => {
+                isAliveById: () => Promise.reject(new Error("API server unreachable")),
+                teardownById: (id) => {
                     tornDown.push(id);
                     return Promise.resolve();
-},
+                },
             },
             getStatus: () => Promise.resolve(null),
             graceMs: GRACE,
@@ -187,13 +189,13 @@ describe("reapOnce", () => {
             sandboxClient: {
                 listManagedSandboxes: () => Promise.resolve(managedList),
                 isAliveById: () => Promise.resolve(DEAD),
-                teardownById:  (id) => {
+                teardownById: (id) => {
                     if (id === "sbx-a") throw new Error("delete failed");
                     tornDown.push(id);
                     return Promise.resolve();
-},
+                },
             },
-            getStatus: () => Promise.resolve(({ status: "ERROR" })),
+            getStatus: () => Promise.resolve({ status: "ERROR" }),
             graceMs: GRACE,
             nowMs: () => NOW,
         });

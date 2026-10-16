@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BatchV1Api, CoreV1Api, V1Job, V1Pod } from "@kubernetes/client-node";
+import { BatchV1Api, CoreV1Api, createConfiguration, type V1Job, type V1JobList, type V1Pod, type V1PodList, type V1Status } from "@kubernetes/client-node";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { createK8sSandboxOps, waitForPodReady } from "../k8s-client.js";
@@ -21,10 +21,43 @@ import { optionNumber } from "../../report-render/option-lens.js";
 
 /** The conventional managed layout: workspace roots sit directly under the PVC mountpoint. */
 const SESSION_PVC_ROOT = "/sessions";
-const resolveWorkspaceRoot = async (analysisId: string) => `${SESSION_PVC_ROOT}/${analysisId}`;
+const resolveWorkspaceRoot = (analysisId: string) => Promise.resolve(`${SESSION_PVC_ROOT}/${analysisId}`);
 
 /** The managed shape: one farm location, PVC-relative, for every analysis. */
 const FIXED_FARM: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
+
+/**
+ * A batch API double the compiler checks: a real subclass instance, so no cast
+ * stands between the test and the seam. Each member a test drives is assigned
+ * on the instance; an unassigned member reports itself.
+ */
+class StubBatchApi extends BatchV1Api {
+    constructor() {
+        super(createConfiguration({}));
+    }
+    override createNamespacedJob(_request: Parameters<BatchV1Api["createNamespacedJob"]>[0]): Promise<V1Job> {
+        throw new Error("unstubbed createNamespacedJob");
+    }
+    override deleteNamespacedJob(_request: Parameters<BatchV1Api["deleteNamespacedJob"]>[0]): Promise<V1Status> {
+        throw new Error("unstubbed deleteNamespacedJob");
+    }
+    override listNamespacedJob(_request: Parameters<BatchV1Api["listNamespacedJob"]>[0]): Promise<V1JobList> {
+        throw new Error("unstubbed listNamespacedJob");
+    }
+    override readNamespacedJob(_request: Parameters<BatchV1Api["readNamespacedJob"]>[0]): Promise<V1Job> {
+        throw new Error("unstubbed readNamespacedJob");
+    }
+}
+
+/** The core API half of the same double. */
+class StubCoreApi extends CoreV1Api {
+    constructor() {
+        super(createConfiguration({}));
+    }
+    override listNamespacedPod(_request: Parameters<CoreV1Api["listNamespacedPod"]>[0]): Promise<V1PodList> {
+        throw new Error("unstubbed listNamespacedPod");
+    }
+}
 
 function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: number; existingOwner?: string } = {}) {
     const createdJobs: V1Job[] = [];
@@ -35,51 +68,38 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
     let existingDeleted = false;
     const existingOwner = opts.existingOwner ?? "run-1-0";
 
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const batchApi = {
-        createNamespacedJob:  ({ body }: { namespace: string; body: V1Job }) => {
-            if (pending409 > 0) {
-                pending409--;
-                // Mirror `@kubernetes/client-node` `ApiException`: status on `.code`.
-                // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                const err = new Error("jobs.batch already exists") as Error & {
-                    code: number;
-                };
-                err.code = 409;
-                throw err;
-            }
-            createdJobs.push(body);
-            return Promise.resolve({ metadata: { name: body.metadata?.name, uid: "job-uid-1" } });
-        },
-        deleteNamespacedJob:  ({ name }: { namespace: string; name: string }) => {
-            if (deletedError) throw deletedError;
-            existingDeleted = true;
-            deletedJobs.push(name);
-            return Promise.resolve();
-},
-        // Used by the spawn step's owner-guard (returns the pre-existing Job with
-        // its recorded owner) and then by `waitForJobGone` after a delete (404).
-        listNamespacedJob: (_args: { namespace: string; labelSelector?: string }) => Promise.resolve(({ items: createdJobs })),
-        readNamespacedJob:  ({ name }: { namespace: string; name: string }) => {
-            if (existingDeleted) {
-                // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                const err = new Error("not found") as Error & { code: number };
-                err.code = 404;
-                throw err;
-            }
-            return Promise.resolve({ metadata: { name, uid: "job-uid-existing", annotations: { "cortex/owner-workflow-id": existingOwner } } });
-        },
-    } as unknown as BatchV1Api;
+    const batchApi = new StubBatchApi();
+    batchApi.createNamespacedJob = ({ body }) => {
+        if (pending409 > 0) {
+            pending409--;
+            // Mirror `@kubernetes/client-node` `ApiException`: status on `.code`.
+            throw Object.assign(new Error("jobs.batch already exists"), { code: 409 });
+        }
+        createdJobs.push(body);
+        return Promise.resolve({ metadata: { name: body.metadata?.name, uid: "job-uid-1" } });
+    };
+    batchApi.deleteNamespacedJob = ({ name }) => {
+        if (deletedError) throw deletedError;
+        existingDeleted = true;
+        deletedJobs.push(name);
+        return Promise.resolve({});
+    };
+    // Used by the spawn step's owner-guard (returns the pre-existing Job with
+    // its recorded owner) and then by `waitForJobGone` after a delete (404).
+    batchApi.listNamespacedJob = (_args) => Promise.resolve({ items: createdJobs });
+    batchApi.readNamespacedJob = ({ name }) => {
+        if (existingDeleted) {
+            throw Object.assign(new Error("not found"), { code: 404 });
+        }
+        return Promise.resolve({ metadata: { name, uid: "job-uid-existing", annotations: { "cortex/owner-workflow-id": existingOwner } } });
+    };
 
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    const coreApi = {
-        listNamespacedPod:  (_args: { namespace: string; labelSelector?: string }) => {
-            const pod = podSequence.at(Math.min(podIdx, podSequence.length - 1));
-            podIdx++;
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            return Promise.resolve({ items: pod ? [pod as V1Pod] : [] });
-        },
-    } as unknown as CoreV1Api;
+    const coreApi = new StubCoreApi();
+    coreApi.listNamespacedPod = (_args) => {
+        const pod = podSequence.at(Math.min(podIdx, podSequence.length - 1));
+        podIdx++;
+        return Promise.resolve({ items: pod ? [pod] : [] });
+    };
 
     return {
         batchApi,
@@ -113,10 +133,10 @@ describe("k8s createSandbox", () => {
             refStorePvc: "cortex-refs",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  (_session, _spec, ref) => {
+            registerSandbox: (_session, _spec, ref) => {
                 registered.push(ref.sandboxId);
                 return Promise.resolve();
-},
+            },
         });
 
         const ref = (
@@ -138,7 +158,13 @@ describe("k8s createSandbox", () => {
         expect(ref.port).toBe(8765);
 
         expect(stub.createdJobs).toHaveLength(1);
-        const podSpec = must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec, "podSpec");
+        const podSpec = must(
+            must(
+                must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                'must(stub, "stub").createdJobs[0].spec.template',
+            ).spec,
+            "podSpec",
+        );
         const container = must(podSpec.containers[0], "container");
         const env = container.env ?? [];
         const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
@@ -156,25 +182,55 @@ describe("k8s createSandbox", () => {
 
         expect(container.workingDir).toBe("/an-1/runs/run-1/step-a");
 
-        expect(must(must(must(container, "container").resources, "must(container, \"container\").resources").requests, "must(container, \"container\").resources.requests").cpu).toBe("2");
-        expect(must(must(must(container, "container").resources, "must(container, \"container\").resources").requests, "must(container, \"container\").resources.requests").memory).toBe("4Gi");
-        expect(must(must(must(container, "container").resources, "must(container, \"container\").resources").limits, "must(container, \"container\").resources.limits").cpu).toBe("2");
-        expect(must(must(must(container, "container").resources, "must(container, \"container\").resources").limits, "must(container, \"container\").resources.limits").memory).toBe("4Gi");
+        expect(
+            must(
+                must(must(container, "container").resources, 'must(container, "container").resources').requests,
+                'must(container, "container").resources.requests',
+            ).cpu,
+        ).toBe("2");
+        expect(
+            must(
+                must(must(container, "container").resources, 'must(container, "container").resources').requests,
+                'must(container, "container").resources.requests',
+            ).memory,
+        ).toBe("4Gi");
+        expect(
+            must(must(must(container, "container").resources, 'must(container, "container").resources').limits, 'must(container, "container").resources.limits')
+                .cpu,
+        ).toBe("2");
+        expect(
+            must(must(must(container, "container").resources, 'must(container, "container").resources').limits, 'must(container, "container").resources.limits')
+                .memory,
+        ).toBe("4Gi");
 
-        const sessionVolume = must(must(must(podSpec, "podSpec").volumes, "must(podSpec, \"podSpec\").volumes").find((v) => v.name === "session"), "sessionVolume");
-        expect(must(must(sessionVolume, "sessionVolume").persistentVolumeClaim, "must(sessionVolume, \"sessionVolume\").persistentV").claimName).toBe("cortex-sessions");
-        expect(must(must(podSpec, "podSpec").volumes, "must(podSpec, \"podSpec\").volumes").map((v) => v.name)).toEqual(["session", "libs", "refs"]);
+        const sessionVolume = must(
+            must(must(podSpec, "podSpec").volumes, 'must(podSpec, "podSpec").volumes').find((v) => v.name === "session"),
+            "sessionVolume",
+        );
+        expect(must(must(sessionVolume, "sessionVolume").persistentVolumeClaim, 'must(sessionVolume, "sessionVolume").persistentV').claimName).toBe(
+            "cortex-sessions",
+        );
+        expect(must(must(podSpec, "podSpec").volumes, 'must(podSpec, "podSpec").volumes').map((v) => v.name)).toEqual(["session", "libs", "refs"]);
 
         const mounts = must(container.volumeMounts, "mounts");
-        const ro = must(mounts.find((m) => m.name === "session" && m.mountPath === "/an-1"), "ro");
+        const ro = must(
+            mounts.find((m) => m.name === "session" && m.mountPath === "/an-1"),
+            "ro",
+        );
         expect(ro.subPath).toBe("an-1");
         expect(ro.readOnly).toBe(true);
 
-        const rw = must(mounts.find((m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a"), "rw");
+        const rw = must(
+            mounts.find((m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a"),
+            "rw",
+        );
         expect(rw.subPath).toBe("an-1/runs/run-1/step-a");
         expect(rw.readOnly).toBe(false);
 
-        const libs = must(mounts.find((m) => m.name === "libs"), "libs");
+        const libs = must(
+            mounts.find((m) => m.name === "libs"),
+            "libs",
+        );
         expect(libs.mountPath).toBe("/mnt/libs");
         expect(libs.readOnly).toBe(true);
 
@@ -191,12 +247,13 @@ describe("k8s createSandbox", () => {
             sessionPvcRoot: SESSION_PVC_ROOT,
             // An embedder whose roots are NOT `{pvcRoot}/{analysisId}`. The pod must mount the
             // directory the harness pre-creates under this root, not a same-named sibling of it.
-            resolveWorkspaceRoot: async (id) => `${SESSION_PVC_ROOT}/tenants/acme/${id}`,
+            resolveWorkspaceRoot: (id) => Promise.resolve(`${SESSION_PVC_ROOT}/tenants/acme/${id}`),
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -207,13 +264,35 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const container = must(must(must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec, "must(stub, \"stub\").createdJobs[0].spec.template.").containers, "must(stub, \"stub\").createdJobs[0].spec.template.")[0], "container");
+        const container = must(
+            must(
+                must(
+                    must(
+                        must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                        'must(stub, "stub").createdJobs[0].spec.template',
+                    ).spec,
+                    'must(stub, "stub").createdJobs[0].spec.template.',
+                ).containers,
+                'must(stub, "stub").createdJobs[0].spec.template.',
+            )[0],
+            "container",
+        );
         const mounts = must(container.volumeMounts, "mounts");
 
         // Container-side paths are unchanged — the sandbox contract does not know where the tree lives.
         expect(container.workingDir).toBe("/an-1/runs/run-1/step-a");
-        expect(must(must(mounts, "mounts").find((m) => m.name === "session" && m.mountPath === "/an-1"), "must(mounts, \"mounts\").find((m) => m.name === \"s").subPath).toBe("tenants/acme/an-1");
-        expect(must(must(mounts, "mounts").find((m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a"), "must(mounts, \"mounts\").find((m) => m.name === \"s").subPath).toBe("tenants/acme/an-1/runs/run-1/step-a");
+        expect(
+            must(
+                must(mounts, "mounts").find((m) => m.name === "session" && m.mountPath === "/an-1"),
+                'must(mounts, "mounts").find((m) => m.name === "s',
+            ).subPath,
+        ).toBe("tenants/acme/an-1");
+        expect(
+            must(
+                must(mounts, "mounts").find((m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a"),
+                'must(mounts, "mounts").find((m) => m.name === "s',
+            ).subPath,
+        ).toBe("tenants/acme/an-1/runs/run-1/step-a");
     });
 
     test("mounts a declared write tail in place of the step directory", async () => {
@@ -224,12 +303,13 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot: async (id) => `${SESSION_PVC_ROOT}/${id}`,
+            resolveWorkspaceRoot: (id) => Promise.resolve(`${SESSION_PVC_ROOT}/${id}`),
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -247,13 +327,36 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const container = must(must(must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec, "must(stub, \"stub\").createdJobs[0].spec.template.").containers, "must(stub, \"stub\").createdJobs[0].spec.template.")[0], "container");
-        const mounts = must(must(must(container, "container").volumeMounts, "must(container, \"container\").volumeMounts").filter((m) => m.name === "session"), "mounts");
+        const container = must(
+            must(
+                must(
+                    must(
+                        must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                        'must(stub, "stub").createdJobs[0].spec.template',
+                    ).spec,
+                    'must(stub, "stub").createdJobs[0].spec.template.',
+                ).containers,
+                'must(stub, "stub").createdJobs[0].spec.template.',
+            )[0],
+            "container",
+        );
+        const mounts = must(
+            must(must(container, "container").volumeMounts, 'must(container, "container").volumeMounts').filter((m) => m.name === "session"),
+            "mounts",
+        );
 
         expect(container.workingDir).toBe("/an-1/report-sessions/thread-1/derived");
         // The tree stays read-only, and the one read-write mount covers the declared tail alone.
-        expect(must(must(mounts, "mounts").find((m) => m.mountPath === "/an-1"), "must(mounts, \"mounts\").find((m) => m.mountPath =").readOnly).toBe(true);
-        const rw = must(mounts.find((m) => m.mountPath === "/an-1/report-sessions/thread-1/derived"), "rw");
+        expect(
+            must(
+                must(mounts, "mounts").find((m) => m.mountPath === "/an-1"),
+                'must(mounts, "mounts").find((m) => m.mountPath =',
+            ).readOnly,
+        ).toBe(true);
+        const rw = must(
+            mounts.find((m) => m.mountPath === "/an-1/report-sessions/thread-1/derived"),
+            "rw",
+        );
         expect(rw.subPath).toBe("an-1/report-sessions/thread-1/derived");
         expect(rw.readOnly).toBe(false);
         // No step directory of the coordinates reaches a mount.
@@ -269,22 +372,25 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot: async () => "/elsewhere/an-1",
+            resolveWorkspaceRoot: () => Promise.resolve("/elsewhere/an-1"),
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         // The throw escapes as a rejection rather than an `err` — `createSandbox` runs inside a
         // DBOS workflow body, where only a throw records the step as durably failed.
-        const attempt =  () =>
-            Promise.resolve(ops.createSandbox(
-                ...splitSpawn({ runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } }),
-                mintSandboxIdentity("run-1"),
-                {},
-            ));
+        const attempt = () =>
+            Promise.resolve(
+                ops.createSandbox(
+                    ...splitSpawn({ runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } }),
+                    mintSandboxIdentity("run-1"),
+                    {},
+                ),
+            );
         await expect(attempt()).rejects.toThrow("does not live under sessionPvcRoot");
     });
 
@@ -306,8 +412,9 @@ describe("k8s createSandbox", () => {
             libStorePvc: "cortex-libs",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -325,16 +432,26 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const podSpec = must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec, "podSpec");
+        const podSpec = must(
+            must(
+                must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                'must(stub, "stub").createdJobs[0].spec.template',
+            ).spec,
+            "podSpec",
+        );
         const container = must(podSpec.containers[0], "container");
         expect(container.workingDir).toBe("/an-1");
 
-        const sessionMounts = must(must(container, "container").volumeMounts, "must(container, \"container\").volumeMounts").filter((m) => m.name === "session");
+        const sessionMounts = must(must(container, "container").volumeMounts, 'must(container, "container").volumeMounts').filter((m) => m.name === "session");
         expect(sessionMounts).toHaveLength(1);
         expect(sessionMounts[0].readOnly).toBe(true);
         expect(sessionMounts[0].mountPath).toBe("/an-1");
         // No writable session mount exists.
-        expect(must(must(container, "container").volumeMounts, "must(container, \"container\").volumeMounts").some((m) => m.name === "session" && m.readOnly === false)).toBe(false);
+        expect(
+            must(must(container, "container").volumeMounts, 'must(container, "container").volumeMounts').some(
+                (m) => m.name === "session" && m.readOnly === false,
+            ),
+        ).toBe(false);
     });
 
     test("node selector, tolerations, and runtimeClass thread onto the pod spec", async () => {
@@ -363,8 +480,9 @@ describe("k8s createSandbox", () => {
             runtimeClassName: "gvisor",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -381,7 +499,13 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const podSpec = must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec, "podSpec");
+        const podSpec = must(
+            must(
+                must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                'must(stub, "stub").createdJobs[0].spec.template',
+            ).spec,
+            "podSpec",
+        );
         expect(podSpec.nodeSelector).toEqual({ "platform.io/role": "agent-node" });
         expect(podSpec.tolerations).toEqual([
             {
@@ -410,8 +534,9 @@ describe("k8s createSandbox", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -428,7 +553,13 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const podSpec = must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec, "podSpec");
+        const podSpec = must(
+            must(
+                must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                'must(stub, "stub").createdJobs[0].spec.template',
+            ).spec,
+            "podSpec",
+        );
         expect(podSpec.nodeSelector).toBeUndefined();
         expect(podSpec.tolerations).toBeUndefined();
         expect(podSpec.runtimeClassName).toBeUndefined();
@@ -451,8 +582,9 @@ describe("k8s createSandbox", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -469,8 +601,14 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const podSpec = must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec, "podSpec");
-        expect(must(must(podSpec, "podSpec").volumes, "must(podSpec, \"podSpec\").volumes").map((v) => v.name)).toEqual(["session"]);
+        const podSpec = must(
+            must(
+                must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                'must(stub, "stub").createdJobs[0].spec.template',
+            ).spec,
+            "podSpec",
+        );
+        expect(must(must(podSpec, "podSpec").volumes, 'must(podSpec, "podSpec").volumes').map((v) => v.name)).toEqual(["session"]);
         const mounts = must(podSpec.containers[0].volumeMounts, "mounts");
         expect(mounts.some((m) => m.mountPath.startsWith("/mnt"))).toBe(false);
         const env = podSpec.containers[0].env ?? [];
@@ -498,8 +636,9 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
             libStorePvcRoot: root,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
         (
             await ops.createSandbox(
@@ -514,7 +653,10 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
                 {},
             )
         )._unsafeUnwrap();
-        return must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec;
+        return must(
+            must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+            'must(stub, "stub").createdJobs[0].spec.template',
+        ).spec;
     }
 
     test("a farm with no usable lock drops the store mounts, and the Job is still made", async () => {
@@ -522,7 +664,7 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
         try {
             const podSpec = must(await createWithRoot(root), "podSpec");
 
-            expect(must(must(podSpec, "podSpec").volumes, "must(podSpec, \"podSpec\").volumes").map((v) => v.name)).toEqual(["session"]);
+            expect(must(must(podSpec, "podSpec").volumes, 'must(podSpec, "podSpec").volumes').map((v) => v.name)).toEqual(["session"]);
             const env = Object.fromEntries((podSpec.containers[0].env ?? []).map((e) => [e.name, e.value]));
             expect(env.R_LIBS_SITE).toBeUndefined();
         } finally {
@@ -546,8 +688,9 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
                 packageStore: "required",
                 batchApi: stub.batchApi,
                 coreApi: stub.coreApi,
-                registerSandbox:  () => {    return Promise.resolve();
-},
+                registerSandbox: () => {
+                    return Promise.resolve();
+                },
             });
 
             const result = await ops.createSandbox(
@@ -587,7 +730,7 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
 
             const podSpec = must(await createWithRoot(root), "podSpec");
 
-            expect(must(must(podSpec, "podSpec").volumes, "must(podSpec, \"podSpec\").volumes").map((v) => v.name)).toEqual(["session", "libs"]);
+            expect(must(must(podSpec, "podSpec").volumes, 'must(podSpec, "podSpec").volumes').map((v) => v.name)).toEqual(["session", "libs"]);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -607,8 +750,9 @@ describe("k8s createSandbox failure cleanup", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const result = await ops.createSandbox(
@@ -623,7 +767,7 @@ describe("k8s createSandbox failure cleanup", () => {
             {},
         );
         expect(result.isErr()).toBe(true);
-        const created = must(must(stub, "stub").createdJobs[0].metadata, "must(stub, \"stub\").createdJobs[0].metadata").name;
+        const created = must(must(stub, "stub").createdJobs[0].metadata, 'must(stub, "stub").createdJobs[0].metadata').name;
         expect(stub.deletedJobs).toEqual([must(created, "created")]);
     });
 
@@ -638,7 +782,7 @@ describe("k8s createSandbox failure cleanup", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => Promise.reject(new Error("registry write failed")),
+            registerSandbox: () => Promise.reject(new Error("registry write failed")),
         });
 
         const result = await ops.createSandbox(
@@ -656,7 +800,7 @@ describe("k8s createSandbox failure cleanup", () => {
         if (result.isErr()) {
             expect(result.error.type).toBe("container_create_failed");
         }
-        const created = must(must(stub, "stub").createdJobs[0].metadata, "must(stub, \"stub\").createdJobs[0].metadata").name;
+        const created = must(must(stub, "stub").createdJobs[0].metadata, 'must(stub, "stub").createdJobs[0].metadata').name;
         expect(stub.deletedJobs).toEqual([must(created, "created")]);
     });
 });
@@ -676,10 +820,10 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  (_session, _spec, ref) => {
+            registerSandbox: (_session, _spec, ref) => {
                 registered.push(ref.sandboxId);
                 return Promise.resolve();
-},
+            },
         });
 
         const ref = (
@@ -722,8 +866,9 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const ref = (
@@ -761,8 +906,9 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const result = await ops.createSandbox(
@@ -796,8 +942,9 @@ describe("k8s job ownership labels", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -815,10 +962,10 @@ describe("k8s job ownership labels", () => {
         )._unsafeUnwrap();
 
         const meta = must(stub.createdJobs[0].metadata, "meta");
-        expect(must(must(meta, "meta").labels, "must(meta, \"meta\").labels")["app.kubernetes.io/managed-by"]).toBe("cortex");
-        expect(must(must(meta, "meta").annotations, "must(meta, \"meta\").annotations")["cortex/owner-workflow-id"]).toBe("run-1-0");
-        expect(must(must(meta, "meta").labels, "must(meta, \"meta\").labels")["cortex/run-id"]).toBe("run-1");
-        expect(must(must(meta, "meta").labels, "must(meta, \"meta\").labels")["cortex/step-id"]).toBe("step-a");
+        expect(must(must(meta, "meta").labels, 'must(meta, "meta").labels')["app.kubernetes.io/managed-by"]).toBe("cortex");
+        expect(must(must(meta, "meta").annotations, 'must(meta, "meta").annotations')["cortex/owner-workflow-id"]).toBe("run-1-0");
+        expect(must(must(meta, "meta").labels, 'must(meta, "meta").labels')["cortex/run-id"]).toBe("run-1");
+        expect(must(must(meta, "meta").labels, 'must(meta, "meta").labels')["cortex/step-id"]).toBe("step-a");
     });
 
     test("an owner id that no label could hold round-trips through listManagedSandboxes", async () => {
@@ -839,8 +986,9 @@ describe("k8s job ownership labels", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         (
@@ -883,8 +1031,9 @@ describe("k8s job ownership labels", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
 
         const managed = (await ops.listManagedSandboxes())._unsafeUnwrap();
@@ -910,8 +1059,9 @@ describe("k8s label set", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
     }
 
@@ -931,9 +1081,16 @@ describe("k8s label set", () => {
             "cortex/run-id": "run-1",
             "cortex/step-id": "step-a",
         };
-        expect(must(must(job, "job").metadata, "must(job, \"job\").metadata").labels).toEqual(expected);
-        expect(must(must(must(must(job, "job").spec, "must(job, \"job\").spec").template, "must(job, \"job\").spec.template").metadata, "must(job, \"job\").spec.template.metadata").labels).toEqual(expected);
-        expect(must(must(must(job, "job").metadata, "must(job, \"job\").metadata").annotations, "must(job, \"job\").metadata.annotations")["cortex/owner-workflow-id"]).toBe("run-1-0");
+        expect(must(must(job, "job").metadata, 'must(job, "job").metadata').labels).toEqual(expected);
+        expect(
+            must(
+                must(must(must(job, "job").spec, 'must(job, "job").spec').template, 'must(job, "job").spec.template').metadata,
+                'must(job, "job").spec.template.metadata',
+            ).labels,
+        ).toEqual(expected);
+        expect(
+            must(must(must(job, "job").metadata, 'must(job, "job").metadata').annotations, 'must(job, "job").metadata.annotations')["cortex/owner-workflow-id"],
+        ).toBe("run-1-0");
     });
 
     test("the host labels merge under the harness labels, thus a harness key wins a clash", async () => {
@@ -945,7 +1102,16 @@ describe("k8s label set", () => {
             })
         )._unsafeUnwrap();
 
-        for (const labels of [must(must(stub, "stub").createdJobs[0].metadata, "must(stub, \"stub\").createdJobs[0].metadata").labels, must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").metadata, "must(stub, \"stub\").createdJobs[0].spec.template.").labels]) {
+        for (const labels of [
+            must(must(stub, "stub").createdJobs[0].metadata, 'must(stub, "stub").createdJobs[0].metadata').labels,
+            must(
+                must(
+                    must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                    'must(stub, "stub").createdJobs[0].spec.template',
+                ).metadata,
+                'must(stub, "stub").createdJobs[0].spec.template.',
+            ).labels,
+        ]) {
             expect(must(labels, "labels")["cortex/run-id"]).toBe("run-1");
             expect(must(labels, "labels")["example.com/tenant"]).toBe("acme");
         }
@@ -957,8 +1123,24 @@ describe("k8s label set", () => {
         const stub = stubApis(READY_POD);
         (await opsWith(stub).createSandbox(...splitSpawn(SPAWN), mintSandboxIdentity("run-1"), { "example.com/user": "user@example.com" }))._unsafeUnwrap();
 
-        expect(must(must(must(stub, "stub").createdJobs[0].metadata, "must(stub, \"stub\").createdJobs[0].metadata").labels, "must(stub, \"stub\").createdJobs[0].metadata.label")["example.com/user"]).toBe("user@example.com");
-        expect(must(must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").metadata, "must(stub, \"stub\").createdJobs[0].spec.template.").labels, "must(stub, \"stub\").createdJobs[0].spec.template.")["example.com/user"]).toBe("user@example.com");
+        expect(
+            must(
+                must(must(stub, "stub").createdJobs[0].metadata, 'must(stub, "stub").createdJobs[0].metadata').labels,
+                'must(stub, "stub").createdJobs[0].metadata.label',
+            )["example.com/user"],
+        ).toBe("user@example.com");
+        expect(
+            must(
+                must(
+                    must(
+                        must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                        'must(stub, "stub").createdJobs[0].spec.template',
+                    ).metadata,
+                    'must(stub, "stub").createdJobs[0].spec.template.',
+                ).labels,
+                'must(stub, "stub").createdJobs[0].spec.template.',
+            )["example.com/user"],
+        ).toBe("user@example.com");
     });
 
     test("a literal spawn path stamps its literal run id and step id", async () => {
@@ -977,7 +1159,16 @@ describe("k8s label set", () => {
             )
         )._unsafeUnwrap();
 
-        const labels = must(must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").metadata, "must(stub, \"stub\").createdJobs[0].spec.template.").labels, "labels");
+        const labels = must(
+            must(
+                must(
+                    must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                    'must(stub, "stub").createdJobs[0].spec.template',
+                ).metadata,
+                'must(stub, "stub").createdJobs[0].spec.template.',
+            ).labels,
+            "labels",
+        );
         expect(labels["cortex/run-id"]).toBe("data-profile");
         expect(labels["cortex/step-id"]).toBe("profile");
     });
@@ -995,8 +1186,9 @@ describe("k8s teardown", () => {
             resolveWorkspaceRoot,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
         const result = await ops.teardown({
             sandboxId: "sbx-missing",
@@ -1018,8 +1210,9 @@ describe("k8s teardown", () => {
             resolveWorkspaceRoot,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
         const result = await ops.teardown({
             sandboxId: "sbx-x",
@@ -1063,8 +1256,9 @@ describe("k8s isAlive", () => {
                 resolveWorkspaceRoot,
                 batchApi: stub.batchApi,
                 coreApi: stub.coreApi,
-                registerSandbox:  () => {    return Promise.resolve();
-},
+                registerSandbox: () => {
+                    return Promise.resolve();
+                },
             });
             const liveness = (
                 await ops.isAlive({
@@ -1106,8 +1300,9 @@ describe("k8s isAlive", () => {
             resolveWorkspaceRoot,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
         const liveness = (
             await ops.isAlive({
@@ -1136,8 +1331,9 @@ describe("k8s createSandbox — the farm mounts", () => {
             libStorePvc: "cortex-libs",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox:  () => {    return Promise.resolve();
-},
+            registerSandbox: () => {
+                return Promise.resolve();
+            },
         });
     }
 
@@ -1146,8 +1342,23 @@ describe("k8s createSandbox — the farm mounts", () => {
 
         (await opsWith(FIXED_FARM, stub).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const container = must(must(must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec, "must(stub, \"stub\").createdJobs[0].spec.template.").containers, "must(stub, \"stub\").createdJobs[0].spec.template.")[0], "container");
-        const mounts = must(must(must(container, "container").volumeMounts, "must(container, \"container\").volumeMounts").filter((m) => m.name === "libs"), "mounts");
+        const container = must(
+            must(
+                must(
+                    must(
+                        must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                        'must(stub, "stub").createdJobs[0].spec.template',
+                    ).spec,
+                    'must(stub, "stub").createdJobs[0].spec.template.',
+                ).containers,
+                'must(stub, "stub").createdJobs[0].spec.template.',
+            )[0],
+            "container",
+        );
+        const mounts = must(
+            must(must(container, "container").volumeMounts, 'must(container, "container").volumeMounts').filter((m) => m.name === "libs"),
+            "mounts",
+        );
         expect(mounts.map((m) => ({ mountPath: m.mountPath, subPath: m.subPath, readOnly: m.readOnly }))).toEqual([
             { mountPath: "/mnt/libs", subPath: undefined, readOnly: true },
             { mountPath: "/mnt/libs/current", subPath: "farms/catalog", readOnly: true },
@@ -1160,13 +1371,25 @@ describe("k8s createSandbox — the farm mounts", () => {
 
         (await opsWith(source, stub, "image").createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const podSpec = must(must(must(must(stub, "stub").createdJobs[0].spec, "must(stub, \"stub\").createdJobs[0].spec").template, "must(stub, \"stub\").createdJobs[0].spec.template").spec, "podSpec");
-        const libsVolume = must(must(must(podSpec, "podSpec").volumes, "must(podSpec, \"podSpec\").volumes").find((v) => v.name === "libs"), "libsVolume");
+        const podSpec = must(
+            must(
+                must(must(stub, "stub").createdJobs[0].spec, 'must(stub, "stub").createdJobs[0].spec').template,
+                'must(stub, "stub").createdJobs[0].spec.template',
+            ).spec,
+            "podSpec",
+        );
+        const libsVolume = must(
+            must(must(podSpec, "podSpec").volumes, 'must(podSpec, "podSpec").volumes').find((v) => v.name === "libs"),
+            "libsVolume",
+        );
         // The claim carries no volume-level readOnly when the cache writes
         // through it — the per-mount flags keep the store and the farm read-only.
-        expect(must(must(libsVolume, "libsVolume").persistentVolumeClaim, "must(libsVolume, \"libsVolume\").persistentVolumeC").readOnly).toBeUndefined();
+        expect(must(must(libsVolume, "libsVolume").persistentVolumeClaim, 'must(libsVolume, "libsVolume").persistentVolumeC').readOnly).toBeUndefined();
 
-        const mounts = must(must(must(podSpec, "podSpec").containers[0].volumeMounts, "must(podSpec, \"podSpec\").containers[0].volumeMou").filter((m) => m.name === "libs"), "mounts");
+        const mounts = must(
+            must(must(podSpec, "podSpec").containers[0].volumeMounts, 'must(podSpec, "podSpec").containers[0].volumeMou').filter((m) => m.name === "libs"),
+            "mounts",
+        );
         expect(mounts.map((m) => ({ mountPath: m.mountPath, subPath: m.subPath, readOnly: m.readOnly }))).toEqual([
             { mountPath: "/mnt/libs", subPath: undefined, readOnly: true },
             { mountPath: "/mnt/libs/farm", subPath: "farms/an-1", readOnly: true },
@@ -1176,7 +1399,7 @@ describe("k8s createSandbox — the farm mounts", () => {
 
     test("a resolver refusal returns farm_unavailable and creates no Job", async () => {
         const stub = stubApis([]);
-        const source: FarmSource = { kind: "per-analysis", resolve: () => Promise.resolve(({ kind: "unavailable", reason: "no store yet" })) };
+        const source: FarmSource = { kind: "per-analysis", resolve: () => Promise.resolve({ kind: "unavailable", reason: "no store yet" }) };
 
         const result = await opsWith(source, stub).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
@@ -1204,17 +1427,15 @@ describe("k8s waitForPodReady — the slow pod", () => {
     /** A pod list that answers with `pod` every time, and a clock the sleep advances. */
     function pendingPod(pod: Partial<V1Pod>) {
         let clock = 0;
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const coreApi = {
-            listNamespacedPod: () => Promise.resolve(({ items: [pod as V1Pod] })),
-        } as unknown as CoreV1Api;
+        const coreApi = new StubCoreApi();
+        coreApi.listNamespacedPod = () => Promise.resolve({ items: [pod] });
         return {
             coreApi,
             now: () => clock,
-            sleep:  (ms: number) => {
+            sleep: (ms: number) => {
                 clock += ms;
                 return Promise.resolve();
-},
+            },
         };
     }
 

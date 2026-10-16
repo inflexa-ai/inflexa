@@ -45,6 +45,7 @@ import type { Logger } from "../lib/logger.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { readFarmLock, resolveFarmSource } from "./farm.js";
+import { maybeRecord, recordMember, typedMember } from "../lib/shape.js";
 import { harnessLabels, MANAGED_BY_LABEL, MANAGED_BY_VALUE, mergeLabels, OWNER_WORKFLOW_KEY, SANDBOX_ID_LABEL } from "./labels.js";
 import { buildMountPlan, mountCoordsOf, sandboxWriteTail } from "./mount-plan.js";
 import { CPU_ONLINE_PATH, CPUINFO_PATH, cpuFiles, readHostCpuinfoOnce } from "./cpu-files.js";
@@ -265,9 +266,9 @@ async function createOrAdopt(
     if (inspected.isErr()) return err(created.error);
     const info = inspected.value;
 
-    const owner = info.Config.Labels[OWNER_WORKFLOW_LABEL];
+    const owner = typedMember(info.Config.Labels, OWNER_WORKFLOW_LABEL);
     if (owner !== ownerWorkflowId) {
-        return err({ type: "name_conflict", op: "docker.createSandbox", sandboxId: name, owner: owner });
+        return err({ type: "name_conflict", op: "docker.createSandbox", sandboxId: name, owner: owner ?? null });
     }
     // Both mutating reconcile outcomes are logged: adoption reuses a container the
     // current attempt did not create, so without a record here nothing ties the
@@ -454,7 +455,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         SANDBOX_EGRESS_FIREWALL: "1",
                         ...threadLimitEnv(limits),
                         ...plan.env,
-                        ...(spec.extraEnv),
+                        ...spec.extraEnv,
                     }).map(([k, v]) => `${k}=${v}`);
 
                     const createOpts: Docker.ContainerCreateOptions = {
@@ -502,7 +503,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
 
                     const inspected = await trySandbox(() => sandbox.value.container.inspect(), createFailed);
                     if (inspected.isErr()) return err(inspected.error);
-                    const hostPort = inspected.value.NetworkSettings.Ports?.[`${SANDBOX_SERVER_PORT}/tcp`]?.[0]?.HostPort;
+                    const networkSettings = recordMember(maybeRecord(inspected.value), "NetworkSettings");
+                    const portMap = recordMember(networkSettings, "Ports");
+                    const binding = maybeRecord(recordMember(portMap, `${SANDBOX_SERVER_PORT}/tcp`)?.[0]);
+                    const hostPort = binding?.HostPort;
                     if (!hostPort) {
                         // A container we cannot reach is useless; stop and remove it so a retry
                         // starts clean rather than colliding with an unroutable name.

@@ -27,7 +27,7 @@ import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { ChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
-import { isReconciling, type ChatPartType } from "@inflexa-ai/harness/contracts/part-registry.js";
+import { PART_REGISTRY, isReconciling, type ChatPartType } from "@inflexa-ai/harness/contracts/part-registry.js";
 
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
@@ -39,7 +39,6 @@ import type { SandboxClient } from "../../sandbox/client.js";
 import type { SandboxRef, SandboxSpec } from "../../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../../execution/artifact-registry.js";
 import type { GateFailure } from "../../lib/hooks.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import type { KeptToolOutput, ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
@@ -50,7 +49,9 @@ import { createReportBlockerTool, type BlockerHolder } from "../../tools/sandbox
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 import { CAPPED_OUT_EMPTY_REASON, createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "../sandbox-step.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import { poolDouble, poolQuerySchema, stubSandboxClient, stubWorkspaceFilesystem } from "../../lib/test/doubles.js";
+import { installWritable } from "../../lib/test/writable.js";
+import { maybeRecord } from "../../lib/shape.js";
 import { optionRecord } from "../../report-render/option-lens.js";
 
 const RUN = "run-9";
@@ -224,16 +225,14 @@ const SANDBOX_REF: SandboxRef = {
 
 function makeSandboxClient(spawns: Array<{ session: SpawnSession; spec: SandboxSpec }> = []): SandboxClient {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return {
+    return stubSandboxClient({
         createSandbox: (session: SpawnSession, spec: SandboxSpec) => {
             spawns.push({ session, spec });
             return okAsync(SANDBOX_REF);
         },
-        submitExec: () => Promise.resolve(undefined),
-        awaitExec: () => Promise.reject(new Error("awaitExec: the usage tests run a tool-less agent")),
         isAlive: () => Promise.resolve({ alive: true, oomKilled: false }),
         teardown: () => Promise.resolve(undefined),
-    } as unknown as SandboxClient;
+    });
 }
 
 /**
@@ -305,11 +304,11 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
             register: () => okAsync({ registered: [], failed: [], failedCount: 0 }),
             sync: () => okAsync(undefined),
         },
-        workspaceFs: {} as WorkspaceFilesystem,
-        resolveWorkspaceRoot: async () => workspaceRoot,
+        workspaceFs: stubWorkspaceFilesystem(),
+        resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         model: STEP_MODEL_ID,
-        buildAgent: async ({ fileMetadata }) => stepAgent(fileMetadata),
-        resolveWritePrefix: async (stepInput) => join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId),
+        buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata)),
+        resolveWritePrefix: (stepInput) => Promise.resolve(join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId)),
     };
 }
 
@@ -318,13 +317,17 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
  * part registry publishes for consumers (`isReconciling`) and the one a replayed
  * emission relies on. Non-reconciling parts are appended as-is.
  */
+function isPartType(value: unknown): value is ChatPartType {
+    return typeof value === "string" && value in PART_REGISTRY;
+}
+
 function foldStream(parts: ReadonlyArray<Record<string, unknown>>): Array<Record<string, unknown>> {
     const out: Array<Record<string, unknown>> = [];
     const indexById = new Map<string, number>();
     for (const part of parts) {
-        const type = part.type as ChatPartType;
-        const id = part.id as string | undefined;
-        if (id === undefined || !isReconciling(type)) {
+        const type = part.type;
+        const id = typeof part.id === "string" ? part.id : undefined;
+        if (id === undefined || !isPartType(type) || !isReconciling(type)) {
             out.push(part);
             continue;
         }
@@ -441,13 +444,14 @@ describe("sandbox-step activity history", () => {
         const stream = dbosState.emittedParts.filter((part) => part.type === "data-step-activity" || part.type === "data-activity-entry");
         const activities = partsOf("data-step-activity");
         expect(activities.length).toBeGreaterThan(1);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion reads the ISO-8601 UTC timestamp grammar that toISOString owns
         for (const activity of activities) expect(activity.at).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/));
         // Pairs in write order: the activity part, then its entry.
         expect(stream.map((part) => part.type)).toEqual(activities.flatMap(() => ["data-step-activity", "data-activity-entry"]));
         for (const [index, part] of stream.entries()) {
             if (part.type !== "data-activity-entry") continue;
             const { type: _type, id: _id, ...entry } = part;
-            const { type: _activityType, id: _activityId, ...activity } = stream[index - 1]!;
+            const { type: _activityType, id: _activityId, ...activity } = stream[index - 1];
             expect(entry).toEqual(activity);
         }
         expect(ChatPartSchema.safeParse(partsOf("data-activity-entry")[0]).success).toBe(true);
@@ -467,22 +471,25 @@ describe("sandbox-step activity history", () => {
         expect(folded.filter((part) => part.type === "data-activity-entry")).toEqual(partsOf("data-activity-entry"));
         const activity = folded.filter((part) => part.type === "data-step-activity");
         expect(activity).toHaveLength(1);
-        expect(activity[0]).toEqual(partsOf("data-step-activity").at(-1)!);
+        expect(activity[0]).toEqual(must(partsOf("data-step-activity").at(-1), "last step activity"));
     });
 
     it("logs a rejected entry write, continues the step, and gives the next entry the next number", async () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
         let rejected = false;
-        // A direct assignment through `unknown`, the same as `mockDbos`; the `afterAll` hook restores the original.
-        (dbos.DBOS.writeStream as unknown) = mock(async (_name: string, part: unknown) => {
-            // The body writes only object parts to its stream, so the part is a record with a `type` key.
-            const recorded = part as Record<string, unknown>;
-            if (!rejected && recorded.type === "data-activity-entry") {
-                rejected = true;
-                throw new Error("stream unavailable");
-            }
-            dbosState.emittedParts.push(recorded);
-        });
+        installWritable(
+            dbos.DBOS,
+            "writeStream",
+            mock((_name: string, part: unknown) => {
+                const recorded = optionRecord(part);
+                if (!rejected && recorded.type === "data-activity-entry") {
+                    rejected = true;
+                    throw new Error("stream unavailable");
+                }
+                dbosState.emittedParts.push(recorded);
+                return Promise.resolve();
+            }),
+        );
         const logger = createCapturingLogger();
 
         const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), logger });
@@ -490,8 +497,8 @@ describe("sandbox-step activity history", () => {
         expect(rejected).toBe(true);
         expect(result.status).toBe("complete");
         expect(logger.records.filter((r) => r.level === "warn" && r.msg.includes("emitToParentStream failed"))).toHaveLength(1);
-        expect(partsOf("data-activity-entry")[0]!.id).toBe(`${ENTRY_ID}-1`);
-        expect(partsOf("data-step-activity").at(-1)!.phase).toBe("complete");
+        expect(partsOf("data-activity-entry")[0].id).toBe(`${ENTRY_ID}-1`);
+        expect(must(partsOf("data-step-activity").at(-1), "last step activity").phase).toBe("complete");
     });
 });
 
@@ -521,9 +528,9 @@ describe("sandbox-step file-metadata output tool", () => {
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider,
-            buildAgent: async ({ fileMetadata }) => {
+            buildAgent: ({ fileMetadata }) => {
                 cell = fileMetadata;
-                return stepAgent(fileMetadata);
+                return Promise.resolve(stepAgent(fileMetadata));
             },
         };
 
@@ -582,7 +589,7 @@ describe("sandbox-step post-step continuations", () => {
     it("reads a cached metadata array of an earlier version as entries, and the summary continues the transcript directly", async () => {
         await seedStepOutput();
         const dbos = await import("@dbos-inc/dbos-sdk");
-        const runInline = dbos.DBOS.runStep as unknown as (fn: () => Promise<unknown>, config?: { name?: string }) => Promise<unknown>;
+        const runInline: (fn: () => Promise<unknown>, config?: { name?: string }) => Promise<unknown> = dbos.DBOS.runStep;
         const cached = [{ dbPath: `runs/${USAGE_RUN_ID}/${USAGE_STEP_ID}/output/result.csv`, description: "cached description", metadata: { format: "csv" } }];
         Reflect.set(
             dbos.DBOS,
@@ -634,7 +641,7 @@ describe("sandbox-step kept tool outputs", () => {
     it("keeps the text of a long execute_command result of the task in the store of the step", async () => {
         const store = memoryStore();
         const stderr = "Traceback (most recent call last):\nValueError: no batch column";
-        const sandboxClient = {
+        const sandboxClient: SandboxClient = {
             ...makeSandboxClient(),
             exec: () =>
                 Promise.resolve({
@@ -645,7 +652,7 @@ describe("sandbox-step kept tool outputs", () => {
                     durationMs: 5,
                     timedOut: false,
                 }),
-        } as unknown as SandboxClient;
+        };
         const provider = scriptedProvider((i) =>
             i === 0
                 ? makeMessage([toolUseBlock("tu-x", "execute_command", { command: ["python", "run.py"] })], "tool_use")
@@ -656,16 +663,18 @@ describe("sandbox-step kept tool outputs", () => {
             provider,
             sandboxClient,
             toolOutputStore: store,
-            buildAgent: async (ctx) =>
-                stepAgent(ctx.fileMetadata, [
-                    createExecuteCommandTool({
-                        sandboxClient,
-                        sandbox: ctx.sandbox,
-                        deadlineMs: ctx.deadlineMs,
-                        defaultCwd: `/${ANALYSIS_ID}`,
-                    }),
-                    createReadToolOutputTool(must(must(ctx, "ctx").toolOutputStore, 'must(ctx, "ctx").toolOutputStore')),
-                ]),
+            buildAgent: (ctx) =>
+                Promise.resolve(
+                    stepAgent(ctx.fileMetadata, [
+                        createExecuteCommandTool({
+                            sandboxClient,
+                            sandbox: ctx.sandbox,
+                            deadlineMs: ctx.deadlineMs,
+                            defaultCwd: `/${ANALYSIS_ID}`,
+                        }),
+                        createReadToolOutputTool(must(must(ctx, "ctx").toolOutputStore, 'must(ctx, "ctx").toolOutputStore')),
+                    ]),
+                ),
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
@@ -675,8 +684,9 @@ describe("sandbox-step kept tool outputs", () => {
         expect(store.puts[0]).toMatchObject({ analysisId: ANALYSIS_ID, toolName: "execute_command", toolCallId: "tu-x" });
         expect(store.puts[0]).not.toHaveProperty("threadId");
         const excerpt = must(toolResultIn(provider.calls[1], "tu-x"), "excerpt");
-        expect(excerpt.output.type).toBe("text");
-        const tail = (excerpt.output as { value: string }).value.split("\n").at(-1);
+        const excerptOutput = excerpt.output;
+        if (excerptOutput.type !== "text") throw new Error("expected the text output");
+        const tail = excerptOutput.value.split("\n").at(-1);
         expect(tail).toContain("ValueError: no batch column");
         expect(tail).toContain('"timedOut":false');
     });
@@ -711,8 +721,9 @@ describe("sandbox-step kept tool outputs", () => {
         expect(result.status).toBe("complete");
         expect(provider.calls).toHaveLength(4);
         const read = must(toolResultIn(provider.calls[3], "tu-read"), "read");
-        expect(read.output.type).toBe("json");
-        expect((read.output as { value: unknown }).value).toMatchObject({ status: "ok", offset: 0 });
+        const readOutput = read.output;
+        if (readOutput.type !== "json") throw new Error("expected the json output");
+        expect(readOutput.value).toMatchObject({ status: "ok", offset: 0 });
     });
 
     it("logs one warn when the step has a store and its agent declares no read_tool_output", async () => {
@@ -746,9 +757,9 @@ describe("sandbox-step blocker replay", () => {
         const blockerDeps = (provider: AgentChat): SandboxStepDeps => ({
             ...usageStepDeps(undefined),
             provider,
-            buildAgent: async ({ blockerHolder, fileMetadata }) => {
+            buildAgent: ({ blockerHolder, fileMetadata }) => {
                 holders.push(blockerHolder);
-                return stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]);
+                return Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]));
             },
         });
 
@@ -786,8 +797,7 @@ describe("sandbox-step blocker replay", () => {
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider: scriptedProvider((i) => replies[i]),
-            buildAgent: ({ blockerHolder, fileMetadata }) =>
-                Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)])),
+            buildAgent: ({ blockerHolder, fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)])),
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
@@ -820,8 +830,10 @@ describe("sandbox-step suspension", () => {
     function statementPool(): { pool: Pool; statements: Array<{ text: string; values: readonly unknown[] }> } {
         const statements: Array<{ text: string; values: readonly unknown[] }> = [];
         const pool = poolDouble((arg: unknown, params?: unknown[]) => {
-            const text = typeof arg === "string" ? arg : ((arg as { text?: string }).text ?? "");
-            const values = typeof arg === "object" && arg !== null && "values" in arg ? ((arg as { values?: unknown[] }).values ?? []) : (params ?? []);
+            const record = maybeRecord(arg);
+            const query = record === undefined ? undefined : poolQuerySchema.parse(record);
+            const text = typeof arg === "string" ? arg : (query?.text ?? "");
+            const values = query?.values ?? params ?? [];
             statements.push({ text, values });
             return Promise.resolve({ rows: [], rowCount: 0 });
         });
@@ -862,14 +874,14 @@ describe("sandbox-step suspension", () => {
     it("a refused spawn with the suspend flag suspends the step before any sandbox exists", async () => {
         const { pool, statements } = statementPool();
         const teardowns: string[] = [];
-        const refusing = {
+        const refusing: SandboxClient = {
             ...makeSandboxClient(),
             createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true }),
             teardown: (ref: SandboxRef) => {
                 teardowns.push(ref.sandboxId);
                 return Promise.resolve();
             },
-        } as unknown as SandboxClient;
+        };
 
         await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, sandboxClient: refusing })).rejects.toBeInstanceOf(
             DBOSErrors.DBOSWorkflowCancelledError,
@@ -881,10 +893,10 @@ describe("sandbox-step suspension", () => {
 
     it("a refused spawn without the suspend flag fails the step and sends no suspension", async () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const refusing = {
+        const refusing: SandboxClient = {
             ...makeSandboxClient(),
             createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
-        } as unknown as SandboxClient;
+        };
 
         await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), sandboxClient: refusing })).rejects.toThrow("labels_unavailable");
 
@@ -965,7 +977,10 @@ describe("sandbox-step lineage attestation", () => {
     /** The `step failure` record — the only account of why a scrubbed step died. */
     function stepFailure(logger: CapturingLogger): { errorClass: unknown; err: string } | undefined {
         const rec = logger.records.find((r) => r.msg.endsWith("step failure"));
-        return rec ? { errorClass: rec.fields.errorClass, err: String(rec.fields.err) } : undefined;
+        if (rec === undefined) return undefined;
+        const err = rec.fields.err;
+        if (typeof err !== "string") throw new Error("the step-failure record carries a string err");
+        return { errorClass: rec.fields.errorClass, err };
     }
 
     it("uploads the bytes even when registration is rejected", async () => {
@@ -1070,10 +1085,9 @@ describe("sandbox-step capped-out empty manifest", () => {
     function makeRecordingPool(): { pool: Pool; values: unknown[] } {
         const values: unknown[] = [];
         const pool = poolDouble((arg: unknown, params?: unknown[]) => {
-            if (typeof arg === "object" && arg !== null && "values" in arg) {
-                values.push(...((arg as { values?: unknown[] }).values ?? []));
-            }
-            values.push(...(params ?? []));
+            const record = maybeRecord(arg);
+            const query = record === undefined ? undefined : poolQuerySchema.parse(record);
+            values.push(...(query?.values ?? params ?? []));
             return Promise.resolve({ rows: [], rowCount: 0 });
         });
         return { pool, values };
@@ -1094,24 +1108,26 @@ describe("sandbox-step capped-out empty manifest", () => {
             ...usageStepDeps(undefined),
             pool,
             provider,
-            buildAgent: async ({ blockerHolder, fileMetadata }) =>
-                stepAgent(
-                    fileMetadata,
-                    [
-                        defineTool({
-                            id: "echo",
-                            description: "Echo the label back.",
-                            inputSchema: z.object({ label: z.string() }),
-                            describeCall: "none",
-                            execute: ({ label }) => {
-                                if (args.blockerReason !== undefined) {
-                                    blockerHolder.outcome = { kind: "blocker", reason: args.blockerReason };
-                                }
-                                return Promise.resolve(ok({ label }));
-                            },
-                        }),
-                    ],
-                    1,
+            buildAgent: ({ blockerHolder, fileMetadata }) =>
+                Promise.resolve(
+                    stepAgent(
+                        fileMetadata,
+                        [
+                            defineTool({
+                                id: "echo",
+                                description: "Echo the label back.",
+                                inputSchema: z.object({ label: z.string() }),
+                                describeCall: "none",
+                                execute: ({ label }) => {
+                                    if (args.blockerReason !== undefined) {
+                                        blockerHolder.outcome = { kind: "blocker", reason: args.blockerReason };
+                                    }
+                                    return Promise.resolve(ok({ label }));
+                                },
+                            }),
+                        ],
+                        1,
+                    ),
                 ),
         };
         return { deps, values };

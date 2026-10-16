@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { computeTopologicalLevels } from "../execute-analysis-scheduler.js";
-import { planGraphOf } from "./graph.js";
+import { computeTopologicalLevels } from "../../execute-analysis-scheduler.js";
+import { planGraphOf } from "../graph.js";
 
 function step(id: string, dependsOn: string[] = [], extra: Record<string, unknown> = {}) {
     return {

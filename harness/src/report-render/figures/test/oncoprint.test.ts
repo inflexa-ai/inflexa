@@ -10,7 +10,18 @@ import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption 
 import { CHART_BODY_PX, CHART_SLOT_LIMIT } from "../../design.js";
 import { CELL_GLYPH_RENDERER } from "../../chart-renderers.js";
 import { ALTERATION_CLASS_COLORS, CELL_GROUND_COLOR, ONCOPRINT_ROW_PX } from "../oncoprint.js";
-import { optionArray, optionNullableNumbers, optionRecords, optionStrings } from "../../option-lens.js";
+import {
+    optionArray,
+    optionNullableNumbers,
+    optionNumber,
+    optionPercent,
+    optionRecord,
+    optionRecords,
+    optionString,
+    optionStrings,
+} from "../../option-lens.js";
+import { must } from "../../../lib/test/guards.js";
+import { z } from "zod";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -70,7 +81,9 @@ function cellClass(option: EchartOption, sample: string, gene: string): number {
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
     const genes = optionStrings(axesOf(option, "yAxis")[0].data);
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    const item = (cellSeries(option).data as Array<number[] | { value: number[] }>)
+    const item = z
+        .array(z.union([z.array(z.number()), z.object({ value: z.array(z.number()) }).loose()]))
+        .parse(cellSeries(option).data)
         .map((entry) => (Array.isArray(entry) ? entry : entry.value))
         .find((value) => value[0] === samples.indexOf(sample) && value[1] === genes.indexOf(gene));
     if (item === undefined) throw new Error(`no cell for ${sample} ${gene}`);
@@ -84,19 +97,17 @@ describe("the oncoprint figure", () => {
         expect(cells.type).toBe("custom");
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
         expect(optionArray(cells.data)).toHaveLength(3 * 4);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const payload = cells.itemPayload as { colors: string[]; ground: string };
+        const payload = optionRecord(cells.itemPayload);
         expect(payload.ground).toBe(CELL_GROUND_COLOR);
-        expect(payload.colors[cellClass(option, "TCGA-AB-2945", "FLT3")]).toBe(ALTERATION_CLASS_COLORS.Missense_Mutation);
-        expect(payload.colors[cellClass(option, "TCGA-AB-2965", "FLT3")]).toBe(ALTERATION_CLASS_COLORS.In_Frame_Ins);
+        expect(optionStrings(payload.colors)[cellClass(option, "TCGA-AB-2945", "FLT3")]).toBe(ALTERATION_CLASS_COLORS.Missense_Mutation);
+        expect(optionStrings(payload.colors)[cellClass(option, "TCGA-AB-2965", "FLT3")]).toBe(ALTERATION_CLASS_COLORS.In_Frame_Ins);
         expect(cellClass(option, "TCGA-AB-2802", "FLT3")).toBe(-1);
     });
 
     it("gives each common class its fixed color, and an unknown class a palette color outside the map", () => {
         const option = derive();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const payload = cellSeries(option).itemPayload as { colors: string[] };
-        const silent = payload.colors[cellClass(option, "TCGA-AB-2802", "DNMT3A")];
+        const payload = optionStrings(optionRecord(cellSeries(option).itemPayload).colors);
+        const silent = payload[cellClass(option, "TCGA-AB-2802", "DNMT3A")];
         expect(Object.values(ALTERATION_CLASS_COLORS)).not.toContain(silent);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         expect(silent).toMatch(/^#[0-9a-f]{6}$/);
@@ -142,10 +153,9 @@ describe("the oncoprint figure", () => {
         const share = seriesOf(option).find((entry) => entry.type === "bar" && entry.xAxisIndex === 2);
         expect(share).toBeDefined();
         // Four samples hold the denominator, the unaltered one included.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const data = share?.data as Array<{ value: number; label: { formatter: string } }>;
-        expect(data.map((item) => item.value)).toEqual([0.5, 0.75, 0.75]);
-        expect(data.map((item) => item.label.formatter)).toEqual(["50%", "75%", "75%"]);
+        const data = optionRecords(must(share, "the share series").data);
+        expect(data.map((item) => optionNumber(item.value))).toEqual([0.5, 0.75, 0.75]);
+        expect(data.map((item) => optionString(optionRecord(item.label).formatter))).toEqual(["50%", "75%", "75%"]);
         expect(axesOf(option, "yAxis")[2]).toEqual(expect.objectContaining({ gridIndex: 2, inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] }));
     });
 
@@ -158,9 +168,12 @@ describe("the oncoprint figure", () => {
 
     it("names the legend by the classes, and draws no legend entry for the cells or the share", () => {
         const option = derive();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const legend = option.legend as { data: Array<{ name: string }> };
-        expect(legend.data.map((entry) => entry.name)).toEqual(["Missense Mutation", "Frame Shift Ins", "In Frame Ins", "Silent"]);
+        expect(optionRecords(optionRecord(option.legend).data).map((entry) => optionString(entry.name))).toEqual([
+            "Missense Mutation",
+            "Frame Shift Ins",
+            "In Frame Ins",
+            "Silent",
+        ]);
     });
 
     it("refuses a gene and a sample that hold two classes", () => {
@@ -219,15 +232,13 @@ describe("the oncoprint figure", () => {
                 [0, 0, -1],
                 [2, 0, -1],
             ]);
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const grounds = strips.map((entry) => (entry.itemPayload as { ground: string }).ground);
+            const grounds = strips.map((entry) => optionRecord(entry.itemPayload).ground);
             expect(new Set(grounds).size).toBe(3);
             expect(axesOf(option, "yAxis")[3]).toEqual(expect.objectContaining({ gridIndex: 3, data: ["subtype"] }));
             // The sample title moves under the strips.
             expect(axesOf(option, "xAxis")[0].name).toBeUndefined();
             expect(axesOf(option, "xAxis")[3].name).toBe("sample (n = 4)");
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            const legend = (option.legend as { data: Array<{ name: string }> }).data.map((entry) => entry.name);
+            const legend = optionRecords(optionRecord(option.legend).data).map((entry) => optionString(entry.name));
             expect(legend.slice(-3)).toEqual(["M1", "M2", "M4"]);
         });
 
@@ -261,8 +272,8 @@ describe("the height of an oncoprint of many genes", () => {
     /** The height of one gene row on the page, in pixels. */
     function rowPx(encoding: Encoding, rows: ChartRow[]): number {
         const render = deriveChartRender(oncoprint(encoding), rows, undefined, { key: "onco", columns: [] })._unsafeUnwrap();
-        const matrix = (optionRecords(render.option.grid))[0];
-        const share = 100 - Number.parseFloat(String(matrix.top)) - Number.parseFloat(String(matrix.bottom));
+        const matrix = optionRecords(render.option.grid)[0];
+        const share = 100 - optionPercent(matrix.top) - optionPercent(matrix.bottom);
         return (render.bodyPx * share) / 100 / 20;
     }
 

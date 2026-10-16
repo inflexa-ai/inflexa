@@ -11,8 +11,8 @@ import type {
     PlanLaunch,
 } from "@inflexa-ai/harness";
 
-import * as approval from "./approve-plan.js";
-import * as execute from "../tools/execute-analysis.js";
+import * as approval from "../approve-plan.js";
+import * as execute from "../../tools/execute-analysis.js";
 
 describe("the exports of the plan approval", () => {
     it("reaches the launch and the approval from the package root, as the same functions of their modules", () => {

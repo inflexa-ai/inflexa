@@ -54,6 +54,7 @@ import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup
 import { silentLogger } from "../../../../__tests__/setup/logger.js";
 import { captureMetrics } from "../../../../__tests__/setup/metrics.js";
 import { recordRunCompleted, recordStepCompleted } from "../../../../lib/metrics.js";
+import { errorMessage } from "../../../../lib/thrown.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { sleep } from "../../../../lib/async-utils.js";
 
@@ -94,7 +95,7 @@ let metaCallCounter = 0;
 const chaosMirror = DBOS.registerWorkflow(
     async (): Promise<{ llm: string; meta: string }> => {
         const llmResult = await DBOS.runStep(
-             () => {
+            () => {
                 llmCallCounter += 1;
                 return Promise.resolve(`llm-${llmCallCounter}`);
             },
@@ -108,10 +109,10 @@ const chaosMirror = DBOS.registerWorkflow(
         // ALWAYS in the body so the step sequence on replay matches the
         // original — DBOS's determinism check rejects step sequences that
         // diverge between attempts.
-        await DBOS.cancelWorkflow(must(must(DBOS, "DBOS").workflowID, "must(DBOS, \"DBOS\").workflowID"));
+        await DBOS.cancelWorkflow(must(must(DBOS, "DBOS").workflowID, 'must(DBOS, "DBOS").workflowID'));
 
         const metaResult = await DBOS.runStep(
-             () => {
+            () => {
                 metaCallCounter += 1;
                 return Promise.resolve(`meta-${metaCallCounter}`);
             },
@@ -145,22 +146,22 @@ let stepCCalls = 0;
 const threeStepMirror = DBOS.registerWorkflow(
     async (): Promise<{ a: number; b: number; c: number }> => {
         const a = await DBOS.runStep(
-             () => {
+            () => {
                 stepACalls += 1;
                 return Promise.resolve(stepACalls);
             },
             { name: "three-step.a" },
         );
         const b = await DBOS.runStep(
-             () => {
+            () => {
                 stepBCalls += 1;
                 return Promise.resolve(stepBCalls);
             },
             { name: "three-step.b" },
         );
-        await DBOS.cancelWorkflow(must(must(DBOS, "DBOS").workflowID, "must(DBOS, \"DBOS\").workflowID"));
+        await DBOS.cancelWorkflow(must(must(DBOS, "DBOS").workflowID, 'must(DBOS, "DBOS").workflowID'));
         const c = await DBOS.runStep(
-             () => {
+            () => {
                 stepCCalls += 1;
                 return Promise.resolve(stepCCalls);
             },
@@ -184,15 +185,15 @@ let terminalStepCalls = 0;
 const terminalMetricMirror = DBOS.registerWorkflow(
     async (): Promise<{ terminalCalls: number }> => {
         await DBOS.runStep(
-             () => {
+            () => {
                 terminalStepCalls += 1;
                 recordStepCompleted({ agentId: "mirror-agent", status: "completed", durationMs: 1_500 });
                 recordRunCompleted({ workflow: "analysis", status: "completed", durationMs: 30_000 });
                 return Promise.resolve();
-},
+            },
             { name: "persist-final-status" },
         );
-        await DBOS.cancelWorkflow(must(must(DBOS, "DBOS").workflowID, "must(DBOS, \"DBOS\").workflowID"));
+        await DBOS.cancelWorkflow(must(must(DBOS, "DBOS").workflowID, 'must(DBOS, "DBOS").workflowID'));
         await DBOS.runStep(() => Promise.resolve(undefined), { name: "post-terminal.tail" });
         return { terminalCalls: terminalStepCalls };
     },
@@ -242,10 +243,10 @@ const registrationRejectionMirror = DBOS.registerWorkflow(
                     .warn("failed after a registration rejection (non-fatal)", silentLogger.errorFields(syncErr));
             }
             await DBOS.runStep(
-                 () => {
+                () => {
                     rejectionMarkFailedCalls += 1;
                     return Promise.resolve();
-},
+                },
                 { name: "mark-failed-attestation" },
             );
             throw registrationErr;
@@ -295,7 +296,7 @@ const idempotentSyncMirror = DBOS.registerWorkflow(
 
         // Unconditional cancel — see threeStepMirror's note on DBOS's
         // determinism requirement for step sequences across replay.
-        await DBOS.cancelWorkflow(must(must(DBOS, "DBOS").workflowID, "must(DBOS, \"DBOS\").workflowID"));
+        await DBOS.cancelWorkflow(must(must(DBOS, "DBOS").workflowID, 'must(DBOS, "DBOS").workflowID'));
 
         const tail = await DBOS.runStep(() => Promise.resolve("tail-ok"), { name: "post-step.tail" });
 
@@ -439,9 +440,10 @@ describe("Integration test 10.13 — per-step sync (registration rejection + ide
         expect(rejectionMarkFailedCalls).toBe(1);
 
         // The sync's own failure does not displace the registration rejection.
-        const err = status?.error as Error | undefined;
-        expect(err?.message).toContain(REGISTRATION_REJECTION);
-        expect(err?.message).not.toContain(SYNC_UNREACHABLE);
+        // DBOS stores the thrown value on the terminal status, and the reads below take the message only.
+        const errText = errorMessage(status?.error);
+        expect(errText).toContain(REGISTRATION_REJECTION);
+        expect(errText).not.toContain(SYNC_UNREACHABLE);
 
         // The sync attempt is a bare await, so it takes no DBOS function id: the
         // block's checkpoint sequence is what it would be without it.

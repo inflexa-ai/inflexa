@@ -3,6 +3,7 @@ import type { AssistantModelMessage, ModelMessage, ToolResultPart } from "ai";
 
 import { answerUnansweredToolCalls, NOT_RUN_TOOL_RESULT, notRunResult } from "../tool-call-integrity.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { toolResultParts } from "../../lib/test/messages.js";
 
 function toolCall(toolCallId: string, toolName = "echo"): { type: "tool-call"; toolCallId: string; toolName: string; input: unknown } {
     return { type: "tool-call", toolCallId, toolName, input: {} };
@@ -16,18 +17,13 @@ function toolResult(toolCallId: string, toolName = "echo"): ModelMessage {
 }
 
 function assistantContent(message: ModelMessage | undefined): AssistantModelMessage["content"] {
-    expect(message).toBeDefined();
-    expect(must(message, "message").role).toBe("assistant");
-    // Safe: the role assertion above fails the test before this cast can lie.
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return must(message, "message").content as AssistantModelMessage["content"];
+    const defined = must(message, "message");
+    if (defined.role !== "assistant") throw new Error("expected an assistant message");
+    return defined.content;
 }
 
 function toolParts(message: ModelMessage | undefined): ToolResultPart[] {
-    expect(message).toBeDefined();
-    expect(must(message, "message").role).toBe("tool");
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return must(message, "message").content as ToolResultPart[];
+    return toolResultParts(must(message, "message"));
 }
 
 describe("answerUnansweredToolCalls", () => {

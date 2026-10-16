@@ -130,7 +130,7 @@ describe("WorkspaceMutator provenance recording", () => {
 
         const out = (await tool.execute({ path: "output/notes.md", content: "# notes\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
-        must(must(tool, "tool").foldCallRecord, "must(tool, \"tool\").foldCallRecord")(readToolCallRecord(out));
+        must(must(tool, "tool").foldCallRecord, 'must(tool, "tool").foldCallRecord')(readToolCallRecord(out));
 
         // The key a manifest entry would use — `output/notes.md`, not a record-less leaf.
         const records = collector.getRecords();
@@ -180,7 +180,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
     function buildSessionMutator() {
         const events: SessionProvenanceEvent[] = [];
         const mutator = createSessionWorkspaceMutator({
-            resolveWorkspaceRoot: async (id) => join(basePath, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)),
             provenance: { emitSessionEvent: (event) => events.push(event) },
         });
         return { mutator, events };
@@ -326,7 +326,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
     });
 
     test("an unbound provenance seam records nothing and the write proceeds unchanged", async () => {
-        const mutator = createSessionWorkspaceMutator({ resolveWorkspaceRoot: async (id) => join(basePath, id) });
+        const mutator = createSessionWorkspaceMutator({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
         const result = await writeAndRecord(mutator, {
             path: "notes/b.md",
             content: "b",
@@ -341,7 +341,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
     test("write_file and edit_file through the real tool path land and emit in a chat ToolContext", async () => {
         const { mutator, events } = buildSessionMutator();
         const writeTool = createWriteFileTool({ mutator });
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(basePath, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
         // No workingDir: the read seam defaults to the analysis root, matching
         // the session-scoped mutator's write prefix.
         const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs });
@@ -349,13 +349,13 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
 
         const written = (await writeTool.execute({ path: "notes/draft.md", content: "alpha beta\n" }, ctx))._unsafeUnwrap();
         expect(written.status).toBe("ok");
-        must(must(writeTool, "writeTool").foldCallRecord, "must(writeTool, \"writeTool\").foldCallRecord")(readToolCallRecord(written));
+        must(must(writeTool, "writeTool").foldCallRecord, 'must(writeTool, "writeTool").foldCallRecord')(readToolCallRecord(written));
 
         const edited = (
             await editTool.execute({ path: "notes/draft.md", old_string: "beta", new_string: "gamma", replace_all: false, regex: false }, ctx)
         )._unsafeUnwrap();
         expect(edited.status).toBe("ok");
-        must(must(editTool, "editTool").foldCallRecord, "must(editTool, \"editTool\").foldCallRecord")(readToolCallRecord(edited));
+        must(must(editTool, "editTool").foldCallRecord, 'must(editTool, "editTool").foldCallRecord')(readToolCallRecord(edited));
         expect(readFileSync(join(basePath, "analysis-001", "notes", "draft.md"), "utf8")).toBe("alpha gamma\n");
 
         expect(events.map((event) => (event.type === "write-file" ? event.tool : event.type))).toEqual(["write_file", "edit_file"]);

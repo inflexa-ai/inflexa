@@ -9,6 +9,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
+import { poolDouble } from "../../lib/test/doubles.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
@@ -371,11 +372,9 @@ describe("createReportSessionStateStore", () => {
         const first = await pool.connect();
         const second = await pool.connect();
         try {
-            // The store calls `query` alone, thus a pooled client stands in for the pool here.
-            // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-            const firstStore = createReportSessionStateStore({ pool: first as unknown as Pool });
-            // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-            const secondStore = createReportSessionStateStore({ pool: second as unknown as Pool });
+            // The store calls `query` alone, thus a double that forwards each query to the pinned client stands for the pool here.
+            const firstStore = createReportSessionStateStore({ pool: poolDouble((query, values) => first.query(query.text, values)) });
+            const secondStore = createReportSessionStateStore({ pool: poolDouble((query, values) => second.query(query.text, values)) });
             const record = derivation("race.csv");
 
             await first.query("BEGIN");

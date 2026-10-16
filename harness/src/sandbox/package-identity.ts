@@ -76,8 +76,9 @@ function fold(name: string): string {
  * casts. A caller outside the module reaches a name through a constructor.
  */
 function brand(name: string): PackageIdentity["name"] {
-    // The brand is a compile-time marker with no runtime value, thus a cast is
+    // SAFETY: the brand is a compile-time marker with no runtime value, thus a cast is
     // the only way to mint one, and this function is the only site that casts.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the brand exists only in the type layer; this function is the single mint site of the branded name.
     return name as PackageIdentity["name"];
 }
 

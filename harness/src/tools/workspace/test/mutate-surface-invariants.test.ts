@@ -13,6 +13,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ToolContext } from "../../define-tool.js";
+import { stubAgentSession } from "../../../lib/test/doubles.js";
 
 describe("mutate surface invariants", () => {
     it("ToolContext is exactly { invocationId, session, signal, emit, ask }", () => {
@@ -22,10 +23,10 @@ describe("mutate surface invariants", () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         const ctx: ToolContext = {
             invocationId: "tool-call-test",
-            session: undefined as unknown as ToolContext["session"],
+            session: stubAgentSession(),
             signal: new AbortController().signal,
             emit: () => {},
-            ask:  () => Promise.reject(new Error("ask should not be reached")),
+            ask: () => Promise.reject(new Error("ask should not be reached")),
         };
         expect(Object.keys(ctx).sort()).toEqual(["ask", "emit", "invocationId", "session", "signal"]);
     });

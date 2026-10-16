@@ -1,18 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
-import { createCapturingLogger } from "../__tests__/setup/logger.js";
-import { withSchema } from "../__tests__/setup/postgres.js";
-import { makeLocalAuth } from "../auth/local-auth-context.js";
-import type { AuthorizeRunInput, RunAuthorizer } from "../execution/run-authorizer.js";
-import type { RunLauncher } from "../execution/run-launcher.js";
-import { storedMessagesToChat } from "../memory/conversation-display-replay.js";
-import { createThreadHistory } from "../memory/thread-history.js";
-import { createThreadStore } from "../memory/thread-store.js";
-import type { ProvenanceSeam, SessionProvenanceEvent } from "../provenance/seam.js";
-import { insertRun, upsertAnalysis, upsertPlan } from "../state/index.js";
-import { approvePlan, type ApprovePlanDeps } from "./approve-plan.js";
+import { createCapturingLogger } from "../../__tests__/setup/logger.js";
+import { withSchema } from "../../__tests__/setup/postgres.js";
+import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import type { AuthorizeRunInput, RunAuthorizer } from "../../execution/run-authorizer.js";
+import { poolDouble, stubRunSession } from "../../lib/test/doubles.js";
+import type { RunLauncher } from "../../execution/run-launcher.js";
+import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
+import { createThreadHistory } from "../../memory/thread-history.js";
+import { createThreadStore } from "../../memory/thread-store.js";
+import type { ProvenanceSeam, SessionProvenanceEvent } from "../../provenance/seam.js";
+import { insertRun, upsertAnalysis, upsertPlan } from "../../state/index.js";
+import { approvePlan, type ApprovePlanDeps } from "../approve-plan.js";
 
 const ANALYSIS_ID = "analysis-approve-1";
 const OTHER_ANALYSIS_ID = "analysis-approve-2";
@@ -59,15 +61,17 @@ function doubles(over: { launchFails?: boolean } = {}) {
     const authorizations: AuthorizeRunInput[] = [];
     const events: SessionProvenanceEvent[] = [];
     const runLauncher: RunLauncher = {
-        launch: async (_workflow, options) => {
+        launch: (_workflow, options) => {
             if (over.launchFails) throw new Error("launch boom");
             launches.push({ workflowId: options.workflowId, atMs: Date.now() });
+            return Promise.resolve();
         },
     };
     const runAuthorizer: RunAuthorizer = {
         authorize: (input) => {
             authorizations.push(input);
-            return okAsync({ runSession: {} as never, ownsMandate: true });
+            const runSession = stubRunSession({ runFrame: { runId: "run-approved" } });
+            return okAsync({ runSession, ownsMandate: true });
         },
         revoke: () => okAsync(undefined),
         revokeByJti: () => okAsync(undefined),
@@ -79,8 +83,8 @@ function doubles(over: { launchFails?: boolean } = {}) {
 function depsOf(d: ReturnType<typeof doubles>, over: Partial<ApprovePlanDeps> = {}): ApprovePlanDeps {
     return {
         pool,
-        executeAnalysisWorkflow: async () => {
-            throw new Error("the launcher starts the workflow");
+        executeAnalysisWorkflow: () => {
+            return Promise.reject(new Error("the launcher starts the workflow"));
         },
         runAuthorizer: d.runAuthorizer,
         runLauncher: d.runLauncher,
@@ -100,12 +104,14 @@ const input = (over: Partial<Parameters<typeof approvePlan>[1]> = {}) => ({
 });
 
 async function runRows(): Promise<Array<{ run_id: string; thread_id: string | null; status: string }>> {
-    const { rows } = await pool.query("SELECT run_id, thread_id, status FROM cortex_runs ORDER BY started_at, run_id");
+    const { rows } = await pool.query<{ run_id: string; thread_id: string | null; status: string }>(
+        "SELECT run_id, thread_id, status FROM cortex_runs ORDER BY started_at, run_id",
+    );
     return rows;
 }
 
 async function threadRowCount(): Promise<number> {
-    const { rows } = await pool.query("SELECT count(*)::int AS n FROM messages WHERE thread_id = $1", [THREAD_ID]);
+    const { rows } = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM messages WHERE thread_id = $1", [THREAD_ID]);
     return rows[0].n;
 }
 
@@ -128,9 +134,9 @@ describe("approvePlan", () => {
         (await approvePlan(depsOf(d), input()))._unsafeUnwrap();
 
         expect(d.authorizations).toHaveLength(1);
-        expect(d.authorizations[0]!.auth).toBe(auth);
-        expect(d.authorizations[0]!.scope).toEqual({ kind: "analysis", analysisId: ANALYSIS_ID, threadId: THREAD_ID });
-        expect(d.authorizations[0]!.provenance).toEqual({ agentId: "plan-approval", callPath: ["plan-approval"] });
+        expect(d.authorizations[0].auth).toBe(auth);
+        expect(d.authorizations[0].scope).toEqual({ kind: "analysis", analysisId: ANALYSIS_ID, threadId: THREAD_ID });
+        expect(d.authorizations[0].provenance).toEqual({ agentId: "plan-approval", callPath: ["plan-approval"] });
     });
 
     it("emits one approve-plan event whose time is not later than the launch, and the part carries the same instant", async () => {
@@ -139,11 +145,12 @@ describe("approvePlan", () => {
         const approval = (await approvePlan(depsOf(d), input()))._unsafeUnwrap();
 
         expect(d.events).toHaveLength(1);
-        const event = d.events[0]!;
+        const event = d.events[0];
+        if (event.type !== "approve-plan") throw new Error(`expected the approve-plan event, got ${event.type}`);
         expect(event).toMatchObject({ type: "approve-plan", analysisId: ANALYSIS_ID, threadId: THREAD_ID, planId: PLAN_ID, runId: approval.runId });
-        const atMs = (event as { atMs: number }).atMs;
-        expect(atMs).toBeLessThanOrEqual(d.launches[0]!.atMs);
-        const part = approval.message!.parts[0];
+        const atMs = event.atMs;
+        expect(atMs).toBeLessThanOrEqual(d.launches[0].atMs);
+        const part = must(approval.message, "approval message").parts[0];
         expect(part).toEqual({ type: "data-plan-approval", planId: PLAN_ID, runId: approval.runId, approvedAt: new Date(atMs).toISOString() });
     });
 
@@ -154,9 +161,10 @@ describe("approvePlan", () => {
 
         const history = (await createThreadHistory(pool).loadRecent(THREAD_ID))._unsafeUnwrap();
         expect(history).toHaveLength(1);
-        expect(history[0]!.role).toBe("user");
-        expect(JSON.stringify(history[0]!.content)).toContain(`The person approved plan ${PLAN_ID}. Run ${approval.runId} started.`);
-        expect(JSON.stringify(history[0]!.content)).not.toMatch(/\d{4}-\d{2}-\d{2}|\d{2}:\d{2}/);
+        expect(history[0].role).toBe("user");
+        expect(JSON.stringify(history[0].content)).toContain(`The person approved plan ${PLAN_ID}. Run ${approval.runId} started.`);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion checks the absence of a date or time shape in the serialized transcript, a grammar with no builtin test
+        expect(JSON.stringify(history[0].content)).not.toMatch(/\d{4}-\d{2}-\d{2}|\d{2}:\d{2}/);
     });
 
     it("shows the approval and the run card in the transcript, and the result message equals the transcript message but for the row time", async () => {
@@ -166,7 +174,7 @@ describe("approvePlan", () => {
 
         const transcript = storedMessagesToChat((await createThreadHistory(pool).loadAll(THREAD_ID))._unsafeUnwrap().flat());
         expect(transcript).toHaveLength(1);
-        const { createdAt, ...rest } = transcript[0]!;
+        const { createdAt, ...rest } = transcript[0];
         expect(createdAt).toBeDefined();
         expect(approval.message).toEqual(rest);
         expect(rest.parts).toMatchObject([
@@ -252,10 +260,9 @@ describe("approvePlan", () => {
         const d = doubles();
         const logger = createCapturingLogger();
         // The record append is the one write that takes a connection of the pool, thus refusing the connection fails the append alone.
-        const flaky = {
-            query: (...args: unknown[]) => (pool.query as (...rest: unknown[]) => Promise<unknown>)(...args),
+        const flaky = poolDouble((query, values) => pool.query(query.text, values), {
             connect: () => Promise.reject(new Error("append boom")),
-        } as unknown as Pool;
+        });
 
         const approval = (await approvePlan(depsOf(d, { pool: flaky, logger }), input()))._unsafeUnwrap();
 

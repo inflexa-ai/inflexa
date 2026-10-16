@@ -39,6 +39,8 @@ import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
+import { errnoCode } from "../../lib/thrown.js";
+
 import type { RunSession } from "../../auth/types.js";
 import type { Suspension } from "../../workflows/suspension.js";
 import type { RunAuthorizer } from "../../execution/run-authorizer.js";
@@ -441,7 +443,7 @@ async function derive(args: {
     try {
         await unlink(absolute);
     } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+        if (errnoCode(cause) !== "ENOENT") {
             args.logger.error("the output path did not clear before the derivation", { threadId: args.threadId, ...defaultErrorFields(cause) });
             return { outcome: "exec-failed", detail: `${args.outputName} already holds a file that did not clear, thus this derivation takes a new name` };
         }

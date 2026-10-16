@@ -4,6 +4,7 @@ import { errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
+import { maybeRecord } from "../../lib/shape.js";
 import type { AgentSession } from "../../auth/types.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { ChatResponse } from "../../providers/types.js";
@@ -24,6 +25,7 @@ import {
 } from "../tool-output.js";
 import type { AgentDefinition, EmitEvent, RunStep } from "../types.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { outputValue, toolResultParts } from "../../lib/test/messages.js";
 
 const GO: ReadonlyArray<{ role: "user"; content: string }> = [{ role: "user", content: "go" }];
 
@@ -89,10 +91,12 @@ function callBig(length: number, id = "tu-1"): ChatResponse[] {
 }
 
 function onlyResult(messages: readonly ModelMessage[]): ToolResultPart {
-    const tool = must(messages.find((m) => m.role === "tool"), "tool");
+    const tool = must(
+        messages.find((m) => m.role === "tool"),
+        "tool",
+    );
     expect(tool).toBeDefined();
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    return (tool.content as ToolResultPart[])[0];
+    return toolResultParts(tool)[0];
 }
 
 function textOf(result: ToolResultPart): string {
@@ -152,7 +156,7 @@ describe("runAgent — long tool results", () => {
             description: "Fail with a long message.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute:  () => Promise.reject(new Error("E".repeat(50_000))),
+            execute: () => Promise.reject(new Error("E".repeat(50_000))),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "thrower", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
 
@@ -191,12 +195,11 @@ describe("runAgent — long tool results", () => {
 
         const output = onlyResult(messages).output;
         expect(output.type).toBe("content");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const parts = (output as Extract<ToolResultPart["output"], { type: "content" }>).value;
+        if (output.type !== "content") throw new Error("expected a content output");
+        const parts = output.value;
         expect(parts).toHaveLength(2);
-        expect(parts[0]).toMatchObject({ type: "text" });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((parts[0] as { text: string }).text.startsWith("[Tool result cut: ")).toBe(true);
+        const textPart = z.looseObject({ text: z.string() }).parse(parts[0]);
+        expect(textPart.text.startsWith("[Tool result cut: ")).toBe(true);
         expect(parts[1]).toEqual({ type: "file", mediaType: "image/png", data: { type: "data", data: "PNGBYTES" } });
     });
 
@@ -322,8 +325,14 @@ describe("runAgent — long tool results", () => {
             opts(scriptedProvider(callBig(40_000)), { runStep, toolOutputStore: memoryStore() }),
         );
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const stepOutput = outputs.get("tool-big-tu-1") as { result: ToolResultPart };
+        const stepOutput = z
+            .looseObject({
+                result: z.custom<ToolResultPart>((value) => {
+                    const record = maybeRecord(value);
+                    return record !== undefined && "output" in record;
+                }),
+            })
+            .parse(outputs.get("tool-big-tu-1"));
         expect(stepOutput.result.output.type).toBe("text");
         expect(textOf(stepOutput.result).startsWith("[Tool result cut: ")).toBe(true);
     });
@@ -337,8 +346,12 @@ describe("runAgent — long tool results", () => {
 
         const { messages } = await runAgent(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(provider, { toolOutputStore: store }));
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const results = must(must(messages, "messages").find((m) => m.role === "tool"), "must(messages, \"messages\").find((m) => m.role ==").content as ToolResultPart[];
+        const results = toolResultParts(
+            must(
+                must(messages, "messages").find((m) => m.role === "tool"),
+                'must(messages, "messages").find((m) => m.role ==',
+            ),
+        );
         expect(results.map((r) => r.toolCallId)).toEqual(["tu-A", "tu-B"]);
         expect(textOf(results[0]).startsWith("[Tool result cut: 40000 characters")).toBe(true);
         expect(store.puts.map((kept) => kept.toolCallId)).toEqual(["tu-A"]);
@@ -407,8 +420,11 @@ describe("runAgent — long tool results", () => {
             if (i === 0) return makeMessage([toolUseBlock("tu-1", "big", { length: 100_000 })], "tool_use");
             if (i === 1) {
                 const excerpt = textOf(onlyResult(request.messages));
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-                const ref = must(must(/reference "(to_[0-9a-f]{20})"/, "/reference \"(to_[0-9a-f]{20})\"/").exec(excerpt), "must(/reference \"(to_[0-9a-f]{20})\"/, \"/referenc")[1];
+                const ref = must(
+                    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+                    must(/reference "(to_[0-9a-f]{20})"/, '/reference "(to_[0-9a-f]{20})"/').exec(excerpt),
+                    'must(/reference "(to_[0-9a-f]{20})"/, "/referenc',
+                )[1];
                 return makeMessage([toolUseBlock("tu-2", "read_tool_output", { ref, limit: 16_384 })], "tool_use");
             }
             return makeMessage([textBlock("done")], "end_turn");
@@ -421,11 +437,9 @@ describe("runAgent — long tool results", () => {
             opts(provider, { toolOutputStore: store }),
         );
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const read = (messages.filter((m) => m.role === "tool")[1].content as ToolResultPart[])[0];
+        const read = toolResultParts(messages.filter((m) => m.role === "tool")[1])[0];
         expect(read.output.type).toBe("json");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((read.output as { value: unknown }).value).toMatchObject({
+        expect(outputValue(read.output)).toMatchObject({
             status: "ok",
             offset: 0,
             end: 16_384,

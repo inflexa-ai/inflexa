@@ -411,10 +411,9 @@ export function createLineageCollector(input: Pick<SandboxStepInput, "stepId" | 
  * `dbos.application_versions` without per-workflow config.
  */
 export function registerSandboxStep(deps: SandboxStepDeps): (input: SandboxStepInput) => Promise<SandboxStepResult> {
-    return DBOS.registerWorkflow(
-         (input: SandboxStepInput): Promise<SandboxStepResult> => Promise.resolve(runSandboxStepBody(input, deps)),
-        { name: "sandbox-step" },
-    );
+    return DBOS.registerWorkflow((input: SandboxStepInput): Promise<SandboxStepResult> => Promise.resolve(runSandboxStepBody(input, deps)), {
+        name: "sandbox-step",
+    });
 }
 
 /**
@@ -756,7 +755,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // Manifest walk, hoisted above the blocked branch so the capped-out
     // predicate can read it. The call is inline (not `DBOS.runStep`-wrapped),
     // so the hoist shifts no function id (see the harness-durable-runtime spec).
-    const manifest = await safeRunValue(
+    const manifest = await safeRunValue<readonly ArtifactManifestEntry[]>(
         logger,
         () =>
             walkStepArtifacts({
@@ -765,7 +764,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                 runId: input.runId,
             }),
         "post-step.walk",
-        [] as readonly ArtifactManifestEntry[],
+        [],
     );
 
     // Blocker (see the harness-sandbox-agents spec): the agent declared it cannot fulfil the step. A

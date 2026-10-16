@@ -7,9 +7,16 @@ import type { Pool } from "pg";
 
 import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
 import { bootHarness, type BootHarnessDeps } from "../boot.js";
-import type { CoreRuntimeDeps } from "../assemble.js";
-import type { DbosConfig } from "../dbos.js";
-import { poolDouble } from "../../lib/test/doubles.js";
+import type { ConversationAssemblyDeps, CoreRuntimeDeps } from "../assemble.js";
+import {
+    poolDouble,
+    stubChatProvider,
+    stubEmbeddingProvider,
+    stubRunAuthorizer,
+    stubRunLauncher,
+    stubSandboxClient,
+    stubWorkspaceFilesystem,
+} from "../../lib/test/doubles.js";
 
 /** A pool that fails loudly if boot reaches state-init / the budget guard. */
 function explodingPool(onUse: () => void): Pool {
@@ -18,17 +25,100 @@ function explodingPool(onUse: () => void): Pool {
         throw new Error("exploding pool: boot reached state init");
     };
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return poolDouble(trap, { connect: trap, end: () => {    return Promise.resolve();
-} });
+    return poolDouble(trap, {
+        connect: trap,
+        end: () => {
+            return Promise.resolve();
+        },
+    });
+}
+
+/** The loud answer of a member boot never reaches: every case here stops before the assembly step. */
+function unstubbed(where: string): never {
+    throw new Error(`${where}: boot fails before the assembly reads the core`);
+}
+
+/** The core bag of the boot deps. No case reaches the assembly, so each member stands unwired. */
+function unwiredCore(): CoreRuntimeDeps {
+    const conversation: ConversationAssemblyDeps = {
+        provider: stubChatProvider(),
+        utilityProvider: stubChatProvider(),
+        pool: poolDouble(),
+        embedding: stubEmbeddingProvider(),
+        workspaceFs: stubWorkspaceFilesystem(),
+        model: "test/model",
+        utilityModel: "test/utility-model",
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+        runAuthorizer: stubRunAuthorizer(),
+        runLauncher: stubRunLauncher(),
+        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        skillsDir: "/skills",
+        chrome: {},
+    };
+    return {
+        conversation,
+        workflows: {
+            sandboxStep: {
+                pool: poolDouble(),
+                provider: stubChatProvider(),
+                embedding: stubEmbeddingProvider(),
+                sandboxClient: stubSandboxClient(),
+                artifactRegistry: {
+                    register: () => unstubbed("ArtifactRegistry.register"),
+                    sync: () => unstubbed("ArtifactRegistry.sync"),
+                },
+                workspaceFs: stubWorkspaceFilesystem(),
+                resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+                model: "test/model",
+                buildAgent: () => unstubbed("SandboxStepDeps.buildAgent"),
+                resolveWritePrefix: (stepInput) => Promise.resolve(join("/sessions", stepInput.runId, stepInput.stepId)),
+            },
+            buildExecuteAnalysis: (sandboxStep) => ({
+                pool: poolDouble(),
+                provider: stubChatProvider(),
+                embedding: stubEmbeddingProvider(),
+                sandboxStepCallable: sandboxStep,
+                resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+                synthesisModel: "test/model",
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                runCharge: {
+                    open: () => unstubbed("RunCharge.open"),
+                    close: () => unstubbed("RunCharge.close"),
+                },
+                runAuthorizer: stubRunAuthorizer(),
+            }),
+            dataProfile: {
+                provider: stubChatProvider(),
+                pool: poolDouble(),
+                sandboxClient: stubSandboxClient(),
+                workspaceFs: stubWorkspaceFilesystem(),
+                resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+                model: "test/model",
+                runAuthorizer: stubRunAuthorizer(),
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                embedding: stubEmbeddingProvider(),
+                skillsDir: "/skills",
+            },
+        },
+    };
 }
 
 function bootDeps(overrides: Partial<BootHarnessDeps>): BootHarnessDeps {
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     return {
-        core: {} as CoreRuntimeDeps,
+        core: unwiredCore(),
         pool: explodingPool(() => {}),
         skillsDir: "/definitely/not/a/real/skills/dir",
-        dbos: { executorId: "boot-test" } as DbosConfig,
+        dbos: {
+            dbHost: "boot.test",
+            dbPort: "5432",
+            dbName: "cortex",
+            dbUser: "cortex",
+            dbPassword: "secret",
+            dbSslMode: "disable",
+            appName: "cortex",
+            adminPort: "39001",
+            executorId: "boot-test",
+        },
         connectionBudget: {},
         logger: silentLogger,
         ...overrides,
@@ -70,7 +160,7 @@ describe("bootHarness", () => {
                     },
                 }),
             ),
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
         ).rejects.toThrow(/skills/i);
 
         // Skill validation is step 2 — it throws before state-init (pool) and the

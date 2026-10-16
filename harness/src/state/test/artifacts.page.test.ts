@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
-import { countingQuerier } from "../__tests__/setup/counting-querier.js";
-import { withSchema } from "../__tests__/setup/postgres.js";
-import { countArtifactsByRuns, queryArtifactPage, type ArtifactPageQuery } from "./artifacts.js";
-import type { Querier } from "./db.js";
+import { countingQuerier } from "../../__tests__/setup/counting-querier.js";
+import { poolDouble } from "../../lib/test/doubles.js";
+import { withSchema } from "../../__tests__/setup/postgres.js";
+import { countArtifactsByRuns, queryArtifactPage, type ArtifactPageQuery } from "../artifacts.js";
 
 type SeedRow = {
     analysisId: string;
@@ -224,10 +224,7 @@ describe("countArtifactsByRuns", () => {
 });
 
 describe("a driver failure of the artifact reads", () => {
-    // The reads under test call only `query`, thus an object with a rejecting `query` stands for the whole interface.
-    const rejecting = {
-        query: () => Promise.reject(new Error("connection lost")),
-    } as unknown as Querier;
+    const rejecting = poolDouble(() => Promise.reject(new Error("connection lost")));
 
     it("rides the error channel of queryArtifactPage, with the op", async () => {
         const error = (await queryArtifactPage(rejecting, "a1", { sort: "path", limit: 10, offset: 0 })).match(

@@ -196,7 +196,10 @@ describe("a snapshot of the groups era", () => {
 
     it("addresses an annotated member by its workspace path and composes its group's meaning into the text", () => {
         const entries = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED });
-        const entry = must(entries.find((e) => e.metadata.type === "input" && e.metadata.group === "per-subject-calls"), "entry");
+        const entry = must(
+            entries.find((e) => e.metadata.type === "input" && e.metadata.group === "per-subject-calls"),
+            "entry",
+        );
 
         expect(entry.id).toBe("/a1/data/inputs/vcf/SUBJ_0001.vcf.gz");
         expect(entry.text).toContain("The only member carrying a contig header.");
@@ -227,7 +230,10 @@ describe("a snapshot of the kinds era", () => {
 
     it("labels its entity entries with the axis the profile named", () => {
         const entries = buildProfileIndexEntries({ analysisId: "a1", result: LEGACY, scan: scanFixture() });
-        const entity = must(entries.find((e) => e.metadata.type === "input"), "entity");
+        const entity = must(
+            entries.find((e) => e.metadata.type === "input"),
+            "entity",
+        );
         expect(entity.metadata.axis).toBe("subject");
         expect(entity.text).toContain("one subject's somatic variant calls");
     });
@@ -250,8 +256,8 @@ describe("a snapshot of the kinds era", () => {
     it("marks file-addressed entries with a metadata path and pattern entries with none", () => {
         const resolved = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED });
         for (const entry of resolved) {
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            if (entry.metadata.path !== undefined) expect(entry.id).toBe(`/a1/${entry.metadata.path}`);
+            const path = entry.metadata.path;
+            if (typeof path === "string") expect(entry.id).toBe(`/a1/${path}`);
             else expect(entry.metadata.type).not.toBe("input");
         }
         expect(resolved.some((e) => e.metadata.path !== undefined)).toBe(true);

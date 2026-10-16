@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchGeneTool } from "../search-gene.js";
-import { fetchDouble } from "../../../lib/test/doubles.js";
+import { fetchDouble, urlText } from "../../../lib/test/doubles.js";
 
 const realFetch = globalThis.fetch;
 
@@ -84,7 +84,7 @@ describe("searchGene (bio-lookup family)", () => {
         const seen: string[] = [];
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         globalThis.fetch = fetchDouble((input) => {
-            const url = String(input);
+            const url = urlText(input);
             seen.push(url);
             const { hostname, pathname } = new URL(url);
             if (hostname === "rest.genenames.org") {
@@ -120,7 +120,7 @@ describe("searchGene (bio-lookup family)", () => {
     it("reports an identifier that anchors on no human gene as notFound, not an error", async () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         globalThis.fetch = fetchDouble((input) => {
-            const url = String(input);
+            const url = urlText(input);
             if (new URL(url).hostname === "rest.ensembl.org") return json({ id: "", display_name: "" });
             return Promise.resolve(json({}));
         });

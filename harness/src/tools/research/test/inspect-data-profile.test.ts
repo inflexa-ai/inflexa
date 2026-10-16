@@ -6,6 +6,7 @@ import { completeDataProfile, failDataProfile, tryRerunDataProfile, tryStartData
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createInspectDataProfileTool, type InspectDataProfileOutput } from "../inspect-data-profile.js";
 import { jsonClone } from "../../../lib/json.js";
+import { optionRecord } from "../../../report-render/option-lens.js";
 
 // `makeToolContext` builds a session scoped to this analysis.
 const ANALYSIS = "analysis-001";
@@ -95,12 +96,16 @@ async function resetLedger(): Promise<void> {
     await pool.query("DELETE FROM cortex_analysis_state");
 }
 
+/** The output member the test drove: true only when the tool answered with that scope. */
+function scopeOf<S extends "overview" | "groups" | "files">(out: InspectDataProfileOutput, scope: S): out is Extract<InspectDataProfileOutput, { scope: S }> {
+    return "scope" in out && out.scope === scope;
+}
+
 describe("the tool contract", () => {
     it("declares a bounded, paged input surface", () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const schema = tool.jsonSchema as { properties: Record<string, unknown> };
+        const schema = optionRecord(tool.jsonSchema);
         expect(tool.id).toBe("inspect_data_profile");
-        expect(Object.keys(schema.properties).sort()).toEqual(["page", "pageSize", "scope"]);
+        expect(Object.keys(optionRecord(schema.properties)).sort()).toEqual(["page", "pageSize", "scope"]);
         // The description must say where the profile lives, because nothing else will.
         expect(tool.description).toContain("authoritative record");
         expect(tool.description).toContain("no data-profile file");
@@ -149,10 +154,9 @@ describe("lifecycle variants — every one is data, not an error", () => {
         const out = await run();
         expect(out.state).toBe("failed");
         expect(out).toMatchObject({ error: "sandbox crashed" });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(typeof (out as { failedAt: string | null }).failedAt).toBe("string");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const message = (out as { message: string }).message;
+        if (out.state !== "failed") throw new Error(`expected the failed output, got ${out.state}`);
+        expect(typeof out.failedAt).toBe("string");
+        const message = out.message;
         expect(message).toContain("earlier attempt");
         expect(message).toContain("cannot establish");
     });
@@ -304,11 +308,11 @@ describe("scope: overview", () => {
         expect(out).toMatchObject({ state: "ready", summary: "Three count matrices.", describedFileCount: 1, datasetFileCount: null, groupCount: null });
         // The widened fields come back undefined and drop out at JSON serialization —
         // the model is told nothing rather than told a default.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const overview = out as { domain?: string; organism?: unknown; qualityAssessment?: unknown };
+        if (!scopeOf(out, "overview")) throw new Error(`expected the overview output, got ${JSON.stringify(out)}`);
+        const overview = out;
         expect(overview.domain).toBeUndefined();
         expect(overview.organism).toBeUndefined();
-        expect(overview.qualityAssessment).toBeUndefined();
+        expect(overview).not.toHaveProperty("qualityAssessment");
         expect(jsonClone(out)).not.toHaveProperty("domain");
     });
 });
@@ -355,19 +359,19 @@ describe("scope: files — paged, with truncation always visible", () => {
 
         const first = await run({ scope: "files", page: 1, pageSize: 10 });
         expect(first).toMatchObject({ page: 1, pageSize: 10, total: 25, hasMore: true });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((first as { files: unknown[] }).files).toHaveLength(10);
+        if (!scopeOf(first, "files")) throw new Error(`expected the files output, got ${JSON.stringify(first)}`);
+        expect(first.files).toHaveLength(10);
 
         const second = await run({ scope: "files", page: 2, pageSize: 10 });
         expect(second).toMatchObject({ page: 2, total: 25, hasMore: true });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((second as { files: { path: string }[] }).files[0]?.path).toBe(`/${ANALYSIS}/data/inputs/f10/counts.csv`);
+        if (!scopeOf(second, "files")) throw new Error(`expected the files output, got ${JSON.stringify(second)}`);
+        expect(second.files[0]?.path).toBe(`/${ANALYSIS}/data/inputs/f10/counts.csv`);
 
         // The last page holds the remainder and says so — no silent truncation anywhere.
         const third = await run({ scope: "files", page: 3, pageSize: 10 });
         expect(third).toMatchObject({ page: 3, total: 25, hasMore: false });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((third as { files: unknown[] }).files).toHaveLength(5);
+        if (!scopeOf(third, "files")) throw new Error(`expected the files output, got ${JSON.stringify(third)}`);
+        expect(third.files).toHaveLength(5);
     });
 
     it("a page past the end is empty and honest, not an error", async () => {
@@ -377,8 +381,8 @@ describe("scope: files — paged, with truncation always visible", () => {
 
         const out = await run({ scope: "files", page: 9, pageSize: 10 });
         expect(out).toMatchObject({ page: 9, total: 3, hasMore: false });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((out as { files: unknown[] }).files).toHaveLength(0);
+        if (!scopeOf(out, "files")) throw new Error(`expected the files output, got ${JSON.stringify(out)}`);
+        expect(out.files).toHaveLength(0);
     });
 
     it("a profile that exactly fills one page reports hasMore: false", async () => {
@@ -445,17 +449,14 @@ describe("scope: groups — a snapshot of the kinds era", () => {
             axes: [{ label: "patient", cardinality: 800 }],
             coverage: { matched: 3197, unmatched: 3, total: 3200 },
         });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((out as { kinds: unknown[] }).kinds).toHaveLength(2);
+        if (!scopeOf(out, "groups")) throw new Error(`expected the groups output, got ${JSON.stringify(out)}`);
+        expect(out.kinds).toHaveLength(2);
         // The structure exists; an agent must never be told the dataset has none.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((out as { message: string }).message).toContain("previous model");
+        if (!scopeOf(out, "groups")) throw new Error(`expected the groups output, got ${JSON.stringify(out)}`);
+        expect(out.message).toContain("previous model");
         // A glob takes the same rooting as a file path, and its wildcard survives it.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((out as { kinds: { pathPattern: string }[] }).kinds.map((k) => k.pathPattern)).toEqual([
-            `/${ANALYSIS}/data/inputs/vcf/*.vcf.gz`,
-            `/${ANALYSIS}/data/inputs/tbi/*.tbi`,
-        ]);
+        if (!scopeOf(out, "groups")) throw new Error(`expected the groups output, got ${JSON.stringify(out)}`);
+        expect(out.kinds?.map((k) => k.pathPattern)).toEqual([`/${ANALYSIS}/data/inputs/vcf/*.vcf.gz`, `/${ANALYSIS}/data/inputs/tbi/*.tbi`]);
     });
 
     it("reports the scope unavailable — not empty — for a snapshot that predates every structure record", async () => {
@@ -470,7 +471,8 @@ describe("scope: groups — a snapshot of the kinds era", () => {
         const out = await run({ scope: "groups" });
         expect(out).toMatchObject({ scope: "groups", available: false });
         expect(out).not.toHaveProperty("kinds");
-        expect((out as { message: string }).message).toContain("before the dataset-structure record existed");
+        if (!scopeOf(out, "groups")) throw new Error(`expected the groups output, got ${JSON.stringify(out)}`);
+        expect(out.message).toContain("before the dataset-structure record existed");
     });
 
     it("does not let the described-file count masquerade as the dataset size", async () => {
@@ -480,8 +482,8 @@ describe("scope: groups — a snapshot of the kinds era", () => {
 
         const out = await run();
         expect(out).toMatchObject({ describedFileCount: 1, datasetFileCount: 3200, groupCount: 2 });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((out as { structureNote: string }).structureNote).toContain("scope:'groups'");
+        if (!scopeOf(out, "overview")) throw new Error(`expected the overview output, got ${JSON.stringify(out)}`);
+        expect(out.structureNote).toContain("scope:'groups'");
     });
 
     it("states nothing about the dataset size a legacy row cannot support", async () => {
@@ -495,8 +497,8 @@ describe("scope: groups — a snapshot of the kinds era", () => {
 
         const out = await run();
         expect(out).toMatchObject({ datasetFileCount: null, groupCount: null });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((out as { structureNote: string }).structureNote).toContain("predates");
+        if (!scopeOf(out, "overview")) throw new Error(`expected the overview output, got ${JSON.stringify(out)}`);
+        expect(out.structureNote).toContain("predates");
     });
 });
 
@@ -583,8 +585,8 @@ describe("scope: groups — a snapshot resolved into groups", () => {
         expect(out).not.toHaveProperty("legacy");
         expect(out).not.toHaveProperty("kinds");
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const groups = (out as { groups: { id: string; count: number; fileCount: number; displayPattern: string; slots?: unknown[] }[] }).groups;
+        if (!scopeOf(out, "groups")) throw new Error(`expected the groups output, got ${JSON.stringify(out)}`);
+        const groups = out.groups ?? [];
         expect(groups.map((g) => g.id)).toEqual(["per-subject-calls", "unclassified"]);
         expect(groups[0]).toMatchObject({ count: 40, fileCount: 80, displayPattern: `/${ANALYSIS}/data/inputs/vcf/<id>.vcf.gz` });
         expect(groups[0].slots).toHaveLength(1);
@@ -608,8 +610,8 @@ describe("scope: groups — a snapshot resolved into groups", () => {
             recipe: [{ op: "use", groupIds: ["per-subject-calls"] }],
         });
         // Both observations stand: nothing here resolves 40 against 42.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const dimensions = (out as { dimensions: { observations: unknown[] }[] }).dimensions;
+        if (!scopeOf(out, "groups")) throw new Error(`expected the groups output, got ${JSON.stringify(out)}`);
+        const dimensions = out.dimensions ?? [];
         expect(dimensions[0].observations).toHaveLength(2);
     });
 

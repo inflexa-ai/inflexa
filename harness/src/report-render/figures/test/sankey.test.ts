@@ -13,8 +13,8 @@ import { chartSvgAssets } from "../../chart-export.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_EXPORT_SIZES, CHART_PALETTE, CHART_PAGE_TEXT_PX, CHART_WIDE_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
 import { SANKEY_LINK_OPACITY, sankeyStages } from "../sankey.js";
-import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
-import { optionArray } from "../../../report-render/option-lens.js";
+import { optionArray, optionNumber, optionRecord, optionRecords, optionString } from "../../option-lens.js";
+import { must } from "../../../lib/test/guards.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -57,17 +57,10 @@ function refusal(rows: readonly ChartRow[], encoding: Encoding = ENCODING): stri
 }
 
 function sankeySeries(option: EchartOption): EchartOption {
-    const found = (optionRecords(option.series)).find((entry) => entry.type === "sankey");
+    const found = optionRecords(option.series).find((entry) => entry.type === "sankey");
     if (found === undefined) throw new Error("no sankey series");
     return found;
 }
-
-type Node = {
-    name: string;
-    depth: number;
-    itemStyle: { color: string };
-    label: { position: string };
-};
 
 describe("the sankey stages", () => {
     it("gives each node the longest chain of flows from a node with no inflow, and the last stage to each node with no outflow", () => {
@@ -113,8 +106,7 @@ const LAML_FLOWS: ChartRow[] = [
 describe("the sankey figure on the LAML flow table", () => {
     it("puts each FAB subtype in the first stage, each FLT3 status in the second, and each vital status in the last", () => {
         const series = sankeySeries(derive(LAML_FLOWS));
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const stages = Object.fromEntries((series.data as Node[]).map((node) => [node.name, node.depth]));
+        const stages = Object.fromEntries(optionRecords(series.data).map((node) => [optionString(node.name), optionNumber(node.depth)]));
         expect(stages).toEqual({
             M0: 0,
             "FLT3 mutated": 1,
@@ -131,9 +123,10 @@ describe("the sankey figure on the LAML flow table", () => {
             Deceased: 2,
         });
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(series.links)).length).toBe(19);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const colors = Object.fromEntries((series.data as Node[]).map((node) => [node.name, node.itemStyle.color]));
+        expect(optionArray(series.links).length).toBe(19);
+        const colors = Object.fromEntries(
+            optionRecords(series.data).map((node) => [optionString(node.name), optionString(optionRecord(node.itemStyle).color)]),
+        );
         // The first stage holds nine subtypes, more than the Okabe-Ito palette, thus it alone takes the wide palette.
         expect(colors.M0).toBe(CHART_WIDE_PALETTE[0]);
         expect(colors["FAB unknown"]).toBe(CHART_WIDE_PALETTE[8]);
@@ -146,9 +139,8 @@ describe("the sankey figure on the LAML flow table", () => {
         const series = sankeySeries(option);
         expect(series.nodeGap).toBe(CHART_PAGE_TEXT_PX * 1.25);
         expect(series.labelLayout).toEqual({ hideOverlap: true });
-        const single = (optionRecords(option.media)).find((rule) => (optionRecord(rule.query)).maxWidth === CHART_EXPORT_SIZES.single.widthPx);
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const [singleSeries] = (single as { option: EchartOption }).option.series as EchartOption[];
+        const single = optionRecords(option.media).find((rule) => optionRecord(rule.query).maxWidth === CHART_EXPORT_SIZES.single.widthPx);
+        const [singleSeries] = optionRecords(optionRecord(optionRecord(must(single, "the single-column media rule")).option).series);
         expect(singleSeries.nodeGap).toBeCloseTo(CHART_EXPORT_SIZES.single.textPx * 1.25, 3);
     });
 });
@@ -188,17 +180,25 @@ describe("the sankey figure", () => {
     it("draws one sankey series whose nodes keep the order of their first appearance, and the layout keeps it", () => {
         const series = sankeySeries(derive());
         expect(series.layoutIterations).toBe(0);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((series.data as Node[]).map((node) => node.name)).toEqual(["M1", "Intermediate", "M2", "Favorable", "Poor", "M4", "Alive", "Dead"]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((series.data as Node[]).map((node) => node.depth)).toEqual([0, 1, 0, 1, 1, 0, 2, 2]);
+        expect(optionRecords(series.data).map((node) => optionString(node.name))).toEqual([
+            "M1",
+            "Intermediate",
+            "M2",
+            "Favorable",
+            "Poor",
+            "M4",
+            "Alive",
+            "Dead",
+        ]);
+        expect(optionRecords(series.data).map((node) => optionNumber(node.depth))).toEqual([0, 1, 0, 1, 1, 0, 2, 2]);
         expect(series.links).toEqual(ROWS.map((row) => ({ source: row.source, target: row.target, value: row.patients })));
     });
 
     it("starts the palette again at each stage, and colors each flow in the color of its source at a light opacity", () => {
         const series = sankeySeries(derive());
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const colors = Object.fromEntries((series.data as Node[]).map((node) => [node.name, node.itemStyle.color]));
+        const colors = Object.fromEntries(
+            optionRecords(series.data).map((node) => [optionString(node.name), optionString(optionRecord(node.itemStyle).color)]),
+        );
         expect(colors).toEqual({
             M1: CHART_PALETTE[0],
             M2: CHART_PALETTE[1],
@@ -213,9 +213,9 @@ describe("the sankey figure", () => {
     });
 
     it("prints each label beside its node: at the left of the last stage, and at the right of every other stage", () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const nodes = sankeySeries(derive()).data as Node[];
-        const positions = Object.fromEntries(nodes.map((node) => [node.name, node.label.position]));
+        const positions = Object.fromEntries(
+            optionRecords(sankeySeries(derive()).data).map((node) => [optionString(node.name), optionString(optionRecord(node.label).position)]),
+        );
         expect(positions).toEqual({
             M1: "right",
             Intermediate: "right",
@@ -244,10 +244,9 @@ describe("the sankey figure", () => {
         const option = derive();
         const media = optionRecords(option.media);
         for (const size of [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide]) {
-            const rule = media.find((entry) => (optionRecord(entry.query)).maxWidth === size.widthPx);
+            const rule = media.find((entry) => optionRecord(entry.query).maxWidth === size.widthPx);
             expect(rule?.query).toEqual({ minWidth: size.widthPx, maxWidth: size.widthPx, minHeight: size.heightPx, maxHeight: size.heightPx });
-            // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-            const [series] = (rule as { option: EchartOption }).option.series as EchartOption[];
+            const [series] = optionRecords(optionRecord(optionRecord(must(rule, "the media rule")).option).series);
             const label = optionRecord(series.label);
             expect(label.fontSize).toBe(size.textPx);
             // The room between two of the three stages, less the gap of the label on each side.
@@ -260,13 +259,11 @@ describe("the sankey figure", () => {
         const rows = ROWS.map((row, place) => ({ ...row, sex: place % 2 === 0 ? "Female" : "Male" }));
         const option = derive(rows, { ...ENCODING, group: "sex" });
         const series = sankeySeries(option);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((series.data as Node[]).every((node) => node.itemStyle.color === MUTED_CHART_COLOR)).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const links = series.links as Array<{ lineStyle: { color: string } }>;
-        expect(links[0].lineStyle.color).toBe(CHART_PALETTE[0]);
-        expect(links[1].lineStyle.color).toBe(CHART_PALETTE[1]);
-        expect((optionRecord(option.legend)).data).toEqual([
+        expect(optionRecords(series.data).every((node) => optionString(optionRecord(node.itemStyle).color) === MUTED_CHART_COLOR)).toBe(true);
+        const links = optionRecords(series.links);
+        expect(optionString(optionRecord(links[0].lineStyle).color)).toBe(CHART_PALETTE[0]);
+        expect(optionString(optionRecord(links[1].lineStyle).color)).toBe(CHART_PALETTE[1]);
+        expect(optionRecord(option.legend).data).toEqual([
             { name: "Female", icon: "rect" },
             { name: "Male", icon: "rect" },
         ]);

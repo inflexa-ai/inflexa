@@ -6,13 +6,13 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
 import { DENSE_NULL_Z } from "../dense.js";
 import { FIGURE_MODULES } from "../index.js";
 import { MA_FIGURE, MA_P_THRESHOLD } from "../ma.js";
-import { optionRecord, optionRecords } from "../../option-lens.js";
+import { optionMember, optionRecord, optionRecords, optionRecordsOrEmpty, optionText } from "../../option-lens.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -55,7 +55,7 @@ function seriesOf(option: EchartOption): EchartOption[] {
 }
 
 function names(series: EchartOption): string[] {
-    return (optionRecords(series.data)).map((item) => String(item.name));
+    return optionRecords(series.data).map((item) => optionText(item.name));
 }
 
 describe("the MA figure", () => {
@@ -85,8 +85,7 @@ describe("the MA figure", () => {
 
     it("draws a line at zero, and the effect axis symmetric around zero", () => {
         const option = derive();
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const lines = seriesOf(option).flatMap((series) => ((series.markLine as EchartOption | undefined)?.data as EchartOption[] | undefined) ?? []);
+        const lines = seriesOf(option).flatMap((series) => optionRecordsOrEmpty(optionMember(series.markLine).data));
         expect(lines).toEqual([{ yAxis: 0, label: { show: false } }]);
         const y = optionRecord(option.yAxis);
         expect(y.min).toBe(-5);
@@ -138,21 +137,18 @@ describe("the dense MA plot", () => {
     }
 
     // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-    const seriesDataOnThePage = evaluatePageScript<() => (
-        payload: { columns: string[]; rows: ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[]>(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`);
+    const seriesDataOnThePage = evaluatePageScript<() => (payload: { columns: string[]; rows: ChartRow[] }, source: EchartOption, rule: unknown) => unknown[]>(
+        `${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`,
+    );
 
     it("reads the payload past the bound, and the page splits the rows by the p column as the server does", () => {
         const rows = denseRows(9000);
         const render = deriveChartRender(block(), rows, COLUMNS, { key: "de", columns: COLUMNS }, {}, OPTS)._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = optionRecord(render.option[CHART_SOURCE_MEMBER]);
         expect(source.rule).toEqual({ kind: "ma", column: "padj", cut: MA_P_THRESHOLD });
-        for (const [index, entry] of source.series.entries()) {
+        for (const [index, entry] of optionRecords(source.series).entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
             expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index].data));
         }

@@ -14,7 +14,7 @@ import type { Querier } from "./db.js";
 import type { RunStatus, TerminalRunStatus } from "./schema.js";
 
 /** The newest run of one analysis, with the title of its plan and the counts of its step rows. */
-export interface LatestRunSummary {
+export type LatestRunSummary = {
     readonly analysisId: string;
     readonly runId: string;
     readonly status: RunStatus;
@@ -23,29 +23,29 @@ export interface LatestRunSummary {
     readonly totalSteps: number;
     readonly startedAt: string;
     readonly completedAt: string | null;
-}
+};
 
 /** A run of a list of run ids, with the fields of the newest-run read and the thread of the run. */
-export interface RunProgressSummary extends LatestRunSummary {
+export type RunProgressSummary = LatestRunSummary & {
     /** The thread of the run as the ledger stores it, or `null`. */
     readonly threadId: string | null;
-}
+};
 
 /** A terminal run that ended at or after a time. */
-export interface EndedRunSummary {
+export type EndedRunSummary = {
     readonly analysisId: string;
     readonly runId: string;
     readonly status: TerminalRunStatus;
     readonly completedAt: string;
-}
+};
 
 /** The data profile state of one analysis that has a profile status. */
-export interface DataProfileSummary {
+export type DataProfileSummary = {
     readonly analysisId: string;
     readonly status: DataProfileLifecycleStatus;
     readonly completedAt: string | null;
     readonly profiledFiles: number | null;
-}
+};
 
 export function queryRunCountsByAnalyses(
     pool: Querier,
@@ -99,7 +99,7 @@ function titleOf(title: string | null): string | null {
     return trimmed === "" ? null : trimmed;
 }
 
-interface RunProgressRow {
+type RunProgressRow = {
     analysis_id: string;
     run_id: string;
     status: RunStatus;
@@ -108,7 +108,7 @@ interface RunProgressRow {
     plan_title: string | null;
     done_steps: number;
     total_steps: number;
-}
+};
 
 /**
  * The columns of a run summary over a run alias `r`, and the plan alias `p` and
@@ -257,9 +257,9 @@ export function queryDataProfileStatusByAnalyses(pool: Querier, analysisIds: str
             status: r.data_profile_status,
             completedAt: r.data_profile_completed_at ?? null,
             profiledFiles: profileDatasetFileCount({
-                ...(r.partition === null ? {} : { partition: r.partition }),
-                ...(r.coverage === null ? {} : { coverage: r.coverage }),
-                ...(r.kinds === null ? {} : { kinds: r.kinds }),
+                partition: r.partition ?? undefined,
+                coverage: r.coverage ?? undefined,
+                kinds: r.kinds ?? undefined,
             }),
         }));
     });

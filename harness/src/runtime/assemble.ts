@@ -315,9 +315,11 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const { conversation, workflows: wf, resourcePolicy } = deps;
     const usageRecorder = deps.usageRecorder ?? createNoopUsageRecorder();
     const citationResolver = createCitationResolver({
-        ...(deps.citationResolverConfig),
+        ...deps.citationResolverConfig,
         ncbiApiKey: !(deps.citationResolverConfig?.ncbiApiKey !== undefined || conversation.bioKeys.ncbi === undefined) ? conversation.bioKeys.ncbi : undefined,
-        semanticScholarApiKey: !(deps.citationResolverConfig?.semanticScholarApiKey !== undefined || conversation.bioKeys.semanticScholar === undefined) ? conversation.bioKeys.semanticScholar : undefined,
+        semanticScholarApiKey: !(deps.citationResolverConfig?.semanticScholarApiKey !== undefined || conversation.bioKeys.semanticScholar === undefined)
+            ? conversation.bioKeys.semanticScholar
+            : undefined,
     });
 
     const toolOutputStore = createToolOutputStore(conversation.pool);
@@ -464,10 +466,10 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
                     executeAnalysisWorkflow: executeAnalysis,
                     runAuthorizer: conversation.runAuthorizer,
                     runLauncher: conversation.runLauncher,
-                    ...(resourcePolicy ? { resourcePolicy } : {}),
-                    ...(conversation.extendAnalysisFarm ? { extendAnalysisFarm: conversation.extendAnalysisFarm } : {}),
-                    ...(conversation.logger ? { logger: conversation.logger } : {}),
-                    ...(deps.provenance ? { provenance: deps.provenance } : {}),
+                    resourcePolicy,
+                    extendAnalysisFarm: conversation.extendAnalysisFarm,
+                    logger: conversation.logger,
+                    provenance: deps.provenance,
                 },
                 input,
             ),

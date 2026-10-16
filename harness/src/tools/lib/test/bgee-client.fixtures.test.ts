@@ -12,7 +12,7 @@ import { describe, expect, it } from "bun:test";
 
 import { readFixture } from "../__fixtures__/fixture-runner.js";
 import { bucketRank, parseExpressionResponse } from "../bgee-client.js";
-import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { z } from "zod";
 
 describe("Bgee golden fixtures", () => {
     it("reads the observed wire shape of an expression call", () => {
@@ -29,11 +29,12 @@ describe("Bgee golden fixtures", () => {
     });
 
     it("serves the expression score as a string on the wire", () => {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const body = readFixture("bgee", "expr-TP53-human.json") as {
-            data: { calls: { expressionScore?: { expressionScore?: unknown } }[] };
-        };
-        expect(typeof must(must(body, "body").data.calls[0].expressionScore, "must(body, \"body\").data.calls[0].expressionScore").expressionScore).toBe("string");
+        const body = z
+            .looseObject({
+                data: z.looseObject({ calls: z.array(z.looseObject({ expressionScore: z.looseObject({ expressionScore: z.string() }).optional() })) }),
+            })
+            .parse(readFixture("bgee", "expr-TP53-human.json"));
+        expect(typeof body.data.calls[0].expressionScore?.expressionScore).toBe("string");
     });
 
     it("gives a null score when the drift twin breaks the score type", () => {

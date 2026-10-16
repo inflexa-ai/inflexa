@@ -10,14 +10,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
-import type { RequestSession, RunSession } from "../../auth/types.js";
+import type { RequestSession } from "../../auth/types.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunAuthorization, RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { GateFailure } from "../../lib/hooks.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
 import type { ExtendAnalysisFarm } from "../../sandbox/types.js";
 import type { ChatProvider } from "../../providers/types.js";
-import type { ExecuteAnalysisInput } from "../../workflows/execute-analysis.js";
 import type { AdHocRoute } from "../ad-hoc-router.js";
 import type { ToolContext } from "../define-tool.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
@@ -34,26 +33,36 @@ import {
 } from "../execute-analysis.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { jsonParse } from "../../lib/json.js";
+import { errorMessage } from "../../lib/thrown.js";
 import { z } from "zod";
-import { fetchDouble, poolDouble } from "../../lib/test/doubles.js";
+import { AnalysisPlanSchema, AnalysisStepSchema } from "../../schemas/workflow-state.js";
+import { fetchDouble, poolDouble, stubChatProvider, stubRunSession } from "../../lib/test/doubles.js";
 import { optionRecord } from "../../report-render/option-lens.js";
+
+const launchInputSchema = z
+    .object({
+        steps: z.array(z.object({ id: z.string(), depends_on: z.array(z.string()) })),
+        planStepById: z.record(z.string(), AnalysisStepSchema),
+        agentByStepId: z.record(z.string(), z.string()),
+        synthesisEnabled: z.boolean(),
+    })
+    .loose();
 
 /** Records launches; never reaches the durability engine. */
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
     launcher: RunLauncher;
     launches: Array<{ workflowId: string }>;
-    inputs: ExecuteAnalysisInput[];
+    inputs: Array<z.infer<typeof launchInputSchema>>;
 } {
     const launches: Array<{ workflowId: string }> = [];
-    const inputs: ExecuteAnalysisInput[] = [];
+    const inputs: Array<z.infer<typeof launchInputSchema>> = [];
     const launcher: RunLauncher = {
-        launch:  (_workflow, o, input) => {
+        launch: (_workflow, o, input) => {
             if (opts.failLaunch) throw new Error("launch boom");
             launches.push({ workflowId: o.workflowId });
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            inputs.push(input as ExecuteAnalysisInput);
+            inputs.push(launchInputSchema.parse(input));
             return Promise.resolve();
-},
+        },
     };
     return { launcher, launches, inputs };
 }
@@ -64,11 +73,10 @@ function recordingAuthorizer(): {
     revokes: string[];
 } {
     const revokes: string[] = [];
-    // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
     const authorizer: RunAuthorizer = {
         authorize: () =>
             okAsync<RunAuthorization, GateFailure>({
-                runSession: {} as RunSession,
+                runSession: stubRunSession(),
                 ownsMandate: true,
             }),
         revoke: (_authorization, reason) => {
@@ -123,11 +131,11 @@ function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): Too
         session,
         invocationId,
         signal: new AbortController().signal,
-        emit:  (part) => {
+        emit: (part) => {
             emitted.push(part);
             return Promise.resolve();
-},
-        ask:  () => Promise.reject(new Error("ask should not be reached")),
+        },
+        ask: () => Promise.reject(new Error("ask should not be reached")),
     };
 }
 
@@ -164,30 +172,36 @@ function routeProvider(agentId = "single-cell-agent", packages?: string[]): { pr
     };
 }
 
+/** The query parameter the tool planted; the seam types the values unknown. */
+const textOf = (value: unknown): string => {
+    if (typeof value !== "string") throw new Error(`expected a string query parameter, got ${typeof value}`);
+    return value;
+};
+
 function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: Map<string, Row> } {
     const plans = new Map<string, unknown>();
     const runs = new Map<string, Row>();
-    const query =  (q: { text: string; values?: unknown[] }) => {
+    const query = (q: { text: string; values?: unknown[] }) => {
         const values = q.values ?? [];
         if (q.text.includes("SELECT plan FROM cortex_plans")) {
-            const plan = plans.get(String(values[0]));
+            const plan = plans.get(textOf(values[0]));
             return { rows: plan === undefined ? [] : [{ plan }], rowCount: plan === undefined ? 0 : 1 };
         }
         if (q.text.includes("INSERT INTO cortex_plans")) {
-            const planId = String(values[0]);
-            if (!plans.has(planId)) plans.set(planId, jsonParse(String(values[2]), z.unknown()));
+            const planId = textOf(values[0]);
+            if (!plans.has(planId)) plans.set(planId, jsonParse(textOf(values[2]), z.unknown()));
             return { rows: [], rowCount: 1 };
         }
         if (q.text.includes("INSERT INTO cortex_runs") && q.text.includes("ON CONFLICT (run_id)")) {
-            const runId = String(values[0]);
+            const runId = textOf(values[0]);
             if (runs.has(runId)) return { rows: [], rowCount: 0 };
             const row = {
                 run_id: runId,
-                analysis_id: String(values[1]),
+                analysis_id: textOf(values[1]),
                 thread_id: values[2] ?? null,
-                workflow_name: String(values[3]),
+                workflow_name: textOf(values[3]),
                 status: "running",
-                started_at: String(values[4]),
+                started_at: textOf(values[4]),
                 completed_at: null,
                 error: null,
                 synthesis_status: null,
@@ -201,7 +215,7 @@ function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: M
             return { rows: [{ run_id: runId }], rowCount: 1 };
         }
         if (q.text.includes("FROM cortex_runs") && q.text.includes("WHERE run_id = $1")) {
-            const row = runs.get(String(values[0]));
+            const row = runs.get(textOf(values[0]));
             return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
         }
         if (q.text.includes("UPDATE cortex_runs")) return { rows: [], rowCount: 1 };
@@ -241,9 +255,8 @@ const validPlan = {
     created_at: "2026-01-01T00:00:00Z",
 };
 
-// SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
 const utilityDeps = {
-    utilityProvider: {} as never,
+    utilityProvider: stubChatProvider(),
     utilityModel: "utility-model",
 };
 
@@ -255,11 +268,11 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool: poolDouble(),
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("unused")),
         });
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(Object.keys(optionRecord((tool.jsonSchema.properties ?? {}))).sort()).toEqual(["mode", "planId", "request"]);
+        expect(Object.keys(optionRecord(tool.jsonSchema.properties ?? {})).sort()).toEqual(["mode", "planId", "request"]);
         expect(tool.inputSchema.safeParse({ mode: "plan", planId: PLAN_ID }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ mode: "adhoc", request: "Compute this" }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ mode: "plan", request: "wrong" }).success).toBe(false);
@@ -275,7 +288,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
         });
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanNotFoundError);
     });
@@ -294,7 +307,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
-            executeAnalysisWorkflow:  () => {
+            executeAnalysisWorkflow: () => {
                 dispatched = true;
                 return Promise.resolve({
                     runId: "x",
@@ -340,10 +353,12 @@ describe("createExecuteAnalysisTool plan mode", () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         globalThis.fetch = fetchDouble(() => {
             mintCalls++;
-            return Promise.resolve(new Response("{}", {
-                status: 200,
-                headers: { "content-type": "application/json" },
-            }));
+            return Promise.resolve(
+                new Response("{}", {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                }),
+            );
         });
 
         let dispatched = false;
@@ -352,7 +367,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
-            executeAnalysisWorkflow:  () => {
+            executeAnalysisWorkflow: () => {
                 dispatched = true;
                 return Promise.resolve({
                     runId: "x",
@@ -393,7 +408,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: failingAuthorizer,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("workflow must not start after a failed authorization")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("workflow must not start after a failed authorization")),
         });
 
         const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
@@ -419,7 +434,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: suspendingAuthorizer,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("workflow must not start after a refused authorization")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("workflow must not start after a refused authorization")),
         });
 
         const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
@@ -444,7 +459,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("the tool launches via the seam, never calls directly")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("the tool launches via the seam, never calls directly")),
         });
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
@@ -471,7 +486,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("the tool launches via the seam, never calls directly")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("the tool launches via the seam, never calls directly")),
         });
 
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
@@ -495,7 +510,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("unused")),
         });
 
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("launch boom");
@@ -518,7 +533,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
             utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("launch seam should be used")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("launch seam should be used")),
         });
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
@@ -527,7 +542,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         )._unsafeUnwrap() as { runId: string };
         // Simulate a terminal DBOS outcome. A duplicate tool delivery must still
         // return this exact run instead of launching it again.
-        must(must(runs, "runs").get(first.runId), "must(runs, \"runs\").get(first.runId)").status = "completed";
+        must(must(runs, "runs").get(first.runId), 'must(runs, "runs").get(first.runId)').status = "completed";
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
         const replay = (
             await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
@@ -554,7 +569,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
             utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("launch seam should be used")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("launch seam should be used")),
         });
         const request = "Calculate descriptors for the supplied compounds";
 
@@ -584,7 +599,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
                 seamCalls.push({ analysisId, queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("launch seam should be used")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("launch seam should be used")),
         });
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
@@ -618,7 +633,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
                         storeDirs: ["python-dir", "r-dir"] as [string, string],
                     })),
                 ),
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
         });
         const request = "Fit a gradient boosting model on these features";
 
@@ -645,13 +660,12 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
                 seamCalled = true;
                 return okAsync([]);
             },
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("launch seam should be used")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("launch seam should be used")),
         });
 
         (await tool.execute({ mode: "adhoc", request: "Summarize the staged table" }, fakeContext("call-adhoc-no-packages")))._unsafeUnwrap();
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const stored = [...plans.values()][0] as { steps: Array<{ packages: string[]; caveats?: string[] }> };
+        const stored = AnalysisPlanSchema.parse([...plans.values()][0]);
         expect(stored.steps[0].packages).toEqual([]);
         // The step agent must learn that nothing was linked for it, because the
         // link pass is silent when a step declares no package.
@@ -738,7 +752,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ analysisId, queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: q.version ?? "1.0.0" })));
             },
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("the tool launches via the seam, never calls directly")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("the tool launches via the seam, never calls directly")),
         });
 
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
@@ -771,7 +785,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                             : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
                     ),
                 ),
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
         });
 
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(PlanPackagesMissingError);
@@ -804,7 +818,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                         reason: "the dependency graph names 1 edge(s) that it does not hold",
                     })),
                 ),
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
         });
 
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("the store cannot answer");
@@ -838,7 +852,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("unused")),
         });
 
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
@@ -874,7 +888,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("unused")),
         });
 
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
@@ -916,7 +930,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("unused")),
         });
 
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
@@ -949,7 +963,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("unused")),
         });
 
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
@@ -995,7 +1009,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                     ),
                 );
             },
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
         });
 
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("python:igraph");
@@ -1029,7 +1043,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                         detail: "python igraph-0.11.9-aaaaaaaa, r igraph-2.1.4-bbbbbbbb",
                     })),
                 ),
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
         });
 
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
@@ -1056,7 +1070,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
             extendAnalysisFarm,
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("should not be called")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
         });
 
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(PlanPackagesMissingError);
@@ -1082,7 +1096,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalled = true;
                 return okAsync([]);
             },
-            executeAnalysisWorkflow:  () => Promise.reject(new Error("unused")),
+            executeAnalysisWorkflow: () => Promise.reject(new Error("unused")),
         });
 
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
@@ -1094,16 +1108,14 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
 
 /**
  * A pool that fails the statements the matcher names and delegates the others. The launch reads the
- * pool through `query` only, thus a bare object stands for it.
+ * pool through `query` only, thus the double stands for it.
  */
 function poolFailingOn(pool: Pool, failure: (text: string) => Error | undefined): Pool {
-    return {
-        query: (q: { text: string } | string, ...rest: unknown[]) => {
-            const error = failure(typeof q === "string" ? q : q.text);
-            if (error) return Promise.reject(error);
-            return (pool.query as (...args: unknown[]) => Promise<unknown>)(q, ...rest);
-        },
-    } as unknown as Pool;
+    return poolDouble((query) => {
+        const error = failure(query.text);
+        if (error) throw error;
+        return pool.query(query.text, query.values);
+    });
 }
 
 /** The dedup collision as the driver reports it: the unique violation of the active-plan index. */
@@ -1132,15 +1144,21 @@ describe("the launch of a stored plan, over a real database", () => {
     }
 
     async function runRows(): Promise<Array<{ run_id: string; plan_id: string | null; thread_id: string | null; status: string; error: string | null }>> {
-        const { rows } = await pool.query("SELECT run_id, plan_id, thread_id, status, error FROM cortex_runs ORDER BY started_at, run_id");
+        const { rows } = await pool.query<{
+            run_id: string;
+            plan_id: string | null;
+            thread_id: string | null;
+            status: string;
+            error: string | null;
+        }>("SELECT run_id, plan_id, thread_id, status, error FROM cortex_runs ORDER BY started_at, run_id");
         return rows;
     }
 
     function deps(over: Partial<LaunchPlanRunDeps> = {}): LaunchPlanRunDeps {
         return {
             pool,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("the launcher starts the workflow");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("the launcher starts the workflow"));
             },
             runAuthorizer: recordingAuthorizer().authorizer,
             runLauncher: fakeLauncher().launcher,
@@ -1210,7 +1228,8 @@ describe("the launch of a stored plan, over a real database", () => {
 
             expect(malformed).toEqual({ type: "plan_invalid", planId: PLAN_ID, malformed: true, errors: [] });
             expect(invalid).toMatchObject({ type: "plan_invalid", planId: "pln-0000000b", malformed: false });
-            expect((invalid as { errors: string[] }).errors.length).toBeGreaterThan(0);
+            if (invalid.type !== "plan_invalid") throw new Error("expected the validation refusal");
+            expect(invalid.errors.length).toBeGreaterThan(0);
             expect(await runRows()).toEqual([]);
         });
 
@@ -1322,7 +1341,7 @@ describe("the launch of a stored plan, over a real database", () => {
             const refusal = (await launchPlanRun(deps({ pool: colliding }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
 
             expect(refusal.type).toBe("store_failed");
-            expect((refusal as { cause: unknown }).cause).toBeInstanceOf(RunDedupCollisionError);
+            expect(refusal).toMatchObject({ cause: expect.any(RunDedupCollisionError) });
         });
 
         it("gives store_failed when a read of the store fails, and does not reject", async () => {
@@ -1346,7 +1365,8 @@ describe("the launch of a stored plan, over a real database", () => {
             )._unsafeUnwrapErr();
 
             expect(refusal.type).toBe("launch_failed");
-            expect(((refusal as { cause: unknown }).cause as Error).message).toBe("launch boom");
+            if (refusal.type !== "launch_failed") throw new Error("expected the launch refusal");
+            expect(errorMessage(refusal.cause)).toBe("launch boom");
             expect(revokes).toEqual(["workflow-start-failed"]);
             expect(await runRows()).toMatchObject([{ status: "failed", error: "workflow start failed" }]);
         });
@@ -1372,7 +1392,8 @@ describe("the launch of a stored plan, over a real database", () => {
             const failure = await tool.execute({ mode: "plan", planId: "pln-0000000b" }, fakeContext()).catch((error: unknown) => error);
 
             expect(failure).toBeInstanceOf(PlanValidationError);
-            expect((failure as PlanValidationError).errors.length).toBeGreaterThan(0);
+            if (!(failure instanceof PlanValidationError)) throw new Error("expected PlanValidationError");
+            expect(failure.errors.length).toBeGreaterThan(0);
         });
 
         it("fails the call with the package error, and the message names the missing entry", async () => {
@@ -1384,7 +1405,7 @@ describe("the launch of a stored plan, over a real database", () => {
             }).run;
 
             await expect(run()).rejects.toThrow(PlanPackagesMissingError);
-            await expect(run()).rejects.toThrow(/scanpy/);
+            await expect(run()).rejects.toThrow("scanpy");
             expect(await runRows()).toEqual([]);
         });
 
@@ -1419,15 +1440,15 @@ describe("the launch of a stored plan, over a real database", () => {
                 .catch((error: unknown) => error);
 
             expect(failure).toBeInstanceOf(Error);
-            expect((failure as Error).cause).toMatchObject({ type: "query_failed", op: "plans.loadPlan" });
+            expect(failure).toMatchObject({ cause: { type: "query_failed", op: "plans.loadPlan" } });
         });
 
         it("fails the call with the error that the launcher threw", async () => {
             await seedPlan(validPlan);
             const boom = new Error("launch boom");
             const launcher: RunLauncher = {
-                launch: async () => {
-                    throw boom;
+                launch: () => {
+                    return Promise.reject(boom);
                 },
             };
 
@@ -1443,8 +1464,8 @@ describe("the launch of a stored plan, over a real database", () => {
             const emitted: unknown[] = [];
             const run = toolFor({}, emitted).run;
 
-            const first = (await run())._unsafeUnwrap() as { runId: string; status: string };
-            const second = (await run())._unsafeUnwrap() as { runId: string; status: string };
+            const first = (await run())._unsafeUnwrap();
+            const second = (await run())._unsafeUnwrap();
 
             expect(first.status).toBe("in_progress");
             expect(second).toEqual({ runId: first.runId, status: "in_progress" });

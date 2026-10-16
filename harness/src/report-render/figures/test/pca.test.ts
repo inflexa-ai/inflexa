@@ -10,7 +10,7 @@ import { TOOLBOX_BAND_PX } from "../../chart-toolbox.js";
 import { CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_INK, CHART_PAGE_TEXT_PX, CHART_PALETTE } from "../../design.js";
 import { equalRanges, squareLayout } from "../equal-units.js";
 import { PCA_LABEL_ROWS, SHAPE_SYMBOLS } from "../pca.js";
-import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
+import { optionNumber, optionNumberOrUndefined, optionRecord, optionRecords } from "../../option-lens.js";
 import { optionArray } from "../../../report-render/option-lens.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -196,8 +196,7 @@ describe("the layout of one unit", () => {
     it("states the width of the square block at the page body, thus the card centers the block", () => {
         const render = deriveChartRender(block("pca", PCA_ENCODING), PASILLA, undefined, { key: "p1", columns: [] })._unsafeUnwrap();
         const rules = (optionRecords(render.option.media)).filter((rule) => asObj(rule.query).maxWidth === undefined);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const fitting = rules.filter((rule) => ((asObj(rule.query).minHeight as number | undefined) ?? 0) <= CHART_BODY_PX);
+        const fitting = rules.filter((rule) => (optionNumberOrUndefined(asObj(rule.query).minHeight) ?? 0) <= CHART_BODY_PX);
         const chosen = fitting[fitting.length - 1];
         expect(render.bodyPx).toBe(CHART_BODY_PX);
         expect(render.widthPx).toBe(optionNumber(asObj(chosen.query).minWidth));

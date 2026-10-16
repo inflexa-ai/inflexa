@@ -8,7 +8,7 @@ import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_BODY_PX, CHART_INLINE_OPTION_BOUND, SEQUENTIAL_RAMP } from "../../design.js";
 import { DOTPLOT_LINE_PX, DOTPLOT_ROW_GAP_PX, wrappedTerm } from "../dotplot.js";
-import { optionRecord, optionRecords } from "../../option-lens.js";
+import { optionRecord, optionRecords, optionUnknownMatrix } from "../../option-lens.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -54,8 +54,7 @@ describe("the marker dot plot", () => {
         expect(asObj(option.yAxis).name).toBeUndefined();
         expect(asObj(option.xAxis)).toEqual(expect.objectContaining({ type: "category", data: ["IL7R", "LYZ", "MS4A1"] }));
         // Each dot names its cluster by its place on the y axis.
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect(((optionRecords(option.series))[0].data as unknown[][])[1]).toEqual(["IL7R", 1, 0.0, 0.11666666666666667]);
+        expect(optionUnknownMatrix(optionRecords(option.series)[0].data)[1]).toEqual(["IL7R", 1, 0.0, 0.11666666666666667]);
     });
 
     it("colors on the sequential ramp and prints the two ends with the number helper", () => {

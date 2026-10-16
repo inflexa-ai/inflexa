@@ -128,7 +128,7 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
         return (result.rowCount ?? 0) > 0;
     }).andThen((inserted) =>
         tryQuery("runs.reserveRunById.reload", async () => {
-            const result = await pool.query({
+            const result = await pool.query<Record<string, unknown>>({
                 text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                        status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                        mandate_jti, mandate_expires_at, plan_id
@@ -136,7 +136,7 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
                 WHERE run_id = $1`,
                 values: [input.runId],
             });
-            return result.rows[0] ?? null;
+            return result.rows.at(0) ?? null;
         }).map((row) => {
             if (!row || row.analysis_id !== input.analysisId) throw new RunIdentityCollisionError(input.runId);
             return { row: mapRunRow(row), inserted };
@@ -146,6 +146,7 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
 
 function isPartialUniqueViolation(err: unknown): boolean {
     if (err === null || typeof err !== "object") return false;
+    // SAFETY: a pg unique-violation cause carries the SQLSTATE on `.code` and the tripped index on `.constraint` — either mismatch reports false.
     const e = err as { code?: string; constraint?: string };
     return e.code === "23505" && e.constraint === "idx_cortex_runs_active_plan";
 }
@@ -518,7 +519,10 @@ const RunRowDb = z
 
 /** JSONB is parsed by `pg` into native arrays. A legacy TEXT row is parsed here; malformed text counts as null. */
 function rowParts(value: unknown): unknown[] | null {
-    if (Array.isArray(value)) return value;
+    if (Array.isArray(value)) {
+        const parts: unknown[] = value;
+        return parts;
+    }
     if (typeof value === "string") {
         const parsed = parseJsonOrUndefined(value);
         return Array.isArray(parsed) ? parsed : null;

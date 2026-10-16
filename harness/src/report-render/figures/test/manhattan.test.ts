@@ -7,7 +7,7 @@ import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { exportOption } from "../../chart-renderers.js";
 import { CHART_TOOLBOX_SOURCE, pageChartOption } from "../../chart-toolbox.js";
 import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../../design.js";
@@ -16,9 +16,10 @@ import { BELOW_RESOLUTION_SYMBOL, POINT_NAMES } from "../dense.js";
 import { FIGURE_MODULES } from "../index.js";
 import { EXPORT_PLOT_FRAMES, leaderNameBox, overlaps, PAGE_PLOT_FRAME, textWidthPx, type LeaderName, type NameFrame } from "../label-room.js";
 import { guideLabelBox, MANHATTAN_COLORS, MANHATTAN_FIGURE, MANHATTAN_LABEL_COUNT, MANHATTAN_NAME_GAP_SHARE, MANHATTAN_SUGGESTIVE_P } from "../manhattan.js";
-import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
+import { optionArray, optionMember, optionNumber, optionNumbers, optionRecord, optionRecords, optionRecordsOrEmpty, optionText } from "../../option-lens.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
-import { optionArray, optionNumbers } from "../../../report-render/option-lens.js";
+import { must } from "../../../lib/test/guards.js";
+import { z } from "zod";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -64,7 +65,7 @@ function seriesOf(option: EchartOption): EchartOption[] {
 
 /** The upper end of the y axis of one option. */
 function asTop(option: EchartOption): number {
-    return optionNumber((optionRecord(option.yAxis)).max);
+    return optionNumber(optionRecord(option.yAxis).max);
 }
 
 describe("the Manhattan figure", () => {
@@ -76,7 +77,7 @@ describe("the Manhattan figure", () => {
         const option = derive();
         const series = seriesOf(option).slice(0, 3);
         expect(series.map((entry) => entry.name)).toEqual(["1", "2", "3"]);
-        expect(series.map((entry) => (optionRecord(entry.itemStyle)).color)).toEqual([MANHATTAN_COLORS[0], MANHATTAN_COLORS[1], MANHATTAN_COLORS[0]]);
+        expect(series.map((entry) => optionRecord(entry.itemStyle).color)).toEqual([MANHATTAN_COLORS[0], MANHATTAN_COLORS[1], MANHATTAN_COLORS[0]]);
         expect(option.legend).toEqual({ show: false });
     });
 
@@ -96,23 +97,23 @@ describe("the Manhattan figure", () => {
         const x = optionRecord(option.xAxis);
         expect(x.min).toBe(1082207);
         expect(x.max).toBe(689000000);
-        expect((optionRecord(x.axisLabel)).show).toBe(false);
-        expect((optionRecord(option.yAxis)).min).toBe(0);
+        expect(optionRecord(x.axisLabel).show).toBe(false);
+        expect(optionRecord(option.yAxis).min).toBe(0);
     });
 
     it("draws the genome-wide line with its label and the suggestive line", () => {
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
         const lines = seriesOf(derive())
             .filter((entry) => entry.name !== POINT_NAMES)
-            .flatMap((entry) => ((entry.markLine as EchartOption | undefined)?.data as EchartOption[] | undefined) ?? []);
+            .flatMap((entry) => optionRecordsOrEmpty(optionMember(entry.markLine).data));
         expect(MANHATTAN_SUGGESTIVE_P).toBe(1e-5);
-        expect(lines.map((line) => [line.yAxis, (optionRecord(line.label)).formatter])).toEqual([
+        expect(lines.map((line) => [line.yAxis, optionRecord(line.label).formatter])).toEqual([
             [-Math.log10(5e-8), "p 5 × 10⁻⁸"],
             [-Math.log10(1e-5), undefined],
         ]);
         // The label sits over the line at its right end, inside the plot and clear of the chromosome names
         // under the axis.
-        expect((optionRecord(lines[0].label)).position).toBe("insideEndTop");
+        expect(optionRecord(lines[0].label).position).toBe("insideEndTop");
     });
 
     it("keeps the name of a lead variant at the right end clear of the label of the genome-wide line", () => {
@@ -120,13 +121,12 @@ describe("the Manhattan figure", () => {
         const rows = [...ROWS, { chrom: "3", snp: "rs99", pvalue: "1e-8", cum_pos: String(high - 1000000) }];
         const option = derive(block(), rows);
         const names = seriesOf(option).find((entry) => entry.name === POINT_NAMES);
-        const lead = (optionRecords((names?.data ?? []))).find((item) => item.name === "rs99");
+        const lead = optionRecords(names?.data ?? []).find((item) => item.name === "rs99");
         expect(lead).toBeDefined();
         // The page frame reads a window 1280 pixels wide, thus the runtime hides a lead name that still overlaps
         // another on a narrower window.
         expect(names?.labelLayout).toEqual({ hideOverlap: true });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const [x, y] = (lead as { value: number[] }).value;
+        const [x, y] = optionNumbers(optionRecord(must(lead, "the lead point")).value);
         const box = guideLabelBox(-Math.log10(5e-8), { min: 1082207, max: high }, asTop(option), "p 5 × 10⁻⁸", PAGE_PLOT_FRAME);
         expect(x >= box.left && x <= box.right && y >= box.bottom && y <= box.top).toBe(false);
     });
@@ -134,7 +134,7 @@ describe("the Manhattan figure", () => {
     /** The names of the lead variants, in the order of their p. */
     function shownLabels(option: EchartOption): unknown[] {
         const names = seriesOf(option).find((entry) => entry.name === POINT_NAMES);
-        return (optionRecords((names?.data ?? []))).map((item) => item.name);
+        return optionRecords(names?.data ?? []).map((item) => item.name);
     }
 
     it("names the ten most significant lead variants over the genome, one for each chromosome", () => {
@@ -162,7 +162,7 @@ describe("the Manhattan figure", () => {
             { chrom: "3", snp: "f", pvalue: "0.5", cum_pos: "100" },
         ];
         const names = (option: EchartOption): unknown[] =>
-            (optionRecords((optionRecord(seriesOf(option).find((entry) => entry.name === "Chromosome names"))).data)).map((entry) => entry.name);
+            optionRecords(optionRecord(seriesOf(option).find((entry) => entry.name === "Chromosome names")).data).map((entry) => entry.name);
         expect(MANHATTAN_NAME_GAP_SHARE).toBe(0.5);
         // On the page plot of 760 px, the middles sit at 76, 163.4, and 467.4 px. The names are 7.2 px wide,
         // thus each text starts far past the end of the one before it.
@@ -181,7 +181,7 @@ describe("the Manhattan figure", () => {
         // The points carry no label of the runtime, thus no name hides.
         for (const points of seriesOf(option).slice(0, 3)) {
             // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-            expect((optionArray(points.data)).some((item) => typeof item === "object" && item !== null && "label" in item)).toBe(false);
+            expect(optionArray(points.data).some((item) => typeof item === "object" && item !== null && "label" in item)).toBe(false);
         }
     });
 
@@ -190,9 +190,10 @@ describe("the Manhattan figure", () => {
         const rows = [...ROWS, { chrom: "3", snp: "", pvalue: "1e-19", cum_pos: "500000000" }];
         const names = optionRecord(seriesOf(derive(block(), rows)).find((entry) => entry.name === POINT_NAMES));
         const items = optionRecords(names.data);
-        expect(items.map((item) => (optionRecord(item.label)).position)).toEqual(["top", "top"]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const leaders = (optionRecord(names.markLine)).data as Array<Array<{ coord: number[] }>>;
+        expect(items.map((item) => optionRecord(item.label).position)).toEqual(["top", "top"]);
+        const leaders = optionArray(optionRecord(names.markLine).data).map((ends) =>
+            optionArray(ends).map((end) => ({ coord: optionNumbers(optionRecord(end).coord) })),
+        );
         expect(leaders.map((pair) => pair[0].coord)).toEqual([
             [274000000, -Math.log10(4.4e-15)],
             [49124175, -Math.log10(2.123e-13)],
@@ -205,7 +206,7 @@ describe("the Manhattan figure", () => {
     it("places the name of a peak at the top of the axis beside the peak", () => {
         const names = optionRecord(seriesOf(derive()).find((entry) => entry.name === POINT_NAMES));
         // The tallest peak reaches the end of the p axis, thus its name finds no room over it.
-        expect((optionRecord((optionRecords(names.data))[0].label)).position).toBe("right");
+        expect(optionRecord(optionRecords(names.data)[0].label).position).toBe("right");
     });
 
     it("gives the same colors, chromosome names, and lead names to a table sorted by p as to the table sorted by position", () => {
@@ -215,12 +216,11 @@ describe("the Manhattan figure", () => {
             block(),
             [...ROWS].sort((a, b) => pOf(a) - pOf(b)),
         );
-        const colors = (option: EchartOption): Record<string, unknown> =>
-            Object.fromEntries(
-                seriesOf(option)
-                    .slice(0, 3)
-                    .map((entry) => [entry.name, (optionRecord(entry.itemStyle)).color]),
-            );
+        const colors = (option: EchartOption): Record<string, unknown> => {
+            const byName: Record<string, unknown> = {};
+            for (const entry of seriesOf(option).slice(0, 3)) byName[optionText(entry.name)] = optionRecord(entry.itemStyle).color;
+            return byName;
+        };
         const dataOf = (option: EchartOption, name: string): unknown => seriesOf(option).find((entry) => entry.name === name)?.data;
         expect(colors(byP)).toEqual(colors(byPosition));
         expect(dataOf(byP, "Chromosome names")).toEqual(dataOf(byPosition, "Chromosome names"));
@@ -240,12 +240,12 @@ describe("the Manhattan figure", () => {
             { chrom: "Y", snp: "y", pvalue: "0.5", cum_pos: "800" },
         ];
         const option = derive(block(), rows);
-        const names = (optionRecords((optionRecord(seriesOf(option).find((entry) => entry.name === "Chromosome names"))).data)).map((entry) => entry.name);
+        const names = optionRecords(optionRecord(seriesOf(option).find((entry) => entry.name === "Chromosome names")).data).map((entry) => entry.name);
         expect(names).toEqual(["1", "2", "10", "X", "Y", "MT", "Un"]);
         const colors = Object.fromEntries(
             seriesOf(option)
                 .slice(0, 7)
-                .map((entry) => [entry.name, (optionRecord(entry.itemStyle)).color]),
+                .map((entry) => [entry.name, optionRecord(entry.itemStyle).color]),
         );
         const [blue, gray] = MANHATTAN_COLORS;
         expect(colors).toEqual({ "1": blue, "2": gray, "10": blue, X: gray, Y: blue, MT: gray, Un: blue });
@@ -258,7 +258,7 @@ describe("the Manhattan figure", () => {
         expect(triangles.length).toBe(1);
         const top = -Math.log10(4.4e-15);
         expect(triangles[0].data).toEqual([{ name: "rsZero", value: [300000001, top], itemStyle: { color: MANHATTAN_COLORS[1] } }]);
-        expect(optionNumber((optionRecord(option.yAxis)).max)).toBeGreaterThanOrEqual(top);
+        expect(optionNumber(optionRecord(option.yAxis).max)).toBeGreaterThanOrEqual(top);
         expect(shownLabels(option)).toEqual(["rsZero", "rs657452"]);
     });
 
@@ -335,17 +335,17 @@ describe("the Manhattan text at each size", () => {
     const plot = { x: { min: optionNumber(x.min), max: optionNumber(x.max) }, y: { min: 0, max: asTop(option) } };
 
     /** The page option, and the export option of each export size, with the frame where its text places. */
-    // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+    const frames = new Map(Object.entries(EXPORT_PLOT_FRAMES));
     const renders: Array<readonly [string, EchartOption, NameFrame]> = [
         ["page", option, PAGE_PLOT_FRAME],
-        ...Object.entries(CHART_EXPORT_SIZES).map(
-            ([kind, size]) =>
-                [kind, exportOption(option, size.textPx, size.widthPx, size.heightPx), EXPORT_PLOT_FRAMES[kind as keyof typeof CHART_EXPORT_SIZES]] as const,
-        ),
+        ...Object.entries(CHART_EXPORT_SIZES).map(([kind, size]) => {
+            const frame = must(frames.get(kind), `the export plot frame of the ${kind} size`);
+            return [kind, exportOption(option, size.textPx, size.widthPx, size.heightPx), frame] as const;
+        }),
     ];
 
     function dataOf(render: EchartOption, name: string): EchartOption[] {
-        return optionRecords((seriesOf(render).find((entry) => entry.name === name)?.data ?? []));
+        return optionRecords(seriesOf(render).find((entry) => entry.name === name)?.data ?? []);
     }
 
     for (const [kind, render, frame] of renders) {
@@ -353,9 +353,8 @@ describe("the Manhattan text at each size", () => {
             const boxes = dataOf(render, POINT_NAMES).map((item) => {
                 // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
                 const [nameX, nameY] = optionNumbers(item.value);
-                // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                const placed: LeaderName = { x: nameX, y: nameY, side: (optionRecord(item.label)).position as LeaderName["side"] };
-                return leaderNameBox(placed, String(item.name), plot, frame);
+                const placed: LeaderName = { x: nameX, y: nameY, side: z.enum(["right", "left", "top"]).parse(optionRecord(item.label).position) };
+                return leaderNameBox(placed, optionText(item.name), plot, frame);
             });
             expect(boxes.length).toBeGreaterThan(0);
             for (const [index, box] of boxes.entries()) {
@@ -367,8 +366,8 @@ describe("the Manhattan text at each size", () => {
             const toPx = (value: number): number => ((value - plot.x.min) / (plot.x.max - plot.x.min)) * frame.widthPx;
             const spans = dataOf(render, "Chromosome names").map((item) => {
                 // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-                const middle = toPx((optionNumbers(item.value))[0]);
-                const half = textWidthPx(String(item.name), frame.textPx) / 2;
+                const middle = toPx(optionNumbers(item.value)[0]);
+                const half = textWidthPx(optionText(item.name), frame.textPx) / 2;
                 return [middle - half, middle + half] as const;
             });
             expect(spans.length).toBeGreaterThan(0);
@@ -403,28 +402,25 @@ describe("the dense Manhattan plot", () => {
     }
 
     // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-    const seriesDataOnThePage = evaluatePageScript<() => (
-        payload: { columns: string[]; rows: ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[]>(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`);
+    const seriesDataOnThePage = evaluatePageScript<() => (payload: { columns: string[]; rows: ChartRow[] }, source: EchartOption, rule: unknown) => unknown[]>(
+        `${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`,
+    );
 
     it("reads the payload past the bound, and the page builds each chromosome as the server does", () => {
         const rows = denseRows(20000);
         const render = deriveChartRender(block(), rows, COLUMNS, { key: "gw", columns: COLUMNS }, {}, OPTS)._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
-        expect(source.series.length).toBe(22);
-        for (const [index, entry] of source.series.entries()) {
+        const source = optionRecord(render.option[CHART_SOURCE_MEMBER]);
+        expect(optionRecords(source.series).length).toBe(22);
+        for (const [index, entry] of optionRecords(source.series).entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
             expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index].data));
         }
         // The chromosome names ride the page option after the points, thus the page draws them over the payload points.
         const names = seriesOf(render.option)[22];
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        expect((optionArray(names.data)).length).toBe(22);
+        expect(optionArray(names.data).length).toBe(22);
     });
 });
 
@@ -434,10 +430,12 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
 
     /** The page functions of the bootstrap: the binding of each named page function, and the zoom handler that the bootstrap attaches after the init. */
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    const page = evaluatePageScript<() => {
-        readonly bind: (option: EchartOption) => void;
-        readonly watch: (chart: echarts.ECharts, option: EchartOption) => void;
-    }>(`${CHART_TOOLBOX_SOURCE}\nreturn { bind: reportBindToolbox, watch: reportWatchZoom };`);
+    const page = evaluatePageScript<
+        () => {
+            readonly bind: (option: EchartOption) => void;
+            readonly watch: (chart: echarts.ECharts, option: EchartOption) => void;
+        }
+    >(`${CHART_TOOLBOX_SOURCE}\nreturn { bind: reportBindToolbox, watch: reportWatchZoom };`);
 
     /** A zoom window in data units, as a box select of the toolbox gives it. */
     type ZoomWindow = {

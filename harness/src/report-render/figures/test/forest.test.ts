@@ -15,7 +15,7 @@ import { TOOLBOX_BAND_PX } from "../../chart-toolbox.js";
 import { CHART_EXPORT_SIZES, CHART_INK, GUIDE_LINE_COLOR } from "../../design.js";
 import { FOREST_FIGURE, termLines } from "../forest.js";
 import { FIGURE_MODULES } from "../index.js";
-import { optionNumber, optionRecord, optionRecords } from "../../option-lens.js";
+import { optionNumber, optionNumberMatrix, optionRecord, optionRecords } from "../../option-lens.js";
 
 const HASH = `sha256:${"a".repeat(64)}`;
 
@@ -90,10 +90,9 @@ describe("the forest figure", () => {
         const rows = [...ROWS, { term: "Separated", hr: 3.2, lower: 1.2e-150, upper: 40, pvalue: 0.9 }];
         const option = derive(forestBlock(), rows);
         const axis = optionRecord(option.xAxis);
-        expect(Math.log10((optionNumber(axis.max)) / (optionNumber(axis.min)))).toBeLessThanOrEqual(4);
+        expect(Math.log10(optionNumber(axis.max) / optionNumber(axis.min))).toBeLessThanOrEqual(4);
         expect(axis.max).toBe(40);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const items = seriesOf(option)[1].data as number[][];
+        const items = optionNumberMatrix(seriesOf(option)[1].data);
         const separated = items.find((item) => item[1] === rows.length - 1);
         // The low bound ends at the axis and carries the clip mark of its end, and the high bound stays as it is.
         expect(separated?.slice(2, 4)).toEqual([optionNumber(axis.min), 40]);
@@ -114,7 +113,7 @@ describe("the forest figure", () => {
             { term: "b", hr: 0.3, lower: 0.1, upper: 0.5, pvalue: 0.01 },
         ];
         const option = derive(forestBlock(), rows);
-        expect((optionRecord(option.xAxis)).type).toBe("value");
+        expect(optionRecord(option.xAxis).type).toBe("value");
         const line = optionRecord(seriesOf(option).find((series) => series.markLine !== undefined)?.markLine);
         expect(line.data).toEqual([{ xAxis: 0 }]);
     });
@@ -139,8 +138,8 @@ describe("the forest figure", () => {
 
     it("draws each estimate as a square on its row", () => {
         const squares = optionRecord(seriesOf(derive(forestBlock())).find((series) => series.type === "scatter"));
-        expect([squares.symbol, (optionRecord(squares.itemStyle)).color]).toEqual(["rect", CHART_INK]);
-        expect((optionRecords(squares.data)).map((item) => [item.value, item.symbolSize])).toEqual([
+        expect([squares.symbol, optionRecord(squares.itemStyle).color]).toEqual(["rect", CHART_INK]);
+        expect(optionRecords(squares.data).map((item) => [item.value, item.symbolSize])).toEqual([
             [[1.0152725322439, 0], 9],
             [[0.531834967483113, 1], 9],
             [[2.09636398838477, 2], 9],
@@ -152,14 +151,13 @@ describe("the forest figure", () => {
     it("sizes each square by the size channel, with the area in proportion to the value", () => {
         const rows = ROWS.slice(0, 2).map((row, index) => ({ ...row, weight: index === 0 ? 100 : 25 }));
         const squares = optionRecord(seriesOf(derive(forestBlock({ ...ENCODING, size: "weight" }), rows)).find((series) => series.type === "scatter"));
-        expect((optionRecords(squares.data)).map((item) => item.symbolSize)).toEqual([16, 8]);
+        expect(optionRecords(squares.data).map((item) => item.symbolSize)).toEqual([16, 8]);
     });
 
     it("draws the interval of each row as a line along the x axis", () => {
         const interval = optionRecord(seriesOf(derive(forestBlock())).find((series) => series.type === "custom"));
         expect([interval.renderItem, interval.encode]).toEqual(["interval", { x: [0, 2, 3], y: 1 }]);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((interval.data as number[][])[1]).toEqual([0.531834967483113, 1, 0.375837377499962, 0.752581966485737, 0, 0, 0, 0]);
+        expect(optionNumberMatrix(interval.data)[1]).toEqual([0.531834967483113, 1, 0.375837377499962, 0.752581966485737, 0, 0, 0, 0]);
     });
 
     it("prints the estimate with its interval and the p value in two columns at the right", () => {
@@ -209,7 +207,7 @@ describe("the forest figure", () => {
             "Weight loss (lb)",
         ]);
         const squares = optionRecord(seriesOf(option).find((series) => series.type === "scatter"));
-        expect((optionRecords(squares.data)).map((item) => item.name)).toEqual(TERMS);
+        expect(optionRecords(squares.data).map((item) => item.name)).toEqual(TERMS);
     });
 
     it("ends a term past two lines with an ellipsis", () => {
@@ -226,7 +224,7 @@ describe("the forest figure", () => {
         const block = forestBlock();
         const labeled: ChartBlock = { ...block, binding: { ...block.binding, columnLabels: { hr: "Hazard ratio", pvalue: "p" } } };
         const [, estimates, pValues] = yAxes(derive(labeled));
-        expect([estimates.name, pValues.name, (optionRecord(derive(labeled).xAxis)).name]).toEqual(["Hazard ratio", "p", "Hazard ratio"]);
+        expect([estimates.name, pValues.name, optionRecord(derive(labeled).xAxis).name]).toEqual(["Hazard ratio", "p", "Hazard ratio"]);
     });
 
     it("keeps the column titles of an export at its top edge, because an export has no toolbox", () => {

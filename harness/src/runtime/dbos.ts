@@ -144,7 +144,10 @@ export function dbosSdkLogger(logger: Logger, logLevel: string | undefined): DLo
         if (attributes === undefined && stack === undefined) return undefined;
         return { ...attributes, stack: stack !== undefined ? stack : undefined };
     };
-    const message = (entry: unknown): string => (typeof entry === "string" ? entry : String(entry));
+    const message = (entry: unknown): string => {
+        if (typeof entry !== "string") throw new Error(`the DBOS SDK logger hands over rendered strings; got ${typeof entry}`);
+        return entry;
+    };
     return {
         debug: (entry, metadata) => {
             if (passes("debug")) sink.debug(message(entry), fields(metadata));

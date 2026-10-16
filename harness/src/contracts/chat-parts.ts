@@ -84,14 +84,14 @@ export type RunCardPart = {
 
 // ── Plan approval (conversation record) ─────────────────────────────
 
-export interface PlanApprovalPart {
+export type PlanApprovalPart = {
     type: "data-plan-approval";
     planId: string;
     /** The run that the approval started. */
     runId: string;
     /** ISO 8601. The instant of the approval, equal to the time of the `approve-plan` provenance event. */
     approvedAt: string;
-}
+};
 
 // ── File reference (artifact-store-backed, resolved at render time) ──────────
 
@@ -515,7 +515,7 @@ export type CompactionPart = {
 // ── Sub-agent activity (reconciling) ────────────────────────────────
 
 /** One tool call of a sub-agent. It holds no input, no output, and no text of the sub-agent. */
-export interface SubAgentActivityEntry {
+export type SubAgentActivityEntry = {
     agentId: string;
     callPath: string[];
     tool: string;
@@ -527,13 +527,13 @@ export interface SubAgentActivityEntry {
     endedAt?: string;
     /** Absent while the call is in flight. A stored entry always has it. */
     outcome?: ToolCallOutcome;
-}
+};
 
 /**
  * The tool calls of the sub-agents below one root tool call. Re-emitted under the same `id` after each change,
  * so reconciling readers keep the latest list.
  */
-export interface SubAgentActivityPart {
+export type SubAgentActivityPart = {
     type: "data-subagent-activity";
     id: string;
     /** The id of the root tool call. */
@@ -541,7 +541,7 @@ export interface SubAgentActivityPart {
     entries: SubAgentActivityEntry[];
     /** The count of calls past the cap of the entries. */
     dropped: number;
-}
+};
 
 // ── Union ───────────────────────────────────────────────────────────
 

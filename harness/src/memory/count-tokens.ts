@@ -40,7 +40,7 @@ function toolResultText(output: unknown): string {
     const texts: string[] = [];
     for (const item of out.value) {
         if (typeof item !== "object" || item === null) continue;
-        const nested : Record<string, unknown> = item;
+        const nested: Record<string, unknown> = item;
         if (nested.type === "text" && typeof nested.text === "string") texts.push(nested.text);
     }
     return texts.join(" ");
@@ -69,9 +69,9 @@ function tokenizableText(block: unknown): string {
         case "image":
             return "";
         case "tool-call":
-            return `${String(part.toolName ?? "")} ${JSON.stringify(part.input ?? {})}`;
+            return `${typeof part.toolName === "string" ? part.toolName : ""} ${JSON.stringify(part.input ?? {})}`;
         case "tool-result": {
-            return `${String(part.toolName ?? "")} ${toolResultText(part.output)}`;
+            return `${typeof part.toolName === "string" ? part.toolName : ""} ${toolResultText(part.output)}`;
         }
         default:
             return JSON.stringify(part);

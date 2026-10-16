@@ -59,10 +59,20 @@ import { LINEAGE_BLOCK_ATTRIBUTE, LINEAGE_CONTROL_CLASS, LINEAGE_KEY_ATTRIBUTE, 
 import { DOWNLOAD_CONTROL_LABEL, HYBRID_FAULT_NOTE } from "../views/chart-view.js";
 import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS } from "../views/values.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { optionNumber, optionRecord, optionRecords } from "../option-lens.js";
+import { captureOf } from "@inflexa-ai/harness/lib/test/captures.js";
+import { optionArray, optionNumber, optionRecord, optionRecords, optionRecordsOrEmpty } from "../option-lens.js";
 import { jsonParse } from "../../lib/json.js";
 import { z } from "zod";
 import { compilePageScript, runPageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
+
+/**
+ * The table registry that the page assets stage on a faked window. The reader runs on the page's own
+ * globals and hands the registry back as the page built it, and the type parameter states the payload
+ * shape that the decoder built.
+ */
+function stagedTable<P>(window: Record<string, unknown>): Record<string, P> {
+    return runPageScript<(window: Record<string, unknown>) => Record<string, P>>(["window"], `return window[${JSON.stringify(TABLE_DATA_GLOBAL)}]`, window);
+}
 // An own key that names a prototype member must stay an own key: a zod record
 // rebuild would move it onto the prototype, so the check passes the value through.
 const ownKeyRows = z.custom<Record<string, string | number>[]>((v) => Array.isArray(v));
@@ -121,7 +131,7 @@ function attributeReferences(html: string): string[] {
     const references: string[] = [];
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
     for (const match of html.matchAll(/\b(srcset|src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-        const value = match[2] ?? match[3];
+        const value = must(captureOf(match, 2) ?? captureOf(match, 3), "the quoted value of a src/href/srcset match");
         if (match[1] === "srcset") references.push(...srcsetCandidates(value));
         else references.push(value);
     }
@@ -324,15 +334,18 @@ describe("the table data assets", () => {
      * The asset is browser source text, thus a read of the source string would test the serialization and
      * not the value that a reader takes. `decode` runs the page decoder over the payload as well.
      */
-    function registeredPayload(asset: { bytes: string }, decode = false): { columns: string[]; rows: unknown[]; dict: Record<string, string[]> } {
+    function registeredPayload(asset: { bytes: string }, decode = false): {
+        columns: string[];
+        rows: unknown[];
+        dict: Record<string, string[]>;
+        display?: { label: string; kind: string; bound?: number }[];
+    } {
         const window: Record<string, unknown> = {};
         runPageScript(["window"], asset.bytes, window);
         if (decode) {
             runPageScript(["window"], TABLE_DATA_DECODER, window);
         }
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { columns: string[]; rows: unknown[]; dict: Record<string, string[]> }>;
-        return registry["tbl"];
+        return stagedTable<{ columns: string[]; rows: unknown[]; dict: Record<string, string[]>; display?: { label: string; kind: string; bound?: number }[] }>(window)["tbl"];
     }
 
     it("holds one empty grid mount, and the payload holds every row", async () => {
@@ -350,14 +363,14 @@ describe("the table data assets", () => {
 
     it("carries the display of each column beside the rows", async () => {
         const rendered = (await renderReportPage(tableDocument(), valuesOf(3)))._unsafeUnwrap();
-        // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-        const payload = registeredPayload(rendered.dataAssets[0]) as unknown as { display: { label: string; kind: string; bound?: number }[] };
+        const payload = registeredPayload(rendered.dataAssets[0]);
+        const display = must(payload.display, "the display of the staged payload");
 
         // The server resolves the label, the kind, and the bound one time for each column. Thus the page
         // formats each cell with no read of a declaration.
-        expect(payload.display.map((entry) => entry.kind)).toEqual(["compact-scientific", "scientific", "compact-scientific"]);
-        expect(payload.display.map((entry) => entry.label)).toEqual(["gene", "padj", "direction"]);
-        expect(payload.display[1].bound).toBe(1 / 3);
+        expect(display.map((entry) => entry.kind)).toEqual(["compact-scientific", "scientific", "compact-scientific"]);
+        expect(display.map((entry) => entry.label)).toEqual(["gene", "padj", "direction"]);
+        expect(display[1].bound).toBe(1 / 3);
     });
 
     it("compresses a repeated category into the dictionary of its column", async () => {
@@ -399,8 +412,7 @@ describe("the table data assets", () => {
         runPageScript(["window"], rendered.dataAssets[0].bytes, window);
         runPageScript(["window"], TABLE_DATA_DECODER, window);
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] }>;
+        const registry = stagedTable<{ rows: Record<string, string | number>[] }>(window);
         expect(registry["tbl"].rows.length).toBe(4);
         expect(registry["tbl"].rows[0]).toEqual({ gene: "G0", padj: 0, direction: "up" });
         expect(registry["tbl"].rows[1]).toEqual({ gene: "G1", padj: 0.25, direction: "down" });
@@ -425,8 +437,7 @@ describe("the table data assets", () => {
 
         // A column name is authored text. An object literal would send `__proto__` to the prototype, and a
         // plain record would read `constructor` off the prototype instead of the dictionary of the column.
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] }>;
+        const registry = stagedTable<{ rows: Record<string, string | number>[] }>(window);
         const first = registry["tbl"].rows[0];
         expect(Object.hasOwn(first, "__proto__")).toBe(true);
         expect(first["__proto__"]).toBe("left");
@@ -443,8 +454,7 @@ describe("the table data assets", () => {
         runPageScript(["window"], rendered.dataAssets[0].bytes, window);
         runPageScript(["window"], TABLE_DATA_DECODER, window);
 
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] }>;
+        const registry = stagedTable<{ rows: Record<string, string | number>[] }>(window);
         expect(registry["tbl"].rows[1]).toEqual({ gene: "MYC" });
     });
 
@@ -512,7 +522,7 @@ describe("the provenance data assets", () => {
         for (const asset of provenanceAssets(assets)) {
             runPageScript(["window"], asset.bytes, window);
         }
-        return (window[REPORT_PROVENANCE_GLOBAL] ?? {});
+        return window[REPORT_PROVENANCE_GLOBAL] ?? {};
     }
 
     it("registers the document and the attestation under one global, byte for byte", async () => {
@@ -562,7 +572,10 @@ describe("the provenance data assets", () => {
             })
         )._unsafeUnwrap();
         const [documentAsset, attestationAsset] = provenanceAssets(rendered.dataAssets);
-        const tableAsset = must(rendered.dataAssets.find((asset) => asset.name.startsWith("t-")), "tableAsset");
+        const tableAsset = must(
+            rendered.dataAssets.find((asset) => asset.name.startsWith("t-")),
+            "tableAsset",
+        );
 
         // A `fetch` is refused on a `file://` page, thus the document reaches the reader through a script tag
         // and never through a request.
@@ -1903,9 +1916,8 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(page("li#ref-4").text()).toContain("hr");
         // The option prints each statistic in the number format of its column.
         const option = optionRecord(jsonParse(page(".report-chart script[type='application/json']").text(), z.unknown()));
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const graphic = (option.graphic as Array<{ style: { text: string } }>)[0];
-        expect(graphic.style.text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
+        const graphic = optionRecordsOrEmpty(option.graphic)[0];
+        expect(optionRecord(graphic.style).text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
     });
 
     it("marks the tree of each axis of a chart after its binding, and lists each one in the appendix", async () => {
@@ -2579,19 +2591,16 @@ describe("the grid boot", () => {
         const run = boot({ one: genePayload(total) });
 
         run.fire("beforeprint");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const printed = run.applied[0] as { option: string; value: Record<string, string | number>[] };
         // The print layout builds every row that it holds. An unbounded table would take hundreds of pages,
         // thus the print stops at the bound and the note names what the paper leaves out.
-        expect(printed.option).toBe("rowData");
-        expect(printed.value.length).toBe(GRID_PRINT_ROW_CAP);
+        expect(run.applied[0].option).toBe("rowData");
+        expect(optionArray(run.applied[0].value).length).toBe(GRID_PRINT_ROW_CAP);
         expect(run.applied[1]).toEqual({ option: "domLayout", value: "print" });
         expect(run.notes[0].textContent).toBe("The print shows the first 1,000 of 1,201 rows. The full table rides the download.");
 
         run.fire("afterprint");
         expect(run.applied[2]).toEqual({ option: "domLayout", value: "normal" });
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((run.applied[3] as { option: string; value: unknown[] }).value.length).toBe(total);
+        expect(optionArray(run.applied[3].value).length).toBe(total);
         // The screen shows no note, thus the line lives for the print alone.
         expect(run.notes[0].textContent).toBe("");
     });
@@ -2778,7 +2787,7 @@ describe("the chart bootstrap waits for each chart to finish", () => {
 
 describe("the chart bootstrap under a broken chart", () => {
     /** One chart container beside its option script, the pair that the bootstrap walks. */
-    function fakeContainer(id: string): unknown {
+    function fakeContainer(id: string): { getAttribute: () => string; nextElementSibling: { getAttribute: () => string; textContent: string } } {
         return {
             getAttribute: () => id,
             nextElementSibling: { getAttribute: () => "application/json", textContent: "{}" },
@@ -2789,7 +2798,7 @@ describe("the chart bootstrap under a broken chart", () => {
      * Run the emitted bootstrap over fake page globals. Each global arrives as a parameter, thus the script
      * reads the fakes and no real browser is necessary.
      */
-    function runBootstrap(containers: unknown[], init: (container: unknown) => unknown): { ready: boolean; errors: string[] } {
+    function runBootstrap<T>(containers: T[], init: (container: T) => unknown): { ready: boolean; errors: string[] } {
         const errors: string[] = [];
         const win: Record<string, unknown> = { addEventListener: () => undefined };
         const doc = {
@@ -2809,7 +2818,7 @@ describe("the chart bootstrap under a broken chart", () => {
         const good: string[] = [];
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
         const { ready, errors } = runBootstrap([fakeContainer("bad"), fakeContainer("good")], (container) => {
-            if ((container as { getAttribute: () => string }).getAttribute() === "bad") {
+            if (container.getAttribute() === "bad") {
                 throw new Error("bad option");
             }
             good.push("init");
@@ -2879,13 +2888,14 @@ describe("the chart bootstrap binds the toolbox", () => {
 
     it("binds each handler name of the toolbox to its page function before the chart reads the option", () => {
         const { applied } = bootToolbox();
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const feature = (applied[0].toolbox as { feature: Record<string, Record<string, unknown>> }).feature;
-        expect(typeof feature.myExport.onclick).toBe("function");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((feature.myExport.onclick as { name: string }).name).toBe(EXPORT_MENU_FUNCTION);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((feature.dataView.optionToContent as { name: string }).name).toBe(DATA_VIEW_FUNCTION);
+        const toolbox = optionRecord(applied[0].toolbox);
+        const feature = optionRecord(toolbox.feature);
+        const onclick = optionRecord(feature.myExport).onclick;
+        if (typeof onclick !== "function") throw new Error(`the export menu handler did not bind: ${typeof onclick}`);
+        expect(onclick.name).toBe(EXPORT_MENU_FUNCTION);
+        const optionToContent = optionRecord(feature.dataView).optionToContent;
+        if (typeof optionToContent !== "function") throw new Error(`the data view handler did not bind: ${typeof optionToContent}`);
+        expect(optionToContent.name).toBe(DATA_VIEW_FUNCTION);
     });
 
     it("hides the canvas layer of the toolbox of each chart for the print, and shows it again after the print", () => {
@@ -2894,11 +2904,11 @@ describe("the chart bootstrap binds the toolbox", () => {
         // A new option draws each series again, and a dense series then draws in chunks, thus the print sets no option.
         expect(applied.length).toBe(1);
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(layers.map((layer) => (layer.dom.style.visibility) as string | undefined)).toEqual([undefined, undefined, "hidden"]);
+        expect(layers.map((layer) => layer.dom.style.visibility as string | undefined)).toEqual([undefined, undefined, "hidden"]);
         listeners.afterprint();
         expect(applied.length).toBe(1);
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect(layers.map((layer) => (layer.dom.style.visibility) as string | undefined)).toEqual([undefined, undefined, ""]);
+        expect(layers.map((layer) => layer.dom.style.visibility as string | undefined)).toEqual([undefined, undefined, ""]);
     });
 });
 
@@ -2963,10 +2973,9 @@ describe("the chart bootstrap registers the named renderers", () => {
 
     it("keeps the option of each chart by its block id, with the renderer names as data", () => {
         const { win } = bootOne(option);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        const kept = (win[CHART_OPTIONS_GLOBAL] as Record<string, Record<string, unknown>>)["violin-1"];
+        const kept = optionRecord(optionRecord(win[CHART_OPTIONS_GLOBAL])["violin-1"]);
         // The export draws the chart again from this option, thus it stays plain data and names each renderer.
-        expect((optionRecords(kept.series)).map((entry) => entry.renderItem)).toEqual(["outline", "interval"]);
+        expect(optionRecords(kept.series).map((entry) => entry.renderItem)).toEqual(["outline", "interval"]);
     });
 });
 
@@ -3005,8 +3014,7 @@ describe("renderReportPage number format", () => {
         const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
         runPageScript(["window"], rendered.dataAssets[0].bytes, window);
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: unknown[] }>;
+        const registry = stagedTable<{ rows: unknown[] }>(window);
 
         // The number format is presentation, and the payload is data. A rounded value in the asset would
         // put a shown form where a magnitude belongs.
@@ -3095,8 +3103,7 @@ describe("the shared chart payload", () => {
             runPageScript(["window"], asset.bytes, window);
         }
         runPageScript(["window"], TABLE_DATA_DECODER, window);
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        return window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[]; total: number }>;
+        return stagedTable<{ rows: Record<string, string | number>[]; total: number }>(window);
     }
 
     it("holds one payload for one artifact, and a table and a chart both read it", async () => {
@@ -3209,8 +3216,7 @@ describe("the shared chart payload", () => {
 
     /** The series list of one option. */
     function asSeries(option: Record<string, unknown>): { data: unknown[] }[] {
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        return (option.series ?? []) as { data: unknown[] }[];
+        return optionRecordsOrEmpty(option.series).map((series) => ({ data: optionArray(series.data) }));
     }
 });
 
@@ -3477,7 +3483,7 @@ describe("the PNG download of the page", () => {
         };
         const echarts = {
             init: (_dom: unknown, theme: unknown, opts: Record<string, unknown> | undefined) => {
-                init.push({ theme, ...(opts) });
+                init.push({ theme, ...opts });
                 return {
                     on: (event: string, listener: () => void) => event === "finished" && listener(),
                     setOption: (given: Record<string, unknown>) => setOption.push(given),
@@ -3506,12 +3512,12 @@ describe("the PNG download of the page", () => {
         const drawn = clickExport("single");
         expect(drawn.init).toEqual([{ theme: "inflexa-print", renderer: "canvas", width: 336, height: 253, devicePixelRatio: 3.125 }]);
         // 336 CSS pixels at a ratio of 3.125 is 1050 pixels, the width of one journal column at 300 DPI.
-        expect(336 * (optionNumber(drawn.init[0].devicePixelRatio))).toBe(1050);
+        expect(336 * optionNumber(drawn.init[0].devicePixelRatio)).toBe(1050);
         expect(drawn.dataUrl).toEqual([{ type: "png", pixelRatio: 3.125, backgroundColor: "#ffffff" }]);
         expect(drawn.setOption[0].tooltip).toBeUndefined();
         expect(drawn.setOption[0].animation).toBe(false);
         // The script reads the PNG in the same task, thus each series draws in one pass and no chunk waits for a later frame.
-        expect((optionRecords(drawn.setOption[0].series)).map((entry) => entry.progressive)).toEqual([0]);
+        expect(optionRecords(drawn.setOption[0].series).map((entry) => entry.progressive)).toEqual([0]);
         expect(drawn.downloads).toEqual([{ href: "data:image/png;base64,AAAA", download: "bars-single.png" }]);
     });
 
@@ -3520,7 +3526,7 @@ describe("the PNG download of the page", () => {
         const slide = clickExport("slide");
         expect(slide.init[0]).toEqual({ theme: "inflexa-slide", renderer: "canvas", width: 1920, height: 1080, devicePixelRatio: 1 });
         // The slide text is twice the page text, thus the gap between the axis and its name doubles.
-        expect(optionNumber((optionRecord(slide.setOption[0].xAxis)).nameGap)).toBe(68);
+        expect(optionNumber(optionRecord(slide.setOption[0].xAxis).nameGap)).toBe(68);
     });
 
     it("draws nothing for a control that names no kept chart or no size", () => {
@@ -3647,8 +3653,7 @@ describe("the pre-bound total of a table", () => {
         const window: Record<string, unknown> = {};
         runPageScript(["window"], rendered.dataAssets[0].bytes, window);
 
-        // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { total: number; rows: unknown[] }>;
+        const registry = stagedTable<{ total: number; rows: unknown[] }>(window);
         expect(registry["tbl"].total).toBe(14201);
         expect(registry["tbl"].rows.length).toBe(10);
     });
@@ -3672,7 +3677,6 @@ describe("the pre-bound total of a table", () => {
 
         // A whole table shows every row that it holds, thus the footer states the one count.
         expect(load(rendered.html)(`.${GRID_COUNT_CLASS}`).text()).toBe("2 rows");
-        // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        expect((window[TABLE_DATA_GLOBAL] as Record<string, { total: number }>)["tbl"].total).toBe(2);
+        expect(stagedTable<{ total: number }>(window)["tbl"].total).toBe(2);
     });
 });

@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { randomBytes } from "node:crypto";
 
-import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js";
-import { upsertAnalysis } from "./analyses.js";
-import { upsertPlan } from "./plans.js";
-import { insertRun, ORPHANED_RUN_GRACE_MS, reconcileOrphanedRuns } from "./runs.js";
+import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
+import { upsertAnalysis } from "../analyses.js";
+import { upsertPlan } from "../plans.js";
+import { insertRun, ORPHANED_RUN_GRACE_MS, reconcileOrphanedRuns } from "../runs.js";
 
 // reconcileOrphanedRuns reads the real `dbos.workflow_status`, thus it runs against a launched engine: a plain
 // Postgres schema has no such table. Each test uses its own analysis id, so the rows of one test never reach
@@ -34,7 +34,10 @@ describe("reconcileOrphanedRuns", () => {
     }
 
     async function statusOf(runId: string): Promise<{ status: string; error: string | null; completed_at: string | null }> {
-        const { rows } = await rig.pool.query({ text: "SELECT status, error, completed_at FROM cortex_runs WHERE run_id = $1", values: [runId] });
+        const { rows } = await rig.pool.query<{ status: string; error: string | null; completed_at: string | null }>({
+            text: "SELECT status, error, completed_at FROM cortex_runs WHERE run_id = $1",
+            values: [runId],
+        });
         return rows[0];
     }
 
