@@ -262,16 +262,25 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
                 sha256: scriptSha256(replaced.content),
             });
             const lines: readonly number[] | undefined = replaced.lines;
+            const result: {
+                status: "ok";
+                path: string;
+                replacements: number;
+                bytesWritten: number;
+                lines: readonly number[] | undefined;
+                decision_record_noted?: true;
+            } = {
+                status: "ok",
+                path: write.path,
+                replacements: replaced.replacements,
+                bytesWritten: write.bytesWritten,
+                lines: !(lines === undefined) ? lines : undefined,
+            };
+            // Absent stays absent: the gate reads key presence with the `in` operator.
+            if (noted.status === "noted") result.decision_record_noted = true;
             return ok(
                 withToolCallRecord(
-                    {
-                        status: "ok" as const,
-                        path: write.path,
-                        replacements: replaced.replacements,
-                        bytesWritten: write.bytesWritten,
-                        lines: !(lines === undefined) ? lines : undefined,
-                        decision_record_noted: noted.status === "noted" ? true as const : undefined,
-                    },
+                    result,
                     noted.status === "noted" ? [write.record, noted.write] : [write.record],
                 ),
             );

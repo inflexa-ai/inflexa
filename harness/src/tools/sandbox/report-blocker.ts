@@ -81,7 +81,7 @@ export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool {
         describeCall: "none",
         execute: (input) => {
             const degenerate = degenerateTerminalText(input.reason);
-            if (degenerate) return err({ error: `${degenerate} Give the real reason, or continue the work.`, retryable: true });
+            if (degenerate) return Promise.resolve(err({ error: `${degenerate} Give the real reason, or continue the work.`, retryable: true }));
             deps.record({ kind: "blocker", reason: input.reason });
             return Promise.resolve(ok({
                 recorded: true as const,

@@ -172,7 +172,7 @@ describe("knowledge_template with a binding", () => {
                 ],
             },
             ctx,
-        );
+        ).then((r) => r._unsafeUnwrap());
         expect((await recordOf(workingDir)).settings_overrides).toEqual([]);
     });
 

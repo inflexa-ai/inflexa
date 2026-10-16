@@ -39,6 +39,13 @@ function toolContext(analysisId = "analysis-001"): ToolContext {
     };
 }
 
+type PlanResult = {
+    event: string;
+    error?: string;
+    question?: string;
+    planId?: string;
+};
+
 /**
  * Everything the caller supplies. There is no dataset field here — the dataset's
  * facts are the tool's to read, not the caller's to re-type.

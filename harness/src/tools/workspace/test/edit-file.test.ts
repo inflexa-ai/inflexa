@@ -3,8 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readFile as readHostFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { jsonParse } from "../../../lib/json.js";
 import { createEditFileTool } from "../edit-file.js";
 import { createReadFileTool } from "../read-file.js";
 import { createWorkspaceMutator } from "../mutator.js";
@@ -97,9 +99,13 @@ describe("edit_file tool", () => {
         )._unsafeUnwrap();
         expect(out).toMatchObject({ status: "ok", decision_record_noted: true });
 
-        const record = JSON.parse(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8"));
+        const record = jsonParse(
+            await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8"),
+            z.looseObject({ written_sha256: z.string(), unvetted_edits: z.array(z.json()) }),
+        );
         expect(record.written_sha256).toBe("sha256:old");
         expect(record.unvetted_edits).toEqual([
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax, typescript/no-unsafe-assignment -- the digest shape has no builtin matcher, and bun's stringMatching is an AsymmetricMatcher that bun-types names no type for.
             { path: "scripts/de.R", note: "edit_file: 1 replacement(s)", sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) },
         ]);
         const edited = await readHostFile(join(stepDir, "scripts", "de.R"), "utf8");

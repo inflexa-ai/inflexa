@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
+import { z } from "zod";
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -18,6 +19,7 @@ import type { ExecEmit, ExecRequest, ExecResult, SandboxRef } from "../../../san
 import { createExecuteCommandTool } from "../execute-command.js";
 import { EXEC_STREAM_BYTE_CAP } from "../result-bounds.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+import { jsonParse } from "../../../lib/json.js";
 
 const DEFAULT_CWD = "/analysis-001/runs/run-abc/step1";
 
@@ -115,14 +117,14 @@ describe("execute_command and the decision record of a script", () => {
             sandbox: makeSandboxRef(),
             deadlineMs: () => 9_999_999,
             defaultCwd: DEFAULT_CWD,
-            workspaceFilesystem: createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) }),
+            workspaceFilesystem: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) }),
             mutator: createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir }),
         });
         return { tool, client };
     }
 
     async function record(): Promise<Record<string, unknown>> {
-        return JSON.parse(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8"));
+        return jsonParse(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8"), z.looseObject({ unvetted_edits: z.array(z.json()) }));
     }
 
     it("notes a script that changed since its record before the command runs, and leaves an unchanged one alone", async () => {
@@ -133,14 +135,14 @@ describe("execute_command and the decision record of a script", () => {
         const { ctx } = makeToolContext();
 
         // Unchanged: the record stays as it is.
-        await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx);
+        await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx).then((r) => r._unsafeUnwrap());
         expect((await record()).unvetted_edits).toEqual([]);
         expect(client.execs).toHaveLength(1);
 
         // Changed by a path no file tool recorded: the note lands before the run, with the digest of the bytes that run.
         const changed = "ALPHA <- 0.5\n";
         await writeFile(join(stepDir(), "scripts", "de.R"), changed);
-        await tool.execute({ command: ["Rscript", "scripts/de.R", "--verbose"] }, ctx);
+        await tool.execute({ command: ["Rscript", "scripts/de.R", "--verbose"] }, ctx).then((r) => r._unsafeUnwrap());
         const noted = await record();
         expect(noted.unvetted_edits).toEqual([
             { path: `${DEFAULT_CWD}/scripts/de.R`, note: "the script changed by a path no file tool recorded, before it ran", sha256: scriptSha256(changed) },
@@ -148,8 +150,8 @@ describe("execute_command and the decision record of a script", () => {
         expect(client.execs).toHaveLength(2);
 
         // A second run of the same bytes notes nothing more: the last note is the expected digest now.
-        await tool.execute({ command: ["Rscript", `${DEFAULT_CWD}/scripts/de.R`] }, ctx);
-        expect(((await record()).unvetted_edits as unknown[]).length).toBe(1);
+        await tool.execute({ command: ["Rscript", `${DEFAULT_CWD}/scripts/de.R`] }, ctx).then((r) => r._unsafeUnwrap());
+        expect((await record()).unvetted_edits).toHaveLength(1);
     });
 
     it("runs a script of another step whose record it cannot write, and leaves that record as it is", async () => {
@@ -164,7 +166,7 @@ describe("execute_command and the decision record of a script", () => {
         expect(out.status).toBe("ok");
         expect(client.execs).toHaveLength(1);
         // The record of another step is outside the writable prefix: the mutator refused the note, and the record is untouched.
-        expect(JSON.parse(await readFile(join(other, "output", "decision_record_de.json"), "utf8")).unvetted_edits).toEqual([]);
+        expect(jsonParse(await readFile(join(other, "output", "decision_record_de.json"), "utf8"), z.looseObject({ unvetted_edits: z.array(z.json()) })).unvetted_edits).toEqual([]);
     });
 
     it("runs a script without a record, and a command without a script, with no record read", async () => {
@@ -173,7 +175,7 @@ describe("execute_command and the decision record of a script", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ command: ["Rscript", "scripts/own.R"] }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
-        await tool.execute({ command: ["ls", "-la"] }, ctx);
+        await tool.execute({ command: ["ls", "-la"] }, ctx).then((r) => r._unsafeUnwrap());
         expect(client.execs).toHaveLength(2);
     });
 });

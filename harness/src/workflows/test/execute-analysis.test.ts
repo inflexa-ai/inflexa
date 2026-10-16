@@ -1857,7 +1857,7 @@ describe("executeAnalysis child input projection", () => {
     });
 
     it("carries the template binding composed beside the seed into the child input of a grounded step, and none into an ungrounded one", async () => {
-        const pool = makeFakePool({
+        const { pool } = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
         const { deps } = makeDeps({
@@ -1874,7 +1874,7 @@ describe("executeAnalysis child input projection", () => {
             planStepById: {
                 ...base.planStepById,
                 B: {
-                    ...base.planStepById.B!,
+                    ...base.planStepById.B,
                     grounding: {
                         status: "grounded",
                         snapshot: "sha256:71ac",
@@ -1910,7 +1910,7 @@ describe("executeAnalysis child input projection", () => {
     it("hands the child the seed of a checkpoint written as a bare string, with no binding", async () => {
         // A run recovered across the change of the seed shape replays the string
         // the old step returned; the dispatch must still hand the child a prompt.
-        const pool = makeFakePool({
+        const { pool } = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
         const { deps } = makeDeps({

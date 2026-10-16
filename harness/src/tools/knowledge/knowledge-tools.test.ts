@@ -110,7 +110,7 @@ describe("knowledge_recommend", () => {
                 typeof tool.execute
             >[0],
             ctx,
-        );
+        ).then((r) => r._unsafeUnwrap());
         expect(calls.recommend[0]?.situation as unknown).toEqual({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" });
         expect(tool.inputSchema.safeParse({ ...SITUATION, import_state: "tximport" }).success).toBe(false);
     });
@@ -119,7 +119,7 @@ describe("knowledge_recommend", () => {
         const { client, calls } = fakeKnowledgeClient();
         const tool = createKnowledgeRecommendTool({ client });
         const { ctx } = makeToolContext();
-        await tool.execute(tool.inputSchema.parse({ ...SITUATION, preferred_language: "python" }) as Parameters<typeof tool.execute>[0], ctx);
+        await tool.execute(tool.inputSchema.parse({ ...SITUATION, preferred_language: "python" }) as Parameters<typeof tool.execute>[0], ctx).then((r) => r._unsafeUnwrap());
         expect(calls.recommend[0]?.preferences).toEqual({ language: "python" });
         expect(Object.keys(calls.recommend[0]!.situation)).not.toContain("preferred_language");
     });
@@ -408,11 +408,11 @@ describe("the release pin of one plan", () => {
         const fake = fakeKnowledgeClient();
         const [recommend, check] = createKnowledgeTools({ client: fake.client });
         const { ctx } = makeToolContext();
-        await recommend!.execute(SITUATION, ctx);
+        await recommend!.execute(SITUATION, ctx).then((r) => r._unsafeUnwrap());
         expect(fake.calls.recommend[0]?.expected_snapshot).toBeUndefined();
-        await recommend!.execute(SITUATION, ctx);
+        await recommend!.execute(SITUATION, ctx).then((r) => r._unsafeUnwrap());
         expect(fake.calls.recommend[1]?.expected_snapshot).toBe(SNAPSHOT.digest);
-        await check!.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx);
+        await check!.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx).then((r) => r._unsafeUnwrap());
         expect(fake.calls.check[0]?.expected_snapshot).toBe(SNAPSHOT.digest);
     });
 
@@ -465,7 +465,7 @@ describe("knowledge_check", () => {
             ...SITUATION,
             steps: [{ step_type: "differential_expression", method: "DESeq2 Wald test", method_id: "M-0001" }],
         }) as Parameters<typeof tool.execute>[0];
-        await tool.execute(input, ctx);
+        await tool.execute(input, ctx).then((r) => r._unsafeUnwrap());
         expect(calls.check[0]?.steps[0]?.method_id).toBe("M-0001");
         expect(
             tool.inputSchema.safeParse({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald test", method_id: "deseq2" }] })
@@ -499,7 +499,7 @@ describe("knowledge_check", () => {
             ...SITUATION,
             steps: [{ step_type: "differential_expression", method: "log2 fold change only", outcome: "descriptive_only" }],
         }) as Parameters<typeof tool.execute>[0];
-        await tool.execute(input, ctx);
+        await tool.execute(input, ctx).then((r) => r._unsafeUnwrap());
         expect(calls.check[0]?.steps[0]?.outcome).toBe("descriptive_only");
     });
 
@@ -648,7 +648,7 @@ describe("knowledge_template", () => {
         const fake = fakeKnowledgeClient();
         const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, farmLockFile: lockPath, imagePackagesFile: recordPath });
         const { ctx } = makeToolContext();
-        await tool.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx);
+        await tool.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx).then((r) => r._unsafeUnwrap());
         const farm = fake.calls.render[0]?.farm;
         // The lock schema may carry more than the two fields; the client sends the pair.
         expect(farm?.some((pkg) => pkg.name === "DESeq2" && pkg.version === "1.52.0")).toBe(true);
@@ -656,7 +656,7 @@ describe("knowledge_template", () => {
         expect(farm?.some((pkg) => pkg.name === "survival" && pkg.version === "3.8-6")).toBe(true);
 
         const { tool: bare, calls } = build();
-        await bare.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx);
+        await bare.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx).then((r) => r._unsafeUnwrap());
         expect(calls.render[0]?.farm).toBeUndefined();
     });
 
