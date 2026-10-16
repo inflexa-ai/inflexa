@@ -182,7 +182,8 @@ async function runFetch<T>(url: string, options: ApiFetchOptions): Promise<Resul
                 return err({ type: "http_status", status: res.status, body: text.trim() });
             }
 
-            const data = parseAs === "text" ? ((await res.text())) : ((await res.json()));
+            // oxlint-disable-next-line typescript/no-unsafe-assignment -- the caller-declared T trusts the wire response; apiFetchValidated is the honest route for new callers.
+            const data = parseAs === "text" ? await res.text() : await res.json();
             return ok(data);
         } catch (e) {
             if (e instanceof DOMException && e.name === "TimeoutError") {

@@ -639,7 +639,8 @@ export function openLoop(
         const id = randomUUID();
         const stepNamespace = `compaction-${compactions++}`;
         const startedAt = performance.now();
-        const emitPart = (data: Omit<CompactionPart, "type" | "trigger">) => emit({ type: "data-compaction", source, data: { ...data, trigger } });
+        const emitPart = (data: Omit<CompactionPart, "type" | "trigger">): void | Promise<void> =>
+            emit({ type: "data-compaction", source, data: { ...data, trigger } });
         await emitPart({ id, status: "running", tokensBefore });
         const { onRound: _onRound, compaction: _compaction, turnInput: _turnInput, ...conversationOptions } = opts;
         let settled = false;

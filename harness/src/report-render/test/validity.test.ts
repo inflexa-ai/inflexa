@@ -33,6 +33,7 @@ type CssFinding = { name: string; message: string; property?: string };
 
 /** The one signature that the gate uses. The cast gives the untyped import a precise type. */
 // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
+// oxlint-disable-next-line typescript/no-unsafe-assignment -- the package ships no types; this annotation is the boundary that types the untyped import.
 const validateCss: (css: string, filename?: string) => CssFinding[] = validateCssRaw;
 
 /**

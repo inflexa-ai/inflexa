@@ -90,6 +90,8 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
  * does not know. A type that the registry does not know passes unchanged, because a newer emitter can send it. The
  * source is checked for each type, because {@link isRootFrame} reads its call path.
  */
+export function checkChatPart(frame: ChatPartFrame): { readonly ok: true; readonly frame: ChatPartFrame } | { readonly ok: false; readonly error: string };
+export function checkChatPart(frame: ChatFrame): ChatPartCheck;
 export function checkChatPart(frame: ChatFrame): ChatPartCheck {
     const { source, ...part } = frame;
     if (source !== undefined) {
