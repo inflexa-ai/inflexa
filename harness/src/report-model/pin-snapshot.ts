@@ -26,6 +26,7 @@ import { queryRunsByAnalysis } from "../state/runs.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactSnapshot, CitationRecord, ReportSnapshot } from "./reference-resolver.js";
 import { parseJsonOrUndefined } from "../lib/json.js";
+import { maybeRecord } from "../lib/shape.js";
 
 /**
  * The reason that the pin gave no snapshot. The ledger read and the run listing are the two operations
@@ -92,16 +93,17 @@ function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
         return;
     }
     for (const reference of list) {
-        if (typeof reference !== "object" || reference === null) {
+        const fields = maybeRecord(reference);
+        if (fields === undefined) {
             continue;
         }
-        const pmid = reference.pmid;
+        const pmid = fields.pmid;
         if (typeof pmid !== "string") {
             continue;
         }
         const id = pmid.trim();
         if (id.length > 0) {
-            const record = recordOf(reference);
+            const record = recordOf(fields);
             entries.push(record === undefined ? { key: `pmid:${id}` } : { key: `pmid:${id}`, record });
         }
     }
@@ -124,20 +126,20 @@ function citationsOf(text: string): CitationEntry[] {
     if (parsed === undefined) {
         return [];
     }
-    if (typeof parsed !== "object" || parsed === null) {
+    const fields = maybeRecord(parsed);
+    if (fields === undefined) {
         return [];
     }
     const entries: CitationEntry[] = [];
-    // SAFETY: the object guard bounds the read — the member goes to pushPmidCitations, which tests each entry before use.
-    pushPmidCitations((parsed as { keyReferences?: unknown }).keyReferences, entries);
-    // SAFETY: the object guard bounds the read, and the Array.isArray check below rejects a non-array.
-    const findings = (parsed as { findings?: unknown }).findings;
+    pushPmidCitations(fields.keyReferences, entries);
+    const findings = fields.findings;
     if (Array.isArray(findings)) {
         for (const finding of findings) {
-            if (typeof finding !== "object" || finding === null) {
+            const findingFields = maybeRecord(finding);
+            if (findingFields === undefined) {
                 continue;
             }
-            pushPmidCitations(finding.references, entries);
+            pushPmidCitations(findingFields.references, entries);
         }
     }
     return entries;

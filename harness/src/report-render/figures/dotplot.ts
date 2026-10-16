@@ -20,7 +20,7 @@ import { err, ok, type Result } from "neverthrow";
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel, type ChartComposition } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
 import type { ChartRow, EchartOption } from "../chart.js";
-import { optionCell, optionMemberOrUndefined, optionText } from "../option-lens.js";
+import { optionCell, optionMember, optionMemberOrUndefined, optionText } from "../option-lens.js";
 import { CHART_BODY_PX, SEQUENTIAL_RAMP } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
@@ -134,8 +134,9 @@ function itemValue(item: unknown): unknown[] | undefined {
         const members: unknown[] = item;
         return members;
     }
-    if (typeof item === "object" && item !== null) {
-        const value = optionRecord(item).value;
+    const fields = optionMemberOrUndefined(item);
+    if (fields !== undefined) {
+        const value = fields.value;
         if (Array.isArray(value)) {
             const members: unknown[] = value;
             return members;
@@ -227,7 +228,7 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         graphic.push(sizeLegend(range, scaleTitle(context.labels, size), formatSource(context, size)[0], DOTPLOT_SIZE_PLACE, formatSource(context, size)[1]));
     }
 
-    const composedX = typeof option.xAxis === "object" && option.xAxis !== null ? optionRecord(option.xAxis) : {};
+    const composedX = optionMember(option.xAxis);
     const xAxis =
         composedX.type === "value"
             ? { ...composedX, boundaryGap: [...DOTPLOT_VALUE_ROOM], axisLabel: { ...optionMemberOrUndefined(composedX.axisLabel), hideOverlap: true } }

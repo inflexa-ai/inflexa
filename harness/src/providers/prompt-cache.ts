@@ -97,7 +97,7 @@ import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { SystemModelMessage } from "ai";
 
 import type { ModelMessage, PromptCachePolicy, ProviderOptions } from "./types.js";
-import { typedMember } from "../lib/shape.js";
+import { maybeRecord, typedMember } from "../lib/shape.js";
 
 /**
  * The default policy: cache with the 5-minute TTL.
@@ -211,9 +211,9 @@ function canHostBreakpoint(message: ModelMessage): boolean {
     if (typeof content === "string") return content.length > 0;
     if (!Array.isArray(content)) return false;
     const last: unknown = content.at(-1);
-    if (typeof last !== "object" || last === null) return false;
-    // SAFETY: the object guard bounds the read — the cast only reaches the block's discriminant, and the comparison below is the whole decision.
-    return (last as { readonly type?: unknown }).type !== "reasoning";
+    const fields = maybeRecord(last);
+    if (fields === undefined) return false;
+    return fields.type !== "reasoning";
 }
 
 /** The index of the last message that can host the breakpoint, or `-1` when none can. */

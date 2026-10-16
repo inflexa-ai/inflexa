@@ -19,6 +19,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { maybeRecord } from "../lib/shape.js";
 import type { UnresolvedReference } from "../contracts/report-reference.js";
 import { walkBlocks } from "./block-walk.js";
 import { DraftBlockSchema, type DraftBlock, type DraftDocument, type DraftSectionBlock } from "./draft.js";
@@ -151,7 +152,7 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
         return err({ reason: "payload-kind-mismatch", detail: `the block ${operation.targetId} is an atom, and it takes a full block, not a title` });
     }
     const payload = operation.block;
-    if (payload === null || typeof payload !== "object") {
+    if (maybeRecord(payload) === undefined) {
         return err({ reason: "malformed-block", detail: "the payload is not an object" });
     }
     // The id stamp sets the target id on the payload before the parse. Thus an id mismatch is
@@ -203,7 +204,7 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
     const movedPath = target.path;
 
     const place = operation.destination?.place;
-    if (place !== undefined && typeof place === "object") {
+    if (place !== undefined && place !== "start" && place !== "end") {
         const anchorId = "before" in place ? place.before : place.after;
         if (anchorId === operation.targetId) {
             return err({ reason: "unknown-target", detail: `the block ${operation.targetId} cannot anchor its own move` });
@@ -254,7 +255,7 @@ function resolveDestination(document: DraftDocument, destination: DraftDestinati
     const place: DraftPlace = destination?.place ?? "end";
     const parentId = destination?.parentId;
 
-    if (typeof place === "object") {
+    if (place !== "start" && place !== "end") {
         const anchorId = "before" in place ? place.before : place.after;
         const anchor = locate(document, anchorId);
         if (anchor === undefined) {

@@ -21,6 +21,8 @@
  * shared by reference. `normalize(normalize(x))` deep-equals `normalize(x)`.
  */
 
+import { maybeRecord } from "../../lib/shape.js";
+
 /** Max length of a derived `saveAsImage` filename. */
 const MAX_FILENAME_LEN = 64;
 
@@ -36,7 +38,7 @@ export type NormalizeEchartSpecOptions = {
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return maybeRecord(value) !== undefined && !Array.isArray(value);
 }
 
 /** The axis entries of an `xAxis`/`yAxis` option, which ECharts accepts as one object or an array. */

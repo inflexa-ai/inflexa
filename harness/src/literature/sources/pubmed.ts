@@ -1,7 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { z } from "zod";
 
-import { maybeRecord, recordMember } from "../../lib/shape.js";
+import { maybeRecord, recordMember, typedMember } from "../../lib/shape.js";
 
 import { requestJson, requestText, type SourceHttpOptions, type SourceHttpResult } from "./http.js";
 import { splitLines } from "../../lib/text.js";
@@ -120,8 +120,9 @@ function getAuthorsFromDocSum(items: DocSumItem | DocSumItem[] | undefined): str
 }
 
 export function parseEsummary(xml: string): PubMedSummary[] {
-    const parsed = xmlParser.parse(xml);
-    const docSums = (parsed?.eSummaryResult ?? parsed)?.DocSum;
+    const parsed = maybeRecord(xmlParser.parse(xml));
+    const holder = recordMember(parsed, "eSummaryResult") ?? parsed;
+    const docSums = recordMember(holder, "DocSum");
     if (docSums === undefined) return [];
     const documents: DocSum[] = Array.isArray(docSums) ? docSums : [docSums];
     return documents.map((document) => {
@@ -137,13 +138,10 @@ export function parseEsummary(xml: string): PubMedSummary[] {
 }
 
 export function parseEfetch(xml: string): ArticleDetail[] {
-    const articleSet = xmlParser.parse(xml)?.PubmedArticleSet;
+    const articleSet = recordMember(maybeRecord(xmlParser.parse(xml)), "PubmedArticleSet");
     if (articleSet === undefined) return [];
-    const entries: unknown[] = Array.isArray(articleSet.PubmedArticle)
-        ? articleSet.PubmedArticle
-        : articleSet.PubmedArticle === undefined
-          ? []
-          : [articleSet.PubmedArticle];
+    const articleMember = typedMember(articleSet, "PubmedArticle");
+    const entries: unknown[] = Array.isArray(articleMember) ? articleMember : articleMember === undefined ? [] : [articleMember];
 
     return entries.map((entry) => {
         const article = maybeRecord(entry);
@@ -246,11 +244,12 @@ function extractSection(section: unknown, output: ArticleSection[]): void {
 }
 
 export function parsePmcFullText(xml: string): FullTextResult | null {
-    const article = xmlParser.parse(xml)?.["pmc-articleset"]?.article;
-    const body = article?.body;
+    const article = recordMember(recordMember(maybeRecord(xmlParser.parse(xml)), "pmc-articleset"), "article");
+    const body = recordMember(article, "body");
     if (body === undefined) return null;
     const sections: ArticleSection[] = [];
-    for (const section of body.sec === undefined ? [] : Array.isArray(body.sec) ? body.sec : [body.sec]) extractSection(section, sections);
+    const nested = typedMember(body, "sec");
+    for (const section of nested === undefined ? [] : Array.isArray(nested) ? nested : [nested]) extractSection(section, sections);
     if (sections.length === 0) {
         const text = extractParagraphs(body);
         if (text) sections.push({ heading: "", text });

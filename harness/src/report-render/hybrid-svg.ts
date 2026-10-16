@@ -1,5 +1,4 @@
-
-import { optionRecord } from "./option-lens.js";
+import { optionMemberOrUndefined } from "./option-lens.js";
 
 /**
  * The hybrid SVG of a dense chart: the vector axes, text, legend, and guides, over one raster layer of the points.
@@ -37,11 +36,11 @@ export type PointLayerImage = {
  * label. A scatter of size zero, or one with a shown label, carries names, and names stay vector text.
  */
 export function isPointLayer(series: unknown): boolean {
-    if (typeof series !== "object" || series === null) return false;
-    const fields = optionRecord(series);
+    const fields = optionMemberOrUndefined(series);
+    if (fields === undefined) return false;
     if (fields.type !== "scatter" || fields.symbolSize === 0 || fields.symbol === "none") return false;
-    const label = fields.label;
-    return !(typeof label === "object" && label !== null && (optionRecord(label)).show === true);
+    const label = optionMemberOrUndefined(fields.label);
+    return !(label?.show === true);
 }
 
 /** True when an option holds a point layer. The page can then build the hybrid SVG of the option. */

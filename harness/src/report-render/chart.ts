@@ -113,6 +113,7 @@ import {
     optionArray,
     optionCell,
     optionCells,
+    optionMember,
     optionMemberOrUndefined,
     optionNullableNumbers,
     optionRecord,
@@ -334,7 +335,7 @@ function bodyPxOf(raw: EchartOption, option: EchartOption): number {
     if (typeof stated === "number") return Math.max(CHART_BODY_PX, stated);
     const grids = option.grid;
     if (!Array.isArray(grids)) return CHART_BODY_PX;
-    const panels = grids.filter((grid) => typeof grid === "object" && grid !== null && optionRecord(grid).outerBoundsMode === FACET_BOUNDS_MODE).length;
+    const panels = grids.filter((grid) => optionMemberOrUndefined(grid)?.outerBoundsMode === FACET_BOUNDS_MODE).length;
     const rows = panels <= 2 ? 1 : Math.ceil(panels / FACET_COLUMNS);
     return CHART_BODY_PX + (rows - 1) * FACET_ROW_PX;
 }
@@ -353,7 +354,7 @@ function blockWidthOf(option: EchartOption, bodyPx: number): number | undefined 
     if (!Array.isArray(media)) return undefined;
     let width: number | undefined;
     for (const rule of media) {
-        const query = typeof rule === "object" && rule !== null ? optionMemberOrUndefined(optionRecord(rule).query) : undefined;
+        const query = optionMemberOrUndefined(optionMember(rule).query);
         if (query === undefined || query.maxWidth !== undefined || typeof query.minWidth !== "number" || typeof query.minHeight !== "number") continue;
         if (query.minHeight <= bodyPx) width = query.minWidth;
     }
@@ -2562,7 +2563,8 @@ function drawnMembers(emitted: readonly EmittedSeries[], seriesIndex: readonly n
         const data = emitted[index].option.data;
         if (!Array.isArray(data)) continue;
         for (const item of data) {
-            const value = Array.isArray(item) ? item : typeof item === "object" && item !== null ? optionRecord(item).value : undefined;
+            const fields = optionMemberOrUndefined(item);
+            const value = Array.isArray(item) ? item : fields?.value;
             const member = Array.isArray(value) ? toNumber(optionCell(value[dimension])) : null;
             if (member !== null) members.push(member);
         }
@@ -2809,7 +2811,7 @@ function facetLayout(names: readonly (Cell | undefined)[], shared: AxisPair, leg
  * turned label still covers its neighbor. `widthPx` is the panel width on the page, and an x axis alone states it.
  */
 function panelAxis(axis: EchartOption, widthPx?: number): EchartOption {
-    const label = typeof axis.axisLabel === "object" && axis.axisLabel !== null ? optionRecord(axis.axisLabel) : {};
+    const label = optionMember(axis.axisLabel);
     const base = { ...withoutName(axis), splitNumber: FACET_SPLIT_NUMBER };
     if (axis.type !== "category" || !Array.isArray(axis.data)) return { ...base, axisLabel: { ...label, hideOverlap: true } };
     // SAFETY: the encoding layer authors a category axis's data from the track's label column, so each element is
@@ -2850,9 +2852,9 @@ function thinnedLabels(option: EchartOption): EchartOption {
     if (option.xAxis === undefined) return option;
     let thinned = false;
     const thin = (axis: unknown): unknown => {
-        if (typeof axis !== "object" || axis === null || Array.isArray(axis)) return axis;
-        const fields = optionRecord(axis);
-        const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? optionRecord(fields.axisLabel) : {};
+        const fields = optionMemberOrUndefined(axis);
+        if (fields === undefined) return axis;
+        const label = optionMember(fields.axisLabel);
         if (fields.type !== "category" || !Array.isArray(fields.data) || label.rotate !== 90 || label.show === false) return axis;
         const interval = categoryInterval(fields.data.length, CHART_PAGE_TEXT_PX, pagePlotWidth(option.grid, fields));
         if (interval === 0) return axis;
@@ -2873,7 +2875,7 @@ function thinnedLabels(option: EchartOption): EchartOption {
  */
 function pagePlotWidth(grid: unknown, axis: EchartOption): number {
     const entry = Array.isArray(grid) ? grid[typeof axis.gridIndex === "number" ? axis.gridIndex : 0] : grid;
-    const fields = typeof entry === "object" && entry !== null ? optionRecord(entry) : {};
+    const fields = optionMember(entry);
     const stated = pagePx(fields.width);
     return stated > 0 ? stated : CHART_PAGE_WIDTH_PX - pagePx(fields.left) - pagePx(fields.right);
 }
@@ -3925,7 +3927,7 @@ function withValueLabels(
         if (!labeled(entry) || !labelable(index)) return entry;
         const data = optionArray(entry.data).map((item) => {
             // A bar item is a pair or an object whose value is the pair, thus the two forms read one field.
-            const fields: EchartOption = typeof item === "object" && item !== null && !Array.isArray(item) ? optionRecord(item) : { value: item };
+            const fields: EchartOption = optionMemberOrUndefined(item) ?? { value: item };
             if (fields.label !== undefined || !Array.isArray(fields.value)) return item;
             const cell = optionCells(fields.value)[horizontal ? 0 : 1];
             return { ...fields, label: { show: true, position: labelPosition(cell, horizontal), formatter: textOf(cell, index) } };
@@ -3953,8 +3955,9 @@ function labelRoom(series: readonly EchartOption[], horizontal: boolean): Echart
     for (const entry of series) {
         if (entry.type !== "bar" || !Array.isArray(entry.data)) continue;
         for (const item of optionArray(entry.data)) {
-            if (typeof item !== "object" || item === null || Array.isArray(item) || optionRecord(item).label === undefined) continue;
-            const value = optionRecord(item).value;
+            const fields = optionMemberOrUndefined(item);
+            if (fields === undefined || fields.label === undefined) continue;
+            const value = fields.value;
             // The sign rule of `labelPosition`: a bar under zero puts its label at its lower end.
             if ((toNumber(Array.isArray(value) ? optionCell(value[horizontal ? 0 : 1]) : null) ?? 0) < 0) negative = true;
             else positive = true;

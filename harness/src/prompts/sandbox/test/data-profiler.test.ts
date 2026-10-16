@@ -11,16 +11,19 @@ import { z } from "zod";
 
 import { DIMENSION_CATEGORIES, DIMENSION_PROBE_IDS, GROUP_CATEGORY_IDS, GROUP_ROLE_IDS, PROBE_OUTCOME_IDS } from "../../../contracts/profile-vocabulary.js";
 import { ProfileSubmissionSchema } from "../../../schemas/data-profile-schemas.js";
+import { maybeRecord } from "../../../lib/shape.js";
 import { dataProfilerPrompt } from "../data-profiler.js";
 
 /** Collapse wrapping and blockquote markers, so a verbatim carry survives being re-wrapped. */
 function flatten(text: string): string {
-    return text
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        .replace(/^\s*>\s?/gm, "")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        .replace(/\s+/g, " ")
-        .trim();
+    return (
+        text
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            .replace(/^\s*>\s?/gm, "")
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            .replace(/\s+/g, " ")
+            .trim()
+    );
 }
 
 /** The substrate test as the design ledger states it. */
@@ -141,10 +144,12 @@ function schemaFieldNames(node: unknown, into: Set<string> = new Set()): Set<str
         for (const entry of node) schemaFieldNames(entry, into);
         return into;
     }
-    if (node === null || typeof node !== "object") return into;
-    for (const [key, value] of Object.entries(node)) {
-        if (key === "properties" && value !== null && typeof value === "object") {
-            for (const property of Object.keys(value)) into.add(property);
+    const fields = maybeRecord(node);
+    if (fields === undefined) return into;
+    for (const [key, value] of Object.entries(fields)) {
+        const propertyFields = maybeRecord(value);
+        if (key === "properties" && propertyFields !== undefined) {
+            for (const property of Object.keys(propertyFields)) into.add(property);
         }
         schemaFieldNames(value, into);
     }

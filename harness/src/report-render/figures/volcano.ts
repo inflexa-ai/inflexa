@@ -53,7 +53,7 @@ import {
 } from "./dense.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
 import { placeLeaderNames, type NamedPoint } from "./label-room.js";
-import { optionRecord } from "../option-lens.js";
+import { optionMember } from "../option-lens.js";
 import { typedMember } from "../../lib/shape.js";
 
 /** The count of signal points that show their name. */
@@ -159,7 +159,7 @@ function deriveVolcano(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const text = sizedSeries([POINT_NAMES], (frame) =>
         pointNameSeries(names, placeLeaderNames(names, { xs, ys, pointPx: DENSE_SIGNAL_SYMBOL_PX }, plot, VOLCANO_NAME_SIDES, top, frame)),
     );
-    const legend = typeof option.legend === "object" && option.legend !== null ? (optionRecord(option.legend)) : {};
+    const legend = optionMember(option.legend);
     return ok({
         ...option,
         ...text.member,

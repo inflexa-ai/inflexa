@@ -45,6 +45,7 @@ import {
     SubAgentActivityPartSchema,
 } from "../contracts/schemas/chat-parts.js";
 import { ToolCallOutcomeSchema } from "../contracts/schemas/chat-events.js";
+import { maybeRecord } from "../lib/shape.js";
 import type { ToolCallOutcome } from "../contracts/chat-events.js";
 import type { ChatMessage, MessagePart, ToolCallPart } from "../contracts/message.js";
 import type { Logger } from "../lib/logger.js";
@@ -160,7 +161,7 @@ export function envelopeDisplayMessages(messages: readonly ConversationUIMessage
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return maybeRecord(value) !== undefined && !Array.isArray(value);
 }
 
 /**

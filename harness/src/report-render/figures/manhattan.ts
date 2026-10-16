@@ -61,7 +61,7 @@ import {
 } from "./dense.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
 import { placeLeaderNames, textWidthPx, type Box, type NamedPoint, type NameFrame } from "./label-room.js";
-import { optionRecord, optionRecords, optionText } from "../option-lens.js";
+import { optionMemberOrUndefined, optionRecord, optionRecords, optionText } from "../option-lens.js";
 import { typedMember } from "../../lib/shape.js";
 
 /** The two colors that alternate between the chromosomes: the blue of the palette and the muted gray. */
@@ -281,11 +281,10 @@ function guideOverLine(markLine: EchartOption, line: number): EchartOption {
     const data = Array.isArray(markLine.data) ? optionRecords(markLine.data) : [];
     return {
         ...markLine,
-        data: data.map((entry) =>
-            entry.yAxis === line && typeof entry.label === "object" && entry.label !== null
-                ? { ...entry, label: { ...optionRecord(entry.label), position: GUIDE_OVER_LINE } }
-                : entry,
-        ),
+        data: data.map((entry) => {
+            const label = optionMemberOrUndefined(entry.label);
+            return entry.yAxis === line && label !== undefined ? { ...entry, label: { ...label, position: GUIDE_OVER_LINE } } : entry;
+        }),
     };
 }
 

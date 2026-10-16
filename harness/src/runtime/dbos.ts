@@ -17,6 +17,7 @@ import { DBOS, type DBOSConfig, type DLogger } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 
 import type { LogFields, Logger } from "../lib/logger.js";
+import { maybeRecord } from "../lib/shape.js";
 import { DBOS_SYSTEM_POOL_SIZE } from "./pools.js";
 import { errRecipe, okRecipe } from "./result-serialization.js";
 
@@ -292,7 +293,7 @@ export async function sweepEphemeralWorkflows({
         }
     } catch (err) {
         // First-ever boot: DBOS has not created its schema yet — nothing to sweep.
-        if (err && typeof err === "object" && "code" in err && err.code === "42P01") {
+        if (maybeRecord(err)?.code === "42P01") {
             return;
         }
         logger.error("legacy ephemeral-row sweep failed", { executorID, ...logger.errorFields(err) });

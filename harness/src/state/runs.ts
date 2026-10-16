@@ -18,6 +18,7 @@ import { tryMutation, tryQuery } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 import { RunStatus, SynthesisStatus, type CortexRunRow } from "./schema.js";
 import { parseJsonOrUndefined } from "../lib/json.js";
+import { maybeRecord } from "../lib/shape.js";
 
 export type InsertRunInput = {
     runId: string;
@@ -145,10 +146,9 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
 }
 
 function isPartialUniqueViolation(err: unknown): boolean {
-    if (err === null || typeof err !== "object") return false;
-    // SAFETY: a pg unique-violation cause carries the SQLSTATE on `.code` and the tripped index on `.constraint` — either mismatch reports false.
-    const e = err as { code?: string; constraint?: string };
-    return e.code === "23505" && e.constraint === "idx_cortex_runs_active_plan";
+    const e = maybeRecord(err);
+    // A pg unique-violation cause carries the SQLSTATE on `.code` and the tripped index on `.constraint` — either mismatch reports false.
+    return e?.code === "23505" && e.constraint === "idx_cortex_runs_active_plan";
 }
 
 /**

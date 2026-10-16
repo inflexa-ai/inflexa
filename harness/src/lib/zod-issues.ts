@@ -45,6 +45,7 @@
 
 import type { z } from "zod";
 import { parseJsonOrUndefined } from "./json.js";
+import { maybeRecord } from "./shape.js";
 
 /**
  * Strings longer than this are neither parsed nor repaired. A real argument
@@ -199,7 +200,8 @@ function parseAs(raw: string, expected: "object" | "array"): { readonly value: u
     const parsed = parseJsonOrUndefined(raw);
     if (parsed === undefined) return undefined;
     if (expected === "array") return Array.isArray(parsed) ? { value: parsed } : undefined;
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? { value: parsed } : undefined;
+    const fields = maybeRecord(parsed);
+    return fields !== undefined && !Array.isArray(fields) ? { value: parsed } : undefined;
 }
 
 /**
@@ -254,10 +256,16 @@ function quoteSnippet(removed: string): string {
 function resolvePath(input: unknown, path: readonly PropertyKey[]): unknown {
     let current: unknown = input;
     for (const key of path) {
-        if (current === null || (typeof current !== "object" && typeof current !== "function")) {
-            return undefined;
+        const fields = maybeRecord(current);
+        if (fields !== undefined) {
+            current = Reflect.get(fields, key);
+            continue;
         }
-        current = Reflect.get(current, key);
+        if (typeof current === "function") {
+            current = Reflect.get(current, key);
+            continue;
+        }
+        return undefined;
     }
     return current;
 }
@@ -270,12 +278,13 @@ function setAtPath(root: unknown, path: readonly PropertyKey[], value: unknown):
     if (path.length === 0) return value;
 
     const [key, ...rest] = path;
-    if (root === null || typeof root !== "object") return root;
+    const fields = maybeRecord(root);
+    if (fields === undefined) return root;
 
-    const child = setAtPath(Reflect.get(root, key), rest, value);
+    const child = setAtPath(Reflect.get(fields, key), rest, value);
     if (Array.isArray(root)) {
         const copy = [...root];
         return Object.assign(copy, { [key]: child });
     }
-    return { ...root, [key]: child };
+    return { ...fields, [key]: child };
 }

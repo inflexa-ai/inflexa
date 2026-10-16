@@ -15,7 +15,17 @@ import { BELOW_RESOLUTION_SYMBOL, DENSE_NULL_SYMBOL_PX, DENSE_NULL_Z, DENSE_SIGN
 import { EXPORT_PLOT_FRAMES, leaderNameBox, overlaps, PAGE_PLOT_FRAME, type LeaderName, type NameFrame } from "../label-room.js";
 import { FIGURE_MODULES } from "../index.js";
 import { VOLCANO_FIGURE, VOLCANO_LABEL_COUNT } from "../volcano.js";
-import { optionArray, optionMember, optionNumber, optionNumbers, optionRecord, optionRecords, optionRecordsOrEmpty, optionText } from "../../option-lens.js";
+import {
+    optionArray,
+    optionMember,
+    optionMemberOrUndefined,
+    optionNumber,
+    optionNumbers,
+    optionRecord,
+    optionRecords,
+    optionRecordsOrEmpty,
+    optionText,
+} from "../../option-lens.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 import { must } from "../../../lib/test/guards.js";
 import { z } from "zod";
@@ -74,7 +84,10 @@ function seriesOf(option: EchartOption): EchartOption[] {
 function labeled(series: EchartOption): string[] {
     // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
     return optionArray(series.data)
-        .filter((item): item is EchartOption => typeof item === "object" && item !== null && !Array.isArray(item) && "label" in item)
+        .filter((item): item is EchartOption => {
+            const fields = optionMemberOrUndefined(item);
+            return fields !== undefined && "label" in fields;
+        })
         .map((item) => optionText(item.name));
 }
 

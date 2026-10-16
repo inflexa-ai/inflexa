@@ -7,6 +7,7 @@ import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import type { AgentSession } from "../../auth/types.js";
 import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { maybeRecord } from "../../lib/shape.js";
 import {
     compactionExchangeOf,
     compactionMarkerOf,
@@ -1936,7 +1937,8 @@ describe("runAgent — tool result detail", () => {
     it("reads a replayed step that cached the bare result, and keeps the started detail", async () => {
         const replayBareResult: RunStep = async (_name, fn) => {
             const settled = await fn();
-            const bare = typeof settled === "object" && settled !== null && "result" in settled ? settled.result : settled;
+            const fields = maybeRecord(settled);
+            const bare = fields !== undefined && "result" in fields ? fields.result : settled;
             // SAFETY: the legacy step store is untyped across two builds of the loop, and the replay must
             // hand the bare result back as the `T` the caller declared; no runtime check can prove a stored
             // `unknown` to be that `T` (ruling-4 record).
@@ -2472,7 +2474,7 @@ describe("runAgent — compaction", () => {
         const parts: z.infer<typeof CompactionPartSchema>[] = [];
         for (const event of events) {
             if (event.type !== "data-compaction") continue;
-            const data = typeof event.data === "object" && event.data !== null ? event.data : {};
+            const data = maybeRecord(event.data) ?? {};
             parts.push(CompactionPartSchema.parse({ ...data, type: event.type }));
         }
         return parts;

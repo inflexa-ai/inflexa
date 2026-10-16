@@ -40,7 +40,7 @@ import {
 import { formatNumberCell, selectNumberKind, typographicExponent } from "../number-format.js";
 import { STEM_RENDERER } from "../chart-renderers.js";
 import type { RenderProblem } from "../types.js";
-import { optionArray, optionRecord } from "../option-lens.js";
+import { optionArray, optionMemberOrUndefined } from "../option-lens.js";
 
 /** The display labels that a bound table declares, keyed by the raw column name. */
 export type ColumnLabels = ArtifactTableReference["columnLabels"];
@@ -753,7 +753,7 @@ export function legendIconOf(series: EchartOption): string {
 function seriesOf(option: EchartOption): EchartOption[] {
     const series = option.series;
     if (!Array.isArray(series)) return [];
-    return series.filter((entry): entry is EchartOption => typeof entry === "object" && entry !== null);
+    return series.filter((entry): entry is EchartOption => optionMemberOrUndefined(entry) !== undefined);
 }
 
 /**
@@ -787,18 +787,19 @@ function iconsByName(option: EchartOption): Map<string, string> {
  */
 function iconLegend(option: EchartOption): EchartOption | undefined {
     const legend = option.legend;
-    if (typeof legend !== "object" || legend === null || Array.isArray(legend)) return undefined;
-    const fields = optionRecord(legend);
+    const fields = optionMemberOrUndefined(legend);
+    if (fields === undefined) return undefined;
     if (fields.show === false) return undefined;
     const icons = iconsByName(option);
     if (icons.size === 0) return undefined;
     const declared = Array.isArray(fields.data) ? optionArray(fields.data) : [...icons.keys()];
     const data = declared.map((entry) => {
-        if (typeof entry === "object" && entry !== null && typeof (optionRecord(entry)).icon === "string") return entry;
-        const name = typeof entry === "string" ? entry : typeof entry === "object" && entry !== null ? (optionRecord(entry)).name : undefined;
+        const record = optionMemberOrUndefined(entry);
+        if (record !== undefined && typeof record.icon === "string") return entry;
+        const name = typeof entry === "string" ? entry : record?.name;
         const icon = typeof name === "string" ? icons.get(name) : undefined;
         if (icon === undefined || typeof name !== "string") return entry;
-        return typeof entry === "object" && entry !== null ? { ...(optionRecord(entry)), icon } : { name, icon };
+        return record !== undefined ? { ...record, icon } : { name, icon };
     });
     return { ...fields, data };
 }
@@ -831,15 +832,15 @@ function paletteSlots(option: EchartOption): number {
  * the title clears the labels on the page and in each export.
  */
 function movedTitle(axis: unknown): unknown {
-    if (typeof axis !== "object" || axis === null) return axis;
-    const fields = optionRecord(axis);
+    const fields = optionMemberOrUndefined(axis);
+    if (fields === undefined) return axis;
     return typeof fields.name === "string" && fields.name !== "" ? { ...fields, nameMoveOverlap: true } : axis;
 }
 
 /** True when a grid, or one grid of a list, contains its labels. */
 function containsLabels(grid: unknown): boolean {
     const grids = Array.isArray(grid) ? grid : [grid];
-    return grids.some((entry) => typeof entry === "object" && entry !== null && (optionRecord(entry)).containLabel === true);
+    return grids.some((entry) => optionMemberOrUndefined(entry)?.containLabel === true);
 }
 
 /** Each axis of one axis member with its title moved off its labels. */

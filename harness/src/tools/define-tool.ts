@@ -97,10 +97,9 @@ export function withToolResultImages<T extends object>(value: T, images: readonl
 
 /** Does one entry under the reserved key carry the picture shape? */
 function isToolResultImage(entry: unknown): entry is ToolResultImage {
-    if (typeof entry !== "object" || entry === null) return false;
-    // SAFETY: the object guard bounds the read — the destructured members are tested by the typeof in the return below.
-    const { base64, mediaType } = entry as Partial<ToolResultImage>;
-    return typeof base64 === "string" && typeof mediaType === "string";
+    const fields = maybeRecord(entry);
+    if (fields === undefined) return false;
+    return typeof fields.base64 === "string" && typeof fields.mediaType === "string";
 }
 
 /**
@@ -110,9 +109,10 @@ function isToolResultImage(entry: unknown): entry is ToolResultImage {
  * in the same shape.
  */
 export function readToolResultImages(value: unknown): ToolResultImage[] {
-    if (typeof value !== "object" || value === null) return [];
-    // SAFETY: the object guard bounds the read — the symbol key reaches the reserved member the ok-value builder wrote, and the filter below tests each entry.
-    const carried = (value as { [toolResultImageKey]?: unknown })[toolResultImageKey];
+    const fields = maybeRecord(value);
+    if (fields === undefined) return [];
+    // The symbol key reaches the reserved member the ok-value builder wrote, and the filter below tests each entry.
+    const carried: unknown = Reflect.get(fields, toolResultImageKey);
     const entries = Array.isArray(carried) ? carried : [carried];
     return entries.filter(isToolResultImage);
 }
@@ -145,9 +145,10 @@ export function withToolCallRecord<T extends object, R>(value: T, record: R): Wi
 
 /** Read the call record that a tool ok value carries, or `undefined` when it carries none. */
 export function readToolCallRecord(value: unknown): unknown {
-    if (typeof value !== "object" || value === null) return undefined;
-    // SAFETY: the object guard bounds the read — the symbol key reaches the reserved member, and the unknown return keeps the caller's test in charge.
-    return (value as { [toolCallRecordKey]?: unknown })[toolCallRecordKey];
+    const fields = maybeRecord(value);
+    if (fields === undefined) return undefined;
+    const record: unknown = Reflect.get(fields, toolCallRecordKey);
+    return record;
 }
 
 /**

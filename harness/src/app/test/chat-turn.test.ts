@@ -4,6 +4,7 @@ import { err, errAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
+import { maybeRecord } from "../../lib/shape.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { forSubAgent } from "../../auth/types.js";
 import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
@@ -56,7 +57,12 @@ afterEach(async () => {
 function contentText(content: unknown): string {
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
-        return content.map((b) => (typeof b === "object" && b && "text" in b ? String(b.text) : "")).join("\n");
+        return content
+            .map((b) => {
+                const fields = maybeRecord(b);
+                return typeof fields?.text === "string" ? fields.text : "";
+            })
+            .join("\n");
     }
     return "";
 }

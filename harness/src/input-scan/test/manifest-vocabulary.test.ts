@@ -10,6 +10,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { ProfileSubmissionSchema } from "../../schemas/data-profile-schemas.js";
+import { maybeRecord } from "../../lib/shape.js";
 import { detectSets } from "../detect-sets.js";
 import { buildSetMenu } from "../menu.js";
 import { buildManifest } from "../scan.js";
@@ -28,8 +29,9 @@ function keysDeep(value: unknown, out: Set<string> = new Set()): Set<string> {
         for (const item of value) keysDeep(item, out);
         return out;
     }
-    if (value && typeof value === "object") {
-        for (const [key, child] of Object.entries(value)) {
+    const fields = maybeRecord(value);
+    if (fields !== undefined) {
+        for (const [key, child] of Object.entries(fields)) {
             out.add(key);
             keysDeep(child, out);
         }

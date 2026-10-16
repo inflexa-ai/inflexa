@@ -27,6 +27,7 @@ import type { Pool } from "pg";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
+import { maybeRecord } from "../lib/shape.js";
 import type { WorkflowPurger } from "./workflow-purger.js";
 
 /**
@@ -45,8 +46,7 @@ const SYSTEM_SCHEMA = "dbos";
 const UNDEFINED_TABLE = "42P01";
 
 function isUndefinedTable(e: DbError): boolean {
-    const cause: unknown = e.cause;
-    return cause !== null && typeof cause === "object" && "code" in cause && cause.code === UNDEFINED_TABLE;
+    return maybeRecord(e.cause)?.code === UNDEFINED_TABLE;
 }
 
 /**

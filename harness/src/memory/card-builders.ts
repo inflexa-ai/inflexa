@@ -20,6 +20,7 @@ import { okAsync, type ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { tryQuery, type DbError } from "../lib/db-result.js";
+import { maybeRecord } from "../lib/shape.js";
 import type { PlanPart } from "../contracts/chat-parts.js";
 import { PlanPartSchema } from "../contracts/schemas/chat-parts.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
@@ -29,7 +30,7 @@ import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { validatePath } from "../tools/lib/path-validation.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return maybeRecord(value) !== undefined && !Array.isArray(value);
 }
 
 export type PlanCardData = {
@@ -236,7 +237,7 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
 
     const files: FileReferenceEntryData[] = [];
     for (const raw of rawFiles) {
-        const file : Record<string, unknown> = (raw ?? {});
+        const file: Record<string, unknown> = raw ?? {};
         const path = typeof file.path === "string" ? file.path : "";
         if (validatePath(path) !== null) return null;
         const runId = deriveRunId(path);

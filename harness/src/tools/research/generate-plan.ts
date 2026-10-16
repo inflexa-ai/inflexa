@@ -62,6 +62,7 @@ import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { maybeRecord } from "../../lib/shape.js";
 import { decodeObjectString, hintForZodIssue } from "../../lib/zod-issues.js";
 import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
 import { errorMessage } from "../../lib/thrown.js";
@@ -855,8 +856,9 @@ function inventoryContent(label: string, result: Awaited<ReturnType<Tool["execut
         return `## ${label}\n\nInventory lookup failed: ${result.error.error}`;
     }
     const value = result.value;
-    if (typeof value === "object" && value !== null && "content" in value && typeof value.content === "string") {
-        return `## ${label}\n\n${value.content}`;
+    const fields = maybeRecord(value);
+    if (fields !== undefined && typeof fields.content === "string") {
+        return `## ${label}\n\n${fields.content}`;
     }
     return `## ${label}\n\n${JSON.stringify(value)}`;
 }
@@ -915,7 +917,8 @@ function loopFields(run: RunToTerminalResult, kind: OutcomeKind): LogFields {
             cappedOut: run.finish.cappedOut,
             truncationRecoveries: run.finish.truncationRecoveries,
             salvaged: run.salvage !== null,
-            firstFinishReason: run.salvage ? run.salvage.firstFinish.reason : undefined, salvageFinishReason: run.salvage ? run.salvage.finish.reason : undefined,
+            firstFinishReason: run.salvage ? run.salvage.firstFinish.reason : undefined,
+            salvageFinishReason: run.salvage ? run.salvage.finish.reason : undefined,
             toolCalls: transcript.toolCalls,
             toolCallsTruncated: transcript.truncatedToolCalls ? true : undefined,
         },

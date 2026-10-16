@@ -292,11 +292,13 @@ async function readLegacyEntries(root: string): Promise<unknown[]> {
         const registryPath = hostJoin(root, "registry.json");
         if ((await lstat(registryPath)).size > MAX_REGISTRY_BYTES) return [];
         const registry = parseJsonOrUndefined(await readFile(registryPath, "utf-8"));
-        if (!registry || typeof registry !== "object") return [];
-        const byCategory = typedMember(recordMember(maybeRecord(registry), "files"), "by_category");
-        if (!byCategory || typeof byCategory !== "object") return [];
-        for (const category of Object.keys(byCategory).sort()) {
-            const values = typedMember(maybeRecord(byCategory), category);
+        const registryFields = maybeRecord(registry);
+        if (registryFields === undefined) return [];
+        const byCategory = typedMember(recordMember(registryFields, "files"), "by_category");
+        const categoryFields = maybeRecord(byCategory);
+        if (categoryFields === undefined) return [];
+        for (const category of Object.keys(categoryFields).sort()) {
+            const values = typedMember(categoryFields, category);
             if (!Array.isArray(values)) continue;
             for (const item of values) {
                 if (legacyEntries.length >= MAX_LEGACY_ENTRIES) break;

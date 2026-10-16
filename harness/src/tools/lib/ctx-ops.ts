@@ -27,6 +27,7 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError, zWireNumber, type ApiError } from "./api-utils.js";
 import { EPA_CCTE_BASE } from "./toxcast-config.js";
 import { parseJsonOrUndefined } from "../../lib/json.js";
+import { maybeRecord } from "../../lib/shape.js";
 
 export type CtxResolved = {
     dtxsid: string;
@@ -58,7 +59,8 @@ function isNoMatchProblemDetail(error: ApiError): boolean {
         // `suggestions` separates the no-match answer from a generic 400
         // `ProblemDetail`, which carries `title` and `detail` alone. Without it,
         // a malformed request reads as a clean no-match.
-        return typeof body === "object" && body !== null && "detail" in body && "title" in body && "suggestions" in body;
+        const fields = maybeRecord(body);
+        return fields !== undefined && "detail" in fields && "title" in fields && "suggestions" in fields;
     } catch {
         return false;
     }
@@ -77,7 +79,7 @@ export async function resolveDtxsid(query: string, headers: Record<string, strin
         throw new Error(describeApiError(res.error));
     }
 
-    const chem = (res.value).find((row) => row.dtxsid);
+    const chem = res.value.find((row) => row.dtxsid);
     if (!chem?.dtxsid) return null;
     return {
         dtxsid: chem.dtxsid,
@@ -201,7 +203,7 @@ function extractAc50(r: ToxcastBioactivityRow): number {
 
 function extractAc50Raw(r: ToxcastBioactivityRow): number | null {
     const mc5 = r.mc5Param;
-    if (mc5 && typeof mc5 === "object") {
+    if (mc5 !== null && mc5 !== undefined) {
         if (typeof mc5.ac50 === "number") return mc5.ac50;
         if (typeof mc5.acc === "number") return mc5.acc;
     }

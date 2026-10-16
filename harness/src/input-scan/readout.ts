@@ -13,6 +13,7 @@
 import { constants as zlibConstants, createGunzip, createZstdDecompress } from "node:zlib";
 import type { Transform } from "node:stream";
 import { parseJsonOrUndefined } from "../lib/json.js";
+import { maybeRecord } from "../lib/shape.js";
 import { splitLines } from "../lib/text.js";
 
 /** Bytes read from each file. The readout's whole per-file I/O budget. */
@@ -319,7 +320,7 @@ function parseJson(text: string): unknown {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return maybeRecord(value) !== undefined && !Array.isArray(value);
 }
 
 function joinKeys(keys: readonly string[]): string {

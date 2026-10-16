@@ -36,10 +36,11 @@ const snapshot: ReportSnapshot = {
 function field(value: unknown, ...keys: Array<string | number>): unknown {
     let current: unknown = value;
     for (const key of keys) {
-        if (current === null || typeof current !== "object") {
+        const fields = maybeRecord(current);
+        if (fields === undefined) {
             return undefined;
         }
-        current = typedMember(maybeRecord(current), key);
+        current = typedMember(fields, key);
     }
     return current;
 }

@@ -22,7 +22,7 @@ import {
 import { POINT_NAMES } from "../figures/dense.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import { ReferenceLedger } from "../references.js";
-import { optionNumber, optionPercent, optionRecord, optionSource, optionText } from "../option-lens.js";
+import { optionMemberOrUndefined, optionNumber, optionPercent, optionRecord, optionSource, optionText } from "../option-lens.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 import { optionArray } from "../../report-render/option-lens.js";
 
@@ -80,7 +80,10 @@ function asArr(value: unknown): unknown[] {
  * whose value is the pair. Every other item is the pair itself.
  */
 function pairsOf(data: unknown): unknown[] {
-    return asArr(data).map((item) => (typeof item === "object" && item !== null && !Array.isArray(item) ? asObj(item).value : item));
+    return asArr(data).map((item) => {
+        const fields = optionMemberOrUndefined(item);
+        return fields !== undefined ? fields.value : item;
+    });
 }
 
 /** Derive an option and unwrap the ok value, or fail the test on a refusal. */
@@ -1277,7 +1280,8 @@ describe("the point labels across a series split", () => {
         const names: string[] = [];
         for (const entry of asArr(option.series)) {
             for (const point of asArr(asObj(entry).data)) {
-                if (typeof point === "object" && point !== null && "label" in point) names.push(optionText(asObj(point).name));
+                const fields = optionMemberOrUndefined(point);
+                if (fields !== undefined && "label" in fields) names.push(optionText(fields.name));
             }
         }
         return names;

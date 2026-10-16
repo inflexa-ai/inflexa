@@ -27,7 +27,7 @@ import { categoricalPalette, categoryName, chartProblem, colorScale, firstAppear
 import { equalRanges, squareLayout } from "./equal-units.js";
 import { nameAnchors, type PlotRange } from "./label-room.js";
 import type { FigureContext, FigureModule } from "./index.js";
-import { optionRecord, optionRecords } from "../option-lens.js";
+import { optionMember, optionRecords } from "../option-lens.js";
 import { typedMember } from "../../lib/shape.js";
 
 /** The scanpy point area of one cell, in square points, for each cell of the plot: 120000 / n. */
@@ -198,8 +198,8 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
     const option = composed.value;
     const panels = Math.max(1, panelNames.length);
     const pointPx = embeddingPointPx(cells.length);
-    const series = (Array.isArray(option.series) ? (optionRecords(option.series)) : []).map((entry) => {
-        const baseStyle = typeof entry.itemStyle === "object" && entry.itemStyle !== null ? optionRecord(entry.itemStyle) : {};
+    const series = (Array.isArray(option.series) ? optionRecords(option.series) : []).map((entry) => {
+        const baseStyle = optionMember(entry.itemStyle);
         return {
             ...entry,
             large: color === undefined && cells.length >= EMBEDDING_LARGE_CELLS,
@@ -236,14 +236,21 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
             gridIndex: panel,
             ...ranges.x,
             ...HIDDEN_AXIS_PARTS,
-            name: key ? `${valueAxisTitle(context.labels, channelName(x))}${KEY_ARROW}` : undefined, nameLocation: key ? "start" : undefined, nameGap: key ? 0 : undefined, nameTextStyle: key ? { ...keyStyle, verticalAlign: "top" } : undefined,
+            name: key ? `${valueAxisTitle(context.labels, channelName(x))}${KEY_ARROW}` : undefined,
+            nameLocation: key ? "start" : undefined,
+            nameGap: key ? 0 : undefined,
+            nameTextStyle: key ? { ...keyStyle, verticalAlign: "top" } : undefined,
         });
         yAxes.push({
             type: "value",
             gridIndex: panel,
             ...ranges.y,
             ...HIDDEN_AXIS_PARTS,
-            name: key ? `${valueAxisTitle(context.labels, channelName(y))}${KEY_ARROW}` : undefined, nameLocation: key ? "start" : undefined, nameRotate: key ? 90 : undefined, nameGap: key ? 0 : undefined, nameTextStyle: key ? { ...keyStyle, verticalAlign: "bottom" } : undefined,
+            name: key ? `${valueAxisTitle(context.labels, channelName(y))}${KEY_ARROW}` : undefined,
+            nameLocation: key ? "start" : undefined,
+            nameRotate: key ? 90 : undefined,
+            nameGap: key ? 0 : undefined,
+            nameTextStyle: key ? { ...keyStyle, verticalAlign: "bottom" } : undefined,
         });
     }
     // Each panel names its facet value on an axis of no series over its square, thus the name moves with the square.
@@ -287,7 +294,7 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
         channelName(colorChannel),
         declaredForColumn(context.meanings, channelColumn(colorChannel)),
     );
-    const composedMaps = Array.isArray(option.visualMap) ? (optionRecords(option.visualMap)) : [];
+    const composedMaps = Array.isArray(option.visualMap) ? optionRecords(option.visualMap) : [];
     const seriesIndex = composedMaps.find((entry) => entry.dimension === 2)?.seriesIndex ?? series.map((_entry, index) => index);
     const place = layout.visualMap?.[0] ?? {};
     return ok({ ...out, visualMap: [{ type: "continuous", seriesIndex, dimension: 2, ...map, ...place }] });

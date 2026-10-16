@@ -15,6 +15,7 @@ import { type Result, err, ok } from "neverthrow";
 import { z } from "zod";
 
 import type { ArtifactSnapshot, ReportSnapshot } from "../report-model/reference-resolver.js";
+import { maybeRecord } from "../lib/shape.js";
 
 /** One reduced schema issue -- the dotted path and the message, without the rest. */
 export type SchemaIssue = {
@@ -59,7 +60,7 @@ function prefixIssues(prefix: string, issues: SchemaIssue[]): SchemaIssue[] {
 
 /** A stored map is a plain object. An array and a null carry no own key that a map read can use. */
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return maybeRecord(value) !== undefined && !Array.isArray(value);
 }
 
 /**

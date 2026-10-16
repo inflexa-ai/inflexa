@@ -17,6 +17,7 @@ import type { Pool } from "pg";
 import { okAsync } from "neverthrow";
 
 import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "../../lib/logger.js";
+import { maybeRecord } from "../../lib/shape.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
@@ -238,8 +239,7 @@ describe("synthesizeRun", () => {
             // The produced path does not warn.
             expect(h.logs.some((r) => r.level === "warn")).toBe(false);
             // The final run-synthesis chat part was emitted.
-            // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-            expect(emitted.some((e) => typeof e === "object" && e !== null && (e as { type?: string }).type === "data-run-synthesis")).toBe(true);
+            expect(emitted.some((e) => maybeRecord(e)?.type === "data-run-synthesis")).toBe(true);
             // synthesis.json was written under the run directory.
             const path = join(await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
             expect((await stat(path)).isFile()).toBe(true);

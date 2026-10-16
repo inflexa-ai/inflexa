@@ -16,7 +16,17 @@ import { BELOW_RESOLUTION_SYMBOL, POINT_NAMES } from "../dense.js";
 import { FIGURE_MODULES } from "../index.js";
 import { EXPORT_PLOT_FRAMES, leaderNameBox, overlaps, PAGE_PLOT_FRAME, textWidthPx, type LeaderName, type NameFrame } from "../label-room.js";
 import { guideLabelBox, MANHATTAN_COLORS, MANHATTAN_FIGURE, MANHATTAN_LABEL_COUNT, MANHATTAN_NAME_GAP_SHARE, MANHATTAN_SUGGESTIVE_P } from "../manhattan.js";
-import { optionArray, optionMember, optionNumber, optionNumbers, optionRecord, optionRecords, optionRecordsOrEmpty, optionText } from "../../option-lens.js";
+import {
+    optionArray,
+    optionMember,
+    optionMemberOrUndefined,
+    optionNumber,
+    optionNumbers,
+    optionRecord,
+    optionRecords,
+    optionRecordsOrEmpty,
+    optionText,
+} from "../../option-lens.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 import { must } from "../../../lib/test/guards.js";
 import { z } from "zod";
@@ -181,7 +191,12 @@ describe("the Manhattan figure", () => {
         // The points carry no label of the runtime, thus no name hides.
         for (const points of seriesOf(option).slice(0, 3)) {
             // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
-            expect(optionArray(points.data).some((item) => typeof item === "object" && item !== null && "label" in item)).toBe(false);
+            expect(
+                optionArray(points.data).some((item) => {
+                    const fields = optionMemberOrUndefined(item);
+                    return fields !== undefined && "label" in fields;
+                }),
+            ).toBe(false);
         }
     });
 

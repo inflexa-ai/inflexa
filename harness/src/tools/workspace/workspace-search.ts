@@ -27,8 +27,7 @@ const UNDEFINED_TABLE = "42P01";
 
 /** True when a captured driver cause is the "undefined_table" SQLSTATE. */
 function isUndefinedTable(cause: unknown): boolean {
-    // SAFETY: the object guard bounds the read — the cast only reaches the `.code` property, and the exact-string comparison rejects every other shape.
-    return !!cause && typeof cause === "object" && (cause as { code?: unknown }).code === UNDEFINED_TABLE;
+    return maybeRecord(cause)?.code === UNDEFINED_TABLE;
 }
 
 function indexName(analysisId: string): string {

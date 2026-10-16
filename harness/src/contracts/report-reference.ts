@@ -12,6 +12,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 import { parseJsonOrUndefined } from "../lib/json.js";
+import { maybeRecord } from "../lib/shape.js";
 
 /**
  * The shape of a content hash, as lowercase `algorithm:hex`, for example `sha256:9f86d0...`. The
@@ -306,10 +307,10 @@ function sortKeysDeep(value: unknown): unknown {
     if (Array.isArray(value)) {
         return value.map(sortKeysDeep);
     }
-    if (value !== null && typeof value === "object") {
+    const fields = maybeRecord(value);
+    if (fields !== undefined) {
         const sorted: Record<string, unknown> = {};
-        // SAFETY: the enumeration below runs on this object — the entry tuples are its own keys and members, typed as unknown for the recursion.
-        const entries = Object.entries(value) as [string, unknown][];
+        const entries = Object.entries(fields);
         // The keys sort here, so the serialization order holds no trace of the insertion order.
         entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
         for (const [key, member] of entries) {

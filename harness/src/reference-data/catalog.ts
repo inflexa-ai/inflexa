@@ -2,6 +2,7 @@ import { posix as posixPath } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
+import { maybeRecord } from "../lib/shape.js";
 
 /** Schema version for the checked-in reference-data catalog. */
 export const REFERENCE_DATA_CATALOG_VERSION = 1 as const;
@@ -141,9 +142,10 @@ export function referenceArtifactKey(dataset: { readonly id: string; readonly ve
 }
 
 function deepFreeze<T>(value: T): DeepReadonly<T> {
-    if (value && typeof value === "object" && !Object.isFrozen(value)) {
-        for (const nested of Object.values(value)) deepFreeze(nested);
-        Object.freeze(value);
+    const fields = maybeRecord(value);
+    if (fields !== undefined && !Object.isFrozen(fields)) {
+        for (const nested of Object.values(fields)) deepFreeze(nested);
+        Object.freeze(fields);
     }
     // SAFETY: the freeze above ran on every nested object of this value — the cast names the deep-readonly view of the same object that came in.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `Object.freeze` at every depth proves at runtime the deep immutability the `DeepReadonly` view asserts; TS has no type-level mapping for it.

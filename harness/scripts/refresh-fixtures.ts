@@ -34,6 +34,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { sleep } from "../src/lib/async-utils.js";
+import { maybeRecord } from "../src/lib/shape.js";
 import { FixtureManifestSchema, type FixtureManifest, type FixtureManifestEntry } from "../src/tools/lib/__fixtures__/manifest.js";
 import { errorMessage } from "../src/lib/thrown.js";
 import { jsonParse } from "../src/lib/json.js";
@@ -277,7 +278,7 @@ function safeJson(text: string): unknown {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return maybeRecord(value) !== undefined && !Array.isArray(value);
 }
 
 /** Does an ignore path cover this path? A `*` segment matches one segment, and an entry covers what is under it. */

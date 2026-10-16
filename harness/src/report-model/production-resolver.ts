@@ -40,7 +40,7 @@ import { computeSha256File } from "../lib/fs-helpers.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
 import { parseJsonOrUndefined } from "../lib/json.js";
-import { wideMember } from "../lib/shape.js";
+import { maybeRecord, wideMember } from "../lib/shape.js";
 import {
     applyRowBound,
     columnsHeldByNoRow,
@@ -437,12 +437,13 @@ function parseJsonTable(text: string): Row[] | undefined {
     }
     const rows: Row[] = [];
     for (const item of value) {
-        if (item === null || typeof item !== "object" || Array.isArray(item)) {
+        const fields = maybeRecord(item);
+        if (fields === undefined || Array.isArray(fields)) {
             return undefined;
         }
         const row: Row = {};
-        for (const [key, cell] of Object.entries(item)) {
-            if (cell !== null && typeof cell === "object") {
+        for (const [key, cell] of Object.entries(fields)) {
+            if (maybeRecord(cell) !== undefined) {
                 return undefined;
             }
             const coerced = coerceCell(cell);

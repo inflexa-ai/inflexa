@@ -742,8 +742,8 @@ const STREAM_ERROR_STATUS: Readonly<Record<string, number>> = {
  */
 function streamPartFailure(error: unknown): unknown {
     if (isError(error)) return error;
-    if (typeof error !== "object" || error === null) return new Error(errorMessage(error));
-    const reported = maybeRecord(error) ?? {};
+    const reported = maybeRecord(error);
+    if (reported === undefined) return new Error(errorMessage(error));
     const type = typeof reported.type === "string" ? reported.type : undefined;
     const message = typeof reported.message === "string" ? reported.message : undefined;
     const failure = new Error(message ?? type ?? "The provider reported a stream error.", { cause: error });

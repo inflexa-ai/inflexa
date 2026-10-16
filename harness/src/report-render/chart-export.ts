@@ -29,7 +29,7 @@ import {
 import { millimeterRoot } from "./hybrid-svg.js";
 import type { DataAsset } from "./table-data.js";
 import type { RenderProblem } from "./types.js";
-import { optionRecord } from "./option-lens.js";
+import { optionMemberOrUndefined } from "./option-lens.js";
 import { errorMessage } from "../lib/thrown.js";
 
 /** One instance token of the chart runtime: a class, a clip path, or a gradient, for example `zr1-cls-2`. */
@@ -186,8 +186,8 @@ function plottedPoints(option: EchartOption): number {
     if (!Array.isArray(series)) return 0;
     let count = 0;
     for (const entry of series) {
-        if (typeof entry !== "object" || entry === null) continue;
-        const fields = optionRecord(entry);
+        const fields = optionMemberOrUndefined(entry);
+        if (fields === undefined) continue;
         if (!Array.isArray(fields.data)) continue;
         for (const item of fields.data) {
             if (fields.type === "radar") count += polygonCoordinates(item);
@@ -200,7 +200,8 @@ function plottedPoints(option: EchartOption): number {
 
 /** True when one item draws a coordinate: a number, or a value whose members hold no empty slot. */
 function drawnItem(item: unknown): boolean {
-    const value = typeof item === "object" && item !== null && !Array.isArray(item) ? optionRecord(item).value : item;
+    const fields = optionMemberOrUndefined(item);
+    const value = fields !== undefined ? fields.value : item;
     if (typeof value === "number") return true;
     return Array.isArray(value) && value.every((member) => member !== null && member !== undefined && member !== "-");
 }
@@ -219,7 +220,7 @@ const OUTLINE_LEAD_MEMBERS = 4;
 
 /** The count of coordinates that one radar polygon draws: each member of its value that is not empty. */
 function polygonCoordinates(item: unknown): number {
-    const value = typeof item === "object" && item !== null ? optionRecord(item).value : undefined;
+    const value = optionMemberOrUndefined(item)?.value;
     return Array.isArray(value) ? value.filter((member) => member !== null && member !== undefined).length : 0;
 }
 
