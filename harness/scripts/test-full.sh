@@ -43,7 +43,7 @@ CID=$(docker run -d --rm \
     -p 127.0.0.1::5432 \
     pgvector/pgvector:pg18 \
     postgres -c fsync=off -c synchronous_commit=off)
-trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+trap 'docker rm -f -v "$CID" >/dev/null 2>&1 || true' EXIT
 
 for _ in $(seq 1 60); do
     docker exec "$CID" pg_isready -U cortex -d cortex >/dev/null 2>&1 && break
