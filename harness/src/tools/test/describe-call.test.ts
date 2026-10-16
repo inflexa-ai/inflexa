@@ -70,8 +70,8 @@ const unusedCitationResolver: CitationResolver = {
 
 /** Run a tool's hook, asserting it declares one. */
 function describeCall(tool: Tool, input: unknown): string {
-    expect(tool.describeCall).toBeDefined();
-    return must(must(tool, "tool").describeCall, 'must(tool, "tool").describeCall')(input);
+    expect(tool.describeCall?.bind(tool)).toBeDefined();
+    return must(must(tool, "tool").describeCall?.bind(tool), 'must(tool, "tool").describeCall')(input);
 }
 
 describe("describeCall — conversation roster", () => {

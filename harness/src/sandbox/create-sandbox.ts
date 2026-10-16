@@ -38,7 +38,7 @@ import { noteExecOutcome, sandboxExecOutcomeOf, summarizeExec } from "./exec-out
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { mountCoordsOf, sandboxWriteTail, type MountPlanCoords } from "./mount-plan.js";
 import { SandboxFailure, type SandboxError } from "./sandbox-error.js";
-import type { FarmSource, ResolveSandboxLabels, SandboxLabels, SandboxRef, SandboxSpec, ToolchainSource } from "./types.js";
+import type { FarmSource, ResolveSandboxLabels, SandboxLiveness, SandboxLabels, SandboxRef, SandboxSpec, ToolchainSource } from "./types.js";
 
 /**
  * Narrow config slice the sandbox factory reads off `Env` — the backend
@@ -250,7 +250,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
      */
     const failing = (e: SandboxError): SandboxFailure => new SandboxFailure(e);
 
-    const registerSandbox = async (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => {
+    const registerSandbox = async (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef): Promise<void> => {
         unwrapOrThrow(await setSandboxRef(config.pool, session.runFrame.runId, session.runFrame.stepId, ref));
     };
 
@@ -313,7 +313,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
 
     // One arbiter for both surfaces: the client's `isAlive` method and the
     // poll loop's escalation probe are the same backend inspect.
-    const isAlive = async (ref: SandboxRef) => unwrapOrThrow((await ops.isAlive(ref)).mapErr(failing));
+    const isAlive = async (ref: SandboxRef): Promise<SandboxLiveness> => unwrapOrThrow((await ops.isAlive(ref)).mapErr(failing));
     const streamCap = config.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP;
     const execDeps: ExecDeps = { isAlive, ...config.execDeps, execStreamByteCap: streamCap };
 

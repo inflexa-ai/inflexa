@@ -226,7 +226,7 @@ describe("searchProtein — describeCall", () => {
     it("names the query", () => {
         expect(
             must(
-                must(searchProteinTool, "searchProteinTool").describeCall,
+                must(searchProteinTool, "searchProteinTool").describeCall?.bind(searchProteinTool),
                 'must(searchProteinTool, "searchProteinTool").des',
             )({ ...DEFAULTS, query: "BRCA1" }),
         ).toBe("BRCA1");

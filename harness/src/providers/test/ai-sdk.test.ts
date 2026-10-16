@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { errorName, isError } from "../../lib/thrown.js";
+import { errorName, errorOf } from "../../lib/thrown.js";
 import { createHash } from "node:crypto";
 import { APICallError } from "@ai-sdk/provider";
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
@@ -1546,7 +1546,7 @@ describe("failure logging", () => {
             model: fakeModel(() => {
                 controller.abort();
                 const reason = controller.signal.reason;
-                return Promise.reject(isError(reason) ? reason : new Error(String(reason)));
+                return Promise.reject(errorOf(reason) ?? new Error(String(reason)));
             }),
             maxRetries: 0,
             logger,

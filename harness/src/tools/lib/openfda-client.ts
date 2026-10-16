@@ -197,7 +197,7 @@ function firstString(value: unknown): string | null {
 
 function joinSection(value: unknown): string | null {
     if (Array.isArray(value)) {
-        const parts = value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+        const parts = value.flatMap((v) => (typeof v === "string" && v.trim().length > 0 ? [v] : []));
         if (parts.length === 0) return null;
         return parts.join("\n\n");
     }

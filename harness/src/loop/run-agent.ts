@@ -24,6 +24,7 @@ import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { passThroughSpan } from "../lib/otel-spans.js";
 import { ResultError, unwrapOrThrow } from "../lib/result.js";
+import type { ResultAsync } from "neverthrow";
 import { describeZodIssueShapes } from "../lib/zod-issue-shape.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import {
@@ -70,7 +71,8 @@ import {
     type ToolOutputStore,
 } from "./tool-output.js";
 import type { AgentDefinition, EmitFn, LoopMessage, RunStep } from "./types.js";
-import { errorMessage, errorName, isAbortError, isError } from "../lib/thrown.js";
+import { errorMessage, errorName, isAbortError, errorOf } from "../lib/thrown.js";
+import { maybeRecord } from "../lib/shape.js";
 import { jsonParse } from "../lib/json.js";
 
 export type AgentFinish = {
@@ -122,8 +124,8 @@ const TRUNCATED_TOOL_USE_ERROR =
     "Your previous tool call was cut off at the output-token limit and was not executed. Retry with a smaller payload, writing in incremental pieces.";
 
 export type StepNameFormatter = {
-    llm(iteration: number): string;
-    tool(toolName: string, toolUseId: string): string;
+    llm: (iteration: number) => string;
+    tool: (toolName: string, toolUseId: string) => string;
 };
 
 export const DEFAULT_STEP_NAME_FORMATTER: StepNameFormatter = {
@@ -509,7 +511,7 @@ export function openLoop(
         };
         if (opts.toolChoice !== undefined) request.toolChoice = opts.toolChoice;
         if (opts.reasoning !== undefined) request.reasoning = opts.reasoning;
-        const chat = () => provider.chat(request, session, signal).map(countChatTokens(metricAgentId));
+        const chat = (): ResultAsync<ChatResponse, ProviderError> => provider.chat(request, session, signal).map(countChatTokens(metricAgentId));
         if (!endsOnRequestRefusal) {
             const reply = await resultStep(callStep)(stepName, chat);
             accountForChatCall(reply, { ...accounting, stepName });
@@ -1032,7 +1034,7 @@ function recordKeyFor(session: AgentSession, invocationId: string | undefined, s
 
 function toolCallParts(message: Extract<ModelMessage, { role: "assistant" }>): ToolCallPart[] {
     if (typeof message.content === "string") return [];
-    return message.content.filter((part): part is ToolCallPart => part.type === "tool-call");
+    return message.content.flatMap((part) => (part.type === "tool-call" ? [part] : []));
 }
 
 /** Whether an aborted partial carries any content worth persisting — an empty partial contributes no message. */
@@ -1379,7 +1381,8 @@ async function execute(
         return { result, detail: !(detail === undefined) ? detail : undefined, record: !(record === undefined) ? record : undefined };
     } catch (err) {
         if (isFatalLoopError(err)) throw err;
-        if (isAskRejected(err)) return { result: deniedResult(tu, err.feedback) };
+        const rejection = askRejectionOf(err);
+        if (rejection !== undefined) return { result: deniedResult(tu, rejection.feedback) };
         markToolFailure(tu, tool, err, encoding.log);
         return { result: errorResult(tu, toolErrorContent(err)) };
     }
@@ -1392,12 +1395,13 @@ async function execute(
  * model: the span records the exception, and the log gets one warn.
  */
 function markToolFailure(tu: ToolCallPart, tool: Tool, failure: unknown, log: Logger): void {
+    const failureAsError = errorOf(failure);
     const toolError = modeledToolError(failure);
     if (toolError !== undefined) {
         labelToolFailure("tool_error", toolError.error);
-    } else if (isError(failure)) {
-        recordToolException(failure);
-        log.warn("tool call threw", { tool: tool.id, toolCallId: tu.toolCallId, ...log.errorFields(failure) });
+    } else if (failureAsError !== undefined) {
+        recordToolException(failureAsError);
+        log.warn("tool call threw", { tool: tool.id, toolCallId: tu.toolCallId, ...log.errorFields(failureAsError) });
     } else {
         labelToolFailure("_OTHER");
     }
@@ -1494,10 +1498,13 @@ function errorResult(toolCall: ToolCallPart, content: string): ToolResultPart {
     };
 }
 
-function isAskRejected(err: unknown): err is AskRejectedError {
+function askRejectionOf(err: unknown): { feedback?: string } | undefined {
+    if (err instanceof AskRejectedError) return err;
     // Name-based fallback recognizes a rejection thrown from a different module
     // realm, where `instanceof` against this file's class reference would miss it.
-    return err instanceof AskRejectedError || errorName(err) === "AskRejectedError";
+    if (errorName(err) !== "AskRejectedError") return undefined;
+    const feedback = maybeRecord(err)?.feedback;
+    return { feedback: typeof feedback === "string" ? feedback : undefined };
 }
 
 /**
@@ -1550,10 +1557,7 @@ export function finalText(messages: readonly LoopMessage[]): string {
     const last = messages.at(-1);
     if (last === undefined || last.role !== "assistant") return "";
     if (typeof last.content === "string") return last.content;
-    return last.content
-        .filter((block): block is { type: "text"; text: string } & typeof block => block.type === "text")
-        .map((block) => block.text)
-        .join("");
+    return last.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
 }
 
 function formatZodIssues(error: z.ZodError, input: unknown): string {

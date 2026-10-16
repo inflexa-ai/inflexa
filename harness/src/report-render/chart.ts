@@ -3707,7 +3707,7 @@ function barCategoryAxis(
     if (declared?.scale !== undefined) {
         return compositionAxis(context, channel, axis, declared, preset);
     }
-    const ordered = orderChannel(context, channel, firstAppearance(channel.values.filter((value): value is Cell => value !== null)));
+    const ordered = orderChannel(context, channel, firstAppearance(channel.values.filter((value: Cell | null): value is Cell => value !== null)));
     if (ordered.isErr()) return err(ordered.error);
     const typeFields = axis === "x" ? { type: "category" } : { ...HORIZONTAL_CATEGORY_AXIS };
     return ok({ ...typeFields, data: ordered.value, ...axisNameFields(axis, categoryAxisTitle(context.labels, channel.name, declared?.title)) });

@@ -66,9 +66,7 @@ const AuthoringReferenceSchema = z.discriminatedUnion("kind", [
 const AuthoringScalarReferenceSchema = z.discriminatedUnion("kind", [AuthoringValueReferenceSchema, AuthoringDerivationReferenceSchema]);
 
 /** The tree of one heatmap axis on the authoring surface: the contract tree with an authoring binding. */
-function authoringTree() {
-    return ChartTreeSchema.extend({ binding: AuthoringTableReferenceSchema.describe(ChartTreeSchema.shape.binding.description ?? "") });
-}
+const AuthoringTreeSchema = ChartTreeSchema.extend({ binding: AuthoringTableReferenceSchema.describe(ChartTreeSchema.shape.binding.description ?? "") });
 
 /**
  * The chart block of the authoring surface.
@@ -93,8 +91,8 @@ const AuthoringChartBlockSchema = z.strictObject({
         .describe(ChartBlockSchema.shape.track.description ?? ""),
     trees: z
         .strictObject({
-            x: authoringTree().optional().describe("The tree of the `x` categories. It draws above the matrix and above the tracks."),
-            y: authoringTree().optional().describe("The tree of the `y` categories. It draws at the left of the row names."),
+            x: AuthoringTreeSchema.optional().describe("The tree of the `x` categories. It draws above the matrix and above the tracks."),
+            y: AuthoringTreeSchema.optional().describe("The tree of the `y` categories. It draws at the left of the row names."),
         })
         .optional()
         .describe(ChartBlockSchema.shape.trees.description ?? ""),

@@ -67,7 +67,7 @@ import { reportSessionDir, type ResolveWorkspaceRoot } from "../../workspace/pat
 import { defineTool, withToolResultImages, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 import { digestPageFaults, type ConsoleErrorEntry, type FailedRequestEntry } from "./page-faults.js";
-import { errorMessage, errnoCode, isError } from "../../lib/thrown.js";
+import { errorMessage, errnoCode, errorOf } from "../../lib/thrown.js";
 
 // The capture shapes live beside the chrome connection. The tool keeps them on its own surface, thus a
 // consumer of the tool imports one module.
@@ -271,7 +271,7 @@ function startSeamCall<T>(call: () => Promise<T>): Promise<T> {
     try {
         return call();
     } catch (cause) {
-        return Promise.reject(isError(cause) ? cause : new Error(errorMessage(cause)));
+        return Promise.reject(errorOf(cause) ?? new Error(errorMessage(cause)));
     }
 }
 

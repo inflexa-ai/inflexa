@@ -50,7 +50,7 @@ import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js
 import { captureMetrics } from "../../__tests__/setup/metrics.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { isError } from "../../lib/thrown.js";
+import { errorOf } from "../../lib/thrown.js";
 import { poolDouble, stubChatProvider, stubEmbeddingProvider } from "../../lib/test/doubles.js";
 import { optionRecord } from "../../report-render/option-lens.js";
 
@@ -113,13 +113,13 @@ async function mockDbos(): Promise<void> {
     const dbos = await import("@dbos-inc/dbos-sdk");
 
     originalDbosFns ??= {
-        runStep: dbos.DBOS.runStep,
-        startWorkflow: dbos.DBOS.startWorkflow,
-        writeStream: dbos.DBOS.writeStream,
-        cancelWorkflow: dbos.DBOS.cancelWorkflow,
-        waitFirst: dbos.DBOS.waitFirst,
-        recv: dbos.DBOS.recv,
-        now: dbos.DBOS.now,
+        runStep: dbos.DBOS["runStep"],
+        startWorkflow: dbos.DBOS["startWorkflow"],
+        writeStream: dbos.DBOS["writeStream"],
+        cancelWorkflow: dbos.DBOS["cancelWorkflow"],
+        waitFirst: dbos.DBOS["waitFirst"],
+        recv: dbos.DBOS["recv"],
+        now: dbos.DBOS["now"],
     };
 
     // `DBOS.runStep` — execute the wrapped fn immediately, unless the step name
@@ -303,11 +303,15 @@ function suspendWrites(queries: readonly PoolQuery[]): Array<{ text: string; val
 
 // ── Fake handle factory ──────────────────────────────────────────────
 
+function isFailure(value: SandboxStepResult | Error): value is Error {
+    return errorOf(value) !== undefined;
+}
+
 function handleFor(workflowID: string, result: SandboxStepResult | Error): FakeWorkflowHandle {
     return {
         workflowID,
         getResult(): Promise<SandboxStepResult> {
-            if (isError(result)) return Promise.reject(result);
+            if (isFailure(result)) return Promise.reject(result);
             return Promise.resolve(result);
         },
     };

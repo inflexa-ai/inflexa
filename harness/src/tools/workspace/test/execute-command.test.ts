@@ -330,7 +330,7 @@ describe("execute_command lineage", () => {
         const { ctx } = makeToolContext();
 
         const out = (await tool.execute({ command: ["python", "scripts/de.py"] }, ctx))._unsafeUnwrap();
-        must(must(tool, "tool").foldCallRecord, "must(tool, \"tool\").foldCallRecord")(readToolCallRecord(out));
+        must(must(tool, "tool").foldCallRecord?.bind(tool), 'must(tool, "tool").foldCallRecord')(readToolCallRecord(out));
 
         expect(collector.getRecords().map((record) => record.outputPath)).toEqual(["output/de.csv"]);
     });

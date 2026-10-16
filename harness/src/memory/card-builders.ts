@@ -20,7 +20,7 @@ import { okAsync, type ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { tryQuery, type DbError } from "../lib/db-result.js";
-import { maybeRecord } from "../lib/shape.js";
+import { plainRecord } from "../lib/shape.js";
 import type { PlanPart } from "../contracts/chat-parts.js";
 import { PlanPartSchema } from "../contracts/schemas/chat-parts.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
@@ -28,10 +28,6 @@ import { loadPlan, loadPlanRecord, type PlanRecord } from "../state/index.js";
 import { parseStructureUrl } from "../contracts/structure-source.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { validatePath } from "../tools/lib/path-validation.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return maybeRecord(value) !== undefined && !Array.isArray(value);
-}
 
 export type PlanCardData = {
     id: string;
@@ -170,12 +166,13 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
     if (typeof kind !== "string") return null;
     const cardTitle = typeof title === "string" ? title : undefined;
     let content: Record<string, unknown>;
+    const spec = plainRecord(rest.spec);
     if (kind === "structure") {
         const source = typeof rest.url === "string" ? parseStructureUrl(rest.url) : null;
         if (source === null) return null;
         content = { kind, format: source.format, url: source.url, provider: source.provider, accession: source.accession, version: source.version };
-    } else if (kind === "echart" && isRecord(rest.spec)) {
-        content = { kind, ...rest, spec: normalizeEchartSpec(rest.spec, { title: cardTitle }) };
+    } else if (kind === "echart" && spec !== undefined) {
+        content = { kind, ...rest, spec: normalizeEchartSpec(spec, { title: cardTitle }) };
     } else {
         // Every other kind (and an echart the model called without a `spec`) is carried through
         // untouched — there is no layout to normalize, and no spec to invent.

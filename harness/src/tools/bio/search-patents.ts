@@ -12,7 +12,7 @@ import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { guaranteed } from "../../lib/invariants.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import {
     describeAmassError,
     getPatentRecord,
@@ -32,7 +32,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const IDENTIFIER_FIELDS = ["amassId", "publicationNumber", "applicationNumber"] as const;
 
-function dateField(description: string) {
+function dateField(description: string): z.ZodOptional<z.ZodString> {
     return z.string().regex(ISO_DATE).optional().describe(`'search' only. ${description}, YYYY-MM-DD.`);
 }
 
@@ -95,7 +95,7 @@ function failure(e: AmassError): Result<never, ToolError> {
     throw new Error(describeAmassError(e));
 }
 
-export function createSearchPatentsTool(deps: { apiKey: string }) {
+export function createSearchPatentsTool(deps: { apiKey: string }): Tool<z.infer<typeof inputSchema>, PatentsOutput> {
     return defineTool({
         id: "search_patents",
         description:

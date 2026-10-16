@@ -1,5 +1,5 @@
 import { maybeRecord } from "../lib/shape.js";
-import { jsonSchema, tool as aiTool, type ToolCallPart } from "ai";
+import { jsonSchema, tool as aiTool, type AssistantContent, type Tool, type ToolCallPart } from "ai";
 import type { Pool } from "pg";
 import { z } from "zod";
 
@@ -215,7 +215,7 @@ async function routePackages(
     return { packages, droppedPackages };
 }
 
-function routeTool() {
+function routeTool(): { submit_route: Tool } {
     return {
         submit_route: aiTool({
             description: "Submit the single specialist, the resource recommendation, and the packages of the step. This is the only valid response.",
@@ -290,7 +290,9 @@ export async function routeAdHocRequest(
             rollups: input.turnUsage === undefined ? [] : [input.turnUsage],
         });
         const call = Array.isArray(response.message.content)
-            ? response.message.content.find((part): part is ToolCallPart => part.type === "tool-call" && part.toolName === "submit_route")
+            ? response.message.content.find(
+                  (part: Exclude<AssistantContent, string>[number]): part is ToolCallPart => part.type === "tool-call" && part.toolName === "submit_route",
+              )
             : undefined;
         raw = call?.input;
         if (!call) failure = "malformed";

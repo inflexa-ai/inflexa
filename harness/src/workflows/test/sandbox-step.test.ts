@@ -21,13 +21,13 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock, test } fro
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolResultPart } from "ai";
+import type { ToolContent, ToolResultPart } from "ai";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { ChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
-import { PART_REGISTRY, isReconciling, type ChatPartType } from "@inflexa-ai/harness/contracts/part-registry.js";
+import { PART_REGISTRY, isReconciling } from "@inflexa-ai/harness/contracts/part-registry.js";
 
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
@@ -118,11 +118,11 @@ async function mockDbos(): Promise<void> {
     const dbos = await import("@dbos-inc/dbos-sdk");
 
     originalDbosFns ??= {
-        runStep: dbos.DBOS.runStep,
-        writeStream: dbos.DBOS.writeStream,
-        now: dbos.DBOS.now,
-        send: dbos.DBOS.send,
-        cancelWorkflow: dbos.DBOS.cancelWorkflow,
+        runStep: dbos.DBOS["runStep"],
+        writeStream: dbos.DBOS["writeStream"],
+        now: dbos.DBOS["now"],
+        send: dbos.DBOS["send"],
+        cancelWorkflow: dbos.DBOS["cancelWorkflow"],
     };
 
     // Every `DBOS.runStep` runs its body inline — the body under test only needs
@@ -312,14 +312,12 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
     };
 }
 
-/**
- * Latest-wins fold over a run's event stream, keyed by part id — the rule the
- * part registry publishes for consumers (`isReconciling`) and the one a replayed
- * emission relies on. Non-reconciling parts are appended as-is.
- */
-function isPartType(value: unknown): value is ChatPartType {
-    return typeof value === "string" && value in PART_REGISTRY;
-}
+/** The part types the registry marks reconciling — derived, so a registry change cannot drift from this fold. */
+const RECONCILING_TYPES: ReadonlySet<string> = new Set(
+    Object.entries(PART_REGISTRY)
+        .filter(([, descriptor]) => descriptor.reconciling)
+        .map(([type]) => type),
+);
 
 function foldStream(parts: ReadonlyArray<Record<string, unknown>>): Array<Record<string, unknown>> {
     const out: Array<Record<string, unknown>> = [];
@@ -327,7 +325,7 @@ function foldStream(parts: ReadonlyArray<Record<string, unknown>>): Array<Record
     for (const part of parts) {
         const type = part.type;
         const id = typeof part.id === "string" ? part.id : undefined;
-        if (id === undefined || !isPartType(type) || !isReconciling(type)) {
+        if (id === undefined || typeof type !== "string" || !RECONCILING_TYPES.has(type)) {
             out.push(part);
             continue;
         }
@@ -507,7 +505,7 @@ describe("sandbox-step activity history", () => {
 function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
     return request.messages
         .flatMap((message) => (message.role === "tool" ? message.content : []))
-        .find((part): part is ToolResultPart => part.type === "tool-result" && part.toolCallId === toolCallId);
+        .find((part: ToolContent[number]): part is ToolResultPart => part.type === "tool-result" && part.toolCallId === toolCallId);
 }
 
 describe("sandbox-step file-metadata output tool", () => {
@@ -589,7 +587,7 @@ describe("sandbox-step post-step continuations", () => {
     it("reads a cached metadata array of an earlier version as entries, and the summary continues the transcript directly", async () => {
         await seedStepOutput();
         const dbos = await import("@dbos-inc/dbos-sdk");
-        const runInline: (fn: () => Promise<unknown>, config?: { name?: string }) => Promise<unknown> = dbos.DBOS.runStep;
+        const runInline: (fn: () => Promise<unknown>, config?: { name?: string }) => Promise<unknown> = dbos.DBOS["runStep"];
         const cached = [{ dbPath: `runs/${USAGE_RUN_ID}/${USAGE_STEP_ID}/output/result.csv`, description: "cached description", metadata: { format: "csv" } }];
         Reflect.set(
             dbos.DBOS,

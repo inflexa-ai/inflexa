@@ -144,7 +144,7 @@ async function settlesWithin<T>(promise: Promise<T>, timeoutMs: number, label: s
 
 const typesOf = (parts: readonly ChatPart[]): string[] => parts.map((p) => p.type);
 
-const activitiesOf = (parts: readonly ChatPart[]): StepActivityPart[] => parts.filter((p): p is StepActivityPart => p.type === "data-step-activity");
+const activitiesOf = (parts: readonly ChatPart[]): StepActivityPart[] => parts.filter((p: ChatPart): p is StepActivityPart => p.type === "data-step-activity");
 
 const summariesOf = (parts: readonly ChatPart[]): string[] => parts.flatMap((p) => (p.type === "data-step-summary" ? [p.markdown] : []));
 

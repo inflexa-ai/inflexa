@@ -17,6 +17,12 @@ export function maybeRecord(value: unknown): Record<string, unknown> | undefined
     return isRecord(value) ? value : undefined;
 }
 
+/** A non-array object, or `undefined` for `null`, primitives, and arrays — arrays are positions, not keyed maps. */
+export function plainRecord(value: unknown): Record<string, unknown> | undefined {
+    const record = maybeRecord(value);
+    return record === undefined || Array.isArray(record) ? undefined : record;
+}
+
 /** The member of `container` narrowed to an object, or `undefined` when absent, `null`, or a primitive. */
 export function recordMember(container: Record<string, unknown> | undefined, key: string): Record<string, unknown> | undefined {
     return maybeRecord(container?.[key]);

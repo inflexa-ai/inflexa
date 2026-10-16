@@ -19,7 +19,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { APICallError, type LanguageModelV4, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { retryWithExponentialBackoff } from "@ai-sdk/provider-utils";
+import { retryWithExponentialBackoff, type RetryFunction } from "@ai-sdk/provider-utils";
 import { trace } from "@opentelemetry/api";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
@@ -42,7 +42,7 @@ import type {
     ProviderOptions,
     ReasoningPolicy,
 } from "./types.js";
-import { errorMessage, isAbortError, isError } from "../lib/thrown.js";
+import { errorMessage, isAbortError, errorOf } from "../lib/thrown.js";
 import { maybeRecord, recordMember, typedMember } from "../lib/shape.js";
 
 /**
@@ -482,7 +482,7 @@ export function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): P
  * timeout. Without this guard the envelope would loop an expiry that the caller
  * itself declared.
  */
-export function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn, hookCall: HookCall) {
+export function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn, hookCall: HookCall): RetryFunction {
     let retryCount = 0;
     return retryWithExponentialBackoff({
         maxRetries,
@@ -619,7 +619,7 @@ function responseFromMessages(input: {
 }): ChatResponse {
     const { messages, fallbackText, finishReason, rawFinishReason, requestedModelId, servedModelId, provider } = input;
     const usage = toChatUsage(input.usage);
-    const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
+    const message = [...messages].reverse().find((m: ModelMessage): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
     if (message === undefined) {
         return { message: { role: "assistant", content: fallbackText }, finishReason, rawFinishReason, usage, requestedModelId, servedModelId, provider };
     }
@@ -741,7 +741,8 @@ const STREAM_ERROR_STATUS: Readonly<Record<string, number>> = {
  * `[object Object]` and reaches the classifier with no status at all.
  */
 function streamPartFailure(error: unknown): unknown {
-    if (isError(error)) return error;
+    const asError = errorOf(error);
+    if (asError !== undefined) return asError;
     const reported = maybeRecord(error);
     if (reported === undefined) return new Error(errorMessage(error));
     const type = typeof reported.type === "string" ? reported.type : undefined;

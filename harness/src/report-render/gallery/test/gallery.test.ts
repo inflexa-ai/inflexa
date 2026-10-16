@@ -93,7 +93,7 @@ function everyBlock(blocks: readonly Block[]): Block[] {
 }
 
 /** Each chart block of the gallery. */
-const CHARTS = everyBlock(GALLERY_DOCUMENT.sections).filter((block): block is ChartBlock => block.kind === "chart");
+const CHARTS = everyBlock(GALLERY_DOCUMENT.sections).filter((block: Block): block is ChartBlock => block.kind === "chart");
 
 /** Each file under a directory, as a path relative to the gallery directory. */
 async function filesUnder(dir: string): Promise<string[]> {

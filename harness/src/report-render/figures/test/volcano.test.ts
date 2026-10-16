@@ -82,13 +82,12 @@ function seriesOf(option: EchartOption): EchartOption[] {
 
 /** The names of the points of one series that carry a shown label. */
 function labeled(series: EchartOption): string[] {
-    // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
     return optionArray(series.data)
-        .filter((item): item is EchartOption => {
+        .flatMap((item) => {
             const fields = optionMemberOrUndefined(item);
-            return fields !== undefined && "label" in fields;
+            return fields !== undefined && "label" in fields ? [fields] : [];
         })
-        .map((item) => optionText(item.name));
+        .map((fields) => optionText(fields.name));
 }
 
 describe("the volcano figure", () => {

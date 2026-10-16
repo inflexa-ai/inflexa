@@ -18,7 +18,7 @@
 import type { SerializationRecipe } from "@dbos-inc/dbos-sdk";
 import { Err, Ok, err, ok } from "neverthrow";
 import { jsonParse } from "../lib/json.js";
-import { isError } from "../lib/thrown.js";
+import { errorOf } from "../lib/thrown.js";
 import { z, type ZodType } from "zod";
 
 export type Json = string | number | boolean | null | undefined | Json[] | { [key: string]: Json };
@@ -39,7 +39,8 @@ export type EncodedErr = { error?: Json };
  */
 function stringifyJson(value: unknown): string | undefined {
     return JSON.stringify(value, (_key, v: unknown) => {
-        if (isError(v)) return { name: v.name, message: v.message };
+        const error = errorOf(v);
+        if (error !== undefined) return { name: error.name, message: error.message };
         if (typeof v === "bigint") return v.toString();
         return v;
     });

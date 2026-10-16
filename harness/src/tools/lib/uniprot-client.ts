@@ -241,7 +241,7 @@ function toProtein(raw: UniProtSearchResult): UniProtProtein {
         accession: raw.primaryAccession ?? "",
         uniProtkbId: raw.uniProtkbId ?? null,
         proteinName: extractProteinName(raw),
-        geneNames: (raw.genes ?? []).map((gene) => gene.geneName?.value).filter((name): name is string => Boolean(name)),
+        geneNames: (raw.genes ?? []).map((gene) => gene.geneName?.value).filter((name: string | undefined): name is string => Boolean(name)),
         sequenceLength: raw.sequence?.length ?? null,
         function: extractFunctionText(raw),
         subcellularLocations: extractSubcellularLocations(raw),

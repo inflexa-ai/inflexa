@@ -155,8 +155,8 @@ export type CitationResolveOptions = {
 };
 
 export type CitationResolver = {
-    resolveOne(input: CitationInput, options?: CitationResolveOptions): Promise<CitationResolutionResult>;
-    resolveMany(inputs: readonly CitationInput[], options?: CitationResolveOptions): Promise<CitationResolutionResult[]>;
+    resolveOne: (input: CitationInput, options?: CitationResolveOptions) => Promise<CitationResolutionResult>;
+    resolveMany: (inputs: readonly CitationInput[], options?: CitationResolveOptions) => Promise<CitationResolutionResult[]>;
 };
 
 export const CitationSourceOperationSchema = z.enum([
@@ -206,6 +206,6 @@ export type CitationSourceRequest = {
 
 export type CitationSourceClient = {
     readonly source: CitationSource;
-    resolve(request: CitationSourceRequest, signal?: AbortSignal): Promise<CitationSourceOutcome>;
-    resolveMany?(requests: readonly CitationSourceRequest[], signal?: AbortSignal): Promise<CitationSourceOutcome[]>;
+    resolve: (request: CitationSourceRequest, signal?: AbortSignal) => Promise<CitationSourceOutcome>;
+    resolveMany?: (requests: readonly CitationSourceRequest[], signal?: AbortSignal) => Promise<CitationSourceOutcome[]>;
 };

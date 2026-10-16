@@ -24,7 +24,7 @@ import {
     type CitationSourceRequest,
     type RegistrationAgencyEvidence,
 } from "./types.js";
-import { abortReason, errorMessage, isError } from "../lib/thrown.js";
+import { abortReason, errorMessage, errorOf } from "../lib/thrown.js";
 
 const SOURCE_PLAN_VERSION = "citation-plan-v1";
 const SOURCE_ORDER: readonly CitationSource[] = ["doi_registry", "crossref", "pubmed", "arxiv", "semantic_scholar"];
@@ -71,7 +71,7 @@ type PendingCitation = {
 };
 
 function mergedRateLimit(source: CitationSource, config: CitationResolverConfig): RateLimitConfig {
-    return { ...DEFAULT_RATE_LIMITS[source], ...(config.sources?.[source]) };
+    return { ...DEFAULT_RATE_LIMITS[source], ...config.sources?.[source] };
 }
 
 function createDefaultClients(config: CitationResolverConfig, deps: CitationResolverDependencies): CitationSourceClient[] {
@@ -124,7 +124,7 @@ function withCallerSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise
             },
             (error: unknown) => {
                 signal.removeEventListener("abort", onAbort);
-                reject(isError(error) ? error : new Error(errorMessage(error)));
+                reject(errorOf(error) ?? new Error(errorMessage(error)));
             },
         );
     });
@@ -155,7 +155,7 @@ function registrationAgencyEvidence(outcome: CitationSourceOutcome | undefined):
 async function runSource(client: CitationSourceClient, requests: readonly CitationSourceRequest[], signal?: AbortSignal): Promise<CitationSourceOutcome[]> {
     const unavailable = (request: CitationSourceRequest, detail: string): CitationSourceOutcome =>
         sourceOutcome(client.source, request.plan.operation, "unavailable", 0, [], detail);
-    const describe = (error: unknown): string => (errorMessage(error));
+    const describe = (error: unknown): string => errorMessage(error);
 
     if (client.resolveMany === undefined) {
         const settled = await Promise.allSettled(requests.map((request) => client.resolve(request, signal)));
@@ -183,7 +183,7 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
     };
     const cache = new BoundedTtlCache<readonly CitationSourceOutcome[]>(cacheConfig.maximum, now);
     const inFlight = new Map<string, Promise<readonly CitationSourceOutcome[]>>();
-    const matchConfig: CitationMatchConfig = { ...DEFAULT_MATCH_CONFIG, ...(config.match) };
+    const matchConfig: CitationMatchConfig = { ...DEFAULT_MATCH_CONFIG, ...config.match };
     const maxBatchSize = config.maxBatchSize ?? 200;
 
     const keyFor = (input: CitationInput): string => `${SOURCE_PLAN_VERSION}:${citationLookupKey(input)}`;

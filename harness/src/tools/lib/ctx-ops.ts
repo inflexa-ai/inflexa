@@ -225,7 +225,7 @@ function extractAc50Raw(r: ToxcastBioactivityRow): number | null {
  */
 async function fetchAssayNames(rows: readonly ToxcastBioactivityRow[], headers: Record<string, string>): Promise<Map<number, string>> {
     const map = new Map<number, string>();
-    const aeids = [...new Set(rows.map((r) => r.aeid).filter((aeid): aeid is number => aeid != null))];
+    const aeids = [...new Set(rows.map((r) => r.aeid).filter((aeid: number | undefined): aeid is number => aeid != null))];
     if (aeids.length === 0) return map;
 
     const url = `${EPA_CCTE_BASE}/bioactivity/assay/search/by-aeid/`;

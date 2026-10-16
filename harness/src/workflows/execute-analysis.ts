@@ -135,7 +135,7 @@ import { recordCancelledChild } from "./metrics.js";
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
 import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, type Suspension } from "./suspension.js";
 import { errorMessage } from "../lib/thrown.js";
-import { isError } from "../lib/thrown.js";
+import { errorOf } from "../lib/thrown.js";
 import { typedMember } from "../lib/shape.js";
 
 /** Registered child sandbox-step callable the parent's child-dispatch closes over. */
@@ -956,10 +956,9 @@ export function synthesizeFindings(args: {
  * and uses `DBOS.workflowID` as the source of truth.
  */
 export function registerExecuteAnalysis(deps: ExecuteAnalysisDeps): (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult> {
-    return DBOS.registerWorkflow(
-         (input: ExecuteAnalysisInput): Promise<ExecuteAnalysisResult> => Promise.resolve(runExecuteAnalysisBody(input, deps)),
-        { name: "executeAnalysis" },
-    );
+    return DBOS.registerWorkflow((input: ExecuteAnalysisInput): Promise<ExecuteAnalysisResult> => Promise.resolve(runExecuteAnalysisBody(input, deps)), {
+        name: "executeAnalysis",
+    });
 }
 
 /**
@@ -1175,6 +1174,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // failed, force a failed terminal status so the charge/run-authorization close correctly
     // and the run row + stream report the failure before we re-throw.
     const suspension = final.suspension ?? synthesisSuspension;
+    const synthesisErrorMessage = errorOf(synthesisError)?.message;
     const terminal: { -readonly [K in keyof CollectAndCompleteArgs]: CollectAndCompleteArgs[K] } = {
         input,
         runId,
@@ -1185,8 +1185,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         canceled: final.canceled,
         suspension,
         failureReason: synthesisError
-            ? isError(synthesisError)
-                ? `synthesis-failed: ${synthesisError.message}`
+            ? synthesisErrorMessage !== undefined
+                ? `synthesis-failed: ${synthesisErrorMessage}`
                 : "synthesis-failed"
             : final.suspension === null && synthesisSuspension !== null
               ? synthesisSuspension.reason
@@ -1213,7 +1213,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // Re-throw after the terminal block so the workflow record goes to ERROR.
     // Non-Error throw values wrap so the workflow record carries a message;
     // Errors re-throw with their identity intact.
-    if (synthesisError !== null) throw isError(synthesisError) ? synthesisError : new Error(errorMessage(synthesisError));
+    if (synthesisError !== null) throw errorOf(synthesisError) ?? new Error(errorMessage(synthesisError));
 
     return result;
 }
@@ -1510,9 +1510,9 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 parentWorkflowId: dbosParentId,
                 runSession: forStep(input.runSession, stepId),
             };
-            const handle = (await DBOS.startWorkflow(deps.sandboxStepCallable, {
+            const handle = await DBOS.startWorkflow(deps.sandboxStepCallable, {
                 workflowID: childWorkflowId,
-            })(childInput));
+            })(childInput);
             inFlight.set(childWorkflowId, { stepId, handle });
             stepRuntime.set(stepId, { status: "running" });
         }
@@ -1868,7 +1868,17 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                     .unwrapOr(0),
             { name: "count-run-artifacts" },
         );
-        const completedPart: { type: "data-run-completed"; runId: string; status: ExecuteAnalysisFinalStatus; completedSteps: number; totalSteps: number; artifactCount: number; findings: { title: string; confidence: string }[]; note?: string; usage?: CollectAndCompleteArgs["usage"] } = {
+        const completedPart: {
+            type: "data-run-completed";
+            runId: string;
+            status: ExecuteAnalysisFinalStatus;
+            completedSteps: number;
+            totalSteps: number;
+            artifactCount: number;
+            findings: { title: string; confidence: string }[];
+            note?: string;
+            usage?: CollectAndCompleteArgs["usage"];
+        } = {
             type: "data-run-completed",
             runId,
             status,

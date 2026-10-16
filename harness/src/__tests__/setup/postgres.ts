@@ -166,7 +166,7 @@ export async function withSchema(testName: string): Promise<{
 
     await initCortexState(pool);
 
-    const drop = async () => {
+    const drop = async (): Promise<void> => {
         await pool.end().catch(() => {
             /* already closed */
         });

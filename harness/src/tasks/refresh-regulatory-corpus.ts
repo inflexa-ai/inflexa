@@ -14,8 +14,8 @@ import { z } from "zod";
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../lib/result.js";
-import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
-import { fetchIchListing, fetchAndExtractIchDoc, type IchStub } from "../lib/regulatory-corpus/fetch-ich.js";
+import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaDoc, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
+import { fetchIchListing, fetchAndExtractIchDoc, type IchDoc, type IchStub } from "../lib/regulatory-corpus/fetch-ich.js";
 import { chunkText, upsertChunks, type ChunkRow } from "../lib/regulatory-corpus.js";
 import { errorMessage } from "../lib/thrown.js";
 
@@ -113,7 +113,7 @@ async function listForSource(source: RegulatoryCorpusSource): Promise<Array<FdaD
     }
 }
 
-async function fetchOne(stub: FdaDocStub | IchStub) {
+async function fetchOne(stub: FdaDocStub | IchStub): Promise<IchDoc | FdaDoc> {
     // The stub shapes carry their own discriminant: an ICH listing names its series, an FDA listing names its center.
     if ("series" in stub) {
         return await fetchAndExtractIchDoc(stub);

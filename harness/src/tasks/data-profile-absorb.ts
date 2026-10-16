@@ -233,7 +233,9 @@ export function absorbRecipe(prior: DataProfileResult | null | undefined, detect
     let operations: MenuOperation[];
     let dimensions: ProfileDimension[];
     try {
-        operations = authored.map((step) => replayStep(ctx, step)).filter((operation): operation is MenuOperation => operation !== undefined);
+        operations = authored
+            .map((step) => replayStep(ctx, step))
+            .filter((operation: MenuOperation | undefined): operation is MenuOperation => operation !== undefined);
         dimensions = (prior.dimensions ?? []).map((dimension) => replayDimension(ctx, dimension));
     } catch (err) {
         if (err instanceof StrandedRecipe) return { kind: "stranded", reason: err.message };

@@ -1697,7 +1697,9 @@ describe("runAgent — event provenance", () => {
 
 /** Every `tool-started` / `tool-finished` event a run emitted, in order. */
 function toolEvents(events: readonly EmitEvent[]): Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>[] {
-    return events.filter((e): e is Extract<EmitEvent, { type: "tool-started" | "tool-finished" }> => e.type === "tool-started" || e.type === "tool-finished");
+    return events.filter(
+        (e: EmitEvent): e is Extract<EmitEvent, { type: "tool-started" | "tool-finished" }> => e.type === "tool-started" || e.type === "tool-finished",
+    );
 }
 
 /** Run one scripted turn, returning the tool events it emitted. */
@@ -2025,7 +2027,10 @@ describe("runAgent — tool-finished outcome", () => {
 function finishedDurationMs(events: readonly Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>[], toolUseId: string): number {
     // The predicate narrows to the union member itself rather than to a cast
     // shape. Thus a `durationMs` dropped from `EmitEvent` fails here.
-    const finished = events.find((e): e is Extract<EmitEvent, { type: "tool-finished" }> => e.type === "tool-finished" && e.toolUseId === toolUseId);
+    const finished = events.find(
+        (e: Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>): e is Extract<EmitEvent, { type: "tool-finished" }> =>
+            e.type === "tool-finished" && e.toolUseId === toolUseId,
+    );
     expect(finished).toBeDefined();
     expect(typeof must(finished, "finished").durationMs).toBe("number");
     return must(must(finished, "finished").durationMs, "the duration of the finished run");

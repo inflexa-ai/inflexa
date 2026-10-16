@@ -1180,8 +1180,8 @@ describe("the session refusal", () => {
 describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
     function detailOf(tool: ReturnType<typeof createPreviewReportTool>, result: PreviewReportResult): string {
-        expect(tool.describeResult).toBeDefined();
-        return must(must(tool, "tool").describeResult, 'must(tool, "tool").describeResult')({}, result);
+        expect(tool.describeResult?.bind(tool)).toBeDefined();
+        return must(must(tool, "tool").describeResult?.bind(tool), 'must(tool, "tool").describeResult')({}, result);
     }
 
     it("names the page path of a render", async () => {

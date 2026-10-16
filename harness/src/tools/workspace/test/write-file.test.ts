@@ -176,7 +176,7 @@ describe("write_file tool", () => {
         expect(collector.getRecords()).toEqual([]);
 
         // A replay returns the cached value and folds its record again, into fresh process state.
-        must(must(tool, "tool").foldCallRecord, 'must(tool, "tool").foldCallRecord')(readToolCallRecord(out));
+        must(must(tool, "tool").foldCallRecord?.bind(tool), 'must(tool, "tool").foldCallRecord')(readToolCallRecord(out));
         const records = collector.getRecords();
         expect(records.map((record) => record.outputPath)).toEqual(["output/replay.txt"]);
         expect(records[0].outputHash).toBe(computeSha256(Buffer.from("v1", "utf8")));

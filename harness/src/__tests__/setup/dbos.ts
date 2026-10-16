@@ -161,7 +161,7 @@ async function ensureDbosLaunched(basePool: Pool): Promise<void> {
 
         if (!shared.shutdownRegistered) {
             shared.shutdownRegistered = true;
-            const shutdown = () => {
+            const shutdown = (): void => {
                 // Fire-and-forget — exit handlers can't await.
                 void shutdownDbos({ logger: silentLogger });
             };
@@ -184,7 +184,7 @@ export async function setupDbosForTests(testName: string): Promise<DbosTestRig> 
     const { pool, schemaName, drop } = await withSchema(testName);
 
     let dropped = false;
-    const safeDrop = async () => {
+    const safeDrop = async (): Promise<void> => {
         if (dropped) return;
         dropped = true;
         await drop();

@@ -191,7 +191,7 @@ function entityDimensionLabel(dimensions: readonly ProfileDimensionView[], disti
 }
 
 function kindEntry(analysisId: string, group: ProfileGroupView): ProfileIndexEntry {
-    const facts = [`${group.count} files`, group.format, group.pattern].filter((fact): fact is string => Boolean(fact)).join(", ");
+    const facts = [`${group.count} files`, group.format, group.pattern].filter((fact: string | undefined): fact is string => Boolean(fact)).join(", ");
     return {
         id: `/${analysisId}/kind/${slug(group.name)}`,
         text: `${group.name} — ${group.description} One member is ${group.memberRepresents}. (${facts})`,

@@ -15,7 +15,7 @@ import type { DraftDocument } from "../../../report-model/draft.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
-import type { ToolContext } from "../../define-tool.js";
+import type { Tool, ToolContext } from "../../define-tool.js";
 import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
 import type { ToolExecutionMode } from "../../define-tool.js";
 import {
@@ -894,8 +894,8 @@ describe("the call detail", () => {
     const tools = createReportAuthoringTools(makeFakeGateway());
 
     /** Run a tool's call hook, asserting that the tool declares one. */
-    function detailOf(tool: { describeCall?(input: unknown): string }, input: unknown): string {
-        return must(tool.describeCall, "the tool declares describeCall")(input);
+    function detailOf(tool: Tool, input: unknown): string {
+        return must(tool.describeCall?.bind(tool), "the tool declares describeCall")(input);
     }
 
     /** A whole-table reference onto one pinned path. */

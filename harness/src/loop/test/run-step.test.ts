@@ -25,8 +25,8 @@ let originalRunStep: unknown;
 
 async function stubRunStep() {
     const dbos = await import("@dbos-inc/dbos-sdk");
-    originalRunStep ??= dbos.DBOS.runStep;
-    const stub = mock( (fn: () => Promise<unknown>, _config?: { name?: string }) => Promise.resolve(fn()));
+    originalRunStep ??= dbos.DBOS["runStep"];
+    const stub = mock((fn: () => Promise<unknown>, _config?: { name?: string }) => Promise.resolve(fn()));
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
     (dbos.DBOS.runStep as unknown) = stub;
     return stub;
@@ -50,9 +50,7 @@ describe("passthroughStep", () => {
     });
 
     it("propagates errors", async () => {
-        await expect(
-            passthroughStep("tool-add-id-1",  () => Promise.reject(new Error("step-failure"))),
-        ).rejects.toThrow("step-failure");
+        await expect(passthroughStep("tool-add-id-1", () => Promise.reject(new Error("step-failure")))).rejects.toThrow("step-failure");
     });
 });
 

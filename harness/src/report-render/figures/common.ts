@@ -753,7 +753,10 @@ export function legendIconOf(series: EchartOption): string {
 function seriesOf(option: EchartOption): EchartOption[] {
     const series = option.series;
     if (!Array.isArray(series)) return [];
-    return series.filter((entry): entry is EchartOption => optionMemberOrUndefined(entry) !== undefined);
+    return series.flatMap((entry) => {
+        const fields = optionMemberOrUndefined(entry);
+        return fields === undefined ? [] : [fields];
+    });
 }
 
 /**

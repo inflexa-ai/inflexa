@@ -11,7 +11,7 @@ import { Browser, BrowserContext, type EvaluateFunc, type MediaFeature, Page, ty
 import { must } from "./guards.js";
 import { setBrowserConnector } from "../chrome.js";
 import { capturePage } from "../page-capture.js";
-import { isError } from "../thrown.js";
+import { errorOf } from "../thrown.js";
 
 /**
  * The steps that the capture drove, in order, the arguments that it gave to each of the three setters, and
@@ -528,7 +528,7 @@ describe("the degraded capture", () => {
         await expect(capture).rejects.toThrow("the browser is broken");
         // The report of a dead look names the second refusal, thus the first one rides on it as the cause.
         const thrown = await capture.catch((cause: unknown) => cause);
-        const thrownError = isError(thrown) ? thrown : undefined;
+        const thrownError = errorOf(thrown);
         expect(thrownError?.cause).toBe(refusedFullPage);
         expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }, { encoding: "base64" }]);
     });

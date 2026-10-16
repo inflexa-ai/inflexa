@@ -42,7 +42,7 @@
 
 import { maybeRecord } from "./shape.js";
 import { Err, Ok, type Result } from "neverthrow";
-import { isError } from "./thrown.js";
+import { errorOf } from "./thrown.js";
 
 /**
  * The shape every per-subsystem error union shares: a string `type`
@@ -71,7 +71,8 @@ export class ResultError extends Error {
 }
 
 function describe(value: unknown): string {
-    if (isError(value)) return value.message;
+    const asError = errorOf(value);
+    if (asError !== undefined) return asError.message;
     const record = maybeRecord(value);
     if (record !== undefined && "type" in record) {
         // Prefer a human `message` field when the structured error carries one
@@ -103,7 +104,7 @@ function jsonText(value: unknown): string | undefined {
  * in `ResultError` with the structured value on `.cause`.
  */
 export function toThrowable(value: unknown): Error {
-    return isError(value) ? value : new ResultError(value);
+    return errorOf(value) ?? new ResultError(value);
 }
 
 /**
@@ -135,7 +136,7 @@ export function unwrapOrThrow<T, E>(result: Result<T, E>): T {
     return result.value;
 }
 
-/** Runtime brand check — is this value a neverthrow `Result`? */
-export function isResult(value: unknown): value is Result<unknown, unknown> {
-    return value instanceof Ok || value instanceof Err;
+/** The value as a neverthrow `Result`, or `undefined` for any other value — the runtime brand check. */
+export function asResult(value: unknown): Result<unknown, unknown> | undefined {
+    return value instanceof Ok || value instanceof Err ? value : undefined;
 }

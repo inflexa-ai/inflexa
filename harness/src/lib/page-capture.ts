@@ -34,7 +34,7 @@ import type { Page } from "puppeteer-core";
 import { withPage, type ChromeConfig } from "./chrome.js";
 import { PAGE_NAV_TIMEOUT_MS, PAGE_READY_TIMEOUT_MS, THEME_READY_EVENT, THEME_READY_SENTINEL } from "../report-render/page.js";
 import { BLOCK_ID_ATTRIBUTE } from "../report-render/views/block-mark.js";
-import { isError } from "./thrown.js";
+import { errorOf } from "./thrown.js";
 import { sleep } from "../lib/async-utils.js";
 
 /** One request that the page could not load, with the reason that the browser gave. */
@@ -272,8 +272,9 @@ async function captureShots(page: Page): Promise<Shots> {
         } catch (refusedViewport) {
             // The two refusals together are the account of a dead look, and the caller reports the second one
             // alone. Thus the first one rides as the cause, and no reader of that report loses half of it.
-            if (isError(refusedViewport) && refusedViewport.cause === undefined) {
-                refusedViewport.cause = refused;
+            const refusedAsError = errorOf(refusedViewport);
+            if (refusedAsError !== undefined && refusedAsError.cause === undefined) {
+                refusedAsError.cause = refused;
             }
             throw refusedViewport;
         }

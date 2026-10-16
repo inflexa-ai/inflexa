@@ -196,13 +196,19 @@ function finalizeGroup(detected: DetectedSets, draft: DraftGroup, id: string, cl
         displayPattern: draft.displayPattern,
         formats: formatCensus(members),
         slots: slots.length > 0 ? slots : undefined,
-        memberAnnotations: annotation.memberAnnotations && annotation.memberAnnotations.length > 0 ? annotation.memberAnnotations.map((entry) => ({ path: entry.path, note: entry.note })) : undefined,
-        completeness: completeness.expectedCompanions.length > 0 ? {
+        memberAnnotations:
+            annotation.memberAnnotations && annotation.memberAnnotations.length > 0
+                ? annotation.memberAnnotations.map((entry) => ({ path: entry.path, note: entry.note }))
+                : undefined,
+        completeness:
+            completeness.expectedCompanions.length > 0
+                ? {
                       expectedCompanions: [...completeness.expectedCompanions],
                       completeMembers: completeness.completeMembers,
                       incompleteMembers: completeness.incompleteMembers,
                       incompleteSample: completeness.incompleteSample.map((entry) => ({ path: entry.path, missingCompanions: [...entry.missingCompanions] })),
-                  } : undefined,
+                  }
+                : undefined,
         unclassified: draft.unclassified ? true : undefined,
         memberPaths: members.map((member) => member.path),
     };
@@ -265,7 +271,6 @@ function allClaims(set: DetectedSet): Claim[] {
 function claimsAt(set: DetectedSet, indices: readonly number[]): Claim[] {
     return indices.map((index) => ({ member: set.members[index], set, memberIndex: index }));
 }
-
 
 function applyUse(ctx: OperationContext, op: Extract<MenuOperation, { op: "use" }>): void {
     const set = resolveSet(ctx, op.setId, "use");
@@ -536,7 +541,7 @@ function resolveDimensions(
         const ctx: ObservationContext = { detected, menuSets, groupsBySet, label: dimension.label, errors };
         const observations = dimension.observations
             .map((observation) => resolveObservation(observation, ctx))
-            .filter((observation): observation is DataProfileObservation => observation !== undefined);
+            .filter((observation: DataProfileObservation | undefined): observation is DataProfileObservation => observation !== undefined);
         if (observations.length === 0) {
             errors.push(`dimension "${dimension.label}": every observation failed to resolve, so nothing evidences it.`);
             continue;
@@ -549,10 +554,13 @@ function resolveDimensions(
             scope: dimensionScope(dimension.category, dimension.scope),
             description: dimension.description ? dimension.description : undefined,
             observations: crossCheckSlots(detected, observations),
-            reconciliations: dimension.reconciliations && dimension.reconciliations.length > 0 ? dimension.reconciliations.map((entry) => ({
+            reconciliations:
+                dimension.reconciliations && dimension.reconciliations.length > 0
+                    ? dimension.reconciliations.map((entry) => ({
                           note: entry.note,
                           delta: entry.delta !== undefined ? entry.delta : undefined,
-                      })) : undefined,
+                      }))
+                    : undefined,
             nestsUnder: dimension.nestsUnder ? { ...dimension.nestsUnder } : undefined,
             treatmentReason: dimension.treatmentReason ? dimension.treatmentReason : undefined,
         });

@@ -146,7 +146,9 @@ const MODEL_AUTHORED_KEY = "modelAuthored";
 
 /** Nest model-authored prose under {@link MODEL_AUTHORED_KEY}, or contribute nothing when there is none. */
 function modelAuthored(fields: Record<string, string | undefined>): LogFields {
-    const present = Object.entries(fields).filter((entry): entry is [string, string] => entry[1] !== undefined && entry[1].length > 0);
+    const present = Object.entries(fields).filter(
+        (entry: [string, string | undefined]): entry is [string, string] => entry[1] !== undefined && entry[1].length > 0,
+    );
     return present.length === 0 ? {} : { [MODEL_AUTHORED_KEY]: Object.fromEntries(present) };
 }
 

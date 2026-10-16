@@ -123,7 +123,7 @@ export function computeDetail(tool: Tool, rawInput: unknown, log: Logger): ToolC
     // an open list — an embedder contributes its own through the host-tools seam —
     // so a `describeCall` that is not callable is reachable. Such a tool counts as
     // undescribed, because the alternative is a TypeError on every one of its calls.
-    const describeCall = tool.describeCall;
+    const describeCall = tool.describeCall?.bind(tool);
     if (typeof describeCall !== "function") return undefined;
 
     try {
@@ -165,7 +165,7 @@ export function computeResultDetail(tool: Tool, parsedInput: unknown, result: un
     // The guard tests for a function, not for presence, for the same reason as in
     // `computeDetail`: a packaged tool comes from an open list, thus a
     // `describeResult` that is not callable is reachable.
-    const describeResult = tool.describeResult;
+    const describeResult = tool.describeResult?.bind(tool);
     if (typeof describeResult !== "function") return undefined;
 
     try {

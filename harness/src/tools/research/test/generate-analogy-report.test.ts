@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ToolResultPart } from "ai";
+import type { ToolContent, ToolResultPart } from "ai";
 import { okAsync } from "neverthrow";
 
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
@@ -59,7 +59,7 @@ const submitReport = (id: string, report: unknown) => makeMessage([toolUseBlock(
 function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
     return request.messages
         .flatMap((message) => (message.role === "tool" ? message.content : []))
-        .find((part): part is ToolResultPart => part.type === "tool-result" && part.toolCallId === toolCallId);
+        .find((part: ToolContent[number]): part is ToolResultPart => part.type === "tool-result" && part.toolCallId === toolCallId);
 }
 
 describe("generateAnalogyReport sub-agent tool", () => {
@@ -166,9 +166,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
         const provider = scriptedProvider(() => makeMessage([textBlock("Still prose, no report.")], "end_turn"));
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
 
-        const result = AnalogicalReasonerOutputSchema.parse(
-            (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap(),
-        );
+        const result = AnalogicalReasonerOutputSchema.parse((await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap());
         if (!("error" in result)) throw new Error("expected the error envelope, got a report");
 
         expect(result.error.kind).toBe("extraction-failed");

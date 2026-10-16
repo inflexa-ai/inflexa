@@ -4,7 +4,7 @@ import { createCrossrefClient } from "../clients/crossref.js";
 import { createCitationResolver } from "../resolve.js";
 import type { CitationRecord, CitationSource, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "../types.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { errorMessage, isError } from "../../lib/thrown.js";
+import { errorMessage, errorOf } from "../../lib/thrown.js";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
 function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
@@ -37,7 +37,7 @@ function clientSet(
 /** The real Crossref client over a fetch that would fail the test if it were ever reached. */
 function realCrossref(): CitationSourceClient {
     return createCrossrefClient({
-        fetch: fetchDouble( () => Promise.reject(new Error("Crossref must not be called without an established registration agency"))),
+        fetch: fetchDouble(() => Promise.reject(new Error("Crossref must not be called without an established registration agency"))),
     });
 }
 
@@ -91,18 +91,20 @@ describe("CitationResolver batch orchestration", () => {
         const pubmed: CitationSourceClient = {
             source: "pubmed",
             resolve: (request) => Promise.resolve(noData("pubmed", request)),
-            resolveMany:  (requests) => {
+            resolveMany: (requests) => {
                 batchCalls += 1;
-                return Promise.resolve(requests.map((request) => {
-                    const pmid = must(request.normalized.identifiers.pmid, "the PMID of a pubmed request");
-                    return {
-                        source: "pubmed",
-                        operation: request.plan.operation,
-                        status: "ok",
-                        requestCount: 1,
-                        records: [{ source: "pubmed", sourceRecordId: pmid, identifiers: { pmid }, title: `Paper ${pmid}` }],
-                    };
-                }));
+                return Promise.resolve(
+                    requests.map((request) => {
+                        const pmid = must(request.normalized.identifiers.pmid, "the PMID of a pubmed request");
+                        return {
+                            source: "pubmed",
+                            operation: request.plan.operation,
+                            status: "ok",
+                            requestCount: 1,
+                            records: [{ source: "pubmed", sourceRecordId: pmid, identifiers: { pmid }, title: `Paper ${pmid}` }],
+                        };
+                    }),
+                );
             },
         };
         const others = clientSet((source, request) => Promise.resolve(noData(source, request))).filter((client) => client.source !== "pubmed");
@@ -147,7 +149,7 @@ describe("CitationResolver batch orchestration", () => {
     });
 
     it("contains a source that throws without failing the entries it never touched", async () => {
-        const clients = clientSet( (source, request) => {
+        const clients = clientSet((source, request) => {
             if (source === "crossref" && request.normalized.identifiers.doi === "10.1000/two") throw new Error("socket hang up");
             return Promise.resolve(matchingHandler(source, request));
         });
@@ -184,7 +186,7 @@ describe("CitationResolver batch orchestration", () => {
         const clients = clientSet(async (source, request, signal) => {
             if (source !== "doi_registry") return Promise.resolve(noData(source, request));
             await new Promise<void>((_resolve, reject) => {
-                signal?.addEventListener("abort", () => reject(isError(signal.reason) ? signal.reason : new Error(errorMessage(signal.reason))), { once: true });
+                signal?.addEventListener("abort", () => reject(errorOf(signal.reason) ?? new Error(errorMessage(signal.reason))), { once: true });
             });
             return noData(source, request);
         });
@@ -222,9 +224,12 @@ describe("CitationResolver cache policy", () => {
     it("does not cache a result containing unavailable coverage", async () => {
         const counts: Partial<Record<CitationSource, number>> = {};
         const clients = clientSet(
-            (source, request) => Promise.resolve(source === "crossref"
-                    ? { source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" }
-                    : noData(source, request)),
+            (source, request) =>
+                Promise.resolve(
+                    source === "crossref"
+                        ? { source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" }
+                        : noData(source, request),
+                ),
             counts,
         );
         const resolver = createCitationResolver({}, { clients });
@@ -240,7 +245,12 @@ describe("CitationResolver cache policy", () => {
         // DOI has spoken, so absence of evidence must not read as evidence of absence.
         const resolver = createCitationResolver(
             { sources: { doi_registry: { enabled: false } } },
-            { clients: [...clientSet((source, request) => Promise.resolve(noData(source, request))).filter((client) => client.source !== "crossref"), realCrossref()] },
+            {
+                clients: [
+                    ...clientSet((source, request) => Promise.resolve(noData(source, request))).filter((client) => client.source !== "crossref"),
+                    realCrossref(),
+                ],
+            },
         );
 
         const result = await resolver.resolveOne({ citation: "10.1000/example" });
@@ -256,9 +266,12 @@ describe("CitationResolver cache policy", () => {
         const resolver = createCitationResolver(
             {},
             {
-                clients: clientSet((source, request) => Promise.resolve(source === "doi_registry"
-                        ? { source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" }
-                        : noData(source, request)),
+                clients: clientSet((source, request) =>
+                    Promise.resolve(
+                        source === "doi_registry"
+                            ? { source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" }
+                            : noData(source, request),
+                    ),
                 ),
             },
         );
@@ -283,7 +296,7 @@ describe("CitationResolver canonical outcome fixtures", () => {
         const resolver = createCitationResolver(
             {},
             {
-                clients: clientSet( (source, request) => {
+                clients: clientSet((source, request) => {
                     if (source !== "doi_registry") return Promise.resolve(noData(source, request));
                     const doi = must(request.normalized.identifiers.doi, "the DOI identifier of a doi_registry plan");
                     return Promise.resolve({
@@ -312,9 +325,16 @@ describe("CitationResolver canonical outcome fixtures", () => {
         const resolver = createCitationResolver(
             {},
             {
-                clients: clientSet( (source, request) => {
+                clients: clientSet((source, request) => {
                     if (source === "crossref") {
-                        return Promise.resolve({ source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" });
+                        return Promise.resolve({
+                            source,
+                            operation: request.plan.operation,
+                            status: "unavailable",
+                            requestCount: 1,
+                            records: [],
+                            detail: "HTTP 503",
+                        });
                     }
                     if (source === "semantic_scholar") {
                         return Promise.resolve({

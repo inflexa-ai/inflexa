@@ -127,7 +127,12 @@ describe("alphafoldPrediction — an upstream failure", () => {
 
 describe("alphafoldPrediction — describeCall", () => {
     it("names the queried accession", () => {
-        expect(must(must(alphafoldPredictionTool, "alphafoldPredictionTool").describeCall, "must(alphafoldPredictionTool, \"alphafoldPredicti")({ uniprotAccession: "P38398" })).toBe("P38398");
+        expect(
+            must(
+                must(alphafoldPredictionTool, "alphafoldPredictionTool").describeCall?.bind(alphafoldPredictionTool),
+                'must(alphafoldPredictionTool, "alphafoldPredicti',
+            ).bind(alphafoldPredictionTool)({ uniprotAccession: "P38398" }),
+        ).toBe("P38398");
     });
 });
 

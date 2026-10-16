@@ -21,11 +21,15 @@ import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../../works
 import { generateStepSummary, type GenerateStepSummaryOptions } from "../step-summary.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { outputValue, toolResultParts } from "../../lib/test/messages.js";
-import { isError } from "../../lib/thrown.js";
+import { errorOf } from "../../lib/thrown.js";
 
 type RecordedCall = {
     readonly req: ChatRequest;
 };
+
+function isFailure(value: ChatResponse | Error): value is Error {
+    return errorOf(value) !== undefined;
+}
 
 function makeProvider(responses: ReadonlyArray<ChatResponse | Error>): { provider: ChatProvider; calls: RecordedCall[] } {
     const calls: RecordedCall[] = [];
@@ -37,8 +41,8 @@ function makeProvider(responses: ReadonlyArray<ChatResponse | Error>): { provide
             // iterations, so snapshot it at call time before it's appended to.
             calls.push({ req: { ...req, messages: [...req.messages] } });
             const r = responses.at(i++);
-            if (isError(r)) return errAsync(toProviderError(r, "test"));
-            if (!r) throw new Error(`scripted provider exhausted at call ${i}`);
+            if (r === undefined) throw new Error(`scripted provider exhausted at call ${i}`);
+            if (isFailure(r)) return errAsync(toProviderError(r, "test"));
             return okAsync(r);
         },
         chatStream() {

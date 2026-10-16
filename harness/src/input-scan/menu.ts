@@ -245,7 +245,7 @@ function renderHeader(readout: HeaderReadout | undefined): string | undefined {
 function renderSlot(slot: SetSlot): string {
     const position = `${slot.location} ${slot.index}`;
     const affix = [slot.prefix ? `after "${slot.prefix}"` : undefined, slot.suffix ? `before "${slot.suffix}"` : undefined]
-        .filter((part): part is string => part !== undefined)
+        .filter((part: string | undefined): part is string => part !== undefined)
         .join(", ");
     const identity = slot.sameAsSlot
         ? `, same identity as ${slot.sameAsSlot}${slot.crossCheckMismatches ? ` (${slot.crossCheckMismatches} members disagreed)` : ""}`

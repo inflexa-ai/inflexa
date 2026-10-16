@@ -45,7 +45,7 @@ import {
     SubAgentActivityPartSchema,
 } from "../contracts/schemas/chat-parts.js";
 import { ToolCallOutcomeSchema } from "../contracts/schemas/chat-events.js";
-import { maybeRecord } from "../lib/shape.js";
+import { plainRecord } from "../lib/shape.js";
 import type { ToolCallOutcome } from "../contracts/chat-events.js";
 import type { ChatMessage, MessagePart, ToolCallPart } from "../contracts/message.js";
 import type { Logger } from "../lib/logger.js";
@@ -163,10 +163,6 @@ export function envelopeDisplayMessages(messages: readonly ConversationUIMessage
     };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return maybeRecord(value) !== undefined && !Array.isArray(value);
-}
-
 /**
  * Strip every `data-*` part the current vocabulary cannot render.
  *
@@ -189,25 +185,27 @@ function dropUnrenderableDataParts(messages: readonly unknown[], identity: strin
     const schemaMismatch: string[] = [];
 
     const filtered = messages.map((message) => {
-        if (!isRecord(message) || !Array.isArray(message.parts)) return message;
+        const messageRecord = plainRecord(message);
+        if (messageRecord === undefined || !Array.isArray(messageRecord.parts)) return message;
         const schemas: Record<string, z.ZodType> = dataSchemas;
-        const parts = message.parts.filter((part) => {
-            if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("data-")) return true;
-            const key = part.type.slice("data-".length);
+        const parts = messageRecord.parts.filter((part: unknown) => {
+            const partRecord = plainRecord(part);
+            if (partRecord === undefined || typeof partRecord.type !== "string" || !partRecord.type.startsWith("data-")) return true;
+            const key = partRecord.type.slice("data-".length);
             // `Object.hasOwn` before the index: a part typed `data-constructor`
             // would otherwise resolve up the prototype chain to something that is
             // not a schema at all, and throw where it should have been dropped.
             if (!Object.hasOwn(schemas, key)) {
-                unknownKey.push(part.type);
+                unknownKey.push(partRecord.type);
                 return false;
             }
-            if (!schemas[key].safeParse(part.data).success) {
-                schemaMismatch.push(part.type);
+            if (!schemas[key].safeParse(partRecord.data).success) {
+                schemaMismatch.push(partRecord.type);
                 return false;
             }
             return true;
         });
-        return parts.length === message.parts.length ? message : { ...message, parts };
+        return parts.length === messageRecord.parts.length ? message : { ...messageRecord, parts };
     });
 
     if (unknownKey.length > 0 || schemaMismatch.length > 0) {

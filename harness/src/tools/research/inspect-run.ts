@@ -22,7 +22,19 @@ import { defineTool, type ToolError } from "../define-tool.js";
 const DEFAULT_PAGE_SIZE = 50;
 const POLL_INTERVAL_MS = 1_000;
 
-type FormattedRun = ReturnType<typeof formatRun>;
+/** One run as the `inspect_run` reply renders it: stored columns, with paths exposed only when the run is terminal. */
+type FormattedRun = {
+    runId: string;
+    workflowName: CortexRunRow["workflowName"];
+    status: CortexRunRow["status"];
+    startedAt: CortexRunRow["startedAt"];
+    completedAt: CortexRunRow["completedAt"];
+    planId: CortexRunRow["planId"];
+    synthesisPath: string | null;
+    synthesisStatus: CortexRunRow["synthesisStatus"];
+    synthesisReason?: CortexRunRow["synthesisReason"];
+    error?: CortexRunRow["error"];
+};
 
 type FormattedStep = {
     stepId: string;
@@ -70,19 +82,8 @@ function isTerminal(status: CortexRunRow["status"]): boolean {
     return status === "completed" || status === "partial" || status === "failed" || status === "canceled" || status === "suspended_insufficient_funds";
 }
 
-function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r.status)) {
-    const run: {
-        runId: string;
-        workflowName: CortexRunRow["workflowName"];
-        status: CortexRunRow["status"];
-        startedAt: CortexRunRow["startedAt"];
-        completedAt: CortexRunRow["completedAt"];
-        planId: CortexRunRow["planId"];
-        synthesisPath: string | null;
-        synthesisStatus: CortexRunRow["synthesisStatus"];
-        synthesisReason?: CortexRunRow["synthesisReason"];
-        error?: CortexRunRow["error"];
-    } = {
+function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r.status)): FormattedRun {
+    const run: FormattedRun = {
         runId: r.runId,
         workflowName: r.workflowName,
         status: r.status,
@@ -105,7 +106,8 @@ function formatSteps(runId: string, stepRows: StepExecutionRow[], verbose: boole
             wave: s.wave,
             status: s.status,
         };
-        if (exposePaths && s.status !== "pending" && s.status !== "skipped" && s.stepId !== SYNTHESIS_STEP_ID) step.summaryPath = `runs/${runId}/${s.stepId}/output/summary.md`;
+        if (exposePaths && s.status !== "pending" && s.status !== "skipped" && s.stepId !== SYNTHESIS_STEP_ID)
+            step.summaryPath = `runs/${runId}/${s.stepId}/output/summary.md`;
         if (verbose) {
             step.durationMs = s.durationMs;
             step.error = s.error;

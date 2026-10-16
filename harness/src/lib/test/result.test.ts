@@ -10,7 +10,7 @@
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
-import { ResultError, isResult, toThrowable, unwrapOrThrow } from "../result.js";
+import { asResult, ResultError, toThrowable, unwrapOrThrow } from "../result.js";
 
 describe("toThrowable", () => {
     it("returns an Error value verbatim", () => {
@@ -50,17 +50,17 @@ describe("unwrapOrThrow", () => {
     });
 });
 
-describe("isResult", () => {
+describe("asResult", () => {
     it("is true for ok and err", () => {
-        // typecheck-disable-next-line must-use-result -- the Result is the fixture consumed by isResult, the type guard under test
-        expect(isResult(ok(1))).toBe(true);
-        // typecheck-disable-next-line must-use-result -- the Result is the fixture consumed by isResult, the type guard under test
-        expect(isResult(err("x"))).toBe(true);
+        // typecheck-disable-next-line must-use-result -- the Result is the fixture consumed by asResult, the brand check under test
+        expect(asResult(ok(1))).toBeDefined();
+        // typecheck-disable-next-line must-use-result -- the Result is the fixture consumed by asResult, the brand check under test
+        expect(asResult(err("x"))).toBeDefined();
     });
 
     it("is false for plain values that merely look result-ish", () => {
-        expect(isResult({ value: 1 })).toBe(false);
-        expect(isResult(null)).toBe(false);
-        expect(isResult("ok")).toBe(false);
+        expect(asResult({ value: 1 })).toBeUndefined();
+        expect(asResult(null)).toBeUndefined();
+        expect(asResult("ok")).toBeUndefined();
     });
 });

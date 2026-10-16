@@ -1566,7 +1566,14 @@ export const CHART_INLINE_OPTION_BOUND = 100_000;
  * style. The text size scales the text alone: the page, the print export, and the slide export each register
  * one theme.
  */
-export function chartTheme(textPx: number) {
+/** The theme `echarts.registerTheme` consumes: the series palette, and the per-component styling the charts inherit. */
+export type ChartTheme = {
+    readonly color: string[];
+    readonly backgroundColor: string;
+    readonly [member: string]: unknown;
+};
+
+export function chartTheme(textPx: number): ChartTheme {
     const axis = {
         axisLine: { show: true, lineStyle: { color: CHART_INK, width: CHART_AXIS_LINE_PX } },
         axisTick: { show: true, inside: false, lineStyle: { color: CHART_INK, width: CHART_AXIS_LINE_PX } },

@@ -823,9 +823,9 @@ describe("the block look", () => {
     it("names the block in the call detail, and the page when the input names none", () => {
         const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve("/unused"), chrome: {} });
 
-        expect(tool.describeCall).toBeDefined();
-        expect(must(must(tool, "tool").describeCall, 'must(tool, "tool").describeCall')({ blockId: "sec-results" })).toBe("look at sec-results");
-        expect(must(must(tool, "tool").describeCall, 'must(tool, "tool").describeCall')({})).toBe("look at the page");
+        expect(tool.describeCall?.bind(tool)).toBeDefined();
+        expect(must(must(tool, "tool").describeCall?.bind(tool), 'must(tool, "tool").describeCall')({ blockId: "sec-results" })).toBe("look at sec-results");
+        expect(must(must(tool, "tool").describeCall?.bind(tool), 'must(tool, "tool").describeCall')({})).toBe("look at the page");
     });
 });
 
@@ -1031,8 +1031,8 @@ describe("the transport precedence", () => {
 describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
     function detailOf(tool: ReturnType<typeof createExaminePageTool>, result: ExaminePageResult): string {
-        expect(tool.describeResult).toBeDefined();
-        return must(must(tool, "tool").describeResult, 'must(tool, "tool").describeResult')({}, result);
+        expect(tool.describeResult?.bind(tool)).toBeDefined();
+        return must(must(tool, "tool").describeResult?.bind(tool), 'must(tool, "tool").describeResult')({}, result);
     }
 
     it("names the look outcome of a capture", async () => {

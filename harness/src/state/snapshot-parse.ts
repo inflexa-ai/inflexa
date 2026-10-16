@@ -15,7 +15,7 @@ import { type Result, err, ok } from "neverthrow";
 import { z } from "zod";
 
 import type { ArtifactSnapshot, ReportSnapshot } from "../report-model/reference-resolver.js";
-import { maybeRecord } from "../lib/shape.js";
+import { plainRecord } from "../lib/shape.js";
 
 /** One reduced schema issue -- the dotted path and the message, without the rest. */
 export type SchemaIssue = {
@@ -58,11 +58,6 @@ function prefixIssues(prefix: string, issues: SchemaIssue[]): SchemaIssue[] {
     }));
 }
 
-/** A stored map is a plain object. An array and a null carry no own key that a map read can use. */
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return maybeRecord(value) !== undefined && !Array.isArray(value);
-}
-
 /**
  * Parse a stored snapshot.
  *
@@ -75,17 +70,19 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * model, thus a change to one shows as a compile error here.
  */
 export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIssue[]> {
-    if (!isPlainRecord(stored)) {
+    const storedRecord = plainRecord(stored);
+    if (storedRecord === undefined) {
         return err([{ path: "", message: "the stored snapshot is not an object" }]);
     }
-    if (!isPlainRecord(stored.artifacts)) {
+    const artifactsRecord = plainRecord(storedRecord.artifacts);
+    if (artifactsRecord === undefined) {
         return err([{ path: "artifacts", message: "the artifacts map is not an object" }]);
     }
-    const citations = CitationsSchema.safeParse(stored.citations);
+    const citations = CitationsSchema.safeParse(storedRecord.citations);
     if (!citations.success) {
         return err(prefixIssues("citations", reduceIssues(citations.error)));
     }
-    const citationRecords = CitationRecordsSchema.safeParse(stored.citationRecords);
+    const citationRecords = CitationRecordsSchema.safeParse(storedRecord.citationRecords);
     if (!citationRecords.success) {
         return err(prefixIssues("citationRecords", reduceIssues(citationRecords.error)));
     }
@@ -93,7 +90,7 @@ export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIss
     // `__proto__` stays an ordinary entry and never reaches a prototype slot.
     const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
     const issues: SchemaIssue[] = [];
-    for (const [path, value] of Object.entries(stored.artifacts)) {
+    for (const [path, value] of Object.entries(artifactsRecord)) {
         const parsed = ArtifactSnapshotSchema.safeParse(value);
         if (!parsed.success) {
             issues.push(...prefixIssues(`artifacts.${path}`, reduceIssues(parsed.error)));

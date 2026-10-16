@@ -84,8 +84,8 @@ export function contextRecordMessage(kind: ContextKind, text: string): ModelMess
     };
 }
 
-function isContextKind(value: unknown): value is ContextKind {
-    return CONTEXT_KINDS.some((kind) => kind === value);
+function contextKindOf(value: unknown): ContextKind | undefined {
+    return CONTEXT_KINDS.find((kind) => kind === value);
 }
 
 /** The kind and the hash of a context record, or `undefined` for a message that is no record. */
@@ -93,8 +93,9 @@ export function contextRecordOf(message: ModelMessage): { readonly kind: Context
     const harness = message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE];
     const kind = harness?.[CONTEXT_KIND_KEY];
     const hash = harness?.[CONTEXT_HASH_KEY];
-    if (typeof hash !== "string" || !isContextKind(kind)) return undefined;
-    return { kind, hash };
+    const contextKind = contextKindOf(kind);
+    if (typeof hash !== "string" || contextKind === undefined) return undefined;
+    return { kind: contextKind, hash };
 }
 
 /**

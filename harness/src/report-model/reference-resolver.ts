@@ -98,7 +98,7 @@ export type ResolvedValue =
  */
 export type ReferenceResolver = {
     resolve(reference: Reference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>>;
-    prepare?(references: readonly Reference[], snapshot: ReportSnapshot): Promise<void>;
+    prepare?: (references: readonly Reference[], snapshot: ReportSnapshot) => Promise<void>;
 };
 
 /**
@@ -202,7 +202,7 @@ export function applyRowBound(rows: Array<Record<string, string | number>>, boun
 
     // A row with no rank stays behind every ranked row, and the direction never lifts it. The two lists
     // keep their source order, thus the tail is as stable as the head.
-    const rankable = ranked.filter((entry): entry is RankableRow => !holdsNoRank(entry, numeric));
+    const rankable = ranked.filter((entry: RankedRow): entry is RankableRow => !holdsNoRank(entry, numeric));
     const unrankable = ranked.filter((entry) => holdsNoRank(entry, numeric));
 
     const sorted = [...rankable].sort((left, right) => {

@@ -24,11 +24,11 @@ beforeEach(async () => {
     provider.register();
 
     const dbos = await import("@dbos-inc/dbos-sdk");
-    originalStartWorkflow ??= dbos.DBOS.startWorkflow;
+    originalStartWorkflow ??= dbos.DBOS["startWorkflow"];
     contextAtStart = undefined;
     inputAtStart = undefined;
     // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-    (dbos.DBOS.startWorkflow as unknown) = () =>  (input: unknown) => {
+    (dbos.DBOS.startWorkflow as unknown) = () => (input: unknown) => {
         contextAtStart = context.active();
         inputAtStart = input;
         return Promise.resolve({});
@@ -61,17 +61,26 @@ describe("createDbosRunLauncher", () => {
         chat.end();
 
         expect(inputAtStart).toEqual({ planId: "p" });
-        const startedUnder = must(must(trace, "trace").getSpan(must(contextAtStart, "contextAtStart")), "must(trace, \"trace\").getSpan(must(contextAtStart").spanContext();
+        const startedUnder = must(
+            must(trace, "trace").getSpan(must(contextAtStart, "contextAtStart")),
+            'must(trace, "trace").getSpan(must(contextAtStart',
+        ).spanContext();
         expect(startedUnder.traceId).not.toBe(chat.spanContext().traceId);
 
         const finished = exporter.getFinishedSpans();
-        const root = must(finished.find((s) => s.name === "launch run"), "root");
+        const root = must(
+            finished.find((s) => s.name === "launch run"),
+            "root",
+        );
         expect(root.spanContext().spanId).toBe(startedUnder.spanId);
         expect(root.parentSpanContext).toBeUndefined();
         expect(root.attributes[ATTR_INFLEXA_RUN_ID]).toBe("run-1");
         expect(root.links.map((l) => l.context)).toEqual([chat.spanContext()]);
 
-        const originating = must(finished.find((s) => s.name === "POST /chat"), "originating");
+        const originating = must(
+            finished.find((s) => s.name === "POST /chat"),
+            "originating",
+        );
         expect(originating.attributes[ATTR_INFLEXA_RUN_ID]).toBe("run-1");
     });
 
@@ -80,8 +89,16 @@ describe("createDbosRunLauncher", () => {
 
         await launcher.launch(workflow, { workflowId: "run-2" }, { planId: "p" });
 
-        const root = must(exporter.getFinishedSpans().find((s) => s.name === "launch run"), "root");
-        expect(must(must(must(trace, "trace").getSpan(must(contextAtStart, "contextAtStart")), "must(trace, \"trace\").getSpan(must(contextAtStart").spanContext(), "must(trace, \"trace\").getSpan(must(contextAtStart").spanId).toBe(root.spanContext().spanId);
+        const root = must(
+            exporter.getFinishedSpans().find((s) => s.name === "launch run"),
+            "root",
+        );
+        expect(
+            must(
+                must(must(trace, "trace").getSpan(must(contextAtStart, "contextAtStart")), 'must(trace, "trace").getSpan(must(contextAtStart').spanContext(),
+                'must(trace, "trace").getSpan(must(contextAtStart',
+            ).spanId,
+        ).toBe(root.spanContext().spanId);
         expect(root.links).toEqual([]);
         expect(root.attributes[ATTR_INFLEXA_RUN_ID]).toBe("run-2");
     });
@@ -89,7 +106,7 @@ describe("createDbosRunLauncher", () => {
     it("ends the root span and rethrows when the start fails", async () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        (dbos.DBOS.startWorkflow as unknown) = () =>  () => Promise.reject(new Error("system database down"));
+        (dbos.DBOS.startWorkflow as unknown) = () => () => Promise.reject(new Error("system database down"));
         const launcher = createDbosRunLauncher();
 
         await expect(launcher.launch(workflow, { workflowId: "run-3" }, { planId: "p" })).rejects.toThrow("system database down");

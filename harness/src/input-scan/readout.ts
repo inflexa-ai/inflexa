@@ -13,7 +13,7 @@
 import { constants as zlibConstants, createGunzip, createZstdDecompress } from "node:zlib";
 import type { Transform } from "node:stream";
 import { parseJsonOrUndefined } from "../lib/json.js";
-import { maybeRecord } from "../lib/shape.js";
+import { plainRecord } from "../lib/shape.js";
 import { splitLines } from "../lib/text.js";
 
 /** Bytes read from each file. The readout's whole per-file I/O budget. */
@@ -264,11 +264,13 @@ function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     if (Array.isArray(whole)) {
         const first = whole[0];
         const fields: ReadoutFields = { jsonType: "array", elementCount: whole.length };
-        if (isRecord(first)) fields.firstElementKeys = joinKeys(Object.keys(first));
+        const firstRecord = plainRecord(first);
+        if (firstRecord !== undefined) fields.firstElementKeys = joinKeys(Object.keys(firstRecord));
         return { fields };
     }
-    if (isRecord(whole)) {
-        const keys = Object.keys(whole);
+    const wholeRecord = plainRecord(whole);
+    if (wholeRecord !== undefined) {
+        const keys = Object.keys(wholeRecord);
         return { fields: { jsonType: "object", keyCount: keys.length, keys: joinKeys(keys) } };
     }
     if (whole !== undefined) return { fields: { jsonType: typeof whole } };
@@ -277,7 +279,12 @@ function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     const candidates = lines.slice(0, MAX_META_LINES);
     const parsed = candidates.map((line) => parseJson(line));
     const complete = parsed.filter((value) => value !== undefined);
-    const record = parsed.find(isRecord);
+    const record = parsed
+        .flatMap((value) => {
+            const recordValue = plainRecord(value);
+            return recordValue === undefined ? [] : [recordValue];
+        })
+        .at(0);
     if (record !== undefined && complete.length >= Math.max(1, candidates.length - 1)) {
         return { fields: { jsonType: "json-lines", recordsInPrefix: lines.length, keys: joinKeys(Object.keys(record)) } };
     }
@@ -317,10 +324,6 @@ function markdownFields(lines: readonly string[]): PrefixReadout {
 
 function parseJson(text: string): unknown {
     return parseJsonOrUndefined(text);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return maybeRecord(value) !== undefined && !Array.isArray(value);
 }
 
 function joinKeys(keys: readonly string[]): string {

@@ -54,7 +54,7 @@ function crossrefRecord(item: z.infer<typeof CrossrefItemSchema>, index: number)
     const venue = firstNonEmpty(item["container-title"] ?? []);
     const authors = item.author
         ?.map((author) => firstNonEmpty([author.name, [author.given, author.family].filter(Boolean).join(" ")]))
-        .filter((author): author is string => author !== undefined);
+        .filter((author: string | undefined): author is string => author !== undefined);
     const dateParts = item.issued?.["date-parts"]?.[0] ?? item.published?.["date-parts"]?.[0];
     return {
         source: "crossref",

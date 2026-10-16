@@ -130,7 +130,7 @@ describe("WorkspaceMutator provenance recording", () => {
 
         const out = (await tool.execute({ path: "output/notes.md", content: "# notes\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
-        must(must(tool, "tool").foldCallRecord, 'must(tool, "tool").foldCallRecord')(readToolCallRecord(out));
+        must(must(tool, "tool").foldCallRecord?.bind(tool), 'must(tool, "tool").foldCallRecord')(readToolCallRecord(out));
 
         // The key a manifest entry would use — `output/notes.md`, not a record-less leaf.
         const records = collector.getRecords();
@@ -349,13 +349,13 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
 
         const written = (await writeTool.execute({ path: "notes/draft.md", content: "alpha beta\n" }, ctx))._unsafeUnwrap();
         expect(written.status).toBe("ok");
-        must(must(writeTool, "writeTool").foldCallRecord, 'must(writeTool, "writeTool").foldCallRecord')(readToolCallRecord(written));
+        must(must(writeTool, "writeTool").foldCallRecord?.bind(writeTool), 'must(writeTool, "writeTool").foldCallRecord')(readToolCallRecord(written));
 
         const edited = (
             await editTool.execute({ path: "notes/draft.md", old_string: "beta", new_string: "gamma", replace_all: false, regex: false }, ctx)
         )._unsafeUnwrap();
         expect(edited.status).toBe("ok");
-        must(must(editTool, "editTool").foldCallRecord, 'must(editTool, "editTool").foldCallRecord')(readToolCallRecord(edited));
+        must(must(editTool, "editTool").foldCallRecord?.bind(editTool), 'must(editTool, "editTool").foldCallRecord')(readToolCallRecord(edited));
         expect(readFileSync(join(basePath, "analysis-001", "notes", "draft.md"), "utf8")).toBe("alpha gamma\n");
 
         expect(events.map((event) => (event.type === "write-file" ? event.tool : event.type))).toEqual(["write_file", "edit_file"]);

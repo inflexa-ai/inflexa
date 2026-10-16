@@ -427,9 +427,11 @@ describe("the derived table", () => {
         const { tool } = makeTool({ root });
         const input = { script: SCRIPT, inputs: [PINNED_PATH], output: "yield.csv" };
 
-        expect(must(must(tool, "tool").describeCall, 'must(tool, "tool").describeCall')(input)).toBe("derive yield.csv");
+        expect(must(must(tool, "tool").describeCall?.bind(tool), 'must(tool, "tool").describeCall')(input)).toBe("derive yield.csv");
         const result = await derive(tool, {});
-        expect(must(must(tool, "tool").describeResult, 'must(tool, "tool").describeResult')(input, result)).toBe(`${reportSessionDir("t1")}/derived/yield.csv`);
+        expect(must(must(tool, "tool").describeResult?.bind(tool), 'must(tool, "tool").describeResult')(input, result)).toBe(
+            `${reportSessionDir("t1")}/derived/yield.csv`,
+        );
     });
 });
 

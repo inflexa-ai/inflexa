@@ -43,7 +43,7 @@ import { ZodError } from "zod";
 import { unwrapOrThrow, type DomainError } from "../lib/result.js";
 import type { FarmLockError } from "./farm.js";
 import type { SandboxRef } from "./types.js";
-import { isError } from "../lib/thrown.js";
+import { errorOf } from "../lib/thrown.js";
 import { maybeRecord } from "../lib/shape.js";
 
 /**
@@ -182,13 +182,14 @@ const CAUSE_LINE_MAX = 200;
  */
 function causeLine(cause: unknown): string | undefined {
     let text: string;
+    const causeAsError = errorOf(cause);
     if (cause instanceof ZodError) {
         const issue = cause.issues.at(0);
         if (!issue) return undefined;
         const path = issue.path.join(".");
         text = path.length > 0 ? `${path}: ${issue.message}` : issue.message;
-    } else if (isError(cause)) {
-        text = cause.message;
+    } else if (causeAsError !== undefined) {
+        text = causeAsError.message;
     } else if (typeof cause === "string") {
         text = cause;
     } else {

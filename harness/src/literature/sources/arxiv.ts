@@ -104,7 +104,7 @@ export function parseArxivAtom(xml: string): ArxivPaper[] {
         const idMatch = rawId.match(/abs\/(.+)$/);
         const authors = allMatches(entry, "author")
             .map((author) => firstMatch(author, "name"))
-            .filter((name): name is string => name !== undefined)
+            .filter((name: string | undefined): name is string => name !== undefined)
             .map(collapseWhitespace);
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the arXiv grammar: its ID, date, and listing formats have no builtin parser.
         const htmlUrl = linkAttribute(entry, (attributes) => /rel="alternate"/.test(attributes) && /type="text\/html"/.test(attributes));

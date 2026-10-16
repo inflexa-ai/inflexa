@@ -34,7 +34,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { sleep } from "../src/lib/async-utils.js";
-import { maybeRecord } from "../src/lib/shape.js";
+import { plainRecord } from "../src/lib/shape.js";
 import { FixtureManifestSchema, type FixtureManifest, type FixtureManifestEntry } from "../src/tools/lib/__fixtures__/manifest.js";
 import { errorMessage } from "../src/lib/thrown.js";
 import { jsonParse } from "../src/lib/json.js";
@@ -277,10 +277,6 @@ function safeJson(text: string): unknown {
     }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return maybeRecord(value) !== undefined && !Array.isArray(value);
-}
-
 /** Does an ignore path cover this path? A `*` segment matches one segment, and an entry covers what is under it. */
 function isIgnored(path: string[], ignorePaths: string[][]): boolean {
     for (const ignore of ignorePaths) {
@@ -315,9 +311,11 @@ function diffJson(stored: unknown, live: unknown, ignorePaths: string[][], path:
         return out;
     }
 
-    if (isRecord(stored) && isRecord(live)) {
-        const keys = [...new Set([...Object.keys(stored), ...Object.keys(live)])].sort();
-        for (const key of keys) diffJson(stored[key], live[key], ignorePaths, [...path, key], out);
+    const storedRecord = plainRecord(stored);
+    const liveRecord = plainRecord(live);
+    if (storedRecord !== undefined && liveRecord !== undefined) {
+        const keys = [...new Set([...Object.keys(storedRecord), ...Object.keys(liveRecord)])].sort();
+        for (const key of keys) diffJson(storedRecord[key], liveRecord[key], ignorePaths, [...path, key], out);
         return out;
     }
 

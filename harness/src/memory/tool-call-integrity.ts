@@ -79,8 +79,8 @@ export function answerUnansweredToolCalls(messages: ModelMessage[], fromIndex = 
     for (let idx = messages.length - 1; idx >= fromIndex; idx--) {
         const message = messages[idx];
         if (message.role !== "assistant" || typeof message.content === "string") continue;
-        const unanswered = message.content.filter(
-            (part): part is ToolCallPart => part.type === "tool-call" && needsClientResult(part) && !resultIds.has(part.toolCallId),
+        const unanswered = message.content.flatMap((part) =>
+            part.type === "tool-call" && needsClientResult(part) && !resultIds.has(part.toolCallId) ? [part] : [],
         );
         if (unanswered.length === 0) continue;
         let insertAt = idx + 1;

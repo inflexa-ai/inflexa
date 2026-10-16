@@ -135,7 +135,7 @@ export class PlanPackagesMissingError extends Error {
                 : null,
             missing.length > 0 ? `the pool does not hold: ${missing.join(", ")}` : null,
             collisions.length > 0 ? `a collision refused: ${collisions.join(", ")}` : null,
-        ].filter((p): p is string => p !== null);
+        ].filter((p: string | null): p is string => p !== null);
         super(`The packages of this plan cannot link — ${parts.join("; ")}`);
         this.name = "PlanPackagesMissingError";
     }

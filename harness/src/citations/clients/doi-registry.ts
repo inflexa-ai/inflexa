@@ -28,7 +28,7 @@ function scalar(value: string | string[] | undefined): string | undefined {
 function cslRecord(doi: string, registrationAgency: string | undefined, metadata: z.infer<typeof CslMetadataSchema> | undefined): CitationRecord {
     const authors = metadata?.author
         ?.map((author) => firstNonEmpty([author.literal, [author.given, author.family].filter(Boolean).join(" ")]))
-        .filter((author): author is string => author !== undefined);
+        .filter((author: string | undefined): author is string => author !== undefined);
     const dateParts = metadata?.issued?.["date-parts"]?.[0] ?? metadata?.published?.["date-parts"]?.[0];
     const title = scalar(metadata?.title);
     const venue = scalar(metadata?.["container-title"]);
@@ -88,7 +88,7 @@ export function createDoiRegistryClient(options: SourceHttpOptions = {}): Citati
                 agencyResult.status === "unavailable" ? agencyResult.detail : undefined,
                 metadataResult.status === "unavailable" ? metadataResult.detail : undefined,
             ]
-                .filter((value): value is string => value !== undefined)
+                .filter((value: string | undefined): value is string => value !== undefined)
                 .join("; ");
             return {
                 ...sourceOutcome(

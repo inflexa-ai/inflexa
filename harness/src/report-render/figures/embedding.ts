@@ -172,7 +172,9 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
     const colors = color === undefined ? undefined : channelValues(rows, color);
     const facets = facet === undefined ? undefined : rows.map((row) => typedMember(row, channelColumn(facet)) ?? null);
     const panelNames =
-        facets === undefined ? [] : firstAppearance(facets.filter((cell): cell is Cell => cell !== null).map((cell) => `${typeof cell}:${String(cell)}`));
+        facets === undefined
+            ? []
+            : firstAppearance(facets.filter((cell: Cell | null): cell is Cell => cell !== null).map((cell) => `${typeof cell}:${String(cell)}`));
     const panelOf = new Map(panelNames.map((key, place) => [key, place]));
 
     const cells: EmbeddedCell[] = [];

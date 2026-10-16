@@ -95,11 +95,11 @@ export function withToolResultImages<T extends object>(value: T, images: readonl
     return { ...value, [toolResultImageKey]: images };
 }
 
-/** Does one entry under the reserved key carry the picture shape? */
-function isToolResultImage(entry: unknown): entry is ToolResultImage {
+/** The entry as a picture, or `undefined` when it carries none. */
+function toolResultImageOf(entry: unknown): ToolResultImage | undefined {
     const fields = maybeRecord(entry);
-    if (fields === undefined) return false;
-    return typeof fields.base64 === "string" && typeof fields.mediaType === "string";
+    if (fields === undefined) return undefined;
+    return typeof fields.base64 === "string" && typeof fields.mediaType === "string" ? { base64: fields.base64, mediaType: fields.mediaType } : undefined;
 }
 
 /**
@@ -114,7 +114,10 @@ export function readToolResultImages(value: unknown): ToolResultImage[] {
     // The symbol key reaches the reserved member the ok-value builder wrote, and the filter below tests each entry.
     const carried: unknown = Reflect.get(fields, toolResultImageKey);
     const entries = Array.isArray(carried) ? carried : [carried];
-    return entries.filter(isToolResultImage);
+    return entries.flatMap((entry) => {
+        const image = toolResultImageOf(entry);
+        return image === undefined ? [] : [image];
+    });
 }
 
 /**
@@ -285,7 +288,7 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> =
      * and its result may already be cached. The loop logs a throw and goes on.
      */
     readonly foldCallRecord?: (record: ToolCallRecordOf<Output>) => void;
-    execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
+    execute: (input: z.infer<Schema>, ctx: ToolContext) => Promise<Result<Output, ToolError>>;
 };
 
 /**

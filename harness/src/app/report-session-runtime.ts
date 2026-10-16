@@ -100,7 +100,7 @@ export type ReportSessionRuntime = {
      * derivation, and the gateway load serves each record as a member of the snapshot.
      */
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
-    ensureSessionState(threadId: string): Promise<EnsureSessionStateResult>;
+    ensureSessionState: (threadId: string) => Promise<EnsureSessionStateResult>;
 };
 
 /**

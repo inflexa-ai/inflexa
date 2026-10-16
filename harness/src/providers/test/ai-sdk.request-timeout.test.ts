@@ -8,7 +8,7 @@ import type { ChatRequest, ChatStreamEvent, FetchLike } from "../types.js";
 import { sleep } from "../../lib/async-utils.js";
 import { must } from "../../lib/test/guards.js";
 import { installWritable } from "../../lib/test/writable.js";
-import { errorMessage, errorName, isError } from "../../lib/thrown.js";
+import { errorMessage, errorName, errorOf } from "../../lib/thrown.js";
 
 const request: ChatRequest = {
     system: "You are a test model.",
@@ -53,8 +53,8 @@ function fetchThatNeverStarts(onCall?: () => void): FetchLike {
         return new Promise<Response>((_resolve, reject) => {
             const signal = init?.signal;
             if (signal === null || signal === undefined) return;
-            if (signal.aborted) return reject(isError(signal.reason) ? signal.reason : new Error(errorMessage(signal.reason)));
-            signal.addEventListener("abort", () => reject(isError(signal.reason) ? signal.reason : new Error(errorMessage(signal.reason))), { once: true });
+            if (signal.aborted) return reject(errorOf(signal.reason) ?? new Error(errorMessage(signal.reason)));
+            signal.addEventListener("abort", () => reject(errorOf(signal.reason) ?? new Error(errorMessage(signal.reason))), { once: true });
         });
     };
 }

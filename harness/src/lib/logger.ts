@@ -20,7 +20,7 @@
  * is the one sanctioned console site.
  */
 
-import { errorMessage, isError } from "./thrown.js";
+import { errorMessage, errorOf } from "./thrown.js";
 
 /** Severity of a log record, ascending. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -92,8 +92,9 @@ export type Logger = {
  * strings means any sink gets something printable regardless of its serializer.
  */
 export function defaultErrorFields(err: unknown): LogFields {
-    if (isError(err)) {
-        return err.stack ? { err: err.message, stack: err.stack } : { err: err.message };
+    const asError = errorOf(err);
+    if (asError !== undefined) {
+        return asError.stack ? { err: asError.message, stack: asError.stack } : { err: asError.message };
     }
     return { err: errorMessage(err) };
 }

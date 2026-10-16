@@ -98,7 +98,7 @@ function createSemaphore(max: number): Semaphore {
     return {
         acquire(): Promise<() => void> {
             return new Promise((resolve) => {
-                const grant = () => {
+                const grant = (): void => {
                     active++;
                     resolve(release);
                 };

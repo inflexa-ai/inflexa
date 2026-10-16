@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createRateLimitSchedule } from "../../../lib/rate-limit.js";
 import { requestJson } from "../http.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
-import { errorMessage, isError } from "../../../lib/thrown.js";
+import { errorMessage, errorOf } from "../../../lib/thrown.js";
 import { fetchDouble } from "../../../lib/test/doubles.js";
 
 const BodySchema = z.object({ ok: z.boolean() });
@@ -33,12 +33,19 @@ describe("shared source HTTP request policy", () => {
         // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
         const result = await requestJson("https://example.test", BodySchema, {
             timeoutMs: 5,
-            fetch: fetchDouble((_url, init) => new Promise((_resolve, reject) => {
-                    init?.signal?.addEventListener("abort", () => {
-                        const reason: unknown = must(must(init, "init").signal, "must(init, \"init\").signal").reason;
-                        reject(isError(reason) ? reason : new Error(errorMessage(reason)));
-                    }, { once: true });
-                })),
+            fetch: fetchDouble(
+                (_url, init) =>
+                    new Promise((_resolve, reject) => {
+                        init?.signal?.addEventListener(
+                            "abort",
+                            () => {
+                                const reason: unknown = must(must(init, "init").signal, 'must(init, "init").signal').reason;
+                                reject(errorOf(reason) ?? new Error(errorMessage(reason)));
+                            },
+                            { once: true },
+                        );
+                    }),
+            ),
         });
 
         expect(result).toMatchObject({ status: "unavailable", detail: "request timed out after 5ms" });
@@ -51,10 +58,10 @@ describe("shared source HTTP request policy", () => {
         const result = await requestJson("https://example.test", BodySchema, {
             maxRetries: 2,
             maxRetryDelayMs: 1_000,
-            sleep:  (milliseconds: number): Promise<void> => {
+            sleep: (milliseconds: number): Promise<void> => {
                 waits.push(milliseconds);
                 return Promise.resolve();
-},
+            },
             fetch: fetchDouble(() => {
                 calls += 1;
                 return Promise.resolve(calls === 1 ? new Response("later", { status: 429, headers: { "retry-after": "2" } }) : Response.json({ ok: true }));
@@ -72,8 +79,9 @@ describe("shared source HTTP request policy", () => {
         const result = await requestJson("https://example.test", BodySchema, {
             maxRetries: 2,
             maxRetryDelayMs: 10,
-            sleep:  (): Promise<void> => {    return Promise.resolve();
-},
+            sleep: (): Promise<void> => {
+                return Promise.resolve();
+            },
             fetch: fetchDouble(() => {
                 calls += 1;
                 return Promise.resolve(new Response("unavailable", { status: 503 }));
@@ -91,8 +99,9 @@ describe("shared source HTTP request policy", () => {
         const result = await requestJson("https://example.test", BodySchema, {
             maxRetries: 1,
             maxRetryDelayMs: 0,
-            sleep:  (): Promise<void> => {    return Promise.resolve();
-},
+            sleep: (): Promise<void> => {
+                return Promise.resolve();
+            },
             schedule: async <T>(operation: () => Promise<T>): Promise<T> => {
                 admitted += 1;
                 return await operation();
