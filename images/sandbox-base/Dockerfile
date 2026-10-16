@@ -30,7 +30,7 @@ ARG TARGETARCH
 # Stage 1: Build sandbox-server (Go static binary)
 # =============================================================================
 
-FROM golang:1.27-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS server-builder
+FROM golang:1.27-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS server-builder
 
 WORKDIR /build
 COPY images/sandbox-base/server/go.mod images/sandbox-base/server/go.sum ./
