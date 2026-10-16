@@ -107,7 +107,9 @@ export type AgentRunUsage = {
 // Key-set equality in both directions is what makes them bite: an `extends`
 // check would accept a shape carrying an extra count, which is precisely the
 // drift that leaves a new field silently unfolded and unreported.
-type _AssertRunUsageFields = [Exclude<keyof AgentRunUsage, TokenUsageField>, Exclude<TokenUsageField, keyof AgentRunUsage>] extends [never, never] ? true : ["_AssertRunUsageFields failed: the two field unions must be equal"];
+type _AssertRunUsageFields = [Exclude<keyof AgentRunUsage, TokenUsageField>, Exclude<TokenUsageField, keyof AgentRunUsage>] extends [never, never]
+    ? true
+    : ["_AssertRunUsageFields failed: the two field unions must be equal"];
 const _assertRunUsageFields: _AssertRunUsageFields = true;
 
 /** Fold one call's reported usage into a run's running total. */
@@ -150,11 +152,12 @@ export function recordChatCall(call: { readonly agentId: string; readonly respon
     const { usage, servedModelId, provider } = call.response;
     if (usage === undefined) return;
     const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens } = getInstruments();
-    const attributes: Attributes = {
-        agent_id: call.agentId,
-        model: !(servedModelId === undefined) ? servedModelId : undefined,
-        provider: !(provider === undefined) ? provider : undefined,
-    };
+    // The API names an undefined attribute value invalid, and the SDK's attribute hash and OTLP
+    // encoder both walk Object.keys, so an undefined-valued key would split the series and export
+    // an empty attribute. An absent model or provider stays an absent key.
+    const attributes: Attributes = { agent_id: call.agentId };
+    if (servedModelId !== undefined) attributes.model = servedModelId;
+    if (provider !== undefined) attributes.provider = provider;
     if (usage.inputTokens !== undefined) inputTokens.add(usage.inputTokens, attributes);
     if (usage.outputTokens !== undefined) outputTokens.add(usage.outputTokens, attributes);
     if (usage.cacheReadInputTokens !== undefined) cacheReadTokens.add(usage.cacheReadInputTokens, attributes);

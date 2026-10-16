@@ -314,13 +314,16 @@ export function resolveCompositionEyes(seam: AcquireEyes | undefined, chrome: Ch
 export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const { conversation, workflows: wf, resourcePolicy } = deps;
     const usageRecorder = deps.usageRecorder ?? createNoopUsageRecorder();
-    const citationResolver = createCitationResolver({
-        ...deps.citationResolverConfig,
-        ncbiApiKey: !(deps.citationResolverConfig?.ncbiApiKey !== undefined || conversation.bioKeys.ncbi === undefined) ? conversation.bioKeys.ncbi : undefined,
-        semanticScholarApiKey: !(deps.citationResolverConfig?.semanticScholarApiKey !== undefined || conversation.bioKeys.semanticScholar === undefined)
-            ? conversation.bioKeys.semanticScholar
-            : undefined,
-    });
+    // Assigned only where the embedder config is silent: a literal member with the value undefined
+    // would land after the spread above and erase a key the config carries.
+    const citationResolverConfig: { -readonly [K in keyof CitationResolverConfig]: CitationResolverConfig[K] } = { ...deps.citationResolverConfig };
+    if (deps.citationResolverConfig?.ncbiApiKey === undefined && conversation.bioKeys.ncbi !== undefined) {
+        citationResolverConfig.ncbiApiKey = conversation.bioKeys.ncbi;
+    }
+    if (deps.citationResolverConfig?.semanticScholarApiKey === undefined && conversation.bioKeys.semanticScholar !== undefined) {
+        citationResolverConfig.semanticScholarApiKey = conversation.bioKeys.semanticScholar;
+    }
+    const citationResolver = createCitationResolver(citationResolverConfig);
 
     const toolOutputStore = createToolOutputStore(conversation.pool);
 
