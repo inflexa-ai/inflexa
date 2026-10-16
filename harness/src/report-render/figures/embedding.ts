@@ -27,6 +27,8 @@ import { categoricalPalette, categoryName, chartProblem, colorScale, firstAppear
 import { equalRanges, squareLayout } from "./equal-units.js";
 import { nameAnchors, type PlotRange } from "./label-room.js";
 import type { FigureContext, FigureModule } from "./index.js";
+import { optionMember, optionRecords } from "../option-lens.js";
+import { typedMember } from "../../lib/shape.js";
 
 /** The scanpy point area of one cell, in square points, for each cell of the plot: 120000 / n. */
 export const SCANPY_AREA_PT2 = 120_000;
@@ -118,13 +120,13 @@ function channelName(channel: ChartChannel): string {
 }
 
 /** One drawn cell: its pair, its panel, its category, and its continuous value. */
-interface EmbeddedCell {
+type EmbeddedCell = {
     readonly x: number;
     readonly y: number;
     readonly panel: number;
     readonly group?: string;
     readonly color?: number;
-}
+};
 
 function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
     const encoding = block.encoding ?? {};
@@ -153,13 +155,13 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
                 encoding: {
                     x,
                     y,
-                    ...(group !== undefined ? { group } : {}),
-                    ...(color !== undefined ? { color } : {}),
-                    ...(label !== undefined ? { label } : {}),
+                    group: group !== undefined ? group : undefined,
+                    color: color !== undefined ? color : undefined,
+                    label: label !== undefined ? label : undefined,
                 },
             },
         ],
-        ...(facet !== undefined ? { facet } : {}),
+        facet: facet !== undefined ? facet : undefined,
     };
     const composed = context.compose(composition, color !== undefined ? { colorOnTop: true } : {});
     if (composed.isErr()) return err(composed.error);
@@ -168,9 +170,11 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
     const ys = channelValues(rows, y);
     const groups = group === undefined ? undefined : channelValues(rows, group);
     const colors = color === undefined ? undefined : channelValues(rows, color);
-    const facets = facet === undefined ? undefined : rows.map((row) => row[channelColumn(facet)] ?? null);
+    const facets = facet === undefined ? undefined : rows.map((row) => typedMember(row, channelColumn(facet)) ?? null);
     const panelNames =
-        facets === undefined ? [] : firstAppearance(facets.filter((cell): cell is Cell => cell !== null).map((cell) => `${typeof cell}:${String(cell)}`));
+        facets === undefined
+            ? []
+            : firstAppearance(facets.filter((cell: Cell | null): cell is Cell => cell !== null).map((cell) => `${typeof cell}:${String(cell)}`));
     const panelOf = new Map(panelNames.map((key, place) => [key, place]));
 
     const cells: EmbeddedCell[] = [];
@@ -188,23 +192,26 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
             x: px,
             y: py,
             panel: facetCell === null ? 0 : (panelOf.get(`${typeof facetCell}:${String(facetCell)}`) ?? 0),
-            ...(cellGroup !== null ? { group: categoryName(cellGroup) } : {}),
-            ...(cellColor !== null ? { color: cellColor } : {}),
+            group: cellGroup !== null ? categoryName(cellGroup) : undefined,
+            color: cellColor !== null ? cellColor : undefined,
         });
     }
 
     const option = composed.value;
     const panels = Math.max(1, panelNames.length);
     const pointPx = embeddingPointPx(cells.length);
-    const series = (Array.isArray(option.series) ? (option.series as EchartOption[]) : []).map((entry) => ({
-        ...entry,
-        large: color === undefined && cells.length >= EMBEDDING_LARGE_CELLS,
-        symbolSize: pointPx,
-        itemStyle: {
-            ...(typeof entry.itemStyle === "object" && entry.itemStyle !== null ? (entry.itemStyle as EchartOption) : {}),
-            opacity: EMBEDDING_OPACITY,
-        },
-    }));
+    const series = (Array.isArray(option.series) ? optionRecords(option.series) : []).map((entry) => {
+        const baseStyle = optionMember(entry.itemStyle);
+        return {
+            ...entry,
+            large: color === undefined && cells.length >= EMBEDDING_LARGE_CELLS,
+            symbolSize: pointPx,
+            itemStyle: {
+                ...baseStyle,
+                opacity: EMBEDDING_OPACITY,
+            },
+        };
+    });
 
     const ranges = equalRanges(
         cells.map((cell) => cell.x),
@@ -231,29 +238,21 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
             gridIndex: panel,
             ...ranges.x,
             ...HIDDEN_AXIS_PARTS,
-            ...(key
-                ? {
-                      name: `${valueAxisTitle(context.labels, channelName(x))}${KEY_ARROW}`,
-                      nameLocation: "start",
-                      nameGap: 0,
-                      nameTextStyle: { ...keyStyle, verticalAlign: "top" },
-                  }
-                : {}),
+            name: key ? `${valueAxisTitle(context.labels, channelName(x))}${KEY_ARROW}` : undefined,
+            nameLocation: key ? "start" : undefined,
+            nameGap: key ? 0 : undefined,
+            nameTextStyle: key ? { ...keyStyle, verticalAlign: "top" } : undefined,
         });
         yAxes.push({
             type: "value",
             gridIndex: panel,
             ...ranges.y,
             ...HIDDEN_AXIS_PARTS,
-            ...(key
-                ? {
-                      name: `${valueAxisTitle(context.labels, channelName(y))}${KEY_ARROW}`,
-                      nameLocation: "start",
-                      nameRotate: 90,
-                      nameGap: 0,
-                      nameTextStyle: { ...keyStyle, verticalAlign: "bottom" },
-                  }
-                : {}),
+            name: key ? `${valueAxisTitle(context.labels, channelName(y))}${KEY_ARROW}` : undefined,
+            nameLocation: key ? "start" : undefined,
+            nameRotate: key ? 90 : undefined,
+            nameGap: key ? 0 : undefined,
+            nameTextStyle: key ? { ...keyStyle, verticalAlign: "bottom" } : undefined,
         });
     }
     // Each panel names its facet value on an axis of no series over its square, thus the name moves with the square.
@@ -271,7 +270,7 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
     }
 
     const out: EchartOption = {
-        ...(option.tooltip !== undefined ? { tooltip: option.tooltip } : {}),
+        tooltip: option.tooltip !== undefined ? option.tooltip : undefined,
         grid: layout.grid,
         xAxis: xAxes,
         yAxis: yAxes,
@@ -287,14 +286,17 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
             series: [...series, ...nameSeries(cells, names, panels, ranges)],
         });
     }
-    const colorChannel = color as ChartChannel;
+    if (color === undefined) {
+        return err(chartProblem(block.id, 'The embedding colors its cells by a "group" channel or by a "color" channel. Name one of the two.'));
+    }
+    const colorChannel: ChartChannel = color;
     const map = clippedScale(
         cells.flatMap((cell) => (cell.color === undefined ? [] : [cell.color])),
         scaleTitle,
         channelName(colorChannel),
         declaredForColumn(context.meanings, channelColumn(colorChannel)),
     );
-    const composedMaps = Array.isArray(option.visualMap) ? (option.visualMap as EchartOption[]) : [];
+    const composedMaps = Array.isArray(option.visualMap) ? optionRecords(option.visualMap) : [];
     const seriesIndex = composedMaps.find((entry) => entry.dimension === 2)?.seriesIndex ?? series.map((_entry, index) => index);
     const place = layout.visualMap?.[0] ?? {};
     return ok({ ...out, visualMap: [{ type: "continuous", seriesIndex, dimension: 2, ...map, ...place }] });

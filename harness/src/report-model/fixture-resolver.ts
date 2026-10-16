@@ -18,6 +18,7 @@ import type {
     UnresolvedReference,
 } from "../contracts/report-reference.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
+import { wideMember } from "../lib/shape.js";
 import {
     applyRowBound,
     columnsHeldByNoRow,
@@ -51,7 +52,7 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
     // A caller supplies the rows of a fixture. A fixture that supplies rows for a figure would resolve a
     // cell that no real artifact holds. Thus the refusal comes before the read of the rows.
     const valueFileType = artifact.fileType;
-    if (fileTypeHoldsNoCell(valueFileType)) {
+    if (valueFileType !== undefined && valueFileType !== null && fileTypeHoldsNoCell(valueFileType)) {
         return fail(reference, "unreadable-artifact", `the ${valueFileType} at ${reference.path} holds no cell to read`);
     }
 
@@ -85,7 +86,7 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
     // `null`. None of the three is a value that a scalar reference can bind. An empty string is a value,
     // thus it stays valid. The wider annotation admits the three, because the row type promises a value
     // for each key that it holds.
-    const cell: string | number | null | undefined = selectedRow[locator.column];
+    const cell = wideMember(selectedRow, locator.column);
     if (cell === undefined || cell === null) {
         return fail(reference, "locator-out-of-range", `column ${locator.column} holds no value in the selected row`);
     }
@@ -104,7 +105,7 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
     }
 
     const tableFileType = artifact.fileType;
-    if (fileTypeHoldsNoCell(tableFileType)) {
+    if (tableFileType !== undefined && tableFileType !== null && fileTypeHoldsNoCell(tableFileType)) {
         return fail(reference, "unreadable-artifact", `the ${tableFileType} at ${reference.path} holds no cell to read`);
     }
 

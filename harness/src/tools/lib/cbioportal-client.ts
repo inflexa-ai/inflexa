@@ -18,20 +18,20 @@ import { apiFetchValidated, describeApiError } from "./api-utils.js";
 const CBIOPORTAL_BASE = "https://www.cbioportal.org/api";
 const HEADERS = { Accept: "application/json" } as const;
 
-export interface CancerStudy {
+export type CancerStudy = {
     studyId: string;
     cancerType: string;
     cancerTypeName: string;
-}
+};
 
-export interface MutationFrequency {
+export type MutationFrequency = {
     cancerTypeId: string;
     cancerTypeName: string;
     totalSamples: number;
     mutatedSamples: number;
     frequency: number;
     studies: string[];
-}
+};
 
 // Raw cBioPortal wire shapes, validated at the fetch boundary. Fields the code
 // reads as map keys or feeds into `string[]` params stay required — a missing
@@ -78,7 +78,7 @@ async function listStudies(): Promise<RawCancerStudy[]> {
     const url = `${CBIOPORTAL_BASE}/studies?projection=SUMMARY&pageSize=10000`;
     const res = await apiFetchValidated(url, z.array(RawCancerStudySchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return res.value ?? [];
+    return res.value;
 }
 
 /**
@@ -91,7 +91,7 @@ async function cancerTypeNames(): Promise<Map<string, string>> {
     const res = await apiFetchValidated(url, z.array(z.object({ cancerTypeId: z.string().optional(), name: z.string().optional() })), { headers: HEADERS });
     const names = new Map<string, string>();
     if (res.isErr()) return names;
-    for (const row of res.value ?? []) {
+    for (const row of res.value) {
         if (row.cancerTypeId && row.name) names.set(row.cancerTypeId, row.name);
     }
     return names;
@@ -101,14 +101,14 @@ async function listAllSampleLists(): Promise<RawSampleList[]> {
     const url = `${CBIOPORTAL_BASE}/sample-lists?projection=SUMMARY&pageSize=10000`;
     const res = await apiFetchValidated(url, z.array(RawSampleListSchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return res.value ?? [];
+    return res.value;
 }
 
 async function listMutationProfiles(): Promise<RawMolecularProfile[]> {
     const url = `${CBIOPORTAL_BASE}/molecular-profiles?projection=SUMMARY&pageSize=10000`;
     const res = await apiFetchValidated(url, z.array(RawMolecularProfileSchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return (res.value ?? []).filter((p) => p.molecularAlterationType === "MUTATION_EXTENDED");
+    return (res.value).filter((p) => p.molecularAlterationType === "MUTATION_EXTENDED");
 }
 
 async function fetchMutationRowsForGene(entrezGeneId: number, profileIds: string[]): Promise<RawMutationRow[]> {
@@ -123,7 +123,7 @@ async function fetchMutationRowsForGene(entrezGeneId: number, profileIds: string
         }),
     });
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return res.value ?? [];
+    return res.value;
 }
 
 /**
@@ -135,7 +135,7 @@ async function resolveEntrezId(symbol: string): Promise<number | null> {
     const url = `${CBIOPORTAL_BASE}/genes/${encodeURIComponent(symbol)}`;
     const res = await apiFetchValidated(url, z.object({ entrezGeneId: z.number().optional() }), { headers: HEADERS });
     if (res.isErr()) return null;
-    return res.value?.entrezGeneId ?? null;
+    return res.value.entrezGeneId ?? null;
 }
 
 /**
@@ -175,8 +175,12 @@ export async function getSomaticMutationFrequencies(
     const mutations = await fetchMutationRowsForGene(entrezGeneId, profileIds);
     const mutatedStudySamples = new Map<string, Set<string>>();
     for (const m of mutations) {
-        if (!mutatedStudySamples.has(m.studyId)) mutatedStudySamples.set(m.studyId, new Set());
-        mutatedStudySamples.get(m.studyId)!.add(m.sampleId);
+        let samples = mutatedStudySamples.get(m.studyId);
+        if (samples === undefined) {
+            samples = new Set();
+            mutatedStudySamples.set(m.studyId, samples);
+        }
+        samples.add(m.sampleId);
     }
 
     const byCancerType = new Map<string, { name: string; total: number; mutated: number; studies: Set<string> }>();
@@ -194,7 +198,8 @@ export async function getSomaticMutationFrequencies(
                 studies: new Set(),
             });
         }
-        const bucket = byCancerType.get(cancerTypeId)!;
+        const bucket = byCancerType.get(cancerTypeId);
+        if (bucket === undefined) continue;
         bucket.total += sampleCount;
         bucket.mutated += mutatedStudySamples.get(studyId)?.size ?? 0;
         bucket.studies.add(studyId);

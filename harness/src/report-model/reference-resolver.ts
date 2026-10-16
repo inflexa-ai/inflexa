@@ -31,20 +31,20 @@ import { asFiniteNumber } from "./assert-rules.js";
  * `figure`, `script`, `log`, `notebook`, and `output`. Thus the field can refuse a kind of reference, and
  * it can never confirm one. An `output` covers a table and an image alike.
  */
-export interface ArtifactSnapshot {
+export type ArtifactSnapshot = {
     hash: string;
     fileType?: string | null;
     rows?: Array<Record<string, string | number>>;
-}
+};
 
 /**
  * One pinned citation record: the short citation of the paper, and the description that the synthesis
  * gave. The record is the bibliography of a citation key, and the key alone states the membership.
  */
-export interface CitationRecord {
+export type CitationRecord = {
     citation: string;
     description?: string;
-}
+};
 
 /** The pinned citation records, keyed by the citation key, for example `pmid:12345`. */
 export type CitationRecords = Record<string, CitationRecord>;
@@ -59,11 +59,11 @@ export type CitationRecords = Record<string, CitationRecord>;
  * membership role, thus a key with no record is a pinned citation and a stored pin with no map reads the
  * same as one that predates the map.
  */
-export interface ReportSnapshot {
+export type ReportSnapshot = {
     artifacts: Record<string, ArtifactSnapshot>;
     citations?: string[];
     citationRecords?: CitationRecords;
-}
+};
 
 /**
  * The concrete value that a reference resolves to. A scalar comes from one artifact cell or one
@@ -96,10 +96,10 @@ export type ResolvedValue =
  * `resolve` then answers from the cache. The method is optional, thus a realization without it keeps the
  * per-reference behavior and the extension breaks no caller.
  */
-export interface ReferenceResolver {
+export type ReferenceResolver = {
     resolve(reference: Reference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>>;
-    prepare?(references: readonly Reference[], snapshot: ReportSnapshot): Promise<void>;
-}
+    prepare?: (references: readonly Reference[], snapshot: ReportSnapshot) => Promise<void>;
+};
 
 /**
  * Give back each name in `columns` that no row holds, in the order of `columns`.
@@ -128,12 +128,12 @@ function cellOf(row: Record<string, string | number>, column: string): string | 
 }
 
 /** One row of a bound, with the cell of the bound column and the number that the cell reads as. */
-interface RankedRow {
+type RankedRow = {
     readonly row: Record<string, string | number>;
     readonly index: number;
     readonly cell: string | number | undefined;
     readonly value: number | undefined;
-}
+};
 
 /**
  * The code-unit rank of the string form of two cells.
@@ -202,7 +202,7 @@ export function applyRowBound(rows: Array<Record<string, string | number>>, boun
 
     // A row with no rank stays behind every ranked row, and the direction never lifts it. The two lists
     // keep their source order, thus the tail is as stable as the head.
-    const rankable = ranked.filter((entry): entry is RankableRow => !holdsNoRank(entry, numeric));
+    const rankable = ranked.filter((entry: RankedRow): entry is RankableRow => !holdsNoRank(entry, numeric));
     const unrankable = ranked.filter((entry) => holdsNoRank(entry, numeric));
 
     const sorted = [...rankable].sort((left, right) => {

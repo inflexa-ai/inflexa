@@ -12,7 +12,7 @@
  * standing machine exists.
  */
 
-import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, ok, type Result } from "neverthrow";
 import { randomUUID } from "node:crypto";
 
@@ -30,6 +30,7 @@ import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "../workflows/suspension.js";
 import type { ExecEmit, ExecRequest, ExecResult } from "../sandbox/types.js";
 import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT, ExtractValuesResultSchema, type ExtractValuesResult } from "./extract-values-script.js";
+import { parseJsonOrUndefined } from "../lib/json.js";
 
 // The registration in the runtime assembly needs the result type, thus this module re-exports it.
 export type { ExtractValuesResult } from "./extract-values-script.js";
@@ -58,18 +59,18 @@ const noopEmit: ExecEmit = () => {};
  * The body's construction-time deps, closed over at registration. The extraction pass shares the profile's
  * sandbox and authorization rails, thus it draws the same three seams and nothing else.
  */
-export interface ExtractValuesDeps {
+export type ExtractValuesDeps = {
     /** Operational logging seam. An absent logger falls back to a no-op. */
     readonly logger?: Logger;
     readonly sandboxClient: SandboxClient;
     readonly runAuthorizer: RunAuthorizer;
-}
+};
 
 /**
  * The workflow input. It is JSON-serializable, thus DBOS persists it as the workflow's input row. The
  * `RunSession` carries the run authorization. The body reads it and never mints.
  */
-export interface ExtractValuesWorkflowInput {
+export type ExtractValuesWorkflowInput = {
     readonly analysisId: string;
     readonly runSession: RunSession;
     /** The fall-through artifacts of one document pass. One submission covers every request. */
@@ -80,7 +81,7 @@ export interface ExtractValuesWorkflowInput {
      * which matches the prior owned behavior.
      */
     readonly ownsMandate?: boolean; // oss-core-managed-ok
-}
+};
 
 /**
  * Build the sandbox exec for one extraction pass. The command runs the fixed script through `python3 -c`.
@@ -122,10 +123,8 @@ export function parseExtractionOutput(result: ExecResult): ExtractValuesResult {
     if (result.exitCode !== 0) {
         throw new Error(`the extraction script exited with code ${String(result.exitCode)}`);
     }
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(result.stdout);
-    } catch {
+    const parsed = parseJsonOrUndefined(result.stdout);
+    if (parsed === undefined) {
         throw new Error("the extraction script did not emit valid JSON");
     }
     return ExtractValuesResultSchema.parse(parsed);
@@ -206,17 +205,17 @@ export function extractValuesWorkflowId(analysisId: string, nonce: string): stri
  * The route-side deps for the trigger: the run authorizer, and the registered workflow callable. The body's
  * construction-time deps are closed over at registration, thus the trigger never holds them.
  */
-export interface ExtractValuesTriggerDeps {
+export type ExtractValuesTriggerDeps = {
     readonly runAuthorizer: RunAuthorizer;
     readonly workflow: (input: ExtractValuesWorkflowInput) => Promise<Result<ExtractValuesResult, Suspension>>;
-}
+};
 
 /** The identity and the requests for one extraction pass. */
-export interface ExtractValuesTriggerParams {
+export type ExtractValuesTriggerParams = {
     readonly auth: AuthContext;
     readonly analysisId: string;
     readonly requests: readonly ExtractionRequest[];
-}
+};
 
 /**
  * The async edge. It authorizes through the `RunAuthorizer`, starts the workflow, and awaits the outcome.
@@ -246,7 +245,7 @@ export async function triggerExtractValues(
     const { runSession, ownsMandate } = authorized.value; // oss-core-managed-ok
     const handle = (await DBOS.startWorkflow(deps.workflow, {
         workflowID: extractValuesWorkflowId(analysisId, randomUUID()),
-    })({ analysisId, runSession, requests: [...requests], ownsMandate })) as WorkflowHandle<Result<ExtractValuesResult, Suspension>>; // oss-core-managed-ok
+    })({ analysisId, runSession, requests: [...requests], ownsMandate })); // oss-core-managed-ok
     return handle.getResult();
 }
 

@@ -34,7 +34,7 @@ import { scopeResource } from "../../auth/types.js";
 import { toThrowable, unwrapOrThrow } from "../../lib/result.js";
 import { isWorkingMemoryRejection, WORKING_MEMORY_LIMITS } from "../../memory/working-memory.js";
 import { queryRun } from "../../state/index.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 const { goalChars, entryChars, constraints, hypotheses, findings } = WORKING_MEMORY_LIMITS;
 
@@ -103,15 +103,22 @@ const inputSchema = z
 
 type Input = z.infer<typeof inputSchema>;
 
+// The refinements of `inputSchema` reject an input before `execute` sees it;
+// this helper hands the op builders a value the refinement has guaranteed.
+function guaranteed<T>(value: T | undefined, field: string): T {
+    if (value === undefined) throw new Error(`the input schema must supply ${field}`);
+    return value;
+}
+
 /** Map a validated flat input to a constraint/hypothesis list amendment. */
 function toListOp(input: Input): ListOp {
     switch (input.operation ?? "add") {
         case "add":
-            return { op: "add", text: input.text! };
+            return { op: "add", text: guaranteed(input.text, "text") };
         case "revise":
-            return { op: "revise", id: input.id!, text: input.text! };
+            return { op: "revise", id: guaranteed(input.id, "id"), text: guaranteed(input.text, "text") };
         case "retire":
-            return { op: "retire", id: input.id! };
+            return { op: "retire", id: guaranteed(input.id, "id") };
     }
 }
 
@@ -123,15 +130,15 @@ function toConstraintOp(input: Input): ConstraintOp {
 /** As `toListOp`, but an added finding also carries the run it is attributed to. */
 function toFindingOp(input: Input): FindingOp {
     const base = toListOp(input);
-    return base.op === "add" ? { ...base, runId: input.runId! } : base;
+    return base.op === "add" ? { ...base, runId: guaranteed(input.runId, "runId") } : base;
 }
 
-interface UpdateOutput {
+type UpdateOutput = {
     readonly ok: true;
     readonly section: Input["section"];
-}
+};
 
-export function createUpdateWorkingMemoryTool(workingMemory: WorkingMemoryStore, pool: Pool) {
+export function createUpdateWorkingMemoryTool(workingMemory: WorkingMemoryStore, pool: Pool): Tool<z.infer<typeof inputSchema>, UpdateOutput> {
     /** Write one amendment, mapping a refused write to a model-visible error. */
     async function apply<S extends Section>(analysisId: string, section: S, value: SectionValue[S]): Promise<Result<UpdateOutput, ToolError>> {
         const written = await workingMemory.updateSection(analysisId, section, value);
@@ -187,7 +194,7 @@ export function createUpdateWorkingMemoryTool(workingMemory: WorkingMemoryStore,
             const analysisId = scopeResource(ctx.session.scope).resourceId;
             switch (input.section) {
                 case "goal":
-                    return apply(analysisId, "goal", { text: input.text! });
+                    return apply(analysisId, "goal", { text: guaranteed(input.text, "text") });
                 case "constraint":
                     return apply(analysisId, "constraint", toConstraintOp(input));
                 case "hypothesis":

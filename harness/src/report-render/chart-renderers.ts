@@ -21,6 +21,8 @@
  */
 
 import { CHART_INK, CHART_PAGE_TEXT_PX, COLOR_SCALE_BAND_PCT, GUIDE_LINE_COLOR } from "./design.js";
+import { optionArray, optionMember, optionMemberOrUndefined, optionNumberOrUndefined, optionRecord } from "./option-lens.js";
+import { optionPercent } from "./option-lens.js";
 
 /** The renderer name of an interval: an error bar, a confidence interval, or the inner mark of a violin. */
 export const INTERVAL_RENDERER = "interval";
@@ -74,25 +76,25 @@ const INNER_POINT_FILL = "#ffffff";
 const OUTLINE_OPACITY = 0.75;
 
 /** The first argument of a renderer: the JSON parameters that the series carries in `itemPayload`. */
-export interface RenderParams {
+export type RenderParams = {
     readonly itemPayload?: Readonly<Record<string, unknown>>;
-}
+};
 
 /** The part of the chart runtime that a renderer reads. */
-export interface RenderApi {
+export type RenderApi = {
     value(dimension: number): number;
     coord(point: number[]): number[];
     size(delta: number[]): number[];
     visual(name: "color"): string;
-}
+};
 
-/** One graphic element that a renderer gives back to the chart runtime. */
-export interface RenderedElement {
-    type: string;
-    shape?: Record<string, unknown>;
-    style?: Record<string, unknown>;
-    children?: RenderedElement[];
-}
+/** One graphic element that a renderer gives back to the chart runtime. The members are the kinds the renderers write, each in the shape the runtime's own element option takes for that kind. */
+export type RenderedElement =
+    | { type: "line"; shape: { x1: number; y1: number; x2: number; y2: number }; style?: { stroke?: string; lineWidth?: number } }
+    | { type: "circle"; shape: { cx: number; cy: number; r: number }; style?: { fill?: string; stroke?: string; lineWidth?: number } }
+    | { type: "rect"; shape: { x: number; y: number; width: number; height: number }; style?: { fill?: string } }
+    | { type: "polygon"; shape: { points: number[][] }; style?: { fill?: string; stroke?: string; lineWidth?: number; opacity?: number } }
+    | { type: "group"; children: RenderedElement[] };
 
 /** One straight segment in the ink of the chart. */
 function segment(x1: number, y1: number, x2: number, y2: number, width: number): RenderedElement {
@@ -117,7 +119,7 @@ export function intervalRenderer(_params: RenderParams, api: RenderApi): Rendere
     const alongX = api.value(4) === 0;
     const offset = api.value(5);
     const inner = api.value(6) === 1;
-    const clipped = Number(api.value(7)) || 0;
+    const clipped = api.value(7) || 0;
     const band = alongX ? api.size([0, 1])[1] : api.size([1, 0])[0];
     const shift = offset * band;
     const from = api.coord(alongX ? [low, y] : [x, low]);
@@ -209,7 +211,7 @@ export function outlineRenderer(_params: RenderParams, api: RenderApi): Rendered
  */
 export function cellGlyphRenderer(params: RenderParams, api: RenderApi): RenderedElement {
     const payload = params.itemPayload ?? {};
-    const colors = Array.isArray(payload.colors) ? payload.colors : [];
+    const colors: unknown[] = Array.isArray(payload.colors) ? payload.colors : [];
     const ground = typeof payload.ground === "string" ? payload.ground : CHART_INK;
     const center = api.coord([api.value(0), api.value(1)]);
     const klass = api.value(2);
@@ -219,9 +221,10 @@ export function cellGlyphRenderer(params: RenderParams, api: RenderApi): Rendere
     const children: RenderedElement[] = [
         { type: "rect", shape: { x: center[0] - width / 2, y: center[1] - height / 2, width, height }, style: { fill: ground } },
     ];
-    if (klass >= 0 && klass < colors.length) {
+    if (klass >= 0 && klass < colors.length && typeof colors[klass] === "string") {
+        const fill = colors[klass];
         const glyph = height * CELL_GLYPH_SHARE;
-        children.push({ type: "rect", shape: { x: center[0] - width / 2, y: center[1] - glyph / 2, width, height: glyph }, style: { fill: colors[klass] } });
+        children.push({ type: "rect", shape: { x: center[0] - width / 2, y: center[1] - glyph / 2, width, height: glyph }, style: { fill } });
     }
     return { type: "group", children };
 }
@@ -256,11 +259,11 @@ export type ChartRenderer = (params: RenderParams, api: RenderApi) => RenderedEl
  * One registered renderer: the name that a derived series states, the TypeScript function that the export
  * registers, and the name of the page twin in `CHART_RENDERERS_SOURCE` that the bootstrap registers.
  */
-export interface ChartRendererEntry {
+export type ChartRendererEntry = {
     readonly name: string;
     readonly render: ChartRenderer;
     readonly pageFunction: string;
-}
+};
 
 /**
  * The registered renderers. A renderer joins by one entry here, beside its TypeScript function and its page
@@ -274,9 +277,9 @@ export const CHART_RENDERERS: readonly ChartRendererEntry[] = [
 ];
 
 /** The part of the chart runtime that holds the registry of the named renderers. */
-export interface RendererRegistry {
+export type RendererRegistry = {
     registerCustomSeries(name: string, render: ChartRenderer): void;
-}
+};
 
 /**
  * Register each renderer with the chart runtime. A second registration of one name replaces the first with
@@ -300,23 +303,27 @@ export function registerChartRenderers(runtime: RendererRegistry): void {
 export const SIZED_SERIES_MEMBER = "sizedSeries";
 
 /** The series of each export width: the names of the page series that they replace, and the series of each width. */
-export interface SizedSeries {
+export type SizedSeries = {
     readonly names: readonly string[];
     readonly widths: Readonly<Record<string, readonly unknown[]>>;
-}
+};
 
 /**
  * The series of an option with the page series of the sized names replaced by the series of one export width.
  * A width that the member does not hold keeps the page series.
  */
 function sizedSeries(series: unknown, sized: unknown, widthPx: number): unknown {
-    if (!Array.isArray(series) || typeof sized !== "object" || sized === null) return series;
-    const fields = sized as Record<string, unknown>;
-    const widths = fields.widths as Record<string, unknown> | undefined;
-    const chosen = typeof widths === "object" && widths !== null ? widths[String(widthPx)] : undefined;
+    if (!Array.isArray(series)) return series;
+    const fields = optionMemberOrUndefined(sized);
+    if (fields === undefined) return series;
+    const widths = optionMemberOrUndefined(fields.widths);
+    const chosen = widths?.[String(widthPx)];
     if (!Array.isArray(fields.names) || !Array.isArray(chosen)) return series;
-    const names = fields.names as unknown[];
-    const kept = series.filter((entry: unknown) => typeof entry !== "object" || entry === null || names.indexOf((entry as Record<string, unknown>).name) < 0);
+    const names = optionArray(fields.names);
+    const kept = series.filter((entry: unknown) => {
+        const fields = optionMemberOrUndefined(entry);
+        return fields === undefined || names.indexOf(fields.name) < 0;
+    });
     return kept.concat(chosen);
 }
 
@@ -326,8 +333,9 @@ function sizedSeries(series: unknown, sized: unknown, widthPx: number): unknown 
  */
 function scaledAxes(axes: unknown, scale: number): unknown {
     if (Array.isArray(axes)) return axes.map((axis) => scaledAxes(axis, scale));
-    if (typeof axes !== "object" || axes === null) return axes;
-    const axis = { ...(axes as Record<string, unknown>) };
+    const axisRecord = optionMemberOrUndefined(axes);
+    if (axisRecord === undefined) return axes;
+    const axis = { ...axisRecord };
     if (typeof axis.nameGap === "number") axis.nameGap = axis.nameGap * scale;
     if (typeof axis.offset === "number") axis.offset = axis.offset * scale;
     return axis;
@@ -338,9 +346,10 @@ function scaledAxes(axes: unknown, scale: number): unknown {
  * group. A facet panel label is such an element, and the size legend is such a group.
  */
 function scaledGraphic(element: unknown, scale: number): unknown {
-    if (typeof element !== "object" || element === null) return element;
-    const out = { ...(element as Record<string, unknown>) };
-    const style = out.style as Record<string, unknown> | undefined;
+    const fields = optionMemberOrUndefined(element);
+    if (fields === undefined) return element;
+    const out = { ...fields };
+    const style = optionMemberOrUndefined(out.style);
     if (style !== undefined && typeof style.fontSize === "number") out.style = { ...style, fontSize: style.fontSize * scale };
     if (Array.isArray(out.children)) out.children = out.children.map((child: unknown) => scaledGraphic(child, scale));
     return out;
@@ -375,11 +384,11 @@ export function categoryInterval(count: number, textPx: number, widthPx: number)
  * export states the interval again at its own width and text size.
  */
 function fittedCategories(axis: unknown, textPx: number, widthPx: number): unknown {
-    if (typeof axis !== "object" || axis === null || Array.isArray(axis)) return axis;
-    const fields = axis as Record<string, unknown>;
+    const fields = optionMemberOrUndefined(axis);
+    if (fields === undefined) return axis;
     const data = fields.data;
     if (fields.type !== "category" || !Array.isArray(data) || data.length === 0) return axis;
-    const label = typeof fields.axisLabel === "object" && fields.axisLabel !== null ? (fields.axisLabel as Record<string, unknown>) : {};
+    const label = optionMember(fields.axisLabel);
     let rotate = label.rotate;
     if (typeof rotate !== "number" || rotate === 0) {
         let longest = 0;
@@ -426,12 +435,9 @@ function wrappedTitle(title: string, textPx: number, widthPx: number): string {
  * the chart, and a chart of one grid spans the export width.
  */
 function gridWidth(grid: unknown, axis: unknown, widthPx: number): number {
-    const place =
-        typeof axis === "object" && axis !== null && typeof (axis as Record<string, unknown>).gridIndex === "number"
-            ? ((axis as Record<string, unknown>).gridIndex as number)
-            : 0;
-    const entry = Array.isArray(grid) ? grid[place] : grid;
-    const width = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>).width : undefined;
+    const place = optionNumberOrUndefined(optionMemberOrUndefined(axis)?.gridIndex) ?? 0;
+    const entry: unknown = Array.isArray(grid) ? grid[place] : grid;
+    const width = optionMemberOrUndefined(entry)?.width;
     if (typeof width === "string" && width.endsWith("%")) return (widthPx * Number.parseFloat(width)) / 100;
     if (typeof width === "number") return width;
     return widthPx;
@@ -452,8 +458,8 @@ function fittedAxes(axes: unknown, grid: unknown, textPx: number, widthPx: numbe
  * prints no end, or that draws pieces and no scale passes through.
  */
 function stillScale(map: unknown, textPx: number, widthPx: number): unknown {
-    if (typeof map !== "object" || map === null) return map;
-    const fields = map as Record<string, unknown>;
+    const fields = optionMemberOrUndefined(map);
+    if (fields === undefined) return map;
     const text = fields.text;
     if (fields.show === false || fields.type === "piecewise" || !Array.isArray(text) || typeof text[0] !== "string" || typeof text[1] !== "string") return map;
     const lines = text[0].split("\n");
@@ -508,16 +514,17 @@ function legendBand(lines: number, textPx: number): number {
  * are the data of the legend, or else the name of each series in order of first appearance.
  */
 function legendLines(option: Record<string, unknown>, textPx: number, widthPx: number): number {
-    const legend = option.legend as Record<string, unknown>;
+    const legend = optionRecord(option.legend);
     const names: string[] = [];
     if (Array.isArray(legend.data)) {
         for (const entry of legend.data) {
-            const name = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>).name : entry;
+            const fields = optionMemberOrUndefined(entry);
+            const name: unknown = fields !== undefined ? fields.name : entry;
             if (typeof name === "string") names.push(name);
         }
     } else if (Array.isArray(option.series)) {
         for (const series of option.series) {
-            const name = typeof series === "object" && series !== null ? (series as Record<string, unknown>).name : undefined;
+            const name = optionMemberOrUndefined(series)?.name;
             if (typeof name === "string" && name !== "" && names.indexOf(name) < 0) names.push(name);
         }
     }
@@ -547,7 +554,7 @@ function legendLines(option: Record<string, unknown>, textPx: number, widthPx: n
  * height draws in one line that scrolls.
  */
 function facetOverLegend(option: Record<string, unknown>, textPx: number, widthPx: number, heightPx: number): void {
-    const grids = option.grid as unknown[];
+    const grids = optionArray(option.grid);
     const title = Math.round(textPx * FACET_TITLE_SHARE);
     const tops: number[] = [];
     let lowest = 0;
@@ -555,19 +562,19 @@ function facetOverLegend(option: Record<string, unknown>, textPx: number, widthP
     for (const grid of grids) {
         const bottom = panelBottom(grid);
         if (bottom <= 0) continue;
-        const fields = grid as Record<string, unknown>;
-        const top = Number.parseFloat(String(fields.top));
+        const fields = optionRecord(grid);
+        const top = optionPercent(fields.top);
         if (tops.indexOf(top) < 0) tops.push(top);
         if (bottom <= lowest) continue;
         lowest = bottom;
-        height = Number.parseFloat(String(fields.height));
+        height = optionPercent(fields.height);
     }
     tops.sort((a, b) => a - b);
     const partOf = (legendPx: number): number => Math.max(0, lowest - ((heightPx - legendPx - title) / heightPx) * 100) / tops.length;
     const lines = legendLines(option, textPx, widthPx);
     let band = legendBand(lines, textPx);
     if (lines > 1 && partOf(band) > height * (1 - PANEL_MIN_SHARE)) {
-        option.legend = { ...(option.legend as Record<string, unknown>), type: "scroll" };
+        option.legend = { ...optionRecord(option.legend), type: "scroll" };
         band = legendBand(1, textPx);
     }
     const part = partOf(band);
@@ -577,15 +584,15 @@ function facetOverLegend(option: Record<string, unknown>, textPx: number, widthP
     if (part > 0) {
         option.grid = grids.map((grid: unknown) => {
             if (panelBottom(grid) <= 0) return grid;
-            const fields = grid as Record<string, unknown>;
-            const top = Number.parseFloat(String(fields.top));
-            return { ...fields, top: moved(top, tops.indexOf(top)), height: `${Math.round((Number.parseFloat(String(fields.height)) - part) * 1e4) / 1e4}%` };
+            const fields = optionRecord(grid);
+            const top = optionPercent(fields.top);
+            return { ...fields, top: moved(top, tops.indexOf(top)), height: `${Math.round((optionPercent(fields.height) - part) * 1e4) / 1e4}%` };
         });
     }
     if (Array.isArray(option.graphic)) {
         option.graphic = option.graphic.map((element: unknown) => {
-            if (typeof element !== "object" || element === null) return element;
-            const fields = element as Record<string, unknown>;
+            const fields = optionMemberOrUndefined(element);
+            if (fields === undefined) return element;
             if (fields.bottom !== undefined) return { ...fields, bottom: band };
             const top = typeof fields.top === "string" && fields.top.endsWith("%") ? Number.parseFloat(fields.top) : Number.NaN;
             const row = Number.isFinite(top) && part > 0 ? rowOf(top) : -1;
@@ -596,23 +603,23 @@ function facetOverLegend(option: Record<string, unknown>, textPx: number, widthP
 
 /** The bottom edge of one facet panel, in percent of the chart, or 0 for a grid that is no facet panel. */
 function panelBottom(grid: unknown): number {
-    if (typeof grid !== "object" || grid === null) return 0;
-    const fields = grid as Record<string, unknown>;
+    const fields = optionMemberOrUndefined(grid);
+    if (fields === undefined) return 0;
     if (fields.outerBoundsMode !== PANEL_BOUNDS_MODE || typeof fields.top !== "string" || typeof fields.height !== "string") return 0;
     return Number.parseFloat(fields.top) + Number.parseFloat(fields.height);
 }
 
 /** True when an option lays out facet panels over a bottom legend. */
 function holdsFacetLegend(option: Record<string, unknown>): boolean {
-    const legend = option.legend as Record<string, unknown> | undefined;
-    const bottom = typeof legend === "object" && legend !== null && legend.show !== false && legend.bottom !== undefined;
+    const legend = optionMemberOrUndefined(option.legend);
+    const bottom = legend !== undefined && legend.show !== false && legend.bottom !== undefined;
     return bottom && Array.isArray(option.grid) && option.grid.some((grid: unknown) => panelBottom(grid) > 0);
 }
 
 /** True when an option draws a legend along the bottom edge of a grid of one panel. */
 function holdsBottomLegend(option: Record<string, unknown>): boolean {
-    const legend = option.legend as Record<string, unknown> | undefined;
-    const bottom = typeof legend === "object" && legend !== null && legend.show !== false && legend.bottom !== undefined;
+    const legend = optionMemberOrUndefined(option.legend);
+    const bottom = legend !== undefined && legend.show !== false && legend.bottom !== undefined;
     return bottom && option.xAxis !== undefined && !Array.isArray(option.grid);
 }
 
@@ -643,12 +650,13 @@ export function exportOption(option: Record<string, unknown>, textPx: number, wi
     if (out.xAxis !== undefined) out.xAxis = fittedAxes(out.xAxis, out.grid, textPx, widthPx);
     if (Array.isArray(out.visualMap)) out.visualMap = out.visualMap.map((map: unknown) => stillScale(map, textPx, widthPx));
     else if (out.visualMap !== undefined) out.visualMap = stillScale(out.visualMap, textPx, widthPx);
-    if (typeof out.grid === "object" && out.grid !== null && !Array.isArray(out.grid) && (out.grid as Record<string, unknown>).containLabel === true) {
+    const gridFields = optionMemberOrUndefined(out.grid);
+    if (gridFields?.containLabel === true) {
         // The legacy containment holds the labels alone, and a name at the edge of a short export is cut.
-        out.grid = { ...(out.grid as Record<string, unknown>), containLabel: false, outerBoundsMode: "auto", outerBoundsContain: "all" };
+        out.grid = { ...gridFields, containLabel: false, outerBoundsMode: "auto", outerBoundsContain: "all" };
     }
     if (holdsBottomLegend(out)) {
-        const grid = typeof out.grid === "object" && out.grid !== null ? (out.grid as Record<string, unknown>) : {};
+        const grid = optionMember(out.grid);
         out.grid = { ...grid, outerBoundsMode: "auto", outerBounds: { left: 0, right: 0, top: 0, bottom: Math.round(textPx * LEGEND_BAND_LINES) } };
     }
     if (holdsFacetLegend(out)) facetOverLegend(out, textPx, widthPx, heightPx);

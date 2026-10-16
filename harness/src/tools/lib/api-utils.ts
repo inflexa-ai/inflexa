@@ -13,8 +13,9 @@ import { ResultAsync, err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { sleep } from "../../lib/async-utils.js";
+import { errorMessage } from "../../lib/thrown.js";
 
-export interface ApiFetchOptions {
+export type ApiFetchOptions = {
     method?: "GET" | "POST";
     headers?: Record<string, string>;
     body?: string;
@@ -35,7 +36,7 @@ export interface ApiFetchOptions {
     sleep?: (ms: number) => Promise<void>;
     timeoutMs?: number;
     parseAs?: "json" | "text";
-}
+};
 
 /** The error channel of `apiFetch`. A `DomainError` (string `type` discriminant). */
 export type ApiError =
@@ -96,7 +97,7 @@ export function apiFetchValidated<S extends z.ZodType>(
     schema: S,
     options: Omit<ApiFetchOptions, "parseAs"> = {},
 ): ResultAsync<z.infer<S>, ApiError> {
-    return apiFetch<unknown>(url, { ...options, parseAs: "json" }).andThen((data): Result<z.infer<S>, ApiError> => {
+    return apiFetch(url, { ...options, parseAs: "json" }).andThen((data): Result<z.infer<S>, ApiError> => {
         const parsed = schema.safeParse(data);
         if (parsed.success) return ok(parsed.data);
         return err({ type: "invalid_response", issues: summarizeZodIssues(parsed.error) });
@@ -181,13 +182,14 @@ async function runFetch<T>(url: string, options: ApiFetchOptions): Promise<Resul
                 return err({ type: "http_status", status: res.status, body: text.trim() });
             }
 
-            const data = parseAs === "text" ? ((await res.text()) as T) : ((await res.json()) as T);
+            // oxlint-disable-next-line typescript/no-unsafe-assignment -- the caller-declared T trusts the wire response; apiFetchValidated is the honest route for new callers.
+            const data = parseAs === "text" ? await res.text() : await res.json();
             return ok(data);
         } catch (e) {
             if (e instanceof DOMException && e.name === "TimeoutError") {
                 return err({ type: "timeout", timeoutMs });
             }
-            lastError = e instanceof Error ? e.message : String(e);
+            lastError = errorMessage(e);
             if (attempt < maxRetries) {
                 await wait(Math.min(maxRetryDelayMs, retryDelayMs * 2 ** attempt));
                 continue;

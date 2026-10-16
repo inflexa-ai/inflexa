@@ -38,11 +38,11 @@ export const PharmgkbResponseSchema = z.object({
  * phenotype, guideline source and summary live on other PharmGKB resources, so
  * they are absent here rather than present-and-null.
  */
-export interface PharmgkbAnnotation {
+export type PharmgkbAnnotation = {
     gene: string;
     drug: string;
     levelOfEvidence: string;
-}
+};
 
 export async function searchPharmgkb(
     query: string,
@@ -61,7 +61,7 @@ export async function searchPharmgkb(
         throw new Error(describeApiError(res.error));
     }
 
-    const data = res.value?.data ?? [];
+    const data = res.value.data ?? [];
     const annotations = data.slice(0, limit).map((ann) => ({
         gene: ann.location?.genes?.map((g) => g.symbol).join(", ") ?? query,
         drug: ann.relatedChemicals?.map((c) => c.name).join(", ") ?? "",

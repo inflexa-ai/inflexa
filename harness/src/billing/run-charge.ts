@@ -19,10 +19,10 @@ import type { GateFailure, NoticeFailure } from "../lib/hooks.js";
 /** A suspension carries the reason of the host, which the harness does not read. */
 export type RunChargeOutcome = { readonly kind: "ok" | "error" | "canceled" } | { readonly kind: "suspended"; readonly reason: string };
 
-export interface RunCharge {
+export type RunCharge = {
     /** Open the run's running charge at init. */
     open(args: { analysisId: string; runId: string; session: AgentSession }): ResultAsync<void, GateFailure>;
 
     /** Close the run's running charge with the outcome of the run. */
     close(args: { analysisId: string; runId: string; outcome: RunChargeOutcome; session: AgentSession }): ResultAsync<void, NoticeFailure>;
-}
+};

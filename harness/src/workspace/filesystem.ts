@@ -40,7 +40,9 @@ import type { AgentSession } from "../auth/types.js";
 import { scopeResource } from "../auth/types.js";
 import { type FsError, tryFetch, tryFs } from "../lib/fs-result.js";
 import { classifyWithinRoot } from "../lib/fs-helpers.js";
+import { errnoCode } from "../lib/thrown.js";
 import { resolveWorkspacePath, type ResolvedPath, type ResolveWorkspaceRoot } from "./paths.js";
+import { splitLines } from "../lib/text.js";
 
 // ── Result types ──────────────────────────────────────────────────────────
 
@@ -76,7 +78,7 @@ export type ReadBytesResult = { readonly kind: "ok"; readonly bytes: Buffer } | 
 
 // ── Seam interface ────────────────────────────────────────────────────────
 
-export interface WorkspaceFilesystem {
+export type WorkspaceFilesystem = {
     /**
      * Read a workspace file. `headLines` / `tailLines` (mutually exclusive,
      * enforced by the caller) constrain the read to the first N / last N
@@ -115,23 +117,23 @@ export interface WorkspaceFilesystem {
     }): ResultAsync<ReadBytesResult, FsError>;
     list(args: { readonly session: AgentSession; readonly path: string; readonly workingDir?: string }): ResultAsync<ListResult, FsError>;
     stat(args: { readonly session: AgentSession; readonly path: string; readonly workingDir?: string }): ResultAsync<StatResult, FsError>;
-}
+};
 
 /**
  * Adapter for fetching files that aren't present locally. The managed
  * realization downloads via object-store presigned URLs; the OSS build omits
  * the fallback (files are local) and tests pass a fake.
  */
-export interface PresignedFallback {
+export type PresignedFallback = {
     fetch(args: { readonly session: AgentSession; readonly relativePath: string }): Promise<Buffer | null>;
-}
+};
 
-export interface WorkspaceFilesystemDeps {
+export type WorkspaceFilesystemDeps = {
     /** Embedder-supplied workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Optional fallback for files not present locally. */
     readonly presignedFallback?: PresignedFallback;
-}
+};
 
 // ── Constructor ───────────────────────────────────────────────────────────
 
@@ -340,7 +342,8 @@ function collectEntries(dir: string, dirents: readonly { name: string; isDirecto
  * off-tree, re-opening the read-exfiltration hole for the length of the race
  * (CWE-367). `O_NOFOLLOW` makes the leaf open atomic — a symlinked final
  * component fails `ELOOP` in the same syscall that opens it, so there is no
- * check/use gap. `?? 0` keeps the mask valid on a platform that lacks the flag.
+ * check/use gap. On a platform that lacks the flag, `|` coerces it to 0
+ * (ToInt32), so the mask stays valid with no guard.
  *
  * This refuses EVERY leaf symlink, including an in-tree one the persistent check
  * would allow: pure Node cannot express "follow only if it stays in-tree" (that
@@ -350,7 +353,7 @@ function collectEntries(dir: string, dirents: readonly { name: string; isDirecto
  * exposes no `openat2`); the upstream realpath check still rejects the
  * persistent case of that.
  */
-const READ_NO_FOLLOW = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+const READ_NO_FOLLOW = fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
 
 type OpenedFile = { readonly kind: "ok"; readonly fh: FileHandle } | { readonly kind: "out_of_scope" };
 
@@ -369,7 +372,7 @@ function openReadNoFollow(absolute: string): ResultAsync<OpenedFile, FsError> {
             try {
                 return { kind: "ok", fh: await fsOpen(absolute, READ_NO_FOLLOW) };
             } catch (cause) {
-                if ((cause as NodeJS.ErrnoException).code === "ELOOP") return { kind: "out_of_scope" };
+                if (errnoCode(cause) === "ELOOP") return { kind: "out_of_scope" };
                 throw cause;
             }
         },
@@ -500,7 +503,7 @@ function readTailLines(absolute: string, totalSize: number, tailLines: number, m
                     if (windowSize > 0) {
                         await fh.read(buf, 0, windowSize, offset);
                     }
-                    const allLines = buf.toString("utf8").split(/\r?\n/);
+                    const allLines = splitLines(buf.toString("utf8"));
                     // Drop the partial leading line if the window doesn't cover the file start.
                     const candidateLines = offset > 0 ? allLines.slice(1) : allLines;
                     const sliced = candidateLines.length > tailLines ? candidateLines.slice(-tailLines) : candidateLines;
@@ -522,7 +525,7 @@ function readTailLines(absolute: string, totalSize: number, tailLines: number, m
 
 function sliceHeadLines(content: Buffer, headLines: number, maxBytes: number | undefined): ReadFileResult {
     const capped = maxBytes !== undefined && content.length > maxBytes ? content.subarray(0, maxBytes) : content;
-    const lines = capped.toString("utf8").split(/\r?\n/);
+    const lines = splitLines(capped.toString("utf8"));
     const slice = lines.slice(0, headLines);
     const out = Buffer.from(slice.join("\n"));
     if (maxBytes !== undefined && content.length > maxBytes && slice.length < headLines) {
@@ -533,12 +536,12 @@ function sliceHeadLines(content: Buffer, headLines: number, maxBytes: number | u
 
 function sliceTailLines(content: Buffer, tailLines: number, maxBytes: number | undefined): ReadFileResult {
     if (maxBytes === undefined || content.length <= maxBytes) {
-        const lines = content.toString("utf8").split(/\r?\n/);
+        const lines = splitLines(content.toString("utf8"));
         const slice = lines.length > tailLines ? lines.slice(-tailLines) : lines;
         return { kind: "ok", content: Buffer.from(slice.join("\n")), truncated: false };
     }
     const window = content.subarray(content.length - maxBytes);
-    const lines = window.toString("utf8").split(/\r?\n/).slice(1);
+    const lines = splitLines(window.toString("utf8")).slice(1);
     const slice = lines.length > tailLines ? lines.slice(-tailLines) : lines;
     const out = Buffer.from(slice.join("\n"));
     if (slice.length < tailLines) {

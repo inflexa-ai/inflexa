@@ -22,7 +22,7 @@ import { normalizeUnicode, redactSecrets } from "../input-sanitization.js";
 import type { Logger } from "../lib/logger.js";
 import type { Tool } from "../tools/define-tool.js";
 
-export type { ToolCallDetail };
+export type { ToolCallDetail } from "../contracts/chat-events.js";
 
 /**
  * The length cap, in characters. A full workspace path with a line range fits
@@ -97,6 +97,7 @@ export function normalizeDetail(raw: unknown): ToolCallDetail | undefined {
     // `normalizeUnicode` leaves tab, newline and carriage return in place (they
     // are legitimate whitespace in prose); the collapse below is what turns them
     // into the single line this contract promises.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const oneLine = normalizeUnicode(raw).replace(/\s+/g, " ").trim();
     if (oneLine.length === 0) return undefined;
 
@@ -122,7 +123,7 @@ export function computeDetail(tool: Tool, rawInput: unknown, log: Logger): ToolC
     // an open list — an embedder contributes its own through the host-tools seam —
     // so a `describeCall` that is not callable is reachable. Such a tool counts as
     // undescribed, because the alternative is a TypeError on every one of its calls.
-    const describeCall = tool.describeCall;
+    const describeCall = tool.describeCall?.bind(tool);
     if (typeof describeCall !== "function") return undefined;
 
     try {
@@ -164,7 +165,7 @@ export function computeResultDetail(tool: Tool, parsedInput: unknown, result: un
     // The guard tests for a function, not for presence, for the same reason as in
     // `computeDetail`: a packaged tool comes from an open list, thus a
     // `describeResult` that is not callable is reachable.
-    const describeResult = tool.describeResult;
+    const describeResult = tool.describeResult?.bind(tool);
     if (typeof describeResult !== "function") return undefined;
 
     try {

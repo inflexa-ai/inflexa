@@ -25,6 +25,8 @@ import type { Querier } from "../state/db.js";
 import { queryRunsByAnalysis } from "../state/runs.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactSnapshot, CitationRecord, ReportSnapshot } from "./reference-resolver.js";
+import { parseJsonOrUndefined } from "../lib/json.js";
+import { maybeRecord } from "../lib/shape.js";
 
 /**
  * The reason that the pin gave no snapshot. The ledger read and the run listing are the two operations
@@ -38,22 +40,22 @@ export type PinSnapshotError = {
 };
 
 /** The construction options of the pin. */
-export interface PinReportSnapshotOptions {
+export type PinReportSnapshotOptions = {
     /**
      * The workspace-root seam of the caller. The citation evidence sits on disk, thus a composition
      * that binds no seam pins the artifact map alone.
      */
     readonly resolveWorkspaceRoot?: ResolveWorkspaceRoot;
-}
+};
 
 /** The page size of the run listing. The listing walks the pages until a short page ends the walk. */
 const RUN_PAGE_SIZE = 200;
 
 /** One citation of a synthesis record: the key, and the bibliography record when the entry carries one. */
-interface CitationEntry {
+type CitationEntry = {
     readonly key: string;
     readonly record?: CitationRecord;
-}
+};
 
 /** The trimmed text of a field, or `undefined` when the field is not a non-empty string. */
 function trimmedText(value: unknown): string | undefined {
@@ -91,16 +93,17 @@ function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
         return;
     }
     for (const reference of list) {
-        if (typeof reference !== "object" || reference === null) {
+        const fields = maybeRecord(reference);
+        if (fields === undefined) {
             continue;
         }
-        const pmid = (reference as { pmid?: unknown }).pmid;
+        const pmid = fields.pmid;
         if (typeof pmid !== "string") {
             continue;
         }
         const id = pmid.trim();
         if (id.length > 0) {
-            const record = recordOf(reference as { citation?: unknown; description?: unknown });
+            const record = recordOf(fields);
             entries.push(record === undefined ? { key: `pmid:${id}` } : { key: `pmid:${id}`, record });
         }
     }
@@ -119,34 +122,34 @@ function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
  * description sits there.
  */
 function citationsOf(text: string): CitationEntry[] {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(text);
-    } catch {
+    const parsed = parseJsonOrUndefined(text);
+    if (parsed === undefined) {
         return [];
     }
-    if (typeof parsed !== "object" || parsed === null) {
+    const fields = maybeRecord(parsed);
+    if (fields === undefined) {
         return [];
     }
     const entries: CitationEntry[] = [];
-    pushPmidCitations((parsed as { keyReferences?: unknown }).keyReferences, entries);
-    const findings = (parsed as { findings?: unknown }).findings;
+    pushPmidCitations(fields.keyReferences, entries);
+    const findings = fields.findings;
     if (Array.isArray(findings)) {
         for (const finding of findings) {
-            if (typeof finding !== "object" || finding === null) {
+            const findingFields = maybeRecord(finding);
+            if (findingFields === undefined) {
                 continue;
             }
-            pushPmidCitations((finding as { references?: unknown }).references, entries);
+            pushPmidCitations(findingFields.references, entries);
         }
     }
     return entries;
 }
 
 /** The citation evidence of one analysis: the sorted key list, and the record of each key that carries one. */
-interface CollectedCitations {
+type CollectedCitations = {
     readonly keys: string[];
     readonly records: Map<string, CitationRecord>;
-}
+};
 
 /**
  * Collect the citation evidence of one analysis from the synthesis record of each of its runs.
@@ -218,7 +221,8 @@ export async function pinReportSnapshot(
 
     // The ledger accepts any path. A null-prototype map keeps a key such as `__proto__` an ordinary
     // entry, thus no path collides with a prototype slot.
-    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
+    const artifacts: Record<string, ArtifactSnapshot> = {};
+    Reflect.setPrototypeOf(artifacts, null);
     for (const row of ledgerRows.value) {
         artifacts[row.path] = { hash: row.hash, fileType: row.fileType };
     }

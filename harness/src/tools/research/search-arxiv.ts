@@ -36,7 +36,7 @@ export const searchArxivTool = defineTool({
     }),
     describeCall: "none",
     execute: async ({ query, categories, limit }, context): Promise<Result<SearchArxivOutput, ToolError>> => {
-        const result = await source.search({ query, ...(categories === undefined ? {} : { categories }), limit }, context.signal);
+        const result = await source.search({ query, categories: !(categories === undefined) ? categories : undefined, limit }, context.signal);
         if (result.status !== "ok") return ok({ success: false as const, error: result.detail, papers: [] });
         return ok({ success: true as const, papers: result.value });
     },

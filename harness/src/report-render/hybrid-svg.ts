@@ -1,3 +1,5 @@
+import { optionMemberOrUndefined } from "./option-lens.js";
+
 /**
  * The hybrid SVG of a dense chart: the vector axes, text, legend, and guides, over one raster layer of the points.
  *
@@ -13,32 +15,32 @@
  */
 
 /** The box of one export in CSS pixels, and in millimeters for a column export. */
-export interface SvgRootSize {
+export type SvgRootSize = {
     readonly widthPx: number;
     readonly heightPx: number;
     readonly widthMm?: number;
     readonly heightMm?: number;
-}
+};
 
 /** The raster image of the point layer and its rectangle in the pixel space of the SVG. */
-export interface PointLayerImage {
+export type PointLayerImage = {
     readonly href: string;
     readonly x: number;
     readonly y: number;
     readonly width: number;
     readonly height: number;
-}
+};
 
 /**
  * True when one series draws a point for each row: a `scatter` whose symbol draws and which shows no series
  * label. A scatter of size zero, or one with a shown label, carries names, and names stay vector text.
  */
 export function isPointLayer(series: unknown): boolean {
-    if (typeof series !== "object" || series === null) return false;
-    const fields = series as Record<string, unknown>;
+    const fields = optionMemberOrUndefined(series);
+    if (fields === undefined) return false;
     if (fields.type !== "scatter" || fields.symbolSize === 0 || fields.symbol === "none") return false;
-    const label = fields.label;
-    return !(typeof label === "object" && label !== null && (label as Record<string, unknown>).show === true);
+    const label = optionMemberOrUndefined(fields.label);
+    return !(label?.show === true);
 }
 
 /** True when an option holds a point layer. The page can then build the hybrid SVG of the option. */
@@ -66,11 +68,14 @@ function layerNumber(value: number): number {
 
 /** One attribute value with each character that can close it written as an entity. */
 function attributeText(value: string): string {
-    return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the SVG grammar: path data has no builtin parser in the platform.
+    return value.replaceAll("&", "&amp;").replace(/"/g, "&quot;").replaceAll("<", "&lt;");
 }
 
 /** The root tag of an SVG file, and the transparent background rectangle that the chart runtime writes first. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the SVG grammar: path data has no builtin parser in the platform.
 const ROOT_TAG = /^<svg\b[^>]*>/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the SVG grammar: path data has no builtin parser in the platform.
 const BACKGROUND_RECT = /^\s*<rect width="[^"]*" height="[^"]*" x="0" y="0"[^>]*><\/rect>/;
 
 /**
@@ -147,7 +152,7 @@ function reportLayerNumber(value) {
   return Math.round(value * ${LAYER_DECIMALS}) / ${LAYER_DECIMALS};
 }
 function reportAttributeText(value) {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return value.replaceAll("&", "&amp;").replace(/"/g, "&quot;").replaceAll("<", "&lt;");
 }
 function reportComposeHybridSvg(svg, layer, size) {
   var root = ${String(ROOT_TAG)}.exec(svg);

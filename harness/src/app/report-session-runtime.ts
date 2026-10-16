@@ -76,7 +76,7 @@ export type EnsureFailureKind = "absent-thread" | "wrong-thread-type" | "unavail
  */
 export type EnsureSessionStateResult = { outcome: "ready"; state: StoredSessionState } | { outcome: "failed"; kind: EnsureFailureKind; detail: string };
 
-export interface ReportSessionRuntimeDeps {
+export type ReportSessionRuntimeDeps = {
     readonly pool: Pool;
     /**
      * The workspace-root seam of the pin. The citation evidence of an analysis sits on disk under the
@@ -84,7 +84,7 @@ export interface ReportSessionRuntimeDeps {
      */
     readonly resolveWorkspaceRoot?: ResolveWorkspaceRoot;
     readonly logger?: Logger;
-}
+};
 
 /**
  * The report session-state runtime. The gateway serves the authoring tools, and
@@ -93,15 +93,15 @@ export interface ReportSessionRuntimeDeps {
  * turn runs it at the turn start, and the gateway `load` runs it too. Thus a tool
  * call cannot arrive before the state exists.
  */
-export interface ReportSessionRuntime {
+export type ReportSessionRuntime = {
     readonly gateway: ReportSessionStateGateway;
     /**
      * The derivation ledger of the session state. The derivation tool appends one record for each
      * derivation, and the gateway load serves each record as a member of the snapshot.
      */
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
-    ensureSessionState(threadId: string): Promise<EnsureSessionStateResult>;
-}
+    ensureSessionState: (threadId: string) => Promise<EnsureSessionStateResult>;
+};
 
 /**
  * The served membership: the stored pin, with one entry for each derivation of the session.
@@ -122,7 +122,8 @@ function serveMembership(snapshot: ReportSnapshot, derivations: readonly Derivat
     if (derivations.length === 0) {
         return snapshot;
     }
-    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
+    const artifacts: Record<string, ArtifactSnapshot> = {};
+    Reflect.setPrototypeOf(artifacts, null);
     for (const [path, entry] of Object.entries(snapshot.artifacts)) {
         artifacts[path] = entry;
     }

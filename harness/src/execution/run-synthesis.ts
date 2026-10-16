@@ -31,6 +31,7 @@ import { z } from "zod";
 
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 import { tryFs } from "../lib/fs-result.js";
+import { parseJsonOrUndefined } from "../lib/json.js";
 import { hintForZodIssue } from "../lib/zod-issues.js";
 
 import {
@@ -45,7 +46,7 @@ import {
 } from "../schemas/run-synthesis.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import { composeSystemPrompt } from "../agents/system-prompt.js";
-import { flattenDataPart } from "../contracts/chat-frame.js";
+import { maybeRecord } from "../lib/shape.js";
 import type { RunSynthesisPart } from "../contracts/chat-parts.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { isSafeId, runDir } from "../workspace/paths.js";
@@ -54,7 +55,7 @@ import { decodeObjectString } from "../lib/zod-issues.js";
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { passthroughStep } from "../loop/run-step.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
-import type { AgentDefinition, ChatDataPart, EmitFn } from "../loop/types.js";
+import type { AgentDefinition, EmitFn } from "../loop/types.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { RunSession } from "../auth/types.js";
@@ -89,28 +90,28 @@ const LITERATURE_REVIEWER_BUDGET = 3;
 
 // ── Types ────────────────────────────────────────────────────────────
 
-interface ValidationIssue {
+type ValidationIssue = {
     readonly path: string;
     readonly code: "schema" | "semantic";
     readonly message: string;
     readonly hint?: string;
-}
+};
 
 type SubmitSynthesisOutput = { accepted: true } | { accepted: false; issues: ValidationIssue[] };
 
 type SynthesizerOutcome = { kind: "submitted"; synthesis: RunSynthesis } | { kind: "blocker"; reason: string };
 
 /** Internal state passed to the inner tools through closure capture. */
-interface InnerToolContext {
+type InnerToolContext = {
     /** stepIds present in the input summaries — used for reference checks. */
     readonly knownStepIds: ReadonlySet<string>;
     /** runId from the workflow — enforced on the submitted payload. */
     readonly runId: string;
-}
+};
 
-interface OutcomeHolder {
+type OutcomeHolder = {
     outcome: SynthesizerOutcome | null;
-}
+};
 
 // ── Validation ──────────────────────────────────────────────────────
 
@@ -123,6 +124,7 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
     }));
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const PMID_PATTERN = /^\d+$/;
 
 // ── Semantic checks ─────────────────────────────────────────────────
@@ -241,15 +243,15 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
  * did not. A field is `undefined` when it is absent or does not satisfy its own
  * sub-schema — never a guess or a stand-in.
  */
-interface SalvagedInputs {
+type SalvagedInputs = {
     readonly runId?: string;
     readonly findings?: readonly SynthesizedFinding[];
     readonly themes?: readonly BiologicalTheme[];
     readonly keyReferences?: readonly KeyReference[];
-}
+};
 
 function salvageInputs(candidate: unknown): SalvagedInputs {
-    const record: Record<string, unknown> = typeof candidate === "object" && candidate !== null ? (candidate as Record<string, unknown>) : {};
+    const record: Record<string, unknown> = maybeRecord(candidate) ?? {};
 
     const runId = z.string().safeParse(record.runId);
     const findings = z.array(SynthesizedFindingSchema).safeParse(record.findings);
@@ -360,12 +362,15 @@ function buildValidateTool(ctx: InnerToolContext): Tool {
         // The permissive schema also means the loop's string repair never runs
         // here, so `execute` decodes a JSON-encoded string itself.
         inputSchema: z.object({
-            synthesis: z.unknown().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
+            synthesis: z.json().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
         }),
         describeCall: "none",
-        execute: async (input) => {
+        execute: (input) => {
             const result = fullyValidate(decodeObjectString(input.synthesis), ctx);
-            return ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues });
+            return Promise.resolve(
+                // SAFETY: the array is empty — an empty list holds no issue, and the cast fixes the arm's type so both ternary arms share one result shape.
+                ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues }),
+            );
         },
     });
 }
@@ -385,16 +390,16 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
             "supersedes an earlier one.",
         inputSchema: z.object({ synthesis: RunSynthesisSchema }),
         describeCall: "none",
-        execute: async (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
+        execute: (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
             const result = fullyValidate(input.synthesis, ctx);
             if (!result.valid) {
                 // A rejection is not terminal — submission is last-valid-wins, so this
                 // leaves any already-recorded outcome intact and the model may fix the
                 // cited paths and submit again.
-                return ok({ accepted: false as const, issues: result.issues });
+                return Promise.resolve(ok({ accepted: false as const, issues: result.issues }));
             }
             holder.outcome = { kind: "submitted", synthesis: result.synthesis };
-            return ok({ accepted: true as const });
+            return Promise.resolve(ok({ accepted: true as const }));
         },
     });
 }
@@ -439,7 +444,7 @@ export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<strin
 
 // ── Public API ──────────────────────────────────────────────────────
 
-export interface GenerateRunSynthesisInput {
+export type GenerateRunSynthesisInput = {
     readonly provider: ChatProvider;
     readonly session: RunSession;
     readonly model: string;
@@ -461,7 +466,7 @@ export interface GenerateRunSynthesisInput {
     readonly signal?: AbortSignal;
     /** Optional UI event sink (chat data parts forwarded to the parent stream). */
     readonly emit?: EmitFn;
-}
+};
 
 export type GenerateRunSynthesisResult = { kind: "synthesis"; synthesis: RunSynthesis } | { kind: "skipped"; reason: string };
 
@@ -484,7 +489,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         bioKeys: input.bioKeys,
         citationResolver: input.citationResolver,
         usageRecorder: input.usageRecorder,
-        ...(input.toolOutputStore ? { toolOutputStore: input.toolOutputStore } : {}),
+        toolOutputStore: input.toolOutputStore ? input.toolOutputStore : undefined,
     });
 
     const validateTool = buildValidateTool(innerCtx);
@@ -540,13 +545,13 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 
 // ── Disk I/O — load summaries + persist synthesis ───────────────────
 
-export interface LoadStepSummariesInput {
+export type LoadStepSummariesInput = {
     /** Absolute host root of the analysis's workspace tree. */
     readonly workspaceRoot: string;
     readonly runId: string;
     readonly completedSteps: readonly string[];
     readonly agentByStepId?: Readonly<Record<string, string>>;
-}
+};
 
 /**
  * Read each completed step's `output/summary.md`. Steps with missing or empty
@@ -582,12 +587,12 @@ const SYNTHESIS_FILE = "synthesis.json";
  */
 const SYNTHESIS_CAP_BYTES = 1024 * 1024;
 
-export interface PersistSynthesisInput {
+export type PersistSynthesisInput = {
     /** Absolute host root of the analysis's workspace tree. */
     readonly workspaceRoot: string;
     readonly runId: string;
     readonly synthesis: RunSynthesis;
-}
+};
 
 export async function persistSynthesis(args: PersistSynthesisInput): Promise<string> {
     // Confine to the run directory, not the whole workspace: synthesis.json sits
@@ -599,11 +604,11 @@ export async function persistSynthesis(args: PersistSynthesisInput): Promise<str
     return path;
 }
 
-export interface ReadSynthesisInput {
+export type ReadSynthesisInput = {
     /** Absolute host root of the analysis's workspace tree. */
     readonly workspaceRoot: string;
     readonly runId: string;
-}
+};
 
 /**
  * Read the text of a synthesis record under the cap, or give `undefined` when the bytes do not come back.
@@ -659,19 +664,13 @@ export async function readRunSynthesis(args: ReadSynthesisInput): Promise<RunSyn
     if (text === undefined) {
         return null;
     }
-    let json: unknown;
-    try {
-        json = JSON.parse(text);
-    } catch {
-        return null;
-    }
+    const json: unknown = parseJsonOrUndefined(text);
     const parsed = RunSynthesisSchema.safeParse(json);
     if (!parsed.success) {
         return null;
     }
-    // The payload comes from a validated `RunSynthesis`, and the builder sets each field of the part contract.
-    // The tests parse the result with `RunSynthesisPartSchema`.
-    return flattenDataPart(buildRunSynthesisPart(args.runId, parsed.data)) as unknown as RunSynthesisPart;
+    const built = buildRunSynthesisPart(args.runId, parsed.data);
+    return { ...built.data, type: built.type };
 }
 
 // ── Embedding text ──────────────────────────────────────────────────
@@ -717,7 +716,10 @@ function buildSynthesizerPrompt(planNarrative: string, summaries: readonly StepS
  * synthesizer completes successfully. The schema mirrors the harness's contracts
  * `RunSynthesisPart` interface — keep them in lockstep.
  */
-export function buildRunSynthesisPart(runId: string, synthesis: RunSynthesis): ChatDataPart {
+export function buildRunSynthesisPart(
+    runId: string,
+    synthesis: RunSynthesis,
+): { type: "data-run-synthesis"; data: { id: string; runId: string } & RunSynthesis } {
     return {
         type: "data-run-synthesis",
         data: {

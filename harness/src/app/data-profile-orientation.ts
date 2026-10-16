@@ -116,11 +116,13 @@ function clamp(text: string, max: number): string {
  * keeps one record on one line.
  */
 function clip(text: string, max: number): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return clamp(text.replace(/\s+/g, " ").trim(), max);
 }
 
 /** Non-empty, whitespace-collapsed value, or `undefined` — nulls and blanks read the same. */
 function present(value: string | null | undefined): string | undefined {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const flat = value?.replace(/\s+/g, " ").trim();
     return flat ? flat : undefined;
 }
@@ -138,19 +140,22 @@ function formatOrganism(organism: DataProfileResult["organism"]): string | undef
 /** `(20000 x 24, CSV)` — whichever of dimensions / format the profiler recorded. */
 function formatFileFacts(file: { rows?: number | null; cols?: number | null; format?: string }): string {
     const dims = typeof file.rows === "number" && typeof file.cols === "number" ? `${file.rows} x ${file.cols}` : undefined;
-    const facts = [dims, present(file.format)].filter((f): f is string => f !== undefined);
+    const facts = [dims, present(file.format)].filter((f: string | undefined): f is string => f !== undefined);
     return facts.length > 0 ? ` (${facts.join(", ")})` : "";
 }
 
 /** What the dataset IS, or — on a snapshot carrying no structured identity — its summary. */
 function identityLine(result: DataProfileResult): string {
+    const tissue = present(result.tissue);
+    const cellType = present(result.cellType);
+    const condition = present(result.condition);
     const identity = [
-        [present(result.domain), present(result.subtype)].filter((f): f is string => f !== undefined).join(" / ") || undefined,
+        [present(result.domain), present(result.subtype)].filter((f: string | undefined): f is string => f !== undefined).join(" / ") || undefined,
         formatOrganism(result.organism),
-        present(result.tissue) ? `tissue: ${present(result.tissue)}` : undefined,
-        present(result.cellType) ? `cells: ${present(result.cellType)}` : undefined,
-        present(result.condition) ? `condition: ${present(result.condition)}` : undefined,
-    ].filter((f): f is string => f !== undefined);
+        tissue ? `tissue: ${tissue}` : undefined,
+        cellType ? `cells: ${cellType}` : undefined,
+        condition ? `condition: ${condition}` : undefined,
+    ].filter((f: string | undefined): f is string => f !== undefined);
 
     return `Dataset: ${identity.length > 0 ? identity.join(" — ") : clip(result.summary, MAX_IDENTITY_CHARS)}`;
 }
@@ -196,7 +201,7 @@ function byId<T extends { id: string }>(records: readonly T[] | undefined): Map<
 function formatCensus(view: ProfileGroupView, group: DataProfileGroup | undefined): string | undefined {
     const formats = (group?.formats ?? []).filter((entry) => present(entry.format) !== undefined);
     if (formats.length === 0) return present(view.format);
-    if (formats.length === 1) return present(formats[0]!.format);
+    if (formats.length === 1) return present(formats[0].format);
     const shown = formats.slice(0, MAX_GROUP_FORMATS).map((entry) => `${entry.format} ${entry.count}`);
     return `${shown.join(", ")}${formats.length > shown.length ? `, +${formats.length - shown.length}` : ""}`;
 }
@@ -232,7 +237,7 @@ function slotsLine(group: DataProfileGroup | undefined, members: number): string
 /** One group: what it is and how many, then the positions its members vary at. */
 function groupEntry(view: ProfileGroupView, group: DataProfileGroup | undefined): readonly string[] {
     const facts = [`${view.count}x`, formatCensus(view, group), present(group?.categoryLabel ?? group?.category)]
-        .filter((fact): fact is string => fact !== undefined)
+        .filter((fact: string | undefined): fact is string => fact !== undefined)
         .join(", ");
     const line = `- ${clip(view.name, MAX_GROUP_NAME_CHARS)} (${facts}) — ${clip(view.memberRepresents, MAX_GROUP_DESCRIPTION_CHARS)}`;
     const slots = slotsLine(group, view.count);
@@ -304,14 +309,14 @@ function caveatsSection(caveats: readonly string[], budget: number): string | un
         if (line.length <= budget) return line;
     }
     const room = budget - render([""]).length;
-    return room >= MIN_PROSE_CHARS ? render([clamp(capped[0]!, room)]) : undefined;
+    return room >= MIN_PROSE_CHARS ? render([clamp(capped[0], room)]) : undefined;
 }
 
 /** The body's lines, and whether the budget — rather than a per-section cap — cost anything. */
-interface BodyDraft {
+type BodyDraft = {
     readonly lines: readonly string[];
     readonly elided: boolean;
-}
+};
 
 /**
  * Fit the body sections into `budget`, in order, each one whole or absent.
@@ -376,7 +381,7 @@ function composeBody(result: DataProfileResult, analysisId: string, groups: read
 
     const caveats = profileCaveats(result)
         .map((c) => present(c))
-        .filter((c): c is string => c !== undefined);
+        .filter((c: string | undefined): c is string => c !== undefined);
     if (caveats.length > 0) {
         // Three caps, and only one of them is elision: the per-item and share caps are the
         // section's own and already report themselves through `(+N more)`, so the marker is
@@ -416,7 +421,7 @@ export function buildDataProfileOrientation(result: DataProfileResult, analysisI
     // what remains, so the one line saying how much of the dataset is accounted for
     // cannot be the line the body's budget drops.
     const identityBudget = Math.max(0, Math.min(MAX_IDENTITY_CHARS, maxChars - (census ? census.length + 1 : 0)));
-    const header = [clamp(identityLine(result), identityBudget), census].filter((line): line is string => Boolean(line)).join("\n");
+    const header = [clamp(identityLine(result), identityBudget), census].filter((line: string | undefined): line is string => Boolean(line)).join("\n");
     const headerText = clamp(header, maxChars);
     const bodyBudget = maxChars - headerText.length - 1;
     if (bodyBudget <= 0) return headerText;

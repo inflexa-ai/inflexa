@@ -74,22 +74,22 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * `executeAnalysis` bag omits `workingMemory`, because the step seeds must read
  * the same memory that the conversation agent writes.
  */
-export interface CoreWorkflowDeps {
+export type CoreWorkflowDeps = {
     readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore">;
     readonly buildExecuteAnalysis: (
         sandboxStep: SandboxStepCallable,
     ) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "workingMemory">;
     readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore">;
-}
+};
 
 /** The registered, callable workflow handles. */
-export interface RegisteredWorkflows {
+export type RegisteredWorkflows = {
     readonly executeAnalysis: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
     readonly sandboxStep: SandboxStepCallable;
     readonly dataProfile: (input: DataProfileWorkflowInput) => Promise<void>;
     readonly extractValues: (input: ExtractValuesWorkflowInput) => Promise<Result<ExtractValuesResult, Suspension>>;
     readonly deriveTableExec: (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>;
-}
+};
 
 /**
  * Conversation-agent deps minus the workflow callable, the resource policy, the
@@ -117,10 +117,10 @@ export type ConversationAssemblyDeps = Omit<
  * What binds one reference resolver: the analysis whose pinned artifacts it reads, and the auth of the tool
  * call that reads them. A resolver serves one analysis, thus the report tools build one for each call.
  */
-export interface ReportResolverScope {
+export type ReportResolverScope = {
     readonly analysisId: string;
     readonly auth: AuthContext;
-}
+};
 
 /**
  * The factory that gives the reference resolver of one report tool call. The harness wires the production
@@ -128,7 +128,7 @@ export interface ReportResolverScope {
  */
 export type MakeReportReferenceResolver = (scope: ReportResolverScope) => Promise<ReferenceResolver>;
 
-export interface CoreRuntimeDeps {
+export type CoreRuntimeDeps = {
     readonly conversation: ConversationAssemblyDeps;
     readonly workflows: CoreWorkflowDeps;
     /**
@@ -214,7 +214,7 @@ export interface CoreRuntimeDeps {
      * which an embedder calls on its own. Thus that composition binds the seam there as well.
      */
     readonly provenance?: ProvenanceSeam;
-}
+};
 
 /**
  * The refusal a thread type carries no agent yet. `report` is a valid
@@ -224,10 +224,10 @@ export interface CoreRuntimeDeps {
  * life, and a bare-`AgentDefinition` return would force every future member to
  * register an agent in the same commit that adds the member.
  */
-export interface UnregisteredThreadType {
+export type UnregisteredThreadType = {
     readonly type: "unregistered_thread_type";
     readonly threadType: ThreadType;
-}
+};
 
 // `UnregisteredThreadType` is a `DomainError` (string `type`) — the compile-time
 // check keeps its refusal inside the cross-subsystem error vocabulary.
@@ -240,9 +240,9 @@ const _assertDomainError: _AssertDomainError = true;
  * `ResultAsync`: a registered type resolves to its assembled singleton, an
  * unregistered one refuses on the error channel.
  */
-export interface ThreadAgentResolver {
+export type ThreadAgentResolver = {
     forThread(type: ThreadType): Result<AgentDefinition, UnregisteredThreadType>;
-}
+};
 
 /**
  * Wrap a type→agent registry as the resolution surface. Held apart from
@@ -268,7 +268,7 @@ export function createThreadAgentResolver(registry: Partial<Record<ThreadType, A
     };
 }
 
-export interface CoreRuntime {
+export type CoreRuntime = {
     /**
      * Thread→agent resolution — the only way to reach an assembled agent by
      * thread type. Holds the singletons this call built; `conversation` resolves
@@ -291,7 +291,7 @@ export interface CoreRuntime {
      * a plan the same way.
      */
     readonly approvePlan: (input: ApprovePlanInput) => ResultAsync<PlanApproval, ApprovePlanRefusal>;
-}
+};
 
 /**
  * The eyes of the composition, or none.
@@ -314,13 +314,16 @@ export function resolveCompositionEyes(seam: AcquireEyes | undefined, chrome: Ch
 export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const { conversation, workflows: wf, resourcePolicy } = deps;
     const usageRecorder = deps.usageRecorder ?? createNoopUsageRecorder();
-    const citationResolver = createCitationResolver({
-        ...(deps.citationResolverConfig ?? {}),
-        ...(deps.citationResolverConfig?.ncbiApiKey !== undefined || conversation.bioKeys.ncbi === undefined ? {} : { ncbiApiKey: conversation.bioKeys.ncbi }),
-        ...(deps.citationResolverConfig?.semanticScholarApiKey !== undefined || conversation.bioKeys.semanticScholar === undefined
-            ? {}
-            : { semanticScholarApiKey: conversation.bioKeys.semanticScholar }),
-    });
+    // Assigned only where the embedder config is silent: a literal member with the value undefined
+    // would land after the spread above and erase a key the config carries.
+    const citationResolverConfig: { -readonly [K in keyof CitationResolverConfig]: CitationResolverConfig[K] } = { ...deps.citationResolverConfig };
+    if (deps.citationResolverConfig?.ncbiApiKey === undefined && conversation.bioKeys.ncbi !== undefined) {
+        citationResolverConfig.ncbiApiKey = conversation.bioKeys.ncbi;
+    }
+    if (deps.citationResolverConfig?.semanticScholarApiKey === undefined && conversation.bioKeys.semanticScholar !== undefined) {
+        citationResolverConfig.semanticScholarApiKey = conversation.bioKeys.semanticScholar;
+    }
+    const citationResolver = createCitationResolver(citationResolverConfig);
 
     const toolOutputStore = createToolOutputStore(conversation.pool);
 
@@ -339,13 +342,13 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const extractValues = registerExtractValuesWorkflow({
         sandboxClient: wf.dataProfile.sandboxClient,
         runAuthorizer: wf.dataProfile.runAuthorizer,
-        ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
+        logger: wf.dataProfile.logger ? wf.dataProfile.logger : undefined,
     });
     // A session derivation runs its container here and not in the turn. An exec is a durable step of a
     // workflow, thus the tool starts this workflow and awaits it.
     const deriveTableExec = registerDeriveTableExecWorkflow({
         sandboxClient: wf.dataProfile.sandboxClient,
-        ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
+        logger: wf.dataProfile.logger ? wf.dataProfile.logger : undefined,
     });
 
     // The session runtime binds the per-session state to the thread behind the
@@ -357,7 +360,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const reportSession = createReportSessionRuntime({
         pool: conversation.pool,
         resolveWorkspaceRoot: conversation.resolveWorkspaceRoot,
-        ...(conversation.logger ? { logger: conversation.logger } : {}),
+        logger: conversation.logger ? conversation.logger : undefined,
     });
 
     // The eyes of the composition resolve one time here. Thus the agent that looks at a page and
@@ -372,16 +375,16 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         usageRecorder,
         toolOutputStore,
         citationResolver,
-        ...(eyes ? { eyes } : {}),
+        eyes: eyes ? eyes : undefined,
         // The start tool passes it to the spawn, which emits the creation of a
         // report session. The same seam reaches the report agent below.
-        ...(deps.provenance ? { provenance: deps.provenance } : {}),
+        provenance: deps.provenance ? deps.provenance : undefined,
     });
 
     // The report agent is a singleton over the conversation deps, the same way the
     // session runtime is. Its preview tool writes the page into the analysis tree
     // and returns the path, thus the page write reaches no host seam.
-    const reportVersionStore = createReportVersionStore({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
+    const reportVersionStore = createReportVersionStore({ pool: conversation.pool, logger: conversation.logger ? conversation.logger : undefined });
     const reportThreads = createThreadStore(conversation.pool);
 
     // The read cache of the production report path, one for each recent analysis. A preview
@@ -405,7 +408,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             analysisId: scope.analysisId,
             extractionArm: arm,
             readCache: reportArtifactReads.forAnalysis(scope.analysisId),
-            ...(deps.reportHostReadCapBytes !== undefined ? { cap: deps.reportHostReadCapBytes } : {}),
+            cap: deps.reportHostReadCapBytes !== undefined ? deps.reportHostReadCapBytes : undefined,
         });
     };
     const makeReportResolver = deps.makeReportReferenceResolver ?? makeProductionReportResolver;
@@ -427,12 +430,12 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         runDerivation: (input) => triggerDeriveTableExec(deriveTableExec, input),
         runAuthorizer: conversation.runAuthorizer,
         makeResolver: makeReportResolver,
-        ...(eyes ? { eyes } : {}),
-        ...(deps.resolveReportPageAsset ? { resolvePageAsset: deps.resolveReportPageAsset } : {}),
-        ...(deps.makeSessionPagePublisher ? { makeSessionPages: deps.makeSessionPagePublisher } : {}),
-        ...(deps.resolveReportPageUrl ? { resolvePageUrl: deps.resolveReportPageUrl } : {}),
-        ...(deps.provenance ? { provenance: deps.provenance } : {}),
-        ...(conversation.logger ? { logger: conversation.logger } : {}),
+        eyes: eyes ? eyes : undefined,
+        resolvePageAsset: deps.resolveReportPageAsset ? deps.resolveReportPageAsset : undefined,
+        makeSessionPages: deps.makeSessionPagePublisher ? deps.makeSessionPagePublisher : undefined,
+        resolvePageUrl: deps.resolveReportPageUrl ? deps.resolveReportPageUrl : undefined,
+        provenance: deps.provenance ? deps.provenance : undefined,
+        logger: conversation.logger ? conversation.logger : undefined,
         toolOutputStore,
     });
 
@@ -466,10 +469,10 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
                     executeAnalysisWorkflow: executeAnalysis,
                     runAuthorizer: conversation.runAuthorizer,
                     runLauncher: conversation.runLauncher,
-                    ...(resourcePolicy ? { resourcePolicy } : {}),
-                    ...(conversation.extendAnalysisFarm ? { extendAnalysisFarm: conversation.extendAnalysisFarm } : {}),
-                    ...(conversation.logger ? { logger: conversation.logger } : {}),
-                    ...(deps.provenance ? { provenance: deps.provenance } : {}),
+                    resourcePolicy,
+                    extendAnalysisFarm: conversation.extendAnalysisFarm,
+                    logger: conversation.logger,
+                    provenance: deps.provenance,
                 },
                 input,
             ),

@@ -37,6 +37,7 @@ import {
 import { equalRanges, squareLayout } from "./equal-units.js";
 import { NAME_GAP_PX, pointNameSides, type NameSide } from "./label-room.js";
 import type { FigureContext, FigureModule } from "./index.js";
+import { optionRecord } from "../option-lens.js";
 
 /**
  * The symbol of each shape category, in order: the circle, the triangle, the square, the diamond, the
@@ -75,11 +76,11 @@ const PLAIN_POINT_TOOLTIP: EchartOption = { trigger: "item", formatter: "{a}: {c
 const POINT_LABEL_FIELDS: EchartOption = { label: { show: true, formatter: "{b}", position: "right", distance: NAME_GAP_PX, color: CHART_INK } };
 
 /** The two uses of the shape draw. */
-interface ShapeDraw {
+type ShapeDraw = {
     readonly figure: string;
     readonly equalUnits: boolean;
     readonly labelRows: number;
-}
+};
 
 const PCA_DRAW: ShapeDraw = { figure: "pca", equalUnits: true, labelRows: PCA_LABEL_ROWS };
 const SCATTER_DRAW: ShapeDraw = { figure: "scatter", equalUnits: false, labelRows: 0 };
@@ -117,10 +118,10 @@ export const SHAPED_SCATTER_FIGURE: FigureModule = {
 };
 
 /** One resolved channel of the shape draw: its axis name and its value in each row. */
-interface ShapeChannel {
+type ShapeChannel = {
     readonly name: string;
     readonly values: readonly (Cell | null)[];
-}
+};
 
 /**
  * Resolve one channel of the shape draw. A transform applies to a value channel. An order sorts no axis of
@@ -163,13 +164,13 @@ function resolve(
 }
 
 /** One point of the shape draw: its row, its pair, and its two categories. */
-interface ShapedPoint {
+type ShapedPoint = {
     readonly index: number;
     readonly x: number;
     readonly y: number;
     readonly group?: string;
     readonly shape?: string;
-}
+};
 
 /** Derive the shape draw of a PCA or of a plain scatter. */
 function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext, draw: ShapeDraw): Result<EchartOption, RenderProblem> {
@@ -206,7 +207,7 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
         const pg = groups?.values[index] ?? null;
         const ps = shapes?.values[index] ?? null;
         if (px === null || py === null || (groups !== undefined && pg === null) || (shapes !== undefined && ps === null)) continue;
-        points.push({ index, x: px, y: py, ...(pg !== null ? { group: categoryName(pg) } : {}), ...(ps !== null ? { shape: categoryName(ps) } : {}) });
+        points.push({ index, x: px, y: py, group: pg !== null ? categoryName(pg) : undefined, shape: ps !== null ? categoryName(ps) : undefined });
     }
 
     const groupNames = firstAppearance(points.flatMap((point) => (point.group === undefined ? [] : [point.group])));
@@ -234,7 +235,7 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
     const named = labelColumn !== undefined;
     const labeled = named && draw.labelRows > 0 && points.length <= draw.labelRows;
     const sides = new Map<number, NameSide>();
-    if (labeled && labelColumn !== undefined) {
+    if (labelColumn !== undefined && labeled) {
         const placed = pointNameSides(
             points.map((point) => ({ x: point.x, y: point.y, text: String(rows[point.index][labelColumn] ?? "") })),
             ranges,
@@ -256,19 +257,20 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
         for (const [shapePlace, shapeKey] of shapeKeys.entries()) {
             const members = buckets.get(bucketKey(groupKey, shapeKey));
             if (members === undefined) continue;
+            const labelFields = labeled ? POINT_LABEL_FIELDS : {};
             series.push({
                 type: "scatter",
                 name: groupKey ?? shapeKey ?? yTitle,
-                ...(shapeKey !== undefined ? { symbol: SHAPE_SYMBOLS[shapePlace] } : {}),
+                symbol: shapeKey !== undefined ? SHAPE_SYMBOLS[shapePlace] : undefined,
                 symbolSize: SHAPED_POINT_PX,
                 itemStyle: { color: groupKey !== undefined ? palette[groupPlace] : CHART_PALETTE[0] },
-                ...(labeled ? POINT_LABEL_FIELDS : {}),
+                ...labelFields,
                 data: members.map((point) => {
                     const pair = [point.x, point.y];
                     const name = labelColumn === undefined ? undefined : rows[point.index][labelColumn];
                     if (name === undefined) return pair;
                     const side = sides.get(point.index);
-                    return { value: pair, name: String(name), ...(side !== undefined && side !== "right" ? { label: { position: side } } : {}) };
+                    return { value: pair, name: String(name), label: side !== undefined && side !== "right" ? { position: side } : undefined };
                 }),
             });
         }
@@ -290,7 +292,7 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
     const option: EchartOption = {
         tooltip: named ? { ...NAMED_POINT_TOOLTIP } : { ...PLAIN_POINT_TOOLTIP },
         series,
-        legend: keyed ? { orient: draw.equalUnits ? "vertical" : "horizontal", ...(draw.equalUnits ? {} : { bottom: 0 }), data: entries } : { show: false },
+        legend: keyed ? { orient: draw.equalUnits ? "vertical" : "horizontal", bottom: !(draw.equalUnits) ? 0 : undefined, data: entries } : { show: false },
     };
     if (!draw.equalUnits) {
         return ok({ ...option, xAxis: valueAxis("x", xTitle, { scale: true }), yAxis: valueAxis("y", yTitle, { scale: true }) });
@@ -302,7 +304,7 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
         grid: layout.grid,
         xAxis: { ...valueAxis("x", xTitle, ranges.x), ...interval },
         yAxis: { ...valueAxis("y", yTitle, ranges.y), ...interval },
-        ...(keyed && layout.legend !== undefined ? { legend: { ...(option.legend as EchartOption), ...layout.legend } } : {}),
+        legend: keyed && layout.legend !== undefined ? { ...(optionRecord(option.legend)), ...layout.legend } : undefined,
         media: layout.media,
     });
 }

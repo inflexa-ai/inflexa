@@ -30,7 +30,8 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
-import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import { typedMember } from "../../lib/shape.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { decisionRecordPath, scriptSha256 } from "../workspace/decision-record.js";
 import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "../workspace/mutator.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "./client.js";
@@ -48,7 +49,7 @@ export type TemplateBindingValue = string | number | boolean | readonly string[]
  * the plan step: its id, its claims, the release the plan pinned, and the
  * local slots of the contract that the tool binds on the machine.
  */
-export interface TemplateBinding {
+export type TemplateBinding = {
     /** The template reference of the plan step, with its version, for example `tpl-deseq2-two-group@1.0.0`. */
     readonly template: string;
     readonly slots: Readonly<Record<string, TemplateBindingValue>>;
@@ -63,9 +64,9 @@ export interface TemplateBinding {
     readonly local?: readonly TemplateParameter[];
     /** The names of every adaptable slot of the served contract, thus the tool refuses an unknown name before anything leaves the machine. */
     readonly adaptable?: readonly string[];
-}
+};
 
-export interface KnowledgeTemplateDeps {
+export type KnowledgeTemplateDeps = {
     readonly client: KnowledgeClient;
     readonly mutator: WorkspaceMutator;
     /** Host path of the farm `inflexa.lock`, or its resolver for each analysis. Absent with no image record, the environment match reads as unknown. */
@@ -74,22 +75,22 @@ export interface KnowledgeTemplateDeps {
     readonly imagePackagesFile?: string;
     /** The plan settings bound to the template of the step. Absent, the model values ride alone. */
     readonly binding?: TemplateBinding;
-}
+};
 
 /** One bound slot as the decision record keeps it. */
-export interface BoundSlotRecord {
+export type BoundSlotRecord = {
     readonly slot: string;
     readonly value: TemplateBindingValue;
     readonly source: string;
-}
+};
 
 /** One change of a bound value that an `overrides` entry declared, as the decision record keeps it. */
-export interface SettingsOverrideRecord {
+export type SettingsOverrideRecord = {
     readonly slot: string;
     readonly plan_value: TemplateBindingValue;
     readonly new_value: unknown;
     readonly reason: string;
-}
+};
 
 export type KnowledgeTemplateOutput =
     | {
@@ -128,6 +129,8 @@ export type KnowledgeTemplateOutput =
 /** The result of a `knowledge_template` call: each landed write rides as the call record, for the fold. */
 type KnowledgeTemplateResult = KnowledgeTemplateOutput | WithToolCallRecord<KnowledgeTemplateOutput, readonly WriteRecord[]>;
 
+// The template reference grammar the service serves (`tpl-…`, optional `@semver`).
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the template reference grammar of the service.
 const TEMPLATE_REF = /^tpl-[a-z0-9-]+(@\d+\.\d+\.\d+)?$/;
 
 /** A model value equals a bound value when the scalars are identical, or when two lists hold the same strings in order. */
@@ -181,14 +184,14 @@ function isContractRefusal(answer: TemplateContract | KnowledgeUnavailable | Kno
 }
 
 /** One slot as the record and the answer report it: a service entry, or a local slot as bound here. */
-interface ReportedSlot {
+type ReportedSlot = {
     readonly name: string;
     readonly value?: unknown;
     readonly source: string;
     readonly adaptable: boolean;
     readonly lines: readonly number[];
     readonly read?: boolean;
-}
+};
 
 /** The slots of `slots` whose names are in `names`, and the rest, as two records. */
 function splitSlots(slots: Readonly<Record<string, unknown>>, names: ReadonlySet<string>): { local: Record<string, unknown>; remote: Record<string, unknown> } {
@@ -198,7 +201,35 @@ function splitSlots(slots: Readonly<Record<string, unknown>>, names: ReadonlySet
     return { local, remote };
 }
 
-export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
+/** The input of `knowledge_template`. */
+const TemplateInputSchema = z.object({
+    template: z
+        .string()
+        .regex(TEMPLATE_REF, "a template id, optionally with @version")
+        .describe("The template id from the Grounding of the step, with its version, for example `tpl-deseq2-two-group@1.0.0`."),
+    slots: z
+        .record(z.string(), z.json())
+        .describe(
+            "The slot values, by slot name. Only the adaptable slots of the template; a pinned slot is refused. Strings, numbers, booleans, and lists of strings.",
+        ),
+    overrides: z
+        .array(
+            z.object({
+                slot: z.string().min(1).describe("The name of the bound slot whose value you change."),
+                reason: z.string().min(1).describe("Why the plan value does not hold for this step, in one sentence."),
+            }),
+        )
+        .optional()
+        .describe("One entry per bound slot whose value you change from the plan value. Absent when you send every bound value as it is."),
+    script_name: z
+        .string()
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the script file-name grammar of the workspace (`scripts/` entries).
+        .regex(/^[A-Za-z0-9_.-]+$/)
+        .optional()
+        .describe("The file name under `scripts/`. Defaults to `<template id>.R` or `<template id>.py` by the language of the template."),
+});
+
+export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z.infer<typeof TemplateInputSchema>, KnowledgeTemplateResult> {
     return defineTool({
         id: "knowledge_template",
         description:
@@ -213,31 +244,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             "A slot value the template refuses comes back as `match: rejected` with the slot and the permitted values; correct it and call again. " +
             "A change the slots do not cover: use `edit_file` on a line marked `# [adaptable: ...]` in the rendered script, and keep the edit small; the record lists each such edit. " +
             "`match: unavailable` means the service did not answer, and `match: snapshot_mismatch` means the service moved to another release than the plan pinned; in both cases write the script yourself as you would without this tool, and state it in your summary.",
-        inputSchema: z.object({
-            template: z
-                .string()
-                .regex(TEMPLATE_REF, "a template id, optionally with @version")
-                .describe("The template id from the Grounding of the step, with its version, for example `tpl-deseq2-two-group@1.0.0`."),
-            slots: z
-                .record(z.string(), z.unknown())
-                .describe(
-                    "The slot values, by slot name. Only the adaptable slots of the template; a pinned slot is refused. Strings, numbers, booleans, and lists of strings.",
-                ),
-            overrides: z
-                .array(
-                    z.object({
-                        slot: z.string().min(1).describe("The name of the bound slot whose value you change."),
-                        reason: z.string().min(1).describe("Why the plan value does not hold for this step, in one sentence."),
-                    }),
-                )
-                .optional()
-                .describe("One entry per bound slot whose value you change from the plan value. Absent when you send every bound value as it is."),
-            script_name: z
-                .string()
-                .regex(/^[A-Za-z0-9_.-]+$/)
-                .optional()
-                .describe("The file name under `scripts/`. Defaults to `<template id>.R` or `<template id>.py` by the language of the template."),
-        }),
+        inputSchema: TemplateInputSchema,
         describeCall: ({ template }) => template,
         describeResult: (_input, result: KnowledgeTemplateResult) =>
             "status" in result ? (result.status === "ok" ? `${result.script_path} (${result.environment_match})` : result.status) : result.match,
@@ -280,7 +287,9 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             const localByName = new Map(locals.map((parameter) => [parameter.name, parameter]));
             // A local value the contract refuses is refused before the service call, thus a bad path costs no render.
             const localIssues = Object.entries(localValues).flatMap(([name, value]) => {
-                const issue = validateLocalSlot(localByName.get(name)!, value);
+                const parameter = localByName.get(name);
+                if (parameter === undefined) return [];
+                const issue = validateLocalSlot(parameter, value);
                 return issue ? [issue] : [];
             });
             if (localIssues.length > 0) {
@@ -288,14 +297,11 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             }
 
             const farmLockFile = typeof deps.farmLockFile === "function" ? deps.farmLockFile(ctx.session.scope.analysisId) : deps.farmLockFile;
-            const installed = installedPackages({
-                ...(farmLockFile ? { farmLockFile } : {}),
-                ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
-            });
+            const installed = installedPackages({ farmLockFile, imagePackagesFile: deps.imagePackagesFile });
             const answer = await deps.client.render(template, merged, installed.packages, {
-                ...(binding?.step ? { step: binding.step } : {}),
-                ...(binding?.claims ? { claims: binding.claims } : {}),
-                ...(binding?.snapshot ? { expectedSnapshot: binding.snapshot } : {}),
+                step: binding?.step,
+                claims: binding?.claims,
+                expectedSnapshot: binding?.snapshot,
             });
             // A rendered answer carries `ok: true`; the refusals carry `match` and no `ok`.
             if (!("ok" in answer)) return ok(answer);
@@ -309,7 +315,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             const scriptPath = `scripts/${scriptFile}`;
             // Each landed write rides the call record, also when a later write is refused.
             const records: WriteRecord[] = [];
-            const write = async (path: string, content: string) => {
+            const write = async (path: string, content: string): Promise<WriteFileResult> => {
                 const outcome = await deps.mutator.writeFile({
                     path,
                     content,
@@ -324,14 +330,16 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             const scriptWrite = await write(scriptPath, bound.script);
             if (scriptWrite.status !== "ok") return ok({ status: "write_refused", path: scriptWrite.path, reason: scriptWrite.status });
 
-            const boundSlots: BoundSlotRecord[] = Object.entries(binding?.slots ?? {}).map(([slot, value]) => ({
+            const bindingSlots: Readonly<Record<string, TemplateBindingValue>> = binding?.slots ?? {};
+            const boundSlots: BoundSlotRecord[] = Object.entries(bindingSlots).map(([slot, value]) => ({
                 slot,
-                value: value as TemplateBindingValue,
+                value,
                 source: binding ? sourceOf(binding, slot) : "plan",
             }));
             const settingsOverrides: SettingsOverrideRecord[] = boundSlots.flatMap(({ slot, value }) => {
                 const reason = reasons.get(slot);
-                const sent = slots[slot];
+                // The record type claims every key; the model may omit a bound slot, so the read admits the absence.
+                const sent = typedMember(slots, slot);
                 if (reason === undefined || sent === undefined || sameValue(value, sent)) return [];
                 return [{ slot, plan_value: value, new_value: sent, reason }];
             });
@@ -367,9 +375,9 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
                             version: answer.template.version,
                             label: answer.template.label,
                             method: { id: answer.template.method.id, label: answer.template.method.label },
-                            ...(answer.template.substitute_for
-                                ? { substitute_for: { id: answer.template.substitute_for.id, label: answer.template.substitute_for.label } }
-                                : {}),
+                            substitute_for: answer.template.substitute_for
+                                ? { id: answer.template.substitute_for.id, label: answer.template.substitute_for.label }
+                                : undefined,
                         },
                         snapshot: answer.snapshot,
                         slots: reportedSlots,

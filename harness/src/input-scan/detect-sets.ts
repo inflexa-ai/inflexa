@@ -26,22 +26,22 @@ import { catchAll, describeGroup, describeSlot, mineContext, slotToken } from ".
 import type { FormatCount, ScannedFile, UnstructuredEntry } from "./types.js";
 import { IDENTITY_CROSS_CHECK_RATIO, MAX_EXAMPLE_PATHS, MAX_LEFTOVER_SAMPLE, MAX_SETS_PER_CONTEXT, MIN_IDENTITY_TOKEN_LENGTH } from "./tuning.js";
 
-export interface DetectSetsOptions {
+export type DetectSetsOptions = {
     /** Read-based agreement between candidate clusters, when the caller has header readouts. */
     readonly contentSimilarity?: ContentSimilarity;
-}
+};
 
 /** One position of a directory path template: fixed text, or a segment that varies. */
 type PathSegment = { readonly kind: "literal"; readonly name: string } | { readonly kind: "variable"; readonly index: number };
 
-interface DraftSet {
+type DraftSet = {
     readonly origin: SetOrigin;
     readonly marker?: string;
     readonly pathTemplate: string;
     readonly segments: readonly DraftSegment[];
     readonly slots: readonly DraftSlot[];
     readonly members: readonly MemberFile[];
-}
+};
 
 function fileCountOf(members: readonly MemberFile[]): number {
     return members.reduce((total, member) => total + 1 + member.companions.length, 0);
@@ -67,7 +67,7 @@ function wrapperCensus(members: readonly MemberFile[]): WrapperCount[] {
 }
 
 function renderTemplate(segments: readonly DraftSegment[], slots: readonly DraftSlot[]): string {
-    return segments.map((segment) => (segment.kind === "literal" ? segment.text : slotToken(slots[segment.slot]!))).join("");
+    return segments.map((segment) => (segment.kind === "literal" ? segment.text : slotToken(slots[segment.slot]))).join("");
 }
 
 /** The token value at a slot's position, with the literal affixes the template shows stripped off. */
@@ -97,11 +97,11 @@ function crossCheckIdentity(
     for (const slot of nameSlots) {
         if (slot.distinctValues < 2) continue;
         for (let k = 0; k < directoryValues.length; k++) {
-            const values = directoryValues[k]!;
-            const paired = directorySlots[k]!.distinctValues === slot.distinctValues;
+            const values = directoryValues[k];
+            const paired = directorySlots[k].distinctValues === slot.distinctValues;
             let matches = 0;
             for (let i = 0; i < group.items.length; i++) {
-                const core = coreAt(group.items[i]!, slot);
+                const core = coreAt(group.items[i], slot);
                 const segment = values[i] ?? "";
                 const alike =
                     core === segment ||
@@ -134,7 +134,7 @@ function assembleMinedSet(group: MinedGroup, path: readonly PathSegment[]): Draf
         const values = members.map((member) => member.varValues[at] ?? "");
         const distinct = new Set(values);
         if (distinct.size === 1) {
-            directorySegments.push({ kind: "literal", text: `${[...distinct][0]!}/` });
+            directorySegments.push({ kind: "literal", text: `${[...distinct][0]}/` });
             continue;
         }
         const slot = describeSlot(values, "directory", segment.index);
@@ -162,22 +162,22 @@ function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values
     const id = `set-${index + 1}`;
     const slotIds = draft.slots.map((_, position) => `${id}.slot-${position + 1}`);
     const slots: SetSlot[] = draft.slots.map((slot, position) => ({
-        id: slotIds[position]!,
+        id: slotIds[position],
         location: slot.location,
         index: slot.index,
         tokenClass: slot.tokenClass,
-        ...(slot.width !== undefined ? { width: slot.width } : {}),
-        ...(slot.minLength !== undefined ? { minLength: slot.minLength, maxLength: slot.maxLength } : {}),
-        ...(slot.skeleton !== undefined ? { skeleton: slot.skeleton } : {}),
-        ...(slot.prefix !== undefined ? { prefix: slot.prefix } : {}),
-        ...(slot.suffix !== undefined ? { suffix: slot.suffix } : {}),
+        width: slot.width !== undefined ? slot.width : undefined,
+        minLength: slot.minLength !== undefined ? slot.minLength : undefined, maxLength: slot.minLength !== undefined ? slot.maxLength : undefined,
+        skeleton: slot.skeleton !== undefined ? slot.skeleton : undefined,
+        prefix: slot.prefix !== undefined ? slot.prefix : undefined,
+        suffix: slot.suffix !== undefined ? slot.suffix : undefined,
         distinctValues: slot.distinctValues,
         sampleValues: slot.sampleValues,
-        ...(slot.sameAs !== undefined ? { sameAsSlot: slotIds[slot.sameAs]!, crossCheckMismatches: slot.crossCheckMismatches ?? 0 } : {}),
+        sameAsSlot: slot.sameAs !== undefined ? slotIds[slot.sameAs] : undefined, crossCheckMismatches: slot.sameAs !== undefined ? slot.crossCheckMismatches ?? 0 : undefined,
     }));
 
     const segments: TemplateSegment[] = draft.segments.map((segment) =>
-        segment.kind === "literal" ? { kind: "literal", text: segment.text } : { kind: "slot", slotId: slotIds[segment.slot]! },
+        segment.kind === "literal" ? { kind: "literal", text: segment.text } : { kind: "slot", slotId: slotIds[segment.slot] },
     );
     const { members, completeness } = assessCompleteness(draft.members);
 
@@ -185,7 +185,7 @@ function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values
         set: {
             id,
             origin: draft.origin,
-            ...(draft.marker ? { marker: draft.marker } : {}),
+            marker: draft.marker ? draft.marker : undefined,
             pathTemplate: draft.pathTemplate,
             segments,
             memberCount: members.length,
@@ -198,8 +198,8 @@ function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values
             examplePaths: members.slice(0, MAX_EXAMPLE_PATHS).map((member) => member.path),
             members,
         },
-        values: draft.slots.map((slot, position) => [slotIds[position]!, slot.values]),
-        memberValues: draft.slots.map((slot, position) => [slotIds[position]!, slot.memberValues]),
+        values: draft.slots.map((slot, position) => [slotIds[position], slot.values]),
+        memberValues: draft.slots.map((slot, position) => [slotIds[position], slot.memberValues]),
     };
 }
 
@@ -272,7 +272,7 @@ export function detectSets(files: readonly ScannedFile[], options: DetectSetsOpt
         if (children.length === 0) return;
         for (const cluster of clusterChildren(children, options.contentSimilarity)) {
             if (cluster.names.length === 1) {
-                descend(cluster.entries, [...path, { kind: "literal", name: cluster.names[0]! }]);
+                descend(cluster.entries, [...path, { kind: "literal", name: cluster.names[0] }]);
                 continue;
             }
             const next = cluster.entries.map((entry) => ({ node: entry.node, varValues: [...entry.varValues, entry.node.name] }));

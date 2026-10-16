@@ -15,6 +15,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
+import { guaranteed } from "../../lib/invariants.js";
 import {
     fetchPubchemAssays,
     fetchPubchemCompounds,
@@ -111,12 +112,12 @@ export const pubchemTool = defineTool({
     execute: async (input) => {
         switch (input.action) {
             case "compound":
-                return ok<PubchemOutput>({ results: await fetchPubchemCompounds(input.query!, input.searchBy!) });
+                return ok<PubchemOutput>({ results: await fetchPubchemCompounds(guaranteed(input.query, "query"), guaranteed(input.searchBy, "searchBy")) });
             case "crossrefs":
-                return ok<PubchemOutput>({ crossRefs: await fetchPubchemCrossRefs(input.cid!) });
+                return ok<PubchemOutput>({ crossRefs: await fetchPubchemCrossRefs(guaranteed(input.cid, "cid")) });
             case "assays":
                 return ok<PubchemOutput>({
-                    assays: await fetchPubchemAssays(input.cid!, {
+                    assays: await fetchPubchemAssays(guaranteed(input.cid, "cid"), {
                         activeOnly: input.activeOnly ?? true,
                         limit: input.limit ?? 25,
                     }),

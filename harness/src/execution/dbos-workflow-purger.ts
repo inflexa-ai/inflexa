@@ -27,6 +27,7 @@ import type { Pool } from "pg";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
+import { maybeRecord } from "../lib/shape.js";
 import type { WorkflowPurger } from "./workflow-purger.js";
 
 /**
@@ -45,8 +46,7 @@ const SYSTEM_SCHEMA = "dbos";
 const UNDEFINED_TABLE = "42P01";
 
 function isUndefinedTable(e: DbError): boolean {
-    const cause: unknown = e.cause;
-    return cause !== null && typeof cause === "object" && "code" in cause && cause.code === UNDEFINED_TABLE;
+    return maybeRecord(e.cause)?.code === UNDEFINED_TABLE;
 }
 
 /**
@@ -65,7 +65,10 @@ function isUndefinedTable(e: DbError): boolean {
  * message and drops the one stack the SDK bothered to hand over.
  */
 function asEngineLogger(logger: Logger): DLogger {
-    const render = (entry: unknown): string => (typeof entry === "string" ? entry : String(entry));
+    const render = (entry: unknown): string => {
+        if (typeof entry !== "string") throw new Error(`the DBOS engine logger hands over rendered strings; got ${typeof entry}`);
+        return entry;
+    };
     return {
         debug: (entry) => logger.debug(render(entry)),
         info: (entry) => logger.info(render(entry)),
@@ -74,11 +77,11 @@ function asEngineLogger(logger: Logger): DLogger {
     };
 }
 
-export interface DbosWorkflowPurgerDeps {
+export type DbosWorkflowPurgerDeps = {
     /** Pool onto the engine's system database — the same database the application pool holds. */
     readonly pool: Pool;
     readonly logger?: Logger;
-}
+};
 
 export function createDbosWorkflowPurger({ pool, logger: injected }: DbosWorkflowPurgerDeps): WorkflowPurger {
     const logger = (injected ?? createNoopLogger()).named("workflow-purger");
@@ -186,16 +189,19 @@ export function createDbosWorkflowPurger({ pool, logger: injected }: DbosWorkflo
 
         cancel(workflowIds) {
             if (workflowIds.length === 0) return okAsync(undefined);
-            return tryMutation("workflowPurger.cancel", async () => {
-                const client = await engine();
-                // Descendants too: the delete side reaches them, so roots-only
-                // cancellation would leave child step executors writing behind it.
-                await client.cancelWorkflows([...workflowIds], { cancelChildren: true });
-            })
-                .map(() => {
-                    logger.debug("cancelled workflows", { requested: workflowIds.length });
+            return (
+                tryMutation("workflowPurger.cancel", async () => {
+                    const client = await engine();
+                    // Descendants too: the delete side reaches them, so roots-only
+                    // cancellation would leave child step executors writing behind it.
+                    await client.cancelWorkflows([...workflowIds], { cancelChildren: true });
                 })
-                .orElse(whenLedgerAbsent<void>(undefined));
+                    .map(() => {
+                        logger.debug("cancelled workflows", { requested: workflowIds.length });
+                    })
+                    // oxlint-disable-next-line typescript/no-invalid-void-type -- neverthrow's ok<void, E> / ResultAsync<void, E> is the idiom of the seam contracts; re-typing the contracts to undefined changes the published surface beyond this change
+                    .orElse(whenLedgerAbsent<void>(undefined))
+            );
         },
 
         deleteWorkflows(workflowIds, includeDescendants = false) {

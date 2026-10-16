@@ -1,0 +1,1157 @@
+/**
+ * The tests of the eyes tool.
+ *
+ * Each test drives the tool through `execute` with a temp workspace root, an in-memory gateway, and a stub
+ * capture or a fake eyes seam. The chrome connection has its own prior art. Thus these tests cover the tool
+ * orchestration alone: the transport precedence, the lease of one look, and the seen-hash copy.
+ *
+ * A look through a lease runs the shared capture, thus these tests replace the connect operation with a fake
+ * browser. Each test that connects names its own endpoint, because the cache holds one browser for each
+ * endpoint.
+ *
+ * A test that hangs a seam call shortens the two budgets of the tool. Thus the deadline of that call expires
+ * inside the test, and the test reads the outcome that an expiry gives.
+ */
+
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Browser, BrowserContext, type EvaluateFunc, Page, type ScreenshotOptions } from "puppeteer-core";
+
+import type { AuthContext, Scope } from "../../../auth/types.js";
+import { setBrowserConnector } from "../../../lib/chrome.js";
+import { createNoopLogger } from "../../../lib/console-logger.js";
+import type { AcquireEyes, EyesLease, EyesScope } from "../../../lib/eyes.js";
+import type { Logger } from "../../../lib/logger.js";
+import type {
+    ReportSessionState,
+    ReportSessionStateGateway,
+    SeenStampResult,
+    SessionStateLoad,
+    SessionStatePersist,
+    StampResult,
+} from "../../report-authoring/authoring-tools.js";
+import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { readToolResultImages, type ToolContext } from "../../define-tool.js";
+import { createExaminePageTool, type CapturePage, type ExaminePageResult, type PageCapture, type ResolvePageUrl } from "../examine-page.js";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+
+const DEFAULT_ANALYSIS_ID = "analysis-001";
+
+/** Each root that a test made. The cleanup removes them after the suite. */
+const roots: string[] = [];
+
+afterAll(async () => {
+    for (const root of roots) {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+/** Make a fresh temp directory as a workspace root. */
+async function makeRoot(): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "examine-page-"));
+    roots.push(root);
+    return root;
+}
+
+/** Write the rendered page under the session directory, thus a look finds a page. */
+async function writePage(root: string, threadId: string): Promise<void> {
+    const dir = join(root, "report-sessions", threadId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "index.html"), "<html><body>report</body></html>", "utf8");
+}
+
+type FakeRow = {
+    state: ReportSessionState;
+    analysisId: string;
+    rendered: string | null;
+    seen: string | null;
+};
+
+type FakeGateway = ReportSessionStateGateway & {
+    seed(threadId: string, rendered: string | null): void;
+    seenOf(threadId: string): string | null;
+};
+
+function makeFakeGateway(): FakeGateway {
+    const rows = new Map<string, FakeRow>();
+    const emptyState: ReportSessionState = { document: { title: "", sections: [] }, snapshot: { artifacts: {} } };
+    return {
+        seed(threadId, rendered): void {
+            rows.set(threadId, { state: emptyState, analysisId: DEFAULT_ANALYSIS_ID, rendered, seen: null });
+        },
+        seenOf(threadId): string | null {
+            return rows.get(threadId)?.seen ?? null;
+        },
+        load(threadId): Promise<SessionStateLoad> {
+            const row = rows.get(threadId);
+            if (row === undefined) {
+                return Promise.resolve({ outcome: "absent" });
+            }
+            return Promise.resolve({
+                outcome: "found",
+                state: row.state,
+                analysisId: row.analysisId,
+                token: null,
+                seenDocumentHash: row.seen,
+                derivations: [],
+            });
+        },
+        persist(): Promise<SessionStatePersist> {
+            return Promise.resolve({ outcome: "persisted" });
+        },
+        stampRendered(threadId, hash): Promise<StampResult> {
+            const row = rows.get(threadId);
+            if (row === undefined) {
+                return Promise.resolve({ outcome: "absent" });
+            }
+            row.rendered = hash;
+            return Promise.resolve({ outcome: "stamped" });
+        },
+        stampSeen(threadId): Promise<SeenStampResult> {
+            const row = rows.get(threadId);
+            if (row === undefined) {
+                return Promise.resolve({ outcome: "absent" });
+            }
+            if (row.rendered === null) {
+                // No preview stamped a rendered hash, thus the seen stamp finds none to copy.
+                return Promise.resolve({ outcome: "no-rendered" });
+            }
+            row.seen = row.rendered;
+            return Promise.resolve({ outcome: "stamped" });
+        },
+    };
+}
+
+/** A tool context whose scope names a report thread. */
+function ctxForThread(threadId: string): ToolContext {
+    const { ctx } = makeToolContext();
+    const scope: Scope = { kind: "analysis", analysisId: DEFAULT_ANALYSIS_ID, threadId };
+    return { ...ctx, session: { ...ctx.session, scope } };
+}
+
+/** A fake eyes seam, plus the record of what the tool asked of it. */
+type FakeEyes = {
+    readonly acquire: AcquireEyes;
+    /** The scope of each acquire, in call order. */
+    readonly acquired: EyesScope[];
+    /** The endpoint of each released lease, in call order. */
+    readonly released: string[];
+};
+
+/**
+ * Make a fake eyes seam over one endpoint.
+ *
+ * `failAcquire` refuses the acquire, and `failRelease` refuses the release. A refused release still records
+ * the call, thus a test reads that the tool released the lease and that the fault changed no outcome.
+ *
+ * `hangAcquire` and `hangRelease` give a promise that never settles. A realization that hangs while it starts
+ * or stops a browser reads the same. Thus a test drives the deadline of the tool and never a slow clock.
+ */
+function makeFakeEyes(options: { browserUrl: string; failAcquire?: Error; failRelease?: Error; hangAcquire?: boolean; hangRelease?: boolean }): FakeEyes {
+    const acquired: EyesScope[] = [];
+    const released: string[] = [];
+    const neverSettles = <T>(): Promise<T> => new Promise<T>(() => undefined);
+    return {
+        acquired,
+        released,
+        acquire: (scope) => {
+            acquired.push(scope);
+            if (options.failAcquire !== undefined) {
+                return Promise.reject(options.failAcquire);
+            }
+            if (options.hangAcquire === true) {
+                return neverSettles<EyesLease>();
+            }
+            return Promise.resolve({
+                browserUrl: options.browserUrl,
+                release: () => {
+                    released.push(options.browserUrl);
+                    if (options.hangRelease === true) {
+                        // oxlint-disable-next-line typescript/no-invalid-void-type -- neverthrow's ok<void, E> / ResultAsync<void, E> is the idiom of the seam contracts; re-typing the contracts to undefined changes the published surface beyond this change
+                        return neverSettles<void>();
+                    }
+                    return options.failRelease !== undefined ? Promise.reject(options.failRelease) : Promise.resolve();
+                },
+            });
+        },
+    };
+}
+
+/** The loud answer of a member the capture never drives. */
+function unstubbed(where: string): never {
+    throw new Error(`${where}: the capture does not drive this member`);
+}
+
+/**
+ * The page, the context, and the browser of one look, as real puppeteer subclasses.
+ *
+ * The puppeteer classes carry an `EventEmitter` base that holds a `#private`
+ * field, so no object literal types as one and a subclass instance is the only
+ * cast-free double (the kit pattern of `src/lib/test/doubles.ts`). The page
+ * answers the members the capture drives: the setters and the navigation
+ * resolve, the evaluation answers `undefined` (the page signals nothing, so a
+ * short page holds and the capture takes the full-page shot), and the
+ * screenshot returns the configured picture. Every other member fails loudly.
+ */
+class LookPage extends Page {
+    readonly #screenshot: string;
+    constructor(screenshot: string) {
+        super();
+        this.#screenshot = screenshot;
+    }
+    override setViewport(): Promise<void> {
+        return Promise.resolve();
+    }
+    override emulateMediaFeatures(): Promise<void> {
+        return Promise.resolve();
+    }
+    override goto(): Promise<null> {
+        return Promise.resolve(null);
+    }
+    override evaluate<Params extends unknown[], Func extends EvaluateFunc<Params>>(
+        pageFunction: Func | string,
+        ...args: Params
+    ): Promise<Awaited<ReturnType<Func>>>;
+    override evaluate(): Promise<unknown> {
+        return Promise.resolve(undefined);
+    }
+    override screenshot(options?: Readonly<ScreenshotOptions> & { encoding: "base64" }): Promise<string>;
+    override screenshot(options?: Readonly<ScreenshotOptions>): Promise<Uint8Array>;
+    override screenshot(options?: Readonly<ScreenshotOptions>): Promise<string | Uint8Array> {
+        if (options?.encoding !== "base64") return Promise.reject(new Error("LookPage.screenshot: the bytes form is not stubbed"));
+        return Promise.resolve(this.#screenshot);
+    }
+    override close(): Promise<void> {
+        return Promise.resolve();
+    }
+
+    override waitForSelector(): Promise<never> {
+        return unstubbed("LookPage.waitForSelector");
+    }
+    override isServiceWorkerBypassed(): boolean {
+        return unstubbed("LookPage.isServiceWorkerBypassed");
+    }
+    override isDragInterceptionEnabled(): boolean {
+        return unstubbed("LookPage.isDragInterceptionEnabled");
+    }
+    override isJavaScriptEnabled(): boolean {
+        return unstubbed("LookPage.isJavaScriptEnabled");
+    }
+    override waitForFileChooser(): Promise<never> {
+        return unstubbed("LookPage.waitForFileChooser");
+    }
+    override setGeolocation(): Promise<void> {
+        return unstubbed("LookPage.setGeolocation");
+    }
+    override target(): never {
+        return unstubbed("LookPage.target");
+    }
+    override browser(): never {
+        return unstubbed("LookPage.browser");
+    }
+    override browserContext(): never {
+        return unstubbed("LookPage.browserContext");
+    }
+    override mainFrame(): never {
+        return unstubbed("LookPage.mainFrame");
+    }
+    override createCDPSession(): Promise<never> {
+        return unstubbed("LookPage.createCDPSession");
+    }
+    override get keyboard(): never {
+        return unstubbed("LookPage.keyboard");
+    }
+    override get touchscreen(): never {
+        return unstubbed("LookPage.touchscreen");
+    }
+    override get coverage(): never {
+        return unstubbed("LookPage.coverage");
+    }
+    override get tracing(): never {
+        return unstubbed("LookPage.tracing");
+    }
+    override get mouse(): never {
+        return unstubbed("LookPage.mouse");
+    }
+    override frames(): never[] {
+        return unstubbed("LookPage.frames");
+    }
+    override workers(): never[] {
+        return unstubbed("LookPage.workers");
+    }
+    override setRequestInterception(): Promise<void> {
+        return unstubbed("LookPage.setRequestInterception");
+    }
+    override setBypassServiceWorker(): Promise<void> {
+        return unstubbed("LookPage.setBypassServiceWorker");
+    }
+    override setDragInterception(): Promise<void> {
+        return unstubbed("LookPage.setDragInterception");
+    }
+    override setOfflineMode(): Promise<void> {
+        return unstubbed("LookPage.setOfflineMode");
+    }
+    override emulateNetworkConditions(): Promise<void> {
+        return unstubbed("LookPage.emulateNetworkConditions");
+    }
+    override setDefaultNavigationTimeout(): void {
+        unstubbed("LookPage.setDefaultNavigationTimeout");
+    }
+    override setDefaultTimeout(): void {
+        unstubbed("LookPage.setDefaultTimeout");
+    }
+    override getDefaultTimeout(): number {
+        return unstubbed("LookPage.getDefaultTimeout");
+    }
+    override getDefaultNavigationTimeout(): number {
+        return unstubbed("LookPage.getDefaultNavigationTimeout");
+    }
+    override queryObjects(): Promise<never> {
+        return unstubbed("LookPage.queryObjects");
+    }
+    override cookies(): Promise<never[]> {
+        return unstubbed("LookPage.cookies");
+    }
+    override deleteCookie(): Promise<void> {
+        return unstubbed("LookPage.deleteCookie");
+    }
+    override setCookie(): Promise<void> {
+        return unstubbed("LookPage.setCookie");
+    }
+    override exposeFunction(): Promise<void> {
+        return unstubbed("LookPage.exposeFunction");
+    }
+    override removeExposedFunction(): Promise<void> {
+        return unstubbed("LookPage.removeExposedFunction");
+    }
+    override authenticate(): Promise<void> {
+        return unstubbed("LookPage.authenticate");
+    }
+    override setExtraHTTPHeaders(): Promise<void> {
+        return unstubbed("LookPage.setExtraHTTPHeaders");
+    }
+    override setUserAgent(): Promise<void> {
+        return unstubbed("LookPage.setUserAgent");
+    }
+    override metrics(): Promise<never> {
+        return unstubbed("LookPage.metrics");
+    }
+    override reload(): Promise<null> {
+        return unstubbed("LookPage.reload");
+    }
+    override goBack(): Promise<null> {
+        return unstubbed("LookPage.goBack");
+    }
+    override goForward(): Promise<null> {
+        return unstubbed("LookPage.goForward");
+    }
+    override bringToFront(): Promise<void> {
+        return unstubbed("LookPage.bringToFront");
+    }
+    override setJavaScriptEnabled(): Promise<void> {
+        return unstubbed("LookPage.setJavaScriptEnabled");
+    }
+    override setBypassCSP(): Promise<void> {
+        return unstubbed("LookPage.setBypassCSP");
+    }
+    override emulateMediaType(): Promise<void> {
+        return unstubbed("LookPage.emulateMediaType");
+    }
+    override emulateCPUThrottling(): Promise<void> {
+        return unstubbed("LookPage.emulateCPUThrottling");
+    }
+    override emulateTimezone(): Promise<void> {
+        return unstubbed("LookPage.emulateTimezone");
+    }
+    override emulateIdleState(): Promise<void> {
+        return unstubbed("LookPage.emulateIdleState");
+    }
+    override emulateVisionDeficiency(): Promise<void> {
+        return unstubbed("LookPage.emulateVisionDeficiency");
+    }
+    override viewport(): null {
+        return unstubbed("LookPage.viewport");
+    }
+    override evaluateOnNewDocument(): Promise<never> {
+        return unstubbed("LookPage.evaluateOnNewDocument");
+    }
+    override removeScriptToEvaluateOnNewDocument(): Promise<void> {
+        return unstubbed("LookPage.removeScriptToEvaluateOnNewDocument");
+    }
+    override setCacheEnabled(): Promise<void> {
+        return unstubbed("LookPage.setCacheEnabled");
+    }
+    override createPDFStream(): Promise<never> {
+        return unstubbed("LookPage.createPDFStream");
+    }
+    override pdf(): Promise<Uint8Array> {
+        return unstubbed("LookPage.pdf");
+    }
+    override isClosed(): boolean {
+        return unstubbed("LookPage.isClosed");
+    }
+    override waitForDevicePrompt(): Promise<never> {
+        return unstubbed("LookPage.waitForDevicePrompt");
+    }
+}
+
+class LookContext extends BrowserContext {
+    readonly #page: LookPage;
+    constructor(screenshot: string) {
+        super();
+        this.#page = new LookPage(screenshot);
+    }
+    override newPage(): Promise<Page> {
+        return Promise.resolve(this.#page);
+    }
+    override close(): Promise<void> {
+        return Promise.resolve();
+    }
+    override targets(): never[] {
+        return unstubbed("LookContext.targets");
+    }
+    override pages(): Promise<Page[]> {
+        return unstubbed("LookContext.pages");
+    }
+    override overridePermissions(): Promise<void> {
+        return unstubbed("LookContext.overridePermissions");
+    }
+    override clearPermissionOverrides(): Promise<void> {
+        return unstubbed("LookContext.clearPermissionOverrides");
+    }
+    override browser(): never {
+        return unstubbed("LookContext.browser");
+    }
+    override cookies(): Promise<never[]> {
+        return unstubbed("LookContext.cookies");
+    }
+    override setCookie(): Promise<void> {
+        return unstubbed("LookContext.setCookie");
+    }
+}
+
+class LookBrowser extends Browser {
+    readonly #context: LookContext;
+    constructor(screenshot: string) {
+        super();
+        this.#context = new LookContext(screenshot);
+    }
+    override get connected(): boolean {
+        return true;
+    }
+    override get debugInfo() {
+        return { pendingProtocolErrors: [] };
+    }
+    // A browser reached over CDP holds no child process, so `null` is the honest answer.
+    override process(): null {
+        return null;
+    }
+    override createBrowserContext(): Promise<BrowserContext> {
+        return Promise.resolve(this.#context);
+    }
+    override browserContexts(): BrowserContext[] {
+        return [this.#context];
+    }
+    override defaultBrowserContext(): BrowserContext {
+        return this.#context;
+    }
+    override wsEndpoint(): string {
+        return "ws://fake";
+    }
+    override newPage(): Promise<Page> {
+        return this.#context.newPage();
+    }
+    override version(): Promise<string> {
+        return Promise.resolve("stub");
+    }
+    override userAgent(): Promise<string> {
+        return Promise.resolve("stub");
+    }
+    override close(): Promise<void> {
+        return Promise.resolve();
+    }
+    override disconnect(): Promise<void> {
+        return Promise.resolve();
+    }
+    override targets(): never[] {
+        return unstubbed("LookBrowser.targets");
+    }
+    override target(): never {
+        return unstubbed("LookBrowser.target");
+    }
+}
+
+function makeFakeBrowser(screenshot: string): Browser {
+    return new LookBrowser(screenshot);
+}
+
+/**
+ * The endpoint of each test that connects.
+ *
+ * The connection cache holds one browser for each endpoint over the whole run. Thus each test names its own
+ * endpoint, and no test reads the browser that another test left in the cache.
+ */
+const LEASE_ENDPOINT = "http://examine-lease.test:9222";
+const CAPTURE_FAULT_ENDPOINT = "http://examine-capture-fault.test:9222";
+const RELEASE_FAULT_ENDPOINT = "http://examine-release-fault.test:9222";
+const RELEASE_HANG_ENDPOINT = "http://examine-release-hang.test:9222";
+const CONFIGURED_ENDPOINT = "http://examine-configured.test:9222";
+
+/**
+ * The budget that a test gives to a seam call that hangs.
+ *
+ * The tool holds a budget of seconds for a real cold start. A test that waits for it would stall the run,
+ * thus the test seam of the deps shortens the budget to this value.
+ */
+const HUNG_DEADLINE_MS = 25;
+
+/**
+ * Make a logger that records the message of each warn record.
+ *
+ * A failed release changes no outcome of the look, thus the log is its whole record. The fake keeps its own
+ * identity through `with` and `named`, thus a record of the tool reaches this list.
+ */
+function recordingLogger(): { logger: Logger; warns: string[] } {
+    const warns: string[] = [];
+    const logger: Logger = {
+        ...createNoopLogger(),
+        warn: (msg) => {
+            warns.push(msg);
+        },
+        with: () => logger,
+        named: () => logger,
+    };
+    return { logger, warns };
+}
+
+/** The restore of the connect operation that a test replaced. */
+let restoreConnector: (() => void) | undefined;
+
+afterEach(() => {
+    restoreConnector?.();
+    restoreConnector = undefined;
+});
+
+describe("the no-browser outcome", () => {
+    it("reports the absent browser up front when the composition binds no capture seam, no eyes seam, and no endpoint, and stamps nothing", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        // The page and the rendered hash both exist, thus only the absent browser stops the look.
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {} });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("no-browser");
+        if (result.outcome === "no-browser") {
+            expect(result.detail).toContain("no browser");
+        }
+        // No eyes saw the page, thus the seen hash stays null and the record still refuses.
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+
+    it("looks at the page when the config names a browser, thus the arm keys on the composition and not on the connection", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            chrome: { browserUrl: "http://localhost:9222" },
+            capture,
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+    });
+});
+
+describe("the no-page outcome", () => {
+    it("gives a no-page outcome when no preview wrote the page, and stamps nothing", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", null);
+        const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when no page exists"));
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("no-page");
+        // No look ran, thus the seen hash stays null.
+        expect(gateway.seenOf("t1")).toBeNull();
+    });
+});
+
+describe("the missed stamp", () => {
+    it("directs a new preview when the row holds no rendered hash, and stamps no seen hash", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        // The preview stamped no rendered hash, thus the seen stamp finds none to copy.
+        gateway.seed(threadId, null);
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("missed-stamp");
+        // The seen hash stays null, thus the record still refuses until a new preview stamps a rendered hash.
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+});
+
+describe("the seen-stamp copy", () => {
+    it("captures the page, gives the faults on the JSON and the picture on the image path, and copies the rendered hash onto the seen hash", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+
+        let capturedUrl: string | undefined;
+        const stub: PageCapture = {
+            screenshots: [{ base64: "BASE64PNG" }],
+            coverage: { kind: "full" },
+            consoleErrors: ["boom"],
+            failedRequests: [{ url: "assets/x.png", reason: "net" }],
+        };
+        const capture: CapturePage = (url) => {
+            capturedUrl = url;
+            return Promise.resolve(stub);
+        };
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        if (result.outcome === "examined") {
+            expect(result.coverage).toEqual({ kind: "full" });
+            // One whole-document shot slices nothing, thus no tiles list rides the JSON.
+            expect(result.tiles).toBeUndefined();
+            // The faults ride as a digest: each distinct entry carries its count.
+            expect(result.consoleErrors).toEqual([{ text: "boom", count: 1 }]);
+            expect(result.failedRequests).toEqual([{ url: "assets/x.png", reason: "net", count: 1 }]);
+            expect(result.pagePath).toBe(join("report-sessions", threadId, "index.html"));
+        }
+        // The screenshot rides the image path, thus the model sees the picture.
+        expect(readToolResultImages(result)).toEqual([{ base64: "BASE64PNG", mediaType: "image/png" }]);
+        // The JSON text holds no bytes, thus the picture never reaches the JSON by accident.
+        expect(JSON.stringify(result)).not.toContain("BASE64PNG");
+        // The tool navigates to the page file through a file URL.
+        expect(capturedUrl).toBeDefined();
+        expect(fileURLToPath(must(capturedUrl, "capturedUrl"))).toBe(join(root, "report-sessions", threadId, "index.html"));
+        // The look copies the rendered hash onto the seen hash, thus the record lets the current draft record.
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+
+    it("carries the viewport coverage of a degraded picture, and stamps the seen hash as a full look does", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+
+        // The browser refused the full-page bitmap, thus the capture gives the window alone.
+        const stub: PageCapture = { screenshots: [{ base64: "VIEWPORTPNG" }], coverage: { kind: "viewport" }, consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        if (result.outcome === "examined") {
+            // The coverage rides the JSON, thus the agent reads that the picture shows the window alone.
+            expect(result.coverage).toEqual({ kind: "viewport" });
+        }
+        expect(readToolResultImages(result)).toEqual([{ base64: "VIEWPORTPNG", mediaType: "image/png" }]);
+        // The agent saw the current document, thus the degraded look counts and the record path stays open.
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+
+    it("carries the slices of a tiled look in document order, with the ranges on the JSON and the honest coverage", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+
+        // The page was tall, and the budget covered half of it. The capture reports what it saw.
+        const stub: PageCapture = {
+            screenshots: [
+                { base64: "TILEONE", range: { fromY: 0, toY: 1800 } },
+                { base64: "TILETWO", range: { fromY: 1800, toY: 3600 } },
+            ],
+            coverage: { kind: "tiled", capturedPx: 3600, totalPx: 7200 },
+            consoleErrors: [],
+            failedRequests: [],
+        };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        if (result.outcome === "examined") {
+            // The coverage carries the captured and the total pixels, thus a truncated look is never silent.
+            expect(result.coverage).toEqual({ kind: "tiled", capturedPx: 3600, totalPx: 7200 });
+            // The tiles list mirrors the picture order, thus the model reads which rows each picture holds.
+            expect(result.tiles).toEqual([
+                { index: 0, fromY: 0, toY: 1800 },
+                { index: 1, fromY: 1800, toY: 3600 },
+            ]);
+        }
+        // The slices ride the image path in document order, and the JSON text holds no bytes.
+        expect(readToolResultImages(result)).toEqual([
+            { base64: "TILEONE", mediaType: "image/png" },
+            { base64: "TILETWO", mediaType: "image/png" },
+        ]);
+        expect(JSON.stringify(result)).not.toContain("TILEONE");
+        // A truncated look is a true look at the current document, thus it stamps the seen hash the same.
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+});
+
+describe("the fault digest", () => {
+    it("collapses a repeated console error, and replaces its inline data with a placeholder", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const font = `Refused to load the font 'data:font/woff2;base64,${"A".repeat(30_000)}'`;
+        const stub: PageCapture = {
+            screenshots: [{ base64: "BASE64PNG" }],
+            coverage: { kind: "full" },
+            consoleErrors: [font, font, font],
+            failedRequests: [],
+        };
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture: () => Promise.resolve(stub) });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        if (result.outcome === "examined") {
+            expect(result.consoleErrors).toEqual([{ text: "Refused to load the font '[inline font/woff2 data, 30000 chars]'", count: 3 }]);
+        }
+        // The inline bytes never reach the JSON that the agent reads.
+        expect(JSON.stringify(result).length).toBeLessThan(1_000);
+    });
+});
+
+describe("the block look", () => {
+    it("captures the named block, gives its coverage and its rows, and stamps the seen hash as a whole look does", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const asked: (string | undefined)[] = [];
+        const stub: PageCapture = {
+            screenshots: [{ base64: "BLOCKPNG", range: { fromY: 5200, toY: 5700 } }],
+            coverage: { kind: "block", capturedPx: 500, totalPx: 500 },
+            consoleErrors: [],
+            failedRequests: [],
+        };
+        const capture: CapturePage = (_url, options) => {
+            asked.push(options?.blockId);
+            return Promise.resolve(stub);
+        };
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
+
+        const result = (await tool.execute({ blockId: "sec-results" }, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(asked).toEqual(["sec-results"]);
+        expect(result.outcome).toBe("examined");
+        if (result.outcome === "examined") {
+            expect(result.coverage).toEqual({ kind: "block", capturedPx: 500, totalPx: 500 });
+            expect(result.tiles).toEqual([{ index: 0, fromY: 5200, toY: 5700 }]);
+        }
+        expect(readToolResultImages(result)).toEqual([{ base64: "BLOCKPNG", mediaType: "image/png" }]);
+        // A block look is a look at the current page, thus the record gate accepts it.
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+
+    it("asks the capture for the whole page when the block id is null", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const asked: (string | undefined)[] = [];
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = (_url, options) => {
+            asked.push(options?.blockId);
+            return Promise.resolve(stub);
+        };
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
+
+        const result = (await tool.execute({ blockId: null }, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        expect(asked).toEqual([undefined]);
+    });
+
+    it("gives the no-block outcome when the page holds no such block, and stamps nothing", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const stub: PageCapture = { screenshots: [], coverage: { kind: "no-block" }, consoleErrors: [], failedRequests: [] };
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture: () => Promise.resolve(stub) });
+
+        const result = (await tool.execute({ blockId: "gone" }, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result).toEqual({ outcome: "no-block", blockId: "gone" });
+        // No eyes saw the page, thus the record still refuses.
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+
+    it("names the block in the call detail, and the page when the input names none", () => {
+        const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve("/unused"), chrome: {} });
+
+        expect(tool.describeCall?.bind(tool)).toBeDefined();
+        expect(must(must(tool, "tool").describeCall?.bind(tool), 'must(tool, "tool").describeCall')({ blockId: "sec-results" })).toBe("look at sec-results");
+        expect(must(must(tool, "tool").describeCall?.bind(tool), 'must(tool, "tool").describeCall')({})).toBe("look at the page");
+    });
+});
+
+describe("the lease of one look", () => {
+    it("acquires one lease, captures against the endpoint of that lease, and releases the lease", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const connected: string[] = [];
+        restoreConnector = setBrowserConnector((browserUrl) => {
+            connected.push(browserUrl);
+            return Promise.resolve(makeFakeBrowser("LEASEPNG"));
+        });
+        const eyes = makeFakeEyes({ browserUrl: LEASE_ENDPOINT });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, eyes: eyes.acquire });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        expect(readToolResultImages(result)).toEqual([{ base64: "LEASEPNG", mediaType: "image/png" }]);
+        // The scope carries the analysis and the root of this call, thus a realization mounts the same tree.
+        expect(eyes.acquired).toEqual([{ analysisId: DEFAULT_ANALYSIS_ID, workspaceRoot: root }]);
+        // The capture reached the endpoint of the lease, and not the endpoint of the chrome config.
+        expect(connected).toEqual([LEASE_ENDPOINT]);
+        expect(eyes.released).toEqual([LEASE_ENDPOINT]);
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+
+    it("releases the lease when the capture fails, and gives the typed capture failure", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        // The browser of the lease refuses the connection, thus the capture fails after the acquire.
+        restoreConnector = setBrowserConnector(() => Promise.reject(new Error("connect refused")));
+        const eyes = makeFakeEyes({ browserUrl: CAPTURE_FAULT_ENDPOINT });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, eyes: eyes.acquire });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("capture-failed");
+        if (result.outcome === "capture-failed") {
+            expect(result.detail).toContain("connect refused");
+        }
+        expect(eyes.released).toEqual([CAPTURE_FAULT_ENDPOINT]);
+        // No picture reached the agent, thus the look does not count and the seen hash stays null.
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+
+    it("keeps the capture when the release fails", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser("KEPTPNG")));
+        const eyes = makeFakeEyes({ browserUrl: RELEASE_FAULT_ENDPOINT, failRelease: new Error("the browser did not stop") });
+        const { logger, warns } = recordingLogger();
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, eyes: eyes.acquire, logger });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        // The capture already passed, thus the failed release changes no outcome of the look.
+        expect(result.outcome).toBe("examined");
+        expect(readToolResultImages(result)).toEqual([{ base64: "KEPTPNG", mediaType: "image/png" }]);
+        expect(eyes.released).toEqual([RELEASE_FAULT_ENDPOINT]);
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+        // The log is the whole record of a failed release, thus the tool names it there.
+        expect(warns).toContain("the eyes lease did not release");
+    });
+
+    it("gives the typed capture failure when the acquire fails, and throws nothing", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const eyes = makeFakeEyes({ browserUrl: "http://examine-unreached.test:9222", failAcquire: new Error("no browser started") });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, eyes: eyes.acquire });
+
+        const outcome = await tool.execute({}, ctxForThread(threadId));
+
+        expect(outcome.isOk()).toBe(true);
+        const result = outcome._unsafeUnwrap();
+        expect(result.outcome).toBe("capture-failed");
+        if (result.outcome === "capture-failed") {
+            expect(result.detail).toContain("no browser started");
+        }
+        // No lease exists, thus the tool releases nothing and the look does not count.
+        expect(eyes.released).toEqual([]);
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+
+    it("gives the typed capture failure when the acquire hangs, and it settles at the deadline", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const eyes = makeFakeEyes({ browserUrl: "http://examine-acquire-hang.test:9222", hangAcquire: true });
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            chrome: {},
+            eyes: eyes.acquire,
+            deadlines: { acquireMs: HUNG_DEADLINE_MS },
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("capture-failed");
+        if (result.outcome === "capture-failed") {
+            // The detail names the budget, thus a hung acquire reads apart from a refused acquire.
+            expect(result.detail).toBe(`the eyes gave no browser within ${HUNG_DEADLINE_MS} ms`);
+        }
+        // The acquire gave no lease, thus the tool released nothing and the look does not count.
+        expect(eyes.released).toEqual([]);
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+
+    it("keeps the capture when the release hangs", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser("HUNGPNG")));
+        const eyes = makeFakeEyes({ browserUrl: RELEASE_HANG_ENDPOINT, hangRelease: true });
+        const { logger, warns } = recordingLogger();
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            chrome: {},
+            eyes: eyes.acquire,
+            logger,
+            deadlines: { releaseMs: HUNG_DEADLINE_MS },
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        // The capture already passed, thus the release that never settles changes no outcome of the look.
+        expect(result.outcome).toBe("examined");
+        expect(readToolResultImages(result)).toEqual([{ base64: "HUNGPNG", mediaType: "image/png" }]);
+        expect(eyes.released).toEqual([RELEASE_HANG_ENDPOINT]);
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+        // An expired release reads the same as a thrown release, thus the log is its whole record.
+        expect(warns).toContain("the eyes lease did not release");
+    });
+});
+
+describe("the transport precedence", () => {
+    it("takes no lease when the composition injects a capture seam", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const eyes = makeFakeEyes({ browserUrl: "http://examine-unused.test:9222" });
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            chrome: { browserUrl: CONFIGURED_ENDPOINT },
+            eyes: eyes.acquire,
+            capture,
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        // The capture seam replaces the whole transport, thus the eyes seam answers no call at all.
+        expect(eyes.acquired).toEqual([]);
+        expect(eyes.released).toEqual([]);
+    });
+
+    it("looks through the configured endpoint when the composition binds no capture seam and no eyes seam", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const connected: string[] = [];
+        restoreConnector = setBrowserConnector((browserUrl) => {
+            connected.push(browserUrl);
+            return Promise.resolve(makeFakeBrowser("STATICPNG"));
+        });
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: { browserUrl: CONFIGURED_ENDPOINT } });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        expect(readToolResultImages(result)).toEqual([{ base64: "STATICPNG", mediaType: "image/png" }]);
+        // The static realization gives the configured endpoint, thus the capture reaches that one.
+        expect(connected).toEqual([CONFIGURED_ENDPOINT]);
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+});
+
+describe("the result detail", () => {
+    /** Run the tool's result hook, asserting that the tool declares one. */
+    function detailOf(tool: ReturnType<typeof createExaminePageTool>, result: ExaminePageResult): string {
+        expect(tool.describeResult?.bind(tool)).toBeDefined();
+        return must(must(tool, "tool").describeResult?.bind(tool), 'must(tool, "tool").describeResult')({}, result);
+    }
+
+    it("names the look outcome of a capture", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(detailOf(tool, result)).toBe("examined");
+    });
+
+    it("names the absent page", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", null);
+        const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when no page exists"));
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root), chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(detailOf(tool, result)).toBe("no-page");
+    });
+
+    it("names a failed capture", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const capture: CapturePage = () => Promise.reject(new Error("the browser refused the page"));
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            chrome: {},
+            capture,
+            logger: recordingLogger().logger,
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("capture-failed");
+        // The cause of the fault stays in the log, thus the line never carries a browser message.
+        expect(detailOf(tool, result)).toBe("capture-failed");
+    });
+});
+
+describe("the URL seam", () => {
+    it("opens the URL that the bound resolver names", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        let capturedUrl: string | undefined;
+        let resolvedArgs: { pagePath: string; analysisId: string; threadId: string; auth: AuthContext } | undefined;
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = (url) => {
+            capturedUrl = url;
+            return Promise.resolve(stub);
+        };
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            chrome: {},
+            capture,
+            resolvePageUrl: (args) => {
+                resolvedArgs = args;
+                return okAsync("https://content.test/report-sessions/analysis-001/t1/index.html?t=tok");
+            },
+        });
+
+        const ctx = ctxForThread(threadId);
+        const result = (await tool.execute({}, ctx))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        // The seam replaces the file URL, thus the look opens the served page.
+        expect(capturedUrl).toBe("https://content.test/report-sessions/analysis-001/t1/index.html?t=tok");
+        // The seam reads the page of the thread and the auth of the call, thus a realization maps the
+        // page with no second resolver and mints under the credential of the caller.
+        expect(resolvedArgs).toEqual({
+            pagePath: join(root, "report-sessions", threadId, "index.html"),
+            analysisId: DEFAULT_ANALYSIS_ID,
+            threadId,
+            auth: ctx.session.auth,
+        });
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+
+    it.each<[string, ResolvePageUrl]>([
+        ["gives an err", () => errAsync({ reason: "the grant surface is down", suspend: false })],
+        ["rejects", () => new ResultAsync(Promise.reject(new Error("the grant surface is down")))],
+    ])("gives the typed capture failure when the resolver %s, and no look runs", async (_label, resolvePageUrl) => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when the URL did not resolve"));
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            chrome: {},
+            capture,
+            resolvePageUrl,
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("capture-failed");
+        if (result.outcome === "capture-failed") {
+            expect(result.detail).toBe("the page URL did not resolve");
+        }
+        // The look never started, thus the seen hash stays short and the record still refuses.
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+});

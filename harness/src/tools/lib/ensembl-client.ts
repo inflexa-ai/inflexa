@@ -11,6 +11,7 @@
 import { z } from "zod";
 
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
+import { typedMember } from "../../lib/shape.js";
 
 const ENSEMBL_BASE = "https://rest.ensembl.org";
 const HEADERS = {
@@ -18,7 +19,7 @@ const HEADERS = {
     Accept: "application/json",
 };
 
-export interface GeneInfo {
+export type GeneInfo = {
     symbol: string;
     id: string;
     displayName: string;
@@ -29,7 +30,7 @@ export interface GeneInfo {
     strand: number;
     assemblyName: string;
     seqRegionName: string;
-}
+};
 
 // Raw Ensembl gene wire shape (snake_case), validated at the fetch boundary.
 // Every field is optional because the API omits absent values; `mapGene`
@@ -62,9 +63,9 @@ function mapGene(symbol: string, raw: RawGene): GeneInfo {
     };
 }
 
-export interface LookupOptions {
+export type LookupOptions = {
     species?: string;
-}
+};
 
 /**
  * Look up genes by symbol. Gene-level only: `RawGeneSchema`/`mapGene` model the
@@ -94,7 +95,7 @@ export async function lookupGenes(symbols: string[], options: LookupOptions = {}
     const genes: GeneInfo[] = [];
     const notFound: string[] = [];
     for (const sym of symbols) {
-        const raw = result.value[sym];
+        const raw = typedMember(result.value, sym);
         if (raw) genes.push(mapGene(sym, raw));
         else notFound.push(sym);
     }

@@ -62,8 +62,10 @@ import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { maybeRecord, plainRecord } from "../../lib/shape.js";
 import { decodeObjectString, hintForZodIssue } from "../../lib/zod-issues.js";
 import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
+import { errorMessage } from "../../lib/thrown.js";
 
 // ── Tool-level config ──────────────────────────────────────────────
 
@@ -144,7 +146,9 @@ const MODEL_AUTHORED_KEY = "modelAuthored";
 
 /** Nest model-authored prose under {@link MODEL_AUTHORED_KEY}, or contribute nothing when there is none. */
 function modelAuthored(fields: Record<string, string | undefined>): LogFields {
-    const present = Object.entries(fields).filter((entry): entry is [string, string] => entry[1] !== undefined && entry[1].length > 0);
+    const present = Object.entries(fields).filter(
+        (entry: [string, string | undefined]): entry is [string, string] => entry[1] !== undefined && entry[1].length > 0,
+    );
     return present.length === 0 ? {} : { [MODEL_AUTHORED_KEY]: Object.fromEntries(present) };
 }
 
@@ -158,13 +162,13 @@ function modelAuthored(fields: Record<string, string | undefined>): LogFields {
  * attempts is a planner stuck, moving paths is a planner making progress and
  * merely running out of budget.
  */
-interface RejectionRecord {
+type RejectionRecord = {
     readonly attempt: number;
     readonly issueCount: number;
     readonly codes: { readonly schema: number; readonly semantic: number };
     readonly paths: readonly string[];
     readonly messages: readonly string[];
-}
+};
 
 function toRejectionRecord(attempt: number, issues: readonly ValidationIssue[]): RejectionRecord {
     const kept = issues.slice(0, MAX_LOGGED_ISSUES);
@@ -190,7 +194,7 @@ function toRejectionRecord(attempt: number, issues: readonly ValidationIssue[]):
  * ending as a planner that stopped on prose after one turn, and the opposite
  * problem.
  */
-interface PlannerTrace {
+type PlannerTrace = {
     submitAttempts: number;
     /**
      * True count of rejected attempts — NOT `rejections.length`, which stops at
@@ -202,7 +206,7 @@ interface PlannerTrace {
     rejections: RejectionRecord[];
     /** Terminal calls made after an outcome was already recorded — a planner ignoring "stop after this". */
     duplicateTerminalCalls: number;
-}
+};
 
 function createPlannerTrace(): PlannerTrace {
     return { submitAttempts: 0, rejectedAttempts: 0, rejections: [], duplicateTerminalCalls: 0 };
@@ -229,21 +233,21 @@ type PlannerOutcome =
     | { kind: "blocker"; reason: string }
     | { kind: "persist_error"; message: string };
 
-interface OutcomeHolder {
+type OutcomeHolder = {
     outcome: PlannerOutcome | null;
-}
+};
 
-interface PersistContext {
+type PersistContext = {
     analysisId: string;
     parentPlanId: string | null;
-}
+};
 
-interface ValidationIssue {
+type ValidationIssue = {
     path: string;
     code: "schema" | "semantic";
     message: string;
     hint?: string;
-}
+};
 
 type SubmitPlanOutput = { accepted: false; issues: ValidationIssue[] } | { accepted: true; planId: string };
 
@@ -425,7 +429,8 @@ async function persistPlan(
         );
         return { ok: true, planId };
     } catch (err) {
-        const raw = err instanceof Error ? err.message : String(err);
+        const raw = errorMessage(err);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         const isParentValidation = /^parent plan .* (?:not found|belongs to a different analysis)$/i.test(raw);
         logger.error("plan persistence failed", {
             parentPlanId: ctx.parentPlanId,
@@ -457,12 +462,12 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
  * alternatives, their disputed rules, the claim views, and the flags, and
  * the snapshot digest the answer came from.
  */
-interface RecommendMemory {
+type RecommendMemory = {
     readonly steps: Map<string, SkeletonStep>;
     readonly claims: Set<string>;
     /** The digest of the last answer; `undefined` before the first. */
     digest?: string;
-}
+};
 
 function rememberAnswer(memory: RecommendMemory, answer: KnowledgeRecommendAnswer): void {
     memory.steps.clear();
@@ -497,11 +502,11 @@ function claimsByRule(claims: ReadonlySet<string>): ReadonlyMap<string, string> 
 }
 
 /** A claim id the model repaired on one step: the id it wrote and the id of the answer. */
-interface RepairedClaim {
+type RepairedClaim = {
     readonly step: string;
     readonly from: string;
     readonly to: string;
-}
+};
 
 /**
  * Restore the grounding fields the host owns on each candidate step, from the
@@ -545,7 +550,8 @@ function restoreSkeletonGrounding(
     readonly unknown: readonly ValidationIssue[];
 } {
     const decoded = decodeObjectString(candidate);
-    if (memory.steps.size === 0 || typeof decoded !== "object" || decoded === null || !Array.isArray((decoded as { steps?: unknown }).steps)) {
+    const decodedRecord = plainRecord(decoded);
+    if (memory.steps.size === 0 || !Array.isArray(decodedRecord?.steps)) {
         return { candidate: decoded, stamped: [], restored: [], repaired: [], unknown: [] };
     }
     const byRule = claimsByRule(memory.claims);
@@ -553,11 +559,13 @@ function restoreSkeletonGrounding(
     const restored: string[] = [];
     const repaired: RepairedClaim[] = [];
     const unknown: ValidationIssue[] = [];
-    const steps = (decoded as { steps: unknown[] }).steps.map((step, index) => {
-        if (typeof step !== "object" || step === null) return step;
-        const { id, grounding } = step as { id?: unknown; grounding?: unknown };
-        if (typeof grounding !== "object" || grounding === null) return step;
-        const current = grounding as { status?: unknown; template?: unknown; snapshot?: unknown; claims?: unknown };
+    const rawSteps: readonly unknown[] = decodedRecord.steps;
+    const steps = rawSteps.map((step, index) => {
+        const stepRecord = plainRecord(step);
+        if (stepRecord === undefined) return step;
+        const { id, grounding } = stepRecord;
+        const current = plainRecord(grounding);
+        if (current === undefined) return step;
         const label = typeof id === "string" ? id : String(index);
         let next = current;
         const source = typeof id === "string" ? memory.steps.get(id) : undefined;
@@ -572,22 +580,28 @@ function restoreSkeletonGrounding(
             }
         }
         if (Array.isArray(current.claims)) {
+            const priorClaims: readonly unknown[] = current.claims;
             let changed = false;
-            const claims = current.claims.map((claim, position) => {
-                if (typeof claim !== "string" || memory.claims.has(claim)) return claim;
+            const claims: unknown[] = [];
+            for (const [position, claim] of priorClaims.entries()) {
+                if (typeof claim !== "string" || memory.claims.has(claim)) {
+                    claims.push(claim);
+                    continue;
+                }
                 const match = byRule.get(ruleOf(claim));
                 if (match !== undefined) {
                     repaired.push({ step: label, from: claim, to: match });
+                    claims.push(match);
                     changed = true;
-                    return match;
+                    continue;
                 }
                 unknown.push({
                     path: `plan.steps.${index}.grounding.claims.${position}`,
                     code: "semantic",
                     message: `Claim ${claim} is not a claim of the knowledge_recommend answer of this run. Cite a claim id the answer returned, or remove it.`,
                 });
-                return claim;
-            });
+                claims.push(claim);
+            }
             if (changed) next = { ...next, claims };
         }
         // The repaired claims are the ones compared, thus a step whose only claim was miscopied still gets the digest.
@@ -596,9 +610,9 @@ function restoreSkeletonGrounding(
             stamped.push(label);
             next = { ...next, snapshot: memory.digest };
         }
-        return next === current ? step : { ...step, grounding: next };
+        return next === current ? step : { ...stepRecord, grounding: next };
     });
-    return { candidate: { ...decoded, steps }, stamped, restored, repaired, unknown };
+    return { candidate: { ...decodedRecord, steps }, stamped, restored, repaired, unknown };
 }
 
 /**
@@ -656,9 +670,9 @@ function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { v
  * inventories are read before the loop and injected into its seed message.
  * The ids of the terminal list make the mask of the salvage, if one is needed.
  */
-interface InnerTools {
+type InnerTools = {
     readonly terminal: Tool[];
-}
+};
 
 /**
  * Build the planner's inner tools for one invocation. They close over the
@@ -691,7 +705,7 @@ function buildInnerTools(
             // Keep the authoritative shape visible to the model while the
             // permissive branch lets malformed candidates reach execute for
             // structured issue reporting.
-            plan: z.union([PlannerPlanSchema, z.unknown()]).describe("Candidate plan; malformed values are reported in issues."),
+            plan: z.union([PlannerPlanSchema, z.json()]).describe("Candidate plan; malformed values are reported in issues."),
         }),
         describeCall: "none",
         execute: async (input): Promise<Result<SubmitPlanOutput, ToolError>> => {
@@ -779,11 +793,11 @@ function buildInnerTools(
             questionContext: z.string().optional().describe("Optional context: why the plan needs the fact, and what the inputs already say about it."),
         }),
         describeCall: "none",
-        execute: async (input) => {
+        execute: (input) => {
             const degenerate = degenerateTerminalText(input.question);
             if (degenerate) {
                 logger.warn("request_clarification refused a placeholder question", { question: input.question.slice(0, 80) });
-                return err({ error: `${degenerate} Ask the real question, or continue: submit the plan you have.`, retryable: true });
+                return Promise.resolve(err({ error: `${degenerate} Ask the real question, or continue: submit the plan you have.`, retryable: true }));
             }
             if (holder.outcome !== null) {
                 trace.duplicateTerminalCalls++;
@@ -791,7 +805,7 @@ function buildInnerTools(
                     recordedOutcome: holder.outcome.kind,
                     duplicateTerminalCalls: trace.duplicateTerminalCalls,
                 });
-                return ok({ recorded: true as const });
+                return Promise.resolve(ok({ recorded: true as const }));
             }
             holder.outcome = {
                 kind: "clarification",
@@ -805,7 +819,7 @@ function buildInnerTools(
                 submitAttempts: trace.submitAttempts,
                 ...modelAuthored({ clarificationQuestion: bounded(input.question, MAX_LOGGED_PROSE_CHARS) }),
             });
-            return ok({ recorded: true as const });
+            return Promise.resolve(ok({ recorded: true as const }));
         },
     });
 
@@ -853,8 +867,9 @@ function inventoryContent(label: string, result: Awaited<ReturnType<Tool["execut
         return `## ${label}\n\nInventory lookup failed: ${result.error.error}`;
     }
     const value = result.value;
-    if (typeof value === "object" && value !== null && "content" in value && typeof value.content === "string") {
-        return `## ${label}\n\n${value.content}`;
+    const fields = maybeRecord(value);
+    if (fields !== undefined && typeof fields.content === "string") {
+        return `## ${label}\n\n${fields.content}`;
     }
     return `## ${label}\n\n${JSON.stringify(value)}`;
 }
@@ -906,17 +921,19 @@ function readTranscript(messages: readonly LoopMessage[]): { toolCalls: string[]
  */
 function loopFields(run: RunToTerminalResult, kind: OutcomeKind): LogFields {
     const transcript = readTranscript(run.messages);
+    const proseFields = PROSE_EXPLAINS_OUTCOME.has(kind) ? modelAuthored({ plannerFinalProse: transcript.finalProse }) : {};
     return {
         loop: {
             finishReason: run.finish.reason,
             cappedOut: run.finish.cappedOut,
             truncationRecoveries: run.finish.truncationRecoveries,
             salvaged: run.salvage !== null,
-            ...(run.salvage ? { firstFinishReason: run.salvage.firstFinish.reason, salvageFinishReason: run.salvage.finish.reason } : {}),
+            firstFinishReason: run.salvage ? run.salvage.firstFinish.reason : undefined,
+            salvageFinishReason: run.salvage ? run.salvage.finish.reason : undefined,
             toolCalls: transcript.toolCalls,
-            ...(transcript.truncatedToolCalls ? { toolCallsTruncated: true } : {}),
+            toolCallsTruncated: transcript.truncatedToolCalls ? true : undefined,
         },
-        ...(PROSE_EXPLAINS_OUTCOME.has(kind) ? modelAuthored({ plannerFinalProse: transcript.finalProse }) : {}),
+        ...proseFields,
     };
 }
 
@@ -933,12 +950,12 @@ const PROSE_EXPLAINS_OUTCOME: ReadonlySet<OutcomeKind> = new Set<OutcomeKind>(["
 
 // ── Outcome shaping ─────────────────────────────────────────────────
 
-interface ShapeOutcomeArgs {
+type ShapeOutcomeArgs = {
     holder: OutcomeHolder;
     runError: unknown;
     timedOut: boolean;
     outerAborted: boolean;
-}
+};
 
 /**
  * How the invocation ended, at the granularity a diagnostic reader needs.
@@ -963,10 +980,10 @@ type OutcomeKind =
     /** Rejected before the planner ran — the parent plan could not be read. */
     | "parent_plan_load_failed";
 
-interface ShapedOutcome {
+type ShapedOutcome = {
     readonly output: PlanningAgentOutput;
     readonly kind: OutcomeKind;
-}
+};
 
 /**
  * Translate the captured `PlannerOutcome` (plus any loop error) into the
@@ -989,7 +1006,7 @@ function shapeOutcome(args: ShapeOutcomeArgs): ShapedOutcome {
             output: {
                 event: "clarification_needed",
                 question: outcome.question,
-                ...(outcome.questionContext ? { questionContext: outcome.questionContext } : {}),
+                questionContext: outcome.questionContext ? outcome.questionContext : undefined,
             },
             kind: "clarification",
         };
@@ -1015,7 +1032,7 @@ function shapeOutcome(args: ShapeOutcomeArgs): ShapedOutcome {
         return { output: { event: "error", error: "Plan generation was cancelled." }, kind: "cancelled" };
     }
     if (runError) {
-        const msg = runError instanceof Error ? runError.message : String(runError);
+        const msg = errorMessage(runError);
         return { output: { event: "error", error: `Plan generation failed: ${msg}` }, kind: "loop_error" };
     }
     return {
@@ -1049,7 +1066,7 @@ const OUTCOME_LEVEL: Record<OutcomeKind, "info" | "warn" | "error"> = {
 
 // ── Outer tool ──────────────────────────────────────────────────────
 
-export interface GeneratePlanDeps extends EnvironmentStorePaths {
+export type GeneratePlanDeps = EnvironmentStorePaths & {
     /**
      * The conversation-role backend the planner is pinned to. Keeping the
      * provider and its model label in one value prevents composition roots from
@@ -1082,7 +1099,7 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
      * the open-source host.
      */
     readonly knowledge?: KnowledgeClient;
-}
+};
 
 /**
  * The search tools of the planner — built one time, not per invocation.
@@ -1108,7 +1125,7 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonl
         // cross-field index that ranks a method paper best.
         ncbi.pubmed,
         searchArxivTool,
-        createSearchSemanticScholarTool({ ...(bioKeys.semanticScholar === undefined ? {} : { apiKey: bioKeys.semanticScholar }) }),
+        createSearchSemanticScholarTool({ apiKey: !(bioKeys.semanticScholar === undefined) ? bioKeys.semanticScholar : undefined }),
         // The same approach as running code — a pipeline that someone published.
         createSearchGithubReposTool({ githubToken: bioKeys.github }),
         // The API of a staged package, so a step names a function that exists.
@@ -1122,18 +1139,18 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonl
         // The planner is a conversation surface, thus the pool-scope reader binds
         // when the embedder gives one, and the answer names what the store HOLDS.
         createListAvailablePackagesTool({
-            ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-            ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-            ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+            farmLockFile: !(deps.farmLockFile === undefined) ? deps.farmLockFile : undefined,
+            imagePackagesFile: !(deps.imagePackagesFile === undefined) ? deps.imagePackagesFile : undefined,
+            readPoolInventory: !(deps.readPoolInventory === undefined) ? deps.readPoolInventory : undefined,
         }),
         // The knowledge plane: one cited procedure per situation, and one check
         // of the draft. Both attach only when the embedder binds a client.
         ...createKnowledgeTools({
-            ...(deps.knowledge === undefined ? {} : { client: deps.knowledge }),
-            ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-            ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-            ...(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
-            ...(hooks.onRecommend === undefined ? {} : { onRecommend: hooks.onRecommend }),
+            client: deps.knowledge,
+            farmLockFile: deps.farmLockFile,
+            imagePackagesFile: deps.imagePackagesFile,
+            refStorePath: deps.refStorePath,
+            onRecommend: hooks.onRecommend,
         }),
     ];
 }
@@ -1179,6 +1196,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 .describe("User-specified constraints: preferred methods, steps to " + "include/exclude, resource limits, modifications to a prior plan."),
             parentPlanId: z
                 .string()
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
                 .regex(/^pln-[a-f0-9]{8}$/, "parentPlanId must be a pln-<8hex> value")
                 .optional()
                 .describe("The planId of the prior plan being iterated on. Set only when " + "the user is asking for modifications to an existing plan."),
@@ -1206,9 +1224,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     elapsedMs: Date.now() - startedAt,
                     submitAttempts: trace.submitAttempts,
                     rejectedAttempts: trace.rejectedAttempts,
-                    ...(trace.rejections.length > 0 ? { rejections: trace.rejections } : {}),
-                    ...(trace.rejectedAttempts > trace.rejections.length ? { rejectionsTruncated: true } : {}),
-                    ...(trace.duplicateTerminalCalls > 0 ? { duplicateTerminalCalls: trace.duplicateTerminalCalls } : {}),
+                    rejections: trace.rejections.length > 0 ? trace.rejections : undefined,
+                    rejectionsTruncated: trace.rejectedAttempts > trace.rejections.length ? true : undefined,
+                    duplicateTerminalCalls: trace.duplicateTerminalCalls > 0 ? trace.duplicateTerminalCalls : undefined,
                     ...extra,
                 });
                 return ok(shaped.output);
@@ -1261,10 +1279,11 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     // Degrading to "no profile" is correct behaviour and indistinguishable, from
                     // the outcome, from an analysis that genuinely has none — so the read failure
                     // is reported here or it is never known to have happened.
+                    const causeFields = "cause" in error ? logger.errorFields(error.cause) : {};
                     logger.warn("data profile read failed — planning without dataset facts", {
                         dbErrorType: error.type,
-                        ...("op" in error ? { dbOp: error.op } : {}),
-                        ...("cause" in error ? logger.errorFields(error.cause) : {}),
+                        dbOp: "op" in error ? error.op : undefined,
+                        ...causeFields,
                     });
                     return null;
                 },
@@ -1277,9 +1296,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // the loop and put their rendered content in the planner's seed.
             const listAvailableRefs = createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath });
             const listAvailablePackages = createListAvailablePackagesTool({
-                ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-                ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-                ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+                farmLockFile: !(deps.farmLockFile === undefined) ? deps.farmLockFile : undefined,
+                imagePackagesFile: !(deps.imagePackagesFile === undefined) ? deps.imagePackagesFile : undefined,
+                readPoolInventory: !(deps.readPoolInventory === undefined) ? deps.readPoolInventory : undefined,
             });
             // A path-separator query matches every reference path and selects the
             // tool's recursive leaf scan, so the seed contains usable file paths,
@@ -1317,7 +1336,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 salvageIterations: DEFAULT_SALVAGE_ITERATIONS,
                 timeoutMs: planTimeoutMs,
                 grounding: grounding.kind,
-                ...(input.parentPlanId ? { parentPlanId: input.parentPlanId } : {}),
+                parentPlanId: input.parentPlanId ? input.parentPlanId : undefined,
                 seedChars: {
                     total: prompt.length,
                     priorPlan: priorPlanBlock?.length ?? 0,
@@ -1424,12 +1443,14 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 timedOut: signal.aborted && !ctx.signal.aborted,
                 outerAborted: ctx.signal.aborted,
             });
+            const runFields = run ? loopFields(run, shaped.kind) : {};
+            const errorFields = runError ? logger.errorFields(runError) : {};
             return finish(shaped, {
                 // A throw leaves no result to read the transcript off, so the cause takes its
                 // place — `shapeOutcome` folds it into one prose sentence for the model, and
                 // this is the only place its type and stack survive.
-                ...(run ? loopFields(run, shaped.kind) : {}),
-                ...(runError ? logger.errorFields(runError) : {}),
+                ...runFields,
+                ...errorFields,
             });
         },
     });

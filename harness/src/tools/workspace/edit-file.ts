@@ -17,11 +17,12 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import { defineTool, type Tool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { noteScriptChange, scriptSha256 } from "./decision-record.js";
 import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
+import { errorMessage } from "../../lib/thrown.js";
 
 /** Outcome of an `edit_file` call — expected outcomes are data variants, never throws. */
 export type EditFileResult =
@@ -97,7 +98,7 @@ const EditFileInputSchema = z.object({
         ),
 });
 
-export interface EditFileDeps {
+export type EditFileDeps = {
     readonly mutator: WorkspaceMutator;
     /** Read seam used to fetch current file content for search/replace. */
     readonly workspaceFilesystem: WorkspaceFilesystem;
@@ -107,7 +108,7 @@ export interface EditFileDeps {
      * root, matching the session-scoped mutator's write prefix.
      */
     readonly workingDir?: string;
-}
+};
 
 function replaceString(
     content: string,
@@ -161,9 +162,10 @@ function replaceRegex(
     | { kind: "count_mismatch"; expected: number; actual: number; lines: number[] } {
     let compiled: RegExp;
     try {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         compiled = new RegExp(pattern, "gm");
     } catch (err) {
-        return { kind: "invalid_pattern", error: err instanceof Error ? err.message : String(err) };
+        return { kind: "invalid_pattern", error: errorMessage(err) };
     }
     const matches = [...content.matchAll(compiled)];
     if (matches.length === 0) return { kind: "not_found" };
@@ -177,7 +179,7 @@ function replaceRegex(
     return { kind: "ok", content: content.replace(compiled, replacement), replacements: matches.length, lines };
 }
 
-export function createEditFileTool(deps: EditFileDeps) {
+export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof EditFileInputSchema>, EditFileResult> {
     return defineTool({
         id: "edit_file",
         description:
@@ -194,8 +196,8 @@ export function createEditFileTool(deps: EditFileDeps) {
         // The path only. The replaced text is file content, not a description.
         describeCall: ({ path }) => path,
         execute: async ({ path, old_string, new_string, replace_all, regex, expected_matches }, ctx): Promise<Result<EditFileResult, ToolError>> => {
-            const replaceAll = replace_all === true;
-            const useRegex = regex === true;
+            const replaceAll = replace_all;
+            const useRegex = regex;
             if (!useRegex && expected_matches !== undefined) {
                 return ok({ status: "invalid_arguments" as const, path, reason: "expected_matches requires regex=true." });
             }
@@ -211,7 +213,7 @@ export function createEditFileTool(deps: EditFileDeps) {
                 await deps.workspaceFilesystem.readFile({
                     session: ctx.session,
                     path,
-                    ...(deps.workingDir !== undefined ? { workingDir: deps.workingDir } : {}),
+                    workingDir: deps.workingDir !== undefined ? deps.workingDir : undefined,
                 }),
             );
             if (read.kind === "not_found") return ok({ status: "file_not_found" as const, path });
@@ -252,7 +254,7 @@ export function createEditFileTool(deps: EditFileDeps) {
                 filesystem: deps.workspaceFilesystem,
                 mutator: deps.mutator,
                 session: ctx.session,
-                ...(deps.workingDir !== undefined ? { workingDir: deps.workingDir } : {}),
+                workingDir: deps.workingDir,
                 invocationId: ctx.invocationId,
                 toolName: "edit_file",
                 scriptPath: path,
@@ -260,19 +262,23 @@ export function createEditFileTool(deps: EditFileDeps) {
                 sha256: scriptSha256(replaced.content),
             });
             const lines: readonly number[] | undefined = replaced.lines;
-            return ok(
-                withToolCallRecord(
-                    {
-                        status: "ok" as const,
-                        path: write.path,
-                        replacements: replaced.replacements,
-                        bytesWritten: write.bytesWritten,
-                        ...(lines === undefined ? {} : { lines }),
-                        ...(noted.status === "noted" ? { decision_record_noted: true as const } : {}),
-                    },
-                    noted.status === "noted" ? [write.record, noted.write] : [write.record],
-                ),
-            );
+            const result: {
+                status: "ok";
+                path: string;
+                replacements: number;
+                bytesWritten: number;
+                lines: readonly number[] | undefined;
+                decision_record_noted?: true;
+            } = {
+                status: "ok",
+                path: write.path,
+                replacements: replaced.replacements,
+                bytesWritten: write.bytesWritten,
+                lines: !(lines === undefined) ? lines : undefined,
+            };
+            // Absent stays absent: the gate reads key presence with the `in` operator.
+            if (noted.status === "noted") result.decision_record_noted = true;
+            return ok(withToolCallRecord(result, noted.status === "noted" ? [write.record, noted.write] : [write.record]));
         },
         foldCallRecord: (records) => {
             for (const record of records) deps.mutator.recordWrite(record);

@@ -11,7 +11,7 @@ import { ncbiUrl } from "./ncbi-utils.js";
 
 export type ClinicalSignificance = "pathogenic" | "likely-pathogenic" | "benign" | "likely-benign" | "uncertain";
 
-export interface ClinvarVariant {
+export type ClinvarVariant = {
     variationId: string;
     title: string;
     clinicalSignificance: string;
@@ -20,7 +20,7 @@ export interface ClinvarVariant {
     molecularConsequence: string;
     conditions: string[];
     accession: string;
-}
+};
 
 // NCBI esummary wire shapes, validated at the fetch boundary. Every field is
 // optional — esummary omits absent values, and the record mapping below tolerates
@@ -77,9 +77,10 @@ const SIG_MAP: Record<ClinicalSignificance, string> = {
 
 /** Filter out uninformative ClinVar entries (literal "not provided", placeholders). */
 export function filterInformative(variants: ClinvarVariant[]): ClinvarVariant[] {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const noise = /^(not provided|not specified|reclassified)$/i;
     return variants.filter((v) => {
-        const sig = (v.clinicalSignificance ?? "").trim();
+        const sig = (v.clinicalSignificance).trim();
         if (!sig || noise.test(sig)) return false;
         return true;
     });
@@ -105,8 +106,8 @@ export async function searchClinvar(
     const searchRes = await apiFetchValidated(searchUrl, ClinvarSearchResponseSchema);
     if (searchRes.isErr()) throw new Error(describeApiError(searchRes.error));
 
-    const ids: string[] = searchRes.value?.esearchresult?.idlist ?? [];
-    const totalFound = Number(searchRes.value?.esearchresult?.count ?? ids.length);
+    const ids: string[] = searchRes.value.esearchresult?.idlist ?? [];
+    const totalFound = Number(searchRes.value.esearchresult?.count ?? ids.length);
 
     if (ids.length === 0) return { totalFound, variants: [] };
 
@@ -129,7 +130,7 @@ export async function searchClinvar(
  * golden-fixture table exercises it against a stored payload.
  */
 export function mapClinvarVariants(ids: string[], summary: z.infer<typeof ClinvarSummaryResponseSchema>): ClinvarVariant[] {
-    const result: Record<string, ClinvarSummaryRecord | string[] | undefined> = summary?.result ?? {};
+    const result: Record<string, ClinvarSummaryRecord | string[] | undefined> = summary.result ?? {};
     const rawUids = result.uids;
     const uids: string[] = Array.isArray(rawUids) ? rawUids : ids;
 

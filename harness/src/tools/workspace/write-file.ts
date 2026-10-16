@@ -11,7 +11,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import { defineTool, type Tool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
 
 /** The result of a `write_file` call: a success carries the record of the write for the fold. */
@@ -29,11 +29,11 @@ const WriteFileInputSchema = z.object({
     content: z.string().describe("UTF-8 file content."),
 });
 
-export interface WriteFileDeps {
+export type WriteFileDeps = {
     readonly mutator: WorkspaceMutator;
-}
+};
 
-export function createWriteFileTool(deps: WriteFileDeps) {
+export function createWriteFileTool(deps: WriteFileDeps): Tool<z.infer<typeof WriteFileInputSchema>, WriteFileToolResult> {
     return defineTool({
         id: "write_file",
         description:

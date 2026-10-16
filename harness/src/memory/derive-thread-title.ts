@@ -12,6 +12,7 @@
  *    the window, hard-slice at `max` and append `…`.
  */
 export function deriveThreadTitle(text: string, max: number = 40): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const normalized = text.replace(/\s+/g, " ").trim();
     if (normalized.length === 0) return "Untitled";
     if (normalized.length <= max) return normalized;

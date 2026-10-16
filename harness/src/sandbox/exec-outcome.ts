@@ -37,7 +37,7 @@ export function sandboxExecOutcomeOf(result: ExecResult): SandboxExecOutcome {
 }
 
 /** The account of one exec that a failure record can hold. Text-free by construction. */
-export interface ExecOutcomeSummary {
+export type ExecOutcomeSummary = {
     readonly exitCode: number | null;
     readonly timedOut: boolean;
     /**
@@ -47,7 +47,7 @@ export interface ExecOutcomeSummary {
      */
     readonly stderrTotalBytes: number;
     readonly syntheticFailureReason?: string;
-}
+};
 
 /** Reduce a result to its summary. */
 export function summarizeExec(result: ExecResult): ExecOutcomeSummary {
@@ -55,7 +55,7 @@ export function summarizeExec(result: ExecResult): ExecOutcomeSummary {
         exitCode: result.exitCode,
         timedOut: result.timedOut,
         stderrTotalBytes: result.stderrTotalBytes ?? Buffer.byteLength(result.stderr, "utf8"),
-        ...(result.syntheticFailure ? { syntheticFailureReason: result.syntheticFailure.reason } : {}),
+        syntheticFailureReason: result.syntheticFailure ? result.syntheticFailure.reason : undefined,
     };
 }
 

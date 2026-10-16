@@ -45,7 +45,7 @@ const AGENT_ID = "literature-reviewer";
 /** Multi-tool research budget — search → read → synthesize over many genes. */
 const REVIEWER_MAX_ITERATIONS = 30;
 
-export interface LiteratureReviewerDeps {
+export type LiteratureReviewerDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     /** The LLM seam the child loop runs on. */
@@ -60,12 +60,12 @@ export interface LiteratureReviewerDeps {
     readonly toolOutputStore?: ToolOutputStore;
     /** Shared bibliographic verification service; all agent surfaces share its pacing/cache. */
     readonly citationResolver: CitationResolver;
-}
+};
 
 /** Build the `literature_reviewer` delegation tool bound to its provider. */
 export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool {
     const ncbi = createNcbiTools(deps.bioKeys);
-    const chemDb = createChemDbTools(deps.bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
+    const chemDb = createChemDbTools(deps.bioKeys, { logger: deps.logger ? deps.logger : undefined });
     const reviewerTools: readonly Tool[] = [
         searchGeneTool,
         searchProteinTool,

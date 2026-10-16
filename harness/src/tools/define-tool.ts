@@ -16,6 +16,7 @@
  * both `err` and a thrown error to one `tool_result { is_error: true }`.
  */
 
+import { maybeRecord } from "../lib/shape.js";
 import type { Result } from "neverthrow";
 import { z } from "zod";
 
@@ -24,7 +25,7 @@ import type { AgentRunUsage } from "../loop/metrics.js";
 import type { EmitFn } from "../loop/types.js";
 import type { AskApproval, AskRequest } from "./approval/contract.js";
 
-export type { EmitFn };
+export type { EmitFn } from "../loop/types.js";
 
 /**
  * The error channel of a tool's `Result`. `error` is the message surfaced to
@@ -34,11 +35,11 @@ export type { EmitFn };
  * builds one by hand — most failures stay thrown and the loop's backstop
  * derives the same shape via `classifyProviderError`.
  */
-export interface ToolError {
+export type ToolError = {
     readonly error: string;
     readonly retryable: boolean;
     readonly cause?: unknown;
-}
+};
 
 /**
  * How the loop runs a tool call. `step` (the default) wraps the whole call in
@@ -49,8 +50,10 @@ export interface ToolError {
 export type ToolExecutionMode = "step" | "inline";
 
 /** Runtime guard — does a `Result`'s error value carry the `ToolError` shape? */
+// oxlint-disable-next-line @inflexa-ai/no-unknown-type-guards -- a public barrel export whose predicate form is the published surface; the lookup re-type is the recorded redesign.
 export function isToolError(value: unknown): value is ToolError {
-    return typeof value === "object" && value !== null && typeof (value as ToolError).error === "string" && typeof (value as ToolError).retryable === "boolean";
+    const record = maybeRecord(value);
+    return record !== undefined && typeof record.error === "string" && typeof record.retryable === "boolean";
 }
 
 /**
@@ -60,10 +63,10 @@ export function isToolError(value: unknown): value is ToolError {
  * an image content block. Thus the model sees the picture, and the JSON text
  * holds no bytes.
  */
-export interface ToolResultImage {
+export type ToolResultImage = {
     readonly base64: string;
     readonly mediaType: string;
-}
+};
 
 /**
  * The reserved key that carries the pictures on a tool ok value. It is a symbol,
@@ -93,11 +96,11 @@ export function withToolResultImages<T extends object>(value: T, images: readonl
     return { ...value, [toolResultImageKey]: images };
 }
 
-/** Does one entry under the reserved key carry the picture shape? */
-function isToolResultImage(entry: unknown): entry is ToolResultImage {
-    if (typeof entry !== "object" || entry === null) return false;
-    const { base64, mediaType } = entry as Partial<ToolResultImage>;
-    return typeof base64 === "string" && typeof mediaType === "string";
+/** The entry as a picture, or `undefined` when it carries none. */
+function toolResultImageOf(entry: unknown): ToolResultImage | undefined {
+    const fields = maybeRecord(entry);
+    if (fields === undefined) return undefined;
+    return typeof fields.base64 === "string" && typeof fields.mediaType === "string" ? { base64: fields.base64, mediaType: fields.mediaType } : undefined;
 }
 
 /**
@@ -107,10 +110,15 @@ function isToolResultImage(entry: unknown): entry is ToolResultImage {
  * in the same shape.
  */
 export function readToolResultImages(value: unknown): ToolResultImage[] {
-    if (typeof value !== "object" || value === null) return [];
-    const carried = (value as { [toolResultImageKey]?: unknown })[toolResultImageKey];
+    const fields = maybeRecord(value);
+    if (fields === undefined) return [];
+    // The symbol key reaches the reserved member the ok-value builder wrote, and the filter below tests each entry.
+    const carried: unknown = Reflect.get(fields, toolResultImageKey);
     const entries = Array.isArray(carried) ? carried : [carried];
-    return entries.filter(isToolResultImage);
+    return entries.flatMap((entry) => {
+        const image = toolResultImageOf(entry);
+        return image === undefined ? [] : [image];
+    });
 }
 
 /**
@@ -141,8 +149,10 @@ export function withToolCallRecord<T extends object, R>(value: T, record: R): Wi
 
 /** Read the call record that a tool ok value carries, or `undefined` when it carries none. */
 export function readToolCallRecord(value: unknown): unknown {
-    if (typeof value !== "object" || value === null) return undefined;
-    return (value as { [toolCallRecordKey]?: unknown })[toolCallRecordKey];
+    const fields = maybeRecord(value);
+    if (fields === undefined) return undefined;
+    const record: unknown = Reflect.get(fields, toolCallRecordKey);
+    return record;
 }
 
 /**
@@ -151,7 +161,7 @@ export function readToolCallRecord(value: unknown): unknown {
  * `session`, `signal`, `emit`, the `ask` user-approval seam, and the turn's
  * usage accumulator a sub-agent-running tool hands to its child loop.
  */
-export interface ToolContext {
+export type ToolContext = {
     /** Stable identity of this AI SDK tool call. Redelivery preserves it; a new
      * model-issued call receives a new value. */
     readonly invocationId: string;
@@ -174,16 +184,16 @@ export interface ToolContext {
      * no child agent ignores it.
      */
     readonly turnUsage?: AgentRunUsage;
-}
+};
 
 /**
  * A packaged tool: identity, the Zod input contract, the emitted AI SDK input
  * schema, execution mode, the optional hooks, and the executor.
  */
-export interface Tool<Input = unknown, Output = unknown> {
+export type Tool<Input = unknown, Output = unknown> = {
     readonly id: string;
     readonly description: string;
-    readonly inputSchema: z.ZodType;
+    readonly inputSchema: z.ZodType<Input>;
     readonly jsonSchema: Record<string, unknown>;
     readonly executionMode: ToolExecutionMode;
     /** See {@link ToolDefinition.describeCall}. Absent when the tool declares none. */
@@ -196,9 +206,9 @@ export interface Tool<Input = unknown, Output = unknown> {
      */
     foldCallRecord?(record: unknown): void;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
-}
+};
 
-export interface ToolDefinition<Schema extends z.ZodType, Output> {
+export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> = {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: Schema;
@@ -279,8 +289,8 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
      * and its result may already be cached. The loop logs a throw and goes on.
      */
     readonly foldCallRecord?: (record: ToolCallRecordOf<Output>) => void;
-    execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
-}
+    execute: (input: z.infer<Schema>, ctx: ToolContext) => Promise<Result<Output, ToolError>>;
+};
 
 /**
  * Package a `Tool`. The emitted JSON Schema must have a top-level
@@ -289,7 +299,8 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
  * the first LLM call). Union-shaped inputs must be modelled as a flat object
  * with a discriminator field.
  */
-export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition<Schema, Output>): Tool<z.infer<Schema>, Output> {
+export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(def: ToolDefinition<Schema, Output>): Tool<z.infer<Schema>, Output> {
+    // SAFETY: z.toJSONSchema emits a JSON Schema document — an object whose members the checks below read.
     const jsonSchema = z.toJSONSchema(def.inputSchema) as Record<string, unknown>;
     delete jsonSchema.$schema;
 
@@ -305,24 +316,22 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
 
     const executionMode: ToolExecutionMode = def.executionMode ?? "step";
 
-    return {
+    // A tool that declines carries no `describeCall` key at all, so "has a hook" is one property
+    // check. `typeof` is the discriminator, not equality with the sentinel, so a hook that returns
+    // the string `"none"` still packages as a hook. The same property-presence pattern holds for
+    // `describeResult` and `foldCallRecord`.
+    const packaged: { -readonly [K in keyof Tool<z.infer<Schema>, Output>]: Tool<z.infer<Schema>, Output>[K] } = {
         id: def.id,
         description: def.description,
         inputSchema: def.inputSchema,
         jsonSchema,
         executionMode,
-        // Spread rather than assigned: a tool that declines carries no
-        // `describeCall` key at all, so "has a hook" is one property check.
-        // `typeof` is the discriminator, not equality with the sentinel, so a
-        // hook that returns the string `"none"` still packages as a hook.
-        ...(typeof def.describeCall === "function" ? { describeCall: def.describeCall } : {}),
-        // The same property-presence pattern as `describeCall`: a tool that
-        // declares no result hook carries no key, thus "has a hook" is one
-        // property check on either side.
-        ...(typeof def.describeResult === "function" ? { describeResult: def.describeResult } : {}),
         // The loop passes back only a record that this tool's `execute`
         // attached, thus the record has the declared type.
-        ...(typeof def.foldCallRecord === "function" ? { foldCallRecord: def.foldCallRecord as (record: unknown) => void } : {}),
         execute: def.execute,
     };
+    if (typeof def.describeCall === "function") packaged.describeCall = def.describeCall;
+    if (typeof def.describeResult === "function") packaged.describeResult = def.describeResult;
+    if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord;
+    return packaged;
 }

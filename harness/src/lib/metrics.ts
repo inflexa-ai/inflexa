@@ -85,7 +85,7 @@ export const SANDBOX_PEAK_MEMORY_BOUNDS_BYTES: readonly number[] = [
  */
 export const SANDBOX_CPU_SECONDS_BOUNDS: readonly number[] = [0.5, 1, 5, 15, 60, 300, 900, 1_800, 3_600, 14_400];
 
-interface Instruments {
+type Instruments = {
     readonly runCompleted: Counter;
     readonly runDuration: Histogram;
     readonly stepCompleted: Counter;
@@ -96,7 +96,7 @@ interface Instruments {
     readonly sandboxExecCpuSeconds: Histogram;
     readonly artifactReconcileDropped: Counter;
     readonly lineageInputDropped: Counter;
-}
+};
 
 let instruments: Instruments | undefined;
 

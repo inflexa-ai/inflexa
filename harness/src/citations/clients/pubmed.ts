@@ -2,20 +2,20 @@ import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, Citat
 import { createPubmedSource, type ArticleDetail, type PubmedSourceOptions } from "../../literature/sources/pubmed.js";
 import { parseYear, sourceOutcome } from "./common.js";
 
-export interface PubmedCitationClientOptions extends PubmedSourceOptions {
+export type PubmedCitationClientOptions = PubmedSourceOptions & {
     readonly maxCandidates?: number;
-}
+};
 
 function pubmedRecord(article: ArticleDetail): CitationRecord {
     const year = parseYear(article.year);
     return {
         source: "pubmed",
         sourceRecordId: article.pmid,
-        identifiers: { pmid: article.pmid, ...(article.doi ? { doi: article.doi.toLocaleLowerCase("en-US") } : {}) },
-        ...(article.title ? { title: article.title } : {}),
-        ...(article.authors.length === 0 ? {} : { authors: article.authors }),
-        ...(year === undefined ? {} : { year }),
-        ...(article.journal ? { venue: article.journal } : {}),
+        identifiers: { pmid: article.pmid, doi: article.doi ? article.doi.toLocaleLowerCase("en-US") : undefined },
+        title: article.title ? article.title : undefined,
+        authors: !(article.authors.length === 0) ? article.authors : undefined,
+        year: !(year === undefined) ? year : undefined,
+        venue: article.journal ? article.journal : undefined,
         url: `https://pubmed.ncbi.nlm.nih.gov/${article.pmid}/`,
     };
 }
@@ -29,16 +29,18 @@ export function createPubmedCitationClient(options: PubmedCitationClientOptions 
         let pmids: string[];
 
         if (request.plan.operation === "pubmed_exact") {
-            pmids = [request.normalized.identifiers.pmid!];
+            const pmid = request.normalized.identifiers.pmid;
+            if (pmid === undefined) throw new Error("a pubmed_exact plan must carry a PubMed identifier");
+            pmids = [pmid];
         } else if (request.plan.operation === "pubmed_structured") {
             requestCount += 1;
             const match = await source.matchCitation(
                 {
-                    ...(request.input.venue === undefined ? {} : { venue: request.input.venue }),
-                    ...(request.input.year === undefined ? {} : { year: request.input.year }),
-                    ...(request.input.volume === undefined ? {} : { volume: request.input.volume }),
-                    ...(request.input.firstPage === undefined ? {} : { firstPage: request.input.firstPage }),
-                    ...(request.input.authors?.[0] === undefined ? {} : { firstAuthor: request.input.authors[0] }),
+                    venue: !(request.input.venue === undefined) ? request.input.venue : undefined,
+                    year: !(request.input.year === undefined) ? request.input.year : undefined,
+                    volume: !(request.input.volume === undefined) ? request.input.volume : undefined,
+                    firstPage: !(request.input.firstPage === undefined) ? request.input.firstPage : undefined,
+                    firstAuthor: !(request.input.authors?.[0] === undefined) ? request.input.authors[0] : undefined,
                     key: "citation-0",
                 },
                 signal,
@@ -47,7 +49,7 @@ export function createPubmedCitationClient(options: PubmedCitationClientOptions 
             pmids = match.value;
         } else {
             requestCount += 1;
-            const term = request.plan.operation === "pubmed_doi" ? `${request.normalized.identifiers.doi}[AID]` : `${request.input.title ?? ""}[Title]`;
+            const term = request.plan.operation === "pubmed_doi" ? `${request.normalized.identifiers.doi ?? ""}[AID]` : `${request.input.title ?? ""}[Title]`;
             const search = await source.searchIds(term, options.maxCandidates ?? 5, signal);
             if (search.status !== "ok") return sourceOutcome("pubmed", request.plan.operation, search.status, requestCount, [], search.detail);
             pmids = search.value;
@@ -95,7 +97,11 @@ export function createPubmedCitationClient(options: PubmedCitationClientOptions 
                 if (results[index] === undefined) results[index] = await resolve(request, signal);
             }),
         );
-        return results.map((result) => result!);
+        return results.map(
+            (result, index) =>
+                result ??
+                sourceOutcome("pubmed", requests[index].plan.operation, "unavailable", 0, [], "the batch resolver left this request without an outcome"),
+        );
     }
 
     return { source: "pubmed", resolve, resolveMany };

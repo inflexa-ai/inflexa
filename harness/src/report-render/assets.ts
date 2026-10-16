@@ -29,10 +29,10 @@ export const DEPS_DIR = "deps";
  * One staged asset. `file` is the path under the assets directory, and `specifier` is the module
  * specifier of the source file inside the installed package.
  */
-export interface PageAsset {
+export type PageAsset = {
     readonly file: string;
     readonly specifier: string;
-}
+};
 
 /** The relative source of a staged asset. The page directory is self-contained, thus the source is `assets/<file>`. */
 export function assetSource(asset: PageAsset): string {
@@ -58,7 +58,9 @@ const HASH_CHARS = 12;
  * The head takes the hex alone, and the basename takes each unsafe run as one dash.
  */
 export function tableSidecarName(hash: string, path: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const hex = hash.slice(hash.lastIndexOf(":") + 1).replace(/[^a-z0-9]+/gi, "");
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const base = path.slice(path.lastIndexOf("/") + 1).replace(/[^a-z0-9._-]+/gi, "-");
     return `${hex.slice(0, HASH_CHARS)}-${base}`;
 }
@@ -75,6 +77,7 @@ export function tableSidecarName(hash: string, path: string): string {
  * container.
  */
 export function derivationScriptName(scriptHash: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const hex = scriptHash.slice(scriptHash.lastIndexOf(":") + 1).replace(/[^a-z0-9]+/gi, "");
     return `d-${hex.slice(0, HASH_CHARS)}.py`;
 }

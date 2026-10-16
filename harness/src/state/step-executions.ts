@@ -5,18 +5,19 @@
  */
 
 import type { ResultAsync } from "neverthrow";
+import { z } from "zod";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
-import type { PersistedSandboxRef, StepExecutionRow } from "./schema.js";
+import { PersistedSandboxRefSchema, StepExecutionStatus, type StepExecutionRow } from "./schema.js";
 
-export interface SeedStepExecutionRow {
+export type SeedStepExecutionRow = {
     runId: string;
     stepId: string;
     analysisId: string;
     wave: number;
     agentId: string;
-}
+};
 
 /**
  * Seed one `pending` row per plan step at run start (`started_at` NULL — no
@@ -47,7 +48,7 @@ export function seedStepExecutions(pool: Querier, rows: readonly SeedStepExecuti
     });
 }
 
-export interface InsertStepExecutionInput {
+export type InsertStepExecutionInput = {
     runId: string;
     stepId: string;
     analysisId: string;
@@ -55,7 +56,7 @@ export interface InsertStepExecutionInput {
     agentId: string;
     /** DBOS child workflow id (`"${parent}-${N}"`). Optional for legacy callers. */
     childWorkflowId?: string | null;
-}
+};
 
 export function insertStepExecution(pool: Querier, input: InsertStepExecutionInput): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
@@ -89,7 +90,7 @@ export function insertStepExecution(pool: Querier, input: InsertStepExecutionInp
  * scheduler uses this to find the step row corresponding to a CANCELLED
  * child without holding the runId/stepId map in memory across recovery.
  */
-export interface UpdateStepExecutionInput {
+export type UpdateStepExecutionInput = {
     /** Step status — `running` is allowed for mid-flight telemetry updates (retries). */
     status: "running" | "completed" | "failed" | "skipped" | "canceled" | "blocked";
     durationMs?: number | null;
@@ -104,7 +105,7 @@ export interface UpdateStepExecutionInput {
     finishReason?: string | null;
     /** True when `stepsUsed === maxSteps`. Stored as 0/1 in SQLite. */
     hitMaxSteps?: boolean | null;
-}
+};
 
 /**
  * Update a step execution row. Columns are written conditionally so callers
@@ -121,7 +122,7 @@ export function updateStepExecution(pool: Querier, runId: string, stepId: string
     // position-wise via the `values` array length.
     const sets: string[] = [];
     const values: (string | number | boolean | null)[] = [];
-    const push = (col: string, val: string | number | boolean | null) => {
+    const push = (col: string, val: string | number | boolean | null): void => {
         values.push(val);
         sets.push(`${col} = $${values.length}`);
     };
@@ -206,24 +207,51 @@ export function queryStepsByRun(pool: Querier, runId: string): ResultAsync<StepE
     });
 }
 
-function mapStepExecutionRow(row: Record<string, unknown>): StepExecutionRow {
-    return {
-        runId: row.run_id as string,
-        stepId: row.step_id as string,
-        analysisId: row.analysis_id as string,
-        wave: Number(row.wave),
-        agentId: row.agent_id as string,
-        status: row.status as StepExecutionRow["status"],
-        startedAt: (row.started_at as string) ?? null,
-        completedAt: (row.completed_at as string) ?? null,
-        durationMs: row.duration_ms === null || row.duration_ms === undefined ? null : Number(row.duration_ms),
-        error: (row.error as string) ?? null,
-        attempts: (row.attempts as number) ?? 1,
-        lastErrorClass: (row.last_error_class as string) ?? null,
-        finishReason: (row.finish_reason as string) ?? null,
+/**
+ * The `cortex_step_executions` row as the driver hands it over, parsed into the
+ * row type. The SQL column nullabilities ARE the schema: a row that misses them
+ * is a defect this parse names instead of an `as` that lets it through.
+ */
+const StepRowDb = z
+    .object({
+        run_id: z.string(),
+        step_id: z.string(),
+        analysis_id: z.string(),
+        wave: z.coerce.number(),
+        agent_id: z.string(),
+        status: StepExecutionStatus,
+        started_at: z.string().nullable(),
+        completed_at: z.string().nullable(),
+        duration_ms: z.coerce.number().nullable(),
+        error: z.string().nullable(),
+        attempts: z.coerce.number().nullable(),
+        last_error_class: z.string().nullable(),
+        finish_reason: z.string().nullable(),
+        hit_max_steps: z.union([z.coerce.number(), z.boolean()]),
+        blocked_reason: z.string().nullable(),
+        sandbox_ref: PersistedSandboxRefSchema.nullable(),
+        child_workflow_id: z.string().nullable(),
+    })
+    .transform((row): StepExecutionRow => ({
+        runId: row.run_id,
+        stepId: row.step_id,
+        analysisId: row.analysis_id,
+        wave: row.wave,
+        agentId: row.agent_id,
+        status: row.status,
+        startedAt: row.started_at ?? null,
+        completedAt: row.completed_at ?? null,
+        durationMs: row.duration_ms ?? null,
+        error: row.error ?? null,
+        attempts: row.attempts ?? 1,
+        lastErrorClass: row.last_error_class ?? null,
+        finishReason: row.finish_reason ?? null,
         hitMaxSteps: row.hit_max_steps === 1 || row.hit_max_steps === true,
-        blockedReason: (row.blocked_reason as string) ?? null,
-        sandboxRef: (row.sandbox_ref as PersistedSandboxRef | null) ?? null,
-        childWorkflowId: (row.child_workflow_id as string | null) ?? null,
-    };
+        blockedReason: row.blocked_reason ?? null,
+        sandboxRef: row.sandbox_ref ?? null,
+        childWorkflowId: row.child_workflow_id ?? null,
+    }));
+
+function mapStepExecutionRow(row: Record<string, unknown>): StepExecutionRow {
+    return StepRowDb.parse(row);
 }

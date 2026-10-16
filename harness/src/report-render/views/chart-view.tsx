@@ -34,6 +34,7 @@ import { blockMark } from "./block-mark.js";
 import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
+import { stringOfNode } from "./node-text.js";
 
 /**
  * What the card carries beside the option: the staged names of the two SVG files, and the box of the chart
@@ -42,11 +43,11 @@ import { scriptJson } from "../script-json.js";
  * `bodyPx` is the height of the body, and `widthPx` is the width of a figure that draws a block of a fixed
  * size.
  */
-export interface ChartCard {
+export type ChartCard = {
     readonly svg?: { readonly single: string; readonly double: string };
     readonly bodyPx: number;
     readonly widthPx?: number;
-}
+};
 
 /** The card of a chart with the default body and no SVG file. */
 const PLAIN_CARD: ChartCard = { bodyPx: CHART_BODY_PX };
@@ -114,7 +115,7 @@ export function renderChart(
     ].join("; ");
     const stem = kebabFilename(block.title ?? block.id);
     const hybrid = card.svg === undefined && holdsPointLayer(option);
-    return String(
+    return stringOfNode(
         <div class="report-chart" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, references)}>
             <div class="report-chart-title">
                 {block.title}
@@ -132,12 +133,14 @@ export function renderChart(
                 </button>
             </div>
             <div class="report-chart-card corner-accents">
-                <div id={containerId} data-echarts-id={block.id} class="chart-container" {...(bodyStyle !== "" ? { style: bodyStyle } : {})}></div>
+                <div id={containerId} data-echarts-id={block.id} class="chart-container" style={bodyStyle !== "" ? bodyStyle : undefined}></div>
                 <script type="application/json">{raw(json)}</script>
                 <div id={chartMenuId(containerId)} class="report-chart-menu" role="menu" aria-label={MENU_LABEL}>
                     {SVG_EXPORTS.map((kind) => {
                         const size = exportSizeFor(CHART_EXPORT_SIZES[kind], card.bodyPx);
-                        const file = `${stem}-${size.widthMm}mm.svg`;
+                        const widthMm = size.widthMm;
+                        if (widthMm === undefined) throw new Error(`SVG export size ${size.label} carries no width in mm`);
+                        const file = `${stem}-${widthMm}mm.svg`;
                         const label = `SVG · ${size.label}`;
                         if (card.svg !== undefined) {
                             return (

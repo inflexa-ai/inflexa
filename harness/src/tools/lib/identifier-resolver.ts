@@ -32,12 +32,16 @@ const UNIPROT_BASE = "https://rest.uniprot.org/uniprotkb/search";
 const HGNC_HEADERS = { Accept: "application/json" };
 const UNIPROT_HEADERS = { Accept: "application/json" };
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
 const ENSG_RE = /^ENSG\d{11}$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
 const UNIPROT_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9](-\d+)?$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
 const CHEMBL_RE = /^CHEMBL\d+$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
 const HGNC_RE = /^HGNC:\d+$/;
 
-export interface ResolvedTarget {
+export type ResolvedTarget = {
     /** Canonical id used as the entity-resolution anchor — preferred order: HGNC, then Ensembl. */
     canonicalId: string;
     /** What ontology produced the canonical id ("hgnc" or "ensembl"). */
@@ -67,7 +71,7 @@ export interface ResolvedTarget {
         ensembl: boolean;
         chembl: boolean;
     };
-}
+};
 
 // HGNC search payload, validated at the fetch boundary. Every field is optional
 // because the API omits absent values; each read below is optional-chained /
@@ -128,7 +132,10 @@ const UniprotResponseSchema = z.object({
 });
 type UniprotResponse = z.infer<typeof UniprotResponseSchema>;
 
-async function fetchHgncBy(field: string, value: string) {
+/** The one entry a hit carries. */
+type UniprotEntry = NonNullable<UniprotResponse["results"]>[number];
+
+async function fetchHgncBy(field: string, value: string): Promise<HgncDoc | null> {
     const url = `${HGNC_BASE}/${field}/${encodeURIComponent(value)}`;
     const res = await apiFetchValidated(url, HgncResponseSchema, { headers: HGNC_HEADERS });
     if (res.isErr()) return null;
@@ -136,14 +143,14 @@ async function fetchHgncBy(field: string, value: string) {
     return docs[0] ?? null;
 }
 
-async function fetchUniprotByAccession(accession: string) {
+async function fetchUniprotByAccession(accession: string): Promise<UniprotEntry | null> {
     const url = `${UNIPROT_BASE}?query=accession:${encodeURIComponent(accession)}&format=json&size=1`;
     const res = await apiFetchValidated(url, UniprotResponseSchema, { headers: UNIPROT_HEADERS });
     if (res.isErr()) return null;
     return res.value.results?.[0] ?? null;
 }
 
-async function fetchUniprotBySymbol(symbol: string) {
+async function fetchUniprotBySymbol(symbol: string): Promise<UniprotEntry | null> {
     const query = `gene_exact:${symbol} AND organism_id:9606 AND reviewed:true`;
     const url = `${UNIPROT_BASE}?query=${encodeURIComponent(query)}&format=json&size=1`;
     const res = await apiFetchValidated(url, UniprotResponseSchema, { headers: UNIPROT_HEADERS });
@@ -216,6 +223,7 @@ export async function resolveTarget(input: string, logger?: Logger): Promise<Res
             hgncDoc = await fetchHgncBy("prev_symbol", seedSymbol);
         }
     } else if (seedHgncId) {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
         hgncDoc = await fetchHgncBy("hgnc_id", seedHgncId.replace(/^HGNC:/, ""));
     } else if (seedEnsemblId) {
         hgncDoc = await fetchHgncBy("ensembl_gene_id", seedEnsemblId);
@@ -259,7 +267,7 @@ export async function resolveTarget(input: string, logger?: Logger): Promise<Res
             return [];
         });
         const human = targets.find((t) => t.organism === "Homo sapiens");
-        chemblId = (human ?? targets[0])?.targetChemblId ?? null;
+        chemblId = (human ?? targets.at(0))?.targetChemblId ?? null;
     }
 
     // Final canonical anchor — HGNC preferred, then Ensembl.
@@ -284,8 +292,8 @@ export async function resolveTarget(input: string, logger?: Logger): Promise<Res
     }
 
     const synonyms = new Set<string>();
-    for (const s of hgncDoc?.alias_symbol ?? []) synonyms.add(String(s));
-    for (const s of hgncDoc?.prev_symbol ?? []) synonyms.add(String(s));
+    for (const s of hgncDoc?.alias_symbol ?? []) synonyms.add(s);
+    for (const s of hgncDoc?.prev_symbol ?? []) synonyms.add(s);
     for (const g of uniprotDoc?.genes ?? []) {
         for (const syn of g.synonyms ?? []) {
             if (syn.value) synonyms.add(syn.value);
@@ -322,7 +330,7 @@ export async function resolveTarget(input: string, logger?: Logger): Promise<Res
     };
 }
 
-export interface AutocompleteCandidate {
+export type AutocompleteCandidate = {
     /** Approved HGNC symbol when known, otherwise the input symbol. */
     symbol: string;
     /** Full gene/protein name. */
@@ -332,7 +340,7 @@ export interface AutocompleteCandidate {
     uniprotId: string | null;
     /** Sorted synonyms across HGNC + UniProt. */
     synonyms: string[];
-}
+};
 
 /**
  * Resolve a single gene-symbol query for the autocomplete UI by fanning
@@ -355,7 +363,7 @@ export async function searchTargetByName(symbol: string): Promise<AutocompleteCa
     if (!trimmed) return null;
     const upper = trimmed.toUpperCase();
 
-    async function lookupHgnc() {
+    async function lookupHgnc(): Promise<HgncDoc | null> {
         return (
             (await fetchHgncBy("symbol", upper).catch(() => null)) ??
             (await fetchHgncBy("alias_symbol", upper).catch(() => null)) ??
@@ -371,7 +379,7 @@ export async function searchTargetByName(symbol: string): Promise<AutocompleteCa
 
     if (!hgncDoc && !uniprotDoc && !ensemblId) return null;
 
-    const symbolFromHgnc = (hgncDoc as { symbol?: string } | null)?.symbol;
+    const symbolFromHgnc = hgncDoc?.symbol;
     const uniprotGene = uniprotDoc?.genes?.[0]?.geneName?.value;
     const resolvedSymbol = symbolFromHgnc ?? uniprotGene ?? upper;
 
@@ -380,27 +388,27 @@ export async function searchTargetByName(symbol: string): Promise<AutocompleteCa
     // landing in the synonyms list.
     const seenLower = new Set<string>([resolvedSymbol.toLowerCase()]);
     const synonyms: string[] = [];
-    const addSynonym = (raw: string | undefined | null) => {
+    const addSynonym = (raw: string | undefined | null): void => {
         if (!raw) return;
         const key = raw.toLowerCase();
         if (seenLower.has(key)) return;
         seenLower.add(key);
         synonyms.push(raw);
     };
-    for (const s of (hgncDoc as { alias_symbol?: string[] } | null)?.alias_symbol ?? []) addSynonym(s);
-    for (const s of (hgncDoc as { prev_symbol?: string[] } | null)?.prev_symbol ?? []) addSynonym(s);
+    for (const s of hgncDoc?.alias_symbol ?? []) addSynonym(s);
+    for (const s of hgncDoc?.prev_symbol ?? []) addSynonym(s);
     // Pull synonyms from every UniProt gene record — read-through transcripts
     // and multi-gene entries surface aliases beyond the primary record.
     for (const g of uniprotDoc?.genes ?? []) {
         for (const s of g.synonyms ?? []) addSynonym(s.value);
     }
 
-    const hgncEnsembl = (hgncDoc as { ensembl_gene_id?: string } | null)?.ensembl_gene_id;
+    const hgncEnsembl = hgncDoc?.ensembl_gene_id;
 
     return {
         symbol: resolvedSymbol,
-        displayName: (hgncDoc as { name?: string } | null)?.name ?? uniprotDoc?.proteinDescription?.recommendedName?.fullName?.value ?? null,
-        hgncId: (hgncDoc as { hgnc_id?: string } | null)?.hgnc_id ?? null,
+        displayName: hgncDoc?.name ?? uniprotDoc?.proteinDescription?.recommendedName?.fullName?.value ?? null,
+        hgncId: hgncDoc?.hgnc_id ?? null,
         ensemblId: ensemblId ?? hgncEnsembl ?? null,
         uniprotId: uniprotDoc?.primaryAccession ?? null,
         synonyms: synonyms.sort((a, b) => a.localeCompare(b)),

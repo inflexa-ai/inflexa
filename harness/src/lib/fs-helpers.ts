@@ -7,6 +7,8 @@ import { constants as fsConstants, createReadStream } from "node:fs";
 import { access, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
+import { errnoCode } from "./thrown.js";
+
 /**
  * Compute SHA-256 hash of in-memory content.
  * Returns `sha256:<hex>` format.
@@ -38,6 +40,7 @@ export async function computeSha256File(filePath: string): Promise<string> {
  * an attestation invariant violation, not something to paper over.
  */
 export function hasValidContentHash(hash: string | undefined): boolean {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return !!hash && /^[a-z0-9]+:[0-9a-f]+$/i.test(hash);
 }
 
@@ -112,7 +115,7 @@ export async function classifyWithinRoot(confinementRoot: string, absPath: strin
     try {
         real = await realpath(absPath);
     } catch (cause) {
-        const code = (cause as NodeJS.ErrnoException).code;
+        const code = errnoCode(cause);
         // A path (or symlink target) that does not resolve leaks nothing; let the
         // caller's own not-found/fallback path handle it. Genuine faults (e.g.
         // EACCES traversing a directory) propagate.
@@ -145,10 +148,10 @@ export async function writeFileWithinRoot(workspaceRoot: string, absPath: string
         throw new Error(`writeFileWithinRoot: parent directory escapes the workspace root via a symlink: ${absPath}`);
     }
 
-    // `O_NOFOLLOW ?? 0`: the flag is defined on Linux/macOS (the harness host
-    // platforms); the `?? 0` keeps the open valid on a platform that lacks it
-    // rather than NaN-ing the flag mask.
-    const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | (fsConstants.O_NOFOLLOW ?? 0);
+    // The flag is defined on Linux/macOS (the harness host platforms). On a
+    // platform that lacks it, `|` coerces the absent flag to 0 (ToInt32), so the
+    // mask stays a valid open flag set without a guard.
+    const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW;
     const fh = await open(target, flags, 0o644);
     try {
         await fh.writeFile(data);

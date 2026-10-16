@@ -30,15 +30,15 @@ import { DBOS_SYSTEM_POOL_SIZE, resolveAppPoolSize, SAFETY_MARGIN } from "./pool
  * Narrow config slice the budget guard reads — only the optional app-pool
  * size override. Composition roots map `Env.DB_POOL_MAX` onto this.
  */
-export interface ConnectionBudgetConfig {
+export type ConnectionBudgetConfig = {
     readonly poolMax?: string;
-}
+};
 
-export interface AssertConnectionBudgetOptions {
+export type AssertConnectionBudgetOptions = {
     pool: Pool;
     logger: Logger;
     config: ConnectionBudgetConfig;
-}
+};
 
 /**
  * Verify a single pod's pool footprint fits inside pg `max_connections`.

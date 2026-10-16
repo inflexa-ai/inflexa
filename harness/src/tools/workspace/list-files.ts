@@ -10,7 +10,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { ListEntry, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 
@@ -26,7 +26,7 @@ const ListFilesInputSchema = z.object({
         ),
 });
 
-export function createListFilesTool(fs: WorkspaceFilesystem, workingDir?: string) {
+export function createListFilesTool(fs: WorkspaceFilesystem, workingDir?: string): Tool<z.infer<typeof ListFilesInputSchema>, ListFilesOutput> {
     return defineTool({
         id: "list_files",
         description:

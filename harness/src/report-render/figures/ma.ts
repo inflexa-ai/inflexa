@@ -98,7 +98,7 @@ function deriveMa(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     if (pColumn.isErr()) return err(pColumn.error);
 
     const composition: ChartComposition = {
-        series: [{ form: "scatter", encoding: { x: x.value, y: y.value, ...(encoding.label !== undefined ? { label: encoding.label } : {}) } }],
+        series: [{ form: "scatter", encoding: { x: x.value, y: y.value, label: encoding.label !== undefined ? encoding.label : undefined } }],
         annotations: [{ kind: "reference-line", axis: "y", value: MA_BASELINE }],
         axes: { x: { scale: "log" } },
     };
@@ -124,7 +124,7 @@ function deriveMa(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     const option = composed.value;
     return ok({
         ...option,
-        xAxis: { ...axisOf(option, "xAxis"), ...(low !== undefined && high !== undefined ? { min: decadeFloor(low), max: decadeCeiling(high) } : {}) },
+        xAxis: { ...axisOf(option, "xAxis"), min: low !== undefined && high !== undefined ? decadeFloor(low) : undefined, max: low !== undefined && high !== undefined ? decadeCeiling(high) : undefined },
         yAxis: { ...axisOf(option, "yAxis"), ...symmetricRange(reach) },
         series:
             classification === undefined

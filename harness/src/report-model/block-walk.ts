@@ -53,29 +53,29 @@ export function statisticSlot(index: number): ChartSlot {
  * chart grammar names, and the track and each tree carry each column that they name, thus the structural tier
  * and the value tier match the same set.
  */
-export interface CollectedReference {
+export type CollectedReference = {
     blockId: string;
     reference: Reference;
     slot?: ChartSlot;
     encodingColumns?: string[];
-}
+};
 
 /** An advisory warning about the prose of one block. The detail is the numeral that the prose carries. */
-export interface FreeNumeralWarning {
+export type FreeNumeralWarning = {
     blockId: string;
     kind: "free-numeral";
     detail: string;
-}
+};
 
 /**
  * An advisory warning about one exponent form that the prose of a block carries and the page never prints.
  * The detail is the written form.
  */
-export interface ExponentFormWarning {
+export type ExponentFormWarning = {
     blockId: string;
     kind: "exponent-form";
     detail: string;
-}
+};
 
 /** One advisory warning about the prose of a block. */
 export type ProseWarning = FreeNumeralWarning | ExponentFormWarning;
@@ -84,23 +84,23 @@ export type ProseWarning = FreeNumeralWarning | ExponentFormWarning;
  * An advisory warning about one derivation that no binding of the document names. The detail is the output
  * path of the record. The record stays, and the bytes are reproducible from the script and the sources.
  */
-export interface UnusedDerivationWarning {
+export type UnusedDerivationWarning = {
     kind: "unused-derivation";
     detail: string;
-}
+};
 
 /** One advisory warning about a report. A warning never makes a report invalid. */
 export type ReportWarning = ProseWarning | UnusedDerivationWarning;
 
 /** What one walk over a block tree found. */
-export interface BlockWalk {
+export type BlockWalk = {
     /** Each reference, in document order, tied to the block that carries it. */
     references: CollectedReference[];
     /** Each id that more than one block holds, named one time, in sorted order. */
     repeatedIds: string[];
     /** Each free numeral and each drifted exponent form that prose carries. */
     warnings: ProseWarning[];
-}
+};
 
 /**
  * A free-standing token that looks like a number, with an optional decimal part and an optional percent
@@ -114,6 +114,7 @@ export interface BlockWalk {
  * can be a real free-standing figure or a harmless part of a name. Thus a hit warns, and it never fails
  * the report.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const NUMERAL_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?%?/g;
 
 /**
@@ -122,6 +123,7 @@ const NUMERAL_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?%?/g;
  * The left boundary is the one of the numeral scan, thus a token inside a name never matches. The exponent
  * itself carries an optional sign, because a written form gives one and a shown form never does.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const EXPONENT_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?[eE][+-]?\d+/g;
 
 /** Warn for each free-standing numeral that the prose of one block carries. */

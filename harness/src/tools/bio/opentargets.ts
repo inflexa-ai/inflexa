@@ -27,6 +27,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
+import { guaranteed } from "../../lib/invariants.js";
 import {
     searchDiseaseAssociations,
     searchDiseases,
@@ -118,15 +119,15 @@ export const openTargetsTool = defineTool({
         const limit = input.limit ?? DEFAULT_LIMIT;
         switch (input.action) {
             case "target": {
-                const targetInfo = await searchTargetAssociations(input.ensemblId!, limit);
+                const targetInfo = await searchTargetAssociations(guaranteed(input.ensemblId, "ensemblId"), limit);
                 return ok({ targetInfo, associations: targetInfo?.associations ?? [] });
             }
             case "disease": {
-                const associations = await searchDiseaseAssociations(input.efoId!, limit);
+                const associations = await searchDiseaseAssociations(guaranteed(input.efoId, "efoId"), limit);
                 return ok({ associations });
             }
             case "resolve_disease": {
-                const { total, candidates } = await searchDiseases(input.diseaseName!, limit);
+                const { total, candidates } = await searchDiseases(guaranteed(input.diseaseName, "diseaseName"), limit);
                 return ok({ totalFound: total, candidates });
             }
         }

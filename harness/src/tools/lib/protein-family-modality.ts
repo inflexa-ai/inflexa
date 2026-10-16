@@ -6,34 +6,34 @@
 import familyMappingData from "../../data/protein-family-modality.json" with { type: "json" };
 import { normalizeProteinFamily } from "./protein-family-normalize.js";
 
-interface FamilyEntry {
+type FamilyEntry = {
     family: string;
     patterns: string[];
     preferred_modality: string;
     rationale: string;
-}
+};
 
-interface FamilyMappingFile {
+type FamilyMappingFile = {
     schema_version: number;
     data_version: string;
     families: FamilyEntry[];
     default: { preferred_modality: string; rationale: string };
-}
+};
 
 // The JSON import yields an untyped/structurally-wide value; cast to the declared
 // shape, which the bundled data file is authored to satisfy.
-const dataset = familyMappingData as unknown as FamilyMappingFile;
+const dataset : FamilyMappingFile = familyMappingData;
 
 function loadDataset(): FamilyMappingFile {
     return dataset;
 }
 
-export interface ModalityFallback {
+export type ModalityFallback = {
     family: string | null;
     preferred_modality: string;
     rationale: string;
     source: "family-match" | "default";
-}
+};
 
 /**
  * Infer a preferred modality from a free-text protein-family description

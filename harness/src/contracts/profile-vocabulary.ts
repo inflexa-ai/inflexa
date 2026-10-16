@@ -23,10 +23,10 @@
 export const GROUP_ROLE_IDS = ["data", "metadata", "index", "documentation", "reference"] as const;
 export type GroupRole = (typeof GROUP_ROLE_IDS)[number];
 
-export interface GroupRoleEntry {
+export type GroupRoleEntry = {
     readonly id: GroupRole;
     readonly definition: string;
-}
+};
 
 /**
  * Companions (`.bai`/`.tbi`/per-file `.md5`) take no role — they attach to members. A
@@ -73,12 +73,12 @@ export const GROUP_CATEGORY_IDS = [
 ] as const;
 export type GroupCategory = (typeof GROUP_CATEGORY_IDS)[number];
 
-export interface GroupCategoryEntry {
+export type GroupCategoryEntry = {
     readonly id: GroupCategory;
     readonly definition: string;
     /** The nearest neighbour and the rule that separates them. */
     readonly note: string;
-}
+};
 
 /**
  * Coarse on purpose — a free `subtype` refines below the category. Content beats shape:
@@ -241,14 +241,14 @@ export type DimensionScope = "biological" | "technical";
  */
 export type DimensionTreatment = "split" | "dimension";
 
-export interface DimensionCategoryEntry {
+export type DimensionCategoryEntry = {
     readonly id: DimensionCategory;
     readonly scope: DimensionScope;
     readonly definition: string;
     readonly defaultTreatment: DimensionTreatment;
     /** Why the default reads the way it does, and the nearest neighbour it is not. */
     readonly note: string;
-}
+};
 
 export const DIMENSION_CATEGORIES: readonly DimensionCategoryEntry[] = [
     {
@@ -451,11 +451,11 @@ export type DimensionProbe = (typeof DIMENSION_PROBE_IDS)[number];
 export const PROBE_OUTCOME_IDS = ["found", "not-found", "found-but-constant", "attested"] as const;
 export type ProbeOutcome = (typeof PROBE_OUTCOME_IDS)[number];
 
-export interface DimensionProbeEntry {
+export type DimensionProbeEntry = {
     readonly id: DimensionProbe;
     /** Where a `found` typically comes from. */
     readonly guidance: string;
-}
+};
 
 /**
  * The only dimensions the agent actively looks for. The searchable set is bounded and
@@ -489,11 +489,15 @@ const GROUP_CATEGORY_BY_ID = new Map(GROUP_CATEGORIES.map((entry) => [entry.id, 
 const DIMENSION_CATEGORY_BY_ID = new Map(DIMENSION_CATEGORIES.map((entry) => [entry.id, entry]));
 
 export function groupCategoryEntry(id: GroupCategory): GroupCategoryEntry {
-    return GROUP_CATEGORY_BY_ID.get(id)!;
+    const entry = GROUP_CATEGORY_BY_ID.get(id);
+    if (entry === undefined) throw new Error(`group category ${id} has no vocabulary entry`);
+    return entry;
 }
 
 export function dimensionCategoryEntry(id: DimensionCategory): DimensionCategoryEntry {
-    return DIMENSION_CATEGORY_BY_ID.get(id)!;
+    const entry = DIMENSION_CATEGORY_BY_ID.get(id);
+    if (entry === undefined) throw new Error(`dimension category ${id} has no vocabulary entry`);
+    return entry;
 }
 
 /**

@@ -39,6 +39,8 @@ import { allWithConcurrency } from "../lib/async-utils.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
+import { parseJsonOrUndefined } from "../lib/json.js";
+import { maybeRecord, wideMember } from "../lib/shape.js";
 import {
     applyRowBound,
     columnsHeldByNoRow,
@@ -71,16 +73,16 @@ const PREPARE_CONCURRENCY = 8;
  * `format` carries the reader that the host decided. The arm never derives a reader from the extension,
  * thus the host arm and the sandbox arm can never read one file two ways.
  */
-export interface ExtractionRequest {
+export type ExtractionRequest = {
     readonly path: string;
     readonly hash: string;
     readonly format: TabularFormat;
-}
+};
 
 /** The rows that the extraction arm read for one artifact. Downstream the rows share the host path logic. */
-export interface ExtractionArtifact {
+export type ExtractionArtifact = {
     readonly rows: Array<Record<string, string | number>>;
-}
+};
 
 /**
  * The out-of-process read arm. One `extract` call covers every fall-through artifact of one document
@@ -91,9 +93,9 @@ export interface ExtractionArtifact {
  * The arm is a seam, thus a test stubs it. While no realization is wired, a fall-through reference fails
  * with `extraction-unavailable`, and the detail names the absent arm.
  */
-export interface ExtractionArm {
+export type ExtractionArm = {
     extract(requests: readonly ExtractionRequest[]): Promise<Result<ReadonlyMap<string, ExtractionArtifact>, Suspension>>;
-}
+};
 
 /**
  * The disk facts of one artifact that outlive one resolver.
@@ -103,11 +105,11 @@ export interface ExtractionArm {
  * read again. `rows` is present only for a clean read, because a read fault is transient and it must not
  * stick to the analysis.
  */
-export interface ArtifactRead {
+export type ArtifactRead = {
     readonly signature: string;
     readonly hash: string;
     readonly rows?: Array<Record<string, string | number>>;
-}
+};
 
 /**
  * The read cache of one analysis. It holds what a read of the bytes costs: the streamed hash, and the rows
@@ -117,15 +119,15 @@ export interface ArtifactRead {
  * The cache holds no authorization and no session value. Each resolver still binds its own extraction arm
  * over the auth of its own call.
  */
-export interface ArtifactReadCache {
+export type ArtifactReadCache = {
     get(absolutePath: string): ArtifactRead | undefined;
     set(absolutePath: string, read: ArtifactRead): void;
-}
+};
 
 /** The read caches that the host process holds, one for each recent analysis. */
-export interface ArtifactReadStore {
+export type ArtifactReadStore = {
     forAnalysis(analysisId: string): ArtifactReadCache;
-}
+};
 
 /** The analyses that the read store holds at the same time. An older analysis drops out first. */
 const ANALYSIS_CACHE_LIMIT = 4;
@@ -192,13 +194,13 @@ export function createArtifactReadStore(): ArtifactReadStore {
  * `extractionArm` is optional, because no sandbox realization is wired yet. `readCache` is optional, thus a
  * resolver with no cache reads every artifact itself and its reads die with it.
  */
-export interface ProductionResolverDeps {
+export type ProductionResolverDeps = {
     readonly workspaceRoot: string;
     readonly analysisId: string;
     readonly cap?: number;
     readonly extractionArm?: ExtractionArm;
     readonly readCache?: ArtifactReadCache;
-}
+};
 
 /**
  * The tabular formats that the host fast path reads. The host decides which one a file is, one time, and it
@@ -227,12 +229,12 @@ type HostRead =
     { kind: "rows"; rows: Row[] } | { kind: "fall-through"; format: TabularFormat; detail: string } | { kind: "unsupported-format"; detail: string };
 
 /** One fall-through artifact, the reader that the host decided, and the reason that the host arm stopped. */
-interface FallThrough {
+type FallThrough = {
     readonly path: string;
     readonly hash: string;
     readonly format: TabularFormat;
     readonly hostDetail: string;
-}
+};
 
 /** Build an `Err` that carries the unresolved reference. The `detail` key is present only when there is a detail to carry. */
 function fail(reference: Reference, reason: UnresolvedReason, detail?: string): Result<ResolvedValue, UnresolvedReference> {
@@ -426,10 +428,8 @@ export function parseDelimited(text: string, delimiter: string): Row[] | undefin
  * the file falls through.
  */
 function parseJsonTable(text: string): Row[] | undefined {
-    let value: unknown;
-    try {
-        value = JSON.parse(text);
-    } catch {
+    const value = parseJsonOrUndefined(text);
+    if (value === undefined) {
         return undefined;
     }
     if (!Array.isArray(value)) {
@@ -437,12 +437,13 @@ function parseJsonTable(text: string): Row[] | undefined {
     }
     const rows: Row[] = [];
     for (const item of value) {
-        if (item === null || typeof item !== "object" || Array.isArray(item)) {
+        const fields = maybeRecord(item);
+        if (fields === undefined || Array.isArray(fields)) {
             return undefined;
         }
         const row: Row = {};
-        for (const [key, cell] of Object.entries(item as Record<string, unknown>)) {
-            if (cell !== null && typeof cell === "object") {
+        for (const [key, cell] of Object.entries(fields)) {
+            if (maybeRecord(cell) !== undefined) {
                 return undefined;
             }
             const coerced = coerceCell(cell);
@@ -646,11 +647,11 @@ function shareRows(readCache: ArtifactReadCache | undefined, identity: ReadyIden
  * The read access that one reference makes on one artifact. `needsCells` is false for a whole-file
  * reference, because a file is pinned by its bytes and holds no cell to read.
  */
-interface Access {
+type Access = {
     readonly path: string;
     readonly hash: string;
     readonly needsCells: boolean;
-}
+};
 
 /** The reads that one reference makes. A citation reads no artifact, and a derivation reads its inputs. */
 function accessesOf(reference: Reference): Access[] {
@@ -668,10 +669,10 @@ function accessesOf(reference: Reference): Access[] {
 }
 
 /** The read intent of every reference at one path: whether a cell is read, and each pinned hash a cell reads. */
-interface PathIntent {
+type PathIntent = {
     needsCells: boolean;
     readonly cellHashes: Set<string>;
-}
+};
 
 /**
  * Make the production resolver over the workspace root and the optional extraction arm.
@@ -760,7 +761,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
         if (reference.hash !== identity.onDiskHash) {
             return err({ reference, reason: "hash-mismatch", detail: `expected ${reference.hash} but the artifact hash is ${identity.onDiskHash}` });
         }
-        if (fileTypeHoldsNoCell(identity.fileType)) {
+        if (identity.fileType !== undefined && identity.fileType !== null && fileTypeHoldsNoCell(identity.fileType)) {
             return err({ reference, reason: "unreadable-artifact", detail: `the ${identity.fileType} at ${reference.path} holds no cell to read` });
         }
         const cells = await getCells(reference.path, identity);
@@ -800,7 +801,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
 
         // A real table holds an empty cell, and a parse gives it back as an absent key. An absent key is
         // not a value that a scalar reference can bind. An empty string is a value, thus it stays valid.
-        const cell: string | number | undefined = selectedRow[locator.column];
+        const cell = wideMember(selectedRow, locator.column);
         if (cell === undefined || cell === null) {
             return fail(reference, "locator-out-of-range", `column ${locator.column} holds no value in the selected row`);
         }

@@ -16,6 +16,7 @@ import { basenameOf, dirnameOf } from "./tokens.js";
 const DIRECTORY_MARKERS: readonly { readonly label: string; readonly requires: readonly RegExp[] }[] = [
     {
         label: "feature-barcode-matrix",
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the marker grammar of the scanner: no builtin recognizes these file markers.
         requires: [/^matrix\.mtx(\.gz)?$/, /^barcodes\.tsv(\.gz)?$/, /^(features|genes)\.tsv(\.gz)?$/],
     },
 ];
@@ -29,18 +30,19 @@ const DIRECTORY_MARKERS: readonly { readonly label: string; readonly requires: r
  */
 const SUBTREE_MARKERS: readonly { readonly label: string; readonly name: string; readonly corroborate?: RegExp }[] = [
     { label: "study-manifest", name: "meta_study.txt" },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the marker grammar of the scanner: no builtin recognizes these file markers.
     { label: "dataset-descriptor", name: "dataset_description.json", corroborate: /^sub-/ },
 ];
 
-export interface MarkerUnit {
+export type MarkerUnit = {
     readonly label: string;
     readonly root: string;
     readonly members: readonly MemberFile[];
-}
+};
 
 function hasCorroboratingChild(files: readonly MemberFile[], root: string, pattern: RegExp): boolean {
     const prefix = root === "" ? "" : `${root}/`;
-    return files.some((file) => file.path.startsWith(prefix) && pattern.test(file.path.slice(prefix.length).split("/")[0]!));
+    return files.some((file) => file.path.startsWith(prefix) && pattern.test(file.path.slice(prefix.length).split("/")[0]));
 }
 
 /** The marker-claimed units of a tree, and the members no marker claimed. */

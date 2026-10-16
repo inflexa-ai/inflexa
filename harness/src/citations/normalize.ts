@@ -5,35 +5,43 @@ import { CitationInputSchema, type CitationInput, type NormalizedCitation, type 
 // The DOI suffix is deliberately permissive — the registry allows nearly any character in it, so
 // there is no delimiter to stop at, and `trimDoiPunctuation` walks back the sentence punctuation
 // and brackets a greedy match swallows. PMID and arXiv anchor instead, having fixed shapes.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
 const DOI_PATTERN = /(?:https?:\/\/(?:dx\.)?doi\.org\/|doi\s*:\s*)?(10\.\d{4,9}\/[^\s<>"']+)/i;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
 const PMID_PATTERN = /^(?:pmid\s*:\s*)?(\d{1,9})$/i;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
 const ARXIV_PATTERN = /^(?:https?:\/\/arxiv\.org\/(?:abs|pdf)\/|arxiv\s*:\s*)?((?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z-]+)?\/\d{7})(?:v\d+)?)(?:\.pdf)?$/i;
 
 function collapseWhitespace(value: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
     return value.normalize("NFKC").replace(/\s+/g, " ").trim();
 }
 
 export function normalizeComparable(value: string): string {
     return collapseWhitespace(value)
         .toLocaleLowerCase("en-US")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
         .replace(/[\p{P}\p{S}]+/gu, " ")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
         .replace(/\s+/g, " ")
         .trim();
 }
 
 export function normalizeAuthor(value: string): string {
     return normalizeComparable(value)
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
         .replace(/\b(?:jr|sr|ii|iii|iv)\b/g, "")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
         .replace(/\s+/g, " ")
         .trim();
 }
 
-interface AuthorEvidence {
+type AuthorEvidence = {
     /** Spelled-out name parts, in no particular order. */
     readonly words: readonly string[];
     /** Standalone initials, which say nothing about which part of the name they abbreviate. */
     readonly initials: readonly string[];
-}
+};
 
 function authorEvidence(value: string): AuthorEvidence {
     const tokens = normalizeAuthor(value).split(" ").filter(Boolean);
@@ -54,7 +62,7 @@ const SPELLED_OUT_MINIMUM = 3;
  * contributes only the initial it would abbreviate to.
  */
 function givenLetters(leftover: readonly string[], initials: readonly string[]): string[] {
-    return [...initials, ...leftover.flatMap((word) => (word.length < SPELLED_OUT_MINIMUM ? [...word] : [word[0]!]))].sort();
+    return [...initials, ...leftover.flatMap((word) => (word.length < SPELLED_OUT_MINIMUM ? Array.from(word) : [word[0]]))].sort();
 }
 
 function containsLetters(available: readonly string[], required: readonly string[]): boolean {
@@ -94,6 +102,7 @@ export function authorNamesMatch(left: string, right: string): boolean {
 }
 
 function trimDoiPunctuation(value: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
     let result = value.replace(/[.,;]+$/g, "");
     const pairs: ReadonlyArray<readonly [string, string]> = [
         ["(", ")"],
@@ -118,25 +127,29 @@ export function extractPmid(value: string): string | undefined {
 
 export function extractArxivId(value: string): string | undefined {
     const match = collapseWhitespace(value).match(ARXIV_PATTERN)?.[1];
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
     return match?.toLocaleLowerCase("en-US").replace(/v\d+$/i, "");
 }
 
 function classifyUnsupportedWork(value: string): UnsupportedWorkKind | undefined {
     const normalized = normalizeComparable(value);
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
     if (/\bpersonal communication\b/.test(normalized)) return "personal_communication";
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
     if (/\bunpublished (?:data|work|manuscript)\b/.test(normalized)) return "unpublished";
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
     if (/\b(?:in press|forthcoming)\b/.test(normalized)) return "unregistered_in_press";
     return undefined;
 }
 
 function normalizedSupplied(input: CitationInput): NormalizedCitationMetadata {
     return {
-        ...(input.title === undefined ? {} : { title: normalizeComparable(input.title) }),
-        ...(input.authors === undefined ? {} : { authors: input.authors.map(normalizeAuthor).filter(Boolean) }),
-        ...(input.year === undefined ? {} : { year: input.year }),
-        ...(input.venue === undefined ? {} : { venue: normalizeComparable(input.venue) }),
-        ...(input.volume === undefined ? {} : { volume: normalizeComparable(input.volume) }),
-        ...(input.firstPage === undefined ? {} : { firstPage: normalizeComparable(input.firstPage) }),
+        title: !(input.title === undefined) ? normalizeComparable(input.title) : undefined,
+        authors: !(input.authors === undefined) ? input.authors.map(normalizeAuthor).filter(Boolean) : undefined,
+        year: !(input.year === undefined) ? input.year : undefined,
+        venue: !(input.venue === undefined) ? normalizeComparable(input.venue) : undefined,
+        volume: !(input.volume === undefined) ? normalizeComparable(input.volume) : undefined,
+        firstPage: !(input.firstPage === undefined) ? normalizeComparable(input.firstPage) : undefined,
     };
 }
 
@@ -167,12 +180,12 @@ export function normalizeCitation(unparsed: CitationInput): NormalizedCitation {
         query: normalizeComparable(citation),
         kind,
         identifiers: {
-            ...(doi === undefined || !identified ? {} : { doi }),
-            ...(pmid === undefined || !identified ? {} : { pmid }),
-            ...(arxiv === undefined || !identified ? {} : { arxiv }),
+            doi: !(doi === undefined || !identified) ? doi : undefined,
+            pmid: !(pmid === undefined || !identified) ? pmid : undefined,
+            arxiv: !(arxiv === undefined || !identified) ? arxiv : undefined,
         },
         supplied: normalizedSupplied(input),
-        ...(unsupportedWorkKind === undefined ? {} : { unsupportedWorkKind }),
+        unsupportedWorkKind: !(unsupportedWorkKind === undefined) ? unsupportedWorkKind : undefined,
     };
 }
 

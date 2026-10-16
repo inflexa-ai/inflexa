@@ -34,7 +34,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { sleep } from "../src/lib/async-utils.js";
+import { plainRecord } from "../src/lib/shape.js";
 import { FixtureManifestSchema, type FixtureManifest, type FixtureManifestEntry } from "../src/tools/lib/__fixtures__/manifest.js";
+import { errorMessage } from "../src/lib/thrown.js";
+import { jsonParse } from "../src/lib/json.js";
+import { z } from "zod";
 
 const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "tools", "lib", "__fixtures__");
 
@@ -48,11 +52,11 @@ const MAX_REPORTED_DIFFERENCES = 20;
 const MAX_RENDERED_VALUE = 80;
 
 /** One difference between the stored fixture and the live answer. */
-interface Difference {
+type Difference = {
     path: string;
     stored: string;
     live: string;
-}
+};
 
 /** The outcome of one replayed fixture. */
 type Outcome =
@@ -167,11 +171,11 @@ async function listProviders(selected: string[]): Promise<string[]> {
 async function readManifest(provider: string, path: string): Promise<FixtureManifest | null> {
     let raw: unknown;
     try {
-        raw = JSON.parse(await readFile(path, "utf8")) as unknown;
+        raw = jsonParse(await readFile(path, "utf8"), z.json());
     } catch (error) {
         // A missing or malformed file is a normal condition of an edit in progress. Report the cause and
         // continue with the other providers, because a stack trace here hides the drift report.
-        reject(provider, [error instanceof Error ? error.message : String(error)]);
+        reject(provider, [errorMessage(error)]);
         return null;
     }
 
@@ -206,7 +210,7 @@ async function replay(provider: string, file: string, entry: FixtureManifestEntr
         if (!response.ok) return { kind: "failed", reason: `HTTP ${response.status} from ${url}` };
         body = await response.text();
     } catch (error) {
-        return { kind: "failed", reason: `${error instanceof Error ? error.message : String(error)} (${url})` };
+        return { kind: "failed", reason: `${errorMessage(error)} (${url})` };
     }
 
     const path = join(FIXTURES_DIR, provider, file);
@@ -253,8 +257,8 @@ async function politeFetch(url: string, entry: FixtureManifestEntry): Promise<Re
     const init: RequestInit = {
         method: entry.method ?? "GET",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        ...(entry.headers ? { headers: entry.headers } : {}),
-        ...(entry.body === undefined ? {} : { body: entry.body }),
+        headers: entry.headers ? entry.headers : undefined,
+        body: entry.body,
     };
     try {
         return await fetch(url, init);
@@ -267,14 +271,10 @@ async function politeFetch(url: string, entry: FixtureManifestEntry): Promise<Re
 /** Parse JSON text. A body that is not JSON stays a string, thus the diff reports it instead of throwing. */
 function safeJson(text: string): unknown {
     try {
-        return JSON.parse(text) as unknown;
+        return jsonParse(text, z.json());
     } catch {
         return text;
     }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Does an ignore path cover this path? A `*` segment matches one segment, and an entry covers what is under it. */
@@ -311,9 +311,11 @@ function diffJson(stored: unknown, live: unknown, ignorePaths: string[][], path:
         return out;
     }
 
-    if (isRecord(stored) && isRecord(live)) {
-        const keys = [...new Set([...Object.keys(stored), ...Object.keys(live)])].sort();
-        for (const key of keys) diffJson(stored[key], live[key], ignorePaths, [...path, key], out);
+    const storedRecord = plainRecord(stored);
+    const liveRecord = plainRecord(live);
+    if (storedRecord !== undefined && liveRecord !== undefined) {
+        const keys = [...new Set([...Object.keys(storedRecord), ...Object.keys(liveRecord)])].sort();
+        for (const key of keys) diffJson(storedRecord[key], liveRecord[key], ignorePaths, [...path, key], out);
         return out;
     }
 
@@ -329,7 +331,7 @@ function renderPath(path: string[]): string {
 
 function renderValue(value: unknown): string {
     if (value === undefined) return "(absent)";
-    const text = JSON.stringify(value) ?? String(value);
+    const text = JSON.stringify(value);
     return text.length > MAX_RENDERED_VALUE ? `${text.slice(0, MAX_RENDERED_VALUE)}…` : text;
 }
 

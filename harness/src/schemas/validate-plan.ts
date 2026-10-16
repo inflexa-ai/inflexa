@@ -19,6 +19,7 @@ import { parseQuery, type ParseQueryError } from "../sandbox/package-identity.js
 import { isLabelValue } from "../sandbox/labels.js";
 import { isSafeId, STEP_SUBDIRS, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
 import type { AnalysisPlan } from "./workflow-state.js";
+import { errorMessage } from "../lib/thrown.js";
 
 const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
 
@@ -32,12 +33,12 @@ const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
  */
 const RESERVED_STEP_IDS: ReadonlySet<string> = new Set([...STEP_SUBDIRS, SYNTHESIS_STEP_ID]);
 
-export interface ValidationResult {
+export type ValidationResult = {
     valid: boolean;
     errors: string[];
-}
+};
 
-export interface ValidatePlanOptions {
+export type ValidatePlanOptions = {
     /**
      * Host per-step resource ceilings. When present, a step whose declared
      * `resources` exceed them is an error — the planner gets actionable
@@ -47,7 +48,7 @@ export interface ValidatePlanOptions {
      * sandbox-creation clamp remains their backstop).
      */
     readonly perStepCeiling?: ResourceLimits;
-}
+};
 
 /**
  * One issue for one package entry that does not parse. Each message names the
@@ -84,7 +85,9 @@ function describeParseError(stepId: string, entry: string, error: ParseQueryErro
 export function deriveOutputPrefix(stepId: string): string {
     return stepId
         .toLowerCase()
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .replace(/[^a-z0-9]+/g, "-")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .replace(/^-|-$/g, "");
 }
 
@@ -110,7 +113,7 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
         } else if (err instanceof DependencyError) {
             errors.push(`Step "${err.stepId}" depends on "${err.missingDependency}" which does not exist in the plan`);
         } else {
-            errors.push(`Topological sort failed: ${err instanceof Error ? err.message : String(err)}`);
+            errors.push(`Topological sort failed: ${errorMessage(err)}`);
         }
     }
 

@@ -29,11 +29,13 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import type { Logger } from "../../lib/logger.js";
-import { defineTool } from "../define-tool.js";
+import { guaranteed, present } from "../../lib/invariants.js";
+import { defineTool, type Tool } from "../define-tool.js";
 import { getSomaticMutationFrequencies, type MutationFrequency } from "../lib/cbioportal-client.js";
-import { filterInformative, searchClinvar, type ClinicalSignificance, type ClinvarVariant } from "../lib/clinvar-client.js";
+import { filterInformative, searchClinvar, type ClinvarVariant } from "../lib/clinvar-client.js";
 import { DISGENET_SOURCES, searchDisgenet, type Gda } from "../lib/disgenet-client.js";
 import { searchGwasCatalog, type GwasAssociation, type GwasSearchType } from "../lib/gwas-catalog-client.js";
+import { errorMessage } from "../../lib/thrown.js";
 
 const SOURCES = ["gwas", "disgenet", "clinvar", "cbioportal"] as const;
 type Source = (typeof SOURCES)[number];
@@ -50,13 +52,13 @@ const MAX_LIMIT = 100;
  * normal states the caller must be able to tell apart from genuine no-data —
  * otherwise an unkeyed DisGeNET reads as "no genetic support".
  */
-interface SourceOutcome {
+type SourceOutcome = {
     source: Source;
     status: "ok" | "no_data" | "unavailable" | "not_applicable";
     returned: number;
     totalFound?: number;
     detail?: string;
-}
+};
 
 /** Which query types each corpus can read. An accession is readable by one corpus only. */
 const SOURCE_QUERY_TYPES: Record<Source, readonly QueryType[]> = {
@@ -159,7 +161,7 @@ const inputSchema = z.object({
         .describe("'clinvar' only. Default TRUE — drop variants classified 'not provided', 'not specified' or 'reclassified', which carry no clinical signal."),
 });
 
-interface GeneDiseaseEvidenceOutput {
+type GeneDiseaseEvidenceOutput = {
     query: string;
     queryType: QueryType;
     perSource: SourceOutcome[];
@@ -167,7 +169,7 @@ interface GeneDiseaseEvidenceOutput {
     disgenet?: Gda[];
     clinvar?: ClinvarVariant[];
     cbioportal?: MutationFrequency[];
-}
+};
 
 /**
  * Run one corpus, folding its failure into an `unavailable` outcome. A source
@@ -183,7 +185,7 @@ async function runSource<T>(source: Source, fetch: () => Promise<{ records: T[];
                 source,
                 status: records.length > 0 ? "ok" : "no_data",
                 returned: records.length,
-                ...(totalFound !== undefined ? { totalFound } : {}),
+                totalFound: totalFound !== undefined ? totalFound : undefined,
             },
             records,
         };
@@ -193,14 +195,18 @@ async function runSource<T>(source: Source, fetch: () => Promise<{ records: T[];
                 source,
                 status: "unavailable",
                 returned: 0,
-                detail: error instanceof Error ? error.message : String(error),
+                detail: errorMessage(error),
             },
             records: [],
         };
     }
 }
 
-export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disgenetApiKey: string; logger?: Logger }) {
+export function createGeneDiseaseEvidenceTool(deps: {
+    ncbiApiKey?: string;
+    disgenetApiKey: string;
+    logger?: Logger;
+}): Tool<z.infer<typeof inputSchema>, GeneDiseaseEvidenceOutput> {
     return defineTool({
         id: "gene_disease_evidence",
         description:
@@ -241,10 +247,10 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
             const [gwas, disgenet, clinvar, cbioportal] = await Promise.all([
                 selected.includes("gwas")
                     ? runSource<GwasAssociation>("gwas", async () => {
-                          const searchType = GWAS_SEARCH_TYPES[input.queryType]!;
-                          const res = await searchGwasCatalog(input.query, searchType, {
+                          const searchType = present(GWAS_SEARCH_TYPES[guaranteed(input.queryType, "queryType")], "the GWAS search type of the query");
+                          const res = await searchGwasCatalog(guaranteed(input.query, "query"), searchType, {
                               limit,
-                              ...(input.pValueThreshold !== undefined ? { pValueThreshold: input.pValueThreshold } : {}),
+                              pValueThreshold: input.pValueThreshold !== undefined ? input.pValueThreshold : undefined,
                           });
                           return { records: res.associations, totalFound: res.totalFound };
                       })
@@ -258,8 +264,8 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
                               input.queryType === "gene" ? "gene" : "disease",
                               {
                                   limit,
-                                  ...(input.minScore !== undefined ? { minScore: input.minScore } : {}),
-                                  ...(input.disgenetSource !== undefined ? { source: input.disgenetSource } : {}),
+                                  minScore: input.minScore !== undefined ? input.minScore : undefined,
+                                  source: input.disgenetSource !== undefined ? input.disgenetSource : undefined,
                               },
                               deps.logger,
                           );
@@ -269,7 +275,7 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
                     ? runSource<ClinvarVariant>("clinvar", async () => {
                           const res = await searchClinvar(deps.ncbiApiKey, input.query, {
                               limit,
-                              ...(input.clinicalSignificance !== undefined ? { clinicalSignificance: input.clinicalSignificance as ClinicalSignificance } : {}),
+                              clinicalSignificance: input.clinicalSignificance !== undefined ? input.clinicalSignificance : undefined,
                           });
                           const variants = (input.informativeOnly ?? true) ? filterInformative(res.variants) : res.variants;
                           return { records: variants, totalFound: res.totalFound };

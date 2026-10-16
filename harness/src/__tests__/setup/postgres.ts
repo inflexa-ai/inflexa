@@ -32,6 +32,7 @@ import { GenericContainer, Wait, type StartedTestContainer } from "testcontainer
 import { Pool, type PoolConfig } from "pg";
 import { initCortexState } from "../../state/init.js";
 import { assertContainerWillBeReaped } from "./require-reaper.js";
+import { sleep } from "../../lib/async-utils.js";
 
 const PG_IMAGE = "pgvector/pgvector:pg18";
 const PG_USER = "cortex";
@@ -64,6 +65,7 @@ async function startContainer(): Promise<{ pool: Pool; container?: StartedTestCo
         })
         .withExposedPorts(5432)
         .withCommand(["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off"])
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
         .withStartupTimeout(60_000)
         .start();
@@ -86,7 +88,7 @@ async function startContainer(): Promise<{ pool: Pool; container?: StartedTestCo
             break;
         } catch (err) {
             if (Date.now() > deadline) throw err;
-            await new Promise((r) => setTimeout(r, 200));
+            await sleep(200);
         }
     }
 
@@ -126,6 +128,7 @@ export async function withSchema(testName: string): Promise<{
     const base = await getTestPool();
     const safeName = testName
         .toLowerCase()
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .replace(/[^a-z0-9_]/g, "_")
         .slice(0, 40);
     const schemaName = `t_${safeName}_${Date.now().toString(36)}_${_schemaCounter++}`;
@@ -134,7 +137,7 @@ export async function withSchema(testName: string): Promise<{
 
     // Each test gets its own scoped pool so search_path sticks on every
     // connection pulled from it.
-    const cfg: PoolConfig = (base as unknown as { options?: PoolConfig }).options ?? {};
+    const cfg: PoolConfig = base.options;
     const pool = new Pool({
         host: cfg.host,
         port: cfg.port,
@@ -163,7 +166,7 @@ export async function withSchema(testName: string): Promise<{
 
     await initCortexState(pool);
 
-    const drop = async () => {
+    const drop = async (): Promise<void> => {
         await pool.end().catch(() => {
             /* already closed */
         });

@@ -19,5 +19,5 @@ import type { AuthContext } from "./types.js";
  * `never`, so no real field is fabricated.
  */
 export function makeLocalAuth(): AuthContext {
-    return {} as AuthContext;
+    return {};
 }

@@ -2,12 +2,16 @@ import { posix as posixPath } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
+import { maybeRecord } from "../lib/shape.js";
 
 /** Schema version for the checked-in reference-data catalog. */
 export const REFERENCE_DATA_CATALOG_VERSION = 1 as const;
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 const SAFE_ID = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 const SAFE_VERSION = /^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 const SHA256 = /^[a-f0-9]{64}$/;
 
 function isSafeRelativePath(value: string): boolean {
@@ -35,6 +39,7 @@ const ReferenceArtifactUrlSchema = z.url().refine((value) => value.startsWith("h
  * remain cheap to add, and an unrecognized format degrades to "unknown reader"
  * rather than failing catalog validation.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 export const ReferenceArtifactFormatSchema = z.string().regex(/^[a-z0-9]+(?:[+-][a-z0-9]+)*$/, "Expected a lowercase format token");
 
 /**
@@ -65,6 +70,7 @@ export const ReferenceArtifactSchema = z.strictObject({
  * choice is most silently wrong on — human regulons over mouse counts still run —
  * so it is a first-class field rather than something inferred from the id suffix.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
 export const ReferenceOrganismSchema = z.string().regex(/^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/, "Expected a lowercase organism common name");
 
 /** Provenance and licensing information for one supported reference dataset. */
@@ -136,10 +142,13 @@ export function referenceArtifactKey(dataset: { readonly id: string; readonly ve
 }
 
 function deepFreeze<T>(value: T): DeepReadonly<T> {
-    if (value && typeof value === "object" && !Object.isFrozen(value)) {
-        for (const nested of Object.values(value)) deepFreeze(nested);
-        Object.freeze(value);
+    const fields = maybeRecord(value);
+    if (fields !== undefined && !Object.isFrozen(fields)) {
+        for (const nested of Object.values(fields)) deepFreeze(nested);
+        Object.freeze(fields);
     }
+    // SAFETY: the freeze above ran on every nested object of this value — the cast names the deep-readonly view of the same object that came in.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `Object.freeze` at every depth proves at runtime the deep immutability the `DeepReadonly` view asserts; TS has no type-level mapping for it.
     return value as DeepReadonly<T>;
 }
 
@@ -1485,7 +1494,8 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 description:
                     "Reference map of human CD8+ tumour-infiltrating T cells for ProjecTILs: 11,021 single-cell transcriptomes from 20 samples across 7 tumour types. Projecting onto it places query cells in a fixed, curated state space — naive through effector-memory, tissue-resident and exhausted — rather than in de novo clusters, so results are comparable across datasets. The route to exhaustion and precursor-exhausted phenotyping, which unsupervised clustering names inconsistently. ~258 MB, opt-in.",
                 organism: "human",
-                sourceUrl: "https://figshare.com/articles/dataset/ProjecTILs_human_reference_atlas_of_CD8_tumor-infiltrating_T_cells_CD8_TIL_version_1/23608308",
+                sourceUrl:
+                    "https://figshare.com/articles/dataset/ProjecTILs_human_reference_atlas_of_CD8_tumor-infiltrating_T_cells_CD8_TIL_version_1/23608308",
                 license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
                 recommendation: { group: "cell-typing", recommended: false },
                 artifacts: [
@@ -2174,10 +2184,10 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
 export type ReferenceInstallPlanDataset = ReferenceDataset & { readonly installPath: string };
 
 /** Deterministic plan; every artifact carries the upstream URL it is fetched from. */
-export interface ReferenceInstallPlan {
+export type ReferenceInstallPlan = {
     readonly catalogVersion: typeof REFERENCE_DATA_CATALOG_VERSION;
     readonly datasets: readonly ReferenceInstallPlanDataset[];
-}
+};
 
 /** A requested dataset id was not present in the selected catalog. */
 export class UnknownReferenceDatasetError extends Error {
@@ -2203,16 +2213,16 @@ export function resolveReferenceInstallPlanFromCatalogForTesting(
     const availableIds = [...byId.keys()].sort();
     const selectedIds = [...new Set(datasetIds)].sort();
 
+    const datasets = [];
     for (const id of selectedIds) {
-        if (!byId.has(id)) return err(new UnknownReferenceDatasetError(id, availableIds));
+        const dataset = byId.get(id);
+        if (dataset === undefined) return err(new UnknownReferenceDatasetError(id, availableIds));
+        datasets.push({ ...dataset, installPath: `${dataset.id}/${dataset.version}` });
     }
 
     return ok({
         catalogVersion: catalog.version,
-        datasets: selectedIds.map((id) => {
-            const dataset = byId.get(id)!;
-            return { ...dataset, installPath: `${dataset.id}/${dataset.version}` };
-        }),
+        datasets,
     });
 }
 

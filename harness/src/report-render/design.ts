@@ -1341,7 +1341,7 @@ export const CHART_SLIDE_THEME_NAME = `${ECHARTS_THEME_NAME}-slide`;
 const COLUMN_PIXEL_RATIO = 300 / 96;
 
 /** The size of one chart export: the name of its theme, the CSS pixel box, and the millimeter box of a column. */
-export interface ChartExportSize {
+export type ChartExportSize = {
     readonly theme: string;
     readonly textPx: number;
     readonly widthPx: number;
@@ -1350,7 +1350,7 @@ export interface ChartExportSize {
     readonly heightMm?: number;
     readonly pixelRatio: number;
     readonly label: string;
-}
+};
 
 /**
  * The export sizes of a chart: the single journal column, the double journal column, and a 16:9 slide.
@@ -1566,7 +1566,14 @@ export const CHART_INLINE_OPTION_BOUND = 100_000;
  * style. The text size scales the text alone: the page, the print export, and the slide export each register
  * one theme.
  */
-export function chartTheme(textPx: number) {
+/** The theme `echarts.registerTheme` consumes: the series palette, and the per-component styling the charts inherit. */
+export type ChartTheme = {
+    readonly color: string[];
+    readonly backgroundColor: string;
+    readonly [member: string]: unknown;
+};
+
+export function chartTheme(textPx: number): ChartTheme {
     const axis = {
         axisLine: { show: true, lineStyle: { color: CHART_INK, width: CHART_AXIS_LINE_PX } },
         axisTick: { show: true, inside: false, lineStyle: { color: CHART_INK, width: CHART_AXIS_LINE_PX } },

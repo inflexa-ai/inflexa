@@ -17,6 +17,7 @@
  * nested union. A conflict between the flat fields refuses before the core runs.
  */
 
+import { maybeRecord } from "../../lib/shape.js";
 import { err, ok, type Result } from "neverthrow";
 import { basename } from "node:path";
 import { z } from "zod";
@@ -47,6 +48,7 @@ import type { DraftBlock, DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
+import { parseJsonOrUndefined } from "../../lib/json.js";
 
 /**
  * The block payload.
@@ -59,13 +61,13 @@ import { defineTool, type Tool, type ToolContext, type ToolError } from "../defi
  * The grammar is the authoring one, thus no artifact reference of the published schema carries a hash. The
  * pinned snapshot owns that value, and the land path stamps it from the path.
  *
- * The `z.unknown()` member keeps the runtime parse permissive. Thus a malformed payload still reaches the
- * core, which parses it with the draft grammar and refuses `malformed-block` as typed data in the ok
+ * The permissive second arm keeps the runtime parse permissive. Thus a malformed payload still reaches
+ * the core, which parses it with the draft grammar and refuses `malformed-block` as typed data in the ok
  * channel. A strict input schema would turn that designed refusal into a hard input-validation error from
  * the loop. A payload that carries a hash rides the same arm, and the stamp drops the value before the
- * parse.
+ * parse. `z.json()` is the arm because the published input schema must stay JSON-Schema representable.
  */
-const blockPayload = z.union([AuthoringBlockSchema, z.unknown()]);
+const blockPayload = z.union([AuthoringBlockSchema, z.json()]);
 
 /**
  * A flat field that the model can leave out.
@@ -139,11 +141,11 @@ export type SetTitleInput = z.infer<typeof setTitleInput>;
 export type FinishDraftInput = z.infer<typeof finishDraftInput>;
 
 /** One container that an operation changed, and the child order inside it after the operation. */
-export interface ChangedContainer {
+export type ChangedContainer = {
     /** The section that holds the children. It is absent when the container is the root. */
     parentId?: string;
     children: OutlineEntry[];
-}
+};
 
 /**
  * The closed set of tool-layer refusal reasons.
@@ -165,10 +167,10 @@ export type SessionRefusalReason = "no-thread-scope" | "absent-state" | "wrong-t
  * state, or a gateway that cannot give the state. It sits beside the core `DraftRefusal`, and it never
  * widens the closed reason set of the core.
  */
-export interface SessionRefusal {
+export type SessionRefusal = {
     reason: SessionRefusalReason;
     detail: string;
-}
+};
 
 /**
  * The result of a mutation tool. A refusal carries the typed reason, from the core or from the tool layer.
@@ -200,10 +202,10 @@ export type FinishToolResult =
     { valid: true; warnings: ReportWarning[] } | { valid: false; gaps: FinishGap[]; warnings: ReportWarning[] } | { refused: SessionRefusal };
 
 /** The state of one report thread: the document under composition, and the frozen snapshot. */
-export interface ReportSessionState {
+export type ReportSessionState = {
     readonly document: DraftDocument;
     readonly snapshot: ReportSnapshot;
-}
+};
 
 /**
  * The concurrency token that a load hands out and a persist compares against. It is the prior document
@@ -265,7 +267,7 @@ export type SeenStampResult = { outcome: "stamped" } | { outcome: "no-rendered" 
  * the gateway over the durable store. A load gives the state, a typed absence, or a typed failure. A
  * persist gives success, or a typed failure.
  */
-export interface ReportSessionStateGateway {
+export type ReportSessionStateGateway = {
     load(threadId: string): Promise<SessionStateLoad>;
     persist(threadId: string, document: DraftDocument, expected: SessionStateToken): Promise<SessionStatePersist>;
     /**
@@ -279,13 +281,13 @@ export interface ReportSessionStateGateway {
      * rendered hash existed to copy, thus the eyes tell a real stamp from a missed one.
      */
     stampSeen(threadId: string): Promise<SeenStampResult>;
-}
+};
 
 /**
  * The thread of a call, its analysis, the loaded state, the concurrency token that the persist compares
  * against, the seen-document hash of the look-before-record rule, and the derivations of the session.
  */
-export interface OpenedThread {
+export type OpenedThread = {
     readonly threadId: string;
     readonly analysisId: string;
     readonly state: ReportSessionState;
@@ -294,7 +296,7 @@ export interface OpenedThread {
     readonly seenDocumentHash: string | null;
     /** The derivations of the session, in the order that the records landed. */
     readonly derivations: readonly DerivationRecord[];
-}
+};
 
 /**
  * Resolve the report thread of a call, and load its state through the gateway.
@@ -312,7 +314,7 @@ export interface OpenedThread {
  * same thread id and map a load outcome onto a refusal the same way.
  */
 export async function openReportThread(gateway: ReportSessionStateGateway, scope: Scope): Promise<Result<OpenedThread, SessionRefusal>> {
-    if (scope.kind !== "analysis" || scope.threadId === undefined || !isSafeId(scope.threadId)) {
+    if (scope.threadId === undefined || !isSafeId(scope.threadId)) {
         return err({ reason: "no-thread-scope", detail: "the scope of the call names no usable report thread id" });
     }
     const { threadId, analysisId } = scope;
@@ -343,7 +345,7 @@ export async function openReportThread(gateway: ReportSessionStateGateway, scope
 }
 
 /** The eight authoring tools. */
-export interface ReportAuthoringTools {
+export type ReportAuthoringTools = {
     readonly add_block: Tool<AddBlockInput, MutationResult>;
     readonly change_block: Tool<ChangeBlockInput, MutationResult>;
     readonly remove_block: Tool<RemoveBlockInput, MutationResult>;
@@ -352,15 +354,15 @@ export interface ReportAuthoringTools {
     readonly read_outline: Tool<ReadOutlineInput, OutlineResult>;
     readonly read_block: Tool<ReadBlockInput, ReadBlockResult>;
     readonly finish_draft: Tool<FinishDraftInput, FinishToolResult>;
-}
+};
 
 /** The flat fields that name a destination. Both `add_block` and `move_block` carry them. */
-interface DestinationInput {
+type DestinationInput = {
     parentId?: string | null;
     place?: "start" | "end" | null;
     before?: string | null;
     after?: string | null;
-}
+};
 
 /** Read an absentable field. An explicit `null` and an omitted key both mean that the model gave no value. */
 function given<T>(value: T | null | undefined): T | undefined {
@@ -435,11 +437,8 @@ function decodeBlockPayload(block: unknown): unknown {
     if (typeof block !== "string") {
         return block;
     }
-    try {
-        return JSON.parse(block);
-    } catch {
-        return block;
-    }
+    const value = parseJsonOrUndefined(block);
+    return value === undefined ? block : value;
 }
 
 /** Read the `kind` of an untyped block payload, or `undefined` when the payload names none. */
@@ -454,7 +453,7 @@ function readId(block: unknown): string | undefined {
 
 /** Read one field of an untyped payload, or `undefined` when the payload is not an object. */
 function fieldOf(value: unknown, field: string): unknown {
-    return value !== null && typeof value === "object" ? (value as Record<string, unknown>)[field] : undefined;
+    return maybeRecord(value)?.[field];
 }
 
 function readStringField(block: unknown, field: string): string | undefined {
@@ -608,12 +607,12 @@ const AUTHORING_EXECUTION_MODE = "inline" as const;
  * The optional deps of the authoring surface. The gateway is the one mandatory part, thus it stays a
  * parameter of its own and this bag holds what a composition can leave out.
  */
-export interface ReportAuthoringToolDeps {
+export type ReportAuthoringToolDeps = {
     /** The provenance seam; an unbound session emit emits nothing and each tool acts the same. */
     readonly provenance?: ProvenanceSeam;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-}
+};
 
 /**
  * Make the eight authoring tools over a session-state gateway.

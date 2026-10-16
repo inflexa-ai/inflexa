@@ -50,7 +50,8 @@ export function storedMessagesToChat(messages: readonly StoredMessage[]): ChatMe
             const author = row.author === undefined ? {} : { author: row.author };
             groupLast = undefined;
             for (const message of conversationUIToChatMessages(row.displayEnvelope.messages)) {
-                const stamped: ChatMessage = { ...message, ...createdAt, ...(message.role === "user" ? author : {}) };
+                const authorFields = message.role === "user" ? author : {};
+                const stamped: ChatMessage = { ...message, ...createdAt, ...authorFields };
                 const previous = out.at(-1);
                 // The merged message keeps the creation time of its first round.
                 if (stamped.role === "assistant" && previous?.role === "assistant" && previous.id === stamped.id) mergeRound(previous, stamped);

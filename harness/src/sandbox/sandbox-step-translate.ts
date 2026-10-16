@@ -6,7 +6,10 @@
  * into its emitters.
  */
 
+import { z } from "zod";
+
 import type { ActivityEntryPart, StepActivityPart, StepPhase, SynthesisPhase, SynthesisProgressPart } from "../contracts/chat-parts.js";
+import { maybeRecord } from "../lib/shape.js";
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
 import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
@@ -92,21 +95,28 @@ export function activityForTool(name: string, input?: unknown, resolveDetail?: T
 
 /** On-change working-tree delta the sandbox executor posts per exec (paths
  *  only; the executor skips directories). */
-export interface SandboxTreeDelta {
+export type SandboxTreeDelta = {
     added?: string[];
     modified?: string[];
     removed?: string[];
-}
+};
 
 /** Extract the tree delta from a `data-sandbox-event` part, or null when the
  *  part is some other sandbox event. The wrapper shape is set by
  *  `run-exec.ts`: `{ type: "data-sandbox-event", data: { event } }`
  *  where `event` is the executor's `eventPayload`. */
+const SandboxTreeDeltaSchema = z.looseObject({
+    added: z.array(z.string()).optional(),
+    modified: z.array(z.string()).optional(),
+    removed: z.array(z.string()).optional(),
+});
+
 export function sandboxTreeDelta(part: { type: string; data?: unknown }): SandboxTreeDelta | null {
     if (part.type !== "data-sandbox-event") return null;
-    const inner = (part.data as { event?: { kind?: string; tree?: SandboxTreeDelta } } | undefined)?.event;
-    if (!inner || inner.kind !== "file-tree" || !inner.tree) return null;
-    return inner.tree;
+    const inner = maybeRecord(maybeRecord(part.data)?.event);
+    if (inner === undefined || inner.kind !== "file-tree") return null;
+    const parsed = SandboxTreeDeltaSchema.safeParse(inner.tree);
+    return parsed.success ? parsed.data : null;
 }
 
 /** Apply one on-change delta to the per-step cumulative path set. `added`
@@ -126,5 +136,6 @@ export function applyTreeDelta(files: Set<string>, delta: SandboxTreeDelta): voi
  * `done`) never start with `data-`.
  */
 export function isChatDataPart(event: Parameters<EmitFn>[0]): event is ChatDataPart {
+    // SAFETY: the wire payload carries its discriminant on `type` — the typeof admits the string only, and the second read is that member after the proof.
     return typeof (event as { type?: unknown }).type === "string" && (event as { type: string }).type.startsWith("data-");
 }

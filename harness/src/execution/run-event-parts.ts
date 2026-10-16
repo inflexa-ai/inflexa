@@ -8,6 +8,7 @@
  * through a subscription.
  */
 
+import { maybeRecord } from "../lib/shape.js";
 import { reconcileKey } from "../contracts/chat-frame.js";
 import type { ChatPart } from "../contracts/chat-parts.js";
 import { PART_REGISTRY } from "../contracts/part-registry.js";
@@ -31,10 +32,13 @@ import { PART_REGISTRY } from "../contracts/part-registry.js";
  * consumer for its own check.
  */
 export function parseRunEventPart(value: unknown): ChatPart | null {
-    if (typeof value !== "object" || value === null) return null;
-    const type = (value as { type?: unknown }).type;
+    const record = maybeRecord(value);
+    if (record === undefined) return null;
+    const type = record.type;
     if (typeof type !== "string") return null;
     if (!Object.hasOwn(PART_REGISTRY, type)) return null;
+    // SAFETY: the discriminant named a member of PART_REGISTRY — the registry maps each wire type to its contract, and the producer writes those fields.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the gate validates the registry discriminant alone by design; a payload parse would change the stream semantics.
     return value as ChatPart;
 }
 
@@ -92,8 +96,13 @@ export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (e
         }
     };
 
+    // The timer flips in the debounce callback of another task; the closure gives
+    // each read the value at call time, not a narrowed earlier value.
+    const pendingFlushTimer = (): ReturnType<typeof setTimeout> | null => flushTimer;
+
     const scheduleFlush = (): void => {
         if (flushTimer !== null) return;
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the debounce fires the flush after `flushMs` of quiet; the close path flushes the tail and clears it, so it cannot outlive the stream.
         flushTimer = setTimeout(() => {
             // A timed flush has no caller to report to. A lasting emit failure
             // still reaches the caller, through the next direct emit or the
@@ -115,8 +124,9 @@ export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (e
             scheduleFlush();
         }
     } finally {
-        if (flushTimer !== null) {
-            clearTimeout(flushTimer);
+        const timer = pendingFlushTimer();
+        if (timer !== null) {
+            clearTimeout(timer);
             flushTimer = null;
         }
         await flushChain;

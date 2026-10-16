@@ -28,6 +28,7 @@ const IDENTIFIERS_LISTED_IN_FULL = 8;
  * The identifier spaces that Ensembl cannot key on. Anything that matches none
  * of them is treated as a symbol and goes straight to Ensembl.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const NON_SYMBOL_PATTERNS = [/^ENSG\d{11}$/, /^HGNC:\d+$/, /^CHEMBL\d+$/, /^[A-Z][0-9][A-Z0-9]{3}[0-9](-\d+)?$/];
 
 function isSymbol(identifier: string): boolean {
@@ -35,10 +36,10 @@ function isSymbol(identifier: string): boolean {
 }
 
 /** One input that was not a symbol, beside the approved symbol it became. */
-interface ResolvedIdentifier {
+type ResolvedIdentifier = {
     input: string;
     symbol: string;
-}
+};
 
 export const searchGeneTool = defineTool({
     id: "search_gene",

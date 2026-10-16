@@ -11,12 +11,12 @@
  * start/await/cancel mechanics around it.
  */
 
-export interface LaunchOptions {
+export type LaunchOptions = {
     /** Caller-chosen durable workflow id (e.g. the runId). */
     readonly workflowId: string;
-}
+};
 
-export interface RunLauncher {
+export type RunLauncher = {
     /** Fire-and-forget: resolves once the run is durably started. */
     launch<I>(workflow: (input: I) => Promise<unknown>, opts: LaunchOptions, input: I): Promise<void>;
-}
+};

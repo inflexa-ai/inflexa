@@ -33,6 +33,7 @@
 import { ResultAsync, err, ok } from "neverthrow";
 
 import type { DomainError } from "./result.js";
+import { maybeRecord } from "./shape.js";
 
 /**
  * A filesystem failure. Absence is deliberately NOT modelled here — a missing
@@ -62,8 +63,9 @@ const ABSENT_CODES = new Set(["ENOENT", "ENOTDIR"]);
 const PERMISSION_CODES = new Set(["EACCES", "EPERM"]);
 
 function errnoOf(cause: unknown): string | undefined {
-    if (cause && typeof cause === "object" && "code" in cause) {
-        const code = (cause as { code?: unknown }).code;
+    const fields = maybeRecord(cause);
+    if (fields !== undefined && "code" in fields) {
+        const code = fields.code;
         return typeof code === "string" ? code : undefined;
     }
     return undefined;

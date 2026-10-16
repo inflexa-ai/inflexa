@@ -12,5 +12,5 @@
 
 /** Serialize a value to JSON that is safe inside a `<script>` element. */
 export function scriptJson(value: unknown): string {
-    return JSON.stringify(value).replace(/</g, "\\u003c");
+    return JSON.stringify(value).replaceAll("<", "\\u003c");
 }

@@ -11,6 +11,7 @@
  * exist) is an expected outcome — an empty result list, not an error.
  */
 
+import { maybeRecord } from "../../lib/shape.js";
 import { err, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -19,18 +20,20 @@ import type { EmbeddingProvider } from "../../providers/types.js";
 import { scopeResource } from "../../auth/types.js";
 import { tryQuery } from "../../lib/db-result.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { defineTool } from "../define-tool.js";
+import { defineTool, type Tool } from "../define-tool.js";
 
 /** pgvector / Postgres "undefined_table" — the index has no rows indexed yet. */
 const UNDEFINED_TABLE = "42P01";
 
 /** True when a captured driver cause is the "undefined_table" SQLSTATE. */
 function isUndefinedTable(cause: unknown): boolean {
-    return !!cause && typeof cause === "object" && (cause as { code?: unknown }).code === UNDEFINED_TABLE;
+    return maybeRecord(cause)?.code === UNDEFINED_TABLE;
 }
 
 function indexName(analysisId: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const name = `search_${analysisId.replace(/-/g, "_")}`;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
         throw new Error(`workspaceSearch: unusable analysis id "${analysisId}"`);
     }
@@ -48,15 +51,28 @@ const PATTERN_TYPES = new Set(["input-group", "input-dimension", "input-kind"]);
  * segment. The consumer branches on presence, nothing else.
  */
 export function fileTargetOf(id: string, metadata: unknown): string | undefined {
-    const meta = metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
+    const meta = maybeRecord(metadata) ?? {};
     const type = typeof meta.type === "string" ? meta.type : undefined;
     if (type !== undefined && PATTERN_TYPES.has(type)) return undefined;
     if (type === "input" && meta.entity !== undefined) return undefined;
     if (typeof meta.path === "string") return meta.path;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return id.replace(/^\/[^/]+\//, "");
 }
 
-export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvider) {
+type WorkspaceSearchResult = { id: string; score: number; path?: string; metadata: unknown };
+type WorkspaceSearchOutput = { results: WorkspaceSearchResult[] };
+
+const inputSchema = z.object({
+    query: z.string().min(1).describe("What to search for, in natural language"),
+    type: z
+        .enum(["input-group", "input-dimension", "input", "input-kind", "output", "summary", "synthesis"])
+        .optional()
+        .describe('Restrict results to one entry type: "input-group", "input-dimension", "input", "input-kind", "output", "summary", or "synthesis"'),
+    limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
+});
+
+export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvider): Tool<z.infer<typeof inputSchema>, WorkspaceSearchOutput> {
     return defineTool({
         id: "workspace_search",
         description:
@@ -76,17 +92,10 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
             "metadata, e.g. search input-group for a group's display pattern, then list the tree for " +
             "its members. Most input files carry no entry of their own — find them through their " +
             "group and the listing tools.",
-        inputSchema: z.object({
-            query: z.string().min(1).describe("What to search for, in natural language"),
-            type: z
-                .enum(["input-group", "input-dimension", "input", "input-kind", "output", "summary", "synthesis"])
-                .optional()
-                .describe('Restrict results to one entry type: "input-group", "input-dimension", "input", "input-kind", "output", "summary", or "synthesis"'),
-            limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
-        }),
+        inputSchema,
         describeCall: ({ query, type }) => (type === undefined ? query : `${query} (${type})`),
         execute: async ({ query, type, limit }, ctx) => {
-            const [vector] = unwrapOrThrow(await embedding.embed([query], ctx.session));
+            const vector = unwrapOrThrow(await embedding.embed([query], ctx.session)).at(0);
             if (!vector) return ok({ results: [] });
 
             const table = indexName(scopeResource(ctx.session.scope).resourceId);
@@ -127,7 +136,7 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
                     return {
                         id: r.id,
                         score: r.score,
-                        ...(path !== undefined ? { path } : {}),
+                        path: path !== undefined ? path : undefined,
                         metadata: r.metadata,
                     };
                 }),

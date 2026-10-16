@@ -5,17 +5,18 @@ import {
     tool as aiTool,
     type FilePart,
     type FinishReason,
+    type JSONValue,
     type ToolSet,
     type TextPart,
     type ToolCallPart,
     type ToolResultPart,
     type ModelMessage,
 } from "ai";
-import type { z } from "zod";
+import { z } from "zod";
 
-import type { AgentSession } from "../auth/types.js";
+import type { AgentSession, Scope } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
-import type { UsageRecorder } from "../billing/usage-recorder.js";
+import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js";
 import type { CompactionPart } from "../contracts/chat-parts.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -23,6 +24,7 @@ import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { passThroughSpan } from "../lib/otel-spans.js";
 import { ResultError, unwrapOrThrow } from "../lib/result.js";
+import type { ResultAsync } from "neverthrow";
 import { describeZodIssueShapes } from "../lib/zod-issue-shape.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import {
@@ -41,7 +43,7 @@ import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakp
 import { COMPACTION_MAX_REQUESTS, type CompactionPolicy } from "./compaction.js";
 import { continueAgent, type ContinuationResult } from "./continue-agent.js";
 import { resultStep } from "./run-step.js";
-import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
+import type { AgentChat, ChatRequest, ChatResponse, ChatUsage, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import {
     isToolError,
@@ -65,11 +67,15 @@ import {
     TOOL_RESULT_CAP,
     toolOutputRef,
     withExcerpt,
+    type KeptToolOutput,
     type ToolOutputStore,
 } from "./tool-output.js";
-import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
+import type { AgentDefinition, EmitFn, LoopMessage, RunStep } from "./types.js";
+import { errorMessage, errorName, isAbortError, errorOf } from "../lib/thrown.js";
+import { maybeRecord } from "../lib/shape.js";
+import { jsonParse } from "../lib/json.js";
 
-export interface AgentFinish {
+export type AgentFinish = {
     readonly reason: FinishReason | "aborted" | "max_iterations" | "denied";
     /**
      * The endpoint's own word for the stop, when the provider captured one —
@@ -89,45 +95,45 @@ export interface AgentFinish {
      * carried none, which is by construction the turn's root.
      */
     readonly turnUsage?: AgentRunUsage;
-}
+};
 
-export interface RunAgentResult {
+export type RunAgentResult = {
     readonly messages: LoopMessage[];
     readonly finish: AgentFinish;
-}
+};
 
 /** A request that the provider refused for its content: the HTTP status and the text of the provider error. */
-export interface RequestRefusal {
+export type RequestRefusal = {
     readonly status: number;
     readonly message: string;
-}
+};
 
 /** The result of a segment. A segment that ends on a refusal of its request carries the refusal. */
-export interface SegmentResult extends RunAgentResult {
+export type SegmentResult = RunAgentResult & {
     readonly refusal?: RequestRefusal;
-}
+};
 
 /** The messages that the loop appended after the last call of the round sink. */
-export interface AgentRound {
+export type AgentRound = {
     readonly messages: readonly LoopMessage[];
-}
+};
 
 const TRUNCATED_PROSE_STEER = "Your previous reply was cut off at the output-token limit; continue concisely, or finish via your terminal tool.";
 
 const TRUNCATED_TOOL_USE_ERROR =
     "Your previous tool call was cut off at the output-token limit and was not executed. Retry with a smaller payload, writing in incremental pieces.";
 
-export interface StepNameFormatter {
-    llm(iteration: number): string;
-    tool(toolName: string, toolUseId: string): string;
-}
+export type StepNameFormatter = {
+    llm: (iteration: number) => string;
+    tool: (toolName: string, toolUseId: string) => string;
+};
 
 export const DEFAULT_STEP_NAME_FORMATTER: StepNameFormatter = {
     llm: (i) => `llm-${i}`,
     tool: (name, id) => `tool-${name}-${id}`,
 };
 
-export interface RunAgentOptions {
+export type RunAgentOptions = {
     readonly provider: AgentChat;
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
@@ -243,7 +249,7 @@ export interface RunAgentOptions {
      * root, a workflow step body, a background task).
      */
     readonly invocationId?: string;
-}
+};
 
 /** A run that receives no turn accumulator is the turn's root. See `RunAgentOptions.turnUsage`. */
 export const isTurnRoot = (opts: RunAgentOptions): boolean => opts.turnUsage === undefined;
@@ -263,7 +269,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     const loop = openLoop(agent, initial, session, opts, agent.id);
     if (opts.turnInput !== undefined) {
         const ended = await loop.startTurn(opts.turnInput);
-        if (ended !== undefined) return ended;
+        if (ended !== undefined) return Promise.resolve(ended);
     }
     const task = await loop.runSegment({ mask: opts.toolMask, maxRequests: agent.maxIterations, stepNames: formatStepName, firstIndex: 0, checksBudget: true });
     if (task !== "capped") return task;
@@ -283,7 +289,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 }
 
 /** One stretch of model requests of a conversation, under one mask. */
-export interface LoopSegment {
+export type LoopSegment = {
     /** The tools that can run for each request of the segment. Absent lets each declared tool run. */
     readonly mask: ToolMask | undefined;
     readonly maxRequests: number;
@@ -301,13 +307,13 @@ export interface LoopSegment {
     readonly checksBudget?: boolean;
     /** A refusal of a request, a `provider` error with the status `400` or `413`, ends the segment with no new message. */
     readonly endsOnRequestRefusal?: boolean;
-}
+};
 
 /**
  * One conversation, open for its segments. Each segment extends the same
  * prefix (system prompt, tools, tool choice) as the one before it.
  */
-export interface OpenLoop {
+export type OpenLoop = {
     /**
      * Compact the conversation when the last request passed the turn-start budget, and then append the input of the
      * turn. The result of the run when an abort ends the compaction, or `undefined` when the run continues.
@@ -317,7 +323,7 @@ export interface OpenLoop {
     runSegment(segment: LoopSegment): Promise<SegmentResult | "capped">;
     /** End a run after its last segment used its cap. */
     endCapped(): Promise<RunAgentResult>;
-}
+};
 
 /**
  * Open the loop over one conversation. `metricAgentId` is the id that usage
@@ -339,8 +345,7 @@ export function openLoop(
     // AbortError is control flow, not a tool failure. Always compose it with the
     // host's fatal predicate so request cancellation cannot be converted into a
     // model-visible error result and retried by the loop.
-    const isFatalLoopError = (err: unknown): boolean =>
-        ((err instanceof Error || err instanceof DOMException) && err.name === "AbortError") || configuredFatalLoopError(err);
+    const isFatalLoopError = (err: unknown): boolean => isAbortError(err) || configuredFatalLoopError(err);
     if (agent.tools.length > 0 && !provider.capabilities.toolCalling) {
         throw new Error(`Provider/model cannot run tool-required agent "${agent.id}"`);
     }
@@ -357,11 +362,13 @@ export function openLoop(
         sinkPending = false;
         givenCount = messages.length;
     };
-    const source: EventSource = {
-        agentId: session.provenance.agentId ?? agent.id,
+    // A source without an invocation id must not carry the key, so the absence survives the JSON round trip.
+    // The local is mutable because EventSource stamps its members readonly.
+    const source: { agentId: string; callPath: readonly string[]; invocationId?: string } = {
+        agentId: session.provenance.agentId,
         callPath: session.provenance.callPath,
-        ...(opts.invocationId === undefined ? {} : { invocationId: opts.invocationId }),
     };
+    if (opts.invocationId !== undefined) source.invocationId = opts.invocationId;
     const policy = opts.compaction;
     const viewOptions = { keepFirstTurn: policy?.keepFirstTurn === true };
     const viewOf = (): LoopMessage[] => (policy === undefined ? messages : conversationView(messages, viewOptions).messages);
@@ -437,7 +444,6 @@ export function openLoop(
     // the agent type, so it is computed once.
     const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
     const system = withSystemPromptBreakpoint(agent.systemPrompt, promptCache);
-    const reasoningField: Pick<ChatRequest, "reasoning"> = opts.reasoning === undefined ? {} : { reasoning: opts.reasoning };
     const usage: AgentRunUsage = {};
 
     // Exactly one record per completed run — never one per iteration. That bound is
@@ -473,31 +479,39 @@ export function openLoop(
         session,
         agentId: source.agentId,
         callPath: source.callPath,
-        ...(opts.invocationId === undefined ? {} : { invocationId: opts.invocationId }),
+        invocationId: !(opts.invocationId === undefined) ? opts.invocationId : undefined,
         usageRecorder,
         logger: log,
         rollups: [usage, turnUsage],
     };
 
     /** The rollups this loop stamps on its finish — each absent when nothing reported. */
-    const finishUsage = (): Pick<AgentFinish, "usage" | "turnUsage"> => ({
-        ...(hasReportedUsage(usage) ? { usage: { ...usage } } : {}),
-        ...(turnRoot && hasReportedUsage(turnUsage) ? { turnUsage: { ...turnUsage } } : {}),
-    });
+    const finishUsage = (): Pick<AgentFinish, "usage" | "turnUsage"> => {
+        const finish: { usage?: AgentRunUsage; turnUsage?: AgentRunUsage } = {};
+        if (hasReportedUsage(usage)) finish.usage = { ...usage };
+        if (turnRoot && hasReportedUsage(turnUsage)) finish.turnUsage = { ...turnUsage };
+        return finish;
+    };
 
     /**
      * One model request over the view of the transcript. Token counters grow inside
      * the step body, so a replayed step (a stored reply) does not double-count.
      */
     const callModel = async (stepName: string, endsOnRequestRefusal: boolean): Promise<ChatResponse | { readonly refusal: RequestRefusal }> => {
-        const request: ChatRequest = {
+        const request: {
+            system: ChatRequest["system"];
+            messages: ChatRequest["messages"];
+            tools: ChatRequest["tools"];
+            toolChoice?: ChatRequest["toolChoice"];
+            reasoning?: ChatRequest["reasoning"];
+        } = {
             system,
             messages: withPromptCacheBreakpoint(viewOf(), promptCache),
             tools: toolDefs,
-            ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
-            ...reasoningField,
         };
-        const chat = () => provider.chat(request, session, signal).map(countChatTokens(metricAgentId));
+        if (opts.toolChoice !== undefined) request.toolChoice = opts.toolChoice;
+        if (opts.reasoning !== undefined) request.reasoning = opts.reasoning;
+        const chat = (): ResultAsync<ChatResponse, ProviderError> => provider.chat(request, session, signal).map(countChatTokens(metricAgentId));
         if (!endsOnRequestRefusal) {
             const reply = await resultStep(callStep)(stepName, chat);
             accountForChatCall(reply, { ...accounting, stepName });
@@ -561,8 +575,8 @@ export function openLoop(
     ): Promise<string[]> => {
         const errored: string[] = [];
         for (let idx = 0; idx < calls.length; idx++) {
-            const tu = calls[idx]!;
-            const outcome = outcomeOf(results[idx]!);
+            const tu = calls[idx];
+            const outcome = outcomeOf(results[idx]);
             toolCallCount++;
             // A denial counts here with the errors: the model reads it as a result
             // it did not get to act on, which is what these counters describe. The
@@ -625,7 +639,8 @@ export function openLoop(
         const id = randomUUID();
         const stepNamespace = `compaction-${compactions++}`;
         const startedAt = performance.now();
-        const emitPart = (data: Omit<CompactionPart, "type" | "trigger">) => emit({ type: "data-compaction", source, data: { ...data, trigger } });
+        const emitPart = (data: Omit<CompactionPart, "type" | "trigger">): void | Promise<void> =>
+            emit({ type: "data-compaction", source, data: { ...data, trigger } });
         await emitPart({ id, status: "running", tokensBefore });
         const { onRound: _onRound, compaction: _compaction, turnInput: _turnInput, ...conversationOptions } = opts;
         let settled = false;
@@ -691,25 +706,25 @@ export function openLoop(
             return undefined;
         }
         const ended = await compact(policy, tokens, 0, "turn-start");
-        if (ended !== undefined) return ended;
+        if (ended !== undefined) return Promise.resolve(ended);
         // The records after a summary give the current context, thus a record of the input would only repeat one.
         messages.push(...(summarizedLast ? input.filter((message) => contextRecordOf(message) === undefined) : input));
-        return undefined;
+        return Promise.resolve(undefined);
     };
 
-    const compactOverBudget = async (index: number): Promise<RunAgentResult | undefined> => {
-        if (policy === undefined || continuesTruncation || compactionStopped) return undefined;
+    const compactOverBudget = (index: number): Promise<RunAgentResult | undefined> => {
+        if (policy === undefined || continuesTruncation || compactionStopped) return Promise.resolve(undefined);
         const tokens = lastRequestInputTokens(messages);
-        if (tokens === undefined) return undefined;
+        if (tokens === undefined) return Promise.resolve(undefined);
         const afterSummary = summarizedLast;
         summarizedLast = false;
-        if (tokens <= policy.budget) return undefined;
+        if (tokens <= policy.budget) return Promise.resolve(undefined);
         if (afterSummary) {
             log.warn("the first request after the summary still exceeds the budget, thus the run compacts no more", { tokens, budget: policy.budget });
             compactionStopped = true;
-            return undefined;
+            return Promise.resolve(undefined);
         }
-        return compact(policy, tokens, index, "mid-turn");
+        return Promise.resolve(compact(policy, tokens, index, "mid-turn"));
     };
 
     const runSegment = async (segment: LoopSegment): Promise<SegmentResult | "capped"> => {
@@ -730,7 +745,7 @@ export function openLoop(
             await giveRound();
             if (segment.checksBudget === true) {
                 const ended = await compactOverBudget(index);
-                if (ended !== undefined) return ended;
+                if (ended !== undefined) return Promise.resolve(ended);
             }
             if (segment.closesCappedRun !== true) iterations++;
             const roundStart = messages.length;
@@ -766,7 +781,7 @@ export function openLoop(
                     continuesTruncation = true;
                     continue;
                 }
-                const trailing = toolCalls[toolCalls.length - 1]!;
+                const trailing = toolCalls[toolCalls.length - 1];
                 const earlier = toolCalls.slice(0, -1);
                 const earlierDetails = roundDetails(earlier);
                 for (const [idx, tu] of earlier.entries()) {
@@ -823,7 +838,7 @@ export function openLoop(
                     messages,
                     finish: {
                         reason: reply.finishReason,
-                        ...(reply.rawFinishReason === undefined ? {} : { rawFinishReason: reply.rawFinishReason }),
+                        rawFinishReason: !(reply.rawFinishReason === undefined) ? reply.rawFinishReason : undefined,
                         cappedOut: false,
                         truncationRecoveries,
                         ...finishUsage(),
@@ -901,7 +916,7 @@ function withRequestAnchor(reply: ChatResponse): ChatResponse {
 }
 
 /** What one completed LLM call is accounted under. */
-export interface ChatCallAccounting {
+export type ChatCallAccounting = {
     readonly session: AgentSession;
     readonly agentId: string;
     readonly callPath: readonly string[];
@@ -917,7 +932,7 @@ export interface ChatCallAccounting {
     readonly logger: Logger;
     /** The accumulators that the usage of the call folds into, for example the run total and the turn total. */
     readonly rollups: readonly AgentRunUsage[];
-}
+};
 
 /**
  * Called at the fold point, before any run-ending branch, so an aborted or
@@ -931,22 +946,33 @@ export function accountForChatCall(reply: ChatResponse, call: ChatCallAccounting
 
     const reported = reply.usage;
     if (reported === undefined || !hasReportedUsage(reported)) return;
-    const { session } = call;
-    void deliverNotice(
-        call.logger,
-        "UsageRecorder.record",
-        call.usageRecorder.record({
-            recordKey: recordKeyFor(session, call.invocationId, call.stepName),
-            agentId: call.agentId,
-            callPath: call.callPath,
-            scope: session.scope,
-            ...(session.runFrame?.runId === undefined ? {} : { runId: session.runFrame.runId }),
-            ...(session.runFrame?.stepId === undefined ? {} : { stepId: session.runFrame.stepId }),
-            ...(reply.requestedModelId === undefined ? {} : { requestedModelId: reply.requestedModelId }),
-            ...(reply.servedModelId === undefined ? {} : { servedModelId: reply.servedModelId }),
-            usage: reported,
-        }),
-    );
+    void deliverNotice(call.logger, "UsageRecorder.record", call.usageRecorder.record(attributionOf(call, reply, reported)));
+}
+
+/** The attribution record of one call — each absent attribute stays an absent key. */
+function attributionOf(call: ChatCallAccounting, reply: ChatResponse, usage: ChatUsage): LlmUsageRecord {
+    const record: {
+        recordKey: string;
+        agentId: string;
+        callPath: readonly string[];
+        scope: Scope;
+        runId?: string;
+        stepId?: string;
+        requestedModelId?: string;
+        servedModelId?: string;
+        usage: ChatUsage;
+    } = {
+        recordKey: recordKeyFor(call.session, call.invocationId, call.stepName),
+        agentId: call.agentId,
+        callPath: call.callPath,
+        scope: call.session.scope,
+        usage,
+    };
+    if (call.session.runFrame?.runId !== undefined) record.runId = call.session.runFrame.runId;
+    if (call.session.runFrame?.stepId !== undefined) record.stepId = call.session.runFrame.stepId;
+    if (reply.requestedModelId !== undefined) record.requestedModelId = reply.requestedModelId;
+    if (reply.servedModelId !== undefined) record.servedModelId = reply.servedModelId;
+    return record;
 }
 
 /**
@@ -1009,7 +1035,7 @@ function recordKeyFor(session: AgentSession, invocationId: string | undefined, s
 
 function toolCallParts(message: Extract<ModelMessage, { role: "assistant" }>): ToolCallPart[] {
     if (typeof message.content === "string") return [];
-    return message.content.filter((part): part is ToolCallPart => part.type === "tool-call");
+    return message.content.flatMap((part) => (part.type === "tool-call" ? [part] : []));
 }
 
 /** Whether an aborted partial carries any content worth persisting — an empty partial contributes no message. */
@@ -1023,7 +1049,7 @@ function assistantHasContent(message: Extract<ModelMessage, { role: "assistant" 
  */
 function markLastLoopAssistant(messages: LoopMessage[], roundStart: number): void {
     for (let idx = messages.length - 1; idx >= roundStart; idx--) {
-        const message = messages[idx]!;
+        const message = messages[idx];
         if (message.role === "assistant") {
             messages[idx] = markInterruptedMessage(message);
             return;
@@ -1047,11 +1073,11 @@ function imagePlacementFor(capabilities: ProviderCapabilities): ImagePlacement {
 }
 
 /** The pictures that a tool result cannot carry, with the tool call that produced them. */
-interface DeferredImages {
+type DeferredImages = {
     readonly toolCallId: string;
     readonly toolName: string;
     readonly images: readonly ToolResultImage[];
-}
+};
 
 /**
  * How a completed tool result is encoded onto the provider message. `placement`
@@ -1071,11 +1097,11 @@ interface DeferredImages {
  * changes the contract of the durable step and the specs, thus it waits for
  * its own change.
  */
-interface ResultEncoding {
+type ResultEncoding = {
     readonly placement: ImagePlacement;
     readonly log: Logger;
     readonly deferredImages: DeferredImages[];
-}
+};
 
 /**
  * The text part that names one deferred picture. The wire holds no structural
@@ -1235,11 +1261,11 @@ function elapsedMs(startedAt: number): number {
  * `tool_result` part, which drops a symbol key and flattens every class, thus a
  * hook that ran later would read a shape its tool never produced.
  */
-interface DispatchedCall {
+type DispatchedCall = {
     readonly result: ToolResultPart;
     readonly detail?: ToolCallDetail;
     readonly record?: unknown;
-}
+};
 
 /**
  * Read one settled step-mode dispatch, tolerating the bare result beside the pair.
@@ -1255,13 +1281,13 @@ function readDispatchedStep(settled: DispatchedCall | ToolResultPart): Dispatche
     return "result" in settled ? settled : { result: settled };
 }
 
-interface ResultCut {
+type ResultCut = {
     /** Absent when the run keeps nothing. */
     readonly store: ToolOutputStore | undefined;
     readonly session: AgentSession;
     readonly invocationId: string | undefined;
     readonly log: Logger;
-}
+};
 
 /** For a step-mode tool this runs inside the durable step of the call, thus a replay gives the stored excerpt. */
 async function dispatchTool(
@@ -1286,16 +1312,17 @@ async function cutLongResult(result: ToolResultPart, cut: ResultCut, stepName: s
     const { session } = cut;
     const ref = toolOutputRef(recordKeyFor(session, cut.invocationId, stepName));
     const content = keptTextOf(text);
-    const put = await cut.store.put({
+    const output: { -readonly [K in keyof KeptToolOutput]: KeptToolOutput[K] } = {
         analysisId: session.scope.analysisId,
         ref,
         toolName: result.toolName,
         toolCallId: result.toolCallId,
-        // A run session carries the thread of the chat that started the run, but a run belongs to its analysis.
-        ...(session.runFrame === undefined && session.scope.threadId !== undefined ? { threadId: session.scope.threadId } : {}),
         content,
         totalLength: text.length,
-    });
+    };
+    // A run session carries the thread of the chat that started the run, but a run belongs to its analysis.
+    if (session.runFrame === undefined && session.scope.threadId !== undefined) output.threadId = session.scope.threadId;
+    const put = await cut.store.put(output);
     if (put.isErr()) {
         cut.log.warn("tool output not kept", { toolName: result.toolName, toolCallId: result.toolCallId, ref, errorType: put.error.type });
     }
@@ -1352,10 +1379,11 @@ async function execute(
         const detail = computeResultDetail(tool, input, output.value, encoding.log);
         const record = readToolCallRecord(output.value);
         const result = successResult(tu, output.value, encoding);
-        return { result, ...(detail === undefined ? {} : { detail }), ...(record === undefined ? {} : { record }) };
+        return { result, detail: !(detail === undefined) ? detail : undefined, record: !(record === undefined) ? record : undefined };
     } catch (err) {
         if (isFatalLoopError(err)) throw err;
-        if (isAskRejected(err)) return { result: deniedResult(tu, err.feedback) };
+        const rejection = askRejectionOf(err);
+        if (rejection !== undefined) return { result: deniedResult(tu, rejection.feedback) };
         markToolFailure(tu, tool, err, encoding.log);
         return { result: errorResult(tu, toolErrorContent(err)) };
     }
@@ -1368,12 +1396,13 @@ async function execute(
  * model: the span records the exception, and the log gets one warn.
  */
 function markToolFailure(tu: ToolCallPart, tool: Tool, failure: unknown, log: Logger): void {
+    const failureAsError = errorOf(failure);
     const toolError = modeledToolError(failure);
     if (toolError !== undefined) {
         labelToolFailure("tool_error", toolError.error);
-    } else if (failure instanceof Error) {
-        recordToolException(failure);
-        log.warn("tool call threw", { tool: tool.id, toolCallId: tu.toolCallId, ...log.errorFields(failure) });
+    } else if (failureAsError !== undefined) {
+        recordToolException(failureAsError);
+        log.warn("tool call threw", { tool: tool.id, toolCallId: tu.toolCallId, ...log.errorFields(failureAsError) });
     } else {
         labelToolFailure("_OTHER");
     }
@@ -1391,8 +1420,9 @@ function modeledToolError(failure: unknown): ToolError | undefined {
  * NUL in an object KEY would still reach the row, but keys come from tool result
  * types rather than scanned bytes, so nothing produces one.
  */
-function jsonValue(value: unknown) {
-    return JSON.parse(JSON.stringify(value ?? null), (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
+function jsonValue(value: unknown): JSONValue {
+    // The wire write proves the value is JSON: the parse re-proves it with the schema, and the reviver strips NUL from every string it holds.
+    return jsonParse(JSON.stringify(value ?? null), z.json(), (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
 }
 
 /**
@@ -1455,7 +1485,7 @@ function toolErrorContent(value: unknown): string {
         return JSON.stringify({ error: stripNulCharacters(toolError.error), retryable: toolError.retryable });
     }
     const { retryable } = classifyProviderError(value);
-    const error = stripNulCharacters(value instanceof Error ? value.message : String(value));
+    const error = stripNulCharacters(errorMessage(value));
     return JSON.stringify({ error, retryable });
 }
 
@@ -1469,10 +1499,13 @@ function errorResult(toolCall: ToolCallPart, content: string): ToolResultPart {
     };
 }
 
-function isAskRejected(err: unknown): err is AskRejectedError {
+function askRejectionOf(err: unknown): { feedback?: string } | undefined {
+    if (err instanceof AskRejectedError) return err;
     // Name-based fallback recognizes a rejection thrown from a different module
     // realm, where `instanceof` against this file's class reference would miss it.
-    return err instanceof AskRejectedError || (err instanceof Error && err.name === "AskRejectedError");
+    if (errorName(err) !== "AskRejectedError") return undefined;
+    const feedback = maybeRecord(err)?.feedback;
+    return { feedback: typeof feedback === "string" ? feedback : undefined };
 }
 
 /**
@@ -1525,10 +1558,7 @@ export function finalText(messages: readonly LoopMessage[]): string {
     const last = messages.at(-1);
     if (last === undefined || last.role !== "assistant") return "";
     if (typeof last.content === "string") return last.content;
-    return last.content
-        .filter((block): block is { type: "text"; text: string } & typeof block => block.type === "text")
-        .map((block) => block.text)
-        .join("");
+    return last.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
 }
 
 function formatZodIssues(error: z.ZodError, input: unknown): string {

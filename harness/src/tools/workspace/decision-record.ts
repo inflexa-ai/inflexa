@@ -14,7 +14,9 @@ import { createHash } from "node:crypto";
 import { posix as posixPath } from "node:path";
 
 import type { AgentSession } from "../../auth/types.js";
+import { parseJsonOrUndefined } from "../../lib/json.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { maybeRecord, plainRecord } from "../../lib/shape.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { MutateToolName, WorkspaceMutator, WriteRecord } from "./mutator.js";
 
@@ -24,6 +26,7 @@ import type { MutateToolName, WorkspaceMutator, WriteRecord } from "./mutator.js
  * step that renders two scripts keeps both records.
  */
 export function decisionRecordPath(scriptFile: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the file-extension grammar of the script stem: a trailing run of alphanumerics after the last dot.
     const stem = scriptFile.replace(/\.[A-Za-z0-9]+$/, "");
     return `output/decision_record_${stem}.json`;
 }
@@ -46,22 +49,22 @@ export function scriptSha256(content: string | Uint8Array): string {
 }
 
 /** One change of a script after its render, as the record keeps it. */
-export interface UnvettedEdit {
+export type UnvettedEdit = {
     readonly path: string;
     readonly note: string;
     /** The digest of the script after the change. */
     readonly sha256: string;
-}
+};
 
 /** The digest the record expects of the script now: the last recorded change, else the bytes the render wrote. */
 export function expectedScriptSha256(record: Readonly<Record<string, unknown>>): string | undefined {
-    const edits = Array.isArray(record.unvetted_edits) ? (record.unvetted_edits as readonly Partial<UnvettedEdit>[]) : [];
-    const last = edits[edits.length - 1]?.sha256;
-    if (typeof last === "string") return last;
+    const edits: readonly unknown[] = Array.isArray(record.unvetted_edits) ? record.unvetted_edits : [];
+    const lastSha = maybeRecord(edits.at(-1))?.sha256;
+    if (typeof lastSha === "string") return lastSha;
     return typeof record.written_sha256 === "string" ? record.written_sha256 : undefined;
 }
 
-export interface NoteScriptChangeArgs {
+export type NoteScriptChangeArgs = {
     readonly filesystem: WorkspaceFilesystem;
     readonly mutator: WorkspaceMutator;
     readonly session: AgentSession;
@@ -75,7 +78,7 @@ export interface NoteScriptChangeArgs {
     readonly note: string;
     /** The digest of the script after the change. */
     readonly sha256: string;
-}
+};
 
 /**
  * The outcome of a change note. `noted` carries the record of the write,
@@ -94,19 +97,12 @@ export type ScriptChangeNote = { readonly status: "noted"; readonly write: Write
 export async function noteScriptChange(args: NoteScriptChangeArgs): Promise<ScriptChangeNote> {
     const recordPath = decisionRecordPathFor(args.scriptPath);
     if (!recordPath) return { status: "no_record" };
-    const read = unwrapOrThrow(
-        await args.filesystem.readFile({ session: args.session, path: recordPath, ...(args.workingDir !== undefined ? { workingDir: args.workingDir } : {}) }),
-    );
+    const base = args.workingDir !== undefined ? { workingDir: args.workingDir } : {};
+    const read = unwrapOrThrow(await args.filesystem.readFile({ session: args.session, path: recordPath, ...base }));
     if (read.kind !== "ok") return { status: "no_record" };
-    let record: Record<string, unknown>;
-    try {
-        const parsed: unknown = JSON.parse(read.content.toString("utf8"));
-        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return { status: "no_record" };
-        record = parsed as Record<string, unknown>;
-    } catch {
-        return { status: "no_record" };
-    }
-    const edits = Array.isArray(record.unvetted_edits) ? (record.unvetted_edits as unknown[]) : [];
+    const record = plainRecord(parseJsonOrUndefined(read.content.toString("utf8")));
+    if (record === undefined) return { status: "no_record" };
+    const edits: readonly unknown[] = Array.isArray(record.unvetted_edits) ? record.unvetted_edits : [];
     const entry: UnvettedEdit = { path: args.scriptPath, note: args.note, sha256: args.sha256 };
     const next = { ...record, unvetted_edits: [...edits, entry] };
     const written = await args.mutator.writeFile({
@@ -133,14 +129,9 @@ export async function reconcileScriptRecord(args: ReconcileScriptRecordArgs): Pr
     const base = args.workingDir !== undefined ? { workingDir: args.workingDir } : {};
     const record = unwrapOrThrow(await args.filesystem.readFile({ session: args.session, path: recordPath, ...base }));
     if (record.kind !== "ok") return { status: "no_record" };
-    let expected: string | undefined;
-    try {
-        const parsed: unknown = JSON.parse(record.content.toString("utf8"));
-        if (parsed === null || typeof parsed !== "object") return { status: "no_record" };
-        expected = expectedScriptSha256(parsed as Record<string, unknown>);
-    } catch {
-        return { status: "no_record" };
-    }
+    const parsedRecord = plainRecord(parseJsonOrUndefined(record.content.toString("utf8")));
+    if (parsedRecord === undefined) return { status: "no_record" };
+    const expected = expectedScriptSha256(parsedRecord);
     if (expected === undefined) return { status: "no_record" };
     const script = unwrapOrThrow(await args.filesystem.readFile({ session: args.session, path: args.scriptPath, ...base }));
     if (script.kind !== "ok") return { status: "no_record" };

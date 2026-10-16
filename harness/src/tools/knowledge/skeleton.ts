@@ -29,17 +29,18 @@
  * vetted default, and the agent can state another value with its reason.
  */
 
+import { maybeRecord } from "../../lib/shape.js";
 import type { GroundingSetting } from "../../schemas/workflow-state.js";
 import type { RecommendWithEnvironment, StepEnvironment } from "./environment.js";
 
-export interface SkeletonAlternative {
+export type SkeletonAlternative = {
     readonly method: string;
     readonly label: string;
     readonly when: string;
     readonly rules: readonly string[];
-}
+};
 
-export interface SkeletonStep {
+export type SkeletonStep = {
     readonly id: string;
     readonly name: string;
     readonly track: string;
@@ -65,7 +66,7 @@ export interface SkeletonStep {
         readonly settings: readonly GroundingSetting[];
         readonly reason: string;
     };
-}
+};
 
 type ProcedureStep = RecommendWithEnvironment["procedure"][number];
 
@@ -134,7 +135,7 @@ const DEPENDS: Readonly<Record<string, readonly string[]>> = {
 function settingValue(value: unknown): GroundingSetting["value"] {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
     if (Array.isArray(value)) return value.map(String);
-    return String(value);
+    return JSON.stringify(value);
 }
 
 /** The settings of the steps of a group: one entry per parameter, with the step it belongs to. */
@@ -144,15 +145,16 @@ function stepSettings(steps: readonly ProcedureStep[]): GroundingSetting[] {
             step: step.step,
             name: parameter.name,
             value: settingValue(parameter.value),
-            ...(parameter.default_source ? { source: parameter.default_source } : {}),
+            source: parameter.default_source,
         })),
     );
 }
 
 /** The forbidden method ids of a step. The client schema reads the field through the loose object. */
 function forbidsOf(step: ProcedureStep): readonly string[] {
-    const forbids = (step as { forbids?: unknown }).forbids;
-    return Array.isArray(forbids) ? forbids.filter((method): method is string => typeof method === "string") : [];
+    if (!Array.isArray(step.forbids)) return [];
+    const entries: readonly unknown[] = step.forbids;
+    return entries.flatMap((method) => (typeof method === "string" ? [method] : []));
 }
 
 /** `a and b`, or `a, b and c` for a longer list. */
@@ -208,13 +210,18 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
     const kept = GROUPS.filter((group) => group.steps.some((step) => present.has(step)));
     const keptIds = new Set(kept.map((group) => group.id));
     return kept.map((group) => {
-        const steps = group.steps.map((step) => byStep.get(step)).filter((step): step is ProcedureStep => step !== undefined);
-        const central = steps.find((step) => step.step === "differential_expression") ?? steps.find((step) => step.method !== undefined) ?? steps[0];
+        const steps = group.steps.map((step) => byStep.get(step)).filter((step: ProcedureStep | undefined): step is ProcedureStep => step !== undefined);
+        const central = steps.find((step) => step.step === "differential_expression") ?? steps.find((step) => step.method !== undefined) ?? steps.at(0);
         const flags = steps.flatMap((step) => step.flags ?? []);
         const hardFlag = flags.find((flag) => flag.severity === "flag");
         const claims = [...new Set(steps.flatMap((step) => step.rules))];
         const packages = [
-            ...new Set(steps.map((step) => (step as { package?: { name: string } }).package?.name).filter((name): name is string => name !== undefined)),
+            ...new Set(
+                steps.flatMap((step) => {
+                    const name = maybeRecord(step.package)?.name;
+                    return typeof name === "string" ? [name] : [];
+                }),
+            ),
         ];
         const caveats = [...flags.filter((flag) => flag.severity === "warn").map((flag) => flag.message), ...steps.flatMap(stepCaveats)];
         const method = central?.method;
@@ -238,14 +245,14 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
             depends_on: dependsOn(group.id, keptIds),
             caveats: hardFlag ? [hardFlag.message, ...caveats] : caveats,
             alternatives,
-            ...(disputed ? { disputed: { rule: disputed.rule, sides: disputed.sides } } : {}),
+            disputed: disputed ? { rule: disputed.rule, sides: disputed.sides } : undefined,
             forbids,
-            ...(central?.environment ? { environment: central.environment } : {}),
+            environment: central?.environment,
             grounding: {
                 status,
                 snapshot: answer.snapshot.digest,
                 claims,
-                ...(central?.template ? { template: central.template } : {}),
+                template: central?.template,
                 settings: stepSettings(steps),
                 reason: hardFlag
                     ? `flagged by ${hardFlag.rule}`

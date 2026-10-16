@@ -78,7 +78,7 @@ export async function fetchAlphaFoldPrediction(uniprotAccession: string): Promis
     if (entries.length === 0) return null;
 
     const exact = entries.find((entry) => entry.uniprotAccession.toUpperCase() === accession.toUpperCase());
-    return exact ?? entries[0]!;
+    return exact ?? entries[0];
 }
 
 function isAbsence(e: ApiError): boolean {

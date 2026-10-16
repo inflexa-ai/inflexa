@@ -39,6 +39,7 @@ import {
     valueAxisTitle,
 } from "./common.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
+import { optionPercent } from "../option-lens.js";
 
 /**
  * The count of vertices that the thinning aims at for one curve, before it adds the vertices of shape.
@@ -103,33 +104,33 @@ const PLAIN_CHANNELS = ["x", "y", "group", "hit", "metric"] as const;
 export const GSEA_FIGURE: FigureModule = { reads: GSEA_READS, derive: deriveGsea };
 
 /** The columns that the channels of one block name. */
-interface GseaColumns {
+type GseaColumns = {
     readonly rank: string;
     readonly score: string;
     readonly hit: string;
     readonly metric: string;
     readonly set?: string;
-}
+};
 
 /** One point of a curve: a rank and the value of the curve at that rank. */
-interface Vertex {
+type Vertex = {
     readonly rank: number;
     readonly value: number;
-}
+};
 
 /** One gene set: its value in the set column, its running score in rank order, and the ranks of its hits. */
-interface GseaSet {
+type GseaSet = {
     readonly key: string;
     readonly name: string;
     readonly score: Vertex[];
     readonly hits: number[];
-}
+};
 
 /** The sets of one table in the order of their first row, and the ranked metric that they share. */
-interface GseaTable {
+type GseaTable = {
     readonly sets: GseaSet[];
     readonly metric: Vertex[];
-}
+};
 
 /** Derive the three panels of one gsea block. */
 function deriveGsea(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
@@ -217,7 +218,7 @@ function gseaColumns(encoding: ChartEncoding, rows: readonly ChartRow[], context
         score: column("y"),
         hit: column("hit"),
         metric: column("metric"),
-        ...(encoding.group !== undefined ? { set: channelColumn(encoding.group) } : {}),
+        set: encoding.group !== undefined ? channelColumn(encoding.group) : undefined,
     });
 }
 
@@ -449,8 +450,8 @@ function panelGrids(legendLines: number): EchartOption[] {
  * empty, and a set that dips under zero leaves the bottom left empty.
  */
 function statisticsText(context: FigureContext, panel: EchartOption, corner: "top-right" | "bottom-left"): EchartOption[] {
-    const top = Number.parseFloat(String(panel.top));
-    const height = Number.parseFloat(String(panel.height));
+    const top = optionPercent(panel.top);
+    const height = optionPercent(panel.height);
     return statisticsGraphic(context.statistics, corner).map((element) =>
         corner === "top-right"
             ? { ...element, right: percent(GRID_RIGHT + STATISTICS_INSET), top: percent(top + STATISTICS_INSET) }

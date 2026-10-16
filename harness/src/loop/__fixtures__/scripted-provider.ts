@@ -11,7 +11,7 @@ export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock;
 
 function mapFinishReason(
     finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal" | "unknown",
-): ChatResponse["finishReason"] {
+): ChatResponse["finishReason"] | "unknown" {
     switch (finishReason) {
         case "tool_use":
             return "tool-calls";
@@ -22,9 +22,7 @@ function mapFinishReason(
         case "refusal":
             return "content-filter";
         default:
-            // `unknown` rides through untyped on purpose: this fixture drives a finish
-            // the provider types do not model, and the loop must settle whatever arrives.
-            return finishReason as ChatResponse["finishReason"];
+            return finishReason;
     }
 }
 
@@ -34,12 +32,16 @@ export function makeMessage(
     usage?: ChatUsage,
 ): ChatResponse {
     const mapped = mapFinishReason(finishReason);
-    return {
+    const response: ChatResponse = {
         message: { role: "assistant", content },
-        finishReason: mapped,
-        ...(mapped === finishReason ? {} : { rawFinishReason: finishReason }),
+        finishReason: mapped === "unknown" ? "other" : mapped,
+        rawFinishReason: !(mapped === finishReason) ? finishReason : undefined,
         usage,
     };
+    // The drift twin plants `"unknown"` — a finish the provider types do not model —
+    // and the loop must settle it, thus the field carries a value the type cannot name.
+    if (finishReason === "unknown") Reflect.set(response, "finishReason", "unknown");
+    return response;
 }
 
 /** Wrap-up requests reuse the loop's tools and tool choice, so only the messages tell them apart. */
@@ -70,10 +72,10 @@ function textDeltas(response: ChatResponse): string[] {
     return content.filter((part) => part.type === "text").map((part) => part.text);
 }
 
-export interface ScriptedProvider extends ChatProvider {
+export type ScriptedProvider = ChatProvider & {
     readonly calls: ChatRequest[];
     readonly sessions: Session[];
-}
+};
 
 export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, request: ChatRequest) => ChatResponse)): ScriptedProvider {
     const calls: ChatRequest[] = [];
@@ -82,7 +84,7 @@ export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, r
         typeof script === "function"
             ? script
             : (i: number): ChatResponse => {
-                  const r = script[i];
+                  const r = script.at(i);
                   if (r === undefined) {
                       throw new Error(`scriptedProvider: no scripted reply for call ${i}`);
                   }
@@ -107,7 +109,8 @@ export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, r
             sessions.push(session);
             const response = reply(i, request);
             return (async function* () {
-                for (const text of textDeltas(response)) yield { type: "text-delta", text };
+                const texts = await Promise.resolve(textDeltas(response));
+                for (const text of texts) yield { type: "text-delta", text };
                 yield { type: "done", response };
             })();
         },

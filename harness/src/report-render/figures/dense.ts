@@ -17,6 +17,7 @@ import { formatNumberCell } from "../number-format.js";
 import type { RenderProblem } from "../types.js";
 import { chartProblem, toNumber, transformColumn } from "./common.js";
 import { EXPORT_PLOT_FRAMES, PAGE_PLOT_FRAME, type LeaderName, type NamedPoint, type NameFrame } from "./label-room.js";
+import { optionMemberOrUndefined } from "../option-lens.js";
 
 /**
  * The symbol sizes in pixels of a dense figure: a signal point, and a point that states no finding.
@@ -127,13 +128,16 @@ export function pointNameSeries(names: readonly NamedPoint[], placed: readonly (
  * `exportOption` reads. `names` are the names of the series that `build` can give, thus an export drops each page
  * series of those names, and a size where no text finds a place draws none.
  */
+/** The kinds of export size, in the order of the size table. The `satisfies` check drops this list from the compile the day the size table renames or removes one. */
+const EXPORT_SIZE_KINDS = ["single", "double", "slide"] as const satisfies readonly (keyof typeof CHART_EXPORT_SIZES)[];
+
 export function sizedSeries(
     names: readonly string[],
     build: (frame: NameFrame) => EchartOption[],
 ): { readonly page: EchartOption[]; readonly member: EchartOption } {
     const widths: Record<string, EchartOption[]> = {};
-    for (const [kind, size] of Object.entries(CHART_EXPORT_SIZES)) {
-        widths[String(size.widthPx)] = build(EXPORT_PLOT_FRAMES[kind as keyof typeof CHART_EXPORT_SIZES]);
+    for (const kind of EXPORT_SIZE_KINDS) {
+        widths[String(CHART_EXPORT_SIZES[kind].widthPx)] = build(EXPORT_PLOT_FRAMES[kind]);
     }
     const sized: SizedSeries = { names, widths };
     return { page: build(PAGE_PLOT_FRAME), member: { [SIZED_SERIES_MEMBER]: sized } };
@@ -212,18 +216,22 @@ export function smallest(values: readonly number[]): number | undefined {
 /** The series of an option, as objects. */
 export function seriesOf(option: EchartOption): EchartOption[] {
     const series = option.series;
-    return Array.isArray(series) ? series.filter((entry): entry is EchartOption => typeof entry === "object" && entry !== null) : [];
+    if (!Array.isArray(series)) return [];
+    return series.flatMap((entry) => {
+        const fields = optionMemberOrUndefined(entry);
+        return fields === undefined ? [] : [fields];
+    });
 }
 
 /** The axis of an option as one object. A composition of one grid gives one object for each axis. */
 export function axisOf(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption {
     const axis = option[key];
-    return typeof axis === "object" && axis !== null && !Array.isArray(axis) ? (axis as EchartOption) : {};
+    return optionMemberOrUndefined(axis) ?? {};
 }
 
 /** The fields of one layer of points: the fill, the opacity, the symbol size, and the drawing order. */
 export function pointLayer(color: string, size: number, opacity: number, z?: number): EchartOption {
-    return { itemStyle: { color, opacity }, symbolSize: size, ...(z !== undefined ? { z } : {}) };
+    return { itemStyle: { color, opacity }, symbolSize: size, z: z !== undefined ? z : undefined };
 }
 
 /** The shown text of a count in a legend name: a whole number with a thousands separator. */

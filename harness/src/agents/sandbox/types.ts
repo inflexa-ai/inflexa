@@ -56,7 +56,7 @@ export type SandboxToolName =
     | "knowledgeTemplate";
 
 /** Planner-facing metadata + tool allowlist for one sandbox agent. */
-export interface AgentMeta {
+export type AgentMeta = {
     /** Stable agent id — also the key in the catalog and the `AgentDefinition.id`. */
     readonly id: string;
     /** Capabilities surfaced to the planner. */
@@ -71,7 +71,7 @@ export interface AgentMeta {
     readonly defaultMaxSteps?: number;
     /** False for agents the planner must NOT assign to plan steps (executors, the profiler). */
     readonly plannable?: boolean;
-}
+};
 
 /** Default runaway-guard for sandbox agents. */
 export const SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS = 200;

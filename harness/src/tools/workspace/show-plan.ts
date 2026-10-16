@@ -16,13 +16,22 @@ import { z } from "zod";
 import { buildPlanCardData } from "../../memory/card-builders.js";
 import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 type ShowPlanOutput = { shown: false; reason: "plan_not_found" } | { shown: true; id: string };
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const PLAN_ID_REGEX = /^pln-[a-f0-9]{8}$/;
 
-export function createShowPlanTool(pool: Pool) {
+const inputSchema = z.object({
+    planId: z
+        .string()
+        .regex(PLAN_ID_REGEX, "planId must match pln-<8hex>")
+        .describe("Plan ID (`pln-<8hex>`) from `generate_plan` (newly created) or `inspect_run` (each run carries the planId it ran)"),
+    title: z.string().optional().describe("Optional card heading; defaults to the plan's own title"),
+});
+
+export function createShowPlanTool(pool: Pool): Tool<z.infer<typeof inputSchema>, ShowPlanOutput> {
     return defineTool({
         id: "show_plan",
         description:
@@ -33,13 +42,7 @@ export function createShowPlanTool(pool: Pool) {
             "NOT for a plan you are drafting in conversation (that is `generate_plan`), NOT for other synthesized content " +
             "(`show_user`), NOT for analysis files (`show_file`). Never re-type a plan's steps into a `show_user` markdown " +
             "card — that renders a second, divergent copy of the same plan.",
-        inputSchema: z.object({
-            planId: z
-                .string()
-                .regex(PLAN_ID_REGEX, "planId must match pln-<8hex>")
-                .describe("Plan ID (`pln-<8hex>`) from `generate_plan` (newly created) or `inspect_run` (each run carries the planId it ran)"),
-            title: z.string().optional().describe("Optional card heading; defaults to the plan's own title"),
-        }),
+        inputSchema,
         describeCall: ({ planId }) => planId,
         execute: async ({ planId, title }, ctx): Promise<Result<ShowPlanOutput, ToolError>> => {
             const resourceId = scopeResource(ctx.session.scope).resourceId;

@@ -7,6 +7,7 @@
  * and the loop continues with the real work.
  */
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the placeholder-token grammar of a terminal text: the text starts with one of the known placeholder words.
 const PLACEHOLDER_TEXT = /^\s*(?:placeholder|todo|tbd|skip|n\/?a|none|null|test|x+|\.+|-+)\b/i;
 export const MIN_TERMINAL_TEXT = 4;
 
@@ -15,6 +16,7 @@ export function degenerateTerminalText(text: string): string | undefined {
     const trimmed = text.trim();
     if (trimmed.length < MIN_TERMINAL_TEXT)
         return `The text has ${trimmed.length} characters, and a real question or reason has at least ${MIN_TERMINAL_TEXT}.`;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the whole-word grammar of the placeholder term; a plain includes cannot keep the word boundary.
     if (PLACEHOLDER_TEXT.test(trimmed) || /\bplaceholder\b/i.test(trimmed)) return "The text is a placeholder.";
     return undefined;
 }

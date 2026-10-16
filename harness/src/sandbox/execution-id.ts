@@ -34,8 +34,11 @@ const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789");
 export function sanitizeAgentName(name: string): string {
     return name
         .toLowerCase()
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the execution-ID grammar: its byte layout has no builtin parser.
         .replace(/[^a-z0-9-]/g, "-")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the execution-ID grammar: its byte layout has no builtin parser.
         .replace(/-{2,}/g, "-")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the execution-ID grammar: its byte layout has no builtin parser.
         .replace(/^-+|-+$/g, "")
         .slice(0, AGENT_NAME_MAX_LENGTH);
 }

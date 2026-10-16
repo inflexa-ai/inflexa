@@ -43,28 +43,28 @@ export const DEFAULT_SALVAGE_ITERATIONS = 3;
  * exception — those are summed across both attempts, since they measure the run
  * rather than diagnose it.
  */
-export interface SalvageRecord {
+export type SalvageRecord = {
     /** How the FIRST run ended — the reason a salvage was needed at all. */
     readonly firstFinish: AgentFinish;
     /** How the salvage continuation itself ended. */
     readonly finish: AgentFinish;
-}
+};
 
 /** A `runToTerminal` outcome: the driving run's result, plus the salvage account. */
-export interface RunToTerminalResult extends RunAgentResult {
+export type RunToTerminalResult = RunAgentResult & {
     /** Null when the first run reached its terminal tool and no salvage was needed. */
     readonly salvage: SalvageRecord | null;
-}
+};
 
 /** Describes how to salvage a run that never reached its terminal tool. */
-export interface TerminalSalvage {
+export type TerminalSalvage = {
     /** Their ids become the mask of the salvage continuation, so each must already be a declared tool of the agent. */
     readonly tools: readonly Tool[];
     /** Opens the salvage continuation as a synthetic user message. */
     readonly nudge: string;
     /** The cap of salvage requests. Defaults to {@link DEFAULT_SALVAGE_ITERATIONS}. */
     readonly maxIterations?: number;
-}
+};
 
 /**
  * Drive `agent` to its terminal tool, salvaging once if it does not get there.

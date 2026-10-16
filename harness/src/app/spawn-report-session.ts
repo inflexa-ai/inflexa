@@ -116,10 +116,10 @@ type _AssertDomainError = SpawnRefusal extends DomainError ? true : never;
 const _assertDomainError: _AssertDomainError = true;
 
 /** The paging inputs `listReportSessions` forwards to the thread listing. */
-export interface ReportSessionPaging {
+export type ReportSessionPaging = {
     readonly page?: number;
     readonly perPage?: number;
-}
+};
 
 /**
  * The intent brief of one report session. The caller writes it at the moment of
@@ -128,7 +128,7 @@ export interface ReportSessionPaging {
  * The brief carries intent alone. No field names a path, a dataset, or a format,
  * because the report session reads those from the workspace itself.
  */
-export interface ReportBrief {
+export type ReportBrief = {
     /** The question that the report must answer. */
     readonly objective: string;
     /** The reader of the report. */
@@ -139,19 +139,19 @@ export interface ReportBrief {
     readonly exclusions?: string;
     /** The points that the user did not decide yet. */
     readonly openQuestions?: string;
-}
+};
 
 /**
  * The report child that carries the greatest anchor. A tie on the anchor comes
  * from two concurrent spawns, and the newest `createdAt` wins it.
  */
-export interface NewestReportChild {
+export type NewestReportChild = {
     readonly threadId: string;
     readonly title: string | null;
     /** The `parentSeq` of the child — the point of the parent transcript that it was built on. */
     readonly anchor: number;
     readonly createdAt: Date;
-}
+};
 
 /**
  * The state that a caller reads before a new spawn. `newestChild` is `null` when
@@ -159,7 +159,7 @@ export interface NewestReportChild {
  * way, because a steer into hidden state is not permitted. An absent parent
  * reads the same way.
  */
-export interface ReportSessionDelta {
+export type ReportSessionDelta = {
     readonly newestChild: NewestReportChild | null;
     /**
      * The count of the parent turns that a person opened past the anchor of
@@ -170,7 +170,7 @@ export interface ReportSessionDelta {
      * gives no anchor to count from. No count query runs in that case.
      */
     readonly userTurnsSinceAnchor: number | null;
-}
+};
 
 /**
  * The construction inputs of the report-session operations.
@@ -179,7 +179,7 @@ export interface ReportSessionDelta {
  * `capture`, and a `chrome` config that names a browser. One present route
  * passes the gate of the spawn.
  */
-export interface ReportSessionSpawnDeps {
+export type ReportSessionSpawnDeps = {
     readonly pool: Pool;
     /**
      * The chrome config that the same composition gives to the eyes tool. The
@@ -223,7 +223,7 @@ export interface ReportSessionSpawnDeps {
     readonly provenance?: ProvenanceSeam;
     /** Operational logging seam. An omitted logger falls back to the no-op. */
     readonly logger?: Logger;
-}
+};
 
 /**
  * Whether the composition gives a route to a look at the rendered page. The
@@ -246,7 +246,7 @@ export function compositionHasEyes(deps: Pick<ReportSessionSpawnDeps, "chrome" |
     return deps.eyes !== undefined || deps.capture !== undefined || hasBrowserUrl(deps.chrome);
 }
 
-export interface ReportSessionSpawn {
+export type ReportSessionSpawn = {
     /**
      * Make a `report` child of the parent conversation and return the full row.
      * The child takes the analysis of the parent, the parent thread id, and the
@@ -285,7 +285,7 @@ export interface ReportSessionSpawn {
      * and not by the anchor. It reads no model judgment, and it writes nothing.
      */
     reportSessionDelta(parentThreadId: string): ResultAsync<ReportSessionDelta, DbError>;
-}
+};
 
 const OP = "spawn-report-session";
 

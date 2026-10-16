@@ -53,6 +53,8 @@ import {
 } from "./dense.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
 import { placeLeaderNames, type NamedPoint } from "./label-room.js";
+import { optionMember } from "../option-lens.js";
+import { typedMember } from "../../lib/shape.js";
 
 /** The count of signal points that show their name. */
 export const VOLCANO_LABEL_COUNT = 10;
@@ -107,7 +109,7 @@ function labeledRows(
     const candidates: number[] = [];
     for (let index = 0; index < rows.length; index += 1) {
         const category = base.categoryOf(xs[index], ys[index], index);
-        const name = rows[index][labelColumn];
+        const name = typedMember(rows[index], labelColumn);
         if (category !== undefined && signal.has(category) && name !== undefined && String(name).trim() !== "") candidates.push(index);
     }
     const rank = (index: number): number => (zeros.has(index) ? Number.POSITIVE_INFINITY : (ys[index] ?? 0));
@@ -157,7 +159,7 @@ function deriveVolcano(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const text = sizedSeries([POINT_NAMES], (frame) =>
         pointNameSeries(names, placeLeaderNames(names, { xs, ys, pointPx: DENSE_SIGNAL_SYMBOL_PX }, plot, VOLCANO_NAME_SIDES, top, frame)),
     );
-    const legend = typeof option.legend === "object" && option.legend !== null ? (option.legend as EchartOption) : {};
+    const legend = optionMember(option.legend);
     return ok({
         ...option,
         ...text.member,

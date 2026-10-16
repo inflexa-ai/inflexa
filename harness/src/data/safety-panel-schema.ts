@@ -3,9 +3,11 @@ import { z } from "zod";
 import { OrganSystemSchema } from "../contracts/organ-system.js";
 import { SeveritySchema } from "../contracts/severity.js";
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
 export const CHEMBL_RE = /^CHEMBL\d+$/;
 // UniProt 6-char accession: letter (any A-Z, covering A-N, O, P, Q, R-Z sub-families),
 // followed by a digit, three alphanumerics, and a final digit.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
 export const UNIPROT_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9]$/;
 
 const ChemblIdSchema = z.string().regex(CHEMBL_RE, "must match CHEMBL\\d+");
@@ -13,11 +15,14 @@ const GeneSymbolSchema = z
     .string()
     .min(1)
     .max(20)
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
     .regex(/^[A-Z][A-Z0-9]*(-[A-Z0-9]+)*$/, "must be HGNC-style uppercase");
 const UniprotSchema = z.string().regex(UNIPROT_RE, "must be a 6-char UniProt accession");
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
 const EnsemblGeneSchema = z.string().regex(/^ENSG\d{11}$/, "must match ENSG\\d{11}");
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
 const ReferenceSchema = z.string().regex(/^(PMID:\d+|DOI:.+)$/, "must be PMID:<digits> or DOI:<doi>");
-const IsoDateSchema = z.string().date();
+const IsoDateSchema = z.iso.date();
 
 export const SafetyTargetSchema = z.object({
     chembl_id: ChemblIdSchema,
@@ -35,6 +40,7 @@ export type SafetyTarget = z.infer<typeof SafetyTargetSchema>;
 
 export const SafetyPanelFileSchema = z.object({
     schema_version: z.literal(1),
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
     panel_version: z.string().regex(/^\d+\.\d+\.\d+$/, "semver"),
     curated_at: IsoDateSchema,
     targets: z.array(SafetyTargetSchema),

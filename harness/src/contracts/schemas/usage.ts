@@ -28,5 +28,5 @@ export const TokenUsageRollupSchema = z.object({
 // dependency, and a rule missing for a newly added count is a validation hole,
 // not a compile error, without it.
 type SchemaField = keyof z.infer<typeof TokenUsageRollupSchema>;
-type _AssertSchemaFields = Exclude<SchemaField, TokenUsageField> | Exclude<TokenUsageField, SchemaField> extends never ? true : never;
+type _AssertSchemaFields = [Exclude<SchemaField, TokenUsageField>, Exclude<TokenUsageField, SchemaField>] extends [never, never] ? true : ["_AssertSchemaFields failed: the two field unions must be equal"];
 const _assertSchemaFields: _AssertSchemaFields = true;

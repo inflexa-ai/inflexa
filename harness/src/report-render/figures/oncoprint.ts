@@ -50,6 +50,7 @@ import {
     type ColumnLabels,
 } from "./common.js";
 import type { FigureContext, FigureModule } from "./index.js";
+import { typedMember } from "../../lib/shape.js";
 
 /**
  * The color of each common alteration class of the MAF standard, in the order of the legend.
@@ -118,10 +119,10 @@ const TITLE_LINE_SHARE = 1.6;
 export const ONCOPRINT_FIGURE: FigureModule = { reads: new Set(["x", "y", "value", "tracks"]), derive: deriveOncoprint };
 
 /** One category channel of the figure: its column and its order. */
-interface CategoryChannel {
+type CategoryChannel = {
     readonly column: string;
     readonly channel: ChartChannel;
-}
+};
 
 function deriveOncoprint(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
     const sample = categoryChannel(block, rows, context, "x");
@@ -177,6 +178,11 @@ function deriveOncoprint(block: ChartBlock, rows: readonly ChartRow[], context: 
     const body = (genes.value.length * ONCOPRINT_ROW_PX + band) / (1 - (MATRIX_TOP_PCT + stripShare) / 100);
     const tall = body > CHART_BODY_PX;
     const bottom = tall ? (band / Math.min(body, CHART_BODY_MAX_PX)) * 100 : MATRIX_BOTTOM_PCT;
+    const legendPosition = tall
+        ? {
+              top: percentOf(100 - bottom + ((CHART_PAGE_TEXT_PX * (1 + TITLE_LINE_SHARE) + SAMPLE_TITLE_GAP) / Math.min(body, CHART_BODY_MAX_PX)) * 100),
+          }
+        : { bottom: 0 };
     const layout = { ...MATRIX_GRID, bottom: percentOf(bottom + stripShare) };
     const strips = stripMembers(tracks.value, samples.value, trackValues, legendColors.slice(classes.length), stripBand, bottom, sampleTitle, context.labels);
     const option: EchartOption = {
@@ -220,13 +226,7 @@ function deriveOncoprint(block: ChartBlock, rows: readonly ChartRow[], context: 
         legend: {
             // A taller body holds the legend lines of the single column export, thus the page legend starts
             // under the sample title and the free part of the band sits under it.
-            ...(tall
-                ? {
-                      top: percentOf(
-                          100 - bottom + ((CHART_PAGE_TEXT_PX * (1 + TITLE_LINE_SHARE) + SAMPLE_TITLE_GAP) / Math.min(body, CHART_BODY_MAX_PX)) * 100,
-                      ),
-                  }
-                : { bottom: 0 }),
+            ...legendPosition,
             itemWidth: LEGEND_ICON_PX,
             itemHeight: LEGEND_ICON_PX,
             itemGap: LEGEND_GAP_PX,
@@ -278,7 +278,7 @@ function categoryChannel(
 
 /** The class of one row, or `undefined` for a row that names a sample with no alteration. */
 export function classOf(row: ChartRow, column: string): string | undefined {
-    const cell = row[column];
+    const cell = typedMember(row, column);
     if (cell === undefined) return undefined;
     const text = String(cell).trim();
     return text === "" ? undefined : text;
@@ -358,7 +358,7 @@ function countSeries(
         const name = classOf(row, klass);
         const place = places.get(String(row[sample]));
         if (name === undefined || place === undefined) continue;
-        const series = counts[classPlaces.get(name) ?? -1];
+        const series = counts.at(classPlaces.get(name) ?? -1);
         if (series !== undefined) series[place] = (series[place] ?? 0) + 1;
     }
     return classes.map((name, index) => ({
@@ -411,10 +411,10 @@ function percentText(share: number): string {
 }
 
 /** One annotation track: its column, and the value of each sample, keyed by the text of the sample. */
-interface SampleTrack {
+type SampleTrack = {
     readonly column: string;
     readonly values: ReadonlyMap<string, string>;
-}
+};
 
 /**
  * The value of each sample in each track column. A track draws one value for each sample, thus a sample whose
@@ -428,7 +428,7 @@ function sampleTracks(context: FigureContext, rows: readonly ChartRow[], sample:
         }
         const values = new Map<string, string>();
         for (const row of rows) {
-            const cell = row[column];
+            const cell = typedMember(row, column);
             const value = cell === undefined ? "" : String(cell).trim();
             if (value === "") continue;
             const key = String(row[sample]);
@@ -449,12 +449,12 @@ function sampleTracks(context: FigureContext, rows: readonly ChartRow[], sample:
 }
 
 /** The grid, the axes, and the series of the annotation strips, or none of them for a block with no track. */
-interface StripMembers {
+type StripMembers = {
     readonly grid: EchartOption[];
     readonly xAxis: EchartOption[];
     readonly yAxis: EchartOption[];
     readonly series: EchartOption[];
-}
+};
 
 /**
  * The annotation strips under the matrix: one row of cells for each track, in one grid that shares the sample

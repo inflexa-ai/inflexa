@@ -20,7 +20,7 @@ import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import { normalizeUnicode, redactSecrets } from "../input-sanitization.js";
 
-export interface AssembleMessagesArgs {
+export type AssembleMessagesArgs = {
     /** The conversation thread — a UI-generated UUID, never the analysisId. */
     readonly threadId: string;
     /** The type of the thread. A `report` thread gets no working-memory record, and its view keeps the seed. */
@@ -39,16 +39,16 @@ export interface AssembleMessagesArgs {
     readonly workingMemory: WorkingMemoryStore;
     /** Diagnostic seam for the history repair record; omitted falls back to no-op. */
     readonly logger?: Logger;
-}
+};
 
-export interface AssembledMessages {
+export type AssembledMessages = {
     /** The view of the thread before the turn. */
     readonly history: LoopMessage[];
     /** The sanitized user input as its own message — the genuine turn start. */
     readonly userMessage: ModelMessage;
     /** The context records after the user message. The turn stores them with the user message. */
     readonly contextRecords: readonly ModelMessage[];
-}
+};
 
 /**
  * Assemble the message array for one chat turn. Async — it reads the view of

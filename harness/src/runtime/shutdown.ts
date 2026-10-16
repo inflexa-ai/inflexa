@@ -21,7 +21,7 @@
 
 import type { Logger } from "../lib/logger.js";
 
-export interface ShutdownDeps {
+export type ShutdownDeps = {
     signal: string;
     logger: Logger;
     markDraining: () => void;
@@ -31,7 +31,7 @@ export interface ShutdownDeps {
     flushLogger: () => Promise<void>;
     shutdownOtel: () => Promise<void>;
     exit: (code: number) => void;
-}
+};
 
 async function safely(logger: Logger, step: string, fn: () => Promise<void>): Promise<void> {
     try {

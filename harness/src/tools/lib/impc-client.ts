@@ -44,50 +44,49 @@ const ORGAN_SYSTEM_MAP: Record<string, string> = {
     "embryo phenotype": "growth",
 };
 
-// A single IMPC Solr document — fields vary by core; all optional. `top_level_mp_term_name`
-// and `sex` are `z.unknown()` because the code reads them defensively (`Array.isArray`,
-// `typeof === "string"`) rather than trusting a wire type.
+// A single IMPC Solr document — fields vary by core; all optional. `p_value` admits the
+// numeric string an older core wrote, because the code reads it defensively
+// (`typeof === "number"`) and a drifted field degrades on its own instead of failing the
+// whole response. `top_level_mp_term_name` and `sex` stay free-form JSON for the same reason.
 const ImpcSolrDocSchema = z.object({
     mp_term_id: z.string().optional(),
     mp_term_name: z.string().optional(),
-    p_value: z.number().optional(),
-    top_level_mp_term_name: z.unknown().optional(),
-    sex: z.unknown().optional(),
+    p_value: z.union([z.number(), z.string()]).optional(),
+    top_level_mp_term_name: z.json().optional(),
+    sex: z.json().optional(),
     parameter_stable_id: z.string().optional(),
     parameter_name: z.string().optional(),
     marker_symbol: z.string().optional(),
     mgi_accession_id: z.string().optional(),
 });
-type ImpcSolrDoc = z.infer<typeof ImpcSolrDocSchema>;
 
 // The `response` envelope shared by every IMPC Solr core, validated at the fetch boundary.
 const ImpcSolrResponseSchema = z.object({
     response: z.object({ docs: z.array(ImpcSolrDocSchema).optional(), numFound: z.number().optional() }).optional(),
 });
-type ImpcSolrResponse = z.infer<typeof ImpcSolrResponseSchema>;
 
-export interface MpTerm {
+export type MpTerm = {
     id: string;
     term: string;
     bestPValue: number | null;
-}
+};
 
-export interface PhenotypeProfile {
+export type PhenotypeProfile = {
     mpTerms: MpTerm[];
     organSystems: string[];
     sexDimorphic: boolean;
     phenotypeCount: number;
-}
+};
 
-export interface ViabilityCall {
+export type ViabilityCall = {
     zygosity: string;
     parameterStableId: string;
     mpTerm: { id: string; name: string } | null;
-}
+};
 
 export type ViabilityCategory = "lethal_pre_weaning" | "subviable" | "viable" | null;
 
-export interface KoPhenotypeProfile {
+export type KoPhenotypeProfile = {
     geneSymbol: string;
     mouseMarkerSymbol: string | null;
     mgiAccessionId: string | null;
@@ -99,17 +98,20 @@ export interface KoPhenotypeProfile {
     phenotypeCount: number;
     phenotypeDocsTotal: number;
     phenotypesTruncated: boolean;
-}
+};
 
 function escapeSolrValue(value: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return value.replace(/([+\-&|!(){}[\]^"~*?:\\/\s])/g, "\\$1");
 }
 
 export function parsePhenotypeResponse(raw: unknown): PhenotypeProfile {
-    // `raw` is the untyped IMPC Solr response; we reach `.response.docs` defensively
+    // SAFETY: `raw` is the untyped IMPC Solr response; we reach `.response.docs` defensively
     // (optional-chained, defaulted to []) and treat each doc's fields as optional below.
-    const docs: ImpcSolrDoc[] = (raw as ImpcSolrResponse | null)?.response?.docs ?? [];
-    if (!Array.isArray(docs) || docs.length === 0) {
+    // `raw` is the untyped IMPC Solr response; a shape mismatch degrades to an empty profile.
+    const parsed = ImpcSolrResponseSchema.safeParse(raw);
+    const docs = parsed.success ? (parsed.data.response?.docs ?? []) : [];
+    if (docs.length === 0) {
         return { mpTerms: [], organSystems: [], sexDimorphic: false, phenotypeCount: 0 };
     }
 
@@ -141,8 +143,12 @@ export function parsePhenotypeResponse(raw: unknown): PhenotypeProfile {
         const sex = typeof doc.sex === "string" ? doc.sex.toLowerCase() : "";
         if (sex) {
             allSexes.add(sex);
-            if (!mpToSexes.has(mpId)) mpToSexes.set(mpId, new Set());
-            mpToSexes.get(mpId)!.add(sex);
+            let sexes = mpToSexes.get(mpId);
+            if (sexes === undefined) {
+                sexes = new Set();
+                mpToSexes.set(mpId, sexes);
+            }
+            sexes.add(sex);
         }
     }
 
@@ -162,10 +168,11 @@ export function parsePhenotypeResponse(raw: unknown): PhenotypeProfile {
 }
 
 export function buildViabilityCalls(docsB: unknown, docsC: unknown): ViabilityCall[] {
-    // `docsB`/`docsC` are untyped IMPC Solr responses; the `.response.docs` reach is
-    // optional-chained + defaulted, so a shape mismatch degrades to an empty result.
-    const bDocs: ImpcSolrDoc[] = (docsB as ImpcSolrResponse | null)?.response?.docs ?? [];
-    const cDocs: ImpcSolrDoc[] = (docsC as ImpcSolrResponse | null)?.response?.docs ?? [];
+    // `docsB`/`docsC` are untyped IMPC Solr responses; a shape mismatch degrades to an empty result.
+    const bParsed = ImpcSolrResponseSchema.safeParse(docsB);
+    const cParsed = ImpcSolrResponseSchema.safeParse(docsC);
+    const bDocs = bParsed.success ? (bParsed.data.response?.docs ?? []) : [];
+    const cDocs = cParsed.success ? (cParsed.data.response?.docs ?? []) : [];
     const seen = new Set<string>();
     const out: ViabilityCall[] = [];
 
@@ -208,13 +215,13 @@ async function resolveImpcGene(humanSymbol: string): Promise<{ mouseMarkerSymbol
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return null;
     }
-    const docs = res.value?.response?.docs ?? [];
+    const docs = res.value.response?.docs ?? [];
     if (!Array.isArray(docs) || docs.length === 0) return null;
     const doc = docs[0];
     if (!doc.marker_symbol || !doc.mgi_accession_id) return null;
     return {
-        mouseMarkerSymbol: String(doc.marker_symbol),
-        mgiAccessionId: String(doc.mgi_accession_id),
+        mouseMarkerSymbol: doc.marker_symbol,
+        mgiAccessionId: doc.mgi_accession_id,
     };
 }
 
@@ -226,7 +233,7 @@ async function fetchPhenotypes(mouseSym: string): Promise<{ raw: unknown; numFou
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return { raw: { response: { docs: [] } }, numFound: 0 };
     }
-    const numFound = Number(res.value?.response?.numFound ?? 0);
+    const numFound = res.value.response?.numFound ?? 0;
     return { raw: res.value, numFound };
 }
 

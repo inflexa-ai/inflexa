@@ -40,7 +40,9 @@
  * directly from `neverthrow`; this module owns only the cortex-specific glue.
  */
 
+import { maybeRecord } from "./shape.js";
 import { Err, Ok, type Result } from "neverthrow";
+import { errorOf } from "./thrown.js";
 
 /**
  * The shape every per-subsystem error union shares: a string `type`
@@ -49,10 +51,10 @@ import { Err, Ok, type Result } from "neverthrow";
  * `SandboxError`), and ship a `describe*Error` formatter that turns one into
  * a user-facing line. A step body's error channel is some `DomainError`.
  */
-export interface DomainError {
+export type DomainError = {
     readonly type: string;
     readonly cause?: unknown;
-}
+};
 
 /**
  * A thrown wrapper for a structured error value that is not already an
@@ -69,16 +71,30 @@ export class ResultError extends Error {
 }
 
 function describe(value: unknown): string {
-    if (value instanceof Error) return value.message;
-    if (value && typeof value === "object" && "type" in value) {
+    const asError = errorOf(value);
+    if (asError !== undefined) return asError.message;
+    const record = maybeRecord(value);
+    if (record !== undefined && "type" in record) {
         // Prefer a human `message` field when the structured error carries one
         // (e.g. a `ProviderError`) so the wrapped `Error.message` names the
         // failure; fall back to the `type` discriminant otherwise.
-        const message = (value as { message?: unknown }).message;
+        const message = record.message;
         if (typeof message === "string" && message.length > 0) return message;
-        return String((value as DomainError).type);
+        return typeText(record.type);
     }
+    // oxlint-disable-next-line typescript/no-base-to-string -- the default string form is the specified fallback for a thrown value with no readable members.
     return String(value);
+}
+
+/** The text of an arbitrary discriminant: strings stand as they are, and the JSON form names the rest. */
+function typeText(value: unknown): string {
+    if (typeof value === "string") return value;
+    return jsonText(value) ?? "undefined";
+}
+
+// JSON.stringify claims `string`, but a symbol or a function reads undefined; the declared result keeps that honest.
+function jsonText(value: unknown): string | undefined {
+    return JSON.stringify(value);
 }
 
 /**
@@ -88,7 +104,7 @@ function describe(value: unknown): string {
  * in `ResultError` with the structured value on `.cause`.
  */
 export function toThrowable(value: unknown): Error {
-    return value instanceof Error ? value : new ResultError(value);
+    return errorOf(value) ?? new ResultError(value);
 }
 
 /**
@@ -111,16 +127,16 @@ export function toThrowable(value: unknown): Error {
  * `.andThen`/`.map`/`.mapErr`, or `.match` both branches. Never reach for
  * this to dodge error handling in composable domain logic.
  *
- * The `must-use-result` lint rule recognizes `unwrapOrThrow(...)` as
- * consuming its Result (see the plugin patch in `eslint.config.js`) — do not
- * rewrite call sites into inline `.match`+throw forms to appease lint.
+ * The `must-use-result` rule of the type check command recognizes
+ * `unwrapOrThrow(...)` as consuming its Result — do not rewrite call sites
+ * into inline `.match`+throw forms to appease the rule.
  */
 export function unwrapOrThrow<T, E>(result: Result<T, E>): T {
     if (result.isErr()) throw toThrowable(result.error);
     return result.value;
 }
 
-/** Runtime brand check — is this value a neverthrow `Result`? */
-export function isResult(value: unknown): value is Result<unknown, unknown> {
-    return value instanceof Ok || value instanceof Err;
+/** The value as a neverthrow `Result`, or `undefined` for any other value — the runtime brand check. */
+export function asResult(value: unknown): Result<unknown, unknown> | undefined {
+    return value instanceof Ok || value instanceof Err ? value : undefined;
 }

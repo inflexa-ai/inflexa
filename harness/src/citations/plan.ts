@@ -19,12 +19,14 @@ function enoughForEcitMatch(input: CitationInput): boolean {
 }
 
 function indicatesArxiv(input: CitationInput, normalized: NormalizedCitation): boolean {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return /\b(?:arxiv|preprint)\b/i.test(input.citation) || /\barxiv\b/i.test(input.venue ?? "") || normalized.identifiers.arxiv !== undefined;
 }
 
 export function planCitationSources(input: CitationInput, normalized: NormalizedCitation): CitationSourcePlanItem[] {
-    if (normalized.unsupportedWorkKind !== undefined) {
-        return SOURCES.map((source) => item(source, false, "none", `unsupported work kind: ${normalized.unsupportedWorkKind}`));
+    const unsupportedWorkKind = normalized.unsupportedWorkKind;
+    if (unsupportedWorkKind !== undefined) {
+        return SOURCES.map((source) => item(source, false, "none", `unsupported work kind: ${unsupportedWorkKind}`));
     }
 
     if (normalized.kind === "doi") {

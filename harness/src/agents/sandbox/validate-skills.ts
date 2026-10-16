@@ -8,16 +8,17 @@
 
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { errorMessage } from "../../lib/thrown.js";
 
 /**
  * Minimal shape this validator reads — `id` for diagnostics and `skills`
  * for the per-agent skill list. Declared structurally so `AgentMeta` types
  * with `readonly` arrays work without a cast at the call site.
  */
-interface AgentMetaLike {
+type AgentMetaLike = {
     readonly id: string;
     readonly skills: readonly string[];
-}
+};
 
 export function validateAgentSkills(skillsDir: string, catalog: Readonly<Record<string, AgentMetaLike>>): void {
     try {
@@ -26,7 +27,7 @@ export function validateAgentSkills(skillsDir: string, catalog: Readonly<Record<
             throw new Error(`SKILLS_DIR "${skillsDir}" is not a directory`);
         }
     } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errorMessage(err);
         throw new Error(
             `SKILLS_DIR "${skillsDir}" is not accessible: ${msg}. ` + `Set SKILLS_DIR to a directory containing skill subfolders (one SKILL.md each).`,
             { cause: err },

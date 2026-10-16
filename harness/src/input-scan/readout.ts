@@ -12,6 +12,9 @@
 
 import { constants as zlibConstants, createGunzip, createZstdDecompress } from "node:zlib";
 import type { Transform } from "node:stream";
+import { parseJsonOrUndefined } from "../lib/json.js";
+import { plainRecord } from "../lib/shape.js";
+import { splitLines } from "../lib/text.js";
 
 /** Bytes read from each file. The readout's whole per-file I/O budget. */
 export const READOUT_PREFIX_BYTES = 262_144;
@@ -31,11 +34,11 @@ const BINARY_SNIFF_BYTES = 4096;
 
 export type ReadoutFields = Record<string, string | number | boolean>;
 
-export interface PrefixReadout {
+export type PrefixReadout = {
     readonly fields: ReadoutFields;
     /** Why the fields are thin or empty. Present alongside whatever WAS read. */
     readonly unavailable?: string;
-}
+};
 
 /**
  * Read what a bounded prefix can say about a file.
@@ -73,7 +76,7 @@ async function decompressBounded(raw: Buffer, wrapper: string): Promise<Buffer |
         const chunks: Buffer[] = [];
         let total = 0;
         let settled = false;
-        const finish = () => {
+        const finish = (): void => {
             if (settled) return;
             settled = true;
             stream.removeAllListeners();
@@ -120,8 +123,8 @@ function decodeText(buf: Buffer, format: string): PrefixReadout {
 }
 
 function textFields(text: string, format: string): PrefixReadout {
-    const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
-    const head = lines[0];
+    const lines = splitLines(text).filter((line) => line.trim() !== "");
+    const head = lines.at(0);
     if (head === undefined) return { fields: {}, unavailable: "no text in the prefix" };
 
     if (format === "markdown") return markdownFields(lines);
@@ -130,7 +133,7 @@ function textFields(text: string, format: string): PrefixReadout {
     if (head.startsWith("##")) return metaHeaderFields(lines);
     if (head.startsWith(">")) return { fields: { firstRecord: clip(head.slice(1), MAX_RECORD_CHARS), recordsInPrefix: countPrefixed(lines, ">") } };
     if (head.startsWith("@HD") || head.startsWith("@SQ")) return samFields(lines);
-    if (head.startsWith("@") && lines.length > 1) return { fields: { firstRecord: clip(head.slice(1), MAX_RECORD_CHARS), readLength: lines[1]!.length } };
+    if (head.startsWith("@") && lines.length > 1) return { fields: { firstRecord: clip(head.slice(1), MAX_RECORD_CHARS), readLength: lines[1].length } };
     return delimitedFields(lines) ?? { fields: { firstLine: clip(head, MAX_LINE_CHARS), linesInPrefix: lines.length } };
 }
 
@@ -169,8 +172,9 @@ function samFields(lines: readonly string[]): PrefixReadout {
         referenceSequences: countPrefixed(lines, "@SQ"),
         readGroups: countPrefixed(lines, "@RG"),
     };
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
     const sortOrder = /(?:^|\t)SO:([^\t]+)/.exec(lines.find((line) => line.startsWith("@HD")) ?? "");
-    if (sortOrder) fields.sortOrder = clip(sortOrder[1]!, 20);
+    if (sortOrder) fields.sortOrder = clip(sortOrder[1], 20);
     return { fields };
 }
 
@@ -202,7 +206,7 @@ function sniffDelimiter(line: string): { readonly char: string; readonly name: s
 function delimitedFields(lines: readonly string[]): PrefixReadout | undefined {
     const headerIndex = lines.findIndex((line) => !line.startsWith("#"));
     if (headerIndex < 0) return undefined;
-    const header = lines[headerIndex]!;
+    const header = lines[headerIndex];
     const delimiter = sniffDelimiter(header);
     if (delimiter === undefined) return undefined;
 
@@ -236,7 +240,7 @@ function splitDelimited(line: string, delimiter: string): string[] {
     let current = "";
     let quoted = false;
     for (let index = 0; index < line.length; index++) {
-        const char = line[index]!;
+        const char = line[index];
         if (quoted) {
             if (char !== '"') current += char;
             else if (line[index + 1] === '"') {
@@ -258,17 +262,15 @@ function splitDelimited(line: string, delimiter: string): string[] {
 function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     const whole = parseJson(text.slice(0, READOUT_TEXT_BYTES));
     if (Array.isArray(whole)) {
-        const first = whole[0];
-        return {
-            fields: {
-                jsonType: "array",
-                elementCount: whole.length,
-                ...(isRecord(first) ? { firstElementKeys: joinKeys(Object.keys(first)) } : {}),
-            },
-        };
+        const first: unknown = whole[0];
+        const fields: ReadoutFields = { jsonType: "array", elementCount: whole.length };
+        const firstRecord = plainRecord(first);
+        if (firstRecord !== undefined) fields.firstElementKeys = joinKeys(Object.keys(firstRecord));
+        return { fields };
     }
-    if (isRecord(whole)) {
-        const keys = Object.keys(whole);
+    const wholeRecord = plainRecord(whole);
+    if (wholeRecord !== undefined) {
+        const keys = Object.keys(wholeRecord);
         return { fields: { jsonType: "object", keyCount: keys.length, keys: joinKeys(keys) } };
     }
     if (whole !== undefined) return { fields: { jsonType: typeof whole } };
@@ -277,36 +279,43 @@ function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     const candidates = lines.slice(0, MAX_META_LINES);
     const parsed = candidates.map((line) => parseJson(line));
     const complete = parsed.filter((value) => value !== undefined);
-    const record = parsed.find(isRecord);
+    const record = parsed
+        .flatMap((value) => {
+            const recordValue = plainRecord(value);
+            return recordValue === undefined ? [] : [recordValue];
+        })
+        .at(0);
     if (record !== undefined && complete.length >= Math.max(1, candidates.length - 1)) {
         return { fields: { jsonType: "json-lines", recordsInPrefix: lines.length, keys: joinKeys(Object.keys(record)) } };
     }
-    return { fields: { firstLine: clip(lines[0]!, MAX_LINE_CHARS) }, unavailable: "JSON document extends past the readout prefix" };
+    return { fields: { firstLine: clip(lines[0], MAX_LINE_CHARS) }, unavailable: "JSON document extends past the readout prefix" };
 }
 
 /** Top-level keys, read positionally: an unindented `key:` line opens a mapping entry. */
 function yamlFields(lines: readonly string[]): PrefixReadout {
     const keys: string[] = [];
     for (const line of lines.slice(0, MAX_META_LINES)) {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
         const match = /^([A-Za-z_][\w.-]*):(\s|$)/.exec(line);
-        if (match) keys.push(match[1]!);
+        if (match) keys.push(match[1]);
     }
     const documents = lines.filter((line) => line.trim() === "---").length;
-    return {
-        fields: {
-            topLevelKeyCount: keys.length,
-            topLevelKeys: joinKeys(keys),
-            linesInPrefix: lines.length,
-            ...(documents > 0 ? { documentSeparators: documents } : {}),
-        },
+    const fields: ReadoutFields = {
+        topLevelKeyCount: keys.length,
+        topLevelKeys: joinKeys(keys),
+        linesInPrefix: lines.length,
     };
+    if (documents > 0) fields.documentSeparators = documents;
+    return { fields };
 }
 
 function markdownFields(lines: readonly string[]): PrefixReadout {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
     const headings = lines.filter((line) => /^#{1,6}\s/.test(line));
     return {
         fields: {
-            title: clip((headings[0] ?? lines[0]!).replace(/^#+\s*/, ""), MAX_LINE_CHARS),
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
+            title: clip((headings[0] ?? lines[0]).replace(/^#+\s*/, ""), MAX_LINE_CHARS),
             headings: headings.length,
             linesInPrefix: lines.length,
         },
@@ -314,15 +323,7 @@ function markdownFields(lines: readonly string[]): PrefixReadout {
 }
 
 function parseJson(text: string): unknown {
-    try {
-        return JSON.parse(text) as unknown;
-    } catch {
-        return undefined;
-    }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return parseJsonOrUndefined(text);
 }
 
 function joinKeys(keys: readonly string[]): string {
@@ -340,5 +341,6 @@ function countPrefixed(lines: readonly string[], prefix: string): number {
 }
 
 function clip(text: string, limit: number): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
     return text.replace(/\s+/g, " ").trim().slice(0, limit);
 }

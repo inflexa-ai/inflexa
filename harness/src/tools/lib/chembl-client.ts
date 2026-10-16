@@ -34,27 +34,27 @@ function reportSkippedMolecule(logger: Logger, error: ApiError, moleculeChemblId
 /** How many disease terms one drug can contribute to an indication read. */
 const INDICATIONS_PER_DRUG = 20;
 
-export interface ChemblCompound {
+export type ChemblCompound = {
     chemblId: string;
     preferredCompoundName: string | null;
     canonicalSmiles: string | null;
     molecularWeight: number | null;
     alogp: number | null;
     molecularFormula: string | null;
-}
+};
 
 /** How `searchCompounds` interprets its query string. */
 export type CompoundSearchType = "target" | "compound" | "smiles";
 
-export interface ChemblTarget {
+export type ChemblTarget = {
     targetChemblId: string;
     preferredName: string | null;
     targetType: string | null;
     organism: string | null;
     geneNames: string[];
-}
+};
 
-export interface ChemblActivity {
+export type ChemblActivity = {
     activityId: number | null;
     compoundChemblId: string;
     targetChemblId: string | null;
@@ -64,35 +64,35 @@ export interface ChemblActivity {
     assayChemblId: string | null;
     assayType: string | null;
     pchemblValue: number | null;
-}
+};
 
-export interface ChemblMechanism {
+export type ChemblMechanism = {
     mechanismOfAction: string | null;
     actionType: string | null;
     targetChemblId: string | null;
     targetName: string | null;
     moleculeChemblId: string;
-}
+};
 
-export interface ChemblDrug {
+export type ChemblDrug = {
     moleculeChemblId: string;
     preferredName: string | null;
     maxPhase: number | null;
     moleculeType: string | null;
     firstApproval: number | null;
     indication: string | null;
-}
+};
 
-export interface ChemblModulator {
+export type ChemblModulator = {
     moleculeChemblId: string;
     parentChemblId: string | null;
     preferredName: string | null;
     maxPhase: number | null;
     moleculeType: string | null;
     firstApproval: number | null;
-}
+};
 
-export interface ChemblPolypharmHit {
+export type ChemblPolypharmHit = {
     moleculeChemblId: string;
     targetChemblId: string;
     targetName: string | null;
@@ -102,7 +102,7 @@ export interface ChemblPolypharmHit {
     standardValue: number | null;
     standardUnits: string | null;
     pchemblValue: number | null;
-}
+};
 
 const TargetComponentSynonymSchema = z.object({
     syn_type: z.string().optional(),
@@ -548,7 +548,7 @@ async function searchApprovedDrugsByName(query: string, limit: number): Promise<
     const approved = (res.value.molecules ?? []).filter((mol) => mol.max_phase != null && mol.max_phase >= APPROVED_MAX_PHASE);
     if (approved.length === 0) return [];
 
-    const moleculeChemblIds = approved.map((mol) => mol.molecule_chembl_id).filter((id): id is string => id !== undefined && id.length > 0);
+    const moleculeChemblIds = approved.map((mol) => mol.molecule_chembl_id).filter((id: string | undefined): id is string => id !== undefined && id.length > 0);
     const indications = await fetchIndicationsOf(moleculeChemblIds);
     return approved.map((raw) => mapDrug(raw, indications.get(raw.molecule_chembl_id ?? "") ?? null));
 }
@@ -698,11 +698,11 @@ export async function getModulatorOnTargetPchembl(modulatorChemblId: string, tar
         reportSkippedMolecule(log, res.error, modulatorChemblId);
         return null;
     }
-    const values = (res.value.activities ?? []).map((a) => a.pchembl_value).filter((v): v is number => v != null);
+    const values = (res.value.activities ?? []).map((a) => a.pchembl_value).filter((v: number | null | undefined): v is number => v != null);
     if (values.length === 0) return null;
     values.sort((a, b) => a - b);
     const mid = Math.floor(values.length / 2);
-    return values.length % 2 === 1 ? values[mid]! : (values[mid - 1]! + values[mid]!) / 2;
+    return values.length % 2 === 1 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
 }
 
 /**

@@ -10,6 +10,7 @@
  */
 
 import { okAsync, type ResultAsync } from "neverthrow";
+import { z } from "zod";
 import type { Pool, PoolClient } from "pg";
 
 import { tryMutation, tryQuery, withTransaction, type DbError } from "../../lib/db-result.js";
@@ -20,11 +21,36 @@ type Querier = Pool | PoolClient;
 /** The ask ledger's status machine — one `pending` state, four terminal ones. */
 export type AskStatus = "pending" | "resolved" | "rejected" | "aborted" | "expired";
 
+/**
+ * The `cortex_asks` rows as the driver hands them over, parsed into the query
+ * result types. The SQL column nullabilities and the `reply` JSONB shape ARE
+ * the schema: a row that misses them is a defect the parse names instead of an
+ * `as` that lets it through.
+ */
+const AskStatusDb = z.enum(["pending", "resolved", "rejected", "aborted", "expired"]);
+const AskReplyDb = z.union([
+    z.object({ kind: z.literal("once") }),
+    z.object({ kind: z.literal("always") }),
+    z.object({ kind: z.literal("reject"), feedback: z.string().optional() }),
+]);
+const AskResolutionDb = z.object({ status: AskStatusDb, reply: AskReplyDb.nullable() });
+const PendingAskDb = z.object({
+    id: z.string(),
+    analysis_id: z.string(),
+    user_id: z.string(),
+    thread_id: z.string().nullable(),
+    title: z.string(),
+    command: z.string(),
+    detail: z.string().nullable(),
+    created_at: z.string(),
+});
+const AnswerReturningDb = z.object({ analysis_id: z.string(), user_id: z.string(), grant_key: z.string() });
+
 /** The discriminated outcome of an out-of-band `answer` against a ledger row. */
 export type AnswerOutcome = "applied" | "not_found" | "already_terminal";
 
 /** An unresolved ask, as enumerated by `pending()`. */
-export interface PendingAsk {
+export type PendingAsk = {
     readonly id: string;
     readonly analysisId: string;
     readonly userId: string;
@@ -33,16 +59,16 @@ export interface PendingAsk {
     readonly command: string;
     readonly detail: string | null;
     readonly createdAt: string;
-}
+};
 
 /** The status + recorded reply a poll reads to observe a decision. */
-export interface AskResolution {
+export type AskResolution = {
     readonly status: AskStatus;
     readonly reply: AskReply | null;
-}
+};
 
 /** Column payload shared by the pending insert and the grant short-circuit insert. */
-export interface AskRow {
+export type AskRow = {
     readonly id: string;
     readonly analysisId: string;
     readonly userId: string;
@@ -53,7 +79,7 @@ export interface AskRow {
     /** Grant key an `always` keys its standing grant under; `null` falls back to `command`. */
     readonly grantKey: string | null;
     readonly createdAt: string;
-}
+};
 
 /** Insert a fresh `pending` ask before its decision is awaited. */
 export function insertPendingAsk(querier: Querier, row: AskRow): ResultAsync<void, DbError> {
@@ -113,9 +139,9 @@ export function selectAskResolution(querier: Querier, id: string): ResultAsync<A
             text: `SELECT status, reply FROM cortex_asks WHERE id = $1`,
             values: [id],
         });
-        const row = result.rows[0] as { status: AskStatus; reply: AskReply | null } | undefined;
-        if (!row) return null;
-        return { status: row.status, reply: row.reply ?? null };
+        if (result.rows.length === 0) return null;
+        const row = AskResolutionDb.parse(result.rows[0]);
+        return { status: row.status, reply: row.reply };
     });
 }
 
@@ -139,16 +165,19 @@ export function selectPending(querier: Querier): ResultAsync<PendingAsk[], DbErr
             text: `SELECT id, analysis_id, COALESCE(user_id, '') AS user_id, thread_id, title, command, detail, created_at
               FROM cortex_asks WHERE status = 'pending' ORDER BY created_at ASC`,
         });
-        return result.rows.map((row: Record<string, unknown>) => ({
-            id: row.id as string,
-            analysisId: row.analysis_id as string,
-            userId: row.user_id as string,
-            threadId: (row.thread_id as string | null) ?? null,
-            title: row.title as string,
-            command: row.command as string,
-            detail: (row.detail as string | null) ?? null,
-            createdAt: row.created_at as string,
-        }));
+        return result.rows.map((row: Record<string, unknown>) => {
+            const parsed = PendingAskDb.parse(row);
+            return {
+                id: parsed.id,
+                analysisId: parsed.analysis_id,
+                userId: parsed.user_id,
+                threadId: parsed.thread_id ?? null,
+                title: parsed.title,
+                command: parsed.command,
+                detail: parsed.detail ?? null,
+                createdAt: parsed.created_at,
+            };
+        });
     });
 }
 
@@ -194,13 +223,13 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
         ).andThen((updated) => {
             if ((updated.rowCount ?? 0) === 0) return discriminateMiss(client, id);
             if (reply.kind !== "always") return okAsync<AnswerOutcome, DbError>("applied");
-            // The cast's non-null `grant_key` is sound without any boot-order
-            // caveat: every insert writes grant_key (command when the tool supplied
-            // none), and the COALESCE above covers any pending row that predates
-            // the column — `command` is NOT NULL, so the key can never be null.
-            // `user_id` reads the same way: its COALESCE gives the empty string for a
-            // row that predates the column, and that identity matches no real user.
-            const granted = updated.rows[0] as { analysis_id: string; user_id: string; grant_key: string };
+            // `grant_key` is non-null without any boot-order caveat: every insert
+            // writes grant_key (command when the tool supplied none), and the
+            // COALESCE above covers any pending row that predates the column —
+            // `command` is NOT NULL, so the key can never be null. `user_id` reads
+            // the same way: its COALESCE gives the empty string for a row that
+            // predates the column, and that identity matches no real user.
+            const granted = AnswerReturningDb.parse(updated.rows[0]);
             return tryMutation("asks.answer:grant", async () => {
                 await client.query({
                     text: `INSERT INTO cortex_ask_grants (analysis_id, user_id, grant_key, created_at)

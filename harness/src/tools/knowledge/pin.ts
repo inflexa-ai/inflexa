@@ -6,12 +6,12 @@
  * plan never mixes two releases in silence.
  */
 
-export interface SnapshotPin {
+export type SnapshotPin = {
     /** The pinned release digest, or `undefined` before the first answer. */
     get(): string | undefined;
     /** Pin the release of the first answer. A later call with another digest changes nothing: the first release is the plan's. */
     set(digest: string): void;
-}
+};
 
 export function createSnapshotPin(): SnapshotPin {
     let pinned: string | undefined;

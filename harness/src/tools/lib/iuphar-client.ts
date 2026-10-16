@@ -42,15 +42,16 @@ export const IupharTargetSchema = z.object({
 });
 export type IupharTarget = z.infer<typeof IupharTargetSchema>;
 
-export interface IupharHeterodimer {
+export type IupharHeterodimer = {
     /** Complex target record (e.g., the AMY1 receptor). */
     complex: IupharTarget;
     /** All subunits of the complex, including the primary protein and accessory(ies). */
     subunits: IupharTarget[];
     /** Accessory-protein subunits only (type === "AccessoryProtein"). */
     accessories: IupharTarget[];
-}
+};
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const UNIPROT_ACCESSION_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9]$/;
 
 function stripHtml(name: string): string {
@@ -61,6 +62,7 @@ function stripHtml(name: string): string {
     let prev: string;
     do {
         prev = out;
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         out = out.replace(/<[^>]+>/g, "");
     } while (out !== prev);
     return out;
@@ -143,8 +145,8 @@ export async function getFamilyHeterodimers(uniprotOrGeneSymbol: string): Promis
         const batch = complexes.slice(i, i + concurrency);
         const subunitLists = await Promise.all(batch.map((c) => getSubunits(c.targetId)));
         for (let j = 0; j < batch.length; j++) {
-            const complex = batch[j]!;
-            const subunits = subunitLists[j]!;
+            const complex = batch[j];
+            const subunits = subunitLists[j];
             const cleanedSubunits = subunits.map((s) => ({ ...s, name: stripHtml(s.name) }));
             // Only a shape B row reaches this filter, because `getSubunits`
             // calls `/targets/{id}/subunits`. Shape B is the one shape that

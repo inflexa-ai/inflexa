@@ -54,17 +54,18 @@ import {
 
 /** A resolved `ok(undefined)` ResultAsync — the empty/seed transaction step. */
 function okVoid<E = DbError>(): ResultAsync<void, E> {
+    // oxlint-disable-next-line typescript/no-invalid-void-type -- neverthrow's ok<void, E> / ResultAsync<void, E> is the idiom of the seam contracts; re-typing the contracts to undefined changes the published surface beyond this change
     return new ResultAsync(Promise.resolve(ok<void, E>(undefined)));
 }
 
-interface MessageRow {
+type MessageRow = {
     readonly seq: string;
     readonly message_envelope: unknown;
     readonly tokens: number;
-}
+};
 
 /** One stored message, as returned by the display read (`loadAll`). */
-export interface StoredMessage {
+export type StoredMessage = {
     readonly seq: number;
     readonly envelope: StoredMessageEnvelope;
     readonly message: ModelMessage;
@@ -103,7 +104,7 @@ export interface StoredMessage {
      * behind it.
      */
     readonly createdAt?: Date;
-}
+};
 
 /**
  * One atomic group of rows: the exact provider-facing history, and the display
@@ -114,7 +115,7 @@ export interface StoredMessage {
  * what the transcript replays. Neither is derived from the other, and a failed
  * write commits neither.
  */
-export interface ConversationTurn {
+export type ConversationTurn = {
     /** Exact provider-facing history; token accounting and model reads use only this projection. */
     readonly modelMessages: readonly ModelMessage[];
     /** Complete ordered AI SDK UI messages recorded from the live display event stream. */
@@ -129,7 +130,7 @@ export interface ConversationTurn {
      * envelope, because a `text` parameter carrying 0x00 fails the statement.
      */
     readonly author?: string;
-}
+};
 
 /**
  * The append a host uses to record out-of-band work in a thread — an analysis
@@ -164,7 +165,7 @@ export function conversationRecordTurn(text: string, displayParts?: readonly Exc
 export type TurnStatus = "open" | "done" | "aborted" | "failed";
 
 /** The close of a chat turn. It sets the outcome on the turn record, one time. */
-export interface TurnClose {
+export type TurnClose = {
     readonly status: Exclude<TurnStatus, "open">;
     /** The reason of a failure. */
     readonly reason?: string;
@@ -173,7 +174,7 @@ export interface TurnClose {
     readonly turnDurationMs?: number;
     /** The note of a failure or of an abort, stored after the rounds. */
     readonly note?: ConversationTurn;
-}
+};
 
 /**
  * One write of a chat turn. The opening adds the turn record, and a later write names the turn by
@@ -183,18 +184,18 @@ export type TurnWrite =
     | { readonly opening: ConversationTurn; readonly startSeq?: never; readonly rounds: readonly ConversationTurn[]; readonly close?: TurnClose }
     | { readonly startSeq: number; readonly opening?: never; readonly rounds: readonly ConversationTurn[]; readonly close?: TurnClose };
 
-export interface TurnWriteResult {
+export type TurnWriteResult = {
     /** The `seq` of the user row that opens the turn, which keys its turn record. */
     readonly startSeq: number;
-}
+};
 
 /** The turn record of a chat turn, as the display read gives it. */
-export interface StoredTurnRecord {
+export type StoredTurnRecord = {
     readonly status: TurnStatus;
     readonly reason?: string;
     readonly usage?: TokenUsageRollup;
     readonly durationMs?: number;
-}
+};
 
 /**
  * The result of `retractLastTurn`. `retracted` carries `messages` — the number
@@ -206,16 +207,16 @@ export interface StoredTurnRecord {
 export type RetractOutcome = { kind: "retracted"; messages: number } | { kind: "empty-thread" } | { kind: "no-user-turn" };
 
 /** The read options of {@link ThreadHistory.loadRecent}. */
-export interface LoadRecentOptions {
+export type LoadRecentOptions = {
     /** Keep the first turn of the thread, the seed of a report thread, in front of the latest summary. */
     readonly keepFirstTurn?: boolean;
-}
+};
 
 /**
  * The conversation message store. Two methods, by design — no generic row
  * insert (see the harness-thread-store spec). `threadId` is the conversation scope — one UI thread.
  */
-export interface ThreadHistory {
+export type ThreadHistory = {
     /**
      * Append one group, for example a record of a host — every message written in a
      * single transaction with a `seq` monotonically increasing per thread.
@@ -298,7 +299,7 @@ export interface ThreadHistory {
      * one adds to the count.
      */
     countUserTurnsAfter(threadId: string, seq: number): ResultAsync<number, DbError>;
-}
+};
 
 /**
  * {@link isGenuineUserStart} (`conversation-view.ts`) expressed over a stored
@@ -331,10 +332,10 @@ function serializeEnvelope(message: ModelMessage): string {
     return JSON.stringify(envelopeMessage(message), (_key, value: unknown) => (typeof value === "string" ? stripNulCharacters(value) : value));
 }
 
-interface ThreadInstruments {
+type ThreadInstruments = {
     readonly totalTokens: Histogram;
     readonly turnsEvicted: Histogram;
-}
+};
 
 let instruments: ThreadInstruments | undefined;
 
@@ -378,7 +379,7 @@ function nextSeq(client: PoolClient, threadId: string, op: string): ResultAsync<
         const { rows } = await client.query<{ max_seq: string }>("SELECT COALESCE(MAX(seq), -1)::text AS max_seq FROM messages WHERE thread_id = $1", [
             threadId,
         ]);
-        return Number(rows[0]!.max_seq) + 1;
+        return Number(rows[0].max_seq) + 1;
     });
 }
 
@@ -397,7 +398,8 @@ function insertGroup(client: PoolClient, threadId: string, startSeq: number, gro
     // rather than refused: a 0x00 byte in a `text` parameter fails the
     // statement, and one byte in a label would roll the whole turn back.
     const turnAuthor = author === undefined ? null : stripNulCharacters(author);
-    const authorRow = messages[0] !== undefined && isGenuineUserStart(messages[0]) ? 0 : -1;
+    const firstMessage = messages.at(0);
+    const authorRow = firstMessage !== undefined && isGenuineUserStart(firstMessage) ? 0 : -1;
     // Insert the group's messages in order. Each insert chains off the
     // prior so the first `err` short-circuits — and `withTransaction`
     // re-throws it to force ROLLBACK (a returned `err` that does not
@@ -427,7 +429,7 @@ function insertGroup(client: PoolClient, threadId: string, startSeq: number, gro
                     ),
                 ).map(() => undefined),
             ),
-        okVoid<DbError>(),
+        okVoid(),
     );
 }
 
@@ -476,7 +478,7 @@ function touchThread(client: PoolClient, threadId: string, op: string): ResultAs
             // so COMMIT releases the savepoint on the success path.
             tryMutation(`${op}.touchThread.rewind`, () => client.query("ROLLBACK TO SAVEPOINT touch_thread"))
                 .map(() => undefined)
-                .orElse(() => okVoid<DbError>()),
+                .orElse(() => okVoid()),
         );
 }
 
@@ -546,7 +548,7 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                     }
                     if (close !== undefined) steps.push(() => closeTurnRecord(client, threadId, startSeq, close));
                     steps.push(() => touchThread(client, threadId, "thread-history.writeTurn"));
-                    return steps.reduce((chain, step) => chain.andThen(step), okVoid<DbError>()).map(() => ({ startSeq }));
+                    return steps.reduce((chain, step) => chain.andThen(step), okVoid()).map(() => ({ startSeq }));
                 }),
         );
     }
@@ -639,11 +641,11 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
             [threadId],
         );
 
-        // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
-        // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
-        // The duration and the author obey the same rule, each from its own column.
-        // The creation time is unconditional: its column is NOT NULL, thus it has no
-        // absence to represent.
+        // Built key-by-key, so a row with no rollup carries no `usage` KEY at all
+        // — absent, not present-and-undefined. The duration and the author obey
+        // the same rule, each from its own column. The creation time is
+        // unconditional: its column is NOT NULL, thus it has no absence to
+        // represent.
         const stored: StoredMessage[] = await Promise.all(
             rows.map(async (r) => {
                 const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
@@ -654,21 +656,22 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                         ? undefined
                         : {
                               status: r.turn_status,
-                              ...(r.turn_reason === null ? {} : { reason: r.turn_reason }),
-                              ...(r.turn_usage === null ? {} : { usage: r.turn_usage }),
-                              ...(r.turn_record_duration_ms === null ? {} : { durationMs: Number(r.turn_record_duration_ms) }),
+                              reason: !(r.turn_reason === null) ? r.turn_reason : undefined,
+                              usage: !(r.turn_usage === null) ? r.turn_usage : undefined,
+                              durationMs: !(r.turn_record_duration_ms === null) ? Number(r.turn_record_duration_ms) : undefined,
                           };
-                return {
+                const row: { -readonly [K in keyof StoredMessage]: StoredMessage[K] } = {
                     seq: Number(r.seq),
                     envelope,
                     message: envelope.message,
-                    ...(displayEnvelope ? { displayEnvelope } : {}),
-                    ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
-                    ...(r.turn_duration_ms === null ? {} : { durationMs: Number(r.turn_duration_ms) }),
-                    ...(turn === undefined ? {} : { turn }),
-                    ...(r.author === null ? {} : { author: r.author }),
                     createdAt: r.created_at,
                 };
+                if (displayEnvelope !== undefined) row.displayEnvelope = displayEnvelope;
+                if (r.reported_usage !== null) row.usage = r.reported_usage;
+                if (r.turn_duration_ms !== null) row.durationMs = Number(r.turn_duration_ms);
+                if (turn !== undefined) row.turn = turn;
+                if (r.author !== null) row.author = r.author;
+                return row;
             }),
         );
 
@@ -712,7 +715,7 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                          AND ${GENUINE_USER_START_SQL}) AS boundary`,
                             [threadId],
                         );
-                        return rows[0]!;
+                        return rows[0];
                     }),
                 )
                 .andThen(({ has_rows, boundary }) => {
@@ -775,7 +778,7 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                 AND ${GENUINE_USER_START_SQL}`,
                 [threadId, seq],
             ),
-        ).map(({ rows }) => Number(rows[0]!.turns));
+        ).map(({ rows }) => Number(rows[0].turns));
     }
 
     return { appendTurn, writeTurn, loadRecent, loadAll, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };

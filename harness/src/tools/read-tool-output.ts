@@ -9,6 +9,7 @@ import { z } from "zod";
 import { unwrapOrThrow } from "../lib/result.js";
 import { pairSafeIndex, READ_TOOL_OUTPUT_TOOL_ID, TOOL_OUTPUT_KEEP_MAX, TOOL_RESULT_CAP, type ToolOutputStore } from "../loop/tool-output.js";
 import { defineTool, type Tool, type ToolError } from "./define-tool.js";
+import { errorMessage } from "../lib/thrown.js";
 
 const DEFAULT_PAGE_CHARS = 8 * 1024;
 const MAX_PAGE_CHARS = 16 * 1024;
@@ -18,10 +19,10 @@ const MATCH_CHARS_AFTER = 250;
 /** The loop JSON-escapes the text of a result, and an escape can make a text two to six times longer. */
 const RESULT_BUDGET = TOOL_RESULT_CAP - 512;
 
-interface Match {
+type Match = {
     readonly offset: number;
     readonly text: string;
-}
+};
 
 type ReadToolOutputResult =
     | { status: "ok"; ref: string; offset: number; end: number; keptLength: number; more: boolean; text: string }
@@ -82,9 +83,10 @@ function page(ref: string, text: string, start: number, limit: number): ReadTool
 function search(ref: string, text: string, start: number, limit: number | undefined, pattern: string): ReadToolOutputResult {
     let regex: RegExp;
     try {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         regex = new RegExp(pattern, "g");
     } catch (err) {
-        return { status: "invalid_pattern", pattern, error: err instanceof Error ? err.message : String(err) };
+        return { status: "invalid_pattern", pattern, error: errorMessage(err) };
     }
 
     const stop = limit === undefined ? text.length : windowEnd(text, start, limit);
@@ -117,7 +119,9 @@ function search(ref: string, text: string, start: number, limit: number | undefi
     });
     let result = at(end);
     while (!fits(result) && matches.length > 1) {
-        end = matches.pop()!.offset;
+        const last = matches.pop();
+        if (last === undefined) break;
+        end = last.offset;
         result = at(end);
     }
     return result;

@@ -16,22 +16,22 @@ import { PDFParse } from "pdf-parse";
 
 export type IchSeries = "S" | "E" | "M" | "Q";
 
-export interface IchStub {
+export type IchStub = {
     doc_id: string;
     doc_title: string;
     doc_url: string;
     code: string;
     series: IchSeries;
     metadata?: { year?: string };
-}
+};
 
-export interface IchDoc {
+export type IchDoc = {
     doc_id: string;
     doc_title: string;
     doc_url: string;
     text: string;
     metadata: { code: string; series: IchSeries; year?: string };
-}
+};
 
 /**
  * Curated catalog of ICH guidelines to index into the corpus.
@@ -151,14 +151,14 @@ const ICH_GUIDELINES: ReadonlyArray<{
  * function exists for parity with `fetchFdaGuidanceListing()` and as the
  * seam where a future contributor can swap in dynamic discovery.
  */
-export async function fetchIchListing(): Promise<IchStub[]> {
-    return ICH_GUIDELINES.map((g) => ({
+export function fetchIchListing(): Promise<IchStub[]> {
+    return Promise.resolve(ICH_GUIDELINES.map((g) => ({
         doc_id: `ich-${slugify(g.code)}`,
         doc_title: g.doc_title,
         doc_url: g.url,
         code: g.code,
         series: g.series,
-    }));
+    })));
 }
 
 /**
@@ -190,8 +190,11 @@ export async function fetchAndExtractIchDoc(stub: IchStub): Promise<IchDoc> {
 
 function normalizeWhitespace(s: string): string {
     return s
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
         .replace(/[ \t]+/g, " ")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
         .replace(/\r/g, "")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
         .replace(/\n{3,}/g, "\n\n")
         .trim();
 }
@@ -199,6 +202,8 @@ function normalizeWhitespace(s: string): string {
 function slugify(s: string): string {
     return s
         .toLowerCase()
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
         .replace(/[^a-z0-9]+/g, "-")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
         .replace(/^-|-$/g, "");
 }

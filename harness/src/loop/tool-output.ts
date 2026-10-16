@@ -6,6 +6,8 @@
 import { createHash } from "node:crypto";
 
 import type { ToolResultPart } from "ai";
+
+type ToolContentPart = Extract<ToolResultPart["output"], { type: "content" }>["value"][number];
 import type { ResultAsync } from "neverthrow";
 
 import type { DomainError } from "../lib/result.js";
@@ -24,7 +26,7 @@ export const TOOL_OUTPUT_KEEP_MAX = 1024 * 1024;
 
 export const READ_TOOL_OUTPUT_TOOL_ID = "read_tool_output";
 
-export interface KeptToolOutput {
+export type KeptToolOutput = {
     readonly analysisId: string;
     readonly ref: string;
     readonly toolName: string;
@@ -35,18 +37,31 @@ export interface KeptToolOutput {
     readonly content: string;
     /** The length of the whole text of the result. */
     readonly totalLength: number;
-}
+};
 
 /** Keeps the text of each cut tool result for `read_tool_output`. */
-export interface ToolOutputStore {
+export type ToolOutputStore = {
     /** A second put of the same analysis id and reference replaces the text. */
     put(output: KeptToolOutput): ResultAsync<void, DomainError>;
     get(analysisId: string, ref: string): ResultAsync<KeptToolOutput | null, DomainError>;
-}
+};
 
 /** The reference of one kept text. It is short, because the model copies it. */
 export function toolOutputRef(key: string): string {
     return `to_${createHash("sha256").update(key).digest("hex").slice(0, 20)}`;
+}
+
+/** The text of a content part of a tool result, or `""` when the part carries no text. */
+function isTextPart(part: ToolContentPart): part is Extract<ToolContentPart, { type: "text" }> {
+    // The SDK's content-part union still carries the deprecated `file-data` member,
+    // and reading its `type` discriminant trips `no-deprecated`; `text` is the
+    // member this code reads, and `in` narrows on it directly.
+    return "text" in part;
+}
+
+/** A content part that carries `text`. */
+function textContentPart(text: string): Extract<ToolContentPart, { type: "text" }> {
+    return { type: "text", text };
 }
 
 /** The text that the model reads for a result, or `undefined` for a denial, which is never cut. */
@@ -59,7 +74,7 @@ export function resultTextOf(output: ToolResultPart["output"]): string | undefin
         case "error-text":
             return output.value;
         case "content":
-            return output.value.map((part) => (part.type === "text" ? part.text : "")).join("");
+            return output.value.map((part) => (isTextPart(part) ? part.text : "")).join("");
         case "execution-denied":
             return undefined;
     }
@@ -109,7 +124,7 @@ export function withExcerpt(part: ToolResultPart, excerpt: string): ToolResultPa
         case "error-text":
             return { ...part, output: { type: "error-text", value: excerpt } };
         case "content":
-            return { ...part, output: { type: "content", value: [{ type: "text", text: excerpt }, ...output.value.filter((p) => p.type !== "text")] } };
+            return { ...part, output: { type: "content", value: [textContentPart(excerpt), ...output.value.filter((part) => !isTextPart(part))] } };
         case "execution-denied":
             return part;
     }

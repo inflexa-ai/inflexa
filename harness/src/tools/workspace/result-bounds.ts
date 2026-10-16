@@ -21,12 +21,12 @@ import type { ExecResult } from "../../sandbox/types.js";
 /** Per-stream cap: the maximum of a kept tool output, thus the host gets each stream that the store can keep. */
 export const EXEC_STREAM_BYTE_CAP = TOOL_OUTPUT_KEEP_MAX;
 
-export interface BoundedStream {
+export type BoundedStream = {
     readonly content: string;
     readonly truncated: boolean;
     readonly totalLength: number;
     readonly returnedBytes: number;
-}
+};
 
 /**
  * Decode `buf` as UTF-8, dropping a trailing partial sequence rather than
@@ -47,7 +47,7 @@ function trimPartialSequence(buf: Buffer): string {
     return buf.toString("utf8");
 }
 
-export interface BoundedExecResult {
+export type BoundedExecResult = {
     readonly execId: string;
     readonly exitCode: number | null;
     readonly stdout: string;
@@ -59,7 +59,7 @@ export interface BoundedExecResult {
     readonly durationMs: number | null;
     readonly timedOut: boolean;
     readonly syntheticFailure?: { readonly reason: string };
-}
+};
 
 function boundStream(stream: string, cap: number = EXEC_STREAM_BYTE_CAP): BoundedStream {
     const totalLength = Buffer.byteLength(stream, "utf8");
@@ -122,7 +122,7 @@ export function capExecStreams(result: ExecResult, cap: number = EXEC_STREAM_BYT
 export function boundExecResult(result: ExecResult, cap: number = EXEC_STREAM_BYTE_CAP): BoundedExecResult {
     const outStream = boundStream(result.stdout, cap);
     const errStream = boundStream(result.stderr, cap);
-    return {
+    const bound: { -readonly [K in keyof BoundedExecResult]: BoundedExecResult[K] } = {
         execId: result.execId,
         exitCode: result.exitCode,
         stdout: outStream.content,
@@ -133,6 +133,7 @@ export function boundExecResult(result: ExecResult, cap: number = EXEC_STREAM_BY
         stderrTotalLength: result.stderrTotalBytes ?? errStream.totalLength,
         durationMs: result.durationMs,
         timedOut: result.timedOut,
-        ...(result.syntheticFailure ? { syntheticFailure: result.syntheticFailure } : {}),
     };
+    if (result.syntheticFailure !== undefined) bound.syntheticFailure = result.syntheticFailure;
+    return bound;
 }

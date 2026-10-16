@@ -26,9 +26,10 @@ import { ResultAsync, err, ok } from "neverthrow";
 import type { Pool, PoolClient } from "pg";
 
 import type { DomainError } from "./result.js";
+import { maybeRecord } from "./shape.js";
 
 /** A query/mutation/connection accepted by the data-access layer. */
-type Querier = Pool | PoolClient;
+export type Querier = Pool | PoolClient;
 
 /**
  * A storage-layer failure. Absence is deliberately NOT modelled: single-row
@@ -75,8 +76,9 @@ const CONSTRAINT_SQLSTATE: Record<string, string> = {
 };
 
 function sqlstate(cause: unknown): string | undefined {
-    if (cause && typeof cause === "object" && "code" in cause) {
-        const code = (cause as { code?: unknown }).code;
+    const fields = maybeRecord(cause);
+    if (fields !== undefined && "code" in fields) {
+        const code = fields.code;
         return typeof code === "string" ? code : undefined;
     }
     return undefined;
@@ -84,8 +86,9 @@ function sqlstate(cause: unknown): string | undefined {
 
 /** pg surfaces the tripped constraint's name on `.constraint`. */
 function constraintName(cause: unknown): string {
-    if (cause && typeof cause === "object" && "constraint" in cause) {
-        const name = (cause as { constraint?: unknown }).constraint;
+    const fields = maybeRecord(cause);
+    if (fields !== undefined && "constraint" in fields) {
+        const name = fields.constraint;
         if (typeof name === "string" && name.length > 0) return name;
     }
     return "unknown";
@@ -235,5 +238,3 @@ export function withTransaction<T>(pool: Pool, op: string, fn: (client: PoolClie
         })(),
     );
 }
-
-export type { Querier };

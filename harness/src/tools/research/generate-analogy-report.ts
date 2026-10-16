@@ -35,6 +35,7 @@ import { createSearchGithubReposTool } from "./search-github-repos.js";
 
 // Biology literature — reused for analogies that land back in biology.
 import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
+import { errorMessage } from "../../lib/thrown.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 const AGENT_ID = "analogical-reasoner";
@@ -49,9 +50,9 @@ const ANALOGY_SALVAGE_NUDGE =
 
 type AnalogyOutcome = { readonly kind: "report"; readonly report: AnalogyReport } | BlockerOutcome;
 
-interface AnalogyOutcomeCell {
+type AnalogyOutcomeCell = {
     outcome: AnalogyOutcome | null;
-}
+};
 
 function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
     return defineTool({
@@ -64,13 +65,13 @@ function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
             "names and call it again. An accepted call ends the run.",
         inputSchema: AnalogyReportSchema,
         describeCall: "none",
-        execute: async (report) => {
+        execute:  (report) => {
             // A report replaces a blocker, thus the report wins when one round records both.
             cell.outcome = { kind: "report", report };
-            return ok({
+            return Promise.resolve(ok({
                 recorded: true as const,
                 message: "Report recorded.",
-            });
+            }));
         },
     });
 }
@@ -155,7 +156,7 @@ export function buildResearchPrompt(input: GenerateAnalogyReportInput): string {
     return lines.join("\n");
 }
 
-export interface GenerateAnalogyReportDeps {
+export type GenerateAnalogyReportDeps = {
     /** The LLM seam the child loop runs on. */
     readonly provider: ChatProvider;
     /** Model id — provenance / metric label; the provider owns the wire model. */
@@ -168,14 +169,14 @@ export interface GenerateAnalogyReportDeps {
     readonly toolOutputStore?: ToolOutputStore;
     /** Logging seam; omitted falls back to no-op. Logs the salvage warning and an accounting error of the reasoner loop. */
     readonly logger?: Logger;
-}
+};
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
 export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps): Tool {
     const logger = (deps.logger ?? createNoopLogger()).named("generate-analogy-report");
     const ncbi = createNcbiTools(deps.bioKeys);
     const searchTools: readonly Tool[] = [
-        createSearchSemanticScholarTool({ ...(deps.bioKeys.semanticScholar === undefined ? {} : { apiKey: deps.bioKeys.semanticScholar }) }),
+        createSearchSemanticScholarTool({ apiKey: !(deps.bioKeys.semanticScholar === undefined) ? deps.bioKeys.semanticScholar : undefined }),
         searchArxivTool,
         createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
         ncbi.pubmed,
@@ -249,7 +250,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                     { tools: [submitReportTool, blockerTool], nudge: ANALOGY_SALVAGE_NUDGE },
                 );
             } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
+                const message = errorMessage(err);
                 return ok({
                     schemaVersion: "1",
                     error: {

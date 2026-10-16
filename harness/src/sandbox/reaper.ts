@@ -77,7 +77,7 @@ export function terminalStepStatus(workflowStatus: string | null): "canceled" | 
     }
 }
 
-export interface ReaperDeps {
+export type ReaperDeps = {
     pool: Pool;
     sandboxClient: Pick<SandboxClient, "listManagedSandboxes" | "teardownById" | "isAliveById">;
     getStatus: (workflowId: string) => Promise<{ status: string } | null>;
@@ -86,9 +86,9 @@ export interface ReaperDeps {
     /** Wall-clock ms; injected for tests. */
     nowMs?: () => number;
     logger?: Logger;
-}
+};
 
-export interface ReapSummary {
+export type ReapSummary = {
     managedCount: number;
     reapedCount: number;
     rowsReconciled: number;
@@ -99,7 +99,7 @@ export interface ReapSummary {
      * *and* a bug signal — it means owner ids are not round-tripping.
      */
     liveUnattributed: number;
-}
+};
 
 /**
  * One cluster→registry sweep. Lists managed machines, classifies each against
@@ -180,12 +180,12 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
     return summary;
 }
 
-export interface RegisterReaperDeps {
+export type RegisterReaperDeps = {
     pool: Pool;
     sandboxClient: Pick<SandboxClient, "listManagedSandboxes" | "teardownById" | "isAliveById">;
     graceMs?: number;
     logger?: Logger;
-}
+};
 
 /** Production registration: a single (unsharded) `@DBOS.scheduled` workflow. */
 export function registerSandboxReaper(deps: RegisterReaperDeps): void {
@@ -202,7 +202,7 @@ export function registerSandboxReaper(deps: RegisterReaperDeps): void {
                     reapOnce({
                         pool: deps.pool,
                         sandboxClient: deps.sandboxClient,
-                        getStatus: async (workflowId) => (await DBOS.getWorkflowStatus(workflowId)) as { status: string } | null,
+                        getStatus: async (workflowId) => (await DBOS.getWorkflowStatus(workflowId)),
                         graceMs: deps.graceMs,
                         logger: deps.logger,
                     }),

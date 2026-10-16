@@ -18,16 +18,17 @@
 
 import { err, type Result } from "neverthrow";
 
+import { plainRecord } from "../lib/shape.js";
 import type { Tool, ToolContext, ToolError } from "../tools/define-tool.js";
 
-export interface CallGuardPolicy {
+export type CallGuardPolicy = {
     /** The calls with one identical input that a run may make to one tool. The next one is refused. */
     readonly identicalLimit: number;
     /** The calls, with any input, that a run may make to one tool. The next one is refused. */
     readonly perToolLimit: number;
     /** The calls, with any input, that a run may make across every guarded tool. The next one is refused by every tool. */
     readonly totalLimit: number;
-}
+};
 
 /**
  * Two identical calls let a model confirm an answer once. Twelve calls of one
@@ -47,25 +48,26 @@ export function canonicalInputKey(input: unknown): string {
 
 function sortKeys(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(sortKeys);
-    if (value !== null && typeof value === "object") {
+    const record = plainRecord(value);
+    if (record !== undefined) {
         const out: Record<string, unknown> = {};
-        for (const key of Object.keys(value as Record<string, unknown>).sort()) out[key] = sortKeys((value as Record<string, unknown>)[key]);
+        for (const key of Object.keys(record).sort()) out[key] = sortKeys(record[key]);
         return out;
     }
     return value;
 }
 
-export interface GuardedCallRefusal {
+export type GuardedCallRefusal = {
     readonly tool: string;
     readonly kind: "identical" | "budget" | "total";
     readonly calls: number;
-}
+};
 
-export interface CallGuardOptions {
+export type CallGuardOptions = {
     readonly policy?: CallGuardPolicy;
     /** Called on each refusal, for the log of the host. */
     readonly onRefusal?: (refusal: GuardedCallRefusal) => void;
-}
+};
 
 /** Wrap each tool so its `execute` obeys the policy for the life of the returned list. */
 export function guardRepeatedCalls(tools: readonly Tool[], options: CallGuardOptions = {}): Tool[] {
@@ -76,8 +78,6 @@ export function guardRepeatedCalls(tools: readonly Tool[], options: CallGuardOpt
         const byInput = new Map<string, number>();
         const guarded: Tool = {
             ...tool,
-            ...(tool.describeCall ? { describeCall: tool.describeCall.bind(tool) } : {}),
-            ...(tool.describeResult ? { describeResult: tool.describeResult.bind(tool) } : {}),
             async execute(input: unknown, ctx: ToolContext): Promise<Result<unknown, ToolError>> {
                 calls += 1;
                 const key = canonicalInputKey(input);
@@ -114,6 +114,8 @@ export function guardRepeatedCalls(tools: readonly Tool[], options: CallGuardOpt
                 return tool.execute(input, ctx);
             },
         };
+        if (tool.describeCall) guarded.describeCall = tool.describeCall.bind(tool);
+        if (tool.describeResult) guarded.describeResult = tool.describeResult.bind(tool);
         return guarded;
     });
 }

@@ -19,20 +19,20 @@ import type { NameToken, SlotTokenClass, TokenKind } from "./tokens.js";
 import { MAX_SLOT_SAMPLE_VALUES, MIN_AFFIX_LENGTH, MIN_CATCH_ALL_MEMBERS, MIN_FAMILY_SET_MEMBERS, MIN_PREFIX_SET_MEMBERS } from "./tuning.js";
 
 /** A member with the directory-slot values of the context it was found in. */
-export interface ContextFile extends MemberFile {
+export type ContextFile = MemberFile & {
     readonly varValues: readonly string[];
-}
+};
 
-export interface MinedItem {
+export type MinedItem = {
     readonly file: ContextFile;
     readonly tokens: readonly NameToken[];
     readonly suffix: string;
     readonly skeleton: string;
-}
+};
 
 export type MinedKind = "tokens" | "prefix" | "family" | "catch-all";
 
-export interface MinedGroup {
+export type MinedGroup = {
     readonly kind: MinedKind;
     readonly tokenKinds: readonly TokenKind[];
     /** The shared literal head, when the group was claimed by prefix mining. */
@@ -42,10 +42,10 @@ export interface MinedGroup {
     readonly suffixes: Map<string, number>;
     items: MinedItem[];
     distinct?: number[];
-}
+};
 
 /** A slot before the assembly stamps it with an id. */
-export interface DraftSlot {
+export type DraftSlot = {
     readonly location: SlotLocation;
     readonly index: number;
     readonly tokenClass: SlotTokenClass;
@@ -63,7 +63,7 @@ export interface DraftSlot {
     readonly memberValues: readonly string[];
     sameAs?: number;
     crossCheckMismatches?: number;
-}
+};
 
 export type DraftSegment = { readonly kind: "literal"; readonly text: string } | { readonly kind: "slot"; readonly slot: number };
 
@@ -104,11 +104,11 @@ function distinctCounts(group: MinedGroup): number[] {
 
 function isVariable(group: MinedGroup, position: number): boolean {
     if (group.tokenKinds[position] === "id") return true;
-    return distinctCounts(group)[position]! > 1;
+    return distinctCounts(group)[position] > 1;
 }
 
 function mergeGroups(groups: readonly MinedGroup[]): MinedGroup {
-    const head = groups[0]!;
+    const head = groups[0];
     const suffixes = new Map<string, number>();
     const items: MinedItem[] = [];
     for (const group of groups) {
@@ -142,26 +142,26 @@ function mergeVariants(groups: readonly MinedGroup[]): MinedGroup[] {
         let merged = false;
         for (const family of families.values()) {
             if (family.length === 1) {
-                next.push(family[0]!);
+                next.push(family[0]);
                 continue;
             }
-            const positions = family[0]!.tokenKinds.length;
+            const positions = family[0].tokenKinds.length;
             let mergedHere = false;
             for (let p = 0; p < positions && !mergedHere; p++) {
-                const kind = family[0]!.tokenKinds[p];
+                const kind = family[0].tokenKinds[p];
                 if (kind !== "alpha" && kind !== "digit") continue;
                 const buckets = new Map<string, MinedGroup[]>();
                 for (const group of family) {
                     // Every member of a group shares its literal tokens, so the first row
                     // identifies the whole group at this position.
-                    const row = group.items[0]!.tokens;
+                    const row = group.items[0].tokens;
                     const key = row.map((token, i) => (i === p || isVariable(group, i) ? "" : token.value)).join(" ");
                     const bucket = buckets.get(key);
                     if (bucket) bucket.push(group);
                     else buckets.set(key, [group]);
                 }
                 if ([...buckets.values()].every((bucket) => bucket.length === 1)) continue;
-                for (const bucket of buckets.values()) next.push(bucket.length === 1 ? bucket[0]! : mergeGroups(bucket));
+                for (const bucket of buckets.values()) next.push(bucket.length === 1 ? bucket[0] : mergeGroups(bucket));
                 mergedHere = true;
                 merged = true;
             }
@@ -174,13 +174,13 @@ function mergeVariants(groups: readonly MinedGroup[]): MinedGroup[] {
 
     const byStem = new Map<string, MinedGroup[]>();
     for (const group of current) {
-        const row = group.items[0]!.tokens;
+        const row = group.items[0].tokens;
         const key = `${group.tokenKinds.join(",")} ${row.map((token, i) => (isVariable(group, i) ? "" : token.value)).join(" ")}`;
         const bucket = byStem.get(key);
         if (bucket) bucket.push(group);
         else byStem.set(key, [group]);
     }
-    return [...byStem.values()].map((bucket) => (bucket.length === 1 ? bucket[0]! : mergeGroups(bucket)));
+    return [...byStem.values()].map((bucket) => (bucket.length === 1 ? bucket[0] : mergeGroups(bucket)));
 }
 
 function symbolOf(token: NameToken): string {
@@ -198,11 +198,13 @@ function symbolOf(token: NameToken): string {
  * cheaper than the singletons it replaces.
  */
 function minePrefixes(residue: readonly MinedItem[]): { sets: MinedGroup[]; rest: MinedItem[] } {
-    interface TrieNode {
-        readonly children: Map<string, TrieNode>;
+    type TrieNode = {
+        // Only the root lacks a token; a child is created per token, so the map
+        // values always carry one.
+        readonly children: Map<string, TrieNode & { readonly token: NameToken }>;
         readonly items: MinedItem[];
         readonly token?: NameToken;
-    }
+    };
 
     const bySuffix = new Map<string, MinedItem[]>();
     for (const item of residue) {
@@ -236,7 +238,7 @@ function minePrefixes(residue: readonly MinedItem[]): { sets: MinedGroup[]; rest
 
         const taken = new Set<MinedItem>();
         const claim = (node: TrieNode, prefixTokens: readonly NameToken[]): void => {
-            for (const child of node.children.values()) claim(child, [...prefixTokens, child.token!]);
+            for (const child of node.children.values()) claim(child, [...prefixTokens, child.token]);
             const free = node.items.filter((item) => !taken.has(item));
             const literals = prefixTokens.filter((token) => token.kind === "alpha").length;
             if (free.length < MIN_PREFIX_SET_MEMBERS || literals < 1) return;
@@ -274,7 +276,7 @@ function collapseFamilies(residue: readonly MinedItem[]): { sets: MinedGroup[]; 
             rest.push(...items);
             continue;
         }
-        const head = items[0]!;
+        const head = items[0];
         sets.push(
             newGroup("family", {
                 tokenKinds: head.tokens.map((token) => token.kind),
@@ -311,7 +313,7 @@ export function mineContext(files: readonly ContextFile[]): { sets: MinedGroup[]
     const singletons: MinedItem[] = [];
     for (const group of groups) {
         if (group.items.length >= 2) sets.push(group);
-        else singletons.push(group.items[0]!);
+        else singletons.push(group.items[0]);
     }
     const prefixes = minePrefixes(singletons);
     sets.push(...prefixes.sets);
@@ -328,6 +330,7 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
     if (suffix.length < MIN_AFFIX_LENGTH) suffix = "";
     // A number and a date are each one value: slicing a shared year off them would
     // report a date as a literal prefix plus a pattern.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the template grammar of the scanner: no builtin tokenizes these layouts.
     if (distinct.every((value) => /^[0-9]*$/.test(value)) || distinct.every((value) => isDateToken(value))) {
         prefix = "";
         suffix = "";
@@ -340,11 +343,12 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
         location,
         index,
         tokenClass: observed.tokenClass,
-        ...(observed.width !== undefined ? { width: observed.width } : {}),
-        ...(observed.minLength !== undefined ? { minLength: observed.minLength, maxLength: observed.maxLength } : {}),
-        ...(observed.skeleton !== undefined ? { skeleton: observed.skeleton } : {}),
-        ...(prefix ? { prefix } : {}),
-        ...(suffix ? { suffix } : {}),
+        width: observed.width !== undefined ? observed.width : undefined,
+        minLength: observed.minLength !== undefined ? observed.minLength : undefined,
+        maxLength: observed.minLength !== undefined ? observed.maxLength : undefined,
+        skeleton: observed.skeleton !== undefined ? observed.skeleton : undefined,
+        prefix: prefix ? prefix : undefined,
+        suffix: suffix ? suffix : undefined,
         distinctValues: distinct.length,
         sampleValues: sorted.slice(0, MAX_SLOT_SAMPLE_VALUES),
         values: cores,
@@ -355,10 +359,16 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
 /** The template token a slot renders as. */
 export function slotToken(slot: DraftSlot): string {
     switch (slot.tokenClass) {
-        case "digits-fixed":
-            return `<digits:${slot.width}>`;
-        case "pattern":
-            return `<pattern:${slot.skeleton}>`;
+        case "digits-fixed": {
+            const width = slot.width;
+            if (width === undefined) throw new Error(`digits-fixed slot ${slot.index} carries no width`);
+            return `<digits:${width}>`;
+        }
+        case "pattern": {
+            const skeleton = slot.skeleton;
+            if (skeleton === undefined) throw new Error(`pattern slot ${slot.index} carries no skeleton`);
+            return `<pattern:${skeleton}>`;
+        }
         default:
             return `<${slot.tokenClass}>`;
     }
@@ -418,7 +428,7 @@ export function describeGroup(group: MinedGroup): { slots: DraftSlot[]; segments
         const values = group.items.map((item) => item.tokens[i]?.value ?? "");
         const distinct = new Set(values);
         if (distinct.size === 1 && group.tokenKinds[i] !== "id") {
-            segments.push({ kind: "literal", text: [...distinct][0]! });
+            segments.push({ kind: "literal", text: [...distinct][0] });
             continue;
         }
         pushSlot(describeSlot(values, "name", i));

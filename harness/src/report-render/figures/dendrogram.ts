@@ -20,11 +20,11 @@ import { chartProblem, toNumber } from "./common.js";
 import type { FigureTree } from "./index.js";
 
 /** One checked tree: the axis categories in leaf order, and the elbow of each edge in table order. */
-export interface CheckedTree {
+export type CheckedTree = {
     readonly order: readonly Cell[];
     readonly height: number;
     readonly elbows: readonly Elbow[];
-}
+};
 
 /**
  * The elbow of one edge, in tree coordinates: the place along the axis and the height of each of its three
@@ -33,11 +33,11 @@ export interface CheckedTree {
 export type Elbow = readonly [readonly [number, number], readonly [number, number], readonly [number, number]];
 
 /** One edge of the table, with its node names as text. */
-interface Edge {
+type Edge = {
     readonly parent: string;
     readonly child: string;
     readonly height: number;
-}
+};
 
 /**
  * Check the tree of one axis against the categories of that axis, and give the leaf order and the elbows.
@@ -116,8 +116,13 @@ export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, ca
 
     const place = new Map<string, number>(leaves.map((leaf, index) => [leaf, index]));
     // The reverse of the preorder meets each child before its parent, and the walk met each node, thus each
-    // lookup below finds a place.
-    const placeOf = (node: string): number => place.get(node) as number;
+    // lookup below finds a place: every leaf takes its place above, and every parent takes the middle of its
+    // children in the walk below.
+    const placeOf = (node: string): number => {
+        const found = place.get(node);
+        if (found === undefined) throw new Error(`the node "${node}" holds no place on the ${axis} axis.`);
+        return found;
+    };
     for (let index = preorder.length - 1; index >= 0; index -= 1) {
         const node = preorder[index];
         const children = childrenOf.get(node);

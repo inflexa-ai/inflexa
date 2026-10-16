@@ -286,12 +286,12 @@ export function contractAnswer(): TemplateContract {
     };
 }
 
-export interface FakeCalls {
+export type FakeCalls = {
     readonly recommend: { situation: KnowledgeSituation; preferences?: KnowledgePreferences; expected_snapshot?: string }[];
     readonly check: { situation: KnowledgeSituation; steps: readonly DraftedStep[]; expected_snapshot?: string }[];
     readonly render: { template: string; slots: Readonly<Record<string, unknown>>; farm?: readonly FarmPackage[]; options?: RenderCallOptions }[];
     readonly contract: { template: string }[];
-}
+};
 
 export function fakeKnowledgeClient(
     answers: Partial<{
@@ -304,21 +304,21 @@ export function fakeKnowledgeClient(
     const calls: FakeCalls = { recommend: [], check: [], render: [], contract: [] };
     const checkAnswer: CheckResponse = { ok: true, snapshot: SNAPSHOT, violations: [], warnings: [], not_assessed: [] };
     const client: KnowledgeClient = {
-        async recommend(situation, _responseFormat, preferences, expectedSnapshot) {
-            calls.recommend.push({ situation, ...(preferences ? { preferences } : {}), ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}) });
-            return answers.recommend ?? recommendAnswer();
+        recommend(situation, _responseFormat, preferences, expectedSnapshot) {
+            calls.recommend.push({ situation, preferences, expected_snapshot: expectedSnapshot });
+            return Promise.resolve(answers.recommend ?? recommendAnswer());
         },
-        async check(situation, steps, expectedSnapshot) {
-            calls.check.push({ situation, steps, ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}) });
-            return answers.check ?? checkAnswer;
+        check(situation, steps, expectedSnapshot) {
+            calls.check.push({ situation, steps, expected_snapshot: expectedSnapshot });
+            return Promise.resolve(answers.check ?? checkAnswer);
         },
-        async render(template, slots, farm, options) {
-            calls.render.push({ template, slots, ...(farm ? { farm } : {}), ...(options ? { options } : {}) });
-            return answers.render ?? renderAnswer();
+        render(template, slots, farm, options) {
+            calls.render.push({ template, slots, farm, options });
+            return Promise.resolve(answers.render ?? renderAnswer());
         },
-        async contract(template) {
+        contract(template) {
             calls.contract.push({ template });
-            return answers.contract ?? contractAnswer();
+            return Promise.resolve(answers.contract ?? contractAnswer());
         },
     };
     return { client, calls };

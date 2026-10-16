@@ -20,6 +20,7 @@ import { okAsync, type ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { tryQuery, type DbError } from "../lib/db-result.js";
+import { maybeRecord, plainRecord } from "../lib/shape.js";
 import type { PlanPart } from "../contracts/chat-parts.js";
 import { PlanPartSchema } from "../contracts/schemas/chat-parts.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
@@ -28,11 +29,7 @@ import { parseStructureUrl } from "../contracts/structure-source.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { validatePath } from "../tools/lib/path-validation.js";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export interface PlanCardData {
+export type PlanCardData = {
     id: string;
     planId: string;
     parentPlanId?: string;
@@ -41,21 +38,21 @@ export interface PlanCardData {
     analytical_narrative: unknown;
     omicsType: unknown;
     omicsSubtype: unknown;
-}
+};
 
-export interface PresentationCardData {
+export type PresentationCardData = {
     id: string;
     title?: string;
     content: Record<string, unknown>;
-}
+};
 
-export interface RunCardData {
+export type RunCardData = {
     id: string;
     runId: string;
     planId: string;
     title: string;
     stepCount: number;
-}
+};
 
 /** Deterministic presentation id — must match `show_user`'s. */
 function presentationId(input: Record<string, unknown>): string {
@@ -76,16 +73,18 @@ export function planCardOf(record: PlanRecord, title?: string): PlanCardData | n
     // Explicit `show_plan({ title })` overrides; otherwise default to the
     // planner-set plan title so both cards share one source.
     const heading = title ?? parsed.data.title;
-    return {
+    const card: PlanCardData = {
         id,
         planId: record.planId,
-        ...(record.parentPlanId !== null ? { parentPlanId: record.parentPlanId } : {}),
-        ...(heading !== undefined ? { title: heading } : {}),
         steps: parsed.data.steps,
         analytical_narrative: parsed.data.analytical_narrative,
         omicsType: parsed.data.omicsType,
         omicsSubtype: parsed.data.omicsSubtype,
     };
+    // Absent keys stay absent: the consumers test key presence with toHaveProperty.
+    if (record.parentPlanId !== null) card.parentPlanId = record.parentPlanId;
+    if (heading !== undefined) card.title = heading;
+    return card;
 }
 
 /** The `data-plan` part of a stored plan record, with the title of the plan. The
@@ -167,12 +166,13 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
     if (typeof kind !== "string") return null;
     const cardTitle = typeof title === "string" ? title : undefined;
     let content: Record<string, unknown>;
+    const spec = plainRecord(rest.spec);
     if (kind === "structure") {
         const source = typeof rest.url === "string" ? parseStructureUrl(rest.url) : null;
         if (source === null) return null;
         content = { kind, format: source.format, url: source.url, provider: source.provider, accession: source.accession, version: source.version };
-    } else if (kind === "echart" && isRecord(rest.spec)) {
-        content = { kind, ...rest, spec: normalizeEchartSpec(rest.spec, { title: cardTitle }) };
+    } else if (kind === "echart" && spec !== undefined) {
+        content = { kind, ...rest, spec: normalizeEchartSpec(spec, { title: cardTitle }) };
     } else {
         // Every other kind (and an echart the model called without a `spec`) is carried through
         // untouched — there is no layout to normalize, and no spec to invent.
@@ -180,7 +180,7 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
     }
     return {
         id: presentationId(input),
-        ...(cardTitle !== undefined ? { title: cardTitle } : {}),
+        title: cardTitle !== undefined ? cardTitle : undefined,
         content,
     };
 }
@@ -189,23 +189,23 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
 export const MAX_FILES = 10;
 
 /** One referenced file in a `data-file-reference` card. */
-export interface FileReferenceEntryData {
+export type FileReferenceEntryData = {
     path: string;
     runId?: string;
     caption?: string;
-}
+};
 
 /** The `data-file-reference` payload: a group of referenced analysis artifacts. */
-export interface FileReferenceCardData {
+export type FileReferenceCardData = {
     id: string;
     title?: string;
     files: FileReferenceEntryData[];
-}
+};
 
 /** Extracts `runId` from paths shaped `runs/{runId}/...`; undefined otherwise. */
 export function deriveRunId(path: string): string | undefined {
     const segments = path.split("/");
-    if (segments.length >= 2 && segments[0] === "runs" && segments[1]!.length > 0) {
+    if (segments.length >= 2 && segments[0] === "runs" && segments[1].length > 0) {
         return segments[1];
     }
     return undefined;
@@ -234,15 +234,15 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
 
     const files: FileReferenceEntryData[] = [];
     for (const raw of rawFiles) {
-        const file = (raw ?? {}) as Record<string, unknown>;
+        const file = maybeRecord(raw) ?? {};
         const path = typeof file.path === "string" ? file.path : "";
         if (validatePath(path) !== null) return null;
         const runId = deriveRunId(path);
         const caption = typeof file.caption === "string" ? file.caption : undefined;
         files.push({
             path,
-            ...(runId !== undefined ? { runId } : {}),
-            ...(caption !== undefined ? { caption } : {}),
+            runId: runId !== undefined ? runId : undefined,
+            caption: caption !== undefined ? caption : undefined,
         });
     }
 
@@ -250,5 +250,5 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
         files.map((f) => f.path),
         title,
     )}`;
-    return { id, ...(title !== undefined ? { title } : {}), files };
+    return { id, title: title !== undefined ? title : undefined, files };
 }

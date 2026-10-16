@@ -9,7 +9,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 
@@ -23,7 +23,7 @@ const FileStatInputSchema = z.object({
         .describe("Path to stat. Relative paths resolve against your working directory; " + "an absolute '/<analysisId>/...' path against the analysis root."),
 });
 
-export function createFileStatTool(fs: WorkspaceFilesystem, workingDir?: string) {
+export function createFileStatTool(fs: WorkspaceFilesystem, workingDir?: string): Tool<z.infer<typeof FileStatInputSchema>, FileStatOutput> {
     return defineTool({
         id: "file_stat",
         description:

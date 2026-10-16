@@ -28,6 +28,8 @@ import type { ReadBytesResult, WorkspaceFilesystem } from "../workspace/filesyst
 
 import { READOUT_PREFIX_BYTES, readPrefix } from "./readout.js";
 import type { FileShape, HeaderReadout } from "./types.js";
+import { parseJsonOrUndefined } from "../lib/json.js";
+import { z } from "zod";
 
 /** Members decoded per shape. One is enough to characterise a set whose names already match. */
 export const MEMBERS_DECODED_PER_SHAPE = 1;
@@ -55,13 +57,13 @@ export const SANDBOX_CONTAINER_FORMATS: ReadonlySet<string> = new Set(["parquet"
 const CONTAINER_DECODER = new URL("./decoder/container_readout.py", import.meta.url);
 
 /** One file to read a header from, and what the scan already knows about its bytes. */
-export interface ReadoutTargetSpec {
+export type ReadoutTargetSpec = {
     readonly path: string;
     readonly format: string;
     readonly wrapper?: string;
-}
+};
 
-export interface ReadHeadersArgs {
+export type ReadHeadersArgs = {
     readonly targets: readonly ReadoutTargetSpec[];
     readonly session: AgentSession;
     readonly fs: WorkspaceFilesystem;
@@ -72,9 +74,9 @@ export interface ReadHeadersArgs {
     readonly mountRoot: string;
     readonly deadlineMs: number;
     readonly emit: EmitFn;
-}
+};
 
-export interface EnrichShapesArgs {
+export type EnrichShapesArgs = {
     readonly shapes: readonly FileShape[];
     readonly session: AgentSession;
     readonly fs: WorkspaceFilesystem;
@@ -85,7 +87,7 @@ export interface EnrichShapesArgs {
     readonly mountRoot: string;
     readonly deadlineMs: number;
     readonly emit: EmitFn;
-}
+};
 
 /**
  * Read a header from each named file, keyed by path.
@@ -107,7 +109,7 @@ export async function readHeaders(args: ReadHeadersArgs): Promise<Map<string, He
     await Promise.all(
         Array.from({ length: Math.min(READOUT_CONCURRENCY, prefixed.length) }, async () => {
             for (let i = next++; i < prefixed.length; i = next++) {
-                const target = prefixed[i]!;
+                const target = prefixed[i];
                 readouts.set(target.path, await readFromPrefix(args, target));
             }
         }),
@@ -129,14 +131,14 @@ export async function readHeaders(args: ReadHeadersArgs): Promise<Map<string, He
 export async function enrichShapes(args: EnrichShapesArgs): Promise<FileShape[]> {
     const targets = new Map<string, FileShape>();
     for (const shape of args.shapes) {
-        const path = shape.examplePaths.slice(0, MEMBERS_DECODED_PER_SHAPE)[0];
+        const path = shape.examplePaths.slice(0, MEMBERS_DECODED_PER_SHAPE).at(0);
         if (path !== undefined && !targets.has(path)) targets.set(path, shape);
     }
     if (targets.size === 0) return [...args.shapes];
 
     const readouts = await readHeaders({
         ...args,
-        targets: [...targets.entries()].map(([path, shape]) => ({ path, format: shape.format, ...(shape.wrapper ? { wrapper: shape.wrapper } : {}) })),
+        targets: [...targets.entries()].map(([path, shape]) => ({ path, format: shape.format, wrapper: shape.wrapper ? shape.wrapper : undefined })),
     });
 
     const byShape = new Map<string, HeaderReadout>();
@@ -158,8 +160,8 @@ async function readFromPrefix(args: ReadHeadersArgs, target: ReadoutTargetSpec):
         .unwrapOr<ReadBytesResult | { readonly kind: "read_failed" }>({ kind: "read_failed" });
     if (read.kind !== "ok") return { path, fields: {}, unavailable: `prefix unreadable (${read.kind})` };
 
-    const readout = await readPrefix({ prefix: read.bytes, format: target.format, ...(target.wrapper ? { wrapper: target.wrapper } : {}) });
-    return { path, fields: readout.fields, ...(readout.unavailable ? { unavailable: readout.unavailable } : {}) };
+    const readout = await readPrefix({ prefix: read.bytes, format: target.format, wrapper: target.wrapper ? target.wrapper : undefined });
+    return { path, fields: readout.fields, unavailable: readout.unavailable ? readout.unavailable : undefined };
 }
 
 async function decodeContainers(
@@ -189,18 +191,14 @@ async function decodeContainers(
     for (const line of result.stdout.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed.startsWith("{")) continue;
-        let parsed: { path?: string; fields?: Record<string, string | number | boolean>; unavailable?: string };
-        try {
-            parsed = JSON.parse(trimmed) as typeof parsed;
-        } catch {
-            continue;
-        }
-        const target = parsed.path ? byAbsolute.get(parsed.path) : undefined;
+        const parsed = EnrichLineSchema.safeParse(parseJsonOrUndefined(trimmed));
+        if (!parsed.success) continue;
+        const target = parsed.data.path ? byAbsolute.get(parsed.data.path) : undefined;
         if (!target) continue;
         readouts.set(target.path, {
             path: target.path,
-            fields: parsed.fields ?? {},
-            ...(parsed.unavailable ? { unavailable: parsed.unavailable } : {}),
+            fields: parsed.data.fields ?? {},
+            unavailable: parsed.data.unavailable ? parsed.data.unavailable : undefined,
         });
     }
 
@@ -215,10 +213,17 @@ async function decodeContainers(
     return readouts;
 }
 
+const EnrichLineSchema = z.object({
+    path: z.string().optional(),
+    fields: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    unavailable: z.string().optional(),
+});
+
 function describeExecFailure(result: ExecResult): string {
     if (result.timedOut) return `container decoder timed out after ${ENRICH_TIMEOUT_SECONDS}s`;
     if (result.syntheticFailure) return `container decoder did not complete: ${result.syntheticFailure.reason}`;
     if (result.exitCode !== 0) {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         const stderr = result.stderr.replace(/\s+/g, " ").trim().slice(0, MAX_STDERR_CHARS);
         return `container decoder exited ${result.exitCode ?? "with no code"}${stderr ? `: ${stderr}` : ""}`;
     }

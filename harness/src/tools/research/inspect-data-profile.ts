@@ -39,7 +39,7 @@ import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { loadDataProfileStatus, type DataProfileFile, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
 import { toAnalysisRootPath } from "../../workspace/paths.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 /** Per-file records returned per page when the caller names none. */
 const DEFAULT_PAGE_SIZE = 20;
@@ -54,14 +54,14 @@ const MAX_PAGE_SIZE = 100;
  */
 type Freshness = "ready" | "stale";
 
-interface ProfileEnvelope {
+type ProfileEnvelope = {
     readonly state: Freshness;
     /** Why the profile may not describe the current inputs. Present only when `state` is `"stale"`. */
     readonly staleReason?: string;
     readonly profiledAt: string;
-}
+};
 
-interface OverviewOutput extends ProfileEnvelope {
+type OverviewOutput = ProfileEnvelope & {
     readonly scope: "overview";
     readonly summary: string;
     readonly domain?: string;
@@ -94,7 +94,7 @@ interface OverviewOutput extends ProfileEnvelope {
      */
     readonly partition?: DataProfileResult["partition"];
     readonly coverage?: DataProfileResult["coverage"];
-}
+};
 
 /**
  * The dataset's structure. A snapshot carrying none reports `available: false` rather
@@ -104,7 +104,7 @@ interface OverviewOutput extends ProfileEnvelope {
  * A snapshot written under the previous model is served through `kinds`/`axes`, labelled
  * — the structure exists, and an agent must not be told the dataset has none.
  */
-interface GroupsOutput extends ProfileEnvelope {
+type GroupsOutput = ProfileEnvelope & {
     readonly scope: "groups";
     readonly available: boolean;
     /** Authored under the previous model — `kinds`/`axes` rather than resolved groups. */
@@ -118,14 +118,14 @@ interface GroupsOutput extends ProfileEnvelope {
     readonly axes?: DataProfileResult["axes"];
     readonly coverage?: DataProfileResult["coverage"];
     readonly message?: string;
-}
+};
 
 /**
  * The members the profile describes individually — annotated members on a resolved
  * snapshot, the notable-file records on an older one. Never the dataset: `datasetFileCount`
  * on the overview is what says how big that is.
  */
-interface FilesOutput extends ProfileEnvelope {
+type FilesOutput = ProfileEnvelope & {
     readonly scope: "files";
     readonly page: number;
     readonly pageSize: number;
@@ -136,7 +136,7 @@ interface FilesOutput extends ProfileEnvelope {
     /** How many files the dataset holds, so a page of 20 never reads as the whole of it. */
     readonly datasetFileCount: number | null;
     readonly files: DataProfileFile[];
-}
+};
 
 /**
  * No profile to serve — the honest lifecycle states, in the ok channel.
@@ -149,16 +149,16 @@ interface FilesOutput extends ProfileEnvelope {
  * constant here, and a constant field carries no information while implying
  * that it does. `FailedOutput` omits one for the same reason — see its note.
  */
-interface AbsentOutput {
+type AbsentOutput = {
     readonly state: "absent";
     readonly message: string;
-}
+};
 
-interface PendingOutput {
+type PendingOutput = {
     readonly state: "pending";
     readonly status: "pending" | "running";
     readonly message: string;
-}
+};
 
 /**
  * A recorded failure with no profile to fall back on.
@@ -175,13 +175,13 @@ interface PendingOutput {
  * `failedAt` is reported instead: a fact the row actually holds, and one an agent
  * that knows when the input set last changed can act on.
  */
-interface FailedOutput {
+type FailedOutput = {
     readonly state: "failed";
     readonly error: string | null;
     /** When the failure was recorded; `null` when the row holds no time. */
     readonly failedAt: string | null;
     readonly message: string;
-}
+};
 
 export type InspectDataProfileOutput = OverviewOutput | GroupsOutput | FilesOutput | AbsentOutput | PendingOutput | FailedOutput;
 
@@ -240,7 +240,26 @@ const FAILURE_SCOPE_NOTE =
     "holds now, so do not read it as a verdict on the current data. Compare failedAt against when the input set " +
     "last changed, and re-profile if they have moved apart.";
 
-export function createInspectDataProfileTool(pool: Pool) {
+const inputSchema = z.object({
+    scope: z
+        .enum(["overview", "groups", "files"])
+        .optional()
+        .describe(
+            "'overview' (default): dataset-level facts, the partition accounting, the annotated-member count, and the dataset file count. " +
+                "'groups': the groups the dataset is made of, with their slots, and the dimensions that vary across it. " +
+                "'files': paged records for the individually annotated members.",
+        ),
+    page: z.number().int().min(1).optional().describe("1-based page of member records. Only used when scope is 'files'. Default 1."),
+    pageSize: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_PAGE_SIZE)
+        .optional()
+        .describe(`Member records per page. Only used when scope is 'files'. Default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}.`),
+});
+
+export function createInspectDataProfileTool(pool: Pool): Tool<z.infer<typeof inputSchema>, InspectDataProfileOutput> {
     return defineTool({
         id: "inspect_data_profile",
         description:
@@ -270,24 +289,7 @@ export function createInspectDataProfileTool(pool: Pool) {
             "input files you are holding now, and this tool cannot tell you whether that attempt covered them. Compare failedAt " +
             "against when the input set last changed before you conclude anything: if the data moved since, say the profile " +
             "needs re-running rather than diagnosing the data itself.",
-        inputSchema: z.object({
-            scope: z
-                .enum(["overview", "groups", "files"])
-                .optional()
-                .describe(
-                    "'overview' (default): dataset-level facts, the partition accounting, the annotated-member count, and the dataset file count. " +
-                        "'groups': the groups the dataset is made of, with their slots, and the dimensions that vary across it. " +
-                        "'files': paged records for the individually annotated members.",
-                ),
-            page: z.number().int().min(1).optional().describe("1-based page of member records. Only used when scope is 'files'. Default 1."),
-            pageSize: z
-                .number()
-                .int()
-                .min(1)
-                .max(MAX_PAGE_SIZE)
-                .optional()
-                .describe(`Member records per page. Only used when scope is 'files'. Default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}.`),
-        }),
+        inputSchema,
         // `execute` defaults both fields internally, and the hook applies the same
         // defaults. Without them the ordinary call, which names no field at all,
         // gives no detail. `page` acts only on the `files` scope, as in `execute`.
@@ -375,9 +377,9 @@ export function createInspectDataProfileTool(pool: Pool) {
                     // nothing of carries `groups: []`, and "zero groups" is a finding — reading
                     // it as "no structure record" would report the analysis unprofiled.
                     groupCount: result.groups !== undefined || result.kinds !== undefined ? groups.length : null,
-                    ...(structureNote ? { structureNote } : {}),
-                    ...(result.partition ? { partition: result.partition } : {}),
-                    ...(result.coverage ? { coverage: result.coverage } : {}),
+                    structureNote: structureNote ? structureNote : undefined,
+                    partition: result.partition ? result.partition : undefined,
+                    coverage: result.coverage ? result.coverage : undefined,
                 });
             }
 
@@ -388,10 +390,10 @@ export function createInspectDataProfileTool(pool: Pool) {
                         scope: "groups",
                         available: true,
                         groups: rootGroupPatterns(result.groups, resourceId),
-                        ...(result.dimensions ? { dimensions: result.dimensions } : {}),
-                        ...(result.probes ? { probes: result.probes } : {}),
-                        ...(result.partition ? { partition: result.partition } : {}),
-                        ...(result.recipe ? { recipe: result.recipe } : {}),
+                        dimensions: result.dimensions ? result.dimensions : undefined,
+                        probes: result.probes ? result.probes : undefined,
+                        partition: result.partition ? result.partition : undefined,
+                        recipe: result.recipe ? result.recipe : undefined,
                     });
                 }
                 if (result.kinds === undefined) {
@@ -414,8 +416,8 @@ export function createInspectDataProfileTool(pool: Pool) {
                     available: true,
                     legacy: true,
                     kinds: rootKindPatterns(result.kinds, resourceId),
-                    ...(result.axes ? { axes: result.axes } : {}),
-                    ...(result.coverage ? { coverage: result.coverage } : {}),
+                    axes: result.axes ? result.axes : undefined,
+                    coverage: result.coverage ? result.coverage : undefined,
                     message:
                         "Authored under the previous model: these are kinds and axes, not resolved groups and dimensions. " +
                         "Counts and patterns were the profiler's own claims rather than a computed partition, and there is no " +

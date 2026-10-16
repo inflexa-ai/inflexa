@@ -29,6 +29,7 @@ import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
  * a name that matches it has one byte per character and `length` is the byte count
  * the limit is measured in.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const SQL_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const MAX_SQL_IDENTIFIER_BYTES = 63;
 
@@ -41,24 +42,24 @@ export function isSqlIdentifier(name: string): boolean {
     return SQL_IDENTIFIER.test(name) && name.length <= MAX_SQL_IDENTIFIER_BYTES;
 }
 
-export interface CreateIndexInput {
+export type CreateIndexInput = {
     readonly indexName: string;
     readonly dimension: number;
     readonly metric?: "cosine" | "l2" | "ip";
-}
+};
 
-export interface BuildIndexInput {
+export type BuildIndexInput = {
     readonly indexName: string;
     readonly metric?: "cosine" | "l2" | "ip";
     readonly indexConfig: { readonly type: "hnsw" };
-}
+};
 
-export interface UpsertInput {
+export type UpsertInput = {
     readonly indexName: string;
     readonly vectors: readonly number[][];
     readonly metadata?: readonly Record<string, unknown>[];
     readonly ids?: readonly string[];
-}
+};
 
 /**
  * A narrow delete surface: every entry of one index whose metadata `type` is named.
@@ -68,31 +69,31 @@ export interface UpsertInput {
  * has to be unable to reach another's — a general predicate would make that a review
  * question rather than a type error.
  */
-export interface DeleteByTypeInput {
+export type DeleteByTypeInput = {
     readonly indexName: string;
     readonly types: readonly string[];
-}
+};
 
-export interface QueryInput {
+export type QueryInput = {
     readonly indexName: string;
     readonly queryVector: readonly number[];
     readonly topK: number;
     readonly filter?: Record<string, unknown>;
-}
+};
 
-export interface QueryResult {
+export type QueryResult = {
     readonly id: string;
     readonly score: number;
     readonly metadata: Record<string, unknown>;
-}
+};
 
-export interface VectorStore {
+export type VectorStore = {
     createIndex(input: CreateIndexInput): ResultAsync<void, DbError>;
     buildIndex(input: BuildIndexInput): ResultAsync<void, DbError>;
     upsert(input: UpsertInput): ResultAsync<void, DbError>;
     deleteByType(input: DeleteByTypeInput): ResultAsync<void, DbError>;
     query(input: QueryInput): ResultAsync<QueryResult[], DbError>;
-}
+};
 
 function assertIdent(name: string): void {
     if (!isSqlIdentifier(name)) {
@@ -120,11 +121,8 @@ export function createVectorStore(pool: Pool): VectorStore {
             });
         },
 
-        buildIndex({ indexName, indexConfig }) {
+        buildIndex({ indexName }) {
             assertIdent(indexName);
-            if (indexConfig.type !== "hnsw") {
-                throw new Error(`vector-store: unsupported index type "${indexConfig.type}"`);
-            }
             // m/ef_construction default to 8/32.
             return tryMutation("vectorStore.buildIndex", async () => {
                 await pool.query(
@@ -142,7 +140,7 @@ export function createVectorStore(pool: Pool): VectorStore {
             const finalIds = ids ?? vectors.map(() => crypto.randomUUID());
             return tryMutation("vectorStore.upsert", async () => {
                 for (let i = 0; i < vectors.length; i++) {
-                    const vec = toVectorLiteral(vectors[i]!);
+                    const vec = toVectorLiteral(vectors[i]);
                     const meta = JSON.stringify(metadata?.[i] ?? {});
                     await pool.query(
                         `INSERT INTO "${indexName}" (vector_id, embedding, metadata)

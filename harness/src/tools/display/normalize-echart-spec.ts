@@ -21,28 +21,37 @@
  * shared by reference. `normalize(normalize(x))` deep-equals `normalize(x)`.
  */
 
+import { plainRecord } from "../../lib/shape.js";
+
 /** Max length of a derived `saveAsImage` filename. */
 const MAX_FILENAME_LEN = 64;
 
 /** Fallback download filename when no heading is available to derive one from. */
 const DEFAULT_FILENAME = "chart";
 
-export interface NormalizeEchartSpecOptions {
+export type NormalizeEchartSpecOptions = {
     /**
      * The `show_user` `title` param — the card heading rendered above the chart canvas. Seeds the
      * `saveAsImage` download filename when the author supplied none.
      */
     title?: string;
-}
+};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * The value as a list of records: an array filters its members, a lone record
+ * wraps, and anything else is empty — arrays are positions, not keyed maps.
+ */
+function recordList(value: unknown): Record<string, unknown>[] {
+    const listed = Array.isArray(value) ? value : [value];
+    return listed.flatMap((entry) => {
+        const record = plainRecord(entry);
+        return record === undefined ? [] : [record];
+    });
 }
 
 /** The axis entries of an `xAxis`/`yAxis` option, which ECharts accepts as one object or an array. */
 function axisEntries(axis: unknown): Record<string, unknown>[] {
-    if (Array.isArray(axis)) return axis.filter(isRecord);
-    return isRecord(axis) ? [axis] : [];
+    return recordList(axis);
 }
 
 /**
@@ -52,10 +61,13 @@ function axisEntries(axis: unknown): Record<string, unknown>[] {
 export function kebabFilename(source: string | undefined): string {
     const slug = (source ?? "")
         .normalize("NFKD")
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .replace(/[^a-z0-9]+/g, "-")
         .slice(0, MAX_FILENAME_LEN)
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
         .replace(/^-+|-+$/g, "");
     return slug.length > 0 ? slug : DEFAULT_FILENAME;
 }
@@ -64,13 +76,13 @@ export function kebabFilename(source: string | undefined): string {
 function seriesCount(spec: Record<string, unknown>): number {
     const series = spec.series;
     if (Array.isArray(series)) return series.length;
-    return isRecord(series) ? 1 : 0;
+    return plainRecord(series) !== undefined ? 1 : 0;
 }
 
 /** True when any series maps its categories to dataset COLUMNS rather than rows. */
 function laysOutByRow(spec: Record<string, unknown>): boolean {
     const series = Array.isArray(spec.series) ? spec.series : [spec.series];
-    return series.some((s) => isRecord(s) && s.seriesLayoutBy === "row");
+    return series.some((s) => plainRecord(s)?.seriesLayoutBy === "row");
 }
 
 /** Header rows to discount from a `dataset.source` array, per ECharts' `sourceHeader` rules. */
@@ -103,8 +115,8 @@ export function categoryCount(spec: Record<string, unknown>): number | null {
     }
 
     // An array of datasets, an object-of-columns `source`, or a row-major layout: do not guess.
-    const dataset = spec.dataset;
-    if (!isRecord(dataset) || laysOutByRow(spec)) return null;
+    const dataset = plainRecord(spec.dataset);
+    if (dataset === undefined || laysOutByRow(spec)) return null;
     const source = dataset.source;
     if (!Array.isArray(source) || source.length === 0) return null;
 
@@ -121,8 +133,7 @@ function rotationFor(count: number | null): number | null {
 
 /** True when the legend (authored or defaulted) sits below the chart and consumes bottom margin. */
 function isBottomLegend(legend: unknown): boolean {
-    const entries = Array.isArray(legend) ? legend.filter(isRecord) : isRecord(legend) ? [legend] : [];
-    return entries.some((entry) => entry.show !== false && entry.bottom !== undefined);
+    return recordList(legend).some((entry) => entry.show !== false && entry.bottom !== undefined);
 }
 
 /** True when a component option carries any explicit placement — adding another would fight it. */
@@ -168,7 +179,7 @@ export function normalizeEchartSpec(spec: Record<string, unknown>, opts: Normali
     // side would be actively wrong, so only `interval` crosses to the y axis (where it is inert on a
     // value axis and prevents silent label-skipping on a category one).
     const normalizeAxis = (axis: Record<string, unknown>, isX: boolean): Record<string, unknown> => {
-        const axisLabel = isRecord(axis.axisLabel) ? { ...axis.axisLabel } : {};
+        const axisLabel = { ...plainRecord(axis.axisLabel) };
         axisLabel.interval = 0;
         if (isX && rotate !== null && axisLabel.rotate === undefined) axisLabel.rotate = rotate;
         if (isX && typeof axisLabel.rotate === "number" && axisLabel.rotate !== 0) rotated = true;
@@ -179,50 +190,65 @@ export function normalizeEchartSpec(spec: Record<string, unknown>, opts: Normali
         const axis = out[key];
         // A malformed entry is passed through rather than dropped — normalization rewrites layout,
         // never the shape of the spec it was handed.
-        if (Array.isArray(axis)) out[key] = axis.map((entry) => (isRecord(entry) ? normalizeAxis(entry, key === "xAxis") : entry));
-        else if (isRecord(axis)) out[key] = normalizeAxis(axis, key === "xAxis");
+        if (Array.isArray(axis))
+            out[key] = axis.map((entry): unknown => {
+                const record = plainRecord(entry);
+                return record === undefined ? entry : normalizeAxis(record, key === "xAxis");
+            });
+        else {
+            const record = plainRecord(axis);
+            if (record !== undefined) out[key] = normalizeAxis(record, key === "xAxis");
+        }
     }
 
     // ── Grid ────────────────────────────────────────────────────────────
     const cartesian = out.xAxis !== undefined || out.yAxis !== undefined;
     const grid = out.grid;
+    const gridRecord = plainRecord(grid);
     // An array of grids, or a grid the author sized explicitly (`width`/`height`): a margin added on
     // top of an explicit box could over-constrain it. Non-cartesian charts (pie, sunburst, graph)
     // have no grid to lay out.
     const gridNormalizable =
-        cartesian && !Array.isArray(grid) && (grid === undefined || (isRecord(grid) && grid.width === undefined && grid.height === undefined));
+        cartesian &&
+        !Array.isArray(grid) &&
+        (grid === undefined || (gridRecord !== undefined && gridRecord.width === undefined && gridRecord.height === undefined));
     if (gridNormalizable) {
-        const authored = isRecord(grid) ? grid : {};
-        out.grid = {
-            ...authored,
-            ...(authored.top === undefined ? { top: out.graphic !== undefined ? "12%" : "8%" } : {}),
-            ...(authored.bottom === undefined ? { bottom: rotated ? (bottomLegend ? "30%" : "25%") : "20%" } : {}),
-            ...(authored.left === undefined ? { left: "10%" } : {}),
-            ...(authored.right === undefined ? { right: "5%" } : {}),
-        };
+        const authored = gridRecord ?? {};
+        const normalized: Record<string, unknown> = { ...authored };
+        if (authored.top === undefined) normalized.top = out.graphic !== undefined ? "12%" : "8%";
+        // `rotated` flips inside the axis loop; the closure reads it at call time.
+        const isRotated = (): boolean => rotated;
+        if (authored.bottom === undefined) normalized.bottom = isRotated() ? (bottomLegend ? "30%" : "25%") : "20%";
+        if (authored.left === undefined) normalized.left = "10%";
+        if (authored.right === undefined) normalized.right = "5%";
+        out.grid = normalized;
     }
 
     // ── Toolbox ─────────────────────────────────────────────────────────
     if (!Array.isArray(out.toolbox)) {
-        const authored = isRecord(out.toolbox) ? out.toolbox : {};
-        const feature = isRecord(authored.feature) ? authored.feature : {};
-        const saveAsImage = isRecord(feature.saveAsImage) ? feature.saveAsImage : {};
+        const authored = plainRecord(out.toolbox) ?? {};
+        const feature = plainRecord(authored.feature) ?? {};
+        const saveAsImage = plainRecord(feature.saveAsImage) ?? {};
         // The in-spec title is stripped, but it is still the author's own description of the chart —
         // a better filename seed than the generic fallback when no card title was given.
-        const specTitleText = isRecord(specTitle) && typeof specTitle.text === "string" ? specTitle.text : undefined;
+        const specTitleRecord = plainRecord(specTitle);
+        const specTitleText = typeof specTitleRecord?.text === "string" ? specTitleRecord.text : undefined;
 
-        out.toolbox = {
+        const saveAsImageDefaults: Record<string, unknown> = { ...saveAsImage };
+        if (saveAsImage.type === undefined) saveAsImageDefaults.type = "png";
+        if (saveAsImage.name === undefined) saveAsImageDefaults.name = kebabFilename(opts.title ?? specTitleText);
+        const toolbox: Record<string, unknown> = {
             ...authored,
-            ...(hasPlacement(authored) ? {} : { right: 0, top: 0 }),
             feature: {
                 ...feature,
-                saveAsImage: {
-                    ...saveAsImage,
-                    ...(saveAsImage.type === undefined ? { type: "png" } : {}),
-                    ...(saveAsImage.name === undefined ? { name: kebabFilename(opts.title ?? specTitleText) } : {}),
-                },
+                saveAsImage: saveAsImageDefaults,
             },
         };
+        if (!hasPlacement(authored)) {
+            toolbox.right = 0;
+            toolbox.top = 0;
+        }
+        out.toolbox = toolbox;
     }
 
     return out;

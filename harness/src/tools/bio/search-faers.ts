@@ -95,7 +95,7 @@ export const searchFaersTool = defineTool({
             path: ["limit"],
         }),
     describeCall: "none",
-    execute: async ({ action = "adverse_events", drugName, limit, serious = false }): Promise<Result<FaersOutput, ToolError>> => {
+    execute: async ({ action, drugName, limit, serious }): Promise<Result<FaersOutput, ToolError>> => {
         switch (action) {
             case "seriousness":
                 return ok({ seriousness: await getFaersSeriousness(drugName) });

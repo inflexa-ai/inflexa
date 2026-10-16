@@ -28,7 +28,8 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { guaranteed } from "../../lib/invariants.js";
 import {
     boundArticleDetails,
     getArticleDetails,
@@ -145,7 +146,7 @@ type PubMedOutput =
     | { pmcId: string; available: false }
     | ({ pmcId: string; available: true } & Omit<BoundedFullText, "sections">);
 
-export function createPubMedTool(deps: { ncbiApiKey?: string }) {
+export function createPubMedTool(deps: { ncbiApiKey?: string }): Tool<z.infer<typeof inputSchema>, PubMedOutput> {
     return defineTool({
         id: "pubmed",
         description:
@@ -183,17 +184,17 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                     return ok(
                         await searchPubmed(
                             deps.ncbiApiKey,
-                            input.query!,
+                            guaranteed(input.query, "query"),
                             {
                                 maxResults: input.maxResults ?? DEFAULTS.searchResults,
-                                ...(input.sort ? { sort: input.sort } : {}),
-                                ...(input.dateRange ? { dateRange: input.dateRange } : {}),
+                                sort: input.sort ? input.sort : undefined,
+                                dateRange: input.dateRange ? input.dateRange : undefined,
                             },
                             context.signal,
                         ),
                     );
                 case "details": {
-                    const { articles, notFound } = await getArticleDetails(deps.ncbiApiKey, input.pmids!, context.signal);
+                    const { articles, notFound } = await getArticleDetails(deps.ncbiApiKey, guaranteed(input.pmids, "pmids"), context.signal);
                     return ok({
                         articles: boundArticleDetails(articles, {
                             maxAuthors: input.maxAuthors ?? DEFAULTS.maxAuthors,
@@ -205,19 +206,19 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                 case "fulltext": {
                     const parsed = await getArticleFullText(
                         deps.ncbiApiKey,
-                        input.pmcId!,
+                        guaranteed(input.pmcId, "pmcId"),
                         {
-                            ...(input.sections ? { sections: input.sections } : {}),
+                            sections: input.sections ? input.sections : undefined,
                             maxChars: input.maxChars ?? DEFAULTS.maxChars,
                         },
                         context.signal,
                     );
                     // "Not open-access" is an expected outcome — a data variant, not an error.
-                    if (!parsed) return ok({ pmcId: input.pmcId!, available: false as const });
+                    if (!parsed) return ok({ pmcId: guaranteed(input.pmcId, "pmcId"), available: false as const });
                     // `fullText` already holds each admitted section under its heading, thus the
                     // `sections` array would send the same text to the model a second time.
                     const { sections: _sections, ...bounded } = parsed;
-                    return ok({ pmcId: input.pmcId!, available: true as const, ...bounded });
+                    return ok({ pmcId: guaranteed(input.pmcId, "pmcId"), available: true as const, ...bounded });
                 }
             }
         },

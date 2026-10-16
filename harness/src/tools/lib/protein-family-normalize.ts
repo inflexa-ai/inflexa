@@ -8,28 +8,35 @@
  * exact match on the raw text misses one of the two spellings.
  */
 
-interface CanonicalFamily {
+type CanonicalFamily = {
     canonical: string;
     patterns: RegExp[];
-}
+};
 
 const FAMILIES: CanonicalFamily[] = [
     {
         canonical: "g protein-coupled receptor",
         patterns: [
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
             /\bg[-\s]?protein[-\s]?coupled\s+receptor\b/i,
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
             /\bgpcr\b/i,
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
             /\b7tm\s+receptor\b/i,
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
             /\brhodopsin-like\s+receptor\b/i,
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
             /\bsecretin-like\s+receptor\b/i,
         ],
     },
     {
         canonical: "serine/threonine-protein kinase",
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
         patterns: [/\bserine\/threonine[-\s]?protein\s+kinase\b/i],
     },
     {
         canonical: "tyrosine-protein kinase",
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
         patterns: [/\btyrosine[-\s]?protein\s+kinase\b/i],
     },
     // Extend as additional hyphen-style mismatches surface. The default branch

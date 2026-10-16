@@ -19,7 +19,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { APICallError, type LanguageModelV4, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { retryWithExponentialBackoff } from "@ai-sdk/provider-utils";
+import { retryWithExponentialBackoff, type RetryFunction } from "@ai-sdk/provider-utils";
 import { trace } from "@opentelemetry/api";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
@@ -42,6 +42,8 @@ import type {
     ProviderOptions,
     ReasoningPolicy,
 } from "./types.js";
+import { errorMessage, isAbortError, errorOf } from "../lib/thrown.js";
+import { maybeRecord, recordMember, typedMember } from "../lib/shape.js";
 
 /**
  * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
@@ -83,8 +85,8 @@ export const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
  * provider over a boot shares one sink.
  */
 function routeSdkWarningsTo(logger: Logger): void {
-    const g = globalThis as { AI_SDK_LOG_WARNINGS?: unknown };
-    if (g.AI_SDK_LOG_WARNINGS !== undefined) return;
+    const g = maybeRecord(globalThis);
+    if (g === undefined || typedMember(g, "AI_SDK_LOG_WARNINGS") !== undefined) return;
     g.AI_SDK_LOG_WARNINGS = (options: { warnings: readonly unknown[]; provider?: string; model?: string }) => {
         for (const warning of options.warnings) {
             logger.warn("ai sdk warning", { provider: options.provider, model: options.model, warning });
@@ -93,18 +95,18 @@ function routeSdkWarningsTo(logger: Logger): void {
 }
 
 /** With no `suspendOn`, a provider uses {@link DEFAULT_SUSPEND_ON}. */
-export interface ProviderHostPolicy {
+export type ProviderHostPolicy = {
     readonly resolveRequestHeaders?: ResolveRequestHeaders;
     readonly suspendOn?: SuspendOn;
-}
+};
 
 /** The call facts that `providerOptionsFor` uses to build provider options. */
-export interface ProviderCall {
+export type ProviderCall = {
     readonly session: AgentSession;
     readonly reasoning: ReasoningPolicy;
-}
+};
 
-export interface AiSdkProviderDeps extends ProviderHostPolicy {
+export type AiSdkProviderDeps = ProviderHostPolicy & {
     readonly model: LanguageModel;
     readonly capabilities?: Partial<ProviderCapabilities>;
     readonly logger?: Logger;
@@ -133,7 +135,7 @@ export interface AiSdkProviderDeps extends ProviderHostPolicy {
      * every attempt reuses the same options.
      */
     readonly providerOptionsFor?: (call: ProviderCall) => ProviderOptions | undefined;
-}
+};
 
 /**
  * Connection + model configuration for one `ChatProvider`, discriminated by
@@ -289,10 +291,10 @@ export type AiSdkProviderConfig =
           readonly reasoning?: ReasoningPolicy;
       };
 
-export interface ConfiguredAiSdkProviderDeps extends ProviderHostPolicy {
+export type ConfiguredAiSdkProviderDeps = ProviderHostPolicy & {
     readonly config: AiSdkProviderConfig;
     readonly logger?: Logger;
-}
+};
 
 function workloadOf(session: AgentSession): string {
     return `${session.scope.kind}:${scopeWorkloadId(session.scope)}`;
@@ -331,30 +333,24 @@ function thinkingWithBinding(reasoning: ReasoningPolicy, mode: "drop_block" | "e
 }
 
 /** One input transformation that the Anthropic API reports. */
-interface InputTransformation {
+type InputTransformation = {
     readonly type?: string;
     readonly path?: string;
     readonly reason?: string;
-}
+};
 
 /** Reads `providerMetadata.anthropic.inputTransformations`; empty for another vendor. */
 function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTransformation[] {
     const entries = metadata?.["anthropic"]?.["inputTransformations"];
     if (!Array.isArray(entries)) return [];
     return entries.map((entry: unknown) => {
-        const fields = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+        const fields = maybeRecord(entry) ?? {};
         const text = (key: string): string | undefined => {
             const value = fields[key];
             return typeof value === "string" ? value : undefined;
         };
         return { type: text("type"), path: text("path"), reason: text("reason") };
     });
-}
-
-function isAbortError(value: unknown): boolean {
-    if (value instanceof DOMException && value.name === "AbortError") return true;
-    if (value instanceof Error && value.name === "AbortError") return true;
-    return false;
 }
 
 /**
@@ -365,7 +361,7 @@ function isAbortError(value: unknown): boolean {
  */
 function apiCallErrorOf(error: unknown): APICallError | undefined {
     if (APICallError.isInstance(error)) return error;
-    const cause = (error as { cause?: unknown } | null | undefined)?.cause;
+    const cause = typedMember(maybeRecord(error), "cause");
     if (APICallError.isInstance(cause)) return cause;
     return undefined;
 }
@@ -373,7 +369,7 @@ function apiCallErrorOf(error: unknown): APICallError | undefined {
 /** Case-insensitive header lookup; `name` must already be lowercase. */
 function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
     if (headers === undefined) return undefined;
-    const direct = headers[name];
+    const direct = typedMember(headers, name);
     if (direct !== undefined) return direct;
     for (const [key, value] of Object.entries(headers)) {
         if (key.toLowerCase() === name) return value;
@@ -451,9 +447,9 @@ class HeadersRefused extends Error {
  * this flag marks the rejection: it stays set when the hook call of the attempt
  * did not settle as a value.
  */
-export interface HookCall {
+export type HookCall = {
     unsettled: boolean;
-}
+};
 
 /** A refusal of the hook throws `HeadersRefused`. */
 export async function headersForAttempt(hook: ResolveRequestHeaders | undefined, session: AgentSession, call: HookCall): Promise<Record<string, string>> {
@@ -486,7 +482,7 @@ export function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): P
  * timeout. Without this guard the envelope would loop an expiry that the caller
  * itself declared.
  */
-export function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn, hookCall: HookCall) {
+export function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn, hookCall: HookCall): RetryFunction {
     let retryCount = 0;
     return retryWithExponentialBackoff({
         maxRetries,
@@ -532,12 +528,18 @@ export function createRetry(signal: AbortSignal | undefined, logger: Logger, max
  */
 function toChatUsage(usage: LanguageModelUsage | undefined): ChatUsage | undefined {
     if (usage === undefined) return undefined;
+    // The SDK's own usage combiner reads these detail bags with `?.` — a provider
+    // that reports totals without a breakdown arrives without them, whatever the
+    // `LanguageModelUsage` type claims.
+    const inputTokenDetails = recordMember(maybeRecord(usage), "inputTokenDetails");
+    const outputTokenDetails = recordMember(maybeRecord(usage), "outputTokenDetails");
+    const tokenCount = (value: unknown): number | undefined => (typeof value === "number" ? value : undefined);
     return {
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
-        cacheCreationInputTokens: usage.inputTokenDetails?.cacheWriteTokens,
-        cacheReadInputTokens: usage.inputTokenDetails?.cacheReadTokens,
-        reasoningTokens: usage.outputTokenDetails?.reasoningTokens,
+        cacheCreationInputTokens: tokenCount(typedMember(inputTokenDetails, "cacheWriteTokens")),
+        cacheReadInputTokens: tokenCount(typedMember(inputTokenDetails, "cacheReadTokens")),
+        reasoningTokens: tokenCount(typedMember(outputTokenDetails, "reasoningTokens")),
     };
 }
 
@@ -555,12 +557,12 @@ function providerIdOf(model: LanguageModel): string | undefined {
  * A per-call view of the model that also records the model id the endpoint
  * itself reported, if any.
  */
-interface ServedModelCapture {
+type ServedModelCapture = {
     /** The model to hand to the SDK for this one call. */
     readonly model: LanguageModel;
     /** The id the endpoint reported, or `undefined` when it reported none. */
     servedModelId(): string | undefined;
-}
+};
 
 /**
  * Capture the served model id at the raw model boundary, because that is the
@@ -617,7 +619,7 @@ function responseFromMessages(input: {
 }): ChatResponse {
     const { messages, fallbackText, finishReason, rawFinishReason, requestedModelId, servedModelId, provider } = input;
     const usage = toChatUsage(input.usage);
-    const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
+    const message = [...messages].reverse().find((m: ModelMessage): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
     if (message === undefined) {
         return { message: { role: "assistant", content: fallbackText }, finishReason, rawFinishReason, usage, requestedModelId, servedModelId, provider };
     }
@@ -641,11 +643,34 @@ function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
             if (m.content !== "") out.push(m);
             continue;
         }
-        const parts = m.content.filter((p) => p.type !== "text" || p.text !== "");
-        // The filtered parts are a subset of this message's own content, so the
-        // message remains valid for its role — the cast only re-associates the
-        // narrowed array with the union member TS can no longer correlate.
-        if (parts.length > 0) out.push({ ...m, content: parts } as ModelMessage);
+        // The switch filters the content of its own variant: one loop over the
+        // union would widen the array and drop the correlation TS needs to type
+        // the rebuilt message without an assertion.
+        switch (m.role) {
+            case "system": {
+                if (m.content !== "") out.push(m);
+                break;
+            }
+            case "user": {
+                const parts = m.content.filter((p: { type: string; text?: unknown }) => p.type !== "text" || p.text !== "");
+                if (parts.length > 0) out.push({ ...m, content: parts });
+                break;
+            }
+            case "assistant": {
+                const parts = m.content.filter((p: { type: string; text?: unknown }) => p.type !== "text" || p.text !== "");
+                if (parts.length > 0) out.push({ ...m, content: parts });
+                break;
+            }
+            case "tool": {
+                const parts = m.content.filter((p: { type: string; text?: unknown }) => p.type !== "text" || p.text !== "");
+                if (parts.length > 0) out.push({ ...m, content: parts });
+                break;
+            }
+            default: {
+                const _exhaustive: never = m;
+                return _exhaustive;
+            }
+        }
     }
     return out;
 }
@@ -716,9 +741,10 @@ const STREAM_ERROR_STATUS: Readonly<Record<string, number>> = {
  * `[object Object]` and reaches the classifier with no status at all.
  */
 function streamPartFailure(error: unknown): unknown {
-    if (error instanceof Error) return error;
-    if (typeof error !== "object" || error === null) return new Error(String(error));
-    const reported = error as { readonly type?: unknown; readonly message?: unknown };
+    const asError = errorOf(error);
+    if (asError !== undefined) return asError;
+    const reported = maybeRecord(error);
+    if (reported === undefined) return new Error(errorMessage(error));
     const type = typeof reported.type === "string" ? reported.type : undefined;
     const message = typeof reported.message === "string" ? reported.message : undefined;
     const failure = new Error(message ?? type ?? "The provider reported a stream error.", { cause: error });
@@ -755,8 +781,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
         // Propagate a picture flag only when the caller states it. An absent
         // flag stays absent, thus the loop degrades to the next placement for a
         // wire that carries no picture there.
-        ...(deps.capabilities?.imageToolResults !== undefined ? { imageToolResults: deps.capabilities.imageToolResults } : {}),
-        ...(deps.capabilities?.imageUserMessages !== undefined ? { imageUserMessages: deps.capabilities.imageUserMessages } : {}),
+        imageToolResults: deps.capabilities?.imageToolResults !== undefined ? deps.capabilities.imageToolResults : undefined,
+        imageUserMessages: deps.capabilities?.imageUserMessages !== undefined ? deps.capabilities.imageUserMessages : undefined,
     };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
@@ -836,7 +862,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // deltas, and `chatStream` stays the seam that forwards them.
                     const result = streamText({
                         model: capture.model,
-                        system: req.system,
+                        instructions: req.system,
                         messages: sanitizeMessages(req.messages),
                         tools: req.tools,
                         toolChoice: req.toolChoice ?? "auto",
@@ -852,7 +878,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         // and `chunkMs` bounds each later gap. Thus each silent interval
                         // carries the one configured bound, and a turn that writes
                         // steadily runs as long as it needs.
-                        ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
+                        timeout: requestTimeoutMs !== undefined ? { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } : undefined,
                         providerOptions,
                         reasoning,
                     });
@@ -860,7 +886,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // point of the stream re-runs the whole attempt and the envelope
                     // keeps its whole-call scope. No delta reaches a consumer here —
                     // `chatStream` is the seam that forwards them.
-                    const iterator = result.fullStream[Symbol.asyncIterator]();
+                    const iterator = result.stream[Symbol.asyncIterator]();
                     let text = "";
                     for (let pull = await pullNextDelta(iterator); pull.kind !== "end"; pull = await pullNextDelta(iterator)) {
                         // A caller abort rides out as the reason of its own signal, thus
@@ -921,7 +947,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 const headers = await headersForAttempt(deps.resolveRequestHeaders, session, hookCall);
                 const result = streamText({
                     model: capture.model,
-                    system: req.system,
+                    instructions: req.system,
                     messages: sanitizeMessages(req.messages),
                     tools: req.tools,
                     toolChoice: req.toolChoice ?? "auto",
@@ -938,11 +964,11 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // the stream has the one configured bound. A chunk that carries
                     // no content, for example a keep-alive comment, produces no part,
                     // thus it feeds neither bound.
-                    ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
+                    timeout: requestTimeoutMs !== undefined ? { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } : undefined,
                     providerOptions,
                     reasoning,
                 });
-                const iterator = result.fullStream[Symbol.asyncIterator]();
+                const iterator = result.stream[Symbol.asyncIterator]();
                 const first = await pullNextDelta(iterator);
                 // The chunk bound can stop the stream before any content arrives. The
                 // throw carries the sentinel, thus the envelope gives the attempt a
@@ -1020,13 +1046,14 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
             const failure = failureOf(e, workloadOf(session), suspendOn);
             logFailure(session, failure, e);
+            // oxlint-disable-next-line typescript/only-throw-error -- the provider seam's failure value is the ProviderError plain-object union of providers/errors.ts, by contract
             throw failure;
         }
     }
 
     // The provider advertises the guard limit on its own instance, thus a
     // consumer that scales a deadline reads it from the provider in its deps.
-    return { capabilities, chat, chatStream, ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}) };
+    return { capabilities, chat, chatStream, requestTimeoutMs: requestTimeoutMs !== undefined ? requestTimeoutMs : undefined };
 }
 
 /**
@@ -1051,11 +1078,11 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
     return async (input, init) => {
         const controller = new AbortController();
         const callerSignal = init?.signal ?? undefined;
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the guard aborts with the typed `RequestTimeoutError` reason that the failure classification reads; `AbortSignal.timeout` would change the reason class.
         const timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
         // The harness runs on Node, where a timer has `unref`. Unref the guard
         // timer, thus an armed guard does not keep a short-lived process alive.
-        // The DOM type of `setTimeout` declares no `unref`, thus guard the call.
-        timer.unref?.();
+        timer.unref();
         const clear = (): void => {
             clearTimeout(timer);
             // The harness runs on Node, where a caller signal can outlive one fetch
@@ -1078,6 +1105,9 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
         // at 360 seconds, because Bun pads the timer to its minute wheel, and a
         // request with the key completed after 420 seconds. The `RequestInit` type
         // declares no such member, thus the cast.
+        // SAFETY: the only extra key is the Bun-only `timeout`, which the standard
+        // `RequestInit` type omits; runtimes without it ignore the key, so the
+        // widened init is the init the wire call would have read anyway.
         const forwarded = { ...init, signal, timeout: false } as RequestInit;
         try {
             return await fetchImpl(input, forwarded);
@@ -1101,18 +1131,19 @@ function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageMod
     return wrapLanguageModel({
         model,
         middleware: {
-            transformParams: async ({ params }) => ({
-                ...params,
-                providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, store } },
-            }),
+            transformParams: ({ params }) =>
+                Promise.resolve({
+                    ...params,
+                    providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, store } },
+                }),
         },
     });
 }
 
 export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
     return {
-        ...(deps.resolveRequestHeaders !== undefined ? { resolveRequestHeaders: deps.resolveRequestHeaders } : {}),
-        ...(deps.suspendOn !== undefined ? { suspendOn: deps.suspendOn } : {}),
+        resolveRequestHeaders: deps.resolveRequestHeaders !== undefined ? deps.resolveRequestHeaders : undefined,
+        suspendOn: deps.suspendOn !== undefined ? deps.suspendOn : undefined,
     };
 }
 
@@ -1132,14 +1163,21 @@ export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
     const requestTimeoutMs = config.requestTimeoutMs;
-    const effectiveFetch =
-        requestTimeoutMs === undefined ? config.fetch : wrapFetchWithRequestTimeout(config.fetch ?? (globalThis.fetch as FetchLike), requestTimeoutMs);
+    const effectiveFetch = requestTimeoutMs === undefined ? config.fetch : wrapFetchWithRequestTimeout(config.fetch ?? globalThis.fetch, requestTimeoutMs);
+    // The ambient fetch type is a callable with a `preconnect` member beside it,
+    // so a plain wrapper function never satisfies the SDK's option structurally.
+    // The adapter carries the callable; the hint rides to the ambient
+    // realization, whose connection pool is the one every provider shares.
+    const sdkFetch: typeof fetch | undefined =
+        effectiveFetch === undefined
+            ? undefined
+            : Object.assign((input: string | URL | Request, init?: RequestInit) => effectiveFetch(input, init), { preconnect: fetch.preconnect });
 
     if (config.kind === "anthropic") {
         const provider = createAnthropic({
             baseURL: config.baseURL,
             apiKey: config.apiKey,
-            fetch: effectiveFetch as typeof fetch | undefined,
+            fetch: sdkFetch,
         });
         // The Anthropic Messages wire renders an image block inside a
         // tool_result, thus the loop can send a picture. A custom baseURL can
@@ -1157,16 +1195,16 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             ...hostPolicyOf(deps),
             capabilities: { ...pictureDefault, ...config.capabilities },
             logger: deps.logger,
-            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
-            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
-            ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
-            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+            maxOutputTokens: config.maxOutputTokens !== undefined ? config.maxOutputTokens : undefined,
+            maxRetries: config.maxRetries !== undefined ? config.maxRetries : undefined,
+            requestTimeoutMs: requestTimeoutMs !== undefined ? requestTimeoutMs : undefined,
+            reasoning: config.reasoning !== undefined ? config.reasoning : undefined,
             // The package sends the key as `metadata.user_id`, and the binding as
             // `thinking.block_binding`.
             providerOptionsFor: ({ session, reasoning }) => ({
                 anthropic: {
                     metadata: { userId: sessionKeyDigestOf(session) },
-                    ...(binding !== undefined ? { thinking: thinkingWithBinding(reasoning, binding) } : {}),
+                    thinking: binding !== undefined ? thinkingWithBinding(reasoning, binding) : undefined,
                 } satisfies AnthropicLanguageModelOptions,
             }),
         });
@@ -1176,7 +1214,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         const provider = createOpenAI({
             baseURL: config.baseURL,
             apiKey: config.apiKey,
-            fetch: effectiveFetch as typeof fetch | undefined,
+            fetch: sdkFetch,
         });
         // The Responses wire renders an image block inside a function-call
         // output, thus the loop can send a picture. A custom baseURL can front
@@ -1200,9 +1238,9 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             // unset config sends no ceiling, and the server holds the reply at the
             // cap of the model.
             maxOutputTokens: config.maxOutputTokens ?? "provider-maximum",
-            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
-            ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
-            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+            maxRetries: config.maxRetries !== undefined ? config.maxRetries : undefined,
+            requestTimeoutMs: requestTimeoutMs !== undefined ? requestTimeoutMs : undefined,
+            reasoning: config.reasoning !== undefined ? config.reasoning : undefined,
             // The package sends the key as `prompt_cache_key`. The store
             // directive merges into the same namespace, and it keeps this key.
             providerOptionsFor: ({ session }) => ({ openai: { promptCacheKey: sessionKeyDigestOf(session) } }),
@@ -1213,7 +1251,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         name: config.name,
         baseURL: config.baseURL,
         apiKey: config.apiKey,
-        fetch: effectiveFetch as typeof fetch | undefined,
+        fetch: sdkFetch,
         // Each call of the provider streams, `chat` included. Without this flag
         // the package asks for no usage on a stream, and the call reports none.
         includeUsage: true,
@@ -1227,9 +1265,9 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         ...hostPolicyOf(deps),
         capabilities: config.capabilities,
         logger: deps.logger,
-        ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
-        ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
-        ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
-        ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+        maxOutputTokens: config.maxOutputTokens !== undefined ? config.maxOutputTokens : undefined,
+        maxRetries: config.maxRetries !== undefined ? config.maxRetries : undefined,
+        requestTimeoutMs: requestTimeoutMs !== undefined ? requestTimeoutMs : undefined,
+        reasoning: config.reasoning !== undefined ? config.reasoning : undefined,
     });
 }

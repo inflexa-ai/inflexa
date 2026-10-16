@@ -134,6 +134,9 @@ import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag
 import { recordCancelledChild } from "./metrics.js";
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
 import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, type Suspension } from "./suspension.js";
+import { errorMessage } from "../lib/thrown.js";
+import { errorOf } from "../lib/thrown.js";
+import { typedMember } from "../lib/shape.js";
 
 /** Registered child sandbox-step callable the parent's child-dispatch closes over. */
 type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -141,12 +144,12 @@ type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResul
 // ── Workflow input/output shapes ─────────────────────────────────────
 
 /** Quick-display finding on the run-completed card. Mirrors the wire schema's RunCompletedFinding. */
-export interface RunFinding {
+export type RunFinding = {
     readonly title: string;
     readonly confidence: "high" | "medium" | "low";
-}
+};
 
-export interface ExecuteAnalysisInput {
+export type ExecuteAnalysisInput = {
     readonly analysisId: string;
     /** Plan id — the dedup key for the partial-unique index on cortex_runs. */
     readonly planId: string;
@@ -205,7 +208,7 @@ export interface ExecuteAnalysisInput {
      * absent → true, matching the prior Cortex-owned behavior.
      */
     readonly ownsMandate?: boolean; // oss-core-managed-ok
-}
+};
 
 /**
  * Outcome of the trigger. `running` is what the dedup-collision recovery
@@ -214,14 +217,14 @@ export interface ExecuteAnalysisInput {
  */
 export type ExecuteAnalysisFinalStatus = "running" | "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
 
-export interface ExecuteAnalysisResult {
+export type ExecuteAnalysisResult = {
     readonly runId: string;
     readonly workflowId: string;
     readonly status: ExecuteAnalysisFinalStatus;
     readonly completedSteps: readonly string[];
     readonly failedSteps: readonly string[];
     readonly canceledSteps: readonly string[];
-}
+};
 
 // ── Dep injection ─────────────────────────────────────────────────────
 
@@ -239,14 +242,14 @@ export type StepRuntimeStatus = "pending" | "queued" | "running" | "completed" |
  * that says what the step is FOR. `durationMs` and `error` appear only once the step has settled
  * in a way that produced them.
  */
-export interface RunStepObservation {
+export type RunStepObservation = {
     readonly id: string;
     readonly name: string;
     readonly agent: string;
     readonly status: StepRuntimeStatus;
     readonly durationMs?: number;
     readonly error?: string;
-}
+};
 
 /**
  * A whole-run snapshot handed to {@link ExecuteAnalysisDeps.observeRun}.
@@ -262,14 +265,14 @@ export interface RunStepObservation {
  * computable from `steps` and recorded authoritatively on the run's ledger row; carrying them here
  * would mint a second source that can disagree with the ledger a host also reads.
  */
-export interface RunObservation {
+export type RunObservation = {
     readonly runId: string;
     readonly analysisId: string;
     /** `running` for every mid-flight snapshot; the derived terminal status on the last one. */
     readonly status: ExecuteAnalysisFinalStatus;
     /** Every plan step, including ones that have not started — never a delta. */
     readonly steps: readonly RunStepObservation[];
-}
+};
 
 /**
  * Construction-time deps for the parent workflow. The order-of-operations is
@@ -279,7 +282,7 @@ export interface RunObservation {
  * registered sandbox-step callable — plus the construction inputs (provider,
  * embedder, model, keys, roots) the in-body synthesis needs.
  */
-export interface ExecuteAnalysisDeps {
+export type ExecuteAnalysisDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly pool: Pool;
@@ -360,7 +363,7 @@ export interface ExecuteAnalysisDeps {
      * throwing observer never fails the run.
      */
     readonly observeRun?: (observation: RunObservation) => void;
-}
+};
 
 // ── In-body orchestration helpers ────────────────────────────────────
 
@@ -374,7 +377,9 @@ function emitStreamPart(part: unknown): Promise<void> {
  * run. A DBOS exception passes through with no change.
  */
 async function ledgerStep(log: Logger, name: string, write: () => ResultAsync<unknown, DbError> | Promise<Result<unknown, DbError>>): Promise<void> {
-    await DBOS.runStep(
+    // The step body logs its own failure and never throws, so the outer Result
+    // is deliberately dropped: a ledger miss must not fail the run.
+    const outcome = await DBOS.runStep(
         async (): Promise<Result<void, string>> => {
             const written = await write();
             if (written.isOk()) return ok(undefined);
@@ -383,6 +388,7 @@ async function ledgerStep(log: Logger, name: string, write: () => ResultAsync<un
         },
         { name },
     );
+    if (outcome.isErr()) return;
 }
 
 /**
@@ -432,12 +438,12 @@ function buildRunObservation(args: {
             const rt = stepStates.get(s.id);
             return {
                 id: s.id,
-                name: input.planStepById[s.id]?.name ?? s.id,
+                name: input.planStepById[s.id]?.name,
                 agent: input.agentByStepId[s.id] ?? "unknown",
                 // A step absent from the map has not been reached yet; `pending` is its honest state.
                 status: rt?.status ?? "pending",
-                ...(rt?.durationMs !== undefined ? { durationMs: rt.durationMs } : {}),
-                ...(rt?.error !== undefined ? { error: rt.error } : {}),
+                durationMs: rt?.durationMs !== undefined ? rt.durationMs : undefined,
+                error: rt?.error !== undefined ? rt.error : undefined,
             };
         }),
     };
@@ -477,11 +483,11 @@ export function buildChildInput(args: {
     templateBinding?: TemplateBinding;
 }): Omit<SandboxStepInput, "runSession"> {
     const { input, stepId, level, runId, workflowId, prompt, templateBinding } = args;
-    const resources = input.resourcesByStepId[stepId];
+    const resources = typedMember(input.resourcesByStepId, stepId);
     if (!resources) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from resourcesByStepId — every step must declare resources`);
     }
-    const planStep = input.planStepById[stepId];
+    const planStep = typedMember(input.planStepById, stepId);
     if (!planStep) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from planStepById — every step must carry its plan data`);
     }
@@ -500,7 +506,7 @@ export function buildChildInput(args: {
         dependsOn: planStep.depends_on,
         // Composed beside the seed, thus the same checkpoint carries both and a
         // replay hands the child the binding its briefing describes.
-        ...(templateBinding ? { templateBinding } : {}),
+        templateBinding,
         level,
         prompt,
         parentWorkflowId: workflowId,
@@ -531,14 +537,14 @@ export function buildChildInput(args: {
  */
 export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepId: string; runId: string; deps: ExecuteAnalysisDeps }): Promise<StepSeed> {
     const { briefing, templateBinding } = await gatherStepPackage(args);
-    return { prompt: composeStepBriefing(briefing), ...(templateBinding ? { templateBinding } : {}) };
+    return { prompt: composeStepBriefing(briefing), templateBinding };
 }
 
 /** What `gatherStepPackage` gives: the data of the seed, and the binding of the plan settings when one holds. */
-export interface StepPackage {
+export type StepPackage = {
     readonly briefing: StepBriefing;
     readonly templateBinding?: TemplateBinding;
-}
+};
 
 /**
  * Do every read of one step's package and give the data its seed is rendered
@@ -561,7 +567,7 @@ export interface StepPackage {
 export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; stepId: string; runId: string; deps: ExecuteAnalysisDeps }): Promise<StepPackage> {
     const { input, stepId, runId, deps } = args;
 
-    const step = input.planStepById[stepId];
+    const step = typedMember(input.planStepById, stepId);
     if (!step) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from planStepById — every step must carry its plan data`);
     }
@@ -602,7 +608,7 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
 
     const contract = await resolveTemplateContract(step, deps.knowledge);
 
-    return {
+    const pkg: { -readonly [M in keyof StepPackage]: StepPackage[M] } = {
         briefing: {
             step,
             workspace,
@@ -611,8 +617,9 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
             memory: { goal: memory.goal, constraints: memory.constraints },
             ...contract.briefing,
         },
-        ...(contract.binding ? { templateBinding: contract.binding } : {}),
     };
+    if (contract.binding !== undefined) pkg.templateBinding = contract.binding;
+    return pkg;
 }
 
 /**
@@ -621,16 +628,16 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
  * its served version is the version the plan names. JSON-serialisable, as a
  * durable step result must be.
  */
-export interface StepSeed {
+export type StepSeed = {
     readonly prompt: string;
     readonly templateBinding?: TemplateBinding;
-}
+};
 
 /** The template part of a seed: the brief or the reason for its absence, and the binding when one holds. */
-interface TemplateSeedPart {
+type TemplateSeedPart = {
     readonly briefing: Pick<StepBriefing, "template" | "templateNotRetrieved">;
     readonly binding?: TemplateBinding;
-}
+};
 
 /** A served contract carries no `match`; the two refusals do. */
 function isTemplateContract(answer: TemplateContract | KnowledgeUnavailable | KnowledgeRejected): answer is TemplateContract {
@@ -657,11 +664,12 @@ async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClie
                 : `the knowledge service refused the lookup: ${answer.message}`;
         return { briefing: { templateNotRetrieved: reason } };
     }
-    return bindTemplateContract(ref, answer, step.grounding?.settings ?? [], {
+    const grounding: { -readonly [M in keyof StepGroundingRef]: StepGroundingRef[M] } = {
         stepId: step.id,
         claims: step.grounding?.claims ?? [],
-        ...(step.grounding?.snapshot && step.grounding.snapshot !== "none" ? { snapshot: step.grounding.snapshot } : {}),
-    });
+    };
+    if (step.grounding?.snapshot && step.grounding.snapshot !== "none") grounding.snapshot = step.grounding.snapshot;
+    return bindTemplateContract(ref, answer, step.grounding?.settings ?? [], grounding);
 }
 
 /** The version of a template reference (`tpl-x@1.0.0` gives `1.0.0`), or `undefined` when the reference has none. */
@@ -707,11 +715,11 @@ function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
  * as unbound lines under the caveat the section renders.
  */
 /** What binds the render to the plan step beside the settings: its id, its claims, and the release the plan pinned. */
-interface StepGroundingRef {
+type StepGroundingRef = {
     readonly stepId: string;
     readonly claims: readonly string[];
     readonly snapshot?: string;
-}
+};
 
 function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[], grounding: StepGroundingRef): TemplateSeedPart {
     const refVersion = versionOfRef(ref);
@@ -737,7 +745,7 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                 unbound.push(`${shown}: a policy of the plan, not a value of the \`${setting.name}\` slot (${slot.type}); state the value it gives`);
                 continue;
             }
-            const prior = slots[setting.name];
+            const prior = typedMember(slots, setting.name);
             if (prior !== undefined) {
                 if (!sameSettingValue(prior, setting.value)) unbound.push(`${shown}: differs from the bound value ${JSON.stringify(prior)} of the same slot`);
                 continue;
@@ -760,7 +768,7 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
         unbound.push(`${shown}: no slot of the template carries it`);
     }
 
-    return {
+    const part: { -readonly [M in keyof TemplateSeedPart]: TemplateSeedPart[M] } = {
         briefing: {
             template: {
                 ref,
@@ -769,29 +777,28 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                 inputs: (contract.inputs ?? []).map((input) => ({
                     name: input.name,
                     path: input.path,
-                    ...(input.description ? { description: input.description } : {}),
+                    description: input.description,
                 })),
                 bound,
                 unbound_settings: unbound,
             },
         },
-        ...(versionMatches
-            ? {
-                  binding: {
-                      template: ref,
-                      slots,
-                      sources,
-                      step: grounding.stepId,
-                      claims: grounding.claims,
-                      ...(grounding.snapshot ? { snapshot: grounding.snapshot } : {}),
-                      // The local slots of the contract, thus the tool binds a path or a column name on the machine
-                      // without a second read of the contract.
-                      local: contract.parameters.filter((slot) => slot.local === true),
-                      adaptable: adaptable.map((slot) => slot.name),
-                  },
-              }
-            : {}),
     };
+    if (versionMatches) {
+        part.binding = {
+            template: ref,
+            slots,
+            sources,
+            step: grounding.stepId,
+            claims: grounding.claims,
+            snapshot: grounding.snapshot,
+            // The local slots of the contract, thus the tool binds a path or a column name on the machine
+            // without a second read of the contract.
+            local: contract.parameters.filter((slot) => slot.local === true),
+            adaptable: adaptable.map((slot) => slot.name),
+        };
+    }
+    return part;
 }
 
 /**
@@ -910,7 +917,7 @@ export function synthesizeFindings(args: {
             bioKeys: deps.bioKeys,
             citationResolver: deps.citationResolver,
             usageRecorder: deps.usageRecorder,
-            ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
+            toolOutputStore: deps.toolOutputStore ? deps.toolOutputStore : undefined,
         },
         {
             analysisId,
@@ -950,12 +957,9 @@ export function synthesizeFindings(args: {
  * and uses `DBOS.workflowID` as the source of truth.
  */
 export function registerExecuteAnalysis(deps: ExecuteAnalysisDeps): (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult> {
-    return DBOS.registerWorkflow(
-        async (input: ExecuteAnalysisInput): Promise<ExecuteAnalysisResult> => {
-            return runExecuteAnalysisBody(input, deps);
-        },
-        { name: "executeAnalysis" },
-    );
+    return DBOS.registerWorkflow((input: ExecuteAnalysisInput): Promise<ExecuteAnalysisResult> => Promise.resolve(runExecuteAnalysisBody(input, deps)), {
+        name: "executeAnalysis",
+    });
 }
 
 /**
@@ -1146,7 +1150,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 logger.warn("synthesizeFindings suspended — suspending the run", { runId, reason: suspended.reason });
             } else {
                 synthesisError = err;
-                synthesisOutcome = { status: "failed", reason: err instanceof Error ? err.message : String(err) };
+                synthesisOutcome = { status: "failed", reason: errorMessage(err) };
                 rowOutcome = synthesisOutcome;
                 logger.error("synthesizeFindings failed — failing the run", { runId, ...logger.errorFields(err) });
             }
@@ -1171,7 +1175,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // failed, force a failed terminal status so the charge/run-authorization close correctly
     // and the run row + stream report the failure before we re-throw.
     const suspension = final.suspension ?? synthesisSuspension;
-    const result = await collectAndComplete({
+    const synthesisErrorMessage = errorOf(synthesisError)?.message;
+    const terminal: { -readonly [K in keyof CollectAndCompleteArgs]: CollectAndCompleteArgs[K] } = {
         input,
         runId,
         workflowId,
@@ -1180,10 +1185,9 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         failed: final.failed,
         canceled: final.canceled,
         suspension,
-        ...(final.usage ? { usage: final.usage } : {}),
         failureReason: synthesisError
-            ? synthesisError instanceof Error
-                ? `synthesis-failed: ${synthesisError.message}`
+            ? synthesisErrorMessage !== undefined
+                ? `synthesis-failed: ${synthesisErrorMessage}`
                 : "synthesis-failed"
             : final.suspension === null && synthesisSuspension !== null
               ? synthesisSuspension.reason
@@ -1192,7 +1196,9 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         findings: synthesisFindings,
         synthesisOutcome,
         deps,
-    });
+    };
+    if (final.usage !== undefined) terminal.usage = final.usage;
+    const result = await collectAndComplete(terminal);
 
     // Terminal snapshot, fired here rather than inside `collectAndComplete` because this is the
     // first point where BOTH the derived final status and the scheduler's final step map are in
@@ -1206,26 +1212,28 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     if (suspension !== null && synthesisError === null) return cancelSelf("self-cancel-suspended");
 
     // Re-throw after the terminal block so the workflow record goes to ERROR.
-    if (synthesisError !== null) throw synthesisError;
+    // Non-Error throw values wrap so the workflow record carries a message;
+    // Errors re-throw with their identity intact.
+    if (synthesisError !== null) throw errorOf(synthesisError) ?? new Error(errorMessage(synthesisError));
 
     return result;
 }
 
 // ── (1) validateAndInit ───────────────────────────────────────────────
 
-interface ValidateAndInitFresh {
+type ValidateAndInitFresh = {
     readonly kind: "fresh";
-}
+};
 
-interface ValidateAndInitJoinedExisting {
+type ValidateAndInitJoinedExisting = {
     readonly kind: "joined-existing";
     readonly runId: string;
-}
+};
 
-interface ValidateAndInitChargeRefused {
+type ValidateAndInitChargeRefused = {
     readonly kind: "charge-refused";
     readonly refusal: GateRefusal;
-}
+};
 
 type ValidateAndInitResult = ValidateAndInitFresh | ValidateAndInitJoinedExisting | ValidateAndInitChargeRefused;
 
@@ -1270,15 +1278,15 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
 
 // ── (2-4) Scheduler loop ──────────────────────────────────────────────
 
-interface SchedulerLoopArgs {
+type SchedulerLoopArgs = {
     readonly input: ExecuteAnalysisInput;
     readonly runId: string;
     readonly workflowId: string;
     readonly levels: ReadonlyMap<string, number>;
     readonly deps: ExecuteAnalysisDeps;
-}
+};
 
-interface SchedulerLoopOutcome {
+type SchedulerLoopOutcome = {
     readonly completed: Set<string>;
     readonly failed: Set<string>;
     readonly canceled: Set<string>;
@@ -1296,7 +1304,7 @@ interface SchedulerLoopOutcome {
      * rollup. Absent when no step reported one.
      */
     readonly usage?: TokenUsageRollup;
-}
+};
 
 async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopOutcome> {
     const { input, runId, workflowId, levels, deps } = args;
@@ -1349,8 +1357,11 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     const markDependentsSkipped = (failedStepId: string): void => {
         const stack = [...(dependentsByStepId.get(failedStepId) ?? [])];
         while (stack.length > 0) {
-            const id = stack.pop()!;
-            if (stepRuntime.get(id)!.status === "pending") {
+            const id = stack.pop();
+            if (id === undefined) break;
+            const rt = stepRuntime.get(id);
+            if (rt === undefined) throw new Error(`step ${id} left the runtime index mid-walk`);
+            if (rt.status === "pending") {
                 stepRuntime.set(id, { status: "skipped" });
                 stack.push(...(dependentsByStepId.get(id) ?? []));
             }
@@ -1381,7 +1392,8 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             id: `dag-${runId}`,
             runId,
             steps: input.steps.map((s) => {
-                const rt = stepRuntime.get(s.id)!;
+                const rt = stepRuntime.get(s.id);
+                if (rt === undefined) throw new Error(`step ${s.id} left the runtime index mid-walk`);
                 const entry: Record<string, unknown> = {
                     id: s.id,
                     // `input.steps` is the SCHEDULER's projection — `{id, depends_on}` and nothing
@@ -1391,7 +1403,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                     // field populated for a step missing from the snapshot rather than emitting an
                     // empty label; `planStepById` is complete by contract (dispatch throws on a
                     // miss), so the fallback is unreachable in practice.
-                    name: input.planStepById[s.id]?.name ?? s.id,
+                    name: input.planStepById[s.id]?.name,
                     agent: input.agentByStepId[s.id] ?? "unknown",
                     status: rt.status,
                     level: levels.get(s.id) ?? 0,
@@ -1437,7 +1449,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 // this machine, so the run halts outright — unlike an ordinary
                 // step failure, which dooms only its dependents.
                 for (const stepId of scheduled.neverFits) {
-                    const r = input.resourcesByStepId[stepId];
+                    const r = typedMember(input.resourcesByStepId, stepId);
                     const declared = r ? `${r.cpu} CPU / ${r.memoryGb} GB` : "undeclared";
                     failed.add(stepId);
                     stepRuntime.set(stepId, {
@@ -1452,7 +1464,9 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 return;
             }
             for (const stepId of scheduled.heldForCapacity) {
-                if (stepRuntime.get(stepId)!.status !== "queued") {
+                const rt = stepRuntime.get(stepId);
+                if (rt === undefined) throw new Error(`step ${stepId} left the runtime index mid-walk`);
+                if (rt.status !== "queued") {
                     stepRuntime.set(stepId, { status: "queued" });
                     queuedChanged = true;
                 }
@@ -1466,7 +1480,8 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             return;
         }
         for (const stepId of admit) {
-            const idx = stepIndexById.get(stepId)!;
+            const idx = stepIndexById.get(stepId);
+            if (idx === undefined) throw new Error(`step ${stepId} left the scheduler index mid-walk`);
             const childWorkflowId = `${workflowId}-${idx}`;
             // Compose the seed HERE — the dependencies of `stepId` are all in
             // `completed`, so this is the first (and only) moment their results
@@ -1490,16 +1505,16 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 runId,
                 workflowId,
                 prompt: seed.prompt,
-                ...(seed.templateBinding ? { templateBinding: seed.templateBinding } : {}),
+                templateBinding: seed.templateBinding,
             });
             const childInput: SandboxStepInput = {
                 ...baseChildInput,
                 parentWorkflowId: dbosParentId,
                 runSession: forStep(input.runSession, stepId),
             };
-            const handle = (await DBOS.startWorkflow(deps.sandboxStepCallable, {
+            const handle = await DBOS.startWorkflow(deps.sandboxStepCallable, {
                 workflowID: childWorkflowId,
-            })(childInput)) as WorkflowHandle<SandboxStepResult>;
+            })(childInput);
             inFlight.set(childWorkflowId, { stepId, handle });
             stepRuntime.set(stepId, { status: "running" });
         }
@@ -1515,8 +1530,11 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         // function-ID-consuming ops and diverge the counter on replay.
         const winner = await DBOS.waitFirst([...inFlight.values()].map((e) => e.handle));
         const childId = winner.workflowID;
-        const entry = inFlight.get(childId)!;
+        const entry = inFlight.get(childId);
         inFlight.delete(childId);
+        // The winner came out of `inFlight`, so the same map must hold its entry;
+        // a miss would mean the index and the await raced apart.
+        if (entry === undefined) throw new Error(`the workflow handle of step child ${childId} left the in-flight index`);
 
         let settled:
             { childId: string; stepId: string; kind: "result"; result: SandboxStepResult } | { childId: string; stepId: string; kind: "error"; err: unknown };
@@ -1544,10 +1562,10 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 completed.add(settled.stepId);
                 stepRuntime.set(settled.stepId, {
                     status: "completed",
-                    durationMs: r.durationMs ?? undefined,
+                    durationMs: r.durationMs,
                 });
                 stepStatus = "completed";
-                stepDurationMs = r.durationMs ?? undefined;
+                stepDurationMs = r.durationMs;
                 await emitDagSnapshot();
                 await dispatchReady();
             } else if (r.status === "canceled") {
@@ -1555,11 +1573,11 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 if (childSuspension !== undefined) await haltForSuspension(childSuspension);
                 stepRuntime.set(settled.stepId, {
                     status: "failed",
-                    durationMs: r.durationMs ?? undefined,
+                    durationMs: r.durationMs,
                     error: r.error ?? "canceled",
                 });
                 stepStatus = "canceled";
-                stepDurationMs = r.durationMs ?? undefined;
+                stepDurationMs = r.durationMs;
                 await emitDagSnapshot();
             } else {
                 // failed or blocked — a blocker (see the harness-sandbox-agents spec)
@@ -1571,12 +1589,12 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 failureReason ??= r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed");
                 stepRuntime.set(settled.stepId, {
                     status: "failed",
-                    durationMs: r.durationMs ?? undefined,
+                    durationMs: r.durationMs,
                     error: r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed"),
                 });
                 markDependentsSkipped(settled.stepId);
                 stepStatus = "failed";
-                stepDurationMs = r.durationMs ?? undefined;
+                stepDurationMs = r.durationMs;
                 await emitDagSnapshot();
                 await dispatchReady();
             }
@@ -1591,7 +1609,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 // `stepRuntime` (the DAG snapshot) has no canceled tier; the graceful-cancel branch above
                 // likewise renders canceled steps as "failed", so this stays consistent with it.
                 status: "failed",
-                error: settled.err instanceof Error ? settled.err.message : String(settled.err),
+                error: errorMessage(settled.err),
             });
             stepStatus = "canceled";
             stepDurationMs = undefined;
@@ -1612,11 +1630,11 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             // suspension). A throw is treated exactly like a step failure:
             // dependents doomed, siblings continue.
             failed.add(settled.stepId);
-            failureReason ??= settled.err instanceof Error ? settled.err.message : String(settled.err);
+            failureReason ??= errorMessage(settled.err);
             markDependentsSkipped(settled.stepId);
             stepRuntime.set(settled.stepId, {
                 status: "failed",
-                error: settled.err instanceof Error ? settled.err.message : String(settled.err),
+                error: errorMessage(settled.err),
             });
             stepStatus = "failed";
             // A child that settled by throwing carries no durable duration.
@@ -1640,7 +1658,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 runId,
                 stepId: settled.stepId,
                 status: stepStatus,
-                ...(stepDurationMs !== undefined ? { durationMs: stepDurationMs } : {}),
+                durationMs: stepDurationMs !== undefined ? stepDurationMs : undefined,
                 atMs: settledAtMs,
             },
             input.runSession,
@@ -1649,22 +1667,23 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
     await drainChildSuspensions(childSuspensions);
 
-    return {
+    const outcome: { -readonly [K in keyof SchedulerLoopOutcome]: SchedulerLoopOutcome[K] } = {
         completed,
         failed,
         canceled,
         suspension,
         failureReason,
         stepStates: stepRuntime,
-        ...(hasReportedUsage(runUsage) ? { usage: { ...runUsage } } : {}),
     };
+    if (hasReportedUsage(runUsage)) outcome.usage = { ...runUsage };
+    return outcome;
 }
 
 async function drainChildSuspensions(suspensions: Map<string, ChildSuspended>): Promise<void> {
-    while (true) {
+    for (;;) {
         const msg = await DBOS.recv<ChildSuspended>(CHILD_SUSPENDED_TOPIC, 0);
         if (!msg) return;
-        if (msg.kind === "suspended" && !suspensions.has(msg.childWorkflowId)) suspensions.set(msg.childWorkflowId, msg);
+        if (!suspensions.has(msg.childWorkflowId)) suspensions.set(msg.childWorkflowId, msg);
     }
 }
 
@@ -1685,7 +1704,7 @@ async function cancelInFlight(
 
 // ── (6) collectAndComplete ────────────────────────────────────────────
 
-interface CollectAndCompleteArgs {
+type CollectAndCompleteArgs = {
     readonly input: ExecuteAnalysisInput;
     readonly runId: string;
     readonly workflowId: string;
@@ -1711,7 +1730,7 @@ interface CollectAndCompleteArgs {
      */
     readonly synthesisOutcome: { status: SynthesisStatus; reason: string | null } | null;
     readonly deps: ExecuteAnalysisDeps;
-}
+};
 
 async function collectAndComplete(args: CollectAndCompleteArgs): Promise<ExecuteAnalysisResult> {
     const { input, runId, workflowId, startedAtMs, completed, failed, canceled, suspension, failureReason, forceFailed, deps } = args;
@@ -1851,7 +1870,17 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                     .unwrapOr(0),
             { name: "count-run-artifacts" },
         );
-        await emitStreamPart({
+        const completedPart: {
+            type: "data-run-completed";
+            runId: string;
+            status: ExecuteAnalysisFinalStatus;
+            completedSteps: number;
+            totalSteps: number;
+            artifactCount: number;
+            findings: { title: string; confidence: string }[];
+            note?: string;
+            usage?: CollectAndCompleteArgs["usage"];
+        } = {
             type: "data-run-completed",
             runId,
             status,
@@ -1862,19 +1891,16 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                 title: f.title,
                 confidence: f.confidence,
             })),
-            ...(status === "partial"
-                ? {
-                      note: `${completed.size} of ${input.steps.length} steps completed; results are partial.`,
-                  }
-                : {}),
-            ...(args.usage ? { usage: args.usage } : {}),
-        });
+        };
+        if (status === "partial") completedPart.note = `${completed.size} of ${input.steps.length} steps completed; results are partial.`;
+        if (args.usage !== undefined) completedPart.usage = args.usage;
+        await emitStreamPart(completedPart);
     } else {
         await emitStreamPart({
             type: "data-run-failed",
             runId,
             error: failureReason ?? (suspended !== null ? suspended.reason : "Run canceled before completion"),
-            ...(suspended !== null ? { reason: suspended.reason } : {}),
+            reason: suspended !== null ? suspended.reason : undefined,
         });
     }
 

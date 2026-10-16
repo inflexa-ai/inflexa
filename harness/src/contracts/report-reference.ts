@@ -11,6 +11,8 @@
 
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
+import { parseJsonOrUndefined } from "../lib/json.js";
+import { maybeRecord } from "../lib/shape.js";
 
 /**
  * The shape of a content hash, as lowercase `algorithm:hex`, for example `sha256:9f86d0...`. The
@@ -18,6 +20,7 @@ import { z } from "zod";
  * lowercase only. Thus the pattern rejects an uppercase hex digit, which would pass a case-insensitive
  * match here but never resolve against the lowercase producer.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const HASH_PATTERN = /^[a-z0-9]+:[0-9a-f]+$/;
 
 /**
@@ -293,6 +296,7 @@ const REFERENCE_URI_PREFIX = "inflexa-ref:v1:";
  * Thus a corrupt payload would otherwise decode to mojibake and report as malformed JSON, which names
  * the wrong failure.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 /**
@@ -303,10 +307,14 @@ function sortKeysDeep(value: unknown): unknown {
     if (Array.isArray(value)) {
         return value.map(sortKeysDeep);
     }
-    if (value !== null && typeof value === "object") {
+    const fields = maybeRecord(value);
+    if (fields !== undefined) {
         const sorted: Record<string, unknown> = {};
-        for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-            sorted[key] = sortKeysDeep((value as Record<string, unknown>)[key]);
+        const entries = Object.entries(fields);
+        // The keys sort here, so the serialization order holds no trace of the insertion order.
+        entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+        for (const [key, member] of entries) {
+            sorted[key] = sortKeysDeep(member);
         }
         return sorted;
     }
@@ -352,11 +360,9 @@ export function parseReference(uri: string): Result<Reference, ParseReferenceErr
         return err({ kind: "invalid-payload" });
     }
     const json = Buffer.from(payload, "base64url").toString("utf8");
-    let candidate: unknown;
-    try {
-        candidate = JSON.parse(json);
-    } catch {
-        // `JSON.parse` throws on malformed input. The boundary turns the throw into an `Err`.
+    const candidate = parseJsonOrUndefined(json);
+    // `parseJsonOrUndefined` gives back undefined on malformed input.
+    if (candidate === undefined) {
         return err({ kind: "invalid-json" });
     }
     const result = ReferenceSchema.safeParse(candidate);

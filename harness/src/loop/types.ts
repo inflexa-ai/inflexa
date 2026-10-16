@@ -26,7 +26,7 @@ export type LoopMessage = ModelMessage;
  * prompt, the model id (provenance / metric label — the `ChatProvider`
  * owns the wire model), the tool surface, and the runaway-guard cap.
  */
-export interface AgentDefinition {
+export type AgentDefinition = {
     readonly id: string;
     readonly systemPrompt: string;
     readonly model: string;
@@ -35,7 +35,7 @@ export interface AgentDefinition {
     readonly maxIterations: number;
     /** The compaction rules of an agent that a chat thread runs. Absent: the conversation never compacts. */
     readonly compaction?: CompactionRules;
-}
+};
 
 /**
  * The durability seam. `passthroughStep` (`(_, fn) => fn()`) in the chat
@@ -49,12 +49,12 @@ export type RunStep = <T>(name: string, fn: () => Promise<T>) => Promise<T>;
  * chain at the point of emission, derived from the `Session` (see the harness-durable-runtime spec).
  * `callPath` is provenance only; nothing branches on it.
  */
-export interface EventSource {
+export type EventSource = {
     readonly agentId: string;
     readonly callPath: readonly string[];
     /** The id of the tool call that runs this loop. For a data profile, the workflow id of its attempt. */
     readonly invocationId?: string;
-}
+};
 
 /**
  * Orchestration events the loop emits: iteration boundaries and tool-call
@@ -120,7 +120,7 @@ export type EmitEvent =
  * synthesized content). The loop and `emit` are agnostic to the payload
  * shape; the typed contract lives in `harness/contracts`.
  */
-export interface ChatDataPart {
+export type ChatDataPart = {
     readonly type: `data-${string}`;
     readonly data: unknown;
     /**
@@ -130,7 +130,7 @@ export interface ChatDataPart {
      * routing envelopes).
      */
     readonly source?: EventSource;
-}
+};
 
 /**
  * The flat event sink. One function reference flows unchanged through

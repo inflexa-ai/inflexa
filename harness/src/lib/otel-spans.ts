@@ -121,7 +121,7 @@ export const ATTR_INFLEXA_EXEC_ID = "inflexa.exec_id";
 export function stableSpan(dbosName: string, name: string, attributes: Attributes): void {
     const span = trace.getActiveSpan();
     if (span === undefined || !span.isRecording()) return;
-    // The API `Span` has no name accessor; the SDK span the provider hands out does.
+    // SAFETY: the API `Span` has no name accessor; the SDK span the provider hands out does. A span without the accessor reads undefined and stays untouched.
     if ((span as Partial<ReadableSpan>).name !== dbosName) return;
     span.updateName(name);
     span.setAttributes(attributes);
@@ -133,7 +133,11 @@ export function stableSpan(dbosName: string, name: string, attributes: Attribute
  * writes no client span. Sandbox-server records no spans, and the step span
  * around the call already covers it.
  */
-export function untracedFetch(fetchImpl: typeof fetch, url: string, init: RequestInit & { headers?: Record<string, string> }): Promise<Response> {
+export function untracedFetch(
+    fetchImpl: typeof fetch,
+    url: string,
+    init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
+): Promise<Response> {
     const active = context.active();
     const headers: Record<string, string> = { ...init.headers };
     propagation.inject(active, headers);
@@ -176,15 +180,14 @@ class PassThroughTracer implements Tracer {
     startActiveSpan<F extends (span: ApiSpan) => unknown>(name: string, options: SpanOptions, fn: F): ReturnType<F>;
     startActiveSpan<F extends (span: ApiSpan) => unknown>(name: string, options: SpanOptions, parentContext: Context, fn: F): ReturnType<F>;
     // The inner tracer cannot take this call: its own `startActiveSpan` calls its own `startSpan`, past the rule.
-    startActiveSpan<F extends (span: ApiSpan) => unknown>(
-        name: string,
-        ...rest: [F] | [SpanOptions, F] | [SpanOptions, Context | undefined, F]
-    ): ReturnType<F> {
-        const fn = rest[rest.length - 1] as F;
-        const options = rest.length > 1 ? (rest[0] as SpanOptions) : {};
-        const parentContext = (rest.length > 2 ? (rest[1] as Context | undefined) : undefined) ?? context.active();
+    // The inner tracer cannot take this call: its own `startActiveSpan` calls its own `startSpan`, past the rule.
+    startActiveSpan<F extends (span: ApiSpan) => R, R>(name: string, optionsOrFn?: SpanOptions | F, contextOrFn?: Context | F, fn?: F): R {
+        const callback = typeof contextOrFn === "function" ? contextOrFn : fn;
+        if (callback === undefined) throw new TypeError("startActiveSpan requires its span callback as the last argument");
+        const options = typeof optionsOrFn === "function" ? {} : (optionsOrFn ?? {});
+        const parentContext = (typeof contextOrFn === "function" ? undefined : contextOrFn) ?? context.active();
         const span = this.startSpan(name, options, parentContext);
-        return context.with(trace.setSpan(parentContext, span), () => fn(span)) as ReturnType<F>;
+        return context.with(trace.setSpan(parentContext, span), () => callback(span));
     }
 }
 

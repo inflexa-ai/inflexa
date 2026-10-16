@@ -43,8 +43,10 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
+import { errorMessage } from "../lib/thrown.js";
+import { z } from "zod";
 
-export interface SynthesizeRunDeps {
+export type SynthesizeRunDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly pool: Pool;
@@ -63,16 +65,16 @@ export interface SynthesizeRunDeps {
     readonly usageRecorder?: UsageRecorder;
     /** The store of the synthesizer and reviewer loops and of their read tools. */
     readonly toolOutputStore?: ToolOutputStore;
-}
+};
 
 /** Optional fields for a progress update, mirroring the wire part. */
-export interface SynthesisProgressExtra {
+export type SynthesisProgressExtra = {
     readonly delegationCount?: number;
     readonly reason?: string;
     readonly error?: string;
-}
+};
 
-export interface SynthesizeRunParams {
+export type SynthesizeRunParams = {
     readonly analysisId: string;
     readonly runId: string;
     readonly completedSteps: readonly string[];
@@ -81,16 +83,16 @@ export interface SynthesizeRunParams {
     readonly emit: EmitFn;
     /** Domain progress callback — the phases the run-completed UI renders. */
     readonly onProgress: (phase: SynthesisPhase, activity: string, extra?: SynthesisProgressExtra) => void | Promise<void>;
-}
+};
 
-export interface SynthesizeRunResult {
+export type SynthesizeRunResult = {
     readonly findings: readonly RunFinding[];
     // Only the non-failed outcomes are ever returned — a genuine failure re-throws
     // and the workflow body records "failed" itself. `synthesisReason` carries the
     // skip detail; it is null for the "produced" case.
     readonly synthesisStatus: Exclude<SynthesisStatus, "failed">;
     readonly synthesisReason: string | null;
-}
+};
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
     const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, bioKeys, citationResolver, usageRecorder } = deps;
@@ -124,7 +126,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             bioKeys,
             citationResolver,
             usageRecorder,
-            ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
+            toolOutputStore: deps.toolOutputStore ? deps.toolOutputStore : undefined,
             summaries,
             planNarrative,
             runId,
@@ -151,7 +153,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             const vectorStore = createVectorStore(pool);
             const indexName = searchIndexName(analysisId);
             const synthesisText = formatSynthesisEmbeddingText(synthesis);
-            const [vector] = unwrapOrThrow(await embedding.embed([synthesisText], synthesizerSession));
+            const vector = unwrapOrThrow(await embedding.embed([synthesisText], synthesizerSession)).at(0);
             if (!vector) throw new Error("synthesize-run: empty embedding response");
             unwrapOrThrow(
                 await vectorStore.upsert({
@@ -180,7 +182,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             synthesisReason: null,
         };
     } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errorMessage(err);
         await onProgress("failed", "Synthesis could not be completed — step summaries are still available", { error: msg });
         // A genuine synthesis failure must fail the run loudly (D10): re-throw so
         // the synthesis step errors and the parent workflow goes to ERROR. The
@@ -189,10 +191,13 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
     }
 }
 
+/** The plan row carries only the narrative this reader needs; the rest of the plan blob stays opaque. */
+const planNarrativeSchema = z.object({ analytical_narrative: z.string().optional() }).nullable();
+
 async function loadPlanNarrative(pool: Pool, runId: string, analysisId: string): Promise<string> {
     const run = unwrapOrThrow(await queryRun(pool, runId));
     const planId = run?.planId ?? null;
     if (!planId) return "";
-    const plan = unwrapOrThrow(await loadPlan(pool, planId, { analysisId })) as { analytical_narrative?: string } | null;
+    const plan = planNarrativeSchema.parse(unwrapOrThrow(await loadPlan(pool, planId, { analysisId })));
     return plan?.analytical_narrative ?? "";
 }

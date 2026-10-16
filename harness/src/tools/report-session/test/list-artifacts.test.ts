@@ -1,0 +1,509 @@
+/**
+ * The tests of the pinned-artifact listing tool.
+ *
+ * Each test drives the tool through `execute` with a temp directory as the workspace root and an
+ * in-memory gateway. The tests cover the order of the listing, the cap of the listing, the columns of a
+ * CSV and of a TSV, the extension that carries no header, the cut header line, the quoted header, the
+ * absent file, the file type that holds no cell, the column count of the listing, the path that the pin
+ * does not hold, the pinned citations, and the session refusal.
+ */
+
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
+import type { Scope } from "../../../auth/types.js";
+import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
+import type {
+    ReportSessionState,
+    ReportSessionStateGateway,
+    SessionStateLoad,
+    SessionStatePersist,
+    StampResult,
+} from "../../report-authoring/authoring-tools.js";
+import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import type { ToolContext } from "../../define-tool.js";
+import { createListPinnedArtifactsTool, type ListPinnedArtifactsResult, type PinnedArtifact } from "../list-artifacts.js";
+import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+
+/** Each root that a test made. The cleanup removes them after the suite. */
+const roots: string[] = [];
+
+afterAll(async () => {
+    for (const root of roots) {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+/** Make a fresh temp directory as a workspace root. */
+async function makeRoot(): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "list-artifacts-"));
+    roots.push(root);
+    return root;
+}
+
+/** Write a file under the workspace root, and make each parent directory of it. */
+async function writeUnder(root: string, path: string, content: string): Promise<void> {
+    const absolute = join(root, path);
+    await mkdir(dirname(absolute), { recursive: true });
+    await writeFile(absolute, content, "utf8");
+}
+
+/** The default analysis of a seeded thread. It matches the scope of `ctxForThread`, thus a call resolves. */
+const DEFAULT_ANALYSIS_ID = "analysis-001";
+
+/** An empty draft. The listing reads the snapshot alone, thus the document never matters here. */
+const emptyDraft = { title: "", sections: [] };
+
+/** An in-memory gateway. It holds one state and one analysis for each thread. */
+type FakeGateway = ReportSessionStateGateway & {
+    seed(threadId: string, snapshot: ReportSnapshot, analysisId?: string): void;
+};
+
+function makeFakeGateway(): FakeGateway {
+    const rows = new Map<string, { state: ReportSessionState; analysisId: string }>();
+    return {
+        seed(threadId, snapshot, analysisId = DEFAULT_ANALYSIS_ID): void {
+            rows.set(threadId, { state: { document: structuredClone(emptyDraft), snapshot: structuredClone(snapshot) }, analysisId });
+        },
+        load(threadId): Promise<SessionStateLoad> {
+            const row = rows.get(threadId);
+            if (row === undefined) {
+                return Promise.resolve({ outcome: "absent" });
+            }
+            const state = structuredClone(row.state);
+            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document, seenDocumentHash: null, derivations: [] });
+        },
+        persist(): Promise<SessionStatePersist> {
+            return Promise.resolve({ outcome: "persisted" });
+        },
+        stampRendered(): Promise<StampResult> {
+            return Promise.resolve({ outcome: "stamped" });
+        },
+        stampSeen(): Promise<StampResult> {
+            return Promise.resolve({ outcome: "stamped" });
+        },
+    };
+}
+
+/** A tool context whose scope names a report thread. */
+function ctxForThread(threadId: string): ToolContext {
+    const { ctx } = makeToolContext();
+    const scope: Scope = { kind: "analysis", analysisId: DEFAULT_ANALYSIS_ID, threadId };
+    return { ...ctx, session: { ...ctx.session, scope } };
+}
+
+describe("the listing order", () => {
+    it("gives each pinned artifact in the code-unit order of the path", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            artifacts: {
+                "runs/r1/step-b/output/counts.csv": { hash: "sha256:bbb", fileType: "output" },
+                "data/inputs/f1/raw.csv": { hash: "sha256:aaa", fileType: "output" },
+                "runs/r1/figures/plot.png": { hash: "sha256:ccc", fileType: "figure" },
+            },
+        });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts.map((artifact) => artifact.path)).toEqual([
+                "data/inputs/f1/raw.csv",
+                "runs/r1/figures/plot.png",
+                "runs/r1/step-b/output/counts.csv",
+            ]);
+            expect(result.artifacts.map((artifact) => artifact.fileType)).toEqual(["output", "figure", "output"]);
+            // A reference names the path alone and the session stamps the hash, thus an entry carries no hash.
+            expect(result.artifacts.every((artifact) => !("hash" in artifact))).toBe(true);
+        }
+    });
+});
+
+describe("the listing cap", () => {
+    /** Seed a snapshot of `count` staged inputs. The names pad, thus the code-unit order is the numeric order. */
+    function stagedInputs(count: number): ReportSnapshot {
+        const artifacts: ReportSnapshot["artifacts"] = {};
+        for (let index = 0; index < count; index += 1) {
+            artifacts[`data/inputs/f${String(index).padStart(3, "0")}/raw.csv`] = { hash: `sha256:${index}`, fileType: "output" };
+        }
+        return { artifacts };
+    }
+
+    it("lists the first 200 paths of a large pinned set, and it marks the listing as truncated", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", stagedInputs(250));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts).toHaveLength(200);
+            expect(result.total).toBe(250);
+            expect(result.truncated).toBe(true);
+            // The cap cuts the tail of the order, thus the listing is the prefix of the whole listing.
+            expect(result.artifacts[0].path).toBe("data/inputs/f000/raw.csv");
+            expect(result.artifacts[199].path).toBe("data/inputs/f199/raw.csv");
+        }
+    });
+
+    it("marks a set under the cap as complete, and it gives the total", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", stagedInputs(3));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts).toHaveLength(3);
+            expect(result.total).toBe(3);
+            expect(result.truncated).toBe(false);
+        }
+    });
+});
+
+describe("the columns", () => {
+    /** The one artifact that a call with its path gives, or `undefined` for another outcome. */
+    async function artifactAt(tool: ReturnType<typeof createListPinnedArtifactsTool>, path: string): Promise<PinnedArtifact | undefined> {
+        const result = (await tool.execute({ path }, ctxForThread("t1")))._unsafeUnwrap();
+        return result.outcome === "artifact" ? result.artifact : undefined;
+    }
+    it("splits the header of a CSV on the comma, and trims each name", async () => {
+        const root = await makeRoot();
+        await writeUnder(root, "runs/r1/step-a/output/de.csv", "gene, padj ,log2fc\nTP53,0.01,2.5\n");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/de.csv");
+
+        expect(artifact?.columns).toEqual(["gene", "padj", "log2fc"]);
+    });
+
+    it("splits the header of a TSV on the tab", async () => {
+        const root = await makeRoot();
+        await writeUnder(root, "runs/r1/step-a/output/de.tsv", "gene\tpadj\tlog2fc\nTP53\t0.01\t2.5\n");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.tsv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/de.tsv");
+
+        expect(artifact?.columns).toEqual(["gene", "padj", "log2fc"]);
+    });
+
+    it("reads the header of a path whose extension is uppercase", async () => {
+        const root = await makeRoot();
+        await writeUnder(root, "runs/r1/step-a/output/DE.CSV", "gene,padj\nTP53,0.01\n");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/DE.CSV": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/DE.CSV");
+
+        expect(artifact?.columns).toEqual(["gene", "padj"]);
+    });
+
+    it("reads no header for an extension that carries none, even under an output file type", async () => {
+        const root = await makeRoot();
+        // A minified JSON holds a comma at each field, thus a split of it gives many names that address nothing.
+        await writeUnder(root, "runs/r1/step-a/output/results.json", '{"gene":"TP53","padj":0.01,"log2fc":2.5}\n');
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/results.json": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/results.json");
+
+        expect(artifact?.fileType).toBe("output");
+        expect(artifact?.columns).toBeUndefined();
+    });
+
+    it("gives no columns for a header line that holds a double quote", async () => {
+        const root = await makeRoot();
+        // The quoted field holds the delimiter, thus a naive split gives two wrong names for one column.
+        await writeUnder(root, "runs/r1/step-a/output/quoted.csv", '"gene, symbol",padj\nTP53,0.01\n');
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/quoted.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/quoted.csv");
+
+        expect(artifact?.columns).toBeUndefined();
+    });
+
+    it("drops the last name of a header line that the read cut", async () => {
+        const root = await makeRoot();
+        // The header overflows the 16 KiB window, thus the bytes stop inside one name.
+        const names = Array.from({ length: 3000 }, (_, index) => `col${String(index).padStart(4, "0")}`);
+        await writeUnder(root, "runs/r1/step-a/output/wide.csv", `gene,${names.join(",")}\nTP53\n`);
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/wide.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/wide.csv");
+
+        const columns = artifact?.columns ?? [];
+        expect(columns[0]).toBe("gene");
+        // Each name that lands is whole, thus a locator that names one addresses a real column.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        expect(columns.every((name) => name === "gene" || /^col\d{4}$/.test(name))).toBe(true);
+        expect(columns.length).toBeLessThan(names.length);
+    });
+
+    it("gives no columns when the cut leaves no whole name", async () => {
+        const root = await makeRoot();
+        // One name overflows the window and no delimiter lands inside it, thus nothing whole comes out.
+        await writeUnder(root, "runs/r1/step-a/output/one.csv", `${"g".repeat(20000)}\n`);
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/one.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/one.csv");
+
+        expect(artifact?.columns).toBeUndefined();
+    });
+
+    it("gives no columns for a file whose bytes are absent from the disk", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/gone.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/gone.csv");
+
+        // The path and the file type still list, because the pin is the evidence and the header is orientation.
+        expect(artifact).toBeDefined();
+        expect(artifact).toMatchObject({ path: "runs/r1/step-a/output/gone.csv", fileType: "output" });
+        expect(artifact?.columns).toBeUndefined();
+    });
+
+    it("reads no header for a file type that holds no cell", async () => {
+        const root = await makeRoot();
+        // The bytes are on disk and they hold a comma. A figure holds no cell, thus no read runs.
+        await writeUnder(root, "runs/r1/figures/plot.png", "not,a,header\n");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/figures/plot.png": { hash: "sha256:ccc", fileType: "figure" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "runs/r1/figures/plot.png");
+
+        expect(artifact?.fileType).toBe("figure");
+        expect(artifact?.columns).toBeUndefined();
+    });
+
+    it("gives no columns for a path that escapes the workspace root", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        // The ledger accepts any path, thus a registered `../../` path is a legal snapshot key.
+        gateway.seed("t1", { artifacts: { "../../escape.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const artifact = await artifactAt(tool, "../../escape.csv");
+
+        expect(artifact?.columns).toBeUndefined();
+    });
+
+    it("gives no columns when the workspace root does not resolve, and it still gives the pin", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({
+            gateway,
+            resolveWorkspaceRoot: () => {
+                return Promise.reject(new Error("the workspace root did not resolve"));
+            },
+        });
+
+        const artifact = await artifactAt(tool, "runs/r1/step-a/output/de.csv");
+
+        expect(artifact?.path).toBe("runs/r1/step-a/output/de.csv");
+        expect(artifact?.columns).toBeUndefined();
+    });
+
+    it("gives the count of the columns in the listing, and no names", async () => {
+        const root = await makeRoot();
+        await writeUnder(root, "runs/r1/step-a/output/de.csv", "gene,padj,log2fc\nTP53,0.01,2.5\n");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts[0]).toEqual({ path: "runs/r1/step-a/output/de.csv", fileType: "output", columnCount: 3 });
+        }
+        expect(await artifactAt(tool, "runs/r1/step-a/output/de.csv")).toEqual({
+            path: "runs/r1/step-a/output/de.csv",
+            fileType: "output",
+            columnCount: 3,
+            columns: ["gene", "padj", "log2fc"],
+        });
+    });
+
+    it("gives not-pinned for a path that the pin does not hold", async () => {
+        const root = await makeRoot();
+        await writeUnder(root, "runs/r1/step-a/output/other.csv", "gene\nTP53\n");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({ path: "runs/r1/step-a/output/other.csv" }, ctxForThread("t1")))._unsafeUnwrap();
+
+        // The file is on disk, but a reference binds to the pinned set alone.
+        expect(result).toEqual({ outcome: "not-pinned", path: "runs/r1/step-a/output/other.csv" });
+    });
+});
+
+describe("the pinned citations", () => {
+    it("gives the stored citation keys in the order that the pin wrote", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } },
+            citations: ["pmid:12345", "pmid:42", "pmid:999"],
+        });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            // The agent binds a citation block to one of these keys, thus the listing is the route to a
+            // key and a refusal never has to teach one.
+            expect(result.citations).toEqual([{ key: "pmid:12345" }, { key: "pmid:42" }, { key: "pmid:999" }]);
+        }
+    });
+
+    it("names the paper beside the key that the pin recorded", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } },
+            citations: ["pmid:26997480", "pmid:999"],
+            citationRecords: { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } },
+        });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            // The description stays out, because the listing is an orientation surface. A key with no
+            // record lists bare.
+            expect(result.citations).toEqual([{ key: "pmid:26997480", citation: "Hugo et al. 2016" }, { key: "pmid:999" }]);
+        }
+    });
+
+    it("gives an empty list for a snapshot that pinned no citation", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.citations).toEqual([]);
+        }
+    });
+});
+
+describe("the session refusal", () => {
+    it("refuses a call whose scope carries no thread id", async () => {
+        const root = await makeRoot();
+        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve(root) });
+        // The default fixture scope is an analysis scope with no thread id.
+        const { ctx } = makeToolContext();
+
+        const result = (await tool.execute({}, ctx))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("refused");
+        if (result.outcome === "refused") {
+            expect(result.refusal.reason).toBe("no-thread-scope");
+        }
+    });
+
+    it("refuses a thread with no stored state", async () => {
+        const root = await makeRoot();
+        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("absent")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("refused");
+        if (result.outcome === "refused") {
+            expect(result.refusal.reason).toBe("absent-state");
+        }
+    });
+});
+
+describe("the result detail", () => {
+    /** Seed a snapshot of `count` staged inputs, as the cap tests do. */
+    function stagedInputs(count: number): ReportSnapshot {
+        const artifacts: ReportSnapshot["artifacts"] = {};
+        for (let index = 0; index < count; index += 1) {
+            artifacts[`data/inputs/f${String(index).padStart(3, "0")}/raw.csv`] = { hash: `sha256:${index}`, fileType: "output" };
+        }
+        return { artifacts };
+    }
+
+    /** Run the tool's result hook, asserting that the tool declares one. */
+    function detailOf(tool: ReturnType<typeof createListPinnedArtifactsTool>, result: ListPinnedArtifactsResult): string {
+        expect(tool.describeResult?.bind(tool)).toBeDefined();
+        return must(must(tool, "tool").describeResult?.bind(tool), 'must(tool, "tool").describeResult')({}, result);
+    }
+
+    it("names the listed count of a whole listing", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", stagedInputs(3));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(detailOf(tool, result)).toBe("3 artifacts");
+    });
+
+    it("counts one artifact in the singular, and an empty pinned set in the plural", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("one", stagedInputs(1));
+        gateway.seed("none", stagedInputs(0));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const one = (await tool.execute({}, ctxForThread("one")))._unsafeUnwrap();
+        const none = (await tool.execute({}, ctxForThread("none")))._unsafeUnwrap();
+
+        expect(detailOf(tool, one)).toBe("1 artifact");
+        expect(detailOf(tool, none)).toBe("0 artifacts");
+    });
+
+    // A count alone reads as the whole pinned set, thus a cut listing names the total it came from.
+    it("names the total beside the count of a truncated listing", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", stagedInputs(250));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(detailOf(tool, result)).toBe("200 artifacts of 250");
+    });
+
+    it("names the outcome kind of a refusal", async () => {
+        const root = await makeRoot();
+        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve(root) });
+
+        const result = (await tool.execute({}, ctxForThread("absent")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("refused");
+        expect(detailOf(tool, result)).toBe("refused");
+    });
+});

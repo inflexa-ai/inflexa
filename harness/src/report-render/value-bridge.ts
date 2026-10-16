@@ -42,10 +42,10 @@ export type ResolvedFile = Extract<ResolvedValue, { type: "file" }>;
 export type FigureSourcePolicy = (file: ResolvedFile) => string;
 
 /** One resolved statistic of a chart: the label of the block, and the resolved value of its cell. */
-export interface StatisticResolution {
+export type StatisticResolution = {
     label: string;
     resolved: ResolvedValue;
-}
+};
 
 /**
  * The resolution result of one block: the block id, the block kind, and the resolved value of its binding.
@@ -72,13 +72,13 @@ export type BlockResolution =
  * needs, and `actual` names the resolved type that arrived. `slot` names the track or the statistic of a
  * chart whose value has the wrong type.
  */
-export interface BridgeMismatch {
+export type BridgeMismatch = {
     blockId: string;
     blockKind: ValueBearingKind;
     slot?: ChartSlot;
     expected: ResolvedValue["type"];
     actual: ResolvedValue["type"];
-}
+};
 
 /**
  * Map the resolved values of the blocks onto a `RenderValues` map.
@@ -203,11 +203,9 @@ export function collectResolutions(
                     blockId: block.id,
                     kind: "chart",
                     resolved,
-                    ...(track !== undefined ? { track } : {}),
-                    ...(treeX !== undefined || treeY !== undefined
-                        ? { trees: { ...(treeX !== undefined ? { x: treeX } : {}), ...(treeY !== undefined ? { y: treeY } : {}) } }
-                        : {}),
-                    ...(statistics.length > 0 ? { statistics } : {}),
+                    track: track !== undefined ? track : undefined,
+                    trees: treeX !== undefined || treeY !== undefined ? { x: treeX !== undefined ? treeX : undefined, y: treeY !== undefined ? treeY : undefined } : undefined,
+                    statistics: statistics.length > 0 ? statistics : undefined,
                 });
                 return;
             }
@@ -258,9 +256,9 @@ function chartValue(resolution: Extract<BlockResolution, { kind: "chart" }>): Re
     }
     return ok({
         ...tableValue(binding),
-        ...(statistics.length > 0 ? { statistics } : {}),
-        ...(track !== undefined && track.type === "table" ? { track: secondTable(track) } : {}),
-        ...(trees.x !== undefined || trees.y !== undefined ? { trees } : {}),
+        statistics: statistics.length > 0 ? statistics : undefined,
+        track: track !== undefined && track.type === "table" ? secondTable(track) : undefined,
+        trees: trees.x !== undefined || trees.y !== undefined ? trees : undefined,
     });
 }
 
@@ -295,5 +293,5 @@ function mismatch(
     actual: ResolvedValue["type"],
     slot?: ChartSlot,
 ): BridgeMismatch {
-    return { blockId, blockKind, ...(slot !== undefined ? { slot } : {}), expected, actual };
+    return { blockId, blockKind, slot: slot !== undefined ? slot : undefined, expected, actual };
 }

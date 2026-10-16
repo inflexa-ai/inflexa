@@ -16,7 +16,7 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { GWAS_BASE, GWAS_HEADERS } from "./gwas-catalog-config.js";
 
-export interface GwasAssociation {
+export type GwasAssociation = {
     rsId: string;
     pValue: number;
     pValueMantissa: number;
@@ -30,7 +30,7 @@ export interface GwasAssociation {
     studyAccession: string;
     pubmedId: string;
     sampleSize: string;
-}
+};
 
 export type GwasSearchType = "gene" | "trait" | "variant" | "study";
 
@@ -104,34 +104,34 @@ export const GwasSnpSearchResponseSchema = z.object({
 
 export function mapAssociation(a: RawGwasAssociation): GwasAssociation {
     const loci = a.loci ?? [];
-    const riskAlleles: string[] = loci.flatMap((l) => l.strongestRiskAlleles?.map((ra) => String(ra.riskAlleleName ?? "")) ?? []);
-    const genes: string[] = loci.flatMap((l) => l.authorReportedGenes?.map((g) => String(g.geneName ?? "")) ?? []);
-    const traits = (a.efoTraits ?? []).map((t) => String(t.trait ?? ""));
+    const riskAlleles: string[] = loci.flatMap((l) => l.strongestRiskAlleles?.map((ra) => ra.riskAlleleName ?? "") ?? []);
+    const genes: string[] = loci.flatMap((l) => l.authorReportedGenes?.map((g) => g.geneName ?? "") ?? []);
+    const traits = (a.efoTraits ?? []).map((t) => t.trait ?? "");
     const study: RawGwasStudy = a.study ?? {};
     const pMantissa: number = a.pvalueMantissa ?? 0;
     const pExponent: number = a.pvalueExponent ?? 0;
 
     return {
-        rsId: String(a._snpRsId ?? riskAlleles[0]?.split("-")[0] ?? ""),
+        rsId: a._snpRsId ?? riskAlleles[0]?.split("-")[0],
         pValue: pMantissa * Math.pow(10, pExponent),
         pValueMantissa: pMantissa,
         pValueExponent: pExponent,
         riskAllele: riskAlleles.join(", "),
-        riskFrequency: String(a.riskFrequency ?? ""),
-        orBeta: (a.orPerCopyNum ?? a.betaNum ?? null) as number | null,
-        ci: String(a.range ?? ""),
+        riskFrequency: a.riskFrequency ?? "",
+        orBeta: a.orPerCopyNum ?? a.betaNum ?? null,
+        ci: a.range ?? "",
         trait: traits.join("; "),
-        mappedGenes: [...new Set(genes)] as string[],
-        studyAccession: String(study.accessionId ?? ""),
-        pubmedId: String(study.publicationInfo?.pubmedId ?? ""),
-        sampleSize: String(study.initialSampleSize ?? ""),
+        mappedGenes: [...new Set(genes)],
+        studyAccession: study.accessionId ?? "",
+        pubmedId: study.publicationInfo?.pubmedId ?? "",
+        sampleSize: study.initialSampleSize ?? "",
     };
 }
 
-export interface GwasSearchOptions {
+export type GwasSearchOptions = {
     pValueThreshold?: number;
     limit?: number;
-}
+};
 
 /** Max SNPs whose associations the 'gene' path walks; each is one request. */
 const GENE_PATH_MAX_SNPS = 10;
@@ -149,15 +149,15 @@ export async function searchGwasCatalog(
         const snpRes = await apiFetchValidated(url, GwasSnpSearchResponseSchema, { headers: GWAS_HEADERS });
         if (snpRes.isErr()) throw new Error(describeApiError(snpRes.error));
 
-        const snps = snpRes.value?._embedded?.singleNucleotidePolymorphisms ?? [];
+        const snps = snpRes.value._embedded?.singleNucleotidePolymorphisms ?? [];
         const allAssocs: RawGwasAssociation[] = [];
 
         for (const snp of snps.slice(0, Math.min(limit, GENE_PATH_MAX_SNPS))) {
-            const assocLink = snp?._links?.associations?.href;
+            const assocLink = snp._links?.associations?.href;
             if (!assocLink) continue;
             const aRes = await apiFetchValidated(assocLink, GwasEmbeddedSchema, { headers: GWAS_HEADERS });
             if (aRes.isOk()) {
-                for (const a of aRes.value?._embedded?.associations ?? []) {
+                for (const a of aRes.value._embedded?.associations ?? []) {
                     a._snpRsId = snp.rsId;
                     allAssocs.push(a);
                 }
@@ -191,10 +191,10 @@ export async function searchGwasCatalog(
         );
         if (traitRes.isErr()) throw new Error(describeApiError(traitRes.error));
 
-        const traitUri = (traitRes.value?._embedded?.efoTraits ?? [])[0]?._links?.self?.href;
+        const traitUri = (traitRes.value._embedded?.efoTraits ?? [])[0]?._links?.self?.href;
         if (!traitUri) return { totalFound: 0, associations: [] };
 
-        associationsUrl = `${GWAS_BASE}/efoTraits/${traitUri.split("/").pop()}/associations?size=${limit}`;
+        associationsUrl = `${GWAS_BASE}/efoTraits/${traitUri.split("/").pop() ?? ""}/associations?size=${limit}`;
     }
 
     const res = await apiFetchValidated(associationsUrl, GwasEmbeddedSchema, { headers: GWAS_HEADERS });
@@ -205,8 +205,8 @@ export async function searchGwasCatalog(
         throw new Error(describeApiError(res.error));
     }
 
-    const rawAssocs = res.value?._embedded?.associations ?? [];
-    const totalFound = res.value?.page?.totalElements ?? rawAssocs.length;
+    const rawAssocs = res.value._embedded?.associations ?? [];
+    const totalFound = res.value.page?.totalElements ?? rawAssocs.length;
 
     const filtered = rawAssocs.filter((a) => (a.pvalueMantissa ?? 1) * Math.pow(10, a.pvalueExponent ?? 0) <= pValueThreshold).slice(0, limit);
 

@@ -5,7 +5,7 @@ import type { Pool } from "pg";
 import { tryMutation, tryQuery } from "../lib/db-result.js";
 import type { KeptToolOutput, ToolOutputStore } from "../loop/tool-output.js";
 
-interface ToolOutputRow {
+type ToolOutputRow = {
     readonly analysis_id: string;
     readonly ref: string;
     readonly tool_name: string;
@@ -13,18 +13,19 @@ interface ToolOutputRow {
     readonly thread_id: string | null;
     readonly content: string;
     readonly total_length: number;
-}
+};
 
 function toKeptToolOutput(row: ToolOutputRow): KeptToolOutput {
-    return {
+    const output: { -readonly [K in keyof KeptToolOutput]: KeptToolOutput[K] } = {
         analysisId: row.analysis_id,
         ref: row.ref,
         toolName: row.tool_name,
         toolCallId: row.tool_call_id,
-        ...(row.thread_id === null ? {} : { threadId: row.thread_id }),
         content: row.content,
         totalLength: row.total_length,
     };
+    if (row.thread_id !== null) output.threadId = row.thread_id;
+    return output;
 }
 
 export function createToolOutputStore(pool: Pool): ToolOutputStore {
@@ -52,6 +53,9 @@ export function createToolOutputStore(pool: Pool): ToolOutputStore {
          WHERE analysis_id = $1 AND ref = $2`,
                     [analysisId, ref],
                 ),
-            ).map(({ rows }) => (rows[0] === undefined ? null : toKeptToolOutput(rows[0]))),
+            ).map(({ rows }) => {
+                const row = rows.at(0);
+                return row === undefined ? null : toKeptToolOutput(row);
+            }),
     };
 }

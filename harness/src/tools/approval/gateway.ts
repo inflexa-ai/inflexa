@@ -14,6 +14,7 @@ import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { EmitFn } from "../../loop/types.js";
+import type { AskPart } from "../../contracts/chat-parts.js";
 import { AskRejectedError, type AskApproval, type AskReply, type AskRequest } from "./contract.js";
 import {
     answerAsk,
@@ -30,36 +31,37 @@ import {
     type PendingAsk,
 } from "./queries.js";
 import { uuidv7 } from "./uuidv7.js";
+import { sleepWithSignal } from "../../lib/async-utils.js";
 
 export type { AnswerOutcome, PendingAsk } from "./queries.js";
 
 /** Construction deps: the harness application pool the ledger lives in. */
-export interface AskGatewayDeps {
+export type AskGatewayDeps = {
     readonly pool: Pool;
-}
+};
 
 /**
  * Per-turn context an embedder binds into the `Ask` seam. It scopes the ask to an
  * analysis/thread and to one user, carries the turn's abort `signal`, and supplies
  * the `emit` sink the `data-ask` part flows through.
  */
-export interface AskContext {
+export type AskContext = {
     readonly analysisId: string;
     /** The opaque identity of the person the ask goes to. The harness never reads it. */
     readonly userId: string;
     readonly threadId?: string;
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
-}
+};
 
 /** The gateway surface: the per-turn seam plus the outward embedder-driven API. */
-export interface AskGateway {
+export type AskGateway = {
     ask(request: AskRequest, ctx: AskContext): Promise<AskApproval>;
     answer(id: string, reply: AskReply): Promise<AnswerOutcome>;
     pending(): Promise<PendingAsk[]>;
     /** Expire pending asks older than `maxAgeMs` (default {@link DEFAULT_SWEEP_MAX_AGE_MS}). */
     sweepExpired(maxAgeMs?: number): Promise<number>;
-}
+};
 
 /** Fixed poll cadence — imperceptible against human decision speed, low chatter. */
 const POLL_INTERVAL_MS = 200;
@@ -153,17 +155,16 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
 
 /** Emit (or reconcile, under the same id) the ask's `data-ask` chat part. */
 function emitAskPart(emit: EmitFn, id: string, request: AskRequest, status: AskStatus, reply?: AskReply["kind"]): void | Promise<void> {
-    return emit({
-        type: "data-ask",
-        data: {
-            id,
-            title: request.title,
-            command: request.command,
-            ...(request.detail !== undefined ? { detail: request.detail } : {}),
-            status,
-            ...(reply !== undefined ? { reply } : {}),
-        },
-    });
+    // A terminal part without a reply must not carry the key, so the absence survives the JSON round trip.
+    const data: Omit<AskPart, "type"> = {
+        id,
+        title: request.title,
+        command: request.command,
+        detail: request.detail !== undefined ? request.detail : undefined,
+        status,
+    };
+    if (reply !== undefined) data.reply = reply;
+    return emit({ type: "data-ask", data });
 }
 
 /**
@@ -212,21 +213,7 @@ function throwAbort(signal: AbortSignal): never {
     throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 }
 
-/** Delay `ms`, resolving early if `signal` aborts, leaving no dangling timer. */
-function sleepUntil(ms: number, signal: AbortSignal): Promise<void> {
-    return new Promise((resolve) => {
-        if (signal.aborted) {
-            resolve();
-            return;
-        }
-        const onAbort = (): void => {
-            clearTimeout(timer);
-            resolve();
-        };
-        const timer = setTimeout(() => {
-            signal.removeEventListener("abort", onAbort);
-            resolve();
-        }, ms);
-        signal.addEventListener("abort", onAbort, { once: true });
-    });
+/** Delay `ms`, resolving early if `signal` aborts. */
+async function sleepUntil(ms: number, signal: AbortSignal): Promise<void> {
+    await sleepWithSignal(ms, signal).catch(() => undefined);
 }

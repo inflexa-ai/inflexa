@@ -19,6 +19,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { maybeRecord } from "../lib/shape.js";
 import type { UnresolvedReference } from "../contracts/report-reference.js";
 import { walkBlocks } from "./block-walk.js";
 import { DraftBlockSchema, type DraftBlock, type DraftDocument, type DraftSectionBlock } from "./draft.js";
@@ -57,16 +58,16 @@ export type DraftRefusal =
 export type DraftPlace = "start" | "end" | { before: string } | { after: string };
 
 /** The destination of an add or a move. `parentId` names a section, or the root when it is absent. */
-export interface DraftDestination {
+export type DraftDestination = {
     parentId?: string;
     place?: DraftPlace;
-}
+};
 
 /** The add operation value. The payload can be an atom, or a section that carries children. */
-export interface AddOperation {
+export type AddOperation = {
     block: unknown;
     destination?: DraftDestination;
-}
+};
 
 /**
  * The change operation value. A `title` retitles a section target. A `block` replaces an atom target.
@@ -77,15 +78,15 @@ export type ChangeOperation = {
 } & ({ title: string } | { block: unknown });
 
 /** The remove operation value. It names one block by its id. */
-export interface RemoveOperation {
+export type RemoveOperation = {
     targetId: string;
-}
+};
 
 /** The move operation value. It names one block, and a destination with the shape of the add destination. */
-export interface MoveOperation {
+export type MoveOperation = {
     targetId: string;
     destination?: DraftDestination;
-}
+};
 
 /**
  * Set the title of the document.
@@ -151,12 +152,12 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
         return err({ reason: "payload-kind-mismatch", detail: `the block ${operation.targetId} is an atom, and it takes a full block, not a title` });
     }
     const payload = operation.block;
-    if (payload === null || typeof payload !== "object") {
+    if (maybeRecord(payload) === undefined) {
         return err({ reason: "malformed-block", detail: "the payload is not an object" });
     }
     // The id stamp sets the target id on the payload before the parse. Thus an id mismatch is
-    // unrepresentable, and a replacement always keeps the id of its target.
-    const withId = { ...(payload as Record<string, unknown>), id: operation.targetId };
+    // unrepresentable, and a replacement always keeps the id of its target; the DraftBlockSchema parse below is the check.
+    const withId = Object.assign({}, payload, { id: operation.targetId });
     // The hash stamp then fills each absent reference hash from the snapshot, thus the grammar reads a
     // complete pin. The two stamps are independent, because one reads the block and one reads a reference.
     const hashed = stampReferenceHashes(withId, snapshot);
@@ -203,7 +204,7 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
     const movedPath = target.path;
 
     const place = operation.destination?.place;
-    if (place !== undefined && typeof place === "object") {
+    if (place !== undefined && place !== "start" && place !== "end") {
         const anchorId = "before" in place ? place.before : place.after;
         if (anchorId === operation.targetId) {
             return err({ reason: "unknown-target", detail: `the block ${operation.targetId} cannot anchor its own move` });
@@ -230,19 +231,19 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
 }
 
 /** One block, the path of child indices from the root to the block, and the section that holds it. */
-export interface Located {
+export type Located = {
     block: DraftBlock;
     path: number[];
     /** The section that holds the block, or `undefined` when the block sits at the root. */
     parent?: DraftSectionBlock;
-}
+};
 
 /** A resolved destination: the container path, the insert index, and whether the container is the root. */
-interface ResolvedDestination {
+type ResolvedDestination = {
     containerPath: number[];
     index: number;
     parentIsRoot: boolean;
-}
+};
 
 /**
  * Resolve a destination to a container path and an insert index.
@@ -254,7 +255,7 @@ function resolveDestination(document: DraftDocument, destination: DraftDestinati
     const place: DraftPlace = destination?.place ?? "end";
     const parentId = destination?.parentId;
 
-    if (typeof place === "object") {
+    if (place !== "start" && place !== "end") {
         const anchorId = "before" in place ? place.before : place.after;
         const anchor = locate(document, anchorId);
         if (anchor === undefined) {
@@ -361,7 +362,7 @@ function idAtPath(document: DraftDocument, path: number[]): string | undefined {
     let blocks: DraftBlock[] = document.sections;
     let block: DraftBlock | undefined;
     for (const index of path) {
-        block = blocks[index];
+        block = blocks.at(index);
         if (block !== undefined && block.kind === "section") {
             blocks = block.blocks;
         }
@@ -386,10 +387,30 @@ function getChildren(document: DraftDocument, containerPath: number[]): DraftBlo
 /** Rebuild the document with new children at a container path, and share each untouched branch. */
 function setChildren(document: DraftDocument, containerPath: number[], children: DraftBlock[]): DraftDocument {
     if (containerPath.length === 0) {
-        // The root holds sections only. Each operation enforces that rule before it builds a candidate.
+        // SAFETY: the root holds sections only, and each operation enforces that rule before it builds a candidate.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the operation layer validated sections-at-root before the candidate build; the walk's input type cannot carry that proof.
         return { ...document, sections: children as DraftSectionBlock[] };
     }
-    return { ...document, sections: setChildrenInBlocks(document.sections, containerPath, children) as DraftSectionBlock[] };
+    return { ...document, sections: setChildSections(document.sections, containerPath, children) };
+}
+
+/**
+ * Rebuild the top-level sections with new children at a container path. The input is the section
+ * list of the document, so the copy stays a section list: each replaced element is a section by
+ * construction, and the deeper walk keeps the block-level check.
+ */
+function setChildSections(sections: DraftSectionBlock[], containerPath: number[], children: DraftBlock[]): DraftSectionBlock[] {
+    const head = containerPath[0];
+    const rest = containerPath.slice(1);
+    const target = sections.at(head);
+    if (target === undefined) {
+        throw new TypeError(`a container path names no section: ${containerPath.join("/")}`);
+    }
+    const updated: DraftSectionBlock =
+        rest.length === 0 ? { ...target, blocks: children } : { ...target, blocks: setChildrenInBlocks(target.blocks, rest, children) };
+    const copy = sections.slice();
+    copy[head] = updated;
+    return copy;
 }
 
 function setChildrenInBlocks(blocks: DraftBlock[], containerPath: number[], children: DraftBlock[]): DraftBlock[] {

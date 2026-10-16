@@ -16,6 +16,8 @@ import type { ReferenceLedger } from "../references.js";
 import { blockMark } from "./block-mark.js";
 import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
+import type { FC } from "hono/jsx";
+import { stringOfNode } from "./node-text.js";
 
 /** The paragraph class of a text block and a claim block. The paragraph fills the content column. */
 const PARAGRAPH_CLASS = "report-prose";
@@ -31,14 +33,19 @@ const BRAND_HREF = "https://inflexa.ai/";
  * out, thus a leading or a trailing blank line adds no empty paragraph.
  */
 function splitParagraphs(prose: string): string[] {
-    const parts = prose.split(/\n[ \t]*\n/);
     const paragraphs: string[] = [];
-    for (const part of parts) {
-        const trimmed = part.trim();
-        if (trimmed.length > 0) {
-            paragraphs.push(trimmed);
+    let current: string[] = [];
+    for (const line of prose.split("\n")) {
+        if (line.trim().length > 0) {
+            current.push(line);
+            continue;
+        }
+        if (current.length > 0) {
+            paragraphs.push(current.join("\n").trim());
+            current = [];
         }
     }
+    if (current.length > 0) paragraphs.push(current.join("\n").trim());
     return paragraphs;
 }
 
@@ -46,7 +53,7 @@ function splitParagraphs(prose: string): string[] {
  * One typed list as list markup. The flag selects the element: an ordered list numbers its items, and an
  * unordered one bullets them. Each item is one inline line, thus no item holds a list of its own.
  */
-function TextListView({ list, mark }: { list: TextList; mark: Record<string, string> }) {
+const TextListView: FC<{ list: TextList; mark: Record<string, string> }> = ({ list, mark }) => {
     const items = list.items.map((item) => <li class="report-list-item">{item}</li>);
     return list.ordered ? (
         <ol class={LIST_CLASS} {...mark}>
@@ -57,7 +64,7 @@ function TextListView({ list, mark }: { list: TextList; mark: Record<string, str
             {items}
         </ul>
     );
-}
+};
 
 /**
  * Render a text block as escaped paragraphs, and then its list.
@@ -70,7 +77,7 @@ export function renderText(block: TextBlock): string {
     const paragraphs = splitParagraphs(block.content.prose);
     const list = block.content.list;
     const mark = blockMark(block.id);
-    return String(
+    return stringOfNode(
         <>
             {paragraphs.map((paragraph) => (
                 <p class={PARAGRAPH_CLASS} {...mark}>
@@ -114,7 +121,7 @@ export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger, view: Vi
                 ))}
             </>
         );
-    return String(
+    return stringOfNode(
         view.lineage ? (
             <div {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, block.bindings)}>
                 {body}
@@ -137,8 +144,8 @@ function headingClass(level: number): string {
  */
 export function renderSection(section: SectionBlock, depth: number, childrenHtml: string): string {
     const level = Math.min(depth + 2, 4);
-    const Heading = `h${level}` as "h2" | "h3" | "h4";
-    return String(
+    const Heading = level === 2 ? "h2" : level === 3 ? "h3" : "h4";
+    return stringOfNode(
         <section id={section.id} class="report-section" {...blockMark(section.id)}>
             <Heading class={headingClass(level)}>{section.title}</Heading>
             {raw(childrenHtml)}
@@ -152,7 +159,7 @@ export function renderSection(section: SectionBlock, depth: number, childrenHtml
  * The `report-sidebar` id is the hook of the layout shift on a large viewport.
  */
 export function renderNav(topSections: SectionBlock[]): string {
-    return String(
+    return stringOfNode(
         <aside id="report-sidebar" class="report-nav" aria-label="Report navigation">
             <div class="report-nav-brand">
                 <a class="report-nav-brand-name" href={BRAND_HREF}>

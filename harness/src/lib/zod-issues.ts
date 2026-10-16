@@ -44,6 +44,8 @@
  */
 
 import type { z } from "zod";
+import { parseJsonOrUndefined } from "./json.js";
+import { maybeRecord } from "./shape.js";
 
 /**
  * Strings longer than this are neither parsed nor repaired. A real argument
@@ -56,6 +58,7 @@ const MAX_REPAIRABLE_STRING_LENGTH = 1_000_000;
 const HINT_SNIPPET_LENGTH = 40;
 
 /** A trailing `</parameter>`, optionally followed by `</invoke>`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the zod issue-path grammar: no builtin extracts a field name from an issue path.
 const TRAILING_CALL_TAGS = /<\/parameter>\s*(?:<\/invoke>\s*)?$/;
 
 /**
@@ -117,7 +120,7 @@ export function hintForZodIssue(issue: z.core.$ZodIssue, input: unknown): string
  * untouched branch and clones only along the paths it patches. Repaired content
  * is not re-examined — one pass, no recursion — and no input causes a throw.
  */
-export function repairToolInput(input: unknown, error: z.ZodError): unknown | undefined {
+export function repairToolInput(input: unknown, error: z.ZodError): unknown {
     try {
         let repaired: unknown = input;
         let didRepair = false;
@@ -194,14 +197,11 @@ function repairableExpectation(issue: z.core.$ZodIssue): "object" | "array" | un
  * matches either expectation, but the cell keeps the caller's checks honest.
  */
 function parseAs(raw: string, expected: "object" | "array"): { readonly value: unknown } | undefined {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return undefined;
-    }
+    const parsed = parseJsonOrUndefined(raw);
+    if (parsed === undefined) return undefined;
     if (expected === "array") return Array.isArray(parsed) ? { value: parsed } : undefined;
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? { value: parsed } : undefined;
+    const fields = maybeRecord(parsed);
+    return fields !== undefined && !Array.isArray(fields) ? { value: parsed } : undefined;
 }
 
 /**
@@ -224,11 +224,13 @@ function stripWrappers(raw: string): { readonly text: string; readonly removed: 
     }
 
     if (text.startsWith("```")) {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the zod issue-path grammar: no builtin extracts a field name from an issue path.
         const open = /^```(?:json)?\s*\n/i.exec(text);
         if (open !== null) {
             removed.push(open[0].trim());
             text = text.slice(open[0].length);
         }
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the zod issue-path grammar: no builtin extracts a field name from an issue path.
         const close = /\n```\s*$/.exec(text);
         if (close !== null) {
             removed.push("```");
@@ -254,10 +256,16 @@ function quoteSnippet(removed: string): string {
 function resolvePath(input: unknown, path: readonly PropertyKey[]): unknown {
     let current: unknown = input;
     for (const key of path) {
-        if (current === null || (typeof current !== "object" && typeof current !== "function")) {
-            return undefined;
+        const fields = maybeRecord(current);
+        if (fields !== undefined) {
+            current = Reflect.get(fields, key);
+            continue;
         }
-        current = (current as Record<PropertyKey, unknown>)[key];
+        if (typeof current === "function") {
+            current = Reflect.get(current, key);
+            continue;
+        }
+        return undefined;
     }
     return current;
 }
@@ -270,14 +278,13 @@ function setAtPath(root: unknown, path: readonly PropertyKey[], value: unknown):
     if (path.length === 0) return value;
 
     const [key, ...rest] = path;
-    if (root === null || typeof root !== "object") return root;
+    const fields = maybeRecord(root);
+    if (fields === undefined) return root;
 
-    const container = root as Record<PropertyKey, unknown>;
-    const child = setAtPath(container[key!], rest, value);
+    const child = setAtPath(Reflect.get(fields, key), rest, value);
     if (Array.isArray(root)) {
-        const copy = [...root];
-        copy[key as number] = child;
-        return copy;
+        const copy: unknown[] = Array.from(root, (member): unknown => member);
+        return Object.assign(copy, { [key]: child });
     }
-    return { ...container, [key!]: child };
+    return { ...fields, [key]: child };
 }

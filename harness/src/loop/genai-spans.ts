@@ -20,10 +20,12 @@ import type { ToolCallPart } from "ai";
 
 import type { AgentSession } from "../auth/types.js";
 import type { ToolOutcome } from "./tool-outcome.js";
+import { isAbortError } from "../lib/thrown.js";
+import { toThrowable } from "../lib/result.js";
 
-interface AgentRun {
+type AgentRun = {
     readonly finish: { readonly reason: string; readonly cappedOut: boolean };
-}
+};
 
 /**
  * Run one agent loop under an `invoke_agent` span. A turn root starts a new
@@ -118,10 +120,10 @@ function withSpan<T>(name: string, options: SpanOptions, run: (span: Span) => Pr
             return await run(span);
         } catch (err) {
             // A cancellation is the caller's decision, not a failure.
-            const cancelled = err instanceof Error && err.name === "AbortError";
+            const cancelled = isAbortError(err);
             if (!cancelled) {
                 span.setStatus({ code: SpanStatusCode.ERROR });
-                if (err instanceof Error) span.recordException(err);
+                span.recordException(toThrowable(err));
             }
             throw err;
         } finally {
@@ -132,7 +134,7 @@ function withSpan<T>(name: string, options: SpanOptions, run: (span: Span) => Pr
 
 function runFrameAttributes({ runFrame }: AgentSession): Attributes {
     if (runFrame === undefined) return {};
-    return { "inflexa.run_id": runFrame.runId, ...(runFrame.stepId === undefined ? {} : { "inflexa.step_id": runFrame.stepId }) };
+    return { "inflexa.run_id": runFrame.runId, "inflexa.step_id": !(runFrame.stepId === undefined) ? runFrame.stepId : undefined };
 }
 
 /** The thread is the conversation. The analysis is not: it holds many threads. */

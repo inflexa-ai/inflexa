@@ -1,4 +1,5 @@
-import { jsonSchema, tool as aiTool, type ToolCallPart } from "ai";
+import { maybeRecord } from "../lib/shape.js";
+import { jsonSchema, tool as aiTool, type AssistantContent, type Tool, type ToolCallPart } from "ai";
 import type { Pool } from "pg";
 import { z } from "zod";
 
@@ -18,6 +19,8 @@ import { effectiveDeadlineMs, type ChatProvider } from "../providers/types.js";
 import { formatQuery, parseQuery, type PackageQuery } from "../sandbox/package-identity.js";
 import { loadDataProfileStatus } from "../state/index.js";
 import type { CheckedPackage } from "./sandbox/list-available-packages.js";
+import { errorMessage } from "../lib/thrown.js";
+import { abortAfter } from "../lib/async-utils.js";
 
 export const AD_HOC_ROUTER_AGENT_ID = "adhoc-router";
 export const AD_HOC_ROUTER_TIMEOUT_MS = 10_000;
@@ -51,12 +54,12 @@ const routeSchema = z.object({
  * - `absent` — the bound resolution answered that the pool holds no such
  *   package, and it offered no other spelling.
  */
-export interface DroppedPackage {
+export type DroppedPackage = {
     readonly entry: string;
     readonly reason: "unparsable" | "absent";
-}
+};
 
-export interface AdHocRoute {
+export type AdHocRoute = {
     readonly agentId: string;
     readonly resources: ResourceSpec;
     readonly rationale: string;
@@ -65,9 +68,9 @@ export interface AdHocRoute {
     /** Every entry that the validation removed, with the reason for the caveat. */
     readonly droppedPackages: readonly DroppedPackage[];
     readonly fallbackClass?: "timeout" | "provider_error" | "malformed" | "no_match" | "invalid_agent" | "invalid_resources";
-}
+};
 
-export interface AdHocRouterDeps {
+export type AdHocRouterDeps = {
     readonly provider: ChatProvider;
     readonly model: string;
     readonly pool: Pool;
@@ -89,7 +92,7 @@ export interface AdHocRouterDeps {
     readonly resolvePackages?: (names: readonly string[]) => Promise<readonly CheckedPackage[] | null>;
     /** Falls back to the no-op recorder when omitted. */
     readonly usageRecorder?: UsageRecorder;
-}
+};
 
 export function defaultAdHocResources(policy?: ResourcePolicy): ResourceSpec {
     return policy ? { cpu: Math.min(4, policy.perStep.maxCpu), memoryGb: Math.min(8, policy.perStep.maxMemoryGb) } : { cpu: 4, memoryGb: 8 };
@@ -125,7 +128,7 @@ async function profileOrientation(pool: Pool, analysisId: string, logger: Logger
         if (!status?.result) return "No persisted data-profile facts are available.";
         return buildDataProfileOrientation(status.result, analysisId, DATA_PROFILE_ORIENTATION_MAX_CHARS);
     } catch (error) {
-        logger.warn("could not load data profile for ad hoc routing", { error: error instanceof Error ? error.message : String(error) });
+        logger.warn("could not load data profile for ad hoc routing", { error: errorMessage(error) });
         return "The persisted data profile could not be loaded; route from the request alone.";
     }
 }
@@ -158,7 +161,7 @@ async function routePackages(
     const seen = new Set<string>();
     for (const element of entries) {
         if (typeof element !== "string") {
-            droppedPackages.push({ entry: String(element), reason: "unparsable" });
+            droppedPackages.push({ entry: errorMessage(element), reason: "unparsable" });
             continue;
         }
         const entry = element.trim();
@@ -181,7 +184,7 @@ async function routePackages(
     } catch (error) {
         // A resolution that throws is the same condition as an inventory that
         // reports itself unavailable: it says nothing about the packages.
-        logger.warn("ad hoc package resolution failed", { error: error instanceof Error ? error.message : String(error) });
+        logger.warn("ad hoc package resolution failed", { error: errorMessage(error) });
         rows = null;
     }
     if (rows === null) return { packages: asWritten(), droppedPackages };
@@ -212,10 +215,12 @@ async function routePackages(
     return { packages, droppedPackages };
 }
 
-function routeTool() {
+function routeTool(): { submit_route: Tool } {
     return {
         submit_route: aiTool({
             description: "Submit the single specialist, the resource recommendation, and the packages of the step. This is the only valid response.",
+            // SAFETY: z.toJSONSchema emits the JSON Schema document that the AI SDK jsonSchema helper wraps — the two describe the same schema by construction.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion, @inflexa-ai/no-double-cast -- zod's JSON-Schema output type and the target package's input type describe the same document; neither third-party declaration is ours to align.
             inputSchema: jsonSchema(z.toJSONSchema(routeSchema) as unknown as Parameters<typeof jsonSchema>[0]),
         }),
     };
@@ -240,12 +245,8 @@ export async function routeAdHocRequest(
         (agent) => `- ${agent.id}: capabilities [${agent.capabilities.join(", ")}]; suitable for [${agent.suitableFor.join(", ")}]`,
     ).join("\n");
     const orientation = await profileOrientation(deps.pool, input.analysisId, logger);
-    const controller = new AbortController();
-    const timer = setTimeout(
-        () => controller.abort(new Error("ad hoc routing timed out")),
-        effectiveDeadlineMs(deps.provider, AD_HOC_ROUTER_TIMEOUT_MS, deps.timeoutMs),
-    );
-    const signal = AbortSignal.any([input.signal, controller.signal]);
+    const deadline = abortAfter(effectiveDeadlineMs(deps.provider, AD_HOC_ROUTER_TIMEOUT_MS, deps.timeoutMs), new Error("ad hoc routing timed out"));
+    const signal = AbortSignal.any([input.signal, deadline]);
     let raw: unknown;
     let failure: AdHocRoute["fallbackClass"];
     try {
@@ -283,25 +284,25 @@ export async function routeAdHocRequest(
             agentId: AD_HOC_ROUTER_AGENT_ID,
             callPath: routerSession.provenance.callPath,
             stepName: AD_HOC_ROUTE_CALL_NAME,
-            ...(input.invocationId === undefined ? {} : { invocationId: input.invocationId }),
+            invocationId: !(input.invocationId === undefined) ? input.invocationId : undefined,
             usageRecorder: deps.usageRecorder ?? createNoopUsageRecorder(),
             logger,
             rollups: input.turnUsage === undefined ? [] : [input.turnUsage],
         });
         const call = Array.isArray(response.message.content)
-            ? response.message.content.find((part): part is ToolCallPart => part.type === "tool-call" && part.toolName === "submit_route")
+            ? response.message.content.find(
+                  (part: Exclude<AssistantContent, string>[number]): part is ToolCallPart => part.type === "tool-call" && part.toolName === "submit_route",
+              )
             : undefined;
         raw = call?.input;
         if (!call) failure = "malformed";
     } catch (error) {
         if (input.signal.aborted) throw error;
-        failure = controller.signal.aborted && !input.signal.aborted ? "timeout" : "provider_error";
-        logger.warn("ad hoc route fell back", { failure, error: error instanceof Error ? error.message : String(error) });
-    } finally {
-        clearTimeout(timer);
+        failure = deadline.aborted ? "timeout" : "provider_error";
+        logger.warn("ad hoc route fell back", { failure, error: errorMessage(error) });
     }
 
-    const candidate = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const candidate = maybeRecord(raw) ?? {};
     const requestedAgent = typeof candidate.agentId === "string" ? candidate.agentId : undefined;
     const validAgent = requestedAgent !== undefined && PLANNABLE_AGENT_CATALOG.some((agent) => agent.id === requestedAgent);
     const agentId = validAgent ? requestedAgent : AD_HOC_FALLBACK_AGENT_ID;
@@ -322,5 +323,5 @@ export async function routeAdHocRequest(
     // as a whole and a step agent reads it as "the routing itself fell back".
     const { packages, droppedPackages } = await routePackages(candidate.packages, deps.resolvePackages, logger);
     logger.info("ad hoc route selected", { agentId, resources, rationale, failure, packages, droppedPackages });
-    return { agentId, resources, rationale, packages, droppedPackages, ...(failure ? { fallbackClass: failure } : {}) };
+    return { agentId, resources, rationale, packages, droppedPackages, fallbackClass: failure ? failure : undefined };
 }

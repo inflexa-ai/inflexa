@@ -15,16 +15,16 @@ import { apiFetchValidated, describeApiError } from "./api-utils.js";
 const STRING_BASE = "https://string-db.org/api/json";
 const CALLER_IDENTITY = "inflexa_cortex";
 
-export interface StringInteraction {
+export type StringInteraction = {
     proteinA: string;
     proteinB: string;
     score: number;
     experimentalScore?: number;
     databaseScore?: number;
     textminingScore?: number;
-}
+};
 
-export interface StringEnrichment {
+export type StringEnrichment = {
     category: string;
     term: string;
     description: string;
@@ -32,7 +32,7 @@ export interface StringEnrichment {
     fdr: number;
     geneCount: number;
     genes: string[];
-}
+};
 
 function buildParams(identifiers: string[], species: number, extra: Record<string, string | number> = {}): URLSearchParams {
     const params = new URLSearchParams({
@@ -46,11 +46,11 @@ function buildParams(identifiers: string[], species: number, extra: Record<strin
     return params;
 }
 
-export interface InteractionOptions {
+export type InteractionOptions = {
     species?: number;
     minScore?: number;
     limit?: number;
-}
+};
 
 // One STRING interaction row (interaction/network endpoints). The `.object(...)` half is
 // the raw wire shape (every field optional — the API omits absent values); the

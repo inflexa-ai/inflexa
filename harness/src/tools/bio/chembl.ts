@@ -20,6 +20,7 @@ import { z } from "zod";
 
 import type { ChemblActivity, ChemblCompound, ChemblDrug, ChemblMechanism, ChemblTarget } from "../lib/chembl-client.js";
 import { defineTool, type ToolError } from "../define-tool.js";
+import { guaranteed } from "../../lib/invariants.js";
 import { getBioactivity, getDrugInfo, getMechanism, searchCompounds, searchTargets } from "../lib/chembl-client.js";
 
 /**
@@ -159,15 +160,15 @@ export const chemblTool = defineTool({
     execute: async ({ action, query, searchType, chemblId, idType, activityType, limit }): Promise<Result<ChemblOutput, ToolError>> => {
         switch (action) {
             case "compounds":
-                return ok({ compounds: await searchCompounds(query!, searchType!, limit ?? LIMITS.wideDefault) });
+                return ok({ compounds: await searchCompounds(guaranteed(query, "query"), guaranteed(searchType, "searchType"), limit ?? LIMITS.wideDefault) });
             case "drug":
-                return ok({ drugs: await getDrugInfo(query!, limit ?? LIMITS.narrowDefault) });
+                return ok({ drugs: await getDrugInfo(guaranteed(query, "query"), limit ?? LIMITS.narrowDefault) });
             case "mechanism":
-                return ok({ mechanisms: await getMechanism(chemblId!) });
+                return ok({ mechanisms: await getMechanism(guaranteed(chemblId, "chemblId")) });
             case "bioactivity":
-                return ok({ activities: await getBioactivity(chemblId!, idType!, { activityType, limit: limit ?? LIMITS.wideDefault }) });
+                return ok({ activities: await getBioactivity(guaranteed(chemblId, "chemblId"), guaranteed(idType, "idType"), { activityType, limit: limit ?? LIMITS.wideDefault }) });
             case "targets":
-                return ok({ targets: await searchTargets(query!, limit ?? LIMITS.narrowDefault) });
+                return ok({ targets: await searchTargets(guaranteed(query, "query"), limit ?? LIMITS.narrowDefault) });
         }
     },
 });

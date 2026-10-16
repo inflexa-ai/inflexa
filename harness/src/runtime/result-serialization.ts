@@ -17,8 +17,15 @@
 
 import type { SerializationRecipe } from "@dbos-inc/dbos-sdk";
 import { Err, Ok, err, ok } from "neverthrow";
+import { jsonParse } from "../lib/json.js";
+import { errorOf } from "../lib/thrown.js";
+import { z, type ZodType } from "zod";
 
 export type Json = string | number | boolean | null | undefined | Json[] | { [key: string]: Json };
+
+const JsonValueSchema: ZodType<Json> = z.lazy((): ZodType<Json> =>
+    z.union([z.string(), z.number(), z.boolean(), z.null(), z.undefined(), z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema)]),
+);
 
 export type EncodedOk = { value?: Json };
 
@@ -30,17 +37,26 @@ export type EncodedErr = { error?: Json };
  * `JSON.stringify` gives `{}` for one. A `bigint` becomes its decimal text,
  * because `JSON.stringify` throws on one.
  */
-function toJson(value: unknown): Json {
-    const text = JSON.stringify(value, (_key, v: unknown) => {
-        if (v instanceof Error) return { name: v.name, message: v.message };
+function stringifyJson(value: unknown): string | undefined {
+    return JSON.stringify(value, (_key, v: unknown) => {
+        const error = errorOf(v);
+        if (error !== undefined) return { name: error.name, message: error.message };
         if (typeof v === "bigint") return v.toString();
         return v;
     });
-    return text === undefined ? undefined : (JSON.parse(text) as Json);
+}
+
+function toJson(value: unknown): Json {
+    // The helper boundary keeps the `string | undefined` return of
+    // `JSON.stringify` visible: an `undefined` input serializes to
+    // `undefined`, and the caller must keep that branch.
+    const text = stringifyJson(value);
+    return text === undefined ? undefined : jsonParse(text, JsonValueSchema);
 }
 
 export const okRecipe: SerializationRecipe<Ok<unknown, never>, EncodedOk> = {
     name: "neverthrow.Ok",
+    // oxlint-disable-next-line @inflexa-ai/no-unknown-type-guards -- the DBOS serialization contract pins this predicate's form; the implementation cannot retype it.
     isApplicable: (v): v is Ok<unknown, never> => v instanceof Ok,
     serialize: (v) => ({ value: toJson(v.value) }),
     deserialize: (s) => ok(s.value),
@@ -48,6 +64,7 @@ export const okRecipe: SerializationRecipe<Ok<unknown, never>, EncodedOk> = {
 
 export const errRecipe: SerializationRecipe<Err<never, unknown>, EncodedErr> = {
     name: "neverthrow.Err",
+    // oxlint-disable-next-line @inflexa-ai/no-unknown-type-guards -- the DBOS serialization contract pins this predicate's form; the implementation cannot retype it.
     isApplicable: (v): v is Err<never, unknown> => v instanceof Err,
     serialize: (v) => ({ error: toJson(v.error) }),
     deserialize: (s) => err(s.error),

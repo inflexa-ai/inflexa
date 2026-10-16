@@ -40,7 +40,7 @@ export type {
     DataProfileSubjectSource,
 } from "../contracts/data-profile.js";
 
-export interface DataProfileStatus {
+export type DataProfileStatus = {
     status: DataProfileLifecycleStatus;
     error: string | null;
     startedAt: string | null;
@@ -54,7 +54,7 @@ export interface DataProfileStatus {
      */
     workflowId: string | null;
     seedInputFileIds: string[] | null;
-}
+};
 
 /**
  * The conjunct every claim into `running` carries: the row names a non-empty set
@@ -210,13 +210,13 @@ export function recordDataProfileWorkflowId(pool: Querier, analysisId: string, w
 export type DataProfileTerminalWrite =
     { readonly stamped: false } | { readonly stamped: true; readonly startedAt: string | null; readonly completedAt: string };
 
-interface TerminalWriteRow {
+type TerminalWriteRow = {
     data_profile_started_at: string | null;
     data_profile_completed_at: string;
-}
+};
 
 function terminalWriteOf(rows: ReadonlyArray<TerminalWriteRow>): DataProfileTerminalWrite {
-    const row = rows[0];
+    const row = rows.at(0);
     return row === undefined
         ? { stamped: false }
         : { stamped: true, startedAt: row.data_profile_started_at ?? null, completedAt: row.data_profile_completed_at };
@@ -459,7 +459,7 @@ export function loadDataProfileStatus(pool: Querier, analysisId: string): Result
             FROM cortex_analysis_state WHERE analysis_id = $1`,
             values: [analysisId],
         });
-        const row = result.rows[0];
+        const row = result.rows.at(0);
         if (!row || row.data_profile_status === null) return null;
         return {
             status: row.data_profile_status,

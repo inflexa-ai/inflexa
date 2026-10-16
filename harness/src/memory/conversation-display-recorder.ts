@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { ModelMessage, UIMessagePart } from "ai";
 
-import type { ChatFrame, ChatPartFrame, EventSource } from "../contracts/chat-events.js";
+import type { ChatFrame, EventSource } from "../contracts/chat-events.js";
 import { applyChatFrame, checkChatPart, isRootFrame, toChatFrame } from "../contracts/chat-frame.js";
 import type { ChatMessage, MessagePart } from "../contracts/message.js";
-import { PART_REGISTRY, type ChatPartType } from "../contracts/part-registry.js";
+import { PART_REGISTRY } from "../contracts/part-registry.js";
 import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js";
 import type { EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, type CompactionMarker } from "./ai-sdk-message-storage.js";
 import { conversationDisplayPart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
+import { jsonClone } from "../lib/json.js";
 
-export interface ConversationDisplayRecorder {
+export type ConversationDisplayRecorder = {
     readonly emit: EmitFn;
     /** The user message of the turn. */
     takeOpening(): ConversationUIMessage[];
@@ -18,9 +19,9 @@ export interface ConversationDisplayRecorder {
     takeRound(messages: readonly ModelMessage[]): ConversationUIMessage[];
     /** The whole turn in one projection. `runChatTurn` stores each round with `takeOpening` and `takeRound` instead. */
     finish(options?: { readonly fallbackText?: string; readonly interrupted?: boolean }): ConversationUIMessage[];
-}
+};
 
-export interface ConversationDisplayRecorderOptions {
+export type ConversationDisplayRecorderOptions = {
     readonly userText: string;
     /** The root agent of the turn. Its call path is `[agentId]`, and an event with a longer path is from a sub-agent. */
     readonly agentId: string;
@@ -29,22 +30,26 @@ export interface ConversationDisplayRecorderOptions {
     readonly assistantMessageId?: string;
     /** The clock for the times of the sub-agent activity, in milliseconds. The default is the wall clock. */
     readonly now?: () => number;
-}
+};
 
 type DisplayPart = UIMessagePart<ConversationUIData, Record<string, never>>;
 
 function jsonCopy<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value)) as T;
+    return jsonClone(value);
 }
 
-function durableConversationType(type: string): type is ChatPartType {
-    if (!Object.hasOwn(PART_REGISTRY, type)) return false;
-    const descriptor = PART_REGISTRY[type as ChatPartType];
-    return descriptor.emitter === "conversation" && descriptor.consumer === "conversation" && !descriptor.transient;
+const DURABLE_CONVERSATION_TYPES: ReadonlySet<string> = new Set(
+    Object.entries(PART_REGISTRY)
+        .filter(([, descriptor]) => descriptor.emitter === "conversation" && descriptor.consumer === "conversation" && !descriptor.transient)
+        .map(([type]) => type),
+);
+
+function durableConversationType(type: string): boolean {
+    return DURABLE_CONVERSATION_TYPES.has(type);
 }
 
-/** The checked part of a data frame, copied at receipt, because the emitter keeps its own reference to the payload. */
-function recordedPart(frame: ChatPartFrame): ChatPartFrame {
+/** The checked frame, copied at receipt, because the emitter keeps its own reference to the payload. */
+function recordedPart(frame: ChatFrame): ChatFrame {
     const checked = checkChatPart(frame);
     if (!checked.ok) throw new Error(`Invalid emitted conversation part ${frame.type}: ${checked.error}`);
     return jsonCopy(checked.frame);
@@ -85,7 +90,7 @@ function compactionDivider(marker: CompactionMarker): ConversationUIMessage {
         status: marker.kind === "summary" ? "done" : "failed",
         tokensBefore: marker.tokensBefore,
         durationMs: marker.durationMs,
-        ...(marker.trigger === undefined ? {} : { trigger: marker.trigger }),
+        trigger: !(marker.trigger === undefined) ? marker.trigger : undefined,
     });
     return { id: marker.id, role: "system", parts: [part] };
 }
@@ -131,7 +136,9 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         if (!isRootFrame(frame)) return;
         if (frame.type.startsWith("data-")) {
             // Each chat event type is named without the `data-` prefix, thus a `data-` frame is a part frame.
-            if (durableConversationType(frame.type)) apply(recordedPart(frame as ChatPartFrame));
+            if (durableConversationType(frame.type)) {
+                apply(recordedPart(frame));
+            }
             return;
         }
         apply(frame);
@@ -172,7 +179,7 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
             messages.push({
                 id: assistantMessageId,
                 role: "assistant",
-                ...(finishOptions?.interrupted ? { metadata: { interrupted: true } } : {}),
+                metadata: finishOptions?.interrupted ? { interrupted: true } : undefined,
                 parts: jsonCopy(parts),
             });
         }

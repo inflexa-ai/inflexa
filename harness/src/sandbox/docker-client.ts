@@ -45,6 +45,7 @@ import type { Logger } from "../lib/logger.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { readFarmLock, resolveFarmSource } from "./farm.js";
+import { maybeRecord, recordMember, typedMember } from "../lib/shape.js";
 import { harnessLabels, MANAGED_BY_LABEL, MANAGED_BY_VALUE, mergeLabels, OWNER_WORKFLOW_KEY, SANDBOX_ID_LABEL } from "./labels.js";
 import { buildMountPlan, mountCoordsOf, sandboxWriteTail } from "./mount-plan.js";
 import { CPU_ONLINE_PATH, CPUINFO_PATH, cpuFiles, readHostCpuinfoOnce } from "./cpu-files.js";
@@ -55,6 +56,8 @@ function statusOf(e: SandboxError): number | undefined {
     return "status" in e ? e.status : undefined;
 }
 import type { FarmSource, ManagedSandbox, SandboxIdentity, SandboxLabels, SandboxLiveness, SandboxRef, SandboxSpec, ToolchainSource } from "./types.js";
+import { errorMessage } from "../lib/thrown.js";
+import { sleep } from "../lib/async-utils.js";
 
 const SANDBOX_SERVER_PORT = 8765;
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -77,7 +80,7 @@ const OWNER_WORKFLOW_LABEL = OWNER_WORKFLOW_KEY;
 /** The directory next to the workspace root that holds the cpu files of each sandbox. */
 const CPU_FILES_DIR = ".cpu";
 
-export interface DockerClientConfig {
+export type DockerClientConfig = {
     image: string;
     /** Workspace-root resolution seam; each analysis's resolved root is the bind source for its tree mounts. */
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
@@ -142,7 +145,7 @@ export interface DockerClientConfig {
     logger?: Logger;
     /** Hook called after the registry row is written. */
     registerSandbox: (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => Promise<void>;
-}
+};
 
 /**
  * Whether `refStorePath` is, right now, a real directory fit to be a bind authority.
@@ -216,9 +219,9 @@ async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: numbe
         } catch (err) {
             lastErr = err;
         }
-        await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
+        await sleep(HEALTH_POLL_MS);
     }
-    throw new Error(`sandbox /health did not return 200 within ${timeoutMs}ms: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+    throw new Error(`sandbox /health did not return 200 within ${timeoutMs}ms: ${errorMessage(lastErr)}`);
 }
 
 /**
@@ -263,7 +266,7 @@ async function createOrAdopt(
     if (inspected.isErr()) return err(created.error);
     const info = inspected.value;
 
-    const owner = info.Config?.Labels?.[OWNER_WORKFLOW_LABEL];
+    const owner = typedMember(info.Config.Labels, OWNER_WORKFLOW_LABEL);
     if (owner !== ownerWorkflowId) {
         return err({ type: "name_conflict", op: "docker.createSandbox", sandboxId: name, owner: owner ?? null });
     }
@@ -423,10 +426,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         ...(write && plan.writableStepPath
                             ? [`${tailWritePrefix({ workspaceRoot: hostTreePath, tail: write.tail })}:${plan.writableStepPath}:rw`]
                             : []),
-                        ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
+                        ...(libsMounted && config.libStorePath && plan.libsPath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
                         ...(libsMounted && farm && plan.farmPath ? [`${farm.farmPath}:${plan.farmPath}:ro`] : []),
                         ...(libsMounted && cacheBindable && farm?.cachePath && plan.cachePath ? [`${farm.cachePath}:${plan.cachePath}:rw`] : []),
-                        ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
+                        ...(refsMounted && config.refStorePath && plan.refsPath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
                         ...cpuBinds,
                     ];
 
@@ -452,12 +455,11 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         SANDBOX_EGRESS_FIREWALL: "1",
                         ...threadLimitEnv(limits),
                         ...plan.env,
-                        ...(spec.extraEnv ?? {}),
+                        ...spec.extraEnv,
                     }).map(([k, v]) => `${k}=${v}`);
 
                     const createOpts: Docker.ContainerCreateOptions = {
                         name: sandboxId,
-                        ...(config.platform !== undefined && { platform: config.platform }),
                         Image: image,
                         Env: env,
                         User: SANDBOX_ROOT_USER,
@@ -490,6 +492,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             AutoRemove: false,
                         },
                     };
+                    if (config.platform !== undefined) createOpts.platform = config.platform;
 
                     const sandbox = await createOrAdopt(docker, createOpts, sandboxId, spec.childWorkflowId, createFailed, logger);
                     if (sandbox.isErr()) return err(sandbox.error);
@@ -500,7 +503,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
 
                     const inspected = await trySandbox(() => sandbox.value.container.inspect(), createFailed);
                     if (inspected.isErr()) return err(inspected.error);
-                    const hostPort = inspected.value.NetworkSettings.Ports?.[`${SANDBOX_SERVER_PORT}/tcp`]?.[0]?.HostPort;
+                    const networkSettings = recordMember(maybeRecord(inspected.value), "NetworkSettings");
+                    const portMap = recordMember(networkSettings, "Ports");
+                    const binding = maybeRecord(recordMember(portMap, `${SANDBOX_SERVER_PORT}/tcp`)?.[0]);
+                    const hostPort = binding?.HostPort;
                     if (!hostPort) {
                         // A container we cannot reach is useless; stop and remove it so a retry
                         // starts clean rather than colliding with an unroutable name.
@@ -551,7 +557,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
             ).map((containers) =>
                 containers
                     .map((c) => {
-                        const labels = c.Labels ?? {};
+                        const labels = c.Labels;
                         return {
                             sandboxId: labels[SANDBOX_ID_LABEL] ?? "",
                             // Docker label values are unconstrained, so the id is stored verbatim.
@@ -591,10 +597,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
         return trySandbox(
             async () => {
                 const info = await docker.getContainer(sandboxId).inspect();
-                const oomKilled = info.State.OOMKilled === true;
+                const oomKilled = info.State.OOMKilled;
                 // A running container is a reachable sandbox: the host dials its
                 // published loopback port directly.
-                return { alive: info.State.Running === true, oomKilled };
+                return { alive: info.State.Running, oomKilled };
             },
             (status, cause) => ({
                 type: "liveness_failed",

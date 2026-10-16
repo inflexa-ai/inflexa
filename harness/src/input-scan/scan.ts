@@ -33,7 +33,7 @@ import type { FormatCount, InputScan, InputScanManifest, ScannedFile } from "./t
  */
 export const MAX_SCANNED_FILES = 100_000;
 
-export interface ScanInputTreeArgs {
+export type ScanInputTreeArgs = {
     readonly session: AgentSession;
     readonly fs: WorkspaceFilesystem;
     /** Directory to scan, relative to the analysis root (e.g. `data/inputs`). */
@@ -41,7 +41,7 @@ export interface ScanInputTreeArgs {
     /** Walk ceiling; defaults to {@link MAX_SCANNED_FILES}. */
     readonly limit?: number;
     readonly signal?: AbortSignal;
-}
+};
 
 /** Walk the tree breadth-first, reading a bounded prefix of each file for format detection. */
 async function walk(args: ScanInputTreeArgs): Promise<{ files: ScannedFile[]; truncated: boolean }> {
@@ -53,7 +53,8 @@ async function walk(args: ScanInputTreeArgs): Promise<{ files: ScannedFile[]; tr
 
     while (queue.length > 0) {
         signal?.throwIfAborted();
-        const dir = queue.shift()!;
+        const dir = queue.shift();
+        if (dir === undefined) break;
         const listing = unwrapOrThrow(await fs.list({ session, path: dir }));
         // A directory that vanished mid-walk, or one the seam refuses, is not a scan
         // failure — the tree is being described, not validated.
@@ -78,12 +79,17 @@ async function walk(args: ScanInputTreeArgs): Promise<{ files: ScannedFile[]; tr
                 size: entry.size ?? 0,
                 extensions,
                 format,
-                ...(wrapper ? { wrapper } : {}),
+                wrapper: wrapper ? wrapper : undefined,
             });
         }
     }
 
     return { files, truncated };
+}
+
+/** The display text of one header field value. */
+function fieldText(value: string | number | boolean): string {
+    return typeof value === "string" ? value : String(value);
 }
 
 function formatCensus(files: readonly ScannedFile[]): FormatCount[] {
@@ -100,7 +106,7 @@ export function buildManifest(root: string, files: readonly ScannedFile[], trunc
         fileCount: files.length,
         totalBytes: files.reduce((sum, f) => sum + f.size, 0),
         truncated,
-        ...(truncated ? { scanLimit: limit } : {}),
+        scanLimit: truncated ? limit : undefined,
         shapesTruncated: observed.shapesTruncated,
         formats: formatCensus(files),
         shapes: observed.shapes,
@@ -168,7 +174,7 @@ export function renderInputScanManifest(manifest: InputScanManifest): string {
             }
             if (shape.header) {
                 const fields = Object.entries(shape.header.fields)
-                    .map(([key, value]) => `${key}=${value}`)
+                    .map(([key, value]) => `${key}=${fieldText(value)}`)
                     .join(", ");
                 lines.push(`  - header (${shape.header.path}): ${fields || shape.header.unavailable || "no fields read"}`);
             } else {

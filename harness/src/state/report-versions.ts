@@ -35,7 +35,7 @@ import type { DomainError } from "../lib/result.js";
 import type { ReportSnapshot } from "../report-model/reference-resolver.js";
 import { parseSnapshot, reduceIssues, type SchemaIssue } from "./snapshot-parse.js";
 
-export type { SchemaIssue };
+export type { SchemaIssue } from "./snapshot-parse.js";
 
 /**
  * The name of the unique constraint on thread_id. The write names it as its
@@ -44,7 +44,7 @@ export type { SchemaIssue };
 const THREAD_UNIQUE_CONSTRAINT = "cortex_report_versions_one_per_thread";
 
 /** The anchor and the payload of a version to record. */
-export interface RecordVersionInput {
+export type RecordVersionInput = {
     /** The block document. It rides as `unknown`, and the record parses it. */
     readonly document: unknown;
     /** The pinned snapshot, stored as given. */
@@ -57,17 +57,17 @@ export interface RecordVersionInput {
     readonly parentSeq: number | null;
     /** The earlier version that this one reuses. The parent must belong to the same analysis. */
     readonly parentVersionId?: string;
-}
+};
 
 /** The stable reference of a recorded version, and how the record landed. */
-export interface RecordedVersionRef {
+export type RecordedVersionRef = {
     readonly versionId: string;
     /**
      * `created` minted the row. `replaced` wrote over the one version of the
      * thread, under the same version id.
      */
     readonly outcome: "created" | "replaced";
-}
+};
 
 /**
  * A record the store refuses as data, before or in place of a row. Distinct from
@@ -125,7 +125,7 @@ type _AssertReadError = VersionReadError extends DomainError ? true : never;
 const _assertReadError: _AssertReadError = true;
 
 /** One recorded version, as the store gives it back. */
-export interface RecordedVersion {
+export type RecordedVersion = {
     readonly versionId: string;
     readonly analysisId: string;
     readonly threadId: string;
@@ -136,9 +136,9 @@ export interface RecordedVersion {
     readonly document: ReportDocument;
     readonly snapshot: ReportSnapshot;
     readonly createdAt: Date;
-}
+};
 
-export interface ReportVersionStore {
+export type ReportVersionStore = {
     /**
      * Record a version. The record parses the document, refuses a malformed value
      * as data with no row, and refuses a parent from a different analysis. It reads
@@ -151,12 +151,12 @@ export interface ReportVersionStore {
     getVersion(versionId: string): ResultAsync<RecordedVersion | null, DbError | VersionReadError>;
     /** The one version of a thread, or `null` for a thread with no version. */
     getThreadVersion(threadId: string): ResultAsync<RecordedVersion | null, DbError | VersionReadError>;
-}
+};
 
-export interface ReportVersionStoreDeps {
+export type ReportVersionStoreDeps = {
     readonly pool: Pool;
     readonly logger?: Logger;
-}
+};
 
 /**
  * The full row projection every read shares. `parent_seq` is a bigint, thus the
@@ -166,7 +166,7 @@ export interface ReportVersionStoreDeps {
 const VERSION_COLUMNS =
     "version_id, analysis_id, thread_id, parent_thread_id, parent_seq::text AS parent_seq, parent_version_id, document, snapshot, created_at";
 
-interface VersionRow {
+type VersionRow = {
     readonly version_id: string;
     readonly analysis_id: string;
     readonly thread_id: string;
@@ -176,7 +176,7 @@ interface VersionRow {
     readonly document: unknown;
     readonly snapshot: unknown;
     readonly created_at: Date;
-}
+};
 
 /**
  * The write. The row carries no ordinal, thus the statement writes the given
@@ -309,7 +309,7 @@ export function createReportVersionStore({ pool }: ReportVersionStoreDeps): Repo
                 values: [versionId],
             }),
         ).andThen(({ rows }) => {
-            const row = rows[0];
+            const row = rows.at(0);
             if (!row) return ok(null);
             return rowToVersion(row);
         });
@@ -322,7 +322,7 @@ export function createReportVersionStore({ pool }: ReportVersionStoreDeps): Repo
                 values: [threadId],
             }),
         ).andThen(({ rows }) => {
-            const row = rows[0];
+            const row = rows.at(0);
             if (!row) return ok(null);
             return rowToVersion(row);
         });

@@ -18,14 +18,14 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError, zWireNumber } from "./api-utils.js";
 import { PUBCHEM_BASE, PUBCHEM_HEADERS } from "./pubchem-config.js";
 
-export interface PubChemCompoundProperties {
+export type PubChemCompoundProperties = {
     cid: number;
     molecularWeight: number | null;
     inchiKey: string | null;
     canonicalSmiles: string | null;
     hBondDonorCount: number | null;
     hBondAcceptorCount: number | null;
-}
+};
 
 const PROPERTY_FIELDS = [
     "MolecularWeight",
@@ -117,6 +117,7 @@ export async function getCompoundPropertiesByInChIKey(inchiKey: string): Promise
     return getCompoundPropertiesByCID(cid);
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const AMIDE_BOND_RE = /C\(=O\)N/g;
 
 /**

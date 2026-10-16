@@ -40,10 +40,10 @@ export const AnalogyReportSchema = z.object({
                     description: z.string(),
                     keyConcepts: z.array(z.string()),
                     relevance: z.string(),
-                    sources: z.array(z.object({ url: z.string().url(), title: z.string() })),
+                    sources: z.array(z.object({ url: z.url(), title: z.string() })),
                     githubRepos: z.array(
                         z.object({
-                            url: z.string().url(),
+                            url: z.url(),
                             description: z.string().optional(),
                         }),
                     ),

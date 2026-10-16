@@ -25,17 +25,21 @@ function recordValue(record: CitationRecord, field: CitationField): Comparable |
 }
 
 function normalizedValue(field: CitationField, value: Comparable): string {
-    if (field === "authors") return (value as string[]).map(normalizeAuthor).sort().join("|");
+    if (field === "authors") {
+        if (!Array.isArray(value)) throw new Error(`authors holds ${typeof value}, not a list of names`);
+        return value.map(normalizeAuthor).sort().join("|");
+    }
     if (field === "year") return String(value);
     return normalizeComparable(String(value));
 }
 
-function authorMatch(supplied: readonly string[], source: readonly string[]): boolean {
+function authorMatch(supplied: Comparable, source: Comparable): boolean {
+    if (!Array.isArray(supplied) || !Array.isArray(source)) throw new Error("author comparison needs a list of names on both sides");
     return supplied.every((author) => source.some((candidate) => authorNamesMatch(author, candidate)));
 }
 
 function fieldMatches(field: CitationField, supplied: Comparable, source: Comparable): boolean {
-    if (field === "authors") return authorMatch(supplied as string[], source as string[]);
+    if (field === "authors") return authorMatch(supplied, source);
     if (field === "year") return Math.abs(Number(supplied) - Number(source)) <= 1;
     if (field === "title" || field === "venue") {
         const left = new Set(normalizeComparable(String(supplied)).split(" ").filter(Boolean));

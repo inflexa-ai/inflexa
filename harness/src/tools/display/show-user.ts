@@ -40,7 +40,7 @@ const ShowUserInputSchema = z.object({
         .optional()
         .describe("Card heading rendered above the content. For an echart it is the chart's only title, and it seeds the PNG download filename."),
     spec: z
-        .record(z.string(), z.unknown())
+        .record(z.string(), z.json())
         .optional()
         .describe(
             "Full ECharts option JSON (kind=echart). Author the data, series, `encode`, and tooltip — and OMIT `title`: the card heading is the `title` param, so an in-spec title is stripped (put stats in `tooltip.formatter`, never in `title.subtext`). Layout is normalized for you at render time (legend placement, grid margins, `axisLabel.interval`/rotation, and a PNG `saveAsImage` toolbox), so do not hand-tune it.",

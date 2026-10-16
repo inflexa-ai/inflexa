@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import type { Tool } from "../define-tool.js";
 import type { WorkspaceMutator } from "../workspace/mutator.js";
-import type { KnowledgeClient } from "./client.js";
+import type { KnowledgeClient, KnowledgeUnavailable } from "./client.js";
 import { createKnowledgeCheckTool } from "./check.js";
 import { createSnapshotPin } from "./pin.js";
 import { createKnowledgeRecommendTool, type KnowledgeRecommendDeps } from "./recommend.js";
@@ -30,7 +30,7 @@ export * from "./recommend.js";
 export * from "./situation.js";
 export * from "./template.js";
 
-export interface KnowledgeToolsDeps {
+export type KnowledgeToolsDeps = {
     readonly client?: KnowledgeClient;
     /** Host path of the farm `inflexa.lock`, or its resolver for each analysis, for the environment join of the recommend answer. */
     readonly farmLockFile?: EnvironmentStorePaths["farmLockFile"];
@@ -40,7 +40,7 @@ export interface KnowledgeToolsDeps {
     readonly refStorePath?: string;
     /** Receives each recommend answer the planner sees; see `KnowledgeRecommendDeps.onAnswer`. */
     readonly onRecommend?: KnowledgeRecommendDeps["onAnswer"];
-}
+};
 
 /**
  * The planner tools: `knowledge_recommend` and `knowledge_check`, or an empty
@@ -54,26 +54,29 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
         createKnowledgeRecommendTool({
             client: deps.client,
             pin,
-            ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
-            ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
-            ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
-            ...(deps.onRecommend ? { onAnswer: deps.onRecommend } : {}),
+            farmLockFile: deps.farmLockFile,
+            imagePackagesFile: deps.imagePackagesFile,
+            refStorePath: deps.refStorePath,
+            onAnswer: deps.onRecommend,
         }),
         createKnowledgeCheckTool({ client: deps.client, pin }),
     ];
 }
 
+/** The answer every operation of a client that answers nothing gives: the service is absent, not failed. */
+const NO_SERVICE_ANSWER: KnowledgeUnavailable = { match: "unavailable", reason: "no service" };
+
 /** A client that answers nothing: the definitions of the tools do not depend on the answers. */
 const NO_CLIENT: KnowledgeClient = {
-    recommend: async () => ({ match: "unavailable", reason: "no service" }),
-    check: async () => ({ match: "unavailable", reason: "no service" }),
-    render: async () => ({ match: "unavailable", reason: "no service" }),
-    contract: async () => ({ match: "unavailable", reason: "no service" }),
+    recommend: () => Promise.resolve(NO_SERVICE_ANSWER),
+    check: () => Promise.resolve(NO_SERVICE_ANSWER),
+    render: () => Promise.resolve(NO_SERVICE_ANSWER),
+    contract: () => Promise.resolve(NO_SERVICE_ANSWER),
 };
 
 /** A mutator that writes nothing: the definition of the template tool does not depend on the workspace. */
 const NO_MUTATOR: WorkspaceMutator = {
-    writeFile: async ({ path }) => ({ status: "out_of_scope", path }),
+    writeFile: ({ path }) => Promise.resolve({ status: "out_of_scope", path }),
     recordWrite: () => undefined,
 };
 

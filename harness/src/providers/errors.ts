@@ -19,6 +19,8 @@
  */
 
 import { redactSecrets } from "../input-sanitization.js";
+import { errorMessage } from "../lib/thrown.js";
+import { maybeRecord, typedMember } from "../lib/shape.js";
 
 /**
  * The sentinel that the request-timeout guard uses as an abort reason. The guard
@@ -81,10 +83,15 @@ export type ProviderError =
  * recognized by `instanceof`; this checks the discriminant plus the two
  * always-present fields. Used by `toProviderError` to stay idempotent.
  */
+// oxlint-disable-next-line @inflexa-ai/no-unknown-type-guards -- a public barrel export whose predicate form is the published surface; the lookup re-type is the recorded redesign.
 export function isProviderError(value: unknown): value is ProviderError {
-    if (typeof value !== "object" || value === null) return false;
-    const v = value as { type?: unknown; retryable?: unknown; message?: unknown };
-    return (v.type === "auth" || v.type === "suspend" || v.type === "provider") && typeof v.retryable === "boolean" && typeof v.message === "string";
+    const v = maybeRecord(value);
+    return (
+        v !== undefined &&
+        (v.type === "auth" || v.type === "suspend" || v.type === "provider") &&
+        typeof v.retryable === "boolean" &&
+        typeof v.message === "string"
+    );
 }
 
 export type SuspendError = Extract<ProviderError, { readonly type: "suspend" }>;
@@ -100,19 +107,13 @@ export type SuspendError = Extract<ProviderError, { readonly type: "suspend" }>;
  */
 export function findSuspendError(err: unknown): SuspendError | undefined {
     const asSuspend = (value: unknown): SuspendError | undefined => (isProviderError(value) && value.type === "suspend" ? value : undefined);
-    return findInCauseChain(
-        err,
-        (link) => asSuspend(link) ?? (typeof link === "object" && link !== null ? asSuspend((link as { value?: unknown }).value) : undefined),
-    );
+    return findInCauseChain(err, (link) => asSuspend(link) ?? asSuspend(typedMember(maybeRecord(link), "value")));
 }
 
 /** Find a `ProviderError` of any kind, by the walk of {@link findSuspendError}. */
 export function findProviderError(err: unknown): ProviderError | undefined {
     const asProviderError = (value: unknown): ProviderError | undefined => (isProviderError(value) ? value : undefined);
-    return findInCauseChain(
-        err,
-        (link) => asProviderError(link) ?? (typeof link === "object" && link !== null ? asProviderError((link as { value?: unknown }).value) : undefined),
-    );
+    return findInCauseChain(err, (link) => asProviderError(link) ?? asProviderError(typedMember(maybeRecord(link), "value")));
 }
 
 /**
@@ -145,7 +146,7 @@ export function toProviderError(e: unknown, workload: string, suspendOn: Suspend
         };
     }
     const classified = classifyProviderError(e, suspendOn);
-    const detail = e instanceof Error ? e.message : String(e);
+    const detail = errorMessage(e);
     if (classified.kind === "auth") {
         return {
             type: "auth",
@@ -213,10 +214,11 @@ const PROVIDER_BODY_EXCERPT_MAX_LEN = 120;
  * strings) and is safe on biological data, so a legitimate error body passes through intact.
  */
 function excerptResponseBody(body: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     const singleLine = redactSecrets(body).replace(/\s+/g, " ").trim();
     // Slice by CODE POINT, not UTF-16 unit: a raw byte body can carry astral characters, and a plain
     // `.slice` could bisect a surrogate pair into a lone half that renders as U+FFFD.
-    const chars = [...singleLine];
+    const chars = Array.from(singleLine);
     return chars.length > PROVIDER_BODY_EXCERPT_MAX_LEN ? chars.slice(0, PROVIDER_BODY_EXCERPT_MAX_LEN - 1).join("") + "…" : singleLine;
 }
 
@@ -248,18 +250,8 @@ const CONNECTION_ERROR_CODES = new Set([
 ]);
 
 const CONNECTION_ERROR_PATTERN =
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     /fetch failed|socket hang up|network error|connection (?:refused|reset|error|closed)|econnrefused|enotfound|etimedout|terminated/i;
-
-interface MaybeErrorChain {
-    status?: unknown;
-    statusCode?: unknown;
-    code?: unknown;
-    name?: unknown;
-    message?: unknown;
-    /** The AI SDK's `APICallError` carries the raw response body under this name. */
-    responseBody?: unknown;
-    cause?: unknown;
-}
 
 /**
  * Walk the `cause` chain up to {@link MAX_CAUSE_HOPS} links, and return the first
@@ -272,7 +264,7 @@ function findInCauseChain<T>(err: unknown, probe: (link: unknown) => T | undefin
     for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
         const found = probe(cursor);
         if (found !== undefined) return found;
-        cursor = (cursor as MaybeErrorChain).cause;
+        cursor = typedMember(maybeRecord(cursor), "cause");
     }
     return undefined;
 }
@@ -285,9 +277,11 @@ function findInCauseChain<T>(err: unknown, probe: (link: unknown) => T | undefin
  */
 export function extractStatus(err: unknown): number | undefined {
     return findInCauseChain(err, (link) => {
-        const e = link as MaybeErrorChain;
-        if (typeof e.status === "number") return e.status;
-        if (typeof e.statusCode === "number") return e.statusCode;
+        const rec = maybeRecord(link);
+        const status = typedMember(rec, "status");
+        if (typeof status === "number") return status;
+        const statusCode = typedMember(rec, "statusCode");
+        if (typeof statusCode === "number") return statusCode;
         return undefined;
     });
 }
@@ -304,9 +298,9 @@ export function extractStatus(err: unknown): number | undefined {
 function extractResponseBody(err: unknown): string | undefined {
     let cursor: unknown = err;
     for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
-        const e = cursor as MaybeErrorChain;
-        if (typeof e.responseBody === "string" && e.responseBody.trim() !== "") return e.responseBody;
-        cursor = e.cause;
+        const body = typedMember(maybeRecord(cursor), "responseBody");
+        if (typeof body === "string" && body.trim() !== "") return body;
+        cursor = typedMember(maybeRecord(cursor), "cause");
     }
     return undefined;
 }
@@ -314,16 +308,20 @@ function extractResponseBody(err: unknown): string | undefined {
 /**
  * Walk the `cause` chain for the request-timeout sentinel. The guard aborts a
  * fetch with a `RequestTimeoutError`. The SDK carries the abort reason down the
- * `cause` chain, thus the sentinel can sit one or more hops down.
+ * `cause` chain, thus the sentinel can sit one or more hops down. The walk
+ * gives the sentinel's field, not the thrown object: the consumers read only
+ * the bound, and a name match across a realm boundary cannot re-create the
+ * class identity.
  */
-function findRequestTimeout(err: unknown): RequestTimeoutError | undefined {
+function findRequestTimeout(err: unknown): { requestTimeoutMs: number } | undefined {
     return findInCauseChain(err, (link) => {
-        if (link instanceof RequestTimeoutError) return link;
+        if (link instanceof RequestTimeoutError) return { requestTimeoutMs: link.requestTimeoutMs };
         // A duplicate class identity across a realm boundary fails `instanceof`,
         // thus match the name and the field as a fallback.
-        const e = link as MaybeErrorChain & { requestTimeoutMs?: unknown };
-        if (e.name === "RequestTimeoutError" && typeof e.requestTimeoutMs === "number") return link as RequestTimeoutError;
-        return undefined;
+        const rec = maybeRecord(link);
+        if (typedMember(rec, "name") !== "RequestTimeoutError") return undefined;
+        const ms = typedMember(rec, "requestTimeoutMs");
+        return typeof ms === "number" ? { requestTimeoutMs: ms } : undefined;
     });
 }
 
@@ -341,21 +339,22 @@ const SDK_TIMEOUT_ERROR_NAME = "TimeoutError";
  * an abort reason down the `cause` chain, thus the reason can sit one or more
  * hops down.
  */
-function findSdkTimeout(err: unknown): Error | undefined {
-    return findInCauseChain(err, (link) => {
-        const e = link as MaybeErrorChain;
-        return e.name === SDK_TIMEOUT_ERROR_NAME ? (link as Error) : undefined;
-    });
+function findSdkTimeout(err: unknown): boolean {
+    return findInCauseChain(err, (link) => (typedMember(maybeRecord(link), "name") === SDK_TIMEOUT_ERROR_NAME ? true : undefined)) ?? false;
 }
 
 /** Does any link of the `cause` chain look like a transport-level failure? */
 function looksLikeConnectionError(err: unknown): boolean {
     return (
         findInCauseChain(err, (link) => {
-            const e = link as MaybeErrorChain;
-            if (typeof e.code === "string" && CONNECTION_ERROR_CODES.has(e.code)) return true;
-            if (typeof e.name === "string" && /^APIConnection/.test(e.name)) return true;
-            if (typeof e.message === "string" && CONNECTION_ERROR_PATTERN.test(e.message)) return true;
+            const rec = maybeRecord(link);
+            const code = typedMember(rec, "code");
+            if (typeof code === "string" && CONNECTION_ERROR_CODES.has(code)) return true;
+            const name = typedMember(rec, "name");
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+            if (typeof name === "string" && /^APIConnection/.test(name)) return true;
+            const message = typedMember(rec, "message");
+            if (typeof message === "string" && CONNECTION_ERROR_PATTERN.test(message)) return true;
             return undefined;
         }) ?? false
     );
@@ -377,12 +376,12 @@ export function classifyProviderError(e: unknown, suspendOn: SuspendOn = DEFAULT
     // policy as a connection error. This runs before the status and the
     // connection paths, because a timeout carries no HTTP status, and it must not
     // fall to a non-retryable path.
-    if (findRequestTimeout(e) !== undefined || findSdkTimeout(e) !== undefined) return { kind: "provider", retryable: true };
+    if (findRequestTimeout(e) !== undefined || findSdkTimeout(e)) return { kind: "provider", retryable: true };
 
     const status = extractStatus(e);
 
     if (status !== undefined && Object.hasOwn(suspendOn, status)) {
-        return { kind: "suspend", retryable: false, reason: suspendOn[status]!, status };
+        return { kind: "suspend", retryable: false, reason: suspendOn[status], status };
     }
 
     // `auth` is its own kind rather than a plain non-retryable 4xx because the

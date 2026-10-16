@@ -11,6 +11,7 @@
  * field carries `.optional()`, not `.nullable()`.
  */
 
+import { maybeRecord } from "../../lib/shape.js";
 import { z } from "zod";
 
 import { apiFetchValidated, describeApiError, isUnexpectedApiError } from "./api-utils.js";
@@ -36,28 +37,28 @@ const ENSEMBL_HEADERS = {
 
 export type ExpressionRank = "absent" | "low" | "medium" | "high";
 
-export interface TissueRow {
+export type TissueRow = {
     tissue: string;
     cellType: string | null;
     expressionScore: number | null;
     confidence: "gold" | "silver" | null;
     expressionState: "expressed" | "not expressed";
     rank: ExpressionRank;
-}
+};
 
-export interface SpeciesEntry {
+export type SpeciesEntry = {
     species: SupportedSpecies;
     taxonId: number;
     ensemblId: string;
     tissues: TissueRow[];
-}
+};
 
-export interface MultiSpeciesExpression {
+export type MultiSpeciesExpression = {
     geneSymbol: string;
     humanEnsemblId: string | null;
     bySpecies: SpeciesEntry[];
     notFound: string[];
-}
+};
 
 export function bucketRank(expressionState: string, score: number | null): ExpressionRank {
     if (expressionState === "not expressed") return "absent";
@@ -81,7 +82,6 @@ const BgeeCallSchema = z.object({
     expressionQuality: z.string().optional(),
     expressionState: z.string().optional(),
 });
-type BgeeCall = z.infer<typeof BgeeCallSchema>;
 
 const BgeeExpressionResponseSchema = z.object({
     data: z.object({ calls: z.array(BgeeCallSchema).optional() }).optional(),
@@ -94,31 +94,34 @@ export const EnsemblHomologyResponseSchema = z.object({
 });
 
 export function parseExpressionResponse(raw: unknown): TissueRow[] {
-    // `raw` is the untyped Bgee API payload; `.data.calls` is reached defensively and
-    // the `Array.isArray` guard below means a shape mismatch degrades to an empty list.
-    const calls = (raw as { data?: { calls?: BgeeCall[] } } | null)?.data?.calls;
+    // `raw` is the untyped Bgee API payload; each call is read defensively, so a drifted call
+    // keeps its place with defaulted fields instead of failing the whole response.
+    const calls = maybeRecord(maybeRecord(raw)?.data)?.calls;
     if (!Array.isArray(calls)) return [];
 
     const out: TissueRow[] = [];
     for (const call of calls) {
-        const anatName: string = call?.condition?.anatEntity?.name ?? "";
-        const tissue = anatName.trim().toLowerCase();
+        const record = maybeRecord(call);
+        if (record === undefined) continue;
+        const condition = maybeRecord(record.condition);
+        const anatName = maybeRecord(condition?.anatEntity)?.name;
+        const tissue = typeof anatName === "string" ? anatName.trim().toLowerCase() : "";
         if (!tissue) continue;
 
-        const cellTypeName: string | undefined = call?.condition?.cellType?.name;
+        const cellTypeName = maybeRecord(condition?.cellType)?.name;
         const cellType = typeof cellTypeName === "string" && cellTypeName.trim() !== "" ? cellTypeName.trim().toLowerCase() : null;
 
-        const rawScore = call?.expressionScore?.expressionScore;
+        const rawScore = maybeRecord(record.expressionScore)?.expressionScore;
         let expressionScore: number | null = null;
         if (typeof rawScore === "string" || typeof rawScore === "number") {
             const n = typeof rawScore === "number" ? rawScore : parseFloat(rawScore);
             expressionScore = Number.isFinite(n) ? n : null;
         }
 
-        const quality = call?.expressionQuality;
+        const quality = record.expressionQuality;
         const confidence: "gold" | "silver" | null = quality === "gold" || quality === "silver" ? quality : null;
 
-        const stateRaw = call?.expressionState;
+        const stateRaw = record.expressionState;
         const expressionState: "expressed" | "not expressed" = stateRaw === "not expressed" ? "not expressed" : "expressed";
 
         out.push({

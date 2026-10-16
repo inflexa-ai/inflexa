@@ -14,12 +14,12 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { OPENFDA_BASE, OPENFDA_LABEL_BASE } from "./openfda-config.js";
 
-export interface AdverseEventCount {
+export type AdverseEventCount = {
     reaction: string;
     count: number;
-}
+};
 
-export interface DrugLabelAction {
+export type DrugLabelAction = {
     applicationNumber: string | null;
     brandName: string | null;
     genericName: string | null;
@@ -29,9 +29,9 @@ export interface DrugLabelAction {
     warningsAndCautions: string | null;
     hasRems: boolean;
     sourceUrl: string;
-}
+};
 
-export interface SeriousnessProfile {
+export type SeriousnessProfile = {
     totalReports: number;
     fatalCount: number;
     hospitalizationCount: number;
@@ -39,7 +39,7 @@ export interface SeriousnessProfile {
     disablingCount: number;
     congenitalAnomalyCount: number;
     otherSeriousCount: number;
-}
+};
 
 // FAERS count/meta wire shapes, validated at the fetch boundary. Every field is
 // optional — the API omits absent values, and graceful degradation relies on a
@@ -54,9 +54,9 @@ const FaersMetaResponseSchema = z.object({
 
 /** openFDA drug-label metadata block (`openfda`) — all fields free-form JSON. */
 const OpenFdaLabelMetaSchema = z.object({
-    application_number: z.unknown().optional(),
-    brand_name: z.unknown().optional(),
-    generic_name: z.unknown().optional(),
+    application_number: z.json().optional(),
+    brand_name: z.json().optional(),
+    generic_name: z.json().optional(),
 });
 type OpenFdaLabelMeta = z.infer<typeof OpenFdaLabelMetaSchema>;
 
@@ -68,12 +68,12 @@ type OpenFdaLabelMeta = z.infer<typeof OpenFdaLabelMetaSchema>;
  * provider types both as an array of string.
  */
 const OpenFdaLabelSchema = z.object({
-    set_id: z.unknown().optional(),
+    set_id: z.json().optional(),
     openfda: OpenFdaLabelMetaSchema.optional(),
-    effective_time: z.unknown().optional(),
-    boxed_warning: z.unknown().optional(),
-    warnings_and_cautions: z.unknown().optional(),
-    warnings: z.unknown().optional(),
+    effective_time: z.json().optional(),
+    boxed_warning: z.json().optional(),
+    warnings_and_cautions: z.json().optional(),
+    warnings: z.json().optional(),
     spl_medguide: z.array(z.string()).optional(),
     patient_medication_information: z.array(z.string()).optional(),
 });
@@ -85,6 +85,7 @@ type OpenFdaLabel = z.infer<typeof OpenFdaLabelSchema>;
  * unescaped `"` past the quote escaping and break out of the phrase.
  */
 function escapeQueryPhrase(value: string): string {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
     return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
@@ -117,14 +118,14 @@ export async function getFaersByDrug(
         if (res.error.type === "http_status" && res.error.status === 404) return { totalReports: 0, adverseEvents: [] };
         throw new Error(describeApiError(res.error));
     }
-    const adverseEvents: AdverseEventCount[] = (res.value?.results ?? []).map((r) => ({
+    const adverseEvents: AdverseEventCount[] = (res.value.results ?? []).map((r) => ({
         reaction: r.term ?? "Unknown",
         count: r.count ?? 0,
     }));
 
     const totalUrl = `${OPENFDA_BASE}?search=${encodeURIComponent(search)}&limit=1`;
     const totalRes = await apiFetchValidated(totalUrl, FaersMetaResponseSchema);
-    const totalReports = totalRes.isOk() ? totalRes.value?.meta?.results?.total : undefined;
+    const totalReports = totalRes.isOk() ? totalRes.value.meta?.results?.total : undefined;
 
     return { totalReports, adverseEvents };
 }
@@ -144,7 +145,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
         if (totalRes.error.type === "http_status" && totalRes.error.status === 404) return null;
         throw new Error(describeApiError(totalRes.error));
     }
-    const totalReports: number = totalRes.value?.meta?.results?.total ?? 0;
+    const totalReports: number = totalRes.value.meta?.results?.total ?? 0;
     if (totalReports === 0) {
         return {
             totalReports: 0,
@@ -162,7 +163,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
         const url = `${OPENFDA_BASE}?search=${encodeURIComponent(q)}&limit=1`;
         const res = await apiFetchValidated(url, FaersMetaResponseSchema);
         if (res.isErr()) return 0;
-        return res.value?.meta?.results?.total ?? 0;
+        return res.value.meta?.results?.total ?? 0;
     }
 
     const [fatal, hosp, lifeT, dis, cong, other] = await Promise.all([
@@ -187,7 +188,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
 
 function firstString(value: unknown): string | null {
     if (Array.isArray(value)) {
-        const first = value.find((v) => typeof v === "string" && v.trim());
+        const first: unknown = value.find((v) => typeof v === "string" && v.trim());
         return typeof first === "string" ? first : null;
     }
     if (typeof value === "string") return value || null;
@@ -196,7 +197,7 @@ function firstString(value: unknown): string | null {
 
 function joinSection(value: unknown): string | null {
     if (Array.isArray(value)) {
-        const parts = value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+        const parts = value.flatMap((v) => (typeof v === "string" && v.trim().length > 0 ? [v] : []));
         if (parts.length === 0) return null;
         return parts.join("\n\n");
     }
@@ -210,9 +211,9 @@ function joinSection(value: unknown): string | null {
  * keyed by application number when only that is available.
  */
 function buildLabelSourceUrl(label: OpenFdaLabel): string {
-    const setId = typeof label?.set_id === "string" ? label.set_id : null;
+    const setId = typeof label.set_id === "string" ? label.set_id : null;
     if (setId) return `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${setId}`;
-    const appNum = firstString(label?.openfda?.application_number);
+    const appNum = firstString(label.openfda?.application_number);
     if (appNum) {
         return `https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&ApplNo=${encodeURIComponent(appNum)}`;
     }
@@ -220,21 +221,21 @@ function buildLabelSourceUrl(label: OpenFdaLabel): string {
 }
 
 function mapLabel(raw: OpenFdaLabel): DrugLabelAction {
-    const openfda: OpenFdaLabelMeta = raw?.openfda ?? {};
+    const openfda: OpenFdaLabelMeta = raw.openfda ?? {};
     // The label reference carries no REMS field, thus the signal is the word
     // itself in one of the three sections that a REMS program writes to. The
     // presence of a medication guide alone is not the signal: many labels with no
     // REMS carry one, and a presence test would report a REMS that does not exist.
-    const remsTextCandidates = [raw?.boxed_warning, raw?.spl_medguide, raw?.patient_medication_information];
+    const remsTextCandidates = [raw.boxed_warning, raw.spl_medguide, raw.patient_medication_information];
     const hasRems = remsTextCandidates.some((v) => joinSection(v)?.toLowerCase().includes("rems") ?? false);
 
     return {
         applicationNumber: firstString(openfda.application_number),
         brandName: firstString(openfda.brand_name),
         genericName: firstString(openfda.generic_name),
-        effectiveTime: typeof raw?.effective_time === "string" ? raw.effective_time : null,
-        boxedWarning: joinSection(raw?.boxed_warning),
-        warningsAndCautions: joinSection(raw?.warnings_and_cautions) ?? joinSection(raw?.warnings),
+        effectiveTime: typeof raw.effective_time === "string" ? raw.effective_time : null,
+        boxedWarning: joinSection(raw.boxed_warning),
+        warningsAndCautions: joinSection(raw.warnings_and_cautions) ?? joinSection(raw.warnings),
         hasRems,
         sourceUrl: buildLabelSourceUrl(raw),
     };

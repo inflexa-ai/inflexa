@@ -15,7 +15,7 @@ import type * as Echarts from "echarts";
 import { err, ok, type Result } from "neverthrow";
 
 import type { EchartOption } from "./chart.js";
-import { exportOption, OUTLINE_RENDERER, registerChartRenderers } from "./chart-renderers.js";
+import { exportOption, OUTLINE_RENDERER, registerChartRenderers, type ChartRenderer, type RenderApi } from "./chart-renderers.js";
 import {
     CHART_BODY_PX,
     CHART_EXPORT_SIZES,
@@ -29,8 +29,11 @@ import {
 import { millimeterRoot } from "./hybrid-svg.js";
 import type { DataAsset } from "./table-data.js";
 import type { RenderProblem } from "./types.js";
+import { optionMemberOrUndefined } from "./option-lens.js";
+import { errorMessage } from "../lib/thrown.js";
 
 /** One instance token of the chart runtime: a class, a clip path, or a gradient, for example `zr1-cls-2`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const INSTANCE_TOKEN = /zr\d+-[a-z]+-?\d+/g;
 
 /**
@@ -38,6 +41,7 @@ const INSTANCE_TOKEN = /zr\d+-[a-z]+-?\d+/g;
  * a `url(#...)` reference, and the style block. A text node is none of them, thus a category name that
  * reads as a token keeps its text.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
 const TOKEN_PLACES = /\s(?:id|class)="[^"]*"|url\(#[^)]*\)|<style[^>]*>[\s\S]*?<\/style>/g;
 
 /** The count of hash characters in an asset name. It matches the name of a table asset. */
@@ -58,10 +62,10 @@ export function loadChartRuntime(): Promise<ChartRuntime> {
 }
 
 /** The two SVG files of one chart: the single journal column and the double journal column. */
-export interface ChartSvgs {
+export type ChartSvgs = {
     readonly single: DataAsset;
     readonly double: DataAsset;
-}
+};
 
 /**
  * Render one option to SVG text at one column size.
@@ -71,13 +75,42 @@ export interface ChartSvgs {
  * throw becomes the message of an `err`. The instance is disposed in every case, thus no render leaves a timer
  * behind.
  */
+/**
+ * The renderer function that the chart runtime calls: it narrows the runtime's read of one item dimension
+ * to the number that the derivation writes, and it hands the element that the renderer built back unchanged.
+ *
+ * Each item that the derivation writes for a named renderer holds numbers alone, so a non-number read is a
+ * broken item: it stops the render instead of drawing one point in a wrong place.
+ */
+export function runtimeRenderer(render: ChartRenderer): Echarts.CustomSeriesRenderItem {
+    return (params, api) => render({ itemPayload: params.itemPayload }, runtimeApi(api));
+}
+
+/** The part of the runtime's render API that the renderers read, narrowed to the shapes they read it as. */
+function runtimeApi(api: Echarts.CustomSeriesRenderItemAPI): RenderApi {
+    return {
+        value: (dimension) => {
+            const read = api.value(dimension);
+            if (typeof read !== "number") throw new Error(`the renderer read the item dimension ${dimension} as ${typeof read}, not a number.`);
+            return read;
+        },
+        coord: (point) => api.coord(point),
+        size: (delta) => {
+            const sized = api.size?.(delta);
+            if (!Array.isArray(sized)) throw new Error("the renderer read the band size as one scalar, not a pair.");
+            return sized;
+        },
+        visual: (name) => {
+            const visual = api.visual(name);
+            if (typeof visual !== "string") throw new Error("the renderer read the series color as no string.");
+            return visual;
+        },
+    };
+}
+
 export function renderChartSvg(echarts: ChartRuntime, option: EchartOption, size: ChartExportSize): Result<string, string> {
     echarts.registerTheme(CHART_PRINT_THEME_NAME, chartTheme(CHART_PRINT_TEXT_PX));
-    registerChartRenderers({
-        // The runtime types each item dimension as a string or a number. Each item that the derivation writes
-        // for a named renderer holds numbers alone, thus the renderer reads a number at each dimension.
-        registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, render as unknown as Echarts.CustomSeriesRenderItem),
-    });
+    registerChartRenderers({ registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, runtimeRenderer(render)) });
     let chart: Echarts.ECharts | undefined;
     // The axis jitter of the chart runtime places a point that finds no free place with `Math.random`. The
     // render below runs to its end in one synchronous call, thus the seeded sequence serves this render alone,
@@ -89,7 +122,7 @@ export function renderChartSvg(echarts: ChartRuntime, option: EchartOption, size
         chart.setOption(exportOption(option, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx));
         return ok(finishedSvg(chart.renderToSVGString(), size));
     } catch (cause) {
-        return err(cause instanceof Error ? cause.message : String(cause));
+        return err(errorMessage(cause));
     } finally {
         Math.random = random;
         chart?.dispose();
@@ -127,6 +160,7 @@ function finishedSvg(svg: string, size: ChartExportSize): string {
     const renumber = (token: string): string => {
         let next = tokens.get(token);
         if (next === undefined) {
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
             const family = /^zr\d+-([a-z]+)/.exec(token)?.[1] ?? "t";
             next = `zr0-${family}-${tokens.size}`;
             tokens.set(token, next);
@@ -152,8 +186,8 @@ function plottedPoints(option: EchartOption): number {
     if (!Array.isArray(series)) return 0;
     let count = 0;
     for (const entry of series) {
-        if (typeof entry !== "object" || entry === null) continue;
-        const fields = entry as EchartOption;
+        const fields = optionMemberOrUndefined(entry);
+        if (fields === undefined) continue;
         if (!Array.isArray(fields.data)) continue;
         for (const item of fields.data) {
             if (fields.type === "radar") count += polygonCoordinates(item);
@@ -166,7 +200,8 @@ function plottedPoints(option: EchartOption): number {
 
 /** True when one item draws a coordinate: a number, or a value whose members hold no empty slot. */
 function drawnItem(item: unknown): boolean {
-    const value = typeof item === "object" && item !== null && !Array.isArray(item) ? (item as EchartOption).value : item;
+    const fields = optionMemberOrUndefined(item);
+    const value = fields !== undefined ? fields.value : item;
     if (typeof value === "number") return true;
     return Array.isArray(value) && value.every((member) => member !== null && member !== undefined && member !== "-");
 }
@@ -185,14 +220,16 @@ const OUTLINE_LEAD_MEMBERS = 4;
 
 /** The count of coordinates that one radar polygon draws: each member of its value that is not empty. */
 function polygonCoordinates(item: unknown): number {
-    const value = typeof item === "object" && item !== null ? (item as EchartOption).value : undefined;
+    const value = optionMemberOrUndefined(item)?.value;
     return Array.isArray(value) ? value.filter((member) => member !== null && member !== undefined).length : 0;
 }
 
 /** One SVG asset: the content-addressed name, with the column in millimeters, and the text. */
 function svgAsset(bytes: string, size: ChartExportSize): DataAsset {
+    const widthMm = size.widthMm;
+    if (widthMm === undefined) throw new Error(`SVG export size ${size.label} carries no width in mm`);
     const hash = createHash("sha256").update(bytes).digest("hex").slice(0, HASH_CHARS);
-    return { name: `c-${hash}-${size.widthMm}mm.svg`, bytes };
+    return { name: `c-${hash}-${widthMm}mm.svg`, bytes };
 }
 
 /**

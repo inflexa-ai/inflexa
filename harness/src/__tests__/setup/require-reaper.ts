@@ -35,6 +35,7 @@
  */
 
 import { getContainerRuntimeClient, getReaper } from "testcontainers";
+import { errorMessage } from "../../lib/thrown.js";
 
 /** Set to any non-empty value to accept the leak and start the container anyway. */
 const ALLOW_LEAK_ENV = "CORTEX_TEST_ALLOW_LEAKED_PG";
@@ -109,5 +110,5 @@ export async function assertContainerWillBeReaped(): Promise<void> {
 }
 
 function describe(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
+    return errorMessage(err);
 }

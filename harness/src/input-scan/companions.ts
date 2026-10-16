@@ -80,9 +80,10 @@ export function attachCompanions(files: readonly ScannedFile[]): MemberFile[] {
     const attached = new Map<string, CompanionFile[]>();
     for (const file of files) {
         const root = roots.get(file.path);
-        if (root === undefined) continue;
+        const suffix = root === undefined ? undefined : suffixes.get(file.path);
+        if (root === undefined || suffix === undefined) continue;
         const bucket = attached.get(root);
-        const companion: CompanionFile = { path: file.path, suffix: suffixes.get(file.path)!, size: file.size };
+        const companion: CompanionFile = { path: file.path, suffix, size: file.size };
         if (bucket) bucket.push(companion);
         else attached.set(root, [companion]);
     }
@@ -96,7 +97,7 @@ export function attachCompanions(files: readonly ScannedFile[]): MemberFile[] {
             name: basenameOf(file.path),
             size: file.size,
             format: file.format,
-            ...(file.wrapper ? { wrapper: file.wrapper } : {}),
+            wrapper: file.wrapper ? file.wrapper : undefined,
             companions,
         });
     }

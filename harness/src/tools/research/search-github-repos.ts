@@ -10,24 +10,25 @@
  * `null`. The OpenAPI document gives the modifier of each field.
  */
 
+import { maybeRecord } from "../../lib/shape.js";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 
 const BASE_URL = "https://api.github.com/search/repositories";
 
 type SearchGithubReposOutput = { success: false; error: string; repos: GithubRepo[] } | { success: true; repos: GithubRepo[] };
 
-export interface GithubRepo {
+export type GithubRepo = {
     url: string;
     fullName: string;
     description?: string;
     stars: number;
     language?: string;
     lastUpdated?: string;
-}
+};
 
 // Raw GitHub search wire shape, validated at the fetch boundary. Every field is
 // optional — `parseGithubReposResponse` already filters out items missing the
@@ -51,27 +52,36 @@ const GithubReposResponseSchema = z.object({
 });
 
 export function parseGithubReposResponse(raw: unknown): GithubRepo[] {
-    const items = (raw as { items?: unknown[] } | undefined)?.items;
+    // `raw` is the untyped API body — the reach is optional-chained and the Array.isArray guard below degrades a mismatch to empty.
+    const items = maybeRecord(raw)?.items;
     if (!Array.isArray(items)) return [];
-    return items
-        .filter(
-            (i): i is Record<string, unknown> =>
-                typeof i === "object" &&
-                i !== null &&
-                typeof (i as { html_url?: unknown }).html_url === "string" &&
-                typeof (i as { full_name?: unknown }).full_name === "string",
-        )
-        .map((i) => ({
-            url: String(i.html_url),
-            fullName: String(i.full_name),
-            description: typeof i.description === "string" ? i.description : undefined,
-            stars: typeof i.stargazers_count === "number" ? i.stargazers_count : 0,
-            language: typeof i.language === "string" ? i.language : undefined,
-            lastUpdated: typeof i.updated_at === "string" ? i.updated_at : undefined,
-        }));
+    // An item that names no html_url and full_name is dropped; the typeof in the same conjunct is the test that proves it.
+    return items.flatMap((item) => {
+        const record = maybeRecord(item);
+        if (record === undefined) return [];
+        const url = record.html_url;
+        const fullName = record.full_name;
+        if (typeof url !== "string" || typeof fullName !== "string") return [];
+        return [
+            {
+                url,
+                fullName,
+                description: typeof record.description === "string" ? record.description : undefined,
+                stars: typeof record.stargazers_count === "number" ? record.stargazers_count : 0,
+                language: typeof record.language === "string" ? record.language : undefined,
+                lastUpdated: typeof record.updated_at === "string" ? record.updated_at : undefined,
+            },
+        ];
+    });
 }
 
-export function createSearchGithubReposTool(deps: { githubToken?: string }) {
+const inputSchema = z.object({
+    query: z.string().describe("GitHub search syntax. Plain text matches anywhere; qualifiers " + 'like "topic:bioinformatics" or "stars:>100" are supported.'),
+    language: z.string().optional().describe('Optional language filter (e.g., "python").'),
+    limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
+});
+
+export function createSearchGithubReposTool(deps: { githubToken?: string }): Tool<z.infer<typeof inputSchema>, SearchGithubReposOutput> {
     return defineTool({
         id: "search_github_repos",
         description:
@@ -86,13 +96,7 @@ export function createSearchGithubReposTool(deps: { githubToken?: string }) {
             "and `success: false` with an `error` string means GitHub could not be " +
             "reached or refused the request (the low unauthenticated rate limit " +
             "lands here). Report either one and continue, do not retry unchanged.",
-        inputSchema: z.object({
-            query: z
-                .string()
-                .describe("GitHub search syntax. Plain text matches anywhere; qualifiers " + 'like "topic:bioinformatics" or "stars:>100" are supported.'),
-            language: z.string().optional().describe('Optional language filter (e.g., "python").'),
-            limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
-        }),
+        inputSchema,
         describeCall: "none",
         execute: async ({ query, language, limit }): Promise<Result<SearchGithubReposOutput, ToolError>> => {
             const q = language ? `${query} language:${language}` : query;

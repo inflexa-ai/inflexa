@@ -120,6 +120,23 @@ export function chartMenuControlId(containerId: string): string {
  */
 export function chartToolbox(chartType: ChartType | undefined): EchartOption {
     const dense = chartType !== undefined && DENSE_CARTESIAN_CHARTS.includes(chartType);
+    const feature: EchartOption = {};
+    if (dense) {
+        feature.dataZoom = { show: true, title: { zoom: "Zoom", back: "Undo zoom" }, filterMode: "none" };
+        feature.restore = { show: true, title: "Restore" };
+    }
+    feature.dataView = {
+        show: true,
+        title: "Data",
+        readOnly: true,
+        lang: [...DATA_VIEW_LANG],
+        optionToContent: DATA_VIEW_FUNCTION,
+        backgroundColor: "#ffffff",
+        textColor: CHART_INK,
+        buttonColor: CHART_TOOLBOX_ACTIVE_COLOR,
+        buttonTextColor: "#ffffff",
+    };
+    feature.myExport = { show: true, title: "Download", icon: DOWNLOAD_ICON, onclick: EXPORT_MENU_FUNCTION };
     return {
         show: true,
         zlevel: TOOLBOX_ZLEVEL,
@@ -137,26 +154,7 @@ export function chartToolbox(chartType: ChartType | undefined): EchartOption {
                 textFontSize: TOOLBOX_TITLE_PX,
             },
         },
-        feature: {
-            ...(dense
-                ? {
-                      dataZoom: { show: true, title: { zoom: "Zoom", back: "Undo zoom" }, filterMode: "none" },
-                      restore: { show: true, title: "Restore" },
-                  }
-                : {}),
-            dataView: {
-                show: true,
-                title: "Data",
-                readOnly: true,
-                lang: [...DATA_VIEW_LANG],
-                optionToContent: DATA_VIEW_FUNCTION,
-                backgroundColor: "#ffffff",
-                textColor: CHART_INK,
-                buttonColor: CHART_TOOLBOX_ACTIVE_COLOR,
-                buttonTextColor: "#ffffff",
-            },
-            myExport: { show: true, title: "Download", icon: DOWNLOAD_ICON, onclick: EXPORT_MENU_FUNCTION },
-        },
+        feature,
     };
 }
 
@@ -176,10 +174,10 @@ export const GENOME_POSITION_FUNCTION = "reportGenomePosition";
 export const GENOME_MEMBER = "genome";
 
 /** The genome member of an axis: the series that names the chromosomes, and the start and the label of each chromosome in position order. */
-export interface GenomeAxis {
+export type GenomeAxis = {
     readonly names: string;
     readonly starts: ReadonlyArray<readonly [number, string]>;
-}
+};
 
 /** The bases in one megabase, the unit of a position on a genome axis. */
 const BASES_PER_MEGABASE = 1e6;

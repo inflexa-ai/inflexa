@@ -13,6 +13,7 @@ import { join, relative } from "node:path";
 
 import { inferArtifactType, type ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
+import { errnoCode } from "../lib/thrown.js";
 import { IGNORED_DIRS } from "../sandbox/ignored-dirs.js";
 
 /**
@@ -33,7 +34,7 @@ export async function walkStepArtifacts(args: {
         try {
             entries = await readdir(dir, { withFileTypes: true });
         } catch (err) {
-            const code = (err as NodeJS.ErrnoException).code;
+            const code = errnoCode(err);
             if (code === "ENOENT") return;
             throw err;
         }
