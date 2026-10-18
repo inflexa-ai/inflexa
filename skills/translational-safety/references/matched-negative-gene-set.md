@@ -172,7 +172,10 @@ cuts = {"log_tpm": inner_edges(pos["log_tpm"], 10), "log_degree": inner_edges(po
 pos["cell"], pool["cell"] = cell_ids(pos, cuts), cell_ids(pool, cuts)
 
 rng = np.random.default_rng(seed)
-quota = (pos["cell"].value_counts(normalize=True) * target_count).round().astype(int)
+raw = pos["cell"].value_counts(normalize=True) * target_count
+quota = np.floor(raw).astype(int)
+remainder = target_count - int(quota.sum())
+quota.loc[(raw - quota).sort_values(ascending=False).index[:remainder]] += 1  # the largest fractions take the remainder
 picked, short = [], {}
 for cell, n in quota.items():
     candidates = pool[pool["cell"] == cell]
@@ -206,7 +209,10 @@ def smd(a, b):
     return (a.mean() - b.mean()) / np.sqrt((a.var(ddof=1) + b.var(ddof=1)) / 2)
 
 
-balance = {c: {"smd": smd(pos[c], neg[c]), "ks": ks_2samp(pos[c], neg[c]).statistic} for c in COVARIATES}
+balance = {}
+for c in COVARIATES:
+    ks = ks_2samp(pos[c], neg[c])
+    balance[c] = {"smd": smd(pos[c], neg[c]), "ks": ks.statistic, "ks_p": ks.pvalue}
 X = pd.concat([pos[COVARIATES], neg[COVARIATES]])
 y = np.r_[np.ones(len(pos)), np.zeros(len(neg))]
 balance["auc"] = cross_val_score(LogisticRegression(max_iter=1000), X, y, cv=5, scoring="roc_auc").mean()

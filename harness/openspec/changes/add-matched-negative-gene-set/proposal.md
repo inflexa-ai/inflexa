@@ -7,7 +7,7 @@ A customer builds a classifier that marks a gene as a liver risk when a genetic 
 ## What Changes
 
 - Six reference datasets in the catalog: IMPC phenotyping 24.0, HPO annotations, Open Targets mouse phenotypes, Open Targets target safety events, and MGI mouse-human homology. The sixth is the STRING aliases file, as a companion dataset of the STRING network. It gives the Ensembl gene id of each STRING protein.
-- A reference file in the translational-safety skill pack. It gives the method in five steps: the resolution, the universe and the metrics, the exclusion sources, the two definitions, and the matching. It also gives the anti-patterns. The tissue is a parameter, and the liver is the worked example.
+- A reference file in the translational-safety skill pack. It gives the method in six steps: the resolution, the universe and the metrics, the exclusion sources, the two definitions, the matching, and the diagnostics. It also gives the anti-patterns. The tissue is a parameter, and the liver is the worked example.
 - A section in the `SKILL.md` of the pack, an entry in its References table, and five anti-patterns.
 - Two capability phrases and the `gene-lists` input class on the translational-safety agent. Thus the planner routes the task to that agent.
 - The edits of the catalog test: the six ids in its three pinned lists, the MGI host in the official hosts, and the two organism-agnostic ids.
