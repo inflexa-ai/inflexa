@@ -53,6 +53,7 @@ describe("reference-data catalog", () => {
             "uniprot-idmapping-human",
             "uniprot-idmapping-mouse",
             "uniprot-idmapping-rat",
+            "mgi-mouse-human-homology",
             "reactome-pathways",
             "reactome-mappings",
             "wikipathways-human",
@@ -118,7 +119,8 @@ describe("reference-data catalog", () => {
 
     // Large or domain-specific downloads are opt-in, so a default `setup` never silently pulls
     // hundreds of MB (or GB) the user did not ask for: the all-species NCBI mapping tables, the
-    // Reactome mapping TSVs, the 443 MB tonsil reference, the amplicon taxonomy training sets,
+    // Reactome mapping TSVs, the MGI homology reports that only a cross-species gene list needs,
+    // the 443 MB tonsil reference, the amplicon taxonomy training sets,
     // the 842 MB PharmCAT genome bundle, and the variant-phasing set whose panel alone is 12.4 GB.
     // Also opt-in on size: the ~800 MB indexed genome sequences, the two interaction networks
     // with the STRING alias table that joins one of them to a gene table,
@@ -133,6 +135,7 @@ describe("reference-data catalog", () => {
         expect(notRecommended).toEqual([
             "ncbi-gene2ensembl",
             "ncbi-gene2refseq",
+            "mgi-mouse-human-homology",
             "reactome-mappings",
             "msigdb-oncogenic-human",
             "msigdb-immunologic-human",
@@ -208,6 +211,7 @@ describe("reference-data catalog", () => {
             // whatever finally served it, and a pinned mirror URL would expire.
             "sourceforge.net",
             "resources.aertslab.org",
+            "www.informatics.jax.org",
         ]);
 
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
@@ -260,6 +264,8 @@ describe("reference-data catalog", () => {
             "omnipath-interactions",
             // Chemistry, not biology: a fragmentation spectrum belongs to a compound, not a species.
             "massbank-spectra",
+            // Mouse and human genes in one homology table: the map between the two species.
+            "mgi-mouse-human-homology",
         ]);
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
             expect(dataset.organism === undefined).toBe(organismAgnostic.has(dataset.id));
@@ -363,6 +369,7 @@ describe("reference-data catalog", () => {
                 "hpa-proteinatlas",
                 "lincs-l1000-chem-pert",
                 "massbank-spectra",
+                "mgi-mouse-human-homology",
                 "msigdb-cancer-modules-human",
                 "msigdb-canonical-pathways-human",
                 "msigdb-celltype-human",
