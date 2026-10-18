@@ -494,6 +494,20 @@ function approvalRefusal(c: Context<ServerEnv>, planId: string, refusal: Approve
                 collisions: refusal.collisions,
                 ...(refusal.unavailable === undefined ? {} : { unavailable: refusal.unavailable }),
             });
+        // The harness names the datasets and no command: the remedy is this host's to give. The
+        // command goes in the MESSAGE, because that is what a caller shows a user and what the
+        // conversation agent reads before it offers the download it can already run.
+        case "references_missing":
+            return conflict(
+                refusal.missing.length > 0
+                    ? `The reference data of plan ${planId} is not installed. Install it with: inflexa refs download ${refusal.missing.join(" ")}`
+                    : `The reference data of plan ${planId} could not be confirmed: ${refusal.unavailable ?? "the store did not answer"}.`,
+                {
+                    reason: "references_missing",
+                    missing: refusal.missing,
+                    ...(refusal.unavailable === undefined ? {} : { unavailable: refusal.unavailable }),
+                },
+            );
         case "not_authorized":
             return conflict(`The run was not authorized: ${refusal.reason}`, { reason: "not_authorized" });
         case "suspended":

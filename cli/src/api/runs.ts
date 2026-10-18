@@ -128,6 +128,7 @@ export type PlanApprovalConflict =
     | { reason: "superseded"; supersededBy: string }
     | { reason: "plan_invalid"; errors: string[] }
     | { reason: "packages_missing"; missing: string[]; collisions: string[]; unavailable?: string }
+    | { reason: "references_missing"; missing: string[]; unavailable?: string }
     | { reason: "not_authorized" | "suspended" };
 
 /** The body of `GET {A}/plans/:planId`: a plan with its lineage and the ids of its runs. */
