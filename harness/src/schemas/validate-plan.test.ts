@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
-import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
+import { KNOWN_AGENT_IDS, PLANNABLE_AGENT_IDS } from "../agents/sandbox-catalog.js";
+import { STEP_NON_TASK_FIELDS, STEP_TASK_FIELDS } from "../prompts/briefing.js";
+import { PlanStepSchema } from "./plan-schemas.js";
 import { STEP_SUBDIRS } from "../workspace/paths.js";
+import { AnalysisStepSchema } from "./workflow-state.js";
 import type { AnalysisPlan, AnalysisStep } from "./workflow-state.js";
 import { validatePlan } from "./validate-plan.js";
 
@@ -206,5 +209,46 @@ describe("validatePlan package entries", () => {
         const result = validatePlan(plan([step({ id: "T1S1", packages: [" bioc:fgsea"] })]));
         expect(result.valid).toBe(false);
         expect(result.errors.some((e) => e.includes("T1S1") && e.includes("bioc:fgsea"))).toBe(true);
+    });
+});
+
+/**
+ * The `capability` field is how the launch learns which reference data a step needs, so the two
+ * schemas must disagree about it on purpose: a plan stored before the field has to keep parsing,
+ * and a plan the planner writes today has to carry it.
+ */
+describe("the capability field of a step", () => {
+    const base = {
+        id: "T1S1",
+        name: "s",
+        track: "T1",
+        step_type: "analysis",
+        question: "q",
+        acceptance_criteria: ["a"],
+        depends_on: [],
+        resources: { cpu: 1, memoryGb: 2 },
+        packages: [],
+        agent: PLANNABLE_AGENT_IDS[0]!,
+    };
+
+    it("parses a stored step that carries no phrase", () => {
+        const parsed = AnalysisStepSchema.safeParse({ ...base, status: "pending", maxSteps: 10 });
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.capability).toBeUndefined();
+    });
+
+    it("refuses planner output that carries no phrase", () => {
+        expect(PlanStepSchema.safeParse(base).success).toBe(false);
+    });
+
+    it("accepts planner output that carries one", () => {
+        const parsed = PlanStepSchema.safeParse({ ...base, capability: "differential expression" });
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.capability).toBe("differential expression");
+    });
+
+    it("keeps the phrase out of the rendered task, because the launch already consumed it", () => {
+        expect(STEP_NON_TASK_FIELDS).toContain("capability");
+        expect(STEP_TASK_FIELDS).not.toContain("capability");
     });
 });

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { createCapturingLogger, type CapturedLog, type CapturingLogger } from "../../__tests__/setup/logger.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { PLANNABLE_AGENT_IDS } from "../../agents/sandbox-catalog.js";
+import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../../loop/__fixtures__/scripted-provider.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
@@ -77,6 +78,9 @@ function blockImmediately(): ScriptedProvider {
     ]);
 }
 
+/** One phrase the first plannable agent really advertises — the planner schema takes nothing else. */
+const FIRST_AGENT_CAPABILITY = SANDBOX_AGENT_META[PLANNABLE_AGENT_IDS[0]!]!.capabilities[0]!;
+
 /** A schema-valid planner plan — one step, on a real plannable agent. */
 function validCandidate(stepOverrides: Record<string, unknown> = {}) {
     return {
@@ -93,6 +97,7 @@ function validCandidate(stepOverrides: Record<string, unknown> = {}) {
                 acceptance_criteria: ["A ranked DE table is produced."],
                 depends_on: [],
                 agent: PLANNABLE_AGENT_IDS[0],
+                capability: FIRST_AGENT_CAPABILITY,
                 resources: { cpu: 2, memoryGb: 8 },
                 packages: ["pydeseq2"],
                 ...stepOverrides,

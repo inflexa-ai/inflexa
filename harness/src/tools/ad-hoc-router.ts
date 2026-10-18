@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import { z } from "zod";
 
 import { PLANNABLE_AGENT_CATALOG } from "../agents/sandbox-catalog.js";
+import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { forSubAgent, type AgentSession } from "../auth/types.js";
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../app/data-profile-orientation.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
@@ -32,6 +33,7 @@ const resourcesSchema = z.object({
 });
 const routeSchema = z.object({
     agentId: z.string().optional().describe("The id of one specialist from the eligible catalog, copied exactly."),
+    capability: z.string().optional().describe("The one capability phrase of that specialist which this request uses, copied exactly from its capabilities."),
     resources: resourcesSchema
         .optional()
         .describe(
@@ -60,6 +62,8 @@ export interface AdHocRoute {
     readonly agentId: string;
     readonly resources: ResourceSpec;
     readonly rationale: string;
+    /** The capability phrase of the chosen agent, when the router copied one that the agent advertises. */
+    readonly capability?: string;
     /** The validated package entries of the step. Empty is a normal answer. */
     readonly packages: readonly string[];
     /** Every entry that the validation removed, with the reason for the caveat. */
@@ -321,6 +325,20 @@ export async function routeAdHocRequest(
     // never becomes a `fallbackClass`, because that class describes the route
     // as a whole and a step agent reads it as "the routing itself fell back".
     const { packages, droppedPackages } = await routePackages(candidate.packages, deps.resolvePackages, logger);
-    logger.info("ad hoc route selected", { agentId, resources, rationale, failure, packages, droppedPackages });
-    return { agentId, resources, rationale, packages, droppedPackages, ...(failure ? { fallbackClass: failure } : {}) };
+    // Kept only when the chosen agent really advertises it. A phrase that no agent advertises
+    // resolves no data requirement anyway, and carrying it would put a fabricated capability into
+    // the step and into the run record. An absent phrase is a normal answer, not a fallback class:
+    // most requests use a capability that declares nothing.
+    const requestedCapability = typeof candidate.capability === "string" ? candidate.capability.trim() : "";
+    const capability = (SANDBOX_AGENT_META[agentId]?.capabilities ?? []).includes(requestedCapability) ? requestedCapability : undefined;
+    logger.info("ad hoc route selected", { agentId, resources, rationale, failure, packages, droppedPackages, ...(capability ? { capability } : {}) });
+    return {
+        agentId,
+        resources,
+        rationale,
+        packages,
+        droppedPackages,
+        ...(capability ? { capability } : {}),
+        ...(failure ? { fallbackClass: failure } : {}),
+    };
 }

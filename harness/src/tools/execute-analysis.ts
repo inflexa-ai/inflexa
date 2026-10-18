@@ -372,6 +372,7 @@ export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = n
                 status: "pending",
                 resources: route.resources,
                 agent: route.agentId,
+                ...(route.capability ? { capability: route.capability } : {}),
                 maxSteps: meta?.defaultMaxSteps ?? DEFAULT_SANDBOX_MAX_STEPS,
             },
         ],
