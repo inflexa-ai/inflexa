@@ -7,6 +7,13 @@ import { translationalSafetyAgentPrompt } from "../../prompts/sandbox/translatio
 import { BASE_SANDBOX_TOOLS, createSandboxAgent, type SandboxAgentDeps } from "./shared.js";
 import type { AgentMeta } from "./types.js";
 
+/**
+ * Named once, because the capability phrase is the key of its own data requirement below and a
+ * plan step copies it verbatim. Two spellings of one capability would lose the pre-launch check.
+ */
+const MATCHED_NEGATIVE_CAPABILITY =
+    "matched negative gene set for a tissue risk benchmark (annotation_free or tested_clean negatives) matched on tissue expression and PPI connectivity with mouse and human phenotype annotation exclusions";
+
 export const meta: AgentMeta = {
     id: "translational-safety-agent",
     capabilities: [
@@ -24,7 +31,7 @@ export const meta: AgentMeta = {
         "hematological toxicity assessment",
         "mouse KO phenotype lookup",
         "cross-species baseline expression lookup",
-        "matched negative gene set for a tissue risk benchmark (annotation_free or tested_clean negatives) matched on tissue expression and PPI connectivity with mouse and human phenotype annotation exclusions",
+        MATCHED_NEGATIVE_CAPABILITY,
         "expression and PPI connectivity matching",
     ],
     suitableFor: [
@@ -36,6 +43,24 @@ export const meta: AgentMeta = {
         "drug-interaction-data",
         "pharmacogenomic-data",
         "gene-lists",
+    ],
+    // The method of this capability reads six opt-in datasets. Without any one of them a negatives
+    // file would carry a label the run cannot defend, so the launch refuses rather than spend a run.
+    // The recommended datasets it also reads (the expression table, the network, the gene tables,
+    // the GO collection) stay out: a default store holds them, and declaring one would refuse a
+    // launch an embedder already provisioned.
+    dataRequirements: [
+        {
+            capability: MATCHED_NEGATIVE_CAPABILITY,
+            datasets: [
+                "string-aliases-human",
+                "mgi-mouse-human-homology",
+                "impc-phenotyping",
+                "hpo-annotations",
+                "opentargets-mouse-phenotype",
+                "opentargets-target-safety-event",
+            ],
+        },
     ],
     skills: ["translational-safety", "cheminformatics", "shared/omics-general"],
     tools: [
