@@ -1300,6 +1300,18 @@ describe("POST {A}/plans/:planId/approve", () => {
                 `The packages of plan ${planId} cannot link.`,
                 { reason: "packages_missing", missing: [], collisions: [], unavailable: "the farm is locked" },
             ],
+            // The harness names the datasets and no command; this host owes the remedy, so the
+            // message carries the install the agent and the user can run.
+            [
+                { type: "references_missing", missing: ["hpo-annotations", "impc-phenotyping"] },
+                `The reference data of plan ${planId} is not installed. Install it with: inflexa refs download hpo-annotations impc-phenotyping`,
+                { reason: "references_missing", missing: ["hpo-annotations", "impc-phenotyping"] },
+            ],
+            [
+                { type: "references_missing", missing: [], unavailable: "the reference store could not be read" },
+                `The reference data of plan ${planId} could not be confirmed: the reference store could not be read.`,
+                { reason: "references_missing", missing: [], unavailable: "the reference store could not be read" },
+            ],
             [{ type: "not_authorized", reason: "mint refused" }, "The run was not authorized: mint refused", { reason: "not_authorized" }],
             [{ type: "suspended", reason: "no_funds" }, "The analysis is suspended: no_funds", { reason: "suspended" }],
         ];
