@@ -225,6 +225,10 @@ ${agentCatalog}
   cross-cutting if the input is already in generic format (CSV/TSV). Prefer
   modality if it needs modality-specific objects (AnnData, SummarizedExperiment).
 - If no agent is an exact fit, pick the closest specialist from the list.
+- Name the capability you routed on. Copy one phrase out of that agent's
+  capabilities into the step's \`capability\` field, spelled exactly as the
+  catalog spells it. The launch resolves what reference data that capability
+  needs before the run starts, so a paraphrase costs the step that check.
 
 ## Grounding
 

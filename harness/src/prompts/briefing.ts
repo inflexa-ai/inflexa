@@ -91,6 +91,11 @@ export const STEP_NON_TASK_FIELDS = [
     // the agent does need to know about them — a dropped entry, or a step that
     // declares none — rides in `caveats`.
     "packages",
+    // Withheld for the same reason as `packages`, one layer up: the phrase is how the router and
+    // the planner name what they routed on, and the launch has already resolved the reference data
+    // it declares. The step agent learns the work from its skill pack, which names each dataset by
+    // what it is. Handing it a routing phrase would invite it to treat that phrase as the method.
+    "capability",
 ] as const satisfies readonly (keyof AnalysisStep)[];
 
 // ── Formatting primitives ─────────────────────────────────────────────

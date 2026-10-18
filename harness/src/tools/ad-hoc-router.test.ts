@@ -8,6 +8,7 @@ import type { AgentRunUsage } from "../loop/metrics.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../providers/types.js";
 import { makeToolContext } from "./__fixtures__/tool-context.js";
+import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { AD_HOC_FALLBACK_AGENT_ID, defaultAdHocResources, routeAdHocRequest, validAdHocResources } from "./ad-hoc-router.js";
 
 function providerReturning(input: Record<string, unknown>, capture?: { system?: string }): ChatProvider {
@@ -431,5 +432,65 @@ describe("ad hoc routing — the usage of the router call", () => {
         expect(route.fallbackClass).toBe("provider_error");
         expect(records).toEqual([]);
         expect(turnUsage).toEqual({});
+    });
+});
+
+/**
+ * The router is the one surface that names a capability for an ad hoc run, which never sees a
+ * planner. A phrase it invents must not reach the step: the launch would resolve nothing from it,
+ * and the run record would carry a capability the agent does not advertise.
+ */
+describe("the capability phrase of an ad hoc route", () => {
+    const safetyAgent = "translational-safety-agent";
+    const realPhrase = SANDBOX_AGENT_META[safetyAgent]!.capabilities.find((phrase) => phrase.includes("matched negative gene set"))!;
+
+    it("keeps a phrase the chosen agent advertises", async () => {
+        const { ctx } = makeToolContext();
+        const route = await routeAdHocRequest(
+            {
+                provider: providerReturning({ agentId: safetyAgent, capability: realPhrase, resources: { cpu: 2, memoryGb: 4 }, rationale: "Safety." }),
+                model: "utility-model",
+                pool: emptyPool,
+                resourcePolicy: policy,
+            },
+            { analysisId: "analysis-1", request: "Build matched negatives", session: ctx.session, signal: ctx.signal },
+        );
+        expect(route.agentId).toBe(safetyAgent);
+        expect(route.capability).toBe(realPhrase);
+    });
+
+    it("drops a phrase the chosen agent does not advertise", async () => {
+        const { ctx } = makeToolContext();
+        const route = await routeAdHocRequest(
+            {
+                provider: providerReturning({
+                    agentId: safetyAgent,
+                    capability: "matched negatives, but in my own words",
+                    resources: { cpu: 2, memoryGb: 4 },
+                    rationale: "Safety.",
+                }),
+                model: "utility-model",
+                pool: emptyPool,
+                resourcePolicy: policy,
+            },
+            { analysisId: "analysis-1", request: "Build matched negatives", session: ctx.session, signal: ctx.signal },
+        );
+        expect(route.agentId).toBe(safetyAgent);
+        expect(route.capability).toBeUndefined();
+        expect(route.fallbackClass).toBeUndefined();
+    });
+
+    it("omits the phrase when the model names none", async () => {
+        const { ctx } = makeToolContext();
+        const route = await routeAdHocRequest(
+            {
+                provider: providerReturning({ agentId: safetyAgent, resources: { cpu: 2, memoryGb: 4 }, rationale: "Safety." }),
+                model: "utility-model",
+                pool: emptyPool,
+                resourcePolicy: policy,
+            },
+            { analysisId: "analysis-1", request: "Assess a CYP liability", session: ctx.session, signal: ctx.signal },
+        );
+        expect(route.capability).toBeUndefined();
     });
 });

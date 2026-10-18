@@ -118,6 +118,17 @@ export const AnalysisStepSchema = z.object({
 
     // Execution fields
     agent: z.string().optional().describe("Assigned sandbox agent name from registry"),
+    // Optional on the persistence schema so a plan stored before this field still parses.
+    // `PlanStepSchema` re-requires it for planner output. The launch reads it with the agent id to
+    // resolve what reference data the capability declares — refer to `capabilityDataRequirement`.
+    capability: z
+        .string()
+        .optional()
+        .describe(
+            "The one capability phrase of the assigned agent that this step uses, copied EXACTLY from the agent catalog. " +
+                "One phrase, verbatim — never a paraphrase, never a list, never your own wording. " +
+                "The launch resolves the reference data that the capability declares before the run starts, so a reworded phrase loses that check and the step discovers an absent source itself.",
+        ),
     timeout: z.number().optional().describe("Execution timeout in seconds (falls back to image default)"),
     maxSteps: z.number().describe("Max LLM agentic steps for sandbox agent"),
     description: z.string().optional().describe("Human-readable description of what the step produces."),
