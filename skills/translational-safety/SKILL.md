@@ -1,8 +1,8 @@
 ---
 name: translational-safety
 description: Safety pharmacology assessment, CTCAE grading, organ-specific toxicity biomarkers, CYP liability analysis, structural alerts, and drug-drug interaction evaluation
-version: 1.0.0
-tags: [safety, toxicology, CTCAE, hERG, hepatotoxicity, CYP, DDI, adverse-events, biomarkers]
+version: 1.1.0
+tags: [safety, toxicology, CTCAE, hERG, hepatotoxicity, CYP, DDI, adverse-events, biomarkers, matched-negatives]
 ---
 
 # Translational Safety
@@ -228,11 +228,33 @@ When assessing DDI safety:
 See `references/pharmacovigilance.md` for PRR/ROR computation
 functions and visualization patterns.
 
+## Matched Negative Gene Set for a Tissue Risk Benchmark
+
+When a request gives a list of positive genes for one tissue and asks for
+matched negatives, read `references/matched-negative-gene-set.md` first. It
+gives the method in six parts: the symbol resolution, the expression universe,
+the exclusion sources, the two definitions, the matching, and the diagnostics.
+The tissue is a parameter, and the liver is the worked example.
+
+Two definitions exist, and the request selects one:
+
+| Definition | Meaning | Pool |
+|-|-|-|
+| `annotation_free` | No tissue annotation in the mouse screens, the human phenotypes, or the safety events. Absence of evidence. | Large |
+| `tested_clean` | A mouse knockout passed the tissue screen with no hit. Evidence of absence. | Small |
+
+When the briefing names no definition, make both sets, each with its own
+diagnostics. Never make one set with a silent choice. A lethal knockout leaves
+the pool by default, because its tissue label is unknown. A definition whose
+exclusion source is absent from the reference store gets no negatives file:
+name the absent source instead.
+
 ## References
 
 | Reference | File | Contents |
 |-----------|------|----------|
 | Pharmacovigilance | `references/pharmacovigilance.md` | PRR, ROR, IC computation from FAERS data, signal detection workflow, DDI signal analysis, temporal pattern visualization |
+| Matched negative gene set | `references/matched-negative-gene-set.md` | Symbol resolution across mouse and human, the tissue expression universe, the exclusion sources, the two negative definitions, matching on expression and connectivity, balance diagnostics |
 
 ## Do NOT
 
@@ -253,3 +275,12 @@ functions and visualization patterns.
   signals are statistically unreliable
 - Ignore the denominator problem — FAERS reporting rates change over
   time and across regions
+- Infer the species of a gene symbol from its case — match the human
+  table and the mouse table, then map the ortholog
+- Join the expression table to the network on the symbol — a renamed
+  gene drops out in silence; join on the Ensembl gene id
+- Compute network metrics on the full graph — the positives and the
+  negatives must share one induced subgraph
+- Report a clean mouse knockout screen as proof of safety — it is
+  evidence of absence in the mouse, not in the human
+- Pad a short negative tier from the other tier — report the shortfall
