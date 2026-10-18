@@ -15,6 +15,7 @@
 - [ ] 2.2 Make the field mandatory on the planner output schema, at the place that makes `packages` mandatory. Keep it optional on the persistence schema.
 - [ ] 2.3 Add the planner rule that the step carries the capability phrase of its assigned agent, verbatim.
 - [ ] 2.4 Add a test that a stored plan without the field still parses.
+- [ ] 2.5 Fill the field in the ad-hoc router, because an ad-hoc request becomes a persisted plan and it takes the same launch.
 
 ## 3. The pre-launch resolution
 

@@ -58,6 +58,10 @@ The launch then resolves the requirement with no judgment: the agent of the step
 
 The alternative is a `references` field that holds the ids. It is rejected for two reasons. The planner would resolve the ids itself, which repeats the declaration and can disagree with it. The ids would also reach the step schema, which the planner prompt renders, and a prompt must name no dataset.
 
+### The ad-hoc path takes the same route
+
+An ad-hoc request becomes a persisted plan before it runs (`src/tools/execute-analysis.ts`, `persistedAdHocPlan`). The ad-hoc router selects the agent from the same plannable catalog, thus it can name the capability on the step that it builds. The launch then resolves the requirement for an ad-hoc run and for a planned run alike, with one pass.
+
 ### The pre-launch pass is the place, and the refusal names each id
 
 The check joins the pass that links the packages (`src/tools/execute-analysis.ts`). The store state can change between the plan and the launch, thus the launch is the last honest moment. `PlanReferencesMissingError` carries the absent ids, in the shape of `PlanPackagesMissingError`. It names no remedy command, because the remedy belongs to the embedder.
