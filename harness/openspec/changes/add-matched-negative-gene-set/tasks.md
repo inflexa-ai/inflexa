@@ -23,7 +23,7 @@
 - [x] 3.4 Change each file name and each format of the draft into a description. The ontology file replaces `hp.obo`, and the gene-to-phenotype table replaces `genes_to_phenotype`. A dataset name such as Open Targets or MSigDB is a domain term, and it stays.
 - [x] 3.5 Write the words "matched negative" in the body of the reference, because `skill_search` is a substring match.
 - [x] 3.6 Make sure that the reference names no path, no file name, no format, and no tool. The tissue is a parameter, and the liver is the worked example.
-- [ ] 3.7 Add a section to `skills/translational-safety/SKILL.md` that points to the reference. Add the row to the References table. Add the five anti-patterns to the "Do NOT" section.
+- [x] 3.7 Add a section to `skills/translational-safety/SKILL.md` that points to the reference. Add the row to the References table. Add the five anti-patterns to the "Do NOT" section.
 
 ## 4. The agent
 
