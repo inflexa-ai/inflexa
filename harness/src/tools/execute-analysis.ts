@@ -8,6 +8,7 @@ import { err, ok, ResultAsync, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
+import { capabilityDataRequirement } from "../agents/sandbox-catalog.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import type { AgentSession } from "../auth/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -17,6 +18,7 @@ import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { readInstalledDatasetIds } from "./sandbox/list-available-refs.js";
 import { deliverNotice, passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -60,7 +62,7 @@ const inputSchema = z
 
 type ExecuteAnalysisWorkflow = (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
 
-export interface ExecuteAnalysisToolDeps extends Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory"> {
+export interface ExecuteAnalysisToolDeps extends Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory" | "refStorePath"> {
     readonly pool: Pool;
     readonly executeAnalysisWorkflow: ExecuteAnalysisWorkflow;
     readonly runAuthorizer: RunAuthorizer;
@@ -132,10 +134,33 @@ export class PlanPackagesMissingError extends Error {
     }
 }
 
+/**
+ * A declared dataset that the reference store does not hold, found at the pre-launch pass. The
+ * message names the datasets and no remedy command — the remedy belongs to the embedder, and its
+ * wrapper appends it.
+ */
+export class PlanReferencesMissingError extends Error {
+    constructor(
+        readonly missing: string[],
+        readonly unavailable?: string,
+    ) {
+        const parts = [
+            // The store-level reason FIRST, for the same reason the package error leads with it:
+            // with an unanswerable store, no per-dataset claim below it is trustworthy.
+            unavailable !== undefined
+                ? `the store cannot answer (${unavailable}) — this says nothing about the datasets themselves, so do not re-request them`
+                : null,
+            missing.length > 0 ? `the store does not hold: ${missing.join(", ")}` : null,
+        ].filter((part): part is string => part !== null);
+        super(`The reference data of this plan is not installed — ${parts.join(" ")}`);
+        this.name = "PlanReferencesMissingError";
+    }
+}
+
 /** The deps that start the run of a stored plan. */
 export type LaunchPlanRunDeps = Pick<
     ExecuteAnalysisToolDeps,
-    "pool" | "executeAnalysisWorkflow" | "runAuthorizer" | "runLauncher" | "resourcePolicy" | "extendAnalysisFarm" | "logger"
+    "pool" | "executeAnalysisWorkflow" | "runAuthorizer" | "runLauncher" | "resourcePolicy" | "extendAnalysisFarm" | "refStorePath" | "logger"
 >;
 
 /** The run of a stored plan. `started` is false when a run of the plan was already active. */
@@ -149,10 +174,38 @@ export type LaunchPlanRunRefusal =
     | { type: "plan_not_found"; planId: string }
     | { type: "plan_invalid"; planId: string; malformed: boolean; errors: string[] }
     | { type: "packages_missing"; missing: string[]; collisions: string[]; unavailable?: string }
+    | { type: "references_missing"; missing: string[]; unavailable?: string }
     | { type: "not_authorized"; reason: string }
     | { type: "suspended"; reason: string }
     | { type: "store_failed"; cause: unknown }
     | { type: "launch_failed"; cause: unknown };
+
+/**
+ * Resolve the reference data that the capabilities of a plan declare, before the run reserves
+ * anything. A step names its capability, the agent of the step holds the declaration, and the
+ * declaration names catalog ids. An absent dataset refuses the launch with the ids named.
+ *
+ * Nothing is read when no step declares a requirement: the common plan touches no store at all.
+ *
+ * @returns How many datasets reached the store. Zero says that nothing was checked — a plan that
+ * declares none, or a store the embedder bound nowhere — which a launch record must be able to tell
+ * from a checked launch.
+ */
+async function resolvePlanReferences(refStorePath: string | undefined, plan: AnalysisPlan): Promise<Result<number, LaunchPlanRunRefusal>> {
+    const declared = new Set<string>();
+    for (const step of plan.steps) {
+        if (!step.agent || !step.capability) continue;
+        for (const dataset of capabilityDataRequirement(step.agent, step.capability)) declared.add(dataset);
+    }
+    if (declared.size === 0) return ok(0);
+    const installed = await readInstalledDatasetIds(refStorePath === undefined ? {} : { refStorePath });
+    if (installed === undefined) {
+        return err({ type: "references_missing", missing: [], unavailable: "the reference store could not be read" });
+    }
+    const missing = [...declared].filter((dataset) => !installed.has(dataset)).sort();
+    if (missing.length > 0) return err({ type: "references_missing", missing });
+    return ok(declared.size);
+}
 
 /**
  * Link the packages of the plan into the farm of the analysis, before the
@@ -462,6 +515,12 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
     const resources = stepResources(planId, plan);
     if (resources.isErr()) return err(resources.error);
 
+    // Reference data first: it is a read, so it costs nothing to learn before the farm link
+    // writes. Both passes come before the run reserves anything, thus a miss of either leaves no
+    // run row and no revoked authorization behind.
+    const references = await resolvePlanReferences(deps.refStorePath, plan);
+    if (references.isErr()) return err(references.error);
+
     // The link pass comes before the run reserves anything, thus a pool
     // miss leaves no run row and no revoked authorization behind.
     const linked = await linkPlanPackages(deps.extendAnalysisFarm, analysisId, planId, plan);
@@ -626,6 +685,8 @@ function throwLaunchRefusal(refusal: Exclude<LaunchPlanRunRefusal, { type: "not_
             throw refusal.malformed ? new PlanMalformedError(refusal.planId) : new PlanValidationError(refusal.planId, refusal.errors);
         case "packages_missing":
             throw new PlanPackagesMissingError(refusal.missing, refusal.collisions, refusal.unavailable);
+        case "references_missing":
+            throw new PlanReferencesMissingError(refusal.missing, refusal.unavailable);
         case "store_failed":
             return unwrapOrThrow(err(refusal.cause));
         case "launch_failed":

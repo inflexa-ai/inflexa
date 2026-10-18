@@ -7,6 +7,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
@@ -20,12 +23,17 @@ import type { ChatProvider } from "../providers/types.js";
 import type { ExecuteAnalysisInput } from "../workflows/execute-analysis.js";
 import type { AdHocRoute } from "./ad-hoc-router.js";
 import type { ToolContext } from "./define-tool.js";
+import { capabilityDataRequirement } from "../agents/sandbox-catalog.js";
+import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
+import { REFERENCE_DATA_CATALOG } from "../reference-data/catalog.js";
+import { REFERENCE_INSTALL_RECEIPT_VERSION, referenceReceiptContentDigest } from "../reference-data/receipt.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { RunDedupCollisionError, insertRun, upsertAnalysis, upsertPlan } from "../state/index.js";
 import {
     PlanMalformedError,
     PlanNotFoundError,
     PlanPackagesMissingError,
+    PlanReferencesMissingError,
     PlanValidationError,
     buildAdHocPlan,
     createExecuteAnalysisTool,
@@ -1206,6 +1214,105 @@ describe("the launch of a stored plan, over a real database", () => {
             expect(linked).toBe(false);
             expect(launches).toHaveLength(0);
             expect((await runRows()).map((row) => row.run_id)).toEqual(["r-active"]);
+        });
+
+        /**
+         * The reference pass is the only thing standing between "a capability needs six datasets"
+         * and a run that spends a sandbox to discover one is absent. It must refuse on an absent
+         * dataset, stay silent for a plan that declares none, and never read an unanswerable store
+         * as an empty one.
+         */
+        describe("the declared reference data of a capability", () => {
+            const SAFETY_AGENT = "translational-safety-agent";
+            const CAPABILITY = SANDBOX_AGENT_META[SAFETY_AGENT]!.capabilities.find((phrase) => phrase.includes("matched negative gene set"))!;
+            const DECLARED = [...capabilityDataRequirement(SAFETY_AGENT, CAPABILITY)];
+
+            function planDeclaring(capability?: string) {
+                return {
+                    ...validPlan,
+                    steps: [{ ...makeStep("T1S1"), agent: SAFETY_AGENT, ...(capability ? { capability } : {}) }],
+                };
+            }
+
+            /** A store whose receipts report exactly `ids` as installed. */
+            async function storeWith(ids: readonly string[]): Promise<string> {
+                const root = await mkdtemp(join(tmpdir(), "refs-"));
+                const receipts = join(root, ".inflexa", "receipts");
+                await mkdir(receipts, { recursive: true });
+                for (const id of ids) {
+                    const dataset = REFERENCE_DATA_CATALOG.datasets.find((candidate) => candidate.id === id)!;
+                    const artifacts = dataset.artifacts.map((artifact) => ({ path: artifact.path, bytes: 1, sha256: "a".repeat(64) }));
+                    const content = { datasetId: id, datasetVersion: dataset.version, artifacts };
+                    await writeFile(
+                        join(receipts, `${id}.json`),
+                        JSON.stringify({
+                            version: REFERENCE_INSTALL_RECEIPT_VERSION,
+                            ...content,
+                            activatedAt: "2026-01-01T00:00:00Z",
+                            contentDigest: referenceReceiptContentDigest(content),
+                        }),
+                    );
+                }
+                return root;
+            }
+
+            it("refuses the launch and names every absent dataset, reserving no run", async () => {
+                await seedPlan(planDeclaring(CAPABILITY));
+                const refStorePath = await storeWith([]);
+
+                const refusal = (await launchPlanRun(deps({ refStorePath }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+                expect(refusal).toEqual({ type: "references_missing", missing: [...DECLARED].sort() });
+                expect(await runRows()).toEqual([]);
+            });
+
+            it("names only the absent one when the store holds the rest", async () => {
+                await seedPlan(planDeclaring(CAPABILITY));
+                const refStorePath = await storeWith(DECLARED.slice(1));
+
+                const refusal = (await launchPlanRun(deps({ refStorePath }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+                expect(refusal).toEqual({ type: "references_missing", missing: [DECLARED[0]!] });
+            });
+
+            it("launches when the store holds every declared dataset", async () => {
+                await seedPlan(planDeclaring(CAPABILITY));
+                const refStorePath = await storeWith(DECLARED);
+                const { launcher } = fakeLauncher();
+
+                const launch = (await launchPlanRun(deps({ refStorePath, runLauncher: launcher }), { session: session(), planId: PLAN_ID }))._unsafeUnwrap();
+
+                expect(launch.started).toBe(true);
+            });
+
+            it("checks nothing for a step that names no capability", async () => {
+                await seedPlan(planDeclaring());
+                const { launcher } = fakeLauncher();
+
+                const launch = (
+                    await launchPlanRun(deps({ refStorePath: "/nonexistent-store", runLauncher: launcher }), { session: session(), planId: PLAN_ID })
+                )._unsafeUnwrap();
+
+                expect(launch.started).toBe(true);
+            });
+
+            it("gives one reason when the store cannot answer, and names no dataset as absent", async () => {
+                await seedPlan(planDeclaring(CAPABILITY));
+
+                const refusal = (
+                    await launchPlanRun(deps({ refStorePath: join(tmpdir(), "no-such-ref-store-dir") }), { session: session(), planId: PLAN_ID })
+                )._unsafeUnwrapErr();
+
+                expect(refusal).toEqual({ type: "references_missing", missing: [], unavailable: "the reference store could not be read" });
+            });
+
+            it("carries the datasets into the error the tool body throws, with no remedy command", () => {
+                const error = new PlanReferencesMissingError(["impc-phenotyping", "hpo-annotations"]);
+
+                expect(error.missing).toEqual(["impc-phenotyping", "hpo-annotations"]);
+                expect(error.message).toContain("impc-phenotyping");
+                expect(error.message).not.toContain("refs download");
+            });
         });
 
         it("refuses an unknown plan and a plan of another analysis with plan_not_found, and reserves no run", async () => {
