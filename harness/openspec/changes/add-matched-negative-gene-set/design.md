@@ -173,8 +173,8 @@ An exact betweenness with igraph on 10,000 nodes and about 150,000 edges takes u
 | `ensembl_gene_id` | The join key. |
 | `symbol` | The symbol of the gene table. |
 | `median_tpm` | The median TPM of the tissue. |
-| `degree` | The degree on the induced subgraph. 0 for a gene with no STRING node. |
-| `betweenness` | The betweenness on the induced subgraph. 0 for a gene with no STRING node. |
+| `degree` | The degree on the induced subgraph. 0 for a gene with no edge. |
+| `betweenness` | The betweenness on the induced subgraph. 0 for a gene with no edge. |
 | `in_string` | `false` for a gene with no STRING protein in the alias table. |
 | `is_positive` | `true` for a resolved positive. |
 | `viability` | `lethal`, `subviable`, `viable`, or `not_tested`. |
