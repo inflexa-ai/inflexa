@@ -281,6 +281,49 @@ async function readReceipts(root: string): Promise<unknown[]> {
     return receipts;
 }
 
+/**
+ * The dataset ids the install receipts of the store report, for a caller that must know whether a
+ * declared dataset is present BEFORE a run starts.
+ *
+ * `undefined` means the store itself could not be answered for: an unreadable root, a `.inflexa`
+ * that crosses a symlink, or a receipts directory that exists and cannot be listed. That is NOT an
+ * empty install, and a caller must never collapse the two — every dataset would read as absent, and
+ * a launch would be refused over data that is sitting in the store.
+ *
+ * An empty set is a real answer: the store is readable and it holds no receipt.
+ */
+export async function readInstalledDatasetIds(deps: ListAvailableRefsDeps): Promise<ReadonlySet<string> | undefined> {
+    const storeRoot = deps.refStorePath ?? REFS_ROOT;
+    try {
+        await lstat(storeRoot);
+    } catch {
+        return undefined;
+    }
+    if (await crossesSymlink(storeRoot, ".inflexa")) return undefined;
+    const receiptsDirectory = hostJoin(storeRoot, ".inflexa", "receipts");
+    let names: string[];
+    try {
+        names = (await readdir(receiptsDirectory)).slice(0, MAX_RECEIPT_FILES);
+    } catch (error) {
+        // An absent directory is a readable store with nothing installed. Any other failure is the
+        // store declining to answer, which is a different fact and gets the honest `undefined`.
+        if ((error as { code?: string }).code === "ENOENT") return new Set();
+        return undefined;
+    }
+    const ids = new Set<string>();
+    for (const name of names) {
+        // Per-file, so one malformed receipt costs only its own dataset. A shared try would drop
+        // every receipt after the bad one and read as a store that holds almost nothing.
+        try {
+            const receipt = parseReferenceInstallReceipt(JSON.parse(await readFile(hostJoin(receiptsDirectory, name), "utf-8")));
+            if (receipt) ids.add(receipt.datasetId);
+        } catch {
+            continue;
+        }
+    }
+    return ids;
+}
+
 /** Labels from a `registry.json` an externally-provisioned store may carry. */
 async function readLegacyEntries(root: string): Promise<unknown[]> {
     const legacyEntries: unknown[] = [];
