@@ -33,10 +33,10 @@
 
 ## 5. The checks
 
-- [ ] 5.1 Run `tsc -p tsconfig.build.json` in `harness`.
-- [ ] 5.2 Run `bun test` in `harness`, without the DB suites.
-- [ ] 5.3 Run the agent-facing content review of the root `CLAUDE.md` on the reference and on the `SKILL.md` section.
+- [x] 5.1 Run `tsc -p tsconfig.build.json` in `harness`.
+- [x] 5.2 Run `bun test` in `harness`, without the DB suites.
+- [x] 5.3 Run the agent-facing content review of the root `CLAUDE.md` on the reference and on the `SKILL.md` section.
 
 ## 6. After this change
 
-- [ ] 6.1 Open a GitHub issue for the acknowledgement of the HPO in the product, with the version of the HPO files.
+- [x] 6.1 Open a GitHub issue for the acknowledgement of the HPO in the product, with the version of the HPO files. Issue #682.
