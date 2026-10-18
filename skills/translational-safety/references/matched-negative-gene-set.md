@@ -14,7 +14,7 @@ This reference gives the method. The tissue is a parameter, and the liver is the
 | `target_count` | 2000 | The count of negatives per definition. |
 | `score_cutoff` | 700 | The minimum combined score of a network edge. |
 | `gene_type` | protein-coding | The gene type of the universe. |
-| `exclude_lethal` | on | A homozygous lethal knockout leaves the pool. See step 3. |
+| `exclude_lethal` | on | A homozygous or a hemizygous lethal knockout leaves the pool. See step 3. |
 | `seed` | fixed and recorded | The seed of the draw. |
 
 When the briefing names one definition, make that set. When the briefing names no definition, make both sets, each with its own diagnostics. Never make one set with a silent choice. Record each parameter in the balance report.
@@ -115,7 +115,7 @@ for log_col, source_col in (("log_tpm", "median_tpm"), ("log_degree", "degree"),
 
 | Source | Dataset | Rule for the liver |
 | --- | --- | --- |
-| Customer positives | The resolved list | Every resolved gene is excluded. Every human gene of a `mouse_class` class is excluded. |
+| Customer positives | The resolved list | Every resolved gene is excluded. Every human gene of a `mouse_class` class is excluded. Every candidate of an `ambiguous` positive is excluded. |
 | Mouse phenotypes | The Open Targets mouse phenotype dataset | A top-level class MP:0005370, or a term MP:0002941, MP:0005343, MP:0002968, or MP:0005344. |
 | Human phenotypes | The HPO gene-to-phenotype table | A term in the descendants of HP:0001392 or HP:0004297, from the ontology. |
 | Safety events | The Open Targets target safety events | A biosample tissue id UBERON_0002107 in either spelling, or an event text that holds hepat, liver, bilirubin, or steatos, without case. |
@@ -347,7 +347,7 @@ Give the counts per route, per source, and per tier. Give the pros and the cons 
 - Do not infer the species from the case of a symbol.
 - Do not join the expression table to the network on the symbol: a renamed gene drops out in silence.
 - Do not compute the metrics on the full network: the positives and the negatives must share one induced subgraph.
-- Do not drop a gene with no network node: both classes must carry such genes in proportion.
+- Do not drop a gene with no edge in the network: both classes must carry such genes in proportion.
 - Do not set the `in_string` flag from the degree: a gene with a protein and no edge is on the network.
 - Do not match an identifier or a free-text event with one spelling and one case: a curated liability then passes as a negative.
 - Do not keep a lethal knockout as a negative by default: its label is unknown.

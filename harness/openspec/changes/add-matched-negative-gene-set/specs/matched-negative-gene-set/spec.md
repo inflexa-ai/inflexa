@@ -37,6 +37,7 @@ The `translational-safety` skill pack MUST hold the reference file `references/m
 
 - the six resolution routes and their statuses: `human_symbol`, `human_synonym`, `mouse_ortholog`, `mouse_class`, `ambiguous`, and `unresolved`
 - the class rule: every human gene of the homology class of a `mouse_class` positive is excluded, and the positive leaves the matching
+- the ambiguous rule: each candidate human gene of an `ambiguous` positive is excluded, and the positive leaves the matching
 - the universe rule: the protein-coding genes, the top 10,000 by the median TPM of the tissue, with the gene type and the tissue as parameters
 - the network rule: the STRING edges with a combined score of 700 or more between two universe genes, joined on the Ensembl gene id
 - the metrics: the degree and the betweenness on the induced subgraph
