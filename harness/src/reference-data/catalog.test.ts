@@ -81,6 +81,10 @@ describe("reference-data catalog", () => {
             "string-aliases-human",
             "gtex-v8",
             "hpa-proteinatlas",
+            "impc-phenotyping",
+            "hpo-annotations",
+            "opentargets-mouse-phenotype",
+            "opentargets-target-safety-event",
             "celltypist-immune",
             "celltypist-pan-fetal",
             "celltypist-covid19",
@@ -126,7 +130,8 @@ describe("reference-data catalog", () => {
     // with the STRING alias table that joins one of them to a gene table,
     // the 137 MB spectral library and the 2.1 GB perturbation-signature collection. And opt-in
     // on scope rather than size, because they answer
-    // one field's question: the oncogenic and immunologic gene-set collections. The GO sets and
+    // one field's question: the oncogenic and immunologic gene-set collections, and the four
+    // phenotype-annotation sources that a safety benchmark reads. The GO sets and
     // the liftOver chains are deliberately NOT here — a few MB that unblock a whole class of
     // work is the same trade the chromosome-sizes entries already make.
     it("recommends every dataset except the very large or domain-specific opt-in downloads", () => {
@@ -147,6 +152,10 @@ describe("reference-data catalog", () => {
             "omnipath-interactions",
             "string-ppi-human",
             "string-aliases-human",
+            "impc-phenotyping",
+            "hpo-annotations",
+            "opentargets-mouse-phenotype",
+            "opentargets-target-safety-event",
             "projectils-cd8-til-human",
             "projectils-cd4-til-human",
             "projectils-til-mouse",
@@ -266,6 +275,8 @@ describe("reference-data catalog", () => {
             "massbank-spectra",
             // Mouse and human genes in one homology table: the map between the two species.
             "mgi-mouse-human-homology",
+            // Mouse model phenotypes keyed on the human target that Open Targets mapped each gene to.
+            "opentargets-mouse-phenotype",
         ]);
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
             expect(dataset.organism === undefined).toBe(organismAgnostic.has(dataset.id));
@@ -367,6 +378,8 @@ describe("reference-data catalog", () => {
                 "gencode-mouse",
                 "gtex-v8",
                 "hpa-proteinatlas",
+                "hpo-annotations",
+                "impc-phenotyping",
                 "lincs-l1000-chem-pert",
                 "massbank-spectra",
                 "mgi-mouse-human-homology",
@@ -388,6 +401,8 @@ describe("reference-data catalog", () => {
                 "ncbi-gene2ensembl",
                 "ncbi-gene2refseq",
                 "omnipath-interactions",
+                "opentargets-mouse-phenotype",
+                "opentargets-target-safety-event",
                 "panglaodb-markers",
                 "pharmcat-grch38-fasta",
                 "progeny-human",
