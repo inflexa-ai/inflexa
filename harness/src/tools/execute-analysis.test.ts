@@ -1285,6 +1285,18 @@ describe("the launch of a stored plan, over a real database", () => {
                 expect(launch.started).toBe(true);
             });
 
+            // The defect this covers refused EVERY launch of a plan that declares a capability: with no
+            // bound store the pass read the container path, which no host holds, so the store read as
+            // unreadable forever. An unbound store means the embedder provisions another way.
+            it("checks nothing when the embedder binds no reference store", async () => {
+                await seedPlan(planDeclaring(CAPABILITY));
+                const { launcher } = fakeLauncher();
+
+                const launch = (await launchPlanRun(deps({ runLauncher: launcher }), { session: session(), planId: PLAN_ID }))._unsafeUnwrap();
+
+                expect(launch.started).toBe(true);
+            });
+
             it("checks nothing for a step that names no capability", async () => {
                 await seedPlan(planDeclaring());
                 const { launcher } = fakeLauncher();
@@ -1303,7 +1315,11 @@ describe("the launch of a stored plan, over a real database", () => {
                     await launchPlanRun(deps({ refStorePath: join(tmpdir(), "no-such-ref-store-dir") }), { session: session(), planId: PLAN_ID })
                 )._unsafeUnwrapErr();
 
-                expect(refusal).toEqual({ type: "references_missing", missing: [], unavailable: "the reference store could not be read" });
+                expect(refusal).toEqual({
+                    type: "references_missing",
+                    missing: [],
+                    unavailable: `the reference store at ${join(tmpdir(), "no-such-ref-store-dir")} could not be read`,
+                });
             });
 
             it("carries the datasets into the error the tool body throws, with no remedy command", () => {

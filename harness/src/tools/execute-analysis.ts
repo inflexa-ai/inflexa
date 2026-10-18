@@ -198,9 +198,15 @@ async function resolvePlanReferences(refStorePath: string | undefined, plan: Ana
         for (const dataset of capabilityDataRequirement(step.agent, step.capability)) declared.add(dataset);
     }
     if (declared.size === 0) return ok(0);
-    const installed = await readInstalledDatasetIds(refStorePath === undefined ? {} : { refStorePath });
+    // An unbound store is an embedder that provisions reference data some other way, exactly as an
+    // unbound farm seam leaves the package pass at once. Reading the container path here instead
+    // would fail on every host and refuse every launch that declares a capability.
+    if (refStorePath === undefined) return ok(0);
+    const installed = await readInstalledDatasetIds({ refStorePath });
     if (installed === undefined) {
-        return err({ type: "references_missing", missing: [], unavailable: "the reference store could not be read" });
+        // The path is named, because the reason is a fault of the environment and the reader has to
+        // know WHICH store did not answer. A bare "could not be read" sends a caller round in circles.
+        return err({ type: "references_missing", missing: [], unavailable: `the reference store at ${refStorePath} could not be read` });
     }
     const missing = [...declared].filter((dataset) => !installed.has(dataset)).sort();
     if (missing.length > 0) return err({ type: "references_missing", missing });

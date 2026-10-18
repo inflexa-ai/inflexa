@@ -348,6 +348,10 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             ...(farmLockFile ? { farmLockFile } : {}),
             ...(imagePackagesFile ? { imagePackagesFile } : {}),
             ...(readPoolInventory ? { readPoolInventory } : {}),
+            // The pre-launch pass resolves the declared reference data of a capability against the
+            // store. Without this path it would read the CONTAINER path, which no host holds, and
+            // refuse every launch of a plan that declares one.
+            ...(refStorePath ? { refStorePath } : {}),
             ...(deps.extendAnalysisFarm ? { extendAnalysisFarm: deps.extendAnalysisFarm } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
             ...(usageRecorder ? { usageRecorder } : {}),
