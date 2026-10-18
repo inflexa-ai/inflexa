@@ -24,7 +24,7 @@ export const meta: AgentMeta = {
         "hematological toxicity assessment",
         "mouse KO phenotype lookup",
         "cross-species baseline expression lookup",
-        "matched negative gene set for a tissue risk benchmark from tissue expression, PPI connectivity, and mouse and human phenotype annotations (annotation-free or tested-clean negatives)",
+        "matched negative gene set for a tissue risk benchmark (annotation_free or tested_clean negatives) matched on tissue expression and PPI connectivity with mouse and human phenotype annotation exclusions",
         "expression and PPI connectivity matching",
     ],
     suitableFor: [

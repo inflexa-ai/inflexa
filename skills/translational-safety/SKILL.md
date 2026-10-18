@@ -240,8 +240,8 @@ Two definitions exist, and the request selects one:
 
 | Definition | Meaning | Pool |
 |-|-|-|
-| `annotation_free` | No tissue annotation in the mouse screens, the human phenotypes, or the safety events. Absence of evidence. | Large |
-| `tested_clean` | A mouse knockout passed the tissue screen with no hit. Evidence of absence. | Small |
+| `annotation_free` | No hit in the four exclusion sources: the mouse phenotypes, the human phenotypes, the safety events, and the viability calls. Absence of evidence. | Large |
+| `tested_clean` | The `annotation_free` rule, and a tested early-adult colony with no hit. Evidence of absence. | Small |
 
 When the briefing names no definition, make both sets, each with its own
 diagnostics. Never make one set with a silent choice. A lethal knockout leaves
@@ -278,7 +278,7 @@ name the absent source instead.
 - Infer the species of a gene symbol from its case — match the human
   table and the mouse table, then map the ortholog
 - Join the expression table to the network on the symbol — a renamed
-  gene drops out in silence; join on the Ensembl gene id
+  gene drops out in silence, thus join on the Ensembl gene id
 - Compute network metrics on the full graph — the positives and the
   negatives must share one induced subgraph
 - Report a clean mouse knockout screen as proof of safety — it is

@@ -922,7 +922,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 version: "12.0",
                 title: "STRING human protein-protein interaction network",
                 description:
-                    "STRING v12.0 functional protein association network for Homo sapiens: every protein pair with a combined confidence score, the genome-scale graph network-proximity methods measure distances over. Roughly 85 MB across two files — the network itself and the identifier mapping it cannot be read without. Immutable v12.0 release.",
+                    "STRING v12.0 functional protein association network for Homo sapiens: every protein pair with a combined confidence score, the genome-scale graph network-proximity methods measure distances over. Roughly 85 MB across two files — the network itself and the identifier mapping it cannot be read without. For an exact join to an Ensembl-keyed table, add `string-aliases-human`. Immutable v12.0 release.",
                 organism: "human",
                 sourceUrl: "https://string-db.org/cgi/access",
                 license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
@@ -940,7 +940,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                         url: "https://stringdb-downloads.org/download/protein.info.v12.0/9606.protein.info.v12.0.txt.gz",
                         format: "tsv",
                         contents:
-                            "Gzipped TSV, ~19,700 rows, header '#string_protein_id preferred_name protein_size annotation'. Mandatory rather than supplementary: preferred_name is the gene symbol for each STRING id in the links file, and without this join the network cannot be connected to a gene list, a drug-target set, or any other dataset here.",
+                            "Gzipped TSV, ~19,700 rows, header '#string_protein_id preferred_name protein_size annotation'. Mandatory rather than supplementary: preferred_name is the only name this dataset gives each STRING id of the links file, so without this join the network carries no gene names at all. preferred_name is a symbol, and a symbol join silently drops a renamed gene: for an exact identifier join, add `string-aliases-human` and key on its Ensembl gene id rows instead.",
                     },
                 ],
             },
@@ -952,7 +952,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 version: "12.0",
                 title: "STRING human protein aliases",
                 description:
-                    "The STRING v12.0 alias table for Homo sapiens: every external identifier of each STRING protein, with its source. The Ensembl gene id rows give the exact join from the STRING network to a GTEx or a GENCODE table, which the symbol of the info file does not give for a renamed gene. About 20 MB. Immutable v12.0 release.",
+                    "The STRING v12.0 alias table for Homo sapiens: every external identifier of each STRING protein, with its source. The companion of `string-ppi-human`: its Ensembl gene id rows give the exact join from the STRING network to a GTEx or a GENCODE table, which the symbol of the info file does not give for a renamed gene. About 20 MB. Immutable v12.0 release.",
                 organism: "human",
                 sourceUrl: "https://string-db.org/cgi/access",
                 license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
@@ -1030,21 +1030,21 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                         url: "https://ftp.ebi.ac.uk/pub/databases/impc/all-data-releases/release-24.0/results/genotype-phenotype-assertions-ALL.csv.gz",
                         format: "csv",
                         contents:
-                            "Gzipped CSV with a header, about 4.8 MB, one row per significant genotype-phenotype association. Key columns: marker_accession_id (MGI id), marker_symbol, zygosity, top_level_mp_term_id, top_level_mp_term_name, mp_term_id, mp_term_name, p_value, effect_size, resource_name (IMPC, 3I, EUROPHENOME, MGP). Filter top_level_mp_term_id to one organ system, for example MP:0005370 for the liver and biliary system. A gene absent here was either clean or never tested: the completeness file tells which.",
+                            "Gzipped CSV with a header, about 4.8 MB, one row per significant genotype-phenotype association. Key columns: marker_accession_id (MGI id), marker_symbol, zygosity, top_level_mp_term_id, top_level_mp_term_name, mp_term_id, mp_term_name, p_value, effect_size, resource_name (IMPC, EuroPhenome, MGP, 3i, pwg — matched case-sensitively). zygosity is hemizygote, heterozygote, or homozygote. top_level_mp_term_id holds a comma-separated list on 13,643 of its 67,350 rows, so split it and test membership: equality against MP:0005370 (liver and biliary system) returns 509 rows over 322 genes, membership returns 612 over 351. A gene absent here was either clean or never tested: the completeness file tells which.",
                     },
                     {
                         path: "procedureCompletenessAndPhenotypeHits.csv.gz",
                         url: "https://ftp.ebi.ac.uk/pub/databases/impc/all-data-releases/release-24.0/results/procedureCompletenessAndPhenotypeHits.csv.gz",
                         format: "csv",
                         contents:
-                            "Gzipped CSV with a quoted header, about 24 MB, one row per gene, colony, zygosity, and life stage. The '|'-separated columns 'Procedure Stable Id: Successful' and 'Parameter Name: Successful' say what was tested (the clinical chemistry procedure ids share the prefix IMPC_CBC_, with versions such as IMPC_CBC_001, and parameters such as 'Alanine aminotransferase' and 'Aspartate aminotransferase'); 'Top-level MP Accession Id: Significant' and 'MP Accession Id: Significant' say what was found. The only file that separates a gene tested with no hit from a gene never tested.",
+                            "Gzipped CSV with a quoted header, about 24 MB, one row per gene, colony, zygosity, and life stage. The '|'-separated columns 'Procedure Stable Id: Successful' and 'Parameter Name: Successful' say what was tested (the clinical chemistry procedure ids share the prefix IMPC_CBC_, with versions such as IMPC_CBC_001, and parameter names written out in full — 'Alanine aminotransferase', 'Aspartate aminotransferase', 'Alkaline phosphatase', 'Total bilirubin' — never abbreviated to ALT or AST); 'Top-level MP Accession Id: Significant' and 'MP Accession Id: Significant' say what was found. 'Life Stage' is one of seven values, 'Early adult' among them, and 'Zygosity' includes hemizygote beside homozygote and heterozygote. The only file that separates a gene tested with no hit from a gene never tested.",
                     },
                     {
                         path: "viability.csv.gz",
                         url: "https://ftp.ebi.ac.uk/pub/databases/impc/all-data-releases/release-24.0/results/viability.csv.gz",
                         format: "csv",
                         contents:
-                            "Gzipped CSV with a quoted header, about 470 KB, one row per colony and zygosity. Key columns: 'Gene Accession Id' (MGI id), 'Gene Symbol', 'Zygosity', 'Viability Phenotype HOMs/HEMIs' (lowercase: lethal, subviable, viable), 'Supporting Data' (the long form, for example 'Homozygous - Viable'), 'Viability Call Method' (curated or computed). Lethal takes precedence over subviable within one gene.",
+                            "Gzipped CSV with a quoted header, about 470 KB, one row per colony and zygosity. Key columns: 'Gene Accession Id' (MGI id), 'Gene Symbol', 'Zygosity', 'Viability Phenotype HOMs/HEMIs' (lowercase: lethal, subviable, viable), 'Supporting Data' (the long form, for example 'Homozygous - Viable'), 'Viability Call Method' (curated or computed). 'Zygosity' is homozygote or hemizygote, so an X-linked knockout carries a hemizygous call and no homozygous one. One gene can hold different calls on different colonies — 14 genes hold both a lethal and a viable call — so lethal takes precedence over subviable and over viable within one gene.",
                     },
                 ],
             },
@@ -1115,7 +1115,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                         url: "https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.09/output/target_safety_event/part-00000-e457d966-d50e-4afc-841d-547765a1e4d7-c000.zstd.parquet",
                         format: "parquet",
                         contents:
-                            "Zstd parquet, about 120 KB, 4,387 rows, one row per target and safety event. Columns: targetId (Ensembl gene id), event, eventId (EFO), effects (direction, dosing), biosamples (tissueLabel, tissueId as UBERON, cell fields), datasource, literature (PMID), studies. 78 rows name the liver biosample UBERON_0002107 and 157 rows name a liver event. The sources are curated panels, not an exhaustive list: absence is not safety.",
+                            "Zstd parquet, about 120 KB, 4,387 rows, one row per target and safety event. Columns: targetId (Ensembl gene id), event, eventId (EFO), effects (direction, dosing), biosamples (tissueLabel, tissueId as UBERON, cell fields), datasource, literature (PMID), studies. biosamples is null on 1,786 rows, so guard the test. tissueId carries one term in two spellings — UBERON_0002107 on 74 rows, UBERON:0002107 on 6 — and event is free text in mixed case ('Hepatotoxicity', 'Increased, Liver Steatosis'), so match both spellings and ignore case: a liver filter then flags 88 targets rather than 57. The sources are curated panels, not an exhaustive list: absence is not safety.",
                     },
                 ],
             },

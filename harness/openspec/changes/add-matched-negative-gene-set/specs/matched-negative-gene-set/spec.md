@@ -2,7 +2,7 @@
 
 ### Requirement: The catalog holds the phenotype sources, the homology map, and the STRING aliases
 
-The reference-data catalog MUST hold six datasets with the ids `impc-phenotyping`, `hpo-annotations`, `opentargets-mouse-phenotype`, `opentargets-target-safety-event`, `mgi-mouse-human-homology`, and `string-aliases-human`. The `string-aliases-human` dataset MUST hold the artifact `9606.protein.aliases.v12.0.txt.gz` at the version 12.0, as a companion of `string-ppi-human`. The `string-ppi-human` dataset MUST NOT change, because a new artifact at the same version invalidates the receipt of each existing install. Each of the six datasets MUST be opt-in, with `recommended: false`.
+The reference-data catalog MUST hold six datasets with the ids `impc-phenotyping`, `hpo-annotations`, `opentargets-mouse-phenotype`, `opentargets-target-safety-event`, `mgi-mouse-human-homology`, and `string-aliases-human`. The `string-aliases-human` dataset MUST hold the artifact `9606.protein.aliases.v12.0.txt.gz` at the version 12.0, as a companion of `string-ppi-human`. The version and the artifact list of `string-ppi-human` MUST NOT change. A new artifact at the same version invalidates the receipt of each existing install. Its `contents` text MUST name `string-aliases-human` as the exact identifier join, because the receipt holds the version and the artifact paths only. Each of the six datasets MUST be opt-in, with `recommended: false`.
 
 The `contents` text of each artifact MUST name the key columns and the identifier space. Where an absent row is not a negative, the text MUST say so. The `opentargets-mouse-phenotype` and `mgi-mouse-human-homology` datasets MUST declare no organism, because each table joins the mouse to the human. The `hpo-annotations` dataset MUST carry the identifier `LicenseRef-HPO` and the URL of the HPO license page, because the HPO license has no SPDX identifier.
 
@@ -40,20 +40,29 @@ The `translational-safety` skill pack MUST hold the reference file `references/m
 - the universe rule: the protein-coding genes, the top 10,000 by the median TPM of the tissue, with the gene type and the tissue as parameters
 - the network rule: the STRING edges with a combined score of 700 or more between two universe genes, joined on the Ensembl gene id
 - the metrics: the degree and the betweenness on the induced subgraph
-- the isolated-gene rule: a universe gene with no STRING node keeps degree 0 and betweenness 0, with the flag `in_string` false
-- the four exclusion sources with their term ids, and the rule that DILImap is a positive source and not an exclusion source
-- the viability rule: a homozygous lethal IMPC call excludes a gene from both tiers, and a subviable call is a flag
-- the tested rule: a colony is tested when a procedure id with the prefix `IMPC_CBC_` is successful with the four parameters
+- the isolated-gene rule: a universe gene with no STRING protein in the alias table gets the flag `in_string` false
+- the other case of the flag: a gene with a protein and no edge keeps the flag `in_string` true
+- the covariate columns: the base-10 logarithm of the value plus 1, under the names `log_tpm`, `log_degree`, and `log_betweenness`
+- the four exclusion sources with their term ids, named as the mouse phenotypes, the human phenotypes, the safety events, and the viability calls
+- the rule that DILImap is a positive source and not an exclusion source
+- the identifier rules: the two spellings of the MGI id, and the two spellings of the tissue id
+- the text rules: the case of the event text, and the list in the top-level class column
+- the viability rule: a homozygous or a hemizygous lethal IMPC call excludes a gene from both tiers
+- the precedence rule: a subviable call is a flag, and a lethal call outranks each other call of the gene
+- the tested rule: a colony is tested when a procedure id with the prefix `IMPC_CBC_` is successful with the four parameter names in full
 - the two definitions `annotation_free` and `tested_clean`, each with its rule, its pros, and its cons, and the tier rule for the zygosity
 - the matching cells: joint cells of 10 expression deciles by 5 degree quintiles by 5 betweenness quintiles, cut on the positives
 - the matching draw: the quota per cell, the draw without replacement with a fixed seed, and the two shortfall rules
-- the diagnostics: the SMD and the KS statistic per covariate, and one AUC of a logistic model on the three covariates
+- the diagnostics: the SMD, the KS statistic, and the p-value per matched covariate
+- the AUC: one logistic model on the three matched covariates, and a null value when a class holds fewer than 5 genes
 - the studied-gene diagnostic: the count of GO gene sets per gene, reported with its SMD and not matched
 - the absent-source rule
 - the five output files with their columns, as the design gives them
 - the anti-patterns
 
-The reference MUST name each dataset by what it is. It MUST NOT name a path, a directory, a file name, a format, or a tool. The tissue MUST be a parameter, and the liver MUST be the worked example. The `SKILL.md` of the pack MUST point to the reference, and it MUST list the reference in its References table. It MUST carry the five anti-patterns in its "Do NOT" section.
+The reference MUST name each dataset of the reference store by what it is. It MUST NOT name a path, a directory, a file name, a format, or a tool of the reference store. It MUST name the five output files that the run writes. Those files are the deliverable of the step, not a detail of the installer.
+
+The tissue MUST be a parameter, and the liver MUST be the worked example. The `SKILL.md` of the pack MUST point to the reference, and it MUST list the reference in its References table. It MUST carry the five anti-patterns in its "Do NOT" section.
 
 #### Scenario: An agent finds the method by a search
 
@@ -64,7 +73,7 @@ The reference MUST name each dataset by what it is. It MUST NOT name a path, a d
 
 - **WHEN** the reference is read
 - **THEN** it names the expression table, the network, the phenotype sources, and the homology map by what each is
-- **AND** it names no path, no file name, no format, and no tool
+- **AND** it gives no path, no file name, no format, and no tool for any of them
 
 #### Scenario: The tissue is a parameter
 
@@ -73,7 +82,7 @@ The reference MUST name each dataset by what it is. It MUST NOT name a path, a d
 
 ### Requirement: The negative pool excludes a gene with an unknown liver label
 
-A gene with a homozygous lethal viability call MUST be excluded from both tiers when the parameter `exclude_lethal` is on. The parameter MUST be on by default. A subviable call MUST be a value of the `viability` column, not an exclusion. The report MUST give the count of the candidates that the viability rule excluded, and the lethal share of the positives. A lethal knockout has no liver phenotype because nobody phenotyped it, thus its label is unknown.
+A gene with a homozygous or a hemizygous lethal viability call MUST be excluded from both tiers when the parameter `exclude_lethal` is on. A lethal call of one colony MUST take precedence over a subviable and over a viable call of another colony of the same gene. The parameter MUST be on by default. A subviable call MUST be a value of the `viability` column, not an exclusion. The report MUST give the count of the candidates that the viability rule excluded, and the lethal share of the positives. A lethal knockout has no liver phenotype because nobody phenotyped it, thus its label is unknown.
 
 #### Scenario: A lethal gene leaves the pool
 
@@ -87,17 +96,24 @@ A gene with a homozygous lethal viability call MUST be excluded from both tiers 
 
 ### Requirement: The matching balances the joint distribution
 
-The matching MUST cut the positives into joint cells: 10 deciles of the log expression by 5 quintiles of the log degree by 5 quintiles of the log betweenness. The quota of a cell MUST be the target count times the share of the positives in the cell. A shortfall in a cell MUST take the nearest candidates in the standardized space. A universe gene with no STRING node MUST keep degree 0 and betweenness 0, and it MUST stay in the pool with the flag `in_string` false. A positive of the `mouse_class` route MUST leave the matching, and every human gene of its class MUST be excluded from the pool.
+The matching MUST cut the positives into joint cells: 10 deciles of the log expression by 5 quintiles of the log degree by 5 quintiles of the log betweenness. The quota of a cell MUST be the target count times the share of the positives in the cell. A shortfall in a cell MUST take the nearest candidates in the standardized space.
+
+A universe gene with no edge in the subgraph MUST keep degree 0 and betweenness 0, and it MUST stay in the pool. The flag `in_string` MUST be false only for a gene with no STRING protein in the alias table. The flag MUST NOT come from the degree. A positive of the `mouse_class` route MUST leave the matching, and every human gene of its class MUST be excluded from the pool.
 
 #### Scenario: A cell is short
 
 - **WHEN** a cell holds fewer candidates than its quota
 - **THEN** the step takes the nearest candidates in the standardized space, marks them `nearest` in the `match_method` column, and counts them in the report
 
-#### Scenario: A gene with no STRING node
+#### Scenario: A gene with no STRING protein
 
-- **WHEN** a positive or a candidate has no node in the STRING graph
+- **WHEN** a positive or a candidate has no protein in the alias table
 - **THEN** its degree and betweenness are 0, its `in_string` flag is false, and it stays in the matching
+
+#### Scenario: A gene with a protein and no edge
+
+- **WHEN** a universe gene has a STRING protein and no edge at the cutoff inside the universe
+- **THEN** its degree and betweenness are 0, its `in_string` flag is true, and it stays in the matching
 
 #### Scenario: A homology class with two human genes
 
@@ -106,7 +122,9 @@ The matching MUST cut the positives into joint cells: 10 deciles of the log expr
 
 ### Requirement: An absent exclusion source stops the negatives file
 
-When a source of step 3 is absent from the reference store, the step MUST write the exclusion audit with the sources that it has. It MUST NOT write `negatives.csv`, and it MUST name the absent source in its summary. The `annotation_free` label MUST mean that all four sources were applied. Each definition names the sources that it needs. The `tested_clean` definition needs the IMPC completeness file, and both tiers need the viability table when `exclude_lethal` is on. A definition whose source is absent gets no set, and the other definition still runs. The capability phrase of the agent MUST name the data classes of the method. Thus the planner can ask for an absent source before the run.
+When a source of step 3 is absent from the reference store, the step MUST write the exclusion audit with the sources that it has. It MUST NOT write `negatives.csv`, and it MUST name the absent source in its summary. The `annotation_free` label MUST mean that these four exclusion sources were applied: the mouse phenotypes, the human phenotypes, the safety events, and the viability calls. The viability calls count only when `exclude_lethal` is on. The `tested_clean` definition also needs the IMPC completeness file. A definition whose source is absent gets no set, and the other definition still runs.
+
+Two sources outside step 3 have their own rule. Without the STRING alias table the step MUST compute no network metrics and write no negatives file. Without the homology reports each mouse-only symbol MUST get the status `unresolved`. The capability phrase of the agent MUST name the data classes of the method. Thus the planner can ask for an absent source before the run.
 
 #### Scenario: The HPO table is absent
 
@@ -114,10 +132,16 @@ When a source of step 3 is absent from the reference store, the step MUST write 
 - **THEN** it writes `positives_resolved.csv`, `universe_metrics.csv`, and `exclusion_audit.csv` with three sources
 - **AND** it writes no `negatives.csv`, and its summary names the HPO table
 
-#### Scenario: The IMPC completeness file is absent
+#### Scenario: The mouse screens are absent and the lethal rule is off
 
-- **WHEN** the step finds the four exclusion sources but no IMPC completeness file
-- **THEN** it writes the `annotation_free` set, it writes no `tested_clean` set, and its summary names the completeness file
+- **WHEN** the step finds no IMPC phenotyping release, and the request sets `exclude_lethal` to off
+- **THEN** it writes the `annotation_free` set from the mouse phenotype dataset, the HPO table, and the safety events
+- **AND** it writes no `tested_clean` set, and its summary names the absent release
+
+#### Scenario: The STRING alias table is absent
+
+- **WHEN** the step finds the network but no alias table
+- **THEN** it computes no network metrics, it writes no negatives file, and its summary names the absent table
 
 #### Scenario: The planner sees the sources absent
 
@@ -150,7 +174,9 @@ A run that makes a matched negative gene set MUST make the set of the definition
 
 ### Requirement: The translational-safety agent advertises the capability
 
-The `AgentMeta` of `translational-safety-agent` MUST carry two capability phrases. The first is "matched negative gene set for a tissue risk benchmark from tissue expression, PPI connectivity, and mouse and human phenotype annotations (annotation-free or tested-clean negatives)". The second is "expression and PPI connectivity matching". Its `suitableFor` MUST include `gene-lists`.
+The `AgentMeta` of `translational-safety-agent` MUST carry two capability phrases. The first is "matched negative gene set for a tissue risk benchmark (annotation_free or tested_clean negatives) matched on tissue expression and PPI connectivity with mouse and human phenotype annotation exclusions". The second is "expression and PPI connectivity matching". Neither phrase holds a comma, because each renderer of the catalog joins the phrases with a comma. Each phrase spells a definition as the skill pack spells it, because `skill_search` matches a substring. Its `suitableFor` MUST include `gene-lists`.
+
+The planner prompt MUST carry a routing rule that the question of a gene-list step selects the agent. Without the rule the existing rule of the prompt sends each gene-list step to the enrichment agent, which does not hold the `translational-safety` pack.
 
 #### Scenario: The planner sees the two definitions and the data classes
 
@@ -160,7 +186,7 @@ The `AgentMeta` of `translational-safety-agent` MUST carry two capability phrase
 #### Scenario: A gene list with a tissue risk question routes to the agent
 
 - **WHEN** a request gives a gene list and asks for negatives matched on tissue expression and network connectivity
-- **THEN** the planner assigns the steps to `translational-safety-agent`
+- **THEN** the planner assigns the steps to `translational-safety-agent`, because its routing rule reads the question of the step and not the data object alone
 
 ### Requirement: One run writes the deliverable
 
@@ -170,7 +196,8 @@ A run on the positives MUST write five files: `output/positives_resolved.csv`, `
 
 - **WHEN** a run takes the 1215 symbols and the liver as the tissue
 - **THEN** it writes the five files and the signed record
-- **AND** the balance report gives the SMD and the KS statistic per covariate, one AUC per set, the seed, and the parameters
+- **AND** the balance report gives the SMD, the KS statistic, and the p-value per matched covariate
+- **AND** it gives one AUC per set, the studied-gene residual, the seed, and the parameters
 
 #### Scenario: The matching step reads no reference file
 

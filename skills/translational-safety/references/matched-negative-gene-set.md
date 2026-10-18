@@ -37,9 +37,24 @@ Ask the reference inventory available to you for each dataset by what it is. Rea
 
 ### When a source is absent
 
-Each definition has its own necessary sources. The `annotation_free` label means that all four sources of step 3 were applied. The procedure completeness is also necessary for the `tested_clean` definition. The viability calls are necessary for both tiers when `exclude_lethal` is on.
+Each definition has its own necessary sources. The `annotation_free` label means that these four exclusion sources were applied:
 
-If a source is absent, write the resolution, the universe table, and the audit with the sources that you have. Write no negatives file for a definition whose source is absent. Name the absent source in your summary. A negatives file with a wrong label is worse than none. If the GO collection is absent, report that the diagnostic was not computed, and continue.
+- the mouse phenotypes, from the Open Targets dataset and from the IMPC assertions
+- the human phenotypes, from the gene-to-phenotype table and its ontology
+- the safety events
+- the viability calls, when `exclude_lethal` is on
+
+The procedure completeness is also necessary for the `tested_clean` definition.
+
+Two sources outside step 3 are also necessary. The alias table is necessary for each definition, because the network metrics need the Ensembl join. The homology reports are necessary when an input symbol matches the mouse table only.
+
+If a source is absent, write the resolution, the universe table, and the audit with the sources that you have. Write no negatives file for a definition whose source is absent. Name the absent source in your summary. A negatives file with a wrong label is worse than none.
+
+Three absent sources have their own rule:
+
+- If the alias table is absent, compute no network metrics and write no negatives file. Report the absent table.
+- If the homology reports are absent, give each mouse-only symbol the status `unresolved`. Report the absent reports.
+- If the GO collection is absent, report that the diagnostic was not computed, and continue.
 
 ## Step 1: resolve the positives
 
@@ -51,10 +66,16 @@ Do not infer the species from the case of a symbol. Match each symbol against th
 | `human_synonym` | A match on the human synonyms column that names one gene. | `resolved` |
 | `mouse_ortholog` | A match on the mouse symbol or synonyms column, then the one-to-one ortholog report. | `resolved` |
 | `mouse_class` | No one-to-one ortholog: the homology class report, with the class size in the row. | `many` |
-| `ambiguous` | A human gene and a different mouse gene both match. | `ambiguous` |
-| `unresolved` | No match in either table. | `unresolved` |
+| `ambiguous` | More than one candidate human gene, from one table or from both tables. | `ambiguous` |
+| `unresolved` | No match, or a mouse gene with no row in either homology report. | `unresolved` |
 
-The human Ensembl gene id comes from the cross-reference column of the human gene table. A human gene without an Ensembl cross-reference is `resolved`, but it is outside the universe. A `mouse_class` positive leaves the matching. Every human gene of its class is excluded from the pool in step 3, because one of them is the positive.
+A synonym that names more than one human gene is `ambiguous`, not `human_synonym`. A homology class that holds no human gene is `unresolved`, not `mouse_class`.
+
+The human Ensembl gene id comes from the cross-reference column of the human gene table. A human gene without an Ensembl cross-reference is `resolved`, but it is outside the universe.
+
+A positive that does not reach one human gene still excludes each of its candidates. A `mouse_class` positive and an `ambiguous` positive both leave the matching. Every human gene of the class of a `mouse_class` positive is excluded from the pool in step 3, because one of them is the positive. Each candidate human gene of an `ambiguous` positive is excluded for the same reason.
+
+The homology reports key the mouse gene on the MGI accession id and on the mouse NCBI gene id. The cross-reference column of the mouse gene table writes the MGI id with the prefix two times, for example `MGI:MGI:87854`. The reports and the mouse screens write it one time, for example `MGI:87854`. Strip the repeated prefix before a join, or join on the NCBI gene id instead. Write the single-prefix form in the `mouse_mgi_id` column.
 
 ## Step 2: the universe and the metrics
 
@@ -64,13 +85,17 @@ The human Ensembl gene id comes from the cross-reference column of the human gen
 | Universe | The top `universe_size` of those genes by the median TPM of the tissue. |
 | Network | The edges with a combined score of `score_cutoff` or more between two universe genes. Join on the Ensembl gene id through the alias table, never on the symbol. |
 | Metrics | The degree and the betweenness on that induced subgraph, with igraph. |
-| Isolated genes | A universe gene with no node in the network keeps degree 0 and betweenness 0, with the flag `in_string` false. It stays in the pool. |
+| Covariate columns | `log_tpm`, `log_degree`, and `log_betweenness`: the base-10 logarithm of the value plus 1. |
+| Genes off the network | A universe gene with no STRING protein in the alias table gets the flag `in_string` false. |
+| Isolated genes | A universe gene with a protein and no edge in the subgraph keeps the flag `in_string` true. |
+| Both cases | The degree and the betweenness are 0, and the gene stays in the pool. |
 | Reports | The count of universe genes with no node, per class. The positives outside the universe, which leave the matching. |
 
 The expression table carries a versioned Ensembl gene id. Strip the version before the join. Compute the metrics once, on the one induced subgraph that the positives and the candidates share. An exact betweenness on 10,000 nodes and about 150,000 edges takes under one minute.
 
 ```python
 import igraph as ig
+import numpy as np
 import pandas as pd
 
 # edges: two columns of Ensembl gene ids, both genes in the universe, score >= cutoff
@@ -78,8 +103,12 @@ g = ig.Graph.TupleList(edges[["gene_a", "gene_b"]].itertuples(index=False), dire
 g.simplify()  # the network lists each edge twice, once per direction
 metrics = pd.DataFrame({"ensembl_gene_id": g.vs["name"], "degree": g.degree(), "betweenness": g.betweenness()})
 universe = universe.merge(metrics, on="ensembl_gene_id", how="left")
-universe["in_string"] = universe["degree"].notna()
+# the flag is the presence of a protein, not the presence of an edge: the vertex list
+# holds only the genes that kept an edge inside the universe at the cutoff
+universe["in_string"] = universe["ensembl_gene_id"].isin(alias_ensembl_ids)  # every ENSG of the alias table
 universe[["degree", "betweenness"]] = universe[["degree", "betweenness"]].fillna(0)
+for log_col, source_col in (("log_tpm", "median_tpm"), ("log_degree", "degree"), ("log_betweenness", "betweenness")):
+    universe[log_col] = np.log10(universe[source_col] + 1)
 ```
 
 ## Step 3: the exclusion sources
@@ -89,10 +118,16 @@ universe[["degree", "betweenness"]] = universe[["degree", "betweenness"]].fillna
 | Customer positives | The resolved list | Every resolved gene is excluded. Every human gene of a `mouse_class` class is excluded. |
 | Mouse phenotypes | The Open Targets mouse phenotype dataset | A top-level class MP:0005370, or a term MP:0002941, MP:0005343, MP:0002968, or MP:0005344. |
 | Human phenotypes | The HPO gene-to-phenotype table | A term in the descendants of HP:0001392 or HP:0004297, from the ontology. |
-| Safety events | The Open Targets target safety events | A biosample UBERON_0002107, or an event text that contains hepat, liver, bilirubin, or steatos. |
-| Viability | The IMPC viability calls | A homozygous `lethal` call, when `exclude_lethal` is on. A `subviable` call is a value of the `viability` column, not an exclusion. |
+| Safety events | The Open Targets target safety events | A biosample tissue id UBERON_0002107 in either spelling, or an event text that holds hepat, liver, bilirubin, or steatos, without case. |
+| Viability | The IMPC viability calls | A `lethal` call of a homozygous or a hemizygous colony, when `exclude_lethal` is on. A `subviable` call is a value of the `viability` column, not an exclusion. |
 
-The four MP terms are the circulating ALT, AST, alkaline phosphatase, and bilirubin increases. They sit under the homeostasis class, not under the liver class, thus the list names them. For another tissue, replace the organ class, the clinical terms, the HP roots, the biosample id, and the event words. The method does not change.
+The four MP terms are the circulating ALT, AST, alkaline phosphatase, and bilirubin increases. They sit under the homeostasis class, not under the liver class, thus the list names them. The top-level class column of the mouse screens holds a list, thus split it before the test.
+
+The tissue id of a safety event carries two spellings, `UBERON_0002107` and `UBERON:0002107`. Match both spellings. The event text is mixed case, for example `Hepatotoxicity` and `Increased, Liver Steatosis`, thus match it without case. A row can carry no biosample value, thus guard the test. One spelling with an exact-case text match finds about two thirds of the targets that carry a curated liver liability.
+
+A `lethal` call of one colony takes precedence over a `subviable` and over a `viable` call of another colony of the same gene. Some genes carry both calls.
+
+For another tissue, replace the organ class, the clinical terms, the HP roots, the biosample id, the event words, and the tested panel below. The method does not change. If the phenotyping release holds no procedure for the tissue, the `tested_clean` definition is not available. Report that, and make the `annotation_free` set.
 
 DILImap is a positive source of the customer, not an exclusion dataset. The IMPC assertions are the second source for the mouse phenotypes. A gene that one source excludes and the other does not goes into the audit with both flags.
 
@@ -128,7 +163,7 @@ def descendants(root, parents):
     return seen
 ```
 
-A colony is tested when its successful procedures hold an id with the prefix `IMPC_CBC_`, and its successful parameters hold the four clinical chemistry values. The four values are the ALT, the AST, the alkaline phosphatase, and the bilirubin. Take the early-adult life stage. A gene with no tested colony is `not_tested`, which is not a clean screen.
+A colony is tested when its successful procedures hold an id with the prefix `IMPC_CBC_`, and its successful parameters hold the four clinical chemistry names. The four names are `Alanine aminotransferase`, `Aspartate aminotransferase`, `Alkaline phosphatase`, and `Total bilirubin`. The parameter column holds the full name and never the abbreviation, thus a test for ALT or AST matches no row. Take the life stage `Early adult`. A gene with no tested colony is `not_tested`, which is not a clean screen.
 
 ## Step 4: the two definitions
 
@@ -137,13 +172,15 @@ A colony is tested when its successful procedures hold an id with the prefix `IM
 | `annotation_free` (tier 2) | No hit in any source of step 3. | A large pool. The matching reaches the target. The exclusion is broad. | Absence of evidence: an unstudied gene passes. Unknown positives add label noise. A model can learn studied against unstudied. |
 | `tested_clean` (tier 1) | Tier 2, and a tested early-adult colony with no significant term of step 3. | Evidence of absence. Less annotation bias. | A small pool, often below the target after the matching. IMPC selected the genes. A lethal knockout is absent, and such genes are hubs. Mouse evidence for a human label. |
 
-The tier column records the zygosity. A homozygous colony gives `tested_clean`, and a heterozygote-only colony gives `tested_clean_het`. With `exclude_lethal` on, the `tested_clean_het` tier is nearly empty, because a heterozygote-only colony is almost always a lethal line. An empty tier is the expected result, not a fault. Report its count.
+The tier column records the zygosity. A homozygous colony gives `tested_clean`. A hemizygous colony of an X-linked gene is a full knockout, thus it also gives `tested_clean`. A heterozygote-only colony gives `tested_clean_het`.
+
+Report the count of each tier. A het-only colony is often a lethal line, and `exclude_lethal` removes the lethal lines. But the het tier can still hold some hundreds of genes. Thus a count of zero is not the expected result, and it is not a check of the step.
 
 ## Step 5: the matching
 
 | Item | Rule |
 | --- | --- |
-| Covariates | log10 of TPM + 1, of degree + 1, and of betweenness + 1. |
+| Covariates | The `log_tpm`, `log_degree`, and `log_betweenness` columns of the universe table. |
 | Cells | Joint cells: 10 deciles of the expression by 5 quintiles of the degree by 5 quintiles of the betweenness, cut on the positives. |
 | Quota | `target_count` times the share of the positives in the cell. Give the rounding remainder to the largest fractions. |
 | Draw | Without replacement, with the seed. |
@@ -192,12 +229,16 @@ For each set, compute these values against the positives in the universe:
 
 | Diagnostic | Rule | Target |
 | --- | --- | --- |
-| SMD | The standardized mean difference per covariate. | Below 0.1. |
-| KS | The two-sample Kolmogorov-Smirnov statistic per covariate. | Small, with its p-value. |
-| AUC | One logistic model on the three covariates, with cross-validation. | Near 0.5. |
-| Studied-gene residual | The SMD of log10 of the GO-set count + 1. Reported, not matched. | State the value. |
+| SMD | The standardized mean difference per matched covariate. | Below 0.1. |
+| KS | The two-sample Kolmogorov-Smirnov statistic per matched covariate, with its p-value. | Small. |
+| AUC | One logistic model on the three matched covariates, with cross-validation. | Near 0.5. |
+| Studied-gene residual | The SMD of `log_go_set_count`. Reported, not matched, and with no KS. | State the value. |
+
+The three matched covariates are `log_tpm`, `log_degree`, and `log_betweenness`. The studied-gene residual is not one of them.
 
 If a target is not met, state why. A shortfall of the pool is the usual reason.
+
+The cross-validation needs at least one positive and one negative in each fold. With fewer than 5 positives or 5 negatives in the universe, write `null` for the AUC, and give the count as the reason. Never write a NaN value, because a JSON reader refuses it.
 
 ```python
 from scipy.stats import ks_2samp
@@ -209,13 +250,22 @@ def smd(a, b):
     return (a.mean() - b.mean()) / np.sqrt((a.var(ddof=1) + b.var(ddof=1)) / 2)
 
 
+FOLDS = 5
+
 balance = {}
 for c in COVARIATES:
     ks = ks_2samp(pos[c], neg[c])
     balance[c] = {"smd": smd(pos[c], neg[c]), "ks": ks.statistic, "ks_p": ks.pvalue}
+# the GO-set count is reported, never matched, and it has no KS row
+has_go = "log_go_set_count" in pos.columns
+balance["studied_gene_residual"] = smd(pos["log_go_set_count"], neg["log_go_set_count"]) if has_go else None
 X = pd.concat([pos[COVARIATES], neg[COVARIATES]])
 y = np.r_[np.ones(len(pos)), np.zeros(len(neg))]
-balance["auc"] = cross_val_score(LogisticRegression(max_iter=1000), X, y, cv=5, scoring="roc_auc").mean()
+# a fold with one class gives a NaN score, which no JSON reader accepts
+if min(len(pos), len(neg)) >= FOLDS:
+    balance["auc"] = float(cross_val_score(LogisticRegression(max_iter=1000), X, y, cv=FOLDS, scoring="roc_auc").mean())
+else:
+    balance["auc"] = None
 ```
 
 ## The output files
@@ -229,6 +279,7 @@ Write the five files under `output/`. The first step writes the first three. The
 | `input_symbol` | The symbol as given. |
 | `route` | `human_symbol`, `human_synonym`, `mouse_ortholog`, `mouse_class`, `ambiguous`, or `unresolved`. |
 | `status` | `resolved`, `many`, `ambiguous`, or `unresolved`. |
+| `status_detail` | The match without case, the count of the candidates, or the absent source. Empty for an exact match. |
 | `human_ensembl_gene_id` | The Ensembl gene id of the human gene. Empty when not resolved. |
 | `human_symbol` | The human symbol. |
 | `human_ncbi_gene_id` | The NCBI gene id of the human gene. |
@@ -243,14 +294,16 @@ Write the five files under `output/`. The first step writes the first three. The
 | `ensembl_gene_id` | The join key. |
 | `symbol` | The symbol of the gene table. |
 | `median_tpm` | The median TPM of the tissue. |
-| `degree` | The degree on the induced subgraph. 0 for a gene with no node. |
-| `betweenness` | The betweenness on the induced subgraph. 0 for a gene with no node. |
-| `in_string` | `false` for a gene with no node. |
+| `degree` | The degree on the induced subgraph. 0 for a gene with no edge. |
+| `betweenness` | The betweenness on the induced subgraph. 0 for a gene with no edge. |
+| `log_tpm`, `log_degree`, `log_betweenness` | The base-10 logarithm of the value plus 1. The matched covariates. |
+| `in_string` | `false` for a gene with no STRING protein in the alias table. |
 | `is_positive` | `true` for a resolved positive. |
 | `viability` | `lethal`, `subviable`, `viable`, or `not_tested`. |
 | `impc_tested` | `true` when a colony passed the tested rule. |
-| `impc_zygosity` | `hom`, `het`, or empty. |
+| `impc_zygosity` | `hom`, `hemi`, `het`, or empty. |
 | `go_set_count` | The count of GO gene sets. Empty when the collection is absent. |
+| `log_go_set_count` | The base-10 logarithm of the count plus 1. The studied-gene residual. |
 
 `exclusion_audit.csv`, one row per gene, source, and term:
 
@@ -279,10 +332,11 @@ Write the five files under `output/`. The first step writes the first three. The
 | Field | Content |
 | --- | --- |
 | `parameters` | The tissue, the universe size, the target count, the score cutoff, the gene type, `exclude_lethal`, and the seed. |
-| `sources_applied` | The four sources, and each dataset source with its version. |
+| `sources_applied` | The four exclusion sources, and each dataset with its version. |
 | `counts` | The positives in and outside the universe, the pool, the negatives, the shortfall, the nearest matches, the rows per route, per source, and per tier, the lethal share of the positives, and the no-node genes per class. |
-| `covariates` | For each of the log expression, the log degree, the log betweenness, and the log GO-set count: the SMD, the KS statistic, and its p-value. |
-| `auc` | The AUC of the logistic model on the three matched covariates. |
+| `covariates` | For each of `log_tpm`, `log_degree`, and `log_betweenness`: the SMD, the KS statistic, and its p-value. |
+| `studied_gene_residual` | The SMD of `log_go_set_count`. Null when the GO collection is absent. |
+| `auc` | The AUC of the logistic model on the three matched covariates. Null when a class holds fewer than 5 genes. |
 
 ## The report
 
@@ -294,6 +348,8 @@ Give the counts per route, per source, and per tier. Give the pros and the cons 
 - Do not join the expression table to the network on the symbol: a renamed gene drops out in silence.
 - Do not compute the metrics on the full network: the positives and the negatives must share one induced subgraph.
 - Do not drop a gene with no network node: both classes must carry such genes in proportion.
+- Do not set the `in_string` flag from the degree: a gene with a protein and no edge is on the network.
+- Do not match an identifier or a free-text event with one spelling and one case: a curated liability then passes as a negative.
 - Do not keep a lethal knockout as a negative by default: its label is unknown.
 - Do not write a negatives file when a source of its definition is absent.
 - Do not report a clean IMPC screen as proof of safety.

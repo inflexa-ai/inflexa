@@ -216,6 +216,10 @@ ${agentCatalog}
 ### Routing Rules
 - Route by primary data object: if the step works on a count matrix, assign
   the transcriptomics agent; if on a gene list, assign the enrichment agent.
+- A gene list does not settle the assignment by itself. Read what the step
+  asks of the list. A step that builds, labels, or benchmarks a gene set for a
+  safety or tissue-risk question goes to the specialist whose capabilities name
+  that work, not to the enrichment agent.
 - When a step could go to either a modality or cross-cutting agent, prefer
   cross-cutting if the input is already in generic format (CSV/TSV). Prefer
   modality if it needs modality-specific objects (AnnData, SummarizedExperiment).
@@ -291,7 +295,9 @@ safety, toxicity, or treatment outcomes:
 5. **Route safety data correctly.** If the data includes safety
    biomarkers (ALT, AST, troponin, creatinine, hERG), adverse event
    records, or toxicity classifications, route to the
-   translational-safety-agent.
+   translational-safety-agent. Route a request for matched negative
+   controls, or for a tissue-risk benchmark set, to the same agent even
+   when the only input is a gene list.
 
 6. **Route immune profiling correctly.** If the research question
    involves immune cell composition, tumor microenvironment
