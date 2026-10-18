@@ -27,6 +27,29 @@ export const PLANNABLE_AGENT_CATALOG: readonly PlannerAgentMeta[] = Object.value
     }));
 
 /**
+ * The reference datasets one capability of one agent cannot run without, by catalog id.
+ *
+ * Empty for an unknown agent, for an agent that declares nothing, and for a phrase no declaration
+ * matches. An unmatched phrase must NOT refuse a launch: the pass can only demand what a
+ * declaration states, so a paraphrased phrase degrades to the behaviour of a step with no phrase.
+ */
+export function capabilityDataRequirement(agentId: string, capability: string): readonly string[] {
+    const entry = SANDBOX_AGENT_META[agentId]?.dataRequirements?.find((requirement) => requirement.capability === capability);
+    return entry?.datasets ?? [];
+}
+
+/** Every declared requirement, for a caller that asks what a capability wants before it plans. */
+export function declaredDataRequirements(): readonly { agentId: string; capability: string; datasets: readonly string[] }[] {
+    return Object.values(SANDBOX_AGENT_META).flatMap((meta) =>
+        (meta.dataRequirements ?? []).map((requirement) => ({
+            agentId: meta.id,
+            capability: requirement.capability,
+            datasets: requirement.datasets,
+        })),
+    );
+}
+
+/**
  * Ids of the agents the planner may assign — the `z.enum` domain for
  * `PlanStepSchema.agent`. A non-empty tuple, as `z.enum` requires.
  */
