@@ -27,10 +27,10 @@
 
 ## 4. The tool
 
-- [ ] 4.1 Add the tool that lists each declared requirement with its agent, its phrase, and the store state of each dataset.
-- [ ] 4.2 Write its description so that a caller learns when to use it at attach time.
-- [ ] 4.3 Attach it to the conversation agent.
-- [ ] 4.4 Add a test that the answer names each absent dataset by its catalog id.
+- [x] 4.1 Add the tool that lists each declared requirement with its agent, its phrase, and the store state of each dataset.
+- [x] 4.2 Write its description so that a caller learns when to use it at attach time.
+- [x] 4.3 Attach it to the conversation agent.
+- [x] 4.4 Add a test that the answer names each absent dataset by its catalog id.
 
 ## 5. The embedder
 

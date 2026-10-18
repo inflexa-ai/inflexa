@@ -87,6 +87,7 @@ import { showUserTool } from "../tools/display/index.js";
 import { createUpdateWorkingMemoryTool } from "../tools/memory/index.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import { createListAvailablePackagesTool } from "../tools/sandbox/list-available-packages.js";
+import { createInspectCapabilityDataTool } from "../tools/capability-data.js";
 import { createListAvailableRefsTool } from "../tools/sandbox/list-available-refs.js";
 import { createExecuteAnalysisTool } from "../tools/execute-analysis.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
@@ -303,6 +304,11 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // blind is how a user gets asked to download something already installed, or
         // told nothing is missing when it is; this is the only tool that can tell.
         createListAvailableRefsTool({ ...(refStorePath ? { refStorePath } : {}) }),
+        // Which datasets a specialist capability cannot run without. `list_available_refs` answers
+        // what the store HOLDS; this answers what a capability WANTS, which no prompt may name and
+        // only a skill otherwise records — and a skill is read by a step agent, not here. Without
+        // it this agent meets an absent source as a dead end and designs around it.
+        createInspectCapabilityDataTool({ ...(refStorePath ? { refStorePath } : {}) }),
         // What the STORE holds, pool-scope where the embedder binds the reader:
         // the ask flow of this agent marks the packages the pool does not hold,
         // and the farm of a new analysis is empty — a farm view here would read
