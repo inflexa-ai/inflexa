@@ -918,6 +918,29 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ],
             },
             {
+                // The companion of string-ppi-human. It is its own dataset because a new
+                // artifact on an installed dataset at the same version invalidates the
+                // receipt of every existing install and forces a full re-download.
+                id: "string-aliases-human",
+                version: "12.0",
+                title: "STRING human protein aliases",
+                description:
+                    "The STRING v12.0 alias table for Homo sapiens: every external identifier of each STRING protein, with its source. The Ensembl gene id rows give the exact join from the STRING network to a GTEx or a GENCODE table, which the symbol of the info file does not give for a renamed gene. About 20 MB. Immutable v12.0 release.",
+                organism: "human",
+                sourceUrl: "https://string-db.org/cgi/access",
+                license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
+                recommendation: { group: "interaction-networks", recommended: false },
+                artifacts: [
+                    {
+                        path: "9606.protein.aliases.v12.0.txt.gz",
+                        url: "https://stringdb-downloads.org/download/protein.aliases.v12.0/9606.protein.aliases.v12.0.txt.gz",
+                        format: "tsv",
+                        contents:
+                            "Gzipped TSV, about 20 MB, header '#string_protein_id alias source', many rows per protein. Filter source == 'Ensembl_gene' to get one Ensembl gene id (ENSG) per STRING protein id: the exact join key to a GTEx or a GENCODE table, which the symbol of the info file does not give for a renamed gene.",
+                    },
+                ],
+            },
+            {
                 id: "gtex-v8",
                 version: "8",
                 title: "GTEx v8 normal tissue expression",
@@ -1485,7 +1508,8 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 description:
                     "Reference map of human CD8+ tumour-infiltrating T cells for ProjecTILs: 11,021 single-cell transcriptomes from 20 samples across 7 tumour types. Projecting onto it places query cells in a fixed, curated state space — naive through effector-memory, tissue-resident and exhausted — rather than in de novo clusters, so results are comparable across datasets. The route to exhaustion and precursor-exhausted phenotyping, which unsupervised clustering names inconsistently. ~258 MB, opt-in.",
                 organism: "human",
-                sourceUrl: "https://figshare.com/articles/dataset/ProjecTILs_human_reference_atlas_of_CD8_tumor-infiltrating_T_cells_CD8_TIL_version_1/23608308",
+                sourceUrl:
+                    "https://figshare.com/articles/dataset/ProjecTILs_human_reference_atlas_of_CD8_tumor-infiltrating_T_cells_CD8_TIL_version_1/23608308",
                 license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
                 recommendation: { group: "cell-typing", recommended: false },
                 artifacts: [

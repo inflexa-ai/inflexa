@@ -1,6 +1,6 @@
 ## 1. The catalog
 
-- [ ] 1.1 Add `string-aliases-human` after `string-ppi-human` in `harness/src/reference-data/catalog.ts`: version 12.0, group `interaction-networks`, organism human, opt-in, with the aliases artifact. Do not change `string-ppi-human`.
+- [x] 1.1 Add `string-aliases-human` after `string-ppi-human` in `harness/src/reference-data/catalog.ts`: version 12.0, group `interaction-networks`, organism human, opt-in, with the aliases artifact. Do not change `string-ppi-human`.
 - [ ] 1.2 Add `mgi-mouse-human-homology` after `uniprot-idmapping-rat`, in the group `gene-identifiers`, with no organism.
 - [ ] 1.3 Add `impc-phenotyping`, `hpo-annotations`, `opentargets-mouse-phenotype`, and `opentargets-target-safety-event` after `hpa-proteinatlas`, in the group `phenotype-annotations`.
 - [ ] 1.4 Set the license of `hpo-annotations` to `LicenseRef-HPO` with the URL of the license page. Put the three conditions of the license in the code comment.

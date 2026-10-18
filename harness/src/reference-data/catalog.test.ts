@@ -77,6 +77,7 @@ describe("reference-data catalog", () => {
             "dorothea-mouse",
             "omnipath-interactions",
             "string-ppi-human",
+            "string-aliases-human",
             "gtex-v8",
             "hpa-proteinatlas",
             "celltypist-immune",
@@ -119,7 +120,8 @@ describe("reference-data catalog", () => {
     // hundreds of MB (or GB) the user did not ask for: the all-species NCBI mapping tables, the
     // Reactome mapping TSVs, the 443 MB tonsil reference, the amplicon taxonomy training sets,
     // the 842 MB PharmCAT genome bundle, and the variant-phasing set whose panel alone is 12.4 GB.
-    // Also opt-in on size: the ~800 MB indexed genome sequences, the two interaction networks,
+    // Also opt-in on size: the ~800 MB indexed genome sequences, the two interaction networks
+    // with the STRING alias table that joins one of them to a gene table,
     // the 137 MB spectral library and the 2.1 GB perturbation-signature collection. And opt-in
     // on scope rather than size, because they answer
     // one field's question: the oncogenic and immunologic gene-set collections. The GO sets and
@@ -141,6 +143,7 @@ describe("reference-data catalog", () => {
             "msigdb-celltype-human",
             "omnipath-interactions",
             "string-ppi-human",
+            "string-aliases-human",
             "projectils-cd8-til-human",
             "projectils-cd4-til-human",
             "projectils-til-mouse",
@@ -391,6 +394,7 @@ describe("reference-data catalog", () => {
                 "scgate-human-generic",
                 "scgate-human-tme",
                 "silva-dada2",
+                "string-aliases-human",
                 "string-ppi-human",
                 "ucsc-chrom-sizes-human",
                 "ucsc-chrom-sizes-mouse",
