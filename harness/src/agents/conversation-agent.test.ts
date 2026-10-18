@@ -64,6 +64,14 @@ describe("createConversationAgent", () => {
         expect(buildAgent().tools.map((tool) => tool.id)).toContain("list_available_refs");
     });
 
+    // Discovery answers what the store HOLDS. It cannot answer what a capability WANTS: that lives
+    // in a skill pack, which a step agent reads and this agent never does. Without this tool an
+    // absent source reads as a dead end here, and the agent designs a method around it instead of
+    // naming the datasets a user can install.
+    test("carries the declared data requirement of a capability, which no skill reaches from here", () => {
+        expect(buildAgent().tools.map((tool) => tool.id)).toContain("inspect_capability_data");
+    });
+
     // "Is Seurat installed?" is a manifest lookup, but without this tool the only way to
     // answer it is a sandbox run. The sandbox agents already read this manifest;
     // the agent the user actually asks should not need computation for discovery.
