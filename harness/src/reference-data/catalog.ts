@@ -338,6 +338,33 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ],
             },
             {
+                // Two species in one table: no organism field, like omnipath-interactions.
+                id: "mgi-mouse-human-homology",
+                version: "current",
+                title: "MGI mouse-human homology classes",
+                description:
+                    "The Mouse Genome Informatics homology reports: the one-to-one mouse-to-human orthologs of the protein-coding genes, and the full homology classes with the sequence identifiers. MGI rebuilds the reports weekly, so they are verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://www.informatics.jax.org/downloads/reports/index.html",
+                license: { identifier: "CC-BY-4.0", url: "https://www.informatics.jax.org/mgihome/other/copyright.shtml" },
+                recommendation: { group: "gene-identifiers", recommended: false },
+                artifacts: [
+                    {
+                        path: "HOM_ProteinCoding.rpt",
+                        url: "https://www.informatics.jax.org/downloads/reports/HOM_ProteinCoding.rpt",
+                        format: "tsv",
+                        contents:
+                            "Tab-separated, NO header, about 780 KB, one row per mouse protein-coding gene with a one-to-one human ortholog. Positional columns: 1 MGI accession id, 2 mouse symbol, 3 mouse NCBI gene id, 4 HGNC id, 5 human symbol, 6 human NCBI gene id. The first choice for a mouse-to-human map.",
+                    },
+                    {
+                        path: "HOM_MouseHumanSequence.rpt",
+                        url: "https://www.informatics.jax.org/downloads/reports/HOM_MouseHumanSequence.rpt",
+                        format: "tsv",
+                        contents:
+                            "Tab-separated with a header, about 15 MB, one row per gene. The rows that share a 'DB Class Key' are one homology class across the two species, and a class can hold more than one gene of one species. Key columns: 'Common Organism Name' (mouse, laboratory or human), 'NCBI Taxon ID', Symbol, 'EntrezGene ID', 'Mouse MGI ID', 'HGNC ID'. Use it for a gene absent from the one-to-one file, and report the class size.",
+                    },
+                ],
+            },
+            {
                 id: "reactome-pathways",
                 version: "current",
                 title: "Reactome pathways",
