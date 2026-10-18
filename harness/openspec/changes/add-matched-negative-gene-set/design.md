@@ -237,7 +237,7 @@ It names no path, no file name, no format, and no tool. The catalog `contents` t
 - [The `tested_clean` pool is often below 2000 after the matching.] → The reference says to report the count and never to fill tier 1 from tier 2. The report gives the cons of each definition.
 - [The viability rule removes hubs from the pool.] → The report gives the shortfall per cell and the count that the rule excluded. The parameter lets the customer compare.
 - [The planner can select the enrichment agent for a gene list.] → The capability phrase names the task. The new routing rule names the safety route for the question. If a campaign still shows a wrong route, a later change adds a planner example.
-- [The reference census of the planner seed is truncated.] → The planner can miss an installed dataset. Thus the step rule covers the gap: an absent source stops the negatives file and names that source.
+- [The reference census of the planner seed is truncated.] → The planner can miss an installed dataset. The prompt now states that a bounded listing is not evidence of absence. Thus the planner confirms with its tool, and the step rule covers the rest: an absent source stops the negatives file and names that source.
 - [The MSigDB GO collection is absent from a store.] → The report says that the studied-gene diagnostic was not computed. The matching does not depend on it.
 - [A model reports a clean IMPC screen as proof of safety.] → The anti-pattern in the reference and in the `SKILL.md` names the failure.
 

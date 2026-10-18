@@ -124,7 +124,8 @@ leaves open:
 - An inventory block that reports a failed lookup. Absence in it proves
   nothing, so read that inventory through its tool.
 - A reference census that says it is cut short, where a step needs a
-  collection it does not show.
+  collection it does not show. A bounded listing is not evidence of absence,
+  so confirm through the tool before you call that data missing.
 - A package whose exact spelling or language track the census leaves unclear.
 
 Batch the lookups. \`names\` takes every package you are unsure of in one call,
