@@ -40,3 +40,21 @@
 ## 6. After this change
 
 - [x] 6.1 Open a GitHub issue for the acknowledgement of the HPO in the product, with the version of the HPO files. Issue #682.
+
+## 7. The fixes of the code review
+
+- [x] 7.1 Measure each filter of the reference against the live upstream files. Record each trap in the design.
+- [x] 7.2 Close the holes of the resolution routes: the ambiguous positive, the synonym of two genes, and the mouse gene with no class.
+- [x] 7.3 Name the two spellings of the MGI id and the join keys of the homology reports.
+- [x] 7.4 Define the three covariate columns as the base-10 logarithm of the value plus 1.
+- [x] 7.5 Take the `in_string` flag from the alias table, never from the degree.
+- [x] 7.6 Match both spellings of the tissue id, and match the event text without case.
+- [x] 7.7 Name the four IMPC parameters in full, and add the tested panel to the tissue parameters.
+- [x] 7.8 Add the hemizygous tier, and give a lethal call precedence over each other call of the gene.
+- [x] 7.9 Make the diagnostics table and its code agree. Give the AUC a minimum of 5 genes per class.
+- [x] 7.10 Extend the absent-source rule to the alias table and to the homology reports.
+- [x] 7.11 Correct the `contents` text of the four entries, and name the companion dataset on each STRING entry.
+- [x] 7.12 Remove each comma from the capability phrases, and spell each definition as the skill pack spells it.
+- [x] 7.13 Add the routing rule of the gene-list question to the planner prompt.
+- [x] 7.14 Make the definitions of the `SKILL.md` table agree with the reference.
+- [x] 7.15 Scope the no-location rule of the spec to the reference store, and replace the unreachable scenario.

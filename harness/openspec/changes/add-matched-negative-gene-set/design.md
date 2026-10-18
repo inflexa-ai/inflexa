@@ -28,7 +28,7 @@ The constraints come from the root `CLAUDE.md`, "Agent-facing content". A skill 
 **Non-Goals:**
 
 - No new harness tool. The step runs igraph and pandas in the sandbox.
-- No change to the knowledge plane, to the planner prompt, or to the prompt of the translational-safety agent.
+- No change to the knowledge plane, or to the prompt of the translational-safety agent. The planner prompt takes one routing rule.
 - No change to the schema of the catalog, to the receipt logic, or to the install path of an embedder.
 - No catalog entry for DILImap. It is a positive source of the customer, not an exclusion dataset.
 - No acknowledgement of the HPO in the product. The HPO license asks for one, and that is a separate issue.
@@ -45,19 +45,25 @@ The alternative is a dedicated harness tool with the matching inside. It is reje
 
 The exclusion sources are phenotype and safety data. The agent already holds `targetSafety` and `genePreclinicalProfile`, and its pack holds the hepatotoxicity content. The network metrics are a means, not the question. Thus the `network-agent` is not the owner, and the `enrichment-agent` is not the owner.
 
-The `gene-lists` input class now matches two agents. The planner selects by the capability phrases. The first phrase names the task, the three data classes, and the two definitions. The second phrase, "expression and PPI connectivity matching", names the method.
+The `gene-lists` input class now matches two agents. The planner selects by the capability phrases and by one routing rule. The first phrase names the task, the three data classes, and the two definitions. The second phrase, "expression and PPI connectivity matching", names the method. No capability phrase holds a comma, because each renderer joins the phrases with a comma.
 
 ### The capability phrase names the data classes, and an absent source stops the negatives file
 
-The planner cannot read a skill. Thus it cannot know that the method needs the phenotype sources, and it cannot ask for them. The capability phrase carries that knowledge: "matched negative gene set for a tissue risk benchmark from tissue expression, PPI connectivity, and mouse and human phenotype annotations (annotation-free or tested-clean negatives)". The planner matches the data classes against the reference census of its seed. Its existing rule on an absent reference gives the `request_clarification`.
+The planner cannot read a skill. Thus it cannot know that the method needs the phenotype sources, and it cannot ask for them. The capability phrase carries that knowledge: "matched negative gene set for a tissue risk benchmark (annotation_free or tested_clean negatives) matched on tissue expression and PPI connectivity with mouse and human phenotype annotation exclusions". The phrase spells each definition as the skill spells it, because `skill_search` matches a substring. The planner matches the data classes against the reference census of its seed. Its existing rule on an absent reference gives the `request_clarification`.
 
-A step cannot ask, and a run can start before the sources are installed. Then the step writes the resolution, the universe table, and the audit with the sources that it has. It writes no negatives file, and its summary names the absent source. A negatives file with a wrong label is worse than none. The `annotation_free` label means that all four sources were applied. Each definition names the sources that it needs. The `tested_clean` definition needs the IMPC completeness file, and both tiers need the viability table when `exclude_lethal` is on. A definition whose source is absent gets no set, and the other definition still runs.
+A step cannot ask, and a run can start before the sources are installed. Then the step writes the resolution, the universe table, and the audit with the sources that it has. It writes no negatives file, and its summary names the absent source. A negatives file with a wrong label is worse than none.
+
+The `annotation_free` label means that these four exclusion sources were applied: the mouse phenotypes, the human phenotypes, the safety events, and the viability calls. The viability calls count only when `exclude_lethal` is on. The `tested_clean` definition also needs the IMPC completeness file. A definition whose source is absent gets no set, and the other definition still runs.
+
+Two sources outside the exclusion step have their own rule. The alias table is necessary for each definition, because the network metrics need the Ensembl join. Without it the step computes no metrics and writes no negatives file. The homology reports are necessary for a mouse symbol, and without them each mouse-only symbol is `unresolved`.
 
 The alternative is to write the set with a column that lists the sources applied. It is rejected, because a customer reads the file, not the column.
 
 ### The two definitions reach the planner through the capability phrase
 
-The planner reads the capability phrases from the agent catalog. Thus the two definitions are visible to it, and its existing rule on an essential fact covers the question. The rule is in `src/prompts/planner.ts`: `request_clarification` if a specific fact about the data is essential. The `clarification_needed` outcome reaches the user through the conversation agent. The planner prompt does not change.
+The planner reads the capability phrases from the agent catalog. Thus the two definitions are visible to it, and its existing rule on an essential fact covers the question. The rule is in `src/prompts/planner.ts`: `request_clarification` if a specific fact about the data is essential. The `clarification_needed` outcome reaches the user through the conversation agent.
+
+The planner prompt takes one routing rule, because its existing rule sends each gene-list step to the enrichment agent (`src/prompts/planner.ts:217`). A capability phrase alone cannot overrule a hard rule of the prompt. The new rule says that the question of a gene-list step selects the agent, and it names the safety route for a matched negative set.
 
 A step cannot ask. Thus the reference tells the step to make both sets when the briefing names no definition, each with its own diagnostics. The report then gives the pros and the cons of each set, and a recommendation.
 
@@ -65,7 +71,9 @@ A step cannot ask. Thus the reference tells the step to make both sets when the 
 
 A homozygous lethal knockout has no liver phenotype because nobody phenotyped it. Its liver label is unknown, and an unknown label in the negative set is noise. The viability table of IMPC gives the call. The rule excludes a `lethal` gene from both tiers under the parameter `exclude_lethal`, which is on by default. A `subviable` call is a value of the `viability` column, not an exclusion. The report gives the count that the rule excluded, and the lethal share of the positives.
 
-The cost is a smaller pool of hubs, because a lethal gene is often a hub. The matching then reports a shortfall in the high-degree cells. A reported shortfall is better than label noise. The customer can turn the parameter off and compare the two balance reports. With the parameter on, the `tested_clean_het` tier is nearly empty, because a het-only colony is almost always a lethal line. The report shows the count, and an empty tier is the expected result, not a fault.
+The cost is a smaller pool of hubs, because a lethal gene is often a hub. The matching then reports a shortfall in the high-degree cells. A reported shortfall is better than label noise. The customer can turn the parameter off and compare the two balance reports.
+
+The viability table holds a call per colony, not per gene. One gene can carry a lethal call and a viable call on two colonies, and 14 genes do. Thus a lethal call takes precedence over a subviable and over a viable call of the same gene. The table calls an X-linked knockout hemizygous, thus the tier rule counts a hemizygous colony as a full knockout. The report gives the count of each tier, and a count of zero is not the expected result.
 
 The alternative is to keep the lethal genes and to flag them. It is rejected as the default, because a flag in a column does not stop a classifier from a wrong label.
 
@@ -73,7 +81,9 @@ The alternative is to keep the lethal genes and to flag them. It is rejected as 
 
 The cells are joint: 10 deciles of the log expression by 5 quintiles of the log degree by 5 quintiles of the log betweenness, cut on the positives. The quota of a cell is the target count times the share of the positives in the cell. A short cell takes the nearest candidates in the standardized space, marked `nearest`. Marginal bins are rejected, because the degree and the betweenness correlate, and a marginal match leaves the joint distribution separable.
 
-A universe gene with no STRING node keeps degree 0 and betweenness 0, with the flag `in_string` false. It stays in the pool. Absence from STRING is a learnable feature, thus both classes must carry it in proportion. A dropped gene biases the negatives toward the connected genes.
+A universe gene with no STRING protein in the alias table gets the flag `in_string` false. A gene with a protein and no edge in the subgraph keeps the flag true. Both keep degree 0 and betweenness 0, and both stay in the pool. Absence from STRING is a learnable feature, thus both classes must carry it in proportion. A dropped gene biases the negatives toward the connected genes.
+
+The flag is not the degree. A left merge against the vertex list of the induced subgraph gives a null degree to each gene with no surviving edge. Thus a flag that comes from the degree reports an isolated gene as an absent gene.
 
 A positive of the `mouse_class` route leaves the matching, because it has no one human gene. Every human gene of its class is excluded from the pool, because one of them is the positive.
 
@@ -83,15 +93,32 @@ The human gene table of NCBI carries the Ensembl gene id in its `dbXrefs` column
 
 ### The diagnostics measure the residual
 
-The balance report gives the SMD and the KS statistic per matched covariate, and one AUC of a logistic model on the three covariates. It also gives the count of GO gene sets per gene from the MSigDB GO collection, with its SMD. That count is a reported covariate, not a matched one. It measures the con of the issue: a model can learn studied against unstudied. The MSigDB GO collection is a recommended dataset. If it is absent, the report says that the diagnostic was not computed.
+The balance report gives the SMD, the KS statistic, and the p-value per matched covariate. The three matched covariates are `log_tpm`, `log_degree`, and `log_betweenness`, which are the base-10 logarithm of the value plus 1. The report also gives one AUC of a logistic model on those three covariates.
+
+The count of GO gene sets per gene comes from the MSigDB GO collection. It is a reported residual with its own field and its own SMD, and it is not a matched covariate and not a KS row. It measures the con of the issue: a model can learn studied against unstudied. The MSigDB GO collection is a recommended dataset. If it is absent, the report says that the diagnostic was not computed.
+
+The cross-validation needs a positive and a negative in each of the 5 folds. With fewer than 5 genes in a class, the report gives a null AUC and the reason. A NaN value in the file breaks each JSON reader.
 
 ### The IMPC clinical chemistry procedure is a prefix
 
-The IMPC procedure id has versions, `IMPC_CBC_001` and later. The tested rule matches the prefix `IMPC_CBC_` in the successful procedures of a colony, with the four parameters successful.
+The IMPC procedure id has versions, `IMPC_CBC_001` and later. The tested rule matches the prefix `IMPC_CBC_` in the successful procedures of a colony, with the four parameters successful. The file writes each parameter in full, for example `Alanine aminotransferase` and `Total bilirubin`. A test for the abbreviation matches no row. The prefix and the four names belong to the liver, thus another tissue replaces them with its own panel.
+
+### The upstream identifiers and the free text carry traps
+
+The review of the pull request measured each filter against the live files. Four traps change the result:
+
+- The mouse gene table writes the MGI id with the prefix two times, for example `MGI:MGI:87854`. The homology reports and the mouse screens write it one time. A direct join gives no match.
+- The tissue id of a safety event carries two spellings, `UBERON_0002107` on 74 rows and `UBERON:0002107` on 6 rows. The event text is mixed case. One spelling with an exact-case match finds 57 of the 88 targets that carry a liver liability.
+- The top-level class column of the IMPC assertions holds a comma-separated list on 13,643 of 67,350 rows. An equality test finds 322 genes of the liver class, and a membership test finds 351.
+- The `resource_name` column of the same file holds `IMPC`, `EuroPhenome`, `MGP`, `3i`, and `pwg`. An upper-case form matches no row.
+
+The reference names each trap at the step that meets it. The `contents` text of each entry names it too, because another consumer reads that text and not the skill.
 
 ### The STRING aliases file is a companion dataset
 
 The aliases file is the dataset `string-aliases-human`, at the version 12.0, in the group `interaction-networks`, opt-in. It is not an artifact of `string-ppi-human`. A third artifact at the same version makes each existing STRING install an `invalid_receipt` (`cli/src/modules/refs/store.ts:614`), and the installer then fetches all three files again (`store.ts:1125`). The inventory loses the catalog labels of the STRING files until that happens. The companion obeys the precedent of `reactome-mappings` beside `reactome-pathways`. The aliases file gives one Ensembl gene id per STRING protein id under the source `Ensembl_gene`, and the join to GTEx goes through that id.
+
+The receipt holds the version and the artifact paths only (`store.ts:615`). Thus the `contents` text of `string-ppi-human` can change with no effect on an install, and each entry now names the other.
 
 ### The catalog entries are opt-in, and they take their places by group
 
@@ -148,7 +175,7 @@ An exact betweenness with igraph on 10,000 nodes and about 150,000 edges takes u
 | `median_tpm` | The median TPM of the tissue. |
 | `degree` | The degree on the induced subgraph. 0 for a gene with no STRING node. |
 | `betweenness` | The betweenness on the induced subgraph. 0 for a gene with no STRING node. |
-| `in_string` | `false` for a gene with no STRING node. |
+| `in_string` | `false` for a gene with no STRING protein in the alias table. |
 | `is_positive` | `true` for a resolved positive. |
 | `viability` | `lethal`, `subviable`, `viable`, or `not_tested`. |
 | `impc_tested` | `true` when a colony passed the tested rule. |
@@ -182,10 +209,11 @@ An exact betweenness with igraph on 10,000 nodes and about 150,000 edges takes u
 | Field | Content |
 | --- | --- |
 | `parameters` | The tissue, the universe size, the target count, the score cutoff, the gene type, `exclude_lethal`, and the seed. |
-| `sources_applied` | The four sources, and each dataset source with its version. |
+| `sources_applied` | The four exclusion sources, and each dataset with its version. |
 | `counts` | The positives in and outside the universe, the pool, the negatives, the shortfall, the nearest matches, the rows per route, per source, and per tier, the lethal share of the positives, and the no-STRING genes per class. |
-| `covariates` | For each of the log expression, the log degree, the log betweenness, and the log GO-set count: the SMD, the KS statistic, and its p-value. |
-| `auc` | The AUC of the logistic model on the three matched covariates. |
+| `covariates` | For each of `log_tpm`, `log_degree`, and `log_betweenness`: the SMD, the KS statistic, and its p-value. |
+| `studied_gene_residual` | The SMD of `log_go_set_count`. Null when the GO collection is absent. |
+| `auc` | The AUC of the logistic model on the three matched covariates. Null when a class holds fewer than 5 genes. |
 
 ### The reference names no location
 
@@ -208,7 +236,7 @@ It names no path, no file name, no format, and no tool. The catalog `contents` t
 - [The mouse-to-human map of Open Targets can differ from the MGI tables.] → The IMPC assertions file is the second source. A gene that one source excludes and the other does not goes into the audit with both flags.
 - [The `tested_clean` pool is often below 2000 after the matching.] → The reference says to report the count and never to fill tier 1 from tier 2. The report gives the cons of each definition.
 - [The viability rule removes hubs from the pool.] → The report gives the shortfall per cell and the count that the rule excluded. The parameter lets the customer compare.
-- [The planner can select the enrichment agent for a gene list.] → The capability phrase names the task. If a campaign shows a wrong route, a later change adds a planner example.
+- [The planner can select the enrichment agent for a gene list.] → The capability phrase names the task. The new routing rule names the safety route for the question. If a campaign still shows a wrong route, a later change adds a planner example.
 - [The MSigDB GO collection is absent from a store.] → The report says that the studied-gene diagnostic was not computed. The matching does not depend on it.
 - [A model reports a clean IMPC screen as proof of safety.] → The anti-pattern in the reference and in the `SKILL.md` names the failure.
 
