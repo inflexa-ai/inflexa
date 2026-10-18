@@ -27,9 +27,9 @@
 
 ## 4. The agent
 
-- [ ] 4.1 Add the two capability phrases to `harness/src/agents/sandbox/translational-safety-agent.ts`. The first phrase names the three data classes and the two definitions.
-- [ ] 4.2 Add `gene-lists` to `suitableFor`.
-- [ ] 4.3 Run `bun run format:file` on the agent file.
+- [x] 4.1 Add the two capability phrases to `harness/src/agents/sandbox/translational-safety-agent.ts`. The first phrase names the three data classes and the two definitions.
+- [x] 4.2 Add `gene-lists` to `suitableFor`.
+- [x] 4.3 Run `bun run format:file` on the agent file.
 
 ## 5. The checks
 
