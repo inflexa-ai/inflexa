@@ -125,7 +125,7 @@ A universe gene with no edge in the subgraph MUST keep degree 0 and betweenness 
 
 When a source of step 3 is absent from the reference store, the step MUST write the exclusion audit with the sources that it has. It MUST NOT write `negatives.csv`, and it MUST name the absent source in its summary. The `annotation_free` label MUST mean that these four exclusion sources were applied: the mouse phenotypes, the human phenotypes, the safety events, and the viability calls. The viability calls count only when `exclude_lethal` is on. The `tested_clean` definition also needs the IMPC completeness file. A definition whose source is absent gets no set, and the other definition still runs.
 
-Two sources outside step 3 have their own rule. Without the STRING alias table the step MUST compute no network metrics and write no negatives file. Without the homology reports each mouse-only symbol MUST get the status `unresolved`. The capability phrase of the agent MUST name the data classes of the method. Thus the planner can ask for an absent source before the run.
+Two sources outside step 3 have their own rule. Without the STRING alias table the step MUST compute no network metrics and write no negatives file. Without the homology reports each mouse-only symbol MUST get the status `unresolved`. The capability phrase of the agent MUST name the data classes of the method. Thus the planner can ask for an absent source before the run. The planner prompt MUST state that a bounded reference census is not evidence of absence. Thus the planner confirms with its tool before it reports a source as absent.
 
 #### Scenario: The HPO table is absent
 
