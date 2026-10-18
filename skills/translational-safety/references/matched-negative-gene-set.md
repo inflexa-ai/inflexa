@@ -58,7 +58,7 @@ Three absent sources have their own rule:
 
 ## Step 1: resolve the positives
 
-Do not infer the species from the case of a symbol. Match each symbol against the human table and the mouse table. Then map a mouse gene to its human ortholog with the homology reports. Match the exact case first in both tables. Then match without case, and record that in the status detail.
+Do not infer the species from the case of a symbol. Match each symbol against the human table and the mouse table. Then map a mouse gene to its human ortholog with the homology reports. Match the exact case first in both tables. Then match without case, and record that in the `status_detail` column.
 
 | Route | Rule | Status |
 | --- | --- | --- |
@@ -89,7 +89,7 @@ The homology reports key the mouse gene on the MGI accession id and on the mouse
 | Genes off the network | A universe gene with no STRING protein in the alias table gets the flag `in_string` false. |
 | Isolated genes | A universe gene with a protein and no edge in the subgraph keeps the flag `in_string` true. |
 | Both cases | The degree and the betweenness are 0, and the gene stays in the pool. |
-| Reports | The count of universe genes with no node, per class. The positives outside the universe, which leave the matching. |
+| Reports | The count of universe genes with no STRING protein, per class. The positives outside the universe, which leave the matching. |
 
 The expression table carries a versioned Ensembl gene id. Strip the version before the join. Compute the metrics once, on the one induced subgraph that the positives and the candidates share. An exact betweenness on 10,000 nodes and about 150,000 edges takes under one minute.
 
@@ -333,7 +333,7 @@ Write the five files under `output/`. The first step writes the first three. The
 | --- | --- |
 | `parameters` | The tissue, the universe size, the target count, the score cutoff, the gene type, `exclude_lethal`, and the seed. |
 | `sources_applied` | The four exclusion sources, and each dataset with its version. |
-| `counts` | The positives in and outside the universe, the pool, the negatives, the shortfall, the nearest matches, the rows per route, per source, and per tier, the lethal share of the positives, and the no-node genes per class. |
+| `counts` | The positives in and outside the universe, the pool, the negatives, the shortfall, the nearest matches, the rows per route, per source, and per tier, the lethal share of the positives, and the genes with no STRING protein per class. |
 | `covariates` | For each of `log_tpm`, `log_degree`, and `log_betweenness`: the SMD, the KS statistic, and its p-value. |
 | `studied_gene_residual` | The SMD of `log_go_set_count`. Null when the GO collection is absent. |
 | `auc` | The AUC of the logistic model on the three matched covariates. Null when a class holds fewer than 5 genes. |
