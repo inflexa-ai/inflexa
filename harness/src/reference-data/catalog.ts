@@ -1015,6 +1015,111 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ],
             },
             {
+                id: "impc-phenotyping",
+                version: "release-24.0",
+                title: "IMPC mouse knockout phenotyping, data release 24.0",
+                description:
+                    "The International Mouse Phenotyping Consortium data release 24.0 reports: the significant genotype-to-phenotype assertions, the viability calls, and the procedure completeness of each phenotyped colony. Immutable release directory.",
+                organism: "mouse",
+                sourceUrl: "https://ftp.ebi.ac.uk/pub/databases/impc/all-data-releases/release-24.0/results/",
+                license: { identifier: "CC-BY-4.0", url: "https://www.mousephenotype.org/help/faqs/is-impc-data-freely-available/" },
+                recommendation: { group: "phenotype-annotations", recommended: false },
+                artifacts: [
+                    {
+                        path: "genotype-phenotype-assertions-ALL.csv.gz",
+                        url: "https://ftp.ebi.ac.uk/pub/databases/impc/all-data-releases/release-24.0/results/genotype-phenotype-assertions-ALL.csv.gz",
+                        format: "csv",
+                        contents:
+                            "Gzipped CSV with a header, about 4.8 MB, one row per significant genotype-phenotype association. Key columns: marker_accession_id (MGI id), marker_symbol, zygosity, top_level_mp_term_id, top_level_mp_term_name, mp_term_id, mp_term_name, p_value, effect_size, resource_name (IMPC, 3I, EUROPHENOME, MGP). Filter top_level_mp_term_id to one organ system, for example MP:0005370 for the liver and biliary system. A gene absent here was either clean or never tested: the completeness file tells which.",
+                    },
+                    {
+                        path: "procedureCompletenessAndPhenotypeHits.csv.gz",
+                        url: "https://ftp.ebi.ac.uk/pub/databases/impc/all-data-releases/release-24.0/results/procedureCompletenessAndPhenotypeHits.csv.gz",
+                        format: "csv",
+                        contents:
+                            "Gzipped CSV with a quoted header, about 24 MB, one row per gene, colony, zygosity, and life stage. The '|'-separated columns 'Procedure Stable Id: Successful' and 'Parameter Name: Successful' say what was tested (the clinical chemistry procedure ids share the prefix IMPC_CBC_, with versions such as IMPC_CBC_001, and parameters such as 'Alanine aminotransferase' and 'Aspartate aminotransferase'); 'Top-level MP Accession Id: Significant' and 'MP Accession Id: Significant' say what was found. The only file that separates a gene tested with no hit from a gene never tested.",
+                    },
+                    {
+                        path: "viability.csv.gz",
+                        url: "https://ftp.ebi.ac.uk/pub/databases/impc/all-data-releases/release-24.0/results/viability.csv.gz",
+                        format: "csv",
+                        contents:
+                            "Gzipped CSV with a quoted header, about 470 KB, one row per colony and zygosity. Key columns: 'Gene Accession Id' (MGI id), 'Gene Symbol', 'Zygosity', 'Viability Phenotype HOMs/HEMIs' (lowercase: lethal, subviable, viable), 'Supporting Data' (the long form, for example 'Homozygous - Viable'), 'Viability Call Method' (curated or computed). Lethal takes precedence over subviable within one gene.",
+                    },
+                ],
+            },
+            {
+                id: "hpo-annotations",
+                version: "2026-09-01",
+                title: "Human Phenotype Ontology gene-to-phenotype annotations",
+                description:
+                    "The HPO release 2026-09-01: the gene-to-phenotype annotation table derived from OMIM and Orphanet, with the ontology file that gives the term hierarchy. Immutable GitHub release assets.",
+                organism: "human",
+                sourceUrl: "https://github.com/obophenotype/human-phenotype-ontology/releases/tag/v2026-09-01",
+                // The HPO license has no SPDX identifier. Its page gives three conditions: cite the
+                // HPO Consortium, show the version of each HPO file in a public display, and do not
+                // change the files. The installer fetches the files from the upstream and changes
+                // nothing; the acknowledgement in a product is the concern of the product.
+                license: { identifier: "LicenseRef-HPO", url: "https://hpo.jax.org/app/license" },
+                recommendation: { group: "phenotype-annotations", recommended: false },
+                artifacts: [
+                    {
+                        path: "genes_to_phenotype.txt",
+                        url: "https://github.com/obophenotype/human-phenotype-ontology/releases/download/v2026-09-01/genes_to_phenotype.txt",
+                        format: "tsv",
+                        contents:
+                            "Tab-separated with a header, about 20 MB. Columns: ncbi_gene_id (Entrez), gene_symbol, hpo_id, hpo_name, frequency, disease_id (OMIM or ORPHA). One row per gene, term, and disease, thus a gene repeats. The rows carry the annotated terms only, not their ancestors: take the descendant closure of a root term from hp.obo before a filter.",
+                    },
+                    {
+                        path: "hp.obo",
+                        url: "https://github.com/obophenotype/human-phenotype-ontology/releases/download/v2026-09-01/hp.obo",
+                        format: "obo",
+                        contents:
+                            "The ontology in OBO format, about 11 MB: one [Term] stanza per HP term with id, name, and is_a parents. Walk the is_a edges to take the descendants of a root term, for example HP:0001392 (Abnormality of the liver) or HP:0004297 (Abnormality of the biliary system).",
+                    },
+                ],
+            },
+            {
+                // Mouse phenotypes keyed on human Ensembl ids: no single organism, like omnipath-interactions.
+                id: "opentargets-mouse-phenotype",
+                version: "26.09",
+                title: "Open Targets mouse model phenotypes mapped to human targets",
+                description:
+                    "The mouse_phenotype dataset of Open Targets Platform 26.09: the IMPC and the MGI literature phenotypes of mouse models, with the human target that Open Targets mapped each mouse gene to. One zstd parquet part. Immutable release.",
+                sourceUrl: "https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.09/output/mouse_phenotype/",
+                license: { identifier: "CC0-1.0", url: "https://platform-docs.opentargets.org/licence" },
+                recommendation: { group: "phenotype-annotations", recommended: false },
+                artifacts: [
+                    {
+                        path: "mouse_phenotype.parquet",
+                        url: "https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.09/output/mouse_phenotype/part-00000-5e904527-9bf6-4fd5-9fc4-5f272954b1f8-c000.zstd.parquet",
+                        format: "parquet",
+                        contents:
+                            "Zstd parquet, about 6.5 MB, 203,583 rows, one row per human target, mouse gene, and phenotype term. Columns: targetFromSourceId (human Ensembl gene id), targetInModel (mouse symbol), targetInModelMgiId, targetInModelEnsemblId, modelPhenotypeId (MP id), modelPhenotypeLabel, modelPhenotypeClasses (list of top-level MP id and label), biologicalModels (allele, background, literature). Read with pandas and pyarrow. The mouse-to-human map is the one of Open Targets, which can differ from the MGI homology tables.",
+                    },
+                ],
+            },
+            {
+                id: "opentargets-target-safety-event",
+                version: "26.09",
+                title: "Open Targets target safety events",
+                description:
+                    "The target_safety_event dataset of Open Targets Platform 26.09: curated safety liabilities per target from the published panels, ToxCast, AOP-Wiki, and ClinPGx, each with the organ or tissue of the event. One zstd parquet part. Immutable release.",
+                organism: "human",
+                sourceUrl: "https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.09/output/target_safety_event/",
+                license: { identifier: "CC0-1.0", url: "https://platform-docs.opentargets.org/licence" },
+                recommendation: { group: "phenotype-annotations", recommended: false },
+                artifacts: [
+                    {
+                        path: "target_safety_event.parquet",
+                        url: "https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.09/output/target_safety_event/part-00000-e457d966-d50e-4afc-841d-547765a1e4d7-c000.zstd.parquet",
+                        format: "parquet",
+                        contents:
+                            "Zstd parquet, about 120 KB, 4,387 rows, one row per target and safety event. Columns: targetId (Ensembl gene id), event, eventId (EFO), effects (direction, dosing), biosamples (tissueLabel, tissueId as UBERON, cell fields), datasource, literature (PMID), studies. 78 rows name the liver biosample UBERON_0002107 and 157 rows name a liver event. The sources are curated panels, not an exhaustive list: absence is not safety.",
+                    },
+                ],
+            },
+            {
                 id: "celltypist-immune",
                 version: "2",
                 title: "CellTypist immune cell models",

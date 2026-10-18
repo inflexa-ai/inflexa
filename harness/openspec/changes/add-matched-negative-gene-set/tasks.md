@@ -2,18 +2,18 @@
 
 - [x] 1.1 Add `string-aliases-human` after `string-ppi-human` in `harness/src/reference-data/catalog.ts`: version 12.0, group `interaction-networks`, organism human, opt-in, with the aliases artifact. Do not change `string-ppi-human`.
 - [x] 1.2 Add `mgi-mouse-human-homology` after `uniprot-idmapping-rat`, in the group `gene-identifiers`, with no organism.
-- [ ] 1.3 Add `impc-phenotyping`, `hpo-annotations`, `opentargets-mouse-phenotype`, and `opentargets-target-safety-event` after `hpa-proteinatlas`, in the group `phenotype-annotations`.
-- [ ] 1.4 Set the license of `hpo-annotations` to `LicenseRef-HPO` with the URL of the license page. Put the three conditions of the license in the code comment.
-- [ ] 1.5 Run `bun run format:file` on `catalog.ts`.
+- [x] 1.3 Add `impc-phenotyping`, `hpo-annotations`, `opentargets-mouse-phenotype`, and `opentargets-target-safety-event` after `hpa-proteinatlas`, in the group `phenotype-annotations`.
+- [x] 1.4 Set the license of `hpo-annotations` to `LicenseRef-HPO` with the URL of the license page. Put the three conditions of the license in the code comment.
+- [x] 1.5 Run `bun run format:file` on `catalog.ts`.
 
 ## 2. The catalog test
 
-- [ ] 2.1 Add the six ids to the ordered id list, at the three positions of task 1.1, task 1.2, and task 1.3.
-- [ ] 2.2 Add the six ids to the `notRecommended` list, and add their reason to the comment above the test.
+- [x] 2.1 Add the six ids to the ordered id list, at the three positions of task 1.1, task 1.2, and task 1.3.
+- [x] 2.2 Add the six ids to the `notRecommended` list, and add their reason to the comment above the test.
 - [x] 2.3 Add `www.informatics.jax.org` to `officialHosts`.
-- [ ] 2.4 Add `mgi-mouse-human-homology` and `opentargets-mouse-phenotype` to `organismAgnostic`, with a comment that gives the reason.
-- [ ] 2.5 Add the six ids to the sorted `availableIds` list.
-- [ ] 2.6 Run `bun test src/reference-data/catalog.test.ts` and make sure that it passes.
+- [x] 2.4 Add `mgi-mouse-human-homology` and `opentargets-mouse-phenotype` to `organismAgnostic`, with a comment that gives the reason.
+- [x] 2.5 Add the six ids to the sorted `availableIds` list.
+- [x] 2.6 Run `bun test src/reference-data/catalog.test.ts` and make sure that it passes.
 
 ## 3. The skill pack
 
