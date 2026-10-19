@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
 import type { DataProfileView, RunDetail, RunSummary } from "../../api/runs.ts";
+import type { ClientError } from "../../client/api.ts";
 import { __resetNoticesForTest, __pendingNoticeCountForTest, currentNotice, notify } from "./notice.ts";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from "./sidebar_live.ts";
-import { __resetRunCompletionsForTest, completionNoticeText, markRunAnnounced, watchRunCompletions } from "./run_completion.ts";
+import { __resetRunCompletionsForTest, completionNoticeText, watchRunCompletions, type RunCompletionOpts } from "./run_completion.ts";
 
 function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
@@ -52,6 +53,46 @@ function optsFor(runs: RunSummary[]): RefreshOpts {
         loadActiveRuns: () => okAsync(runs),
         loadRun: (_analysisId, runId) => okAsync(runDetail(runs.find((run) => run.runId === runId) ?? runRow({ runId }))),
     };
+}
+
+/** A client error for a failed read of a run by its id. */
+const READ_FAILED: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:0", cause: "boom" };
+
+/** The error of a read of a run that the server answers with a status. */
+function httpError(status: number): ClientError {
+    return { type: "http", status, body: { error: status === 404 ? "not_found" : "internal_error", message: "x" } };
+}
+
+/** The `(analysisId, runId)` pairs that a fake `loadRun` received, and the options that carry the fake. */
+type FakeRunReads = { reads: [string, string][]; opts: RunCompletionOpts };
+
+/** A `loadRun` that records each read and answers with `answer`. */
+function fakeRunReads(answer: (analysisId: string, runId: string) => ResultAsync<RunDetail, ClientError>): FakeRunReads {
+    const reads: [string, string][] = [];
+    return {
+        reads,
+        opts: {
+            loadRun: (analysisId, runId) => {
+                reads.push([analysisId, runId]);
+                return answer(analysisId, runId);
+            },
+        },
+    };
+}
+
+/** The detail of a run that ended at `completedAt`. */
+function endedDetail(runId: string, status: RunSummary["status"] = "completed"): ResultAsync<RunDetail, ClientError> {
+    return okAsync(runDetail(runRow({ runId, status, completedAt: "2026-07-28T10:02:30.000Z" })));
+}
+
+/** A read that stays open until the test calls `release`. */
+function openRead(): { result: ResultAsync<RunDetail, ClientError>; release: (detail: RunDetail) => void } {
+    // The Promise executor below runs synchronously, so `resolveRead` is assigned before `openRead` returns.
+    let resolveRead!: (detail: RunDetail) => void;
+    const promise = new Promise<RunDetail>((resolve) => {
+        resolveRead = resolve;
+    });
+    return { result: ResultAsync.fromSafePromise(promise), release: resolveRead };
 }
 
 /** Let queued microtasks (the notice promotion) settle. */
@@ -203,42 +244,6 @@ describe("run completion announcement", () => {
         });
     });
 
-    test("a run marked as announced raises no notice when a later snapshot shows it terminal", async () => {
-        await createRoot(async (dispose) => {
-            watchRunCompletions();
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
-
-            // Another flow told the user already, then a later poll loads the run as canceled.
-            markRunAnnounced("run-a", "canceled");
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "canceled", completedAt: "2026-07-28T10:01:00.000Z" })]));
-            await settle();
-
-            expect(currentNotice()).toBeNull();
-            expect(__pendingNoticeCountForTest()).toBe(0);
-            dispose();
-        });
-    });
-
-    test("marking one run as announced leaves another run's announcement alone", async () => {
-        await createRoot(async (dispose) => {
-            watchRunCompletions();
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
-            markRunAnnounced("run-a", "canceled");
-            await refreshSidebarData(
-                "analysis-1",
-                optsFor([
-                    runRow({ runId: "run-a", status: "canceled", completedAt: "2026-07-28T10:01:00.000Z" }),
-                    runRow({ runId: "run-b", status: "completed", completedAt: "2026-07-28T10:01:00.000Z" }),
-                ]),
-            );
-            await settle();
-
-            expect(currentNotice()?.text).toContain("completed");
-            expect(__pendingNoticeCountForTest()).toBe(0);
-            dispose();
-        });
-    });
-
     test("distinct runs are not conflated — each announces on its own transition", async () => {
         await createRoot(async (dispose) => {
             watchRunCompletions();
@@ -275,6 +280,326 @@ describe("run completion announcement", () => {
             );
             await settle();
             expect(currentNotice()).not.toBeNull();
+            dispose();
+        });
+    });
+});
+
+describe("a run that leaves the runs read", () => {
+    /** The runs read of `analysis-1` that holds only newer runs, so it does not hold the observed run. */
+    const newerRuns = (): RefreshOpts => optsFor([runRow({ runId: "run-newer" })]);
+
+    test("a run that ends after newer runs fill the window announces, from a read by its id", async () => {
+        await createRoot(async (dispose) => {
+            const fake = fakeRunReads((_analysisId, runId) => endedDetail(runId));
+            watchRunCompletions(fake.opts);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+
+            expect(fake.reads).toEqual([["analysis-1", "run-a"]]);
+            expect(currentNotice()).toEqual({ kind: "info", text: "Run Differential expression completed in 2m30s (0/1 steps)" });
+            expect(__pendingNoticeCountForTest()).toBe(0);
+
+            // The announced run is no longer observed, so a later runs read does not read it again.
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads).toHaveLength(1);
+            expect(__pendingNoticeCountForTest()).toBe(0);
+            dispose();
+        });
+    });
+
+    test("a terminal status other than completed announces in its own tone", async () => {
+        await createRoot(async (dispose) => {
+            const fake = fakeRunReads((_analysisId, runId) => endedDetail(runId, "canceled"));
+            watchRunCompletions(fake.opts);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+
+            expect(currentNotice()?.kind).toBe("error");
+            expect(currentNotice()?.text).toContain("was canceled");
+            dispose();
+        });
+    });
+
+    test("a run that the read shows running raises no notice and is read again at the next runs read", async () => {
+        await createRoot(async (dispose) => {
+            let answer = (): ResultAsync<RunDetail, ClientError> => okAsync(runDetail(runRow({ runId: "run-a" })));
+            const fake = fakeRunReads(() => answer());
+            watchRunCompletions(fake.opts);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads).toHaveLength(1);
+            expect(currentNotice()).toBeNull();
+
+            answer = () => endedDetail("run-a");
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads).toHaveLength(2);
+            expect(currentNotice()?.text).toContain("completed");
+            dispose();
+        });
+    });
+
+    test("a 404 drops the run with no notice, and no later runs read reads it", async () => {
+        await createRoot(async (dispose) => {
+            const fake = fakeRunReads(() => errAsync(httpError(404)));
+            watchRunCompletions(fake.opts);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+
+            expect(fake.reads).toEqual([["analysis-1", "run-a"]]);
+            expect(currentNotice()).toBeNull();
+            dispose();
+        });
+    });
+
+    test("a failed read raises no notice and keeps the run, whether the failure is a status other than 404 or a transport error", async () => {
+        for (const failure of [httpError(500), READ_FAILED]) {
+            __resetSidebarLiveForTest();
+            __resetRunCompletionsForTest();
+            __resetNoticesForTest();
+            await createRoot(async (dispose) => {
+                let answer = (): ResultAsync<RunDetail, ClientError> => errAsync(failure);
+                const fake = fakeRunReads(() => answer());
+                watchRunCompletions(fake.opts);
+                await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+
+                await refreshSidebarData("analysis-1", newerRuns());
+                await settle();
+                expect(currentNotice()).toBeNull();
+                expect(fake.reads).toHaveLength(1);
+
+                answer = () => endedDetail("run-a");
+                await refreshSidebarData("analysis-1", newerRuns());
+                await settle();
+                expect(fake.reads).toHaveLength(2);
+                expect(currentNotice()?.text).toContain("completed");
+                dispose();
+            });
+        }
+    });
+
+    test("two runs reads that miss the run send one read while that read is open", async () => {
+        await createRoot(async (dispose) => {
+            const open = openRead();
+            const fake = fakeRunReads(() => open.result);
+            watchRunCompletions(fake.opts);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads).toEqual([["analysis-1", "run-a"]]);
+
+            open.release(runDetail(runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:02:30.000Z" })));
+            await settle();
+            expect(currentNotice()?.text).toContain("completed");
+            expect(__pendingNoticeCountForTest()).toBe(0);
+            dispose();
+        });
+    });
+
+    test("at most four reads are open, and a later runs read starts the reads that waited", async () => {
+        await createRoot(async (dispose) => {
+            const open = new Map<string, ReturnType<typeof openRead>>();
+            const fake = fakeRunReads((_analysisId, runId) => {
+                const read = openRead();
+                open.set(runId, read);
+                return read.result;
+            });
+            watchRunCompletions(fake.opts);
+            const ids = ["run-1", "run-2", "run-3", "run-4", "run-5", "run-6"];
+            await refreshSidebarData("analysis-1", optsFor(ids.map((runId) => runRow({ runId }))));
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads.map(([, runId]) => runId)).toEqual(["run-1", "run-2", "run-3", "run-4"]);
+
+            // A runs read while the four reads are open starts none.
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads).toHaveLength(4);
+
+            for (const runId of ids.slice(0, 4))
+                // Every id in `ids.slice(0, 4)` was read above, and the fake `loadRun` stored its open read.
+                open.get(runId)!.release(runDetail(runRow({ runId, status: "completed", completedAt: "2026-07-28T10:02:30.000Z" })));
+            await settle();
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads.map(([, runId]) => runId)).toEqual([...ids.slice(0, 4), "run-5", "run-6"]);
+            dispose();
+        });
+    });
+
+    test("a read that resolves after a swap raises no notice, and the run is read again when its analysis opens again", async () => {
+        await createRoot(async (dispose) => {
+            const open = openRead();
+            let answer: () => ResultAsync<RunDetail, ClientError> = () => open.result;
+            const fake = fakeRunReads(() => answer());
+            watchRunCompletions(fake.opts);
+            await refreshSidebarData("analysis-A", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-A", optsFor([runRow({ runId: "run-newer" })]));
+            expect(fake.reads).toEqual([["analysis-A", "run-a"]]);
+
+            await refreshSidebarData("analysis-B", optsFor([]));
+            open.release(runDetail(runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:02:30.000Z" })));
+            await settle();
+            expect(currentNotice()).toBeNull();
+
+            answer = () => endedDetail("run-a");
+            await refreshSidebarData("analysis-A", optsFor([runRow({ runId: "run-newer" })]));
+            await settle();
+            expect(fake.reads).toEqual([
+                ["analysis-A", "run-a"],
+                ["analysis-A", "run-a"],
+            ]);
+            expect(currentNotice()?.text).toContain("completed");
+            dispose();
+        });
+    });
+
+    test("a runs read that showed the run terminal first leaves the late read without a second notice", async () => {
+        await createRoot(async (dispose) => {
+            const open = openRead();
+            const fake = fakeRunReads((_analysisId, runId) => (runId === "run-a" ? open.result : okAsync(runDetail(runRow({ runId })))));
+            watchRunCompletions(fake.opts);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", newerRuns());
+            expect(fake.reads).toHaveLength(1);
+
+            // The run shows up terminal in a runs read while the by-id read is open.
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:02:30.000Z" })]));
+            await settle();
+            expect(currentNotice()?.text).toContain("completed");
+
+            open.release(runDetail(runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:02:30.000Z" })));
+            await settle();
+            expect(__pendingNoticeCountForTest()).toBe(0);
+            dispose();
+        });
+    });
+
+    test("a run of an analysis that is not open is not read until its analysis opens again", async () => {
+        await createRoot(async (dispose) => {
+            const fake = fakeRunReads((_analysisId, runId) => endedDetail(runId));
+            watchRunCompletions(fake.opts);
+            await refreshSidebarData("analysis-A", optsFor([runRow({ runId: "run-a" })]));
+
+            await refreshSidebarData("analysis-B", optsFor([runRow({ runId: "run-b" })]));
+            await settle();
+            expect(fake.reads).toEqual([]);
+            expect(currentNotice()).toBeNull();
+
+            await refreshSidebarData("analysis-A", optsFor([runRow({ runId: "run-newer" })]));
+            await settle();
+            expect(fake.reads).toEqual([["analysis-A", "run-a"]]);
+            expect(currentNotice()?.text).toContain("completed");
+            dispose();
+        });
+    });
+
+    test("waiting runs get a read in turn, not only the first four in the order of observation", async () => {
+        await createRoot(async (dispose) => {
+            const fake = fakeRunReads((_analysisId, runId) => (runId === "run-5" ? endedDetail(runId) : okAsync(runDetail(runRow({ runId })))));
+            watchRunCompletions(fake.opts);
+            const ids = ["run-1", "run-2", "run-3", "run-4", "run-5"];
+            await refreshSidebarData("analysis-1", optsFor(ids.map((runId) => runRow({ runId }))));
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads.map(([, runId]) => runId)).toEqual(["run-1", "run-2", "run-3", "run-4"]);
+            expect(currentNotice()).toBeNull();
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads.map(([, runId]) => runId)).toContain("run-5");
+            expect(currentNotice()?.text).toContain("completed");
+            expect(__pendingNoticeCountForTest()).toBe(0);
+            dispose();
+        });
+    });
+
+    test("a failed read also moves the run behind the waiting runs", async () => {
+        await createRoot(async (dispose) => {
+            const fake = fakeRunReads((_analysisId, runId) => (runId === "run-5" ? endedDetail(runId) : errAsync(httpError(500))));
+            watchRunCompletions(fake.opts);
+            const ids = ["run-1", "run-2", "run-3", "run-4", "run-5"];
+            await refreshSidebarData("analysis-1", optsFor(ids.map((runId) => runRow({ runId }))));
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads.map(([, runId]) => runId)).toContain("run-5");
+            expect(currentNotice()?.text).toContain("completed");
+            dispose();
+        });
+    });
+
+    test("an announced run that a recovery showed running again is dropped by the read, and not read again", async () => {
+        await createRoot(async (dispose) => {
+            const fake = fakeRunReads((_analysisId, runId) => endedDetail(runId));
+            watchRunCompletions(fake.opts);
+            const ended = runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:02:30.000Z" });
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([ended]));
+            await settle();
+            expect(currentNotice()?.text).toContain("completed");
+
+            // A recovery moves the run back to running; the next runs reads do not hold it.
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads).toEqual([["analysis-1", "run-a"]]);
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads).toHaveLength(1);
+            expect(__pendingNoticeCountForTest()).toBe(0);
+            dispose();
+        });
+    });
+
+    test("an announced run that a runs read shows terminal again is dropped, and not read again", async () => {
+        await createRoot(async (dispose) => {
+            const fake = fakeRunReads((_analysisId, runId) => endedDetail(runId));
+            watchRunCompletions(fake.opts);
+            const ended = runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:02:30.000Z" });
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([ended]));
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([ended]));
+            await settle();
+            expect(__pendingNoticeCountForTest()).toBe(0);
+
+            await refreshSidebarData("analysis-1", newerRuns());
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads).toEqual([]);
+            dispose();
+        });
+    });
+
+    test("a run that this TUI never saw running is not read", async () => {
+        await createRoot(async (dispose) => {
+            const fake = fakeRunReads((_analysisId, runId) => endedDetail(runId));
+            watchRunCompletions(fake.opts);
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-old", status: "completed", completedAt: "2026-07-28T10:05:00.000Z" })]));
+            await refreshSidebarData("analysis-1", newerRuns());
+            await settle();
+            expect(fake.reads).toEqual([]);
+            expect(currentNotice()).toBeNull();
             dispose();
         });
     });

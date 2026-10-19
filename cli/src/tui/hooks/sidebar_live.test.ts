@@ -231,6 +231,12 @@ describe("refreshSidebarData — snapshot ladder", () => {
         if (r.kind === "loaded") expect(r.runs).toHaveLength(1);
     });
 
+    test("a loaded runs snapshot names the analysis that it was read for", async () => {
+        await refreshSidebarData("A", opts(null, [runRow()]));
+        const r = runsSnapshot();
+        expect(r.kind === "loaded" ? r.analysisId : null).toBe("A");
+    });
+
     test("a present profile + runs load through", async () => {
         await refreshSidebarData("A", opts(profileState({ status: "completed" }), [runRow(), runRow({ runId: "run-2" })]));
         const p = profileSnapshot();
@@ -713,7 +719,7 @@ describe("activeSubjects — a profile never displaces a run", () => {
 
 describe("hasActiveWork — poll arming predicate", () => {
     const notReady: ProfileSnapshot = { kind: "not_ready" };
-    const noRuns: RunsSnapshot = { kind: "loaded", runs: [] };
+    const noRuns: RunsSnapshot = { kind: "loaded", analysisId: "analysis-1", runs: [] };
 
     test("a pending/running profile is active", () => {
         expect(hasActiveWork({ kind: "loaded", profile: profileState({ status: "running" }) }, noRuns)).toBe(true);
@@ -726,7 +732,7 @@ describe("hasActiveWork — poll arming predicate", () => {
     });
 
     test("a non-terminal run arms; all-terminal runs do not", () => {
-        expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", runs: [runRow({ status: "running" })] })).toBe(true);
+        expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", analysisId: "analysis-1", runs: [runRow({ status: "running" })] })).toBe(true);
         const terminal = [
             runRow({ status: "completed" }),
             runRow({ status: "failed" }),
@@ -734,7 +740,7 @@ describe("hasActiveWork — poll arming predicate", () => {
             runRow({ status: "partial" }),
             runRow({ status: "suspended_insufficient_funds" }),
         ];
-        expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", runs: terminal })).toBe(false);
+        expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", analysisId: "analysis-1", runs: terminal })).toBe(false);
     });
 
     test("not_ready snapshots alone are never active (the poll stays at the idle cadence)", () => {
@@ -1414,7 +1420,7 @@ describe("the in-flight guard is bounded", () => {
             expect(entries).toBe(2); // past the bound: the guard is taken and a fresh refresh runs
             // And nothing partial or empty was published in the abandoned refresh's place — the
             // snapshot is still the one the arming refresh wrote.
-            expect(runsSnapshot()).toEqual({ kind: "loaded", runs: [] });
+            expect(runsSnapshot()).toEqual({ kind: "loaded", analysisId: "A", runs: [] });
 
             setSystemTime();
             await new Promise<void>((r) => setTimeout(r, 0));

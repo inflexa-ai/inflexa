@@ -492,6 +492,7 @@ The server MUST NOT give a notification stream. The bus MUST stay inside the ser
 The TUI MUST keep one poll interval while an analysis is open. The interval is 5 s while work is active or a turn of a different client runs on the open thread, and 15 s otherwise. Each tick MUST do these reads:
 
 - the runs and the data profile of the analysis, per `sidebar-live`
+- a read of each run that the TUI observed non-terminal and that the runs read of the analysis does not hold, per `run-completion-notice`. The read is `GET {A}/run/:runId`. A run with an open read gets no second read, and at most 4 reads are open at one time.
 - a probe of the server, `GET /api/v1/server`, per `tui-harness-chat`
 
 When the server that the boot store saw ready answers the probe, the tick MUST also read these:

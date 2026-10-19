@@ -62,12 +62,12 @@ export type ProfileSnapshot =
 
 /**
  * The runs section's render input. `not_ready` before the runtime boots; `unavailable` on a failed
- * read; `loaded` carries the newest runs (possibly empty → the section renders "no runs"). Each run
- * carries its own figure (`usage`), from the same read as the row, so a row and its figure can never
- * come from two different reads of a moving ledger. There is no `absent` kind — an analysis with no
- * runs is a `loaded` empty array, not an absence.
+ * read; `loaded` carries the newest runs (possibly empty → the section renders "no runs") and the
+ * analysis they belong to. Each run carries its own figure (`usage`), from the same read as the row,
+ * so a row and its figure can never come from two different reads of a moving ledger. There is no
+ * `absent` kind — an analysis with no runs is a `loaded` empty array, not an absence.
  */
-export type RunsSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | { kind: "loaded"; runs: RunSummary[] };
+export type RunsSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | { kind: "loaded"; analysisId: string; runs: RunSummary[] };
 
 /**
  * Live progress of ONE non-terminal run — the feed for that run's block in the sidebar RUNS section
@@ -769,7 +769,7 @@ export async function refreshSidebarData(analysisId: string, opts: RefreshOpts =
     }
     const seen = new Set((live ?? []).map((r) => r.runId));
     const merged = [...(live ?? []), ...(listed ?? []).filter((r) => !seen.has(r.runId))];
-    setRuns({ kind: "loaded", runs: merged });
+    setRuns({ kind: "loaded", analysisId, runs: merged });
 
     // EVERY non-terminal run publishes a progress entry, keyed by its run id. A terminal run (or no
     // runs at all) publishes none, and only a non-terminal run fires a run read — so an idle

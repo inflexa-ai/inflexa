@@ -28,6 +28,7 @@ import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { elapsedSinceIso, recordRunCompleted, recordStepCompleted } from "../lib/metrics.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import { markRunCanceledIfActive, queryRun } from "../state/runs.js";
 import type { RunStatus, StepExecutionRow } from "../state/schema.js";
 import { cancelRunningStepExecutions, queryStepsByRun, sweepPendingStepExecutions } from "../state/step-executions.js";
@@ -71,6 +72,8 @@ export interface RunCancelerDeps {
     readonly runCharge: RunCharge;
     readonly runAuthorizer: RunAuthorizer;
     readonly logger?: Logger;
+    /** Receives the end of a run that this canceler cancels. An absent binding, or a binding with no run emit, emits nothing. */
+    readonly provenance?: ProvenanceSeam;
     /** Test seam over the engine cancel. Production default: the workflow
      * purger's `DBOSClient`-backed cancel, child-cascading and launch-free. */
     readonly cancelWorkflows?: (workflowIds: readonly string[]) => Promise<void>;
@@ -108,6 +111,16 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
     const incompleteSteps = async (runId: string): Promise<StepExecutionRow[]> =>
         unwrapOrThrow(await queryStepsByRun(pool, runId)).filter((step) => step.childWorkflowId !== null && step.completedAt === null);
     const childIds = (steps: readonly StepExecutionRow[]): string[] => steps.flatMap((step) => (step.childWorkflowId !== null ? [step.childWorkflowId] : []));
+
+    const emitRunEvent = deps.provenance?.emitRunEvent;
+    const emitGuarded = (event: RunProvenanceEvent, session: AgentSession): void => {
+        if (emitRunEvent === undefined) return;
+        try {
+            emitRunEvent(event, session);
+        } catch (err) {
+            logger.error("the run emit of the provenance binding threw", { runId: event.runId, event: event.type, ...logger.errorFields(err) });
+        }
+    };
 
     return {
         async cancel(runId, session) {
@@ -158,6 +171,36 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             if (transitioned) {
                 recordRunCompleted({ workflow: "analysis", status: "canceled", durationMs: elapsedSinceIso(row.startedAt) });
                 for (const step of cutSteps ?? []) recordStepCompleted({ agentId: step.agentId, status: "canceled" });
+
+                // The end of the run rides the same condition. One wall-clock read stamps every event:
+                // the canceler is not a workflow, so no replay fires these emits again.
+                const atMs = Date.now();
+                for (const step of cutSteps ?? []) {
+                    const durationMs = elapsedSinceIso(step.startedAt, atMs);
+                    emitGuarded(
+                        {
+                            type: "step_completed",
+                            analysisId: row.analysisId,
+                            runId,
+                            stepId: step.stepId,
+                            status: "canceled",
+                            ...(durationMs !== undefined ? { durationMs } : {}),
+                            atMs,
+                        },
+                        session,
+                    );
+                }
+                emitGuarded(
+                    {
+                        type: "run_completed",
+                        analysisId: row.analysisId,
+                        runId,
+                        status: "canceled",
+                        atMs,
+                        durationMs: Math.max(0, atMs - Date.parse(row.startedAt)),
+                    },
+                    session,
+                );
             }
 
             let pendingSwept = false;

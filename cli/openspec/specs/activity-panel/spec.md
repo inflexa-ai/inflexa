@@ -362,7 +362,7 @@ A confirmed abort MUST cancel the run that the confirmation named. The panel foc
 
 The panel MUST report what the cancel really did:
 
-- When the cancel changed the run to `canceled`, the run-completion notice MUST announce it. The TUI MUST read the runs again at once, thus the notice and the panel advance do not wait for the next poll. If the runs that the TUI reads again do not include the run, the completion watcher cannot see it. Then the TUI MUST announce the cancel itself.
+- When the cancel changed the run to `canceled`, the run-completion notice MUST announce it. The TUI MUST read the runs again at once. When those reads succeed, the notice and the panel advance do not wait for the next poll. When a read fails, a later read gives the notice, per `run-completion-notice`. The run-completion notice announces the run also when the runs that the TUI reads again do not hold it. Thus the TUI MUST NOT announce the cancel itself.
 - When the cancel changed the run to `canceled` and each ledger settled, the TUI MUST NOT show a second notice for the same abort.
 - When the cancel changed the run to `canceled` but a ledger did not settle, the TUI MUST also show a warning notice. The notice MUST name each ledger that did not settle (the step rows, the charge, or the mandate).
 - When the run reached a terminal status before the cancel, the TUI MUST show a notice that the run already finished, with that status. It MUST NOT claim an abort.
@@ -425,7 +425,8 @@ While the panel shows a run, its legend MUST name the abort chord with the chord
 
 - **GIVEN** the canceled run is not in the runs that the TUI reads again, because newer runs fill the list
 - **WHEN** the cancel changes the run to `canceled`
-- **THEN** the TUI shows a notice that the run was canceled
+- **THEN** the run-completion notice announces that the run was canceled
+- **AND** the abort raises no notice of its own
 
 #### Scenario: A profile has no abort
 

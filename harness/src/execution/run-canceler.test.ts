@@ -13,6 +13,8 @@ import type { Pool } from "pg";
 import { captureMetrics } from "../__tests__/setup/metrics.js";
 import type { AgentSession } from "../auth/types.js";
 import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
+import type { Logger, LogFields } from "../lib/logger.js";
+import type { RunProvenanceEvent } from "../provenance/seam.js";
 import type { RunAuthorizer } from "./run-authorizer.js";
 import { createRunCanceler, UnknownRunError } from "./run-canceler.js";
 
@@ -79,7 +81,7 @@ interface FakeDb {
 }
 
 /** Successive `queryStepsByRun` reads consume `stepBatches`; the last repeats. */
-function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails?: boolean; settleFails?: boolean } = {}): FakeDb {
+function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails?: boolean; settleFails?: boolean; failStepReadsAfter?: number } = {}): FakeDb {
     const state = { run, swept: 0, ledger: (stepBatches[stepBatches.length - 1] ?? []).map((row) => ({ ...row })) };
     let stepReads = 0;
     const pool = {
@@ -112,6 +114,7 @@ function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails
                 return { rowCount: 1 };
             }
             if (text.includes("FROM cortex_step_executions")) {
+                if (opts.failStepReadsAfter !== undefined && stepReads >= opts.failStepReadsAfter) throw new Error("step read exploded");
                 const batch = stepBatches[Math.min(stepReads, stepBatches.length - 1)] ?? [];
                 stepReads += 1;
                 return { rows: batch };
@@ -444,6 +447,205 @@ describe("createRunCanceler outcome metrics", () => {
             expect(await capture.histograms("cortex.step.duration")).toEqual([]);
         } finally {
             await capture.dispose();
+        }
+    });
+});
+
+function recordingErrorLogger(): { logger: Logger; errors: Array<{ msg: string; fields?: LogFields }> } {
+    const errors: Array<{ msg: string; fields?: LogFields }> = [];
+    const logger: Logger = {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: (msg, fields) => {
+            errors.push({ msg, ...(fields ? { fields } : {}) });
+        },
+        with: () => logger,
+        named: () => logger,
+        errorFields: () => ({}),
+    };
+    return { logger, errors };
+}
+
+describe("createRunCanceler run end record", () => {
+    function recordingEmit(opts: { throws?: boolean } = {}): {
+        emitRunEvent: (event: RunProvenanceEvent, emitSession: AgentSession) => void;
+        received: Array<{ event: RunProvenanceEvent; session: AgentSession }>;
+    } {
+        const received: Array<{ event: RunProvenanceEvent; session: AgentSession }> = [];
+        return {
+            received,
+            emitRunEvent: (event, emitSession) => {
+                received.push({ event, session: emitSession });
+                if (opts.throws) throw new Error("emit exploded");
+            },
+        };
+    }
+
+    it("a won cancel emits step_completed for the cut step, then run_completed, with the cancel session and one atMs", async () => {
+        const steps = [stepRow("cut", "wf-child-1"), stepRow("done", "wf-child-2", "2026-08-12T00:30:00.000Z"), stepRow("never", null)];
+        const db = fakeDb(runRow(), [steps]);
+        const { charge } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const { emitRunEvent, received } = recordingEmit();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows, provenance: { emitRunEvent } });
+
+        const before = Date.now();
+        await canceler.cancel("run-1", session);
+        const after = Date.now();
+
+        expect(received.map((entry) => entry.event.type)).toEqual(["step_completed", "run_completed"]);
+        for (const entry of received) expect(entry.session).toBe(session);
+        const [stepEvent, runEvent] = received.map((entry) => entry.event);
+        const atMs = runEvent?.type === "run_completed" ? runEvent.atMs : Number.NaN;
+        expect(atMs).toBeGreaterThanOrEqual(before);
+        expect(atMs).toBeLessThanOrEqual(after);
+        expect(stepEvent).toEqual({
+            type: "step_completed",
+            analysisId: "analysis-1",
+            runId: "run-1",
+            stepId: "cut",
+            status: "canceled",
+            durationMs: atMs - Date.parse("2026-08-12T00:00:01.000Z"),
+            atMs,
+        });
+        expect(runEvent).toEqual({
+            type: "run_completed",
+            analysisId: "analysis-1",
+            runId: "run-1",
+            status: "canceled",
+            durationMs: atMs - Date.parse("2026-08-12T00:00:00.000Z"),
+            atMs,
+        });
+    });
+
+    it("omits the step duration when the step row has no start", async () => {
+        const db = fakeDb(runRow(), [[{ ...stepRow("cut", "wf-child-1"), started_at: null }]]);
+        const { charge } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const { emitRunEvent, received } = recordingEmit();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows, provenance: { emitRunEvent } });
+
+        await canceler.cancel("run-1", session);
+
+        const stepEvent = received[0]?.event;
+        expect(stepEvent?.type).toBe("step_completed");
+        expect(stepEvent !== undefined && "durationMs" in stepEvent).toBe(false);
+    });
+
+    it("emits nothing when the run completes between the read and the terminal write", async () => {
+        const db = fakeDb(runRow(), [[stepRow("cut", "wf-child-1")]]);
+        const { cancelWorkflows } = recordingCancel(() => {
+            db.state.run = { ...(db.state.run as Row), status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
+        });
+        const { charge } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { emitRunEvent, received } = recordingEmit();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows, provenance: { emitRunEvent } });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result.finalStatus).toBe("completed");
+        expect(received).toEqual([]);
+    });
+
+    it("emits nothing for a second cancel of a canceled run", async () => {
+        const db = fakeDb(runRow({ status: "canceled", completed_at: "2026-08-12T01:00:00.000Z", error: "external_cancel" }));
+        const { charge } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const { emitRunEvent, received } = recordingEmit();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows, provenance: { emitRunEvent } });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result.outcome).toBe("already_terminal");
+        expect(received).toEqual([]);
+    });
+
+    it("still emits run_completed, and no step_completed, when the read of the cut steps fails", async () => {
+        const db = fakeDb(runRow(), [[stepRow("cut", "wf-child-1")]], { failStepReadsAfter: 1 });
+        const { charge } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const { emitRunEvent, received } = recordingEmit();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows, provenance: { emitRunEvent } });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result.finalStatus).toBe("canceled");
+        expect(received.map((entry) => entry.event.type)).toEqual(["run_completed"]);
+    });
+
+    it("a throwing run emit changes no convergence phase and no result", async () => {
+        const steps = [stepRow("cut", "wf-child-1"), pendingRow("waiting")];
+        const run = runRow({ mandate_jti: "jti-1" });
+
+        const baselineDb = fakeDb(run, [steps]);
+        const baseline = await createRunCanceler({
+            pool: baselineDb.pool,
+            runCharge: recordingCharge().charge,
+            runAuthorizer: recordingAuthorizer().authorizer,
+            cancelWorkflows: recordingCancel().cancelWorkflows,
+        }).cancel("run-1", session);
+
+        const db = fakeDb(run, [steps]);
+        const { charge, closes } = recordingCharge();
+        const { authorizer, revoked } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const { emitRunEvent, received } = recordingEmit({ throws: true });
+        const { logger, errors } = recordingErrorLogger();
+        const canceler = createRunCanceler({
+            pool: db.pool,
+            runCharge: charge,
+            runAuthorizer: authorizer,
+            cancelWorkflows,
+            provenance: { emitRunEvent },
+            logger,
+        });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(received.map((entry) => entry.event.type)).toEqual(["step_completed", "run_completed"]);
+        expect(errors.map((entry) => entry.msg)).toEqual(["the run emit of the provenance binding threw", "the run emit of the provenance binding threw"]);
+        expect(errors.map((entry) => entry.fields)).toMatchObject([
+            { runId: "run-1", event: "step_completed" },
+            { runId: "run-1", event: "run_completed" },
+        ]);
+        expect(result).toEqual(baseline);
+        expect(db.state.ledger.find((row) => row.step_id === "cut")?.status).toBe("canceled");
+        expect(db.state.ledger.find((row) => row.step_id === "waiting")?.status).toBe("skipped");
+        expect(closes).toHaveLength(1);
+        expect(revoked).toEqual([{ jti: "jti-1", reason: "external_cancel" }]);
+    });
+
+    it("behaves as before when the provenance binding has no run emit", async () => {
+        const steps = [stepRow("cut", "wf-child-1")];
+        for (const provenance of [undefined, {}]) {
+            const db = fakeDb(runRow(), [steps]);
+            const { charge, closes } = recordingCharge();
+            const { authorizer } = recordingAuthorizer();
+            const { cancelWorkflows } = recordingCancel();
+            const canceler = createRunCanceler({
+                pool: db.pool,
+                runCharge: charge,
+                runAuthorizer: authorizer,
+                cancelWorkflows,
+                ...(provenance === undefined ? {} : { provenance }),
+            });
+
+            const result = await canceler.cancel("run-1", session);
+
+            expect(result).toEqual({
+                runId: "run-1",
+                workflowId: "run-1",
+                outcome: "canceled",
+                finalStatus: "canceled",
+                converged: { steps: true, charge: true, mandate: true },
+            });
+            expect(closes).toHaveLength(1);
         }
     });
 });
