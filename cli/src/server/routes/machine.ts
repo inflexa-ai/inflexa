@@ -173,7 +173,7 @@ export function machineRoutes(opts: MachineRouteOpts = DEFAULT_MACHINE_ROUTE_OPT
         holdConnection(c);
         // A listing that failed is an ordinary outcome: the client offers a free-text model id.
         const body: ModelList = (await opts.listModels()).match(
-            (listed): ModelList => ({ models: listed.map((model) => ({ id: model.id, efforts: [...model.efforts] })) }),
+            (listed): ModelList => ({ models: listed.map((model) => ({ id: model.id, efforts: [...model.efforts], releasedAt: model.releasedAt })) }),
             (error): ModelList => ({ models: null, reason: describeListModelsError(error) }),
         );
         return c.json(body);

@@ -14,12 +14,42 @@ import { env } from "../../lib/env.ts";
 // truth in env.ts (`cliproxyApiUrl`, `cliproxyConfigPath`) — not user-overridable, since we own the
 // container.
 
-const modelsSchema = z.object({ data: z.array(z.object({ id: z.string(), created: z.number().optional() })) });
+const modelsSchema = z.object({
+    data: z.array(
+        z.object({
+            id: z.string(),
+            created: z.number().nullish().catch(null),
+            created_at: z.string().nullish().catch(null),
+        }),
+    ),
+});
+
+// `Date.parse` accepts strings that are no RFC 3339 date-time, for example "0", and it moves "2026-02-30" to March.
+const rfc3339Schema = z.iso.datetime({ offset: true });
 
 /**
- * One entry of the proxy's `/models` list as the ranking consumes it: the id plus the registry's
- * `created` unix timestamp (verified live: the proxy passes it through from its GitHub-sourced
- * registry). `created` is optional so a proxy build that omits it degrades to the id tiebreak —
+ * The release time of one `/models` entry in Unix seconds, or `undefined` when the entry has no usable date.
+ * `created_at` (RFC 3339, the Anthropic route) wins; `created` (Unix seconds, the OpenAI route and the proxy)
+ * is read only when `created_at` gives no date. A value of the wrong type, a string that is not an RFC 3339
+ * date-time with a valid calendar date, and a number that is not finite give no date. A time of 0 or less also gives no date: Anthropic documents an epoch value
+ * for a release date that it does not know, and no model predates the epoch. A time that a JavaScript `Date`
+ * cannot represent gives no date as well, thus `new Date(seconds * 1000).toISOString()` never throws on the result.
+ */
+export function releaseTimeOf(entry: { created?: unknown; created_at?: unknown }): number | undefined {
+    const createdAt = rfc3339Schema.safeParse(entry.created_at);
+    const fromCreatedAt = createdAt.success ? Date.parse(createdAt.data) / 1000 : Number.NaN;
+    return usableReleaseTime(fromCreatedAt) ?? usableReleaseTime(typeof entry.created === "number" ? entry.created : Number.NaN);
+}
+
+function usableReleaseTime(seconds: number): number | undefined {
+    if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+    return Number.isFinite(new Date(seconds * 1000).getTime()) ? seconds : undefined;
+}
+
+/**
+ * One entry of a `/models` list as the ranking consumes it: the id plus the release time in unix seconds
+ * ({@link releaseTimeOf}). The proxy passes `created` through from its GitHub-sourced registry (verified live).
+ * `created` is optional so a proxy build that omits it degrades to the id tiebreak —
  * still deterministic — rather than failing the schema.
  */
 export type ModelCandidate = { id: string; created?: number };
@@ -140,7 +170,7 @@ export async function listModelCandidates(apiKey: string, signal?: AbortSignal):
     if (!res.ok) return err({ type: "proxy_unreachable", detail: `HTTP ${res.status}` });
     const models = await res.jsonWith(modelsSchema);
     if (!models || models.data.length === 0) return err({ type: "no_models" });
-    return ok(models.data);
+    return ok(models.data.map((m) => ({ id: m.id, created: releaseTimeOf(m) })));
 }
 
 /**
@@ -200,9 +230,10 @@ export function rankModelCandidates(models: ModelCandidate[]): string[] {
 /**
  * Total-order comparator for the default-model rank: `created` descending (a missing timestamp ranks
  * oldest — 0 precedes every real unix stamp), ties broken by id ascending so the sort is stable across
- * serving orders. Id order is ONLY ever the tiebreak, never the primary key.
+ * serving orders. Id order is ONLY ever the tiebreak, never the primary key. The model picker listing
+ * sorts with this same comparator, so the rank and the picker cannot disagree on recency.
  */
-function byRecencyThenId(a: ModelCandidate, b: ModelCandidate): number {
+export function byRecencyThenId(a: ModelCandidate, b: ModelCandidate): number {
     const byCreated = (b.created ?? 0) - (a.created ?? 0);
     if (byCreated !== 0) return byCreated;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;

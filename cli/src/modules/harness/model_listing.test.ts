@@ -62,9 +62,10 @@ describe("listConnectionModels — per-mode request shape", () => {
         const result = await listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: rec.fetch }));
 
         // The proxy reports no capability and serves Claude only, thus each model gets the full ladder.
+        // Neither model has a date, thus the ids break the tie.
         expect(result._unsafeUnwrap()).toEqual([
-            { id: "claude-sonnet-4-5", efforts: AGENT_EFFORTS },
-            { id: "claude-opus-4-8", efforts: AGENT_EFFORTS },
+            { id: "claude-opus-4-8", efforts: AGENT_EFFORTS, releasedAt: null },
+            { id: "claude-sonnet-4-5", efforts: AGENT_EFFORTS, releasedAt: null },
         ]);
         expect(rec.calls).toHaveLength(1);
         expect(rec.calls[0]?.url).toContain("/v1/models");
@@ -83,8 +84,8 @@ describe("listConnectionModels — per-mode request shape", () => {
 
         // An OpenAI-compatible wire sends the effort name as it is, thus an unreported model gets no ladder.
         expect(result._unsafeUnwrap()).toEqual([
-            { id: "gpt-4o", efforts: [] },
-            { id: "gpt-4o-mini", efforts: [] },
+            { id: "gpt-4o", efforts: [], releasedAt: null },
+            { id: "gpt-4o-mini", efforts: [], releasedAt: null },
         ]);
         expect(rec.calls[0]?.url).toBe("https://api.example.com/v1/models");
         expect(rec.calls[0]?.headers).toEqual({ Authorization: "Bearer sk-direct" });
@@ -102,8 +103,8 @@ describe("listConnectionModels — per-mode request shape", () => {
             }),
         );
 
-        expect(result._unsafeUnwrap()).toEqual([{ id: "claude-sonnet-4-5", efforts: AGENT_EFFORTS }]);
-        expect(rec.calls[0]?.url).toBe("https://api.anthropic.com/v1/models");
+        expect(result._unsafeUnwrap()).toEqual([{ id: "claude-sonnet-4-5", efforts: AGENT_EFFORTS, releasedAt: null }]);
+        expect(rec.calls[0]?.url).toBe("https://api.anthropic.com/v1/models?limit=1000");
         expect(rec.calls[0]?.headers).toEqual({ "x-api-key": "sk-ant", "anthropic-version": "2023-06-01" });
     });
 
@@ -125,7 +126,7 @@ describe("listConnectionModels — per-mode request shape", () => {
                 fetch: rec.fetch,
             }),
         );
-        expect(result._unsafeUnwrap()).toEqual([{ id: "claude-sonnet-5", efforts: AGENT_EFFORTS }]);
+        expect(result._unsafeUnwrap()).toEqual([{ id: "claude-sonnet-5", efforts: AGENT_EFFORTS, releasedAt: null }]);
         expect(rec.calls[0]?.headers).toEqual({ Authorization: "Bearer gw-jwt", "anthropic-version": "2023-06-01" });
     });
 
@@ -329,6 +330,252 @@ const DIRECT_ANTHROPIC: ResolvedModelConnection = {
     protocol: "anthropic",
     agents: {},
 };
+
+/** A models body whose entries carry the raw date fields of the sources, with the paging fields of Anthropic's route. */
+function datedResponse(models: { id: string; created?: unknown; created_at?: unknown }[], paging: { has_more?: boolean; last_id?: string } = {}): Response {
+    return new Response(JSON.stringify({ data: models, ...paging }));
+}
+
+describe("listConnectionModels — the release date and the newest-first order", () => {
+    const cliproxy: ResolvedModelConnection = { mode: "cliproxy", provider: "anthropic", agents: {} };
+    const sept21 = "2026-09-21T00:00:00.000Z";
+
+    async function listFor(models: { id: string; created?: unknown; created_at?: unknown }[], connection: ResolvedModelConnection = cliproxy) {
+        const rec = recordingFetch(() => Promise.resolve(datedResponse(models)));
+        return (await listConnectionModels(seamsFor({ connection, modelApiKey: "sk-ant", fetch: rec.fetch })))._unsafeUnwrap();
+    }
+
+    test("each model carries releasedAt as the ISO 8601 form of `created_at` or `created`", async () => {
+        const listing = await listFor([
+            { id: "claude-rfc", created_at: "2026-09-21T00:00:00Z" },
+            { id: "claude-unix", created: 1_760_000_000 },
+        ]);
+        expect(listing.map((m) => [m.id, m.releasedAt])).toEqual([
+            ["claude-rfc", sept21],
+            ["claude-unix", "2025-10-09T08:53:20.000Z"],
+        ]);
+    });
+
+    test("an epoch date, an earlier date, an invalid date, and a missing date give releasedAt null", async () => {
+        const listing = await listFor([
+            { id: "claude-epoch", created_at: "1970-01-01T00:00:00Z" },
+            { id: "claude-before", created: -100 },
+            { id: "claude-invalid", created_at: "not a date" },
+            { id: "claude-none" },
+        ]);
+        expect(listing.map((m) => m.releasedAt)).toEqual([null, null, null, null]);
+    });
+
+    test("a finite date that a JavaScript Date cannot represent gives releasedAt null and never throws", async () => {
+        const listing = await listFor([
+            { id: "claude-far", created: 1e15 },
+            { id: "claude-ok", created: 1_760_000_000 },
+        ]);
+        expect(listing.map((m) => [m.id, m.releasedAt])).toEqual([
+            ["claude-ok", "2025-10-09T08:53:20.000Z"],
+            ["claude-far", null],
+        ]);
+    });
+
+    test("a date field of an unknown shape costs that date only, never the listing", async () => {
+        const listing = await listFor([
+            { id: "claude-odd", created: "soon", created_at: { when: "yesterday" } },
+            { id: "claude-ok", created: 1_760_000_000 },
+        ]);
+        expect(listing.map((m) => [m.id, m.releasedAt])).toEqual([
+            ["claude-ok", "2025-10-09T08:53:20.000Z"],
+            ["claude-odd", null],
+        ]);
+    });
+
+    test("the listing comes newest first, and an undated model comes last whatever the serving order", async () => {
+        const listing = await listFor([
+            { id: "claude-older", created: 1_700_000_000 },
+            { id: "claude-undated" },
+            { id: "claude-newer", created_at: "2026-09-21T00:00:00Z" },
+        ]);
+        expect(listing.map((m) => m.id)).toEqual(["claude-newer", "claude-older", "claude-undated"]);
+    });
+
+    test("the ids break a tie of dates, in ascending order", async () => {
+        const listing = await listFor([
+            { id: "claude-b", created: 1_700_000_000 },
+            { id: "claude-a", created: 1_700_000_000 },
+            { id: "claude-z" },
+            { id: "claude-y" },
+        ]);
+        expect(listing.map((m) => m.id)).toEqual(["claude-a", "claude-b", "claude-y", "claude-z"]);
+    });
+
+    test("the OpenAI-compatible and the direct Anthropic wires sort the same way", async () => {
+        const models = [{ id: "m-old", created: 1_600_000_000 }, { id: "m-none" }, { id: "m-new", created: 1_760_000_000 }];
+        const openai = await listFor(models, {
+            mode: "direct",
+            provider: "openai",
+            baseURL: "https://api.example.com/v1",
+            protocol: "openai-compatible",
+            agents: {},
+        });
+        const anthropic = await listFor(models, DIRECT_ANTHROPIC);
+        expect(openai.map((m) => m.id)).toEqual(["m-new", "m-old", "m-none"]);
+        expect(anthropic.map((m) => m.id)).toEqual(["m-new", "m-old", "m-none"]);
+    });
+});
+
+describe("listConnectionModels — the pages of the direct Anthropic listing", () => {
+    const withAuth: ResolvedModelConnection = { ...DIRECT_ANTHROPIC, auth: { kind: "command", command: "corp token", scheme: "bearer" } };
+
+    /** A fetch that answers its n-th call with the n-th of `pages`, and rejects a call after the last page. */
+    function pagedFetch(pages: Response[]): ReturnType<typeof recordingFetch> {
+        let next = 0;
+        return recordingFetch(() => {
+            const page = pages[next++];
+            return page === undefined ? Promise.reject(new Error("read a page that the test did not serve")) : Promise.resolve(page);
+        });
+    }
+
+    const listWith = (connection: ResolvedModelConnection, rec: ReturnType<typeof recordingFetch>) =>
+        listConnectionModels(
+            seamsFor({
+                connection,
+                modelApiKey: "sk-ant",
+                resolveAuthCredential: async () => ok({ token: "gw-jwt", scheme: "bearer" }),
+                fetch: rec.fetch,
+            }),
+        );
+
+    test("the first request asks for 1000 models, and the next request carries the last_id of the page", async () => {
+        const rec = pagedFetch([
+            datedResponse([{ id: "claude-b", created: 200 }], { has_more: true, last_id: "claude-b" }),
+            datedResponse([{ id: "claude-a", created: 100 }], { has_more: false, last_id: "claude-a" }),
+        ]);
+        const listing = (await listWith(DIRECT_ANTHROPIC, rec))._unsafeUnwrap();
+
+        expect(rec.calls.map((c) => c.url)).toEqual([
+            "https://api.anthropic.com/v1/models?limit=1000",
+            "https://api.anthropic.com/v1/models?limit=1000&after_id=claude-b",
+        ]);
+        expect(listing.map((m) => m.id)).toEqual(["claude-b", "claude-a"]);
+    });
+
+    test("the models of all pages are sorted together, not page by page", async () => {
+        const rec = pagedFetch([
+            datedResponse([{ id: "claude-old", created: 100 }], { has_more: true, last_id: "claude-old" }),
+            datedResponse([{ id: "claude-new", created: 900 }], { has_more: false, last_id: "claude-new" }),
+        ]);
+        expect((await listWith(DIRECT_ANTHROPIC, rec))._unsafeUnwrap().map((m) => m.id)).toEqual(["claude-new", "claude-old"]);
+    });
+
+    test("a configured auth block pages the same way and sends the same headers on each page", async () => {
+        const rec = pagedFetch([
+            datedResponse([{ id: "claude-b" }], { has_more: true, last_id: "claude-b" }),
+            datedResponse([{ id: "claude-a" }], { has_more: false, last_id: "claude-a" }),
+        ]);
+        const listing = (await listWith(withAuth, rec))._unsafeUnwrap();
+
+        expect(listing.map((m) => m.id)).toEqual(["claude-a", "claude-b"]);
+        expect(rec.calls.map((c) => c.url)).toEqual([
+            "https://api.anthropic.com/v1/models?limit=1000",
+            "https://api.anthropic.com/v1/models?limit=1000&after_id=claude-b",
+        ]);
+        for (const call of rec.calls) expect(call.headers).toEqual({ Authorization: "Bearer gw-jwt", "anthropic-version": "2023-06-01" });
+    });
+
+    test("the read ends at has_more false, and it ends when has_more is absent", async () => {
+        const stops = pagedFetch([datedResponse([{ id: "claude-a" }], { has_more: false, last_id: "claude-a" })]);
+        await listWith(DIRECT_ANTHROPIC, stops);
+        expect(stops.calls).toHaveLength(1);
+
+        const absent = pagedFetch([datedResponse([{ id: "claude-a" }], { last_id: "claude-a" })]);
+        await listWith(DIRECT_ANTHROPIC, absent);
+        expect(absent.calls).toHaveLength(1);
+    });
+
+    test("a repeated last_id ends the read, keeps the models that were read, and lists a repeated id one time", async () => {
+        const rec = pagedFetch([
+            datedResponse([{ id: "claude-a", created: 100 }], { has_more: true, last_id: "claude-a" }),
+            datedResponse(
+                [
+                    { id: "claude-a", created: 900 },
+                    { id: "claude-b", created: 50 },
+                ],
+                { has_more: true, last_id: "claude-a" },
+            ),
+        ]);
+        const listing = (await listWith(DIRECT_ANTHROPIC, rec))._unsafeUnwrap();
+
+        expect(rec.calls).toHaveLength(2);
+        expect(listing.map((m) => m.id)).toEqual(["claude-a", "claude-b"]);
+        expect(listing[0]!.releasedAt).toBe(new Date(100_000).toISOString());
+    });
+
+    test("a page with no last_id, and an empty later page, end the read", async () => {
+        const noCursor = pagedFetch([datedResponse([{ id: "claude-a" }], { has_more: true })]);
+        expect((await listWith(DIRECT_ANTHROPIC, noCursor))._unsafeUnwrap()).toHaveLength(1);
+        expect(noCursor.calls).toHaveLength(1);
+
+        const emptyLater = pagedFetch([
+            datedResponse([{ id: "claude-a" }], { has_more: true, last_id: "claude-a" }),
+            datedResponse([], { has_more: true, last_id: "claude-z" }),
+        ]);
+        expect((await listWith(DIRECT_ANTHROPIC, emptyLater))._unsafeUnwrap().map((m) => m.id)).toEqual(["claude-a"]);
+        expect(emptyLater.calls).toHaveLength(2);
+    });
+
+    test("the read ends at the page cap of 10 pages, and the listing gives the models that it read", async () => {
+        let served = 0;
+        const rec = recordingFetch(() => {
+            served++;
+            return Promise.resolve(datedResponse([{ id: `claude-${String(served).padStart(2, "0")}` }], { has_more: true, last_id: `cursor-${served}` }));
+        });
+        const listing = (await listWith(DIRECT_ANTHROPIC, rec))._unsafeUnwrap();
+
+        expect(rec.calls).toHaveLength(10);
+        expect(listing).toHaveLength(10);
+    });
+
+    test("a failed later page fails the listing with the reason of a failed first page", async () => {
+        const first = datedResponse([{ id: "claude-a" }], { has_more: true, last_id: "claude-a" });
+        const status = pagedFetch([first, new Response("nope", { status: 500 })]);
+        expect((await listWith(DIRECT_ANTHROPIC, status))._unsafeUnwrapErr()).toEqual({ type: "unreachable", detail: "HTTP 500" });
+
+        let pageNo = 0;
+        const throwing = recordingFetch(() =>
+            pageNo++ === 0 ? Promise.resolve(datedResponse([{ id: "claude-a" }], { has_more: true, last_id: "claude-a" })) : Promise.reject(new Error("reset")),
+        );
+        expect((await listWith(DIRECT_ANTHROPIC, throwing))._unsafeUnwrapErr()).toEqual({ type: "unreachable", detail: "reset" });
+
+        const garbage = pagedFetch([datedResponse([{ id: "claude-a" }], { has_more: true, last_id: "claude-a" }), new Response("not json at all")]);
+        expect((await listWith(DIRECT_ANTHROPIC, garbage))._unsafeUnwrapErr()).toEqual({ type: "no_models" });
+    });
+
+    test("one timeout bounds all pages together", async () => {
+        let pageNo = 0;
+        const fetchPages: ListModelsSeams["fetch"] = (_url, _headers, signal) =>
+            pageNo++ === 0
+                ? Promise.resolve(datedResponse([{ id: "claude-a" }], { has_more: true, last_id: "claude-a" }))
+                : new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+        const outcome = await listConnectionModels(seamsFor({ connection: DIRECT_ANTHROPIC, modelApiKey: "sk-ant", fetch: fetchPages }), 50);
+        expect(outcome._unsafeUnwrapErr()).toEqual({ type: "timed_out", afterMs: 50 });
+    });
+
+    test("the cliproxy mode and the OpenAI-compatible protocol send no limit and read one page", async () => {
+        const proxy = recordingFetch(() => Promise.resolve(datedResponse([{ id: "claude-a" }], { has_more: true, last_id: "claude-a" })));
+        await listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: proxy.fetch }));
+        expect(proxy.calls).toHaveLength(1);
+        expect(proxy.calls[0]?.url).not.toContain("limit");
+
+        const openai = recordingFetch(() => Promise.resolve(datedResponse([{ id: "gpt-4o" }], { has_more: true, last_id: "gpt-4o" })));
+        await listConnectionModels(
+            seamsFor({
+                connection: { mode: "direct", provider: "openai", baseURL: "https://api.example.com/v1", protocol: "openai-compatible", agents: {} },
+                modelApiKey: "sk-direct",
+                fetch: openai.fetch,
+            }),
+        );
+        expect(openai.calls.map((c) => c.url)).toEqual(["https://api.example.com/v1/models"]);
+    });
+});
 
 describe("validateModelSelection — per-mode commit validation", () => {
     test("cliproxy delegates to checkModelAccess with the proxy key and returns its verdict", async () => {

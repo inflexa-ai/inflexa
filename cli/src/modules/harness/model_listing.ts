@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { env, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, type Credential, type CredentialError } from "../../lib/credential.ts";
-import { readApiKey, checkModelAccess, type ChatSetupError, type ModelAccess } from "../proxy/models.ts";
+import { readApiKey, checkModelAccess, byRecencyThenId, releaseTimeOf, type ChatSetupError, type ModelAccess } from "../proxy/models.ts";
 import { AGENT_EFFORTS, type ModelAuthConfig } from "../../lib/config.ts";
 import { resolveModelConnection, type AgentEffort, type ResolvedModelConnection } from "./config.ts";
 
@@ -25,8 +25,9 @@ import { resolveModelConnection, type AgentEffort, type ResolvedModelConnection 
 // route, an OpenAI-compatible /models, AND Anthropic's GET /v1/models (whose `data[].id` carries the
 // model id). One schema covers all three; unmodeled fields are ignored.
 //
-// Only Anthropic's own route adds `capabilities.effort`. A capability block of an unknown shape falls to
-// `null` through `.catch`, thus it costs the effort list of that model only, never the listing.
+// Only Anthropic's own route adds `capabilities.effort`, `created_at`, and the paging fields `has_more` and
+// `last_id`. The OpenAI-style routes and the cliproxy route add `created`. A field of an unknown shape falls
+// to `null` through `.catch`, thus it costs that model's effort list or date, or the paging, never the listing.
 const capabilitySupportSchema = z.object({ supported: z.boolean() });
 const effortCapabilitySchema = z.object({
     supported: z.boolean(),
@@ -40,13 +41,21 @@ const modelsSchema = z.object({
     data: z.array(
         z.object({
             id: z.string(),
+            created: z.number().nullish().catch(null),
+            created_at: z.string().nullish().catch(null),
             capabilities: z.object({ effort: effortCapabilitySchema.nullish() }).nullish().catch(null),
         }),
     ),
+    has_more: z.boolean().nullish().catch(null),
+    last_id: z.string().nullish().catch(null),
 });
 
-/** One listed model: its id, and the efforts the picker can select for it (empty when there is none to select). */
-export type ListedModel = { readonly id: string; readonly efforts: readonly AgentEffort[] };
+/**
+ * One listed model: its id, the efforts the picker can select for it (empty when there is none to select), and
+ * its release date as an ISO 8601 string, or `null` when the source gives no usable date. The source's date is
+ * passed on with no correction.
+ */
+export type ListedModel = { readonly id: string; readonly efforts: readonly AgentEffort[]; readonly releasedAt: string | null };
 
 /**
  * The efforts of one listed model. A reported capability decides: each neutral rung the model supports,
@@ -110,6 +119,12 @@ export function describeListModelsError(e: ListModelsError): string {
  * `GET /api/v1/models`, thus without this bound a hung endpoint holds the request with no end.
  */
 const LIST_MODELS_TIMEOUT_MS = 10_000;
+
+/** The maximum `limit` of the Anthropic List Models route; the default of 20 would cut the catalog to its 20 newest models. */
+const ANTHROPIC_PAGE_SIZE = 1000;
+
+/** Upper bound on the pages of one listing, far above a real catalog at {@link ANTHROPIC_PAGE_SIZE} models a page. */
+const MAX_LISTING_PAGES = 10;
 
 /**
  * The effectful seams, injectable so the per-mode request-shaping is unit-testable offline (no real
@@ -191,9 +206,11 @@ async function requestFor(
  * List the connection's available model ids for the agent-model picker, UNCACHED. Resolves
  * the configured connection, shapes the mode-specific request (cliproxy `/models`, direct
  * OpenAI-compatible `/models`, direct Anthropic `/models` off the `/v1`-terminated root), and parses the shared `{ data: [{ id }] }`
- * response. Returns each model with its efforts, or a {@link ListModelsError} the picker maps to free-text entry — every
+ * response. Returns each model with its efforts and release date, newest first with the undated models last (the
+ * comparator of the default-model rank), or a {@link ListModelsError} the picker maps to free-text entry — every
  * failure is on the Result channel because listing failure is an ordinary, designed outcome, not a fault.
- * `timeoutMs` bounds the request.
+ * A direct Anthropic connection is read page by page, at {@link ANTHROPIC_PAGE_SIZE} models a page. `timeoutMs` bounds
+ * the request, and for a paged listing it bounds all pages together.
  */
 export async function listConnectionModels(
     seams: ListModelsSeams = realSeams,
@@ -209,6 +226,43 @@ export async function listConnectionModels(
     const { url, headers } = requestResult.value;
 
     const signal = AbortSignal.timeout(timeoutMs);
+    const paged = connection.mode === "direct" && connection.protocol === "anthropic";
+    const anthropicWire = connection.mode === "cliproxy" || connection.protocol === "anthropic";
+
+    const entries: { id: string; created: number | undefined; efforts: readonly AgentEffort[] }[] = [];
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    for (let pagesRead = 1; ; pagesRead++) {
+        const pageUrl = paged ? `${url}?limit=${ANTHROPIC_PAGE_SIZE}${cursor === undefined ? "" : `&after_id=${encodeURIComponent(cursor)}`}` : url;
+        const page = await readPage(pageUrl, headers, signal, timeoutMs, seams);
+        if (page.isErr()) return err(page.error);
+        if (page.value.data.length === 0 && entries.length === 0) return err({ type: "no_models" });
+        for (const m of page.value.data) {
+            if (seen.has(m.id)) continue;
+            seen.add(m.id);
+            entries.push({ id: m.id, created: releaseTimeOf(m), efforts: effortsOf(m.capabilities?.effort, anthropicWire) });
+        }
+        // A gateway can ignore `after_id` and keep reporting `has_more`. Ending with the models read so far
+        // keeps the listing that such a gateway gives from its first page, where a failure would remove it.
+        const lastId = page.value.last_id;
+        if (!paged || page.value.has_more !== true || page.value.data.length === 0 || !lastId || lastId === cursor || pagesRead >= MAX_LISTING_PAGES) break;
+        cursor = lastId;
+    }
+    return ok(
+        entries
+            .sort(byRecencyThenId)
+            .map((m) => ({ id: m.id, efforts: m.efforts, releasedAt: m.created === undefined ? null : new Date(m.created * 1000).toISOString() })),
+    );
+}
+
+/** Read and parse one page of a listing, mapping each failure to the {@link ListModelsError} that the picker shows. */
+async function readPage(
+    url: string,
+    headers: Record<string, string>,
+    signal: AbortSignal,
+    timeoutMs: number,
+    seams: ListModelsSeams,
+): Promise<Result<z.infer<typeof modelsSchema>, ListModelsError>> {
     let res: Response;
     // fetch throws on a dead endpoint and on the abort; bridge that throw into the Result channel. Only the
     // timer aborts `signal`, thus an aborted signal is the bound, not a dead endpoint.
@@ -226,9 +280,8 @@ export async function listConnectionModels(
     // An abort during the body read reaches `jsonWith` as a parse failure, which gives `null`.
     const models = await res.jsonWith(modelsSchema);
     if (models === null && signal.aborted) return err({ type: "timed_out", afterMs: timeoutMs });
-    if (!models || models.data.length === 0) return err({ type: "no_models" });
-    const anthropicWire = connection.mode === "cliproxy" || connection.protocol === "anthropic";
-    return ok(models.data.map((m) => ({ id: m.id, efforts: effortsOf(m.capabilities?.effort, anthropicWire) })));
+    if (!models) return err({ type: "no_models" });
+    return ok(models);
 }
 
 // Commit-time accessibility validation for the agent-model picker (design D6). Distinct from listing:

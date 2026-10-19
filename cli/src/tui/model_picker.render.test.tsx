@@ -22,7 +22,7 @@ const saveNoop = async (): Promise<string | null> => null;
 
 /** Listed models that each offer the same effort ladder — the full one unless the case names another. */
 function listed(ids: readonly string[], efforts: readonly AgentEffort[] = AGENT_EFFORTS): ListedModel[] {
-    return ids.map((id) => ({ id, efforts: [...efforts] }));
+    return ids.map((id) => ({ id, efforts: [...efforts], releasedAt: null }));
 }
 
 function pickerNode(models: readonly ListedModel[] | null, current: string) {
@@ -155,7 +155,7 @@ describe("model picker rows", () => {
 // The effort a row shows when the picker holds an effort the model may not list. The held effort must
 // never show on a model that cannot take it, and must come back on a model that can.
 describe("effortFor", () => {
-    const model = (efforts: readonly AgentEffort[]): ListedModel => ({ id: "m", efforts: [...efforts] });
+    const model = (efforts: readonly AgentEffort[]): ListedModel => ({ id: "m", efforts: [...efforts], releasedAt: null });
 
     test("a listed effort is kept", () => {
         expect(effortFor(model(AGENT_EFFORTS), "xhigh")).toBe("xhigh");

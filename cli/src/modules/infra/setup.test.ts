@@ -230,6 +230,37 @@ describe("probeCredentialSource", () => {
         };
     }
 
+    test("a 2xx /models carries the release time of each listed id, and a bad date costs that id's date only", async () => {
+        const { doFetch } = routeFetch({
+            "/models": () =>
+                Response.json({
+                    data: [
+                        { id: "claude-opus-5-5", created_at: "2026-09-21T00:00:00Z" },
+                        { id: "gpt-5", created: 1_700_000_000 },
+                        { id: "claude-3-haiku-20240307", created_at: "1970-01-01T00:00:00Z" },
+                        { id: "claude-bad-date", created_at: { nested: true } },
+                    ],
+                }),
+        });
+        const result = await probeCredentialSource(
+            "https://api.anthropic.com/v1",
+            "anthropic",
+            { kind: "command", command: "printf tok-123", scheme: "x-api-key" },
+            "claude-sonnet-5",
+            doFetch,
+        );
+        const value = result._unsafeUnwrap();
+        expect(value.outcome).toBe("pass");
+        if (value.outcome === "pass") {
+            expect(value.listedModels).toEqual([
+                { id: "claude-opus-5-5", created: Date.parse("2026-09-21T00:00:00Z") / 1000 },
+                { id: "gpt-5", created: 1_700_000_000 },
+                { id: "claude-3-haiku-20240307" },
+                { id: "claude-bad-date" },
+            ]);
+        }
+    });
+
     test("a 2xx /models validates, sends the scheme + version headers, and returns the listed ids", async () => {
         const { doFetch, calls } = routeFetch({ "/models": () => Response.json({ data: [{ id: "claude-sonnet-5" }, { id: "claude-haiku-4-5" }] }) });
         const result = await probeCredentialSource(
@@ -242,7 +273,7 @@ describe("probeCredentialSource", () => {
         const value = result._unsafeUnwrap();
         expect(value.outcome).toBe("pass");
         if (value.outcome === "pass") {
-            expect(value.listedModels).toEqual(["claude-sonnet-5", "claude-haiku-4-5"]);
+            expect(value.listedModels).toEqual([{ id: "claude-sonnet-5" }, { id: "claude-haiku-4-5" }]);
             expect(value.validatedModel).toBeNull(); // rung 1 validated the credential, not a model
         }
         expect(calls).toHaveLength(1);
@@ -357,11 +388,20 @@ describe("probeCredentialSource", () => {
 describe("directModelPrefill", () => {
     test("the ranked listing wins over the conventional default, which wins over the empty free-text prompt", () => {
         // gpt ranks below claude in the family preference, so the claude id is the top-ranked pre-fill.
-        expect(directModelPrefill(["gpt-5", "claude-sonnet-5"], "anthropic")).toBe("claude-sonnet-5");
+        expect(directModelPrefill([{ id: "gpt-5" }, { id: "claude-sonnet-5" }], "anthropic")).toBe("claude-sonnet-5");
         expect(directModelPrefill(null, "anthropic")).toBe("claude-sonnet-5");
         expect(directModelPrefill([], "google")).toBe("gemini-2.5-pro");
         // No listing and no convention for the slug: no guess at all.
         expect(directModelPrefill(null, "my-corp-gateway")).toBe("");
+    });
+
+    test("the direct setup pre-fills the newest listed model", () => {
+        const listed = [
+            { id: "claude-3-haiku-20240307", created: Date.parse("2024-03-07T00:00:00Z") / 1000 },
+            { id: "claude-opus-5-5", created: Date.parse("2026-09-21T00:00:00Z") / 1000 },
+        ];
+        expect(directModelPrefill(listed, "anthropic")).toBe("claude-opus-5-5");
+        expect(directModelPrefill([...listed].reverse(), "anthropic")).toBe("claude-opus-5-5");
     });
 });
 

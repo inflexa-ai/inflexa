@@ -140,9 +140,20 @@ describe("the agents", () => {
 });
 
 describe("GET /api/v1/models", () => {
-    test("gives the models of the connection with their efforts", async () => {
-        const routes = routesWith({ listModels: async () => ok([{ id: "claude-opus-4-8", efforts: ["low", "high"] }]) });
-        expect((await (await routes.request("/models")).json()) as ModelList).toEqual({ models: [{ id: "claude-opus-4-8", efforts: ["low", "high"] }] });
+    test("gives the models of the connection with their efforts and their release date", async () => {
+        const routes = routesWith({
+            listModels: async () =>
+                ok([
+                    { id: "claude-opus-5-5", efforts: ["low", "high"], releasedAt: "2026-09-21T00:00:00.000Z" },
+                    { id: "claude-opus-4-8", efforts: ["low"], releasedAt: null },
+                ]),
+        });
+        expect((await (await routes.request("/models")).json()) as ModelList).toEqual({
+            models: [
+                { id: "claude-opus-5-5", efforts: ["low", "high"], releasedAt: "2026-09-21T00:00:00.000Z" },
+                { id: "claude-opus-4-8", efforts: ["low"], releasedAt: null },
+            ],
+        });
     });
 
     test("a listing that failed is `models: null` with the reason for a person, not an error", async () => {
@@ -160,7 +171,7 @@ describe("GET /api/v1/models", () => {
         const app = routesWith({
             listModels: async () => {
                 await Promise.sleep(slowMs);
-                return ok([{ id: "claude-opus-4-8", efforts: ["low"] }]);
+                return ok([{ id: "claude-opus-4-8", efforts: ["low"], releasedAt: null }]);
             },
         });
         app.get("/quiet-control", async (c) => {
@@ -180,7 +191,7 @@ describe("GET /api/v1/models", () => {
             );
         try {
             const [models, quiet, withBody] = await Promise.all([outcome("/models"), outcome("/quiet-control"), outcome("/body-control", json("POST", {}))]);
-            expect(models).toBe(`200 ${JSON.stringify({ models: [{ id: "claude-opus-4-8", efforts: ["low"] }] })}`);
+            expect(models).toBe(`200 ${JSON.stringify({ models: [{ id: "claude-opus-4-8", efforts: ["low"], releasedAt: null }] })}`);
             expect(quiet).toContain("The socket connection was closed unexpectedly");
             expect(withBody).toBe("200 answered");
         } finally {
