@@ -242,8 +242,9 @@ export function toAnalysisRootPath(resourceId: string, path: string): string {
 
     // A record holds no host path. Thus a leading slash is how a model writes the
     // same root-relative path, and the remainder is the tail.
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    const tail = normalizeTail(trimmed.replace(/^\/+/, ""));
+    let stripped = trimmed;
+    while (stripped.startsWith("/")) stripped = stripped.slice(1);
+    const tail = normalizeTail(stripped);
     if (tail === ".." || tail.startsWith("../")) return trimmed;
     return joinAnalysisRoot(resourceId, tail);
 }
@@ -306,8 +307,14 @@ function stripAnalysisRoot(path: string, analysisId: string): string | null {
     return slashIdx === -1 ? "" : withoutLead.slice(slashIdx + 1);
 }
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const SAFE_ID = /^[\w.-]+$/;
+function isSafeIdCharset(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const ch = value[i];
+        if (!((ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9") || ch === "_" || ch === "." || ch === "-")) return false;
+    }
+    return true;
+}
 
 /**
  * True when `value` is a safe single path segment: the `SAFE_ID` charset (word
@@ -319,7 +326,7 @@ const SAFE_ID = /^[\w.-]+$/;
  * same at plan time and at mount time.
  */
 export function isSafeId(value: string): boolean {
-    return SAFE_ID.test(value) && value !== "." && value !== "..";
+    return isSafeIdCharset(value) && value !== "." && value !== "..";
 }
 
 /**

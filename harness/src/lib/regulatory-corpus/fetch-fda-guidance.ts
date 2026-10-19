@@ -80,13 +80,15 @@ const FDA_GUIDANCES: ReadonlyArray<{
  * (e.g., headless-browser scraping or a vetted third-party index).
  */
 export function fetchFdaGuidanceListing(center: FdaCenter): Promise<FdaDocStub[]> {
-    return Promise.resolve(FDA_GUIDANCES.filter((g) => g.center === center).map((g) => ({
-        doc_id: g.doc_id,
-        doc_title: g.doc_title,
-        doc_url: `https://www.fda.gov/media/${g.media_id}/download`,
-        center: g.center,
-        metadata: { year: g.year },
-    })));
+    return Promise.resolve(
+        FDA_GUIDANCES.filter((g) => g.center === center).map((g) => ({
+            doc_id: g.doc_id,
+            doc_title: g.doc_title,
+            doc_url: `https://www.fda.gov/media/${g.media_id}/download`,
+            center: g.center,
+            metadata: { year: g.year },
+        })),
+    );
 }
 
 /**
@@ -127,13 +129,30 @@ export async function fetchAndExtractFdaDoc(stub: FdaDocStub): Promise<FdaDoc> {
     };
 }
 
+/** A run of 3+ newlines is one paragraph break: the one-pass walk rewrites each run to two. */
+function collapseBlankLines(text: string): string {
+    let out = "";
+    let run = 0;
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] === "\n") {
+            run++;
+            continue;
+        }
+        if (run > 0) {
+            out += run === 1 ? "\n" : "\n\n";
+            run = 0;
+        }
+        out += text[i];
+    }
+    if (run > 0) out += run === 1 ? "\n" : "\n\n";
+    return out;
+}
+
 function normalizeWhitespace(s: string): string {
-    return s
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the FDA page grammar: its document metadata has no builtin parser.
-        .replace(/[ \t]+/g, " ")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the FDA page grammar: its document metadata has no builtin parser.
-        .replace(/\r/g, "")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the FDA page grammar: its document metadata has no builtin parser.
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+    return collapseBlankLines(
+        s
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the space-and-tab run collapse of the FDA page text: a run rewrite no string method does in one call.
+            .replace(/[ \t]+/g, " ")
+            .replaceAll("\r", ""),
+    ).trim();
 }

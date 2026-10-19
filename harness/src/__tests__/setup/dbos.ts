@@ -87,13 +87,14 @@ function parseConnectionStringToEnv(url: string): {
     const u = new URL(url);
     // pg accepts `127.0.0.1` and `localhost` interchangeably; preserve whatever
     // the caller wrote.
+    let database = u.pathname;
+    if (database.startsWith("/")) database = database.slice(1);
     return {
         host: u.hostname,
         port: u.port || "5432",
         user: decodeURIComponent(u.username),
         password: decodeURIComponent(u.password),
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-        database: decodeURIComponent(u.pathname.replace(/^\//, "")),
+        database: decodeURIComponent(database),
     };
 }
 
@@ -194,9 +195,14 @@ export async function setupDbosForTests(testName: string): Promise<DbosTestRig> 
         pool,
         schemaName,
         nextWorkflowId(prefix?: string): string {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-            const p = (prefix ?? "wf-").replace(/[^a-zA-Z0-9_.-]/g, "-");
-            return `${p}${randomUUID()}`;
+            const p = prefix ?? "wf-";
+            let sanitized = "";
+            for (let i = 0; i < p.length; i++) {
+                const ch = p[i];
+                const word = (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9") || ch === "_" || ch === "." || ch === "-";
+                sanitized += word ? ch : "-";
+            }
+            return `${sanitized}${randomUUID()}`;
         },
         drop: safeDrop,
     };

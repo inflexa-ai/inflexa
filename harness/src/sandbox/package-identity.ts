@@ -64,7 +64,7 @@ export type PackageIdentity = {
  * idempotent, thus a fold of a folded name gives that name again.
  */
 function fold(name: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PEP 503 run collapse: every `-`/`_`/`.` run becomes one hyphen, a run rewrite no string method does in one call.
     return name.replace(/[-_.]+/g, "-").toLowerCase();
 }
 
@@ -177,24 +177,34 @@ export type ParseQueryError =
  * A path, a URL, or a store directory. The entry is trimmed already, thus a
  * leading space cannot defeat the guard.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
-const LOCATION = /^[.~]|[/\\]|:\/\//;
+function isLocation(entry: string): boolean {
+    return entry.startsWith(".") || entry.startsWith("~") || entry.includes("/") || entry.includes("\\") || entry.includes("://");
+}
 
 /** The `<word>:` prefix of an entry. The group holds the word before the colon. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the track-prefix capture: a letter-headed word before the colon — extraction with captures.
 const PREFIX = /^([A-Za-z][A-Za-z0-9_.-]*):/;
 
 /** A run of specifier characters. Only the exact run `==` names a version. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
-const SPECIFIER = /[<>!~=]+/;
+const SPECIFIER_CHARS = new Set(["<", ">", "!", "~", "="]);
+
+/** The first run of specifier characters, leftmost like `exec`: the run and where it starts. */
+function firstSpecifierRun(value: string): { readonly run: string; readonly index: number } | undefined {
+    let index = 0;
+    while (index < value.length && !SPECIFIER_CHARS.has(value[index])) index++;
+    if (index === value.length) return undefined;
+    let end = index + 1;
+    while (end < value.length && SPECIFIER_CHARS.has(value[end])) end++;
+    return { run: value.slice(index, end), index };
+}
 
 /**
  * A run of characters that an exact version cannot hold: a specifier
- * character, a comma, or whitespace. `SPECIFIER` reads the FIRST run only,
+ * character, a comma, or whitespace. `firstSpecifierRun` reads the FIRST run only,
  * thus `numpy==1.26,<2` gives the version `1.26,<2` without this guard, and
  * the compound range then rides into the pool as a version string.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the package-name grammar: its spec syntax has no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the intruder-run capture: a run of specifier, comma, or whitespace chars feeds the refusal.
 const VERSION_INTRUDER = /[<>!~=,\s]+/;
 
 /**
@@ -210,7 +220,7 @@ const VERSION_INTRUDER = /[<>!~=,\s]+/;
 export function parseQuery(entry: string): Result<PackageQuery, ParseQueryError> {
     const trimmed = entry.trim();
     if (trimmed === "") return err({ type: "empty" });
-    if (LOCATION.test(trimmed)) return err({ type: "location", entry: trimmed });
+    if (isLocation(trimmed)) return err({ type: "location", entry: trimmed });
 
     const prefix = PREFIX.exec(trimmed);
     const word = prefix?.[1];
@@ -221,10 +231,10 @@ export function parseQuery(entry: string): Result<PackageQuery, ParseQueryError>
     const rest = track === undefined ? trimmed : trimmed.slice(track.length + 1);
     if (rest === "") return err({ type: "empty" });
 
-    const specifier = SPECIFIER.exec(rest);
-    if (specifier === null) return ok({ spelling: rest, track: !(track === undefined) ? track : undefined });
-    if (specifier[0] !== "==") {
-        return err({ type: "unsupported_specifier", specifier: specifier[0], entry: trimmed });
+    const specifier = firstSpecifierRun(rest);
+    if (specifier === undefined) return ok({ spelling: rest, track: !(track === undefined) ? track : undefined });
+    if (specifier.run !== "==") {
+        return err({ type: "unsupported_specifier", specifier: specifier.run, entry: trimmed });
     }
     // Both halves trim: `numpy == 1.26.4` is one ask, and an untrimmed half
     // makes the spelling `numpy ` and the version ` 1.26.4`, neither of which

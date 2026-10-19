@@ -65,7 +65,7 @@ async function startContainer(): Promise<{ pool: Pool; container?: StartedTestCo
         })
         .withExposedPorts(5432)
         .withCommand(["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off"])
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the container-wait API takes a RegExp argument; the readiness line itself is a fixed literal.
         .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
         .withStartupTimeout(60_000)
         .start();
@@ -126,12 +126,13 @@ export async function withSchema(testName: string): Promise<{
     drop: () => Promise<void>;
 }> {
     const base = await getTestPool();
-    const safeName = testName
-        .toLowerCase()
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-        .replace(/[^a-z0-9_]/g, "_")
-        .slice(0, 40);
-    const schemaName = `t_${safeName}_${Date.now().toString(36)}_${_schemaCounter++}`;
+    const safeName = testName.toLowerCase();
+    let folded = "";
+    for (let i = 0; i < safeName.length; i++) {
+        const ch = safeName[i];
+        folded += (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "_" ? ch : "_";
+    }
+    const schemaName = `t_${folded.slice(0, 40)}_${Date.now().toString(36)}_${_schemaCounter++}`;
 
     await base.query(`CREATE SCHEMA "${schemaName}"`);
 

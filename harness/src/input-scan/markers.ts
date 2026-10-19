@@ -13,11 +13,14 @@ import type { MemberFile } from "./set-types.js";
 import { basenameOf, dirnameOf } from "./tokens.js";
 
 /** A marker whose presence claims the directory it sits in, and nothing below it. */
-const DIRECTORY_MARKERS: readonly { readonly label: string; readonly requires: readonly RegExp[] }[] = [
+const DIRECTORY_MARKERS: readonly { readonly label: string; readonly requires: readonly ((name: string) => boolean)[] }[] = [
     {
         label: "feature-barcode-matrix",
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the marker grammar of the scanner: no builtin recognizes these file markers.
-        requires: [/^matrix\.mtx(\.gz)?$/, /^barcodes\.tsv(\.gz)?$/, /^(features|genes)\.tsv(\.gz)?$/],
+        requires: [
+            (name) => name === "matrix.mtx" || name === "matrix.mtx.gz",
+            (name) => name === "barcodes.tsv" || name === "barcodes.tsv.gz",
+            (name) => name === "features.tsv" || name === "features.tsv.gz" || name === "genes.tsv" || name === "genes.tsv.gz",
+        ],
     },
 ];
 
@@ -28,10 +31,9 @@ const DIRECTORY_MARKERS: readonly { readonly label: string; readonly requires: r
  * tree it does not describe, and letting it claim everything below would swallow the
  * dataset it happens to share a directory with.
  */
-const SUBTREE_MARKERS: readonly { readonly label: string; readonly name: string; readonly corroborate?: RegExp }[] = [
+const SUBTREE_MARKERS: readonly { readonly label: string; readonly name: string; readonly corroborate?: (name: string) => boolean }[] = [
     { label: "study-manifest", name: "meta_study.txt" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the marker grammar of the scanner: no builtin recognizes these file markers.
-    { label: "dataset-descriptor", name: "dataset_description.json", corroborate: /^sub-/ },
+    { label: "dataset-descriptor", name: "dataset_description.json", corroborate: (name) => name.startsWith("sub-") },
 ];
 
 export type MarkerUnit = {
@@ -40,9 +42,9 @@ export type MarkerUnit = {
     readonly members: readonly MemberFile[];
 };
 
-function hasCorroboratingChild(files: readonly MemberFile[], root: string, pattern: RegExp): boolean {
+function hasCorroboratingChild(files: readonly MemberFile[], root: string, corroborates: (name: string) => boolean): boolean {
     const prefix = root === "" ? "" : `${root}/`;
-    return files.some((file) => file.path.startsWith(prefix) && pattern.test(file.path.slice(prefix.length).split("/")[0]));
+    return files.some((file) => file.path.startsWith(prefix) && corroborates(file.path.slice(prefix.length).split("/")[0]));
 }
 
 /** The marker-claimed units of a tree, and the members no marker claimed. */
@@ -60,7 +62,7 @@ export function applyMarkers(files: readonly MemberFile[]): { units: MarkerUnit[
     for (const [directory, members] of byDirectory) {
         const names = members.map((member) => basenameOf(member.path));
         for (const marker of DIRECTORY_MARKERS) {
-            if (marker.requires.every((pattern) => names.some((name) => pattern.test(name)))) directories.push({ label: marker.label, root: directory });
+            if (marker.requires.every((holds) => names.some((name) => holds(name)))) directories.push({ label: marker.label, root: directory });
         }
         for (const marker of SUBTREE_MARKERS) {
             if (!names.includes(marker.name)) continue;

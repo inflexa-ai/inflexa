@@ -75,6 +75,13 @@ export function metricsExportDisabled(env: NodeJS.ProcessEnv = process.env): boo
     return env.OTEL_METRICS_EXPORTER === "none";
 }
 
+/** The endpoint without its trailing-slash run, so the version path joins with one separator. */
+function withoutTrailingSlashes(endpoint: string): string {
+    let base = endpoint;
+    while (base.endsWith("/")) base = base.slice(0, -1);
+    return base;
+}
+
 /**
  * Export interval from `OTEL_METRIC_EXPORT_INTERVAL` (milliseconds). An unset,
  * non-numeric, or non-positive value falls back to the 60 s default.
@@ -126,9 +133,7 @@ export function initOtel(options: InitOtelOptions = {}): void {
         const spanProcessors: SpanProcessor[] = [];
 
         if (endpoint) {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-            const base = endpoint.replace(/\/+$/, "");
-            spanProcessors.push(new DbosSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter({ url: `${base}/v1/traces` }))));
+            spanProcessors.push(new DbosSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter({ url: `${withoutTrailingSlashes(endpoint)}/v1/traces` }))));
         }
 
         const tracerProvider = new HarnessTracerProvider({
@@ -162,10 +167,8 @@ export function initOtel(options: InitOtelOptions = {}): void {
     // With no MeterProvider registered the API's global no-op provider serves
     // every instrument, so the record sites stay valid when export is off.
     if (endpoint && !metricsExportDisabled()) {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-        const base = endpoint.replace(/\/+$/, "");
         const metricExporter = new OTLPMetricExporter({
-            url: `${base}/v1/metrics`,
+            url: `${withoutTrailingSlashes(endpoint)}/v1/metrics`,
         });
 
         const meterProvider = new MeterProvider({

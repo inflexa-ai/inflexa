@@ -1,15 +1,28 @@
 import { describe, expect, test } from "bun:test";
 
+import { isLowerHex } from "../../lib/text.js";
 import { mintSandboxIdentity } from "../identity.js";
+
+function isDns1123Label(value: string): boolean {
+    if (value.length === 0) return false;
+    const headOrTail = (ch: string): boolean => (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9");
+    if (!headOrTail(value[0]) || !headOrTail(value[value.length - 1])) return false;
+    for (let i = 0; i < value.length; i++) {
+        const ch = value[i];
+        if (!headOrTail(ch) && ch !== "-") return false;
+    }
+    return true;
+}
 
 describe("mintSandboxIdentity", () => {
     test("names are sbx-{run8}-{rand8} and DNS-1123 label-safe", () => {
         const id = mintSandboxIdentity("5ef194ab-168c-407c-9872-609f66797b11");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(id.sandboxId).toMatch(/^sbx-5ef194ab-[0-9a-f]{8}$/);
+        const suffix = id.sandboxId.slice("sbx-5ef194ab-".length);
+        expect(id.sandboxId.startsWith("sbx-5ef194ab-")).toBe(true);
+        expect(suffix.length).toBe(8);
+        expect(isLowerHex(suffix)).toBe(true);
         // K8s object names are DNS-1123 subdomains: lowercase alphanumeric + '-'.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(id.sandboxId).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);
+        expect(isDns1123Label(id.sandboxId)).toBe(true);
         expect(id.sandboxId.length).toBeLessThanOrEqual(63);
     });
 

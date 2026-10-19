@@ -46,6 +46,11 @@ export function isLowerHex(value: string): boolean {
     return everyChar(value, (code) => isAsciiDigit(code) || (code >= 97 && code <= 102));
 }
 
+/** Every character is an ASCII letter, in either case, and the value is not empty. */
+export function isAlpha(value: string): boolean {
+    return everyChar(value, (code) => isAsciiUpper(code) || isAsciiLower(code));
+}
+
 /** A lowercase hex digest of length 64. */
 export function isLowerHex64(value: string): boolean {
     return value.length === 64 && isLowerHex(value);
@@ -74,6 +79,17 @@ export function hasLower(value: string): boolean {
 /** The value holds at least one ASCII digit. */
 export function hasDigit(value: string): boolean {
     return someChar(value, isAsciiDigit);
+}
+
+/** The first character is an ASCII digit. */
+export function startsWithDigit(value: string): boolean {
+    return isAsciiDigit(value.charCodeAt(0));
+}
+
+/** The first character is an ASCII letter, in either case. */
+export function startsWithLetter(value: string): boolean {
+    const code = value.charCodeAt(0);
+    return isAsciiUpper(code) || isAsciiLower(code);
 }
 
 /** The `YYYY-MM-DD` character positions. This reads the layout only — it does not validate the calendar. */

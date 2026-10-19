@@ -152,13 +152,15 @@ const ICH_GUIDELINES: ReadonlyArray<{
  * seam where a future contributor can swap in dynamic discovery.
  */
 export function fetchIchListing(): Promise<IchStub[]> {
-    return Promise.resolve(ICH_GUIDELINES.map((g) => ({
-        doc_id: `ich-${slugify(g.code)}`,
-        doc_title: g.doc_title,
-        doc_url: g.url,
-        code: g.code,
-        series: g.series,
-    })));
+    return Promise.resolve(
+        ICH_GUIDELINES.map((g) => ({
+            doc_id: `ich-${slugify(g.code)}`,
+            doc_title: g.doc_title,
+            doc_url: g.url,
+            code: g.code,
+            series: g.series,
+        })),
+    );
 }
 
 /**
@@ -188,22 +190,40 @@ export async function fetchAndExtractIchDoc(stub: IchStub): Promise<IchDoc> {
     };
 }
 
+/** A run of 3+ newlines is one paragraph break: the one-pass walk rewrites each run to two. */
+function collapseBlankLines(text: string): string {
+    let out = "";
+    let run = 0;
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] === "\n") {
+            run++;
+            continue;
+        }
+        if (run > 0) {
+            out += run === 1 ? "\n" : "\n\n";
+            run = 0;
+        }
+        out += text[i];
+    }
+    if (run > 0) out += run === 1 ? "\n" : "\n\n";
+    return out;
+}
+
 function normalizeWhitespace(s: string): string {
-    return s
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
-        .replace(/[ \t]+/g, " ")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
-        .replace(/\r/g, "")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+    return collapseBlankLines(
+        s
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the space-and-tab run collapse of the ICH page text: a run rewrite no string method does in one call.
+            .replace(/[ \t]+/g, " ")
+            .replaceAll("\r", ""),
+    ).trim();
 }
 
 function slugify(s: string): string {
-    return s
+    let slug = s
         .toLowerCase()
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
-        .replace(/[^a-z0-9]+/g, "-")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ICH page grammar: its document metadata has no builtin parser.
-        .replace(/^-|-$/g, "");
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the slug run collapse: every non-alphanumeric run becomes one hyphen, edge runs included.
+        .replace(/[^a-z0-9]+/g, "-");
+    if (slug.startsWith("-")) slug = slug.slice(1);
+    if (slug.endsWith("-")) slug = slug.slice(0, -1);
+    return slug;
 }

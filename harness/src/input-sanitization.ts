@@ -11,7 +11,7 @@
  * C0/C1 control characters and DEL, excluding `\t` (U+0009) and `\n`
  * (U+000A) which are legitimate whitespace in user prose.
  */
-// oxlint-disable-next-line no-control-regex, eslint-js/no-restricted-syntax -- matching control characters is the intent: this pattern strips invisible C0/C1 bytes and DEL from untrusted user input (see `normalizeUnicode` below), and no builtin classifier knows the byte ranges.
+// oxlint-disable-next-line no-control-regex, eslint-js/no-restricted-syntax -- the control-character ranges: C0 minus tab and linefeed, DEL, and the C1 block — ranges no builtin classifier names.
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
 
 /**
@@ -34,7 +34,7 @@ export function normalizeUnicode(text: string): string {
  * arrives through no fault of the model: tool results carry raw command output
  * and file bytes, which is why they are otherwise left unsanitized.
  */
-// oxlint-disable-next-line no-control-regex, eslint-js/no-restricted-syntax -- matching NUL is the intent; see above. No builtin classifier knows the NUL byte.
+// oxlint-disable-next-line no-control-regex, eslint-js/no-restricted-syntax -- the NUL control character: the one code point a stored message cannot carry, stripped on every occurrence.
 const NUL = /\u0000/g;
 
 /**
@@ -63,24 +63,24 @@ export function stripNulCharacters(text: string): string {
  * Anthropic label wins; `sk-(?!ant-)` additionally excludes it by lookahead.
  */
 const SECRET_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the secret-token grammar: a word-bounded vendor prefix over a fixed-length charset run.
     { name: "AWS Access Key", pattern: /\bAKIA[0-9A-Z]{16}\b/g },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the secret-token grammar: a word-bounded vendor prefix over a long charset run.
     { name: "Anthropic API Key", pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the secret-token grammar: a word-bounded prefix, a lookahead that excludes the Anthropic form, and a long charset run.
     { name: "OpenAI API Key", pattern: /\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b/g },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the secret-token grammar: a word-bounded prefix, a one-char scheme choice, and a long charset run.
     { name: "GitHub Token", pattern: /\bgh[psoru]_[A-Za-z0-9_]{36,}\b/g },
     {
         name: "JWT Token",
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the secret-token grammar: a word-bounded JWT header prefix, then three dot-separated charset runs.
         pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
     },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the secret-token grammar: a caseless scheme word, the Unicode \s run, and a charset run with optional padding.
     { name: "Bearer Token", pattern: /\bBearer\s+[A-Za-z0-9_\-.~+/]+=*/gi },
     {
         name: "Connection String",
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanitization grammar: control characters and surrogates have no builtin classifier.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the connection-string grammar: a caseless scheme alternation, then a run that excludes quotes and the Unicode \s class.
         pattern: /\b(?:postgres|postgresql|mysql|mongodb|redis|amqp|mssql):\/\/[^\s"'`]+/gi,
     },
 ];

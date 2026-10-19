@@ -22,6 +22,15 @@ import type { SandboxRef } from "../../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
+/** The path without its leading and trailing separator runs. */
+function trimSlashes(path: string): string {
+    let start = 0;
+    let end = path.length;
+    while (start < end && path[start] === "/") start++;
+    while (end > start && path[end - 1] === "/") end--;
+    return path.slice(start, end);
+}
+
 export type ScanInputsDeps = {
     readonly workspaceFs: WorkspaceFilesystem;
     readonly analysisId: string;
@@ -63,8 +72,7 @@ export function createScanInputsTool(deps: ScanInputsDeps): Tool<z.infer<typeof 
             const scan = await scanInputTree({
                 session: ctx.session,
                 fs: deps.workspaceFs,
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-                root: path.replace(/^\/+/, "").replace(/\/+$/, ""),
+                root: trimSlashes(path),
                 signal: ctx.signal,
             });
 

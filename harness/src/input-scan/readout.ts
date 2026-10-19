@@ -172,7 +172,7 @@ function samFields(lines: readonly string[]): PrefixReadout {
         referenceSequences: countPrefixed(lines, "@SQ"),
         readGroups: countPrefixed(lines, "@RG"),
     };
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the SAM header field extraction: the tab-delimited SO tag's value captured to the end of the field.
     const sortOrder = /(?:^|\t)SO:([^\t]+)/.exec(lines.find((line) => line.startsWith("@HD")) ?? "");
     if (sortOrder) fields.sortOrder = clip(sortOrder[1], 20);
     return { fields };
@@ -295,7 +295,7 @@ function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
 function yamlFields(lines: readonly string[]): PrefixReadout {
     const keys: string[] = [];
     for (const line of lines.slice(0, MAX_META_LINES)) {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the YAML top-level key extraction: an identifier head and body, then a colon before whitespace or the line end.
         const match = /^([A-Za-z_][\w.-]*):(\s|$)/.exec(line);
         if (match) keys.push(match[1]);
     }
@@ -310,11 +310,11 @@ function yamlFields(lines: readonly string[]): PrefixReadout {
 }
 
 function markdownFields(lines: readonly string[]): PrefixReadout {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ATX heading grammar: a hash run of 1-6 followed by the Unicode \s class.
     const headings = lines.filter((line) => /^#{1,6}\s/.test(line));
     return {
         fields: {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the heading-marker strip: a hash run, then the Unicode \s run after it.
             title: clip((headings[0] ?? lines[0]).replace(/^#+\s*/, ""), MAX_LINE_CHARS),
             headings: headings.length,
             linesInPrefix: lines.length,
@@ -341,6 +341,6 @@ function countPrefixed(lines: readonly string[], prefix: string): number {
 }
 
 function clip(text: string, limit: number): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the decoder's readout grammar: no builtin tokenizes the decoder's line format.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s run collapse of the clipped text: a run rewrite no string method does in one call.
     return text.replace(/\s+/g, " ").trim().slice(0, limit);
 }

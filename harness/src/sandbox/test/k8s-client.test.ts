@@ -23,6 +23,16 @@ import { optionNumber } from "../../report-render/option-lens.js";
 const SESSION_PVC_ROOT = "/sessions";
 const resolveWorkspaceRoot = (analysisId: string) => Promise.resolve(`${SESSION_PVC_ROOT}/${analysisId}`);
 
+/** The K8s label-value shape without the length bound: alnum at each end, `[-A-Za-z0-9_.]` inside. */
+function isK8sLabelValueShape(value: string): boolean {
+    if (value.length === 0) return false;
+    const alnum = (ch: string): boolean => (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9");
+    const inner = (ch: string): boolean => alnum(ch) || ch === "-" || ch === "_" || ch === ".";
+    if (!alnum(value[0]) || !alnum(value[value.length - 1])) return false;
+    for (let i = 0; i < value.length; i++) if (!inner(value[i])) return false;
+    return true;
+}
+
 /** The managed shape: one farm location, PVC-relative, for every analysis. */
 const FIXED_FARM: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
 
@@ -1006,8 +1016,7 @@ describe("k8s job ownership labels", () => {
         // every label value on the Job still has to be admissible or the API server
         // rejects the whole thing.
         for (const value of Object.values(must(must(must(stub, "stub").createdJobs[0].metadata, "the job metadata").labels, "the job labels"))) {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            expect(value).toMatch(/^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$/);
+            expect(isK8sLabelValueShape(value)).toBe(true);
             expect(value.length).toBeLessThanOrEqual(63);
         }
     });

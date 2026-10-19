@@ -207,8 +207,7 @@ describe("queryPackages — the two tracks of one name", () => {
         // A two-spelling pair settles itself, thus neither row carries a mark.
         expect(result.content).toContain("decoupler==2.2.0");
         expect(result.content).toContain("decoupleR==2.17.0");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(result.content.match(/both tracks/g)).toHaveLength(2);
+        expect(result.content.split("both tracks").length - 1).toBe(2);
     });
 });
 
@@ -488,8 +487,7 @@ describe("list_available_packages — reading the inventory", () => {
         );
 
         expect(result.total).toBe(2);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(result.content.match(/## Node \(npm\)/g)).toHaveLength(1);
+        expect(result.content.split("## Node (npm)").length - 1).toBe(1);
         expect(result.content).toContain("echarts==5.4.0");
         expect(result.content).toContain("d3==7.9.0");
         expect(result.content).not.toContain("echarts==6.0.0");

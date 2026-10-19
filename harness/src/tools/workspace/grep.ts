@@ -78,7 +78,7 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): To
         execute: async ({ pattern, path, ignoreCase }, ctx): Promise<Result<GrepOutput, ToolError>> => {
             let regex: RegExp;
             try {
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the dynamic pattern: the user-supplied pattern string, compiled at call time with the call's case flag.
                 regex = new RegExp(pattern, ignoreCase === true ? "i" : "");
             } catch (err) {
                 return ok({

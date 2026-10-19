@@ -12,6 +12,7 @@
  * specific class every one of its values satisfies.
  */
 
+import { hasDigit, hasLetter, hasLower, hasUpper, isAlpha, isDigits, isHex, isUuid, startsWithDigit, startsWithLetter } from "../lib/text.js";
 import { KNOWN_EXTENSIONS } from "./formats.js";
 import {
     MAX_OPAQUE_ID_MEAN_RUN,
@@ -61,26 +62,38 @@ export function splitStem(fileName: string): { stem: string; suffix: string } {
     return { stem: parts.slice(0, cut).join("."), suffix: parts.slice(cut).join(".").toLowerCase() };
 }
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-const HEX_DIGEST_PATTERN = /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-const BASE64URL_PATTERN = /^[A-Za-z0-9\-_=]+$/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the delimited-date capture layout (year, month, day) — extraction with captures that feed the range check.
 const DELIMITED_DATE_PATTERN = /^(\d{4})[-_](\d{2})[-_](\d{2})$/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the compact-date capture layout (year, month, day) — extraction with captures that feed the range check.
 const COMPACT_DATE_PATTERN = /^(\d{4})(\d{2})(\d{2})$/;
+
+/** The digest layout: 32, 40, or 64 hex digits in either case. */
+function isHexDigest(value: string): boolean {
+    return (value.length === 32 || value.length === 40 || value.length === 64) && isHex(value);
+}
+
+/** Every character is the base64url token charset — letters, digits, `-`, `_`, `=` — and the value is not empty. */
+function isBase64UrlCharset(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        const alnum = (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
+        if (!alnum && code !== 45 && code !== 95 && code !== 61) return false;
+    }
+    return true;
+}
 
 function charClassCount(value: string): number {
     let classes = 0;
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-    for (const pattern of [/[A-Z]/, /[a-z]/, /[0-9]/, /[-_=]/]) if (pattern.test(value)) classes++;
+    if (hasUpper(value)) classes++;
+    if (hasLower(value)) classes++;
+    if (hasDigit(value)) classes++;
+    if (value.includes("-") || value.includes("_") || value.includes("=")) classes++;
     return classes;
 }
 
 function meanRunLength(value: string): number {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the letter-and-digit run tokenizer: the runs feed the mean-length measure.
     const runs = value.match(/[A-Za-z]+|[0-9]+/g) ?? [];
     if (runs.length === 0) return 0;
     return runs.reduce((total, run) => total + run.length, 0) / runs.length;
@@ -91,16 +104,19 @@ function caseTransitions(value: string): number {
     for (let i = 1; i < value.length; i++) {
         const before = value[i - 1];
         const after = value[i];
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-        if (!/[A-Za-z]/.test(before) || !/[A-Za-z]/.test(after)) continue;
+        if (!hasLetter(before) || !hasLetter(after)) continue;
         if ((before === before.toUpperCase()) !== (after === after.toUpperCase())) flips++;
     }
     return flips;
 }
 
-function fractionOf(value: string, pattern: RegExp): number {
-    return (value.match(pattern) ?? []).length / value.length;
+function fractionOf(value: string, holds: (ch: string) => boolean): number {
+    let count = 0;
+    for (let i = 0; i < value.length; i++) if (holds(value[i])) count++;
+    return count / value.length;
 }
+
+const isOpaqueSeparator = (ch: string): boolean => ch === "-" || ch === "_" || ch === "=";
 
 /**
  * A machine-issued identifier: a UUID, a fixed-length hex digest, or a long
@@ -113,19 +129,17 @@ function fractionOf(value: string, pattern: RegExp): number {
  * person's name is not an identifier however many digits it carries.
  */
 export function isOpaqueId(value: string): boolean {
-    if (UUID_PATTERN.test(value)) return true;
-    if (HEX_DIGEST_PATTERN.test(value)) return true;
+    if (isUuid(value)) return true;
+    if (isHexDigest(value)) return true;
     if (value.length < MIN_OPAQUE_ID_LENGTH) return false;
-    if (!BASE64URL_PATTERN.test(value)) return false;
+    if (!isBase64UrlCharset(value)) return false;
     if (charClassCount(value) < MIN_OPAQUE_ID_CHAR_CLASSES) return false;
 
     const flipBudget = Math.max(MIN_OPAQUE_ID_CASE_FLIPS, Math.floor(value.length / OPAQUE_ID_CASE_FLIP_DIVISOR));
     if (caseTransitions(value) >= flipBudget) return true;
 
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-    if (fractionOf(value, /[-_=]/g) > MAX_OPAQUE_ID_SEPARATOR_FRACTION) return false;
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-    return meanRunLength(value) <= MAX_OPAQUE_ID_MEAN_RUN && fractionOf(value, /[0-9]/g) >= MIN_OPAQUE_ID_DIGIT_FRACTION;
+    if (fractionOf(value, isOpaqueSeparator) > MAX_OPAQUE_ID_SEPARATOR_FRACTION) return false;
+    return meanRunLength(value) <= MAX_OPAQUE_ID_MEAN_RUN && fractionOf(value, (ch) => ch >= "0" && ch <= "9") >= MIN_OPAQUE_ID_DIGIT_FRACTION;
 }
 
 /** A calendar date written compactly or with a single separator: `20260824`, `2026-08-24`. */
@@ -138,15 +152,14 @@ export function isDateToken(value: string): boolean {
     return year >= 1900 && year <= 2999 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
 }
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the embedded-date scan: digit lookarounds keep the date whole inside a longer digit run.
 const EMBEDDED_DATE_PATTERN = /(?<![0-9])(?:\d{4}[-_]\d{2}[-_]\d{2}|\d{8})(?![0-9])/g;
 
 function pushRuns(text: string, into: NameToken[]): void {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the letter, digit, and separator run tokenizer of a segment.
     for (const run of text.matchAll(/[A-Za-z]+|[0-9]+|[-_=]+/g)) {
         const value = run[0];
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-        const kind: TokenKind = /^[0-9]/.test(value) ? "digit" : /^[A-Za-z]/.test(value) ? "alpha" : "delim";
+        const kind: TokenKind = startsWithDigit(value) ? "digit" : startsWithLetter(value) ? "alpha" : "delim";
         into.push({ kind, value });
     }
 }
@@ -162,11 +175,10 @@ function pushRuns(text: string, into: NameToken[]): void {
  */
 export function tokenizeSegment(segment: string): NameToken[] {
     const tokens: NameToken[] = [];
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the base64url-charset-versus-rest run tokenizer of a segment.
     for (const match of segment.matchAll(/[A-Za-z0-9\-_=]+|[^A-Za-z0-9\-_=]+/g)) {
         const value = match[0];
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-        if (!/[A-Za-z0-9]/.test(value)) {
+        if (!hasLetter(value) && !hasDigit(value)) {
             tokens.push({ kind: "delim", value });
             continue;
         }
@@ -240,19 +252,16 @@ export function classifyValues(values: readonly string[]): ValueClass {
         return { tokenClass: "constant" };
     }
     if (values.every((value) => isDateToken(value))) return { tokenClass: "date" };
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-    if (values.every((value) => /^[0-9]+$/.test(value))) {
+    if (values.every(isDigits)) {
         const width = values[0].length;
         return values.every((value) => value.length === width) ? { tokenClass: "digits-fixed", width } : { tokenClass: "digits" };
     }
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-    if (values.every((value) => /^[0-9a-fA-F]+$/.test(value) && value.length >= 4)) return { tokenClass: "hex" };
+    if (values.every((value) => isHex(value) && value.length >= 4)) return { tokenClass: "hex" };
     if (values.every((value) => isOpaqueId(value))) {
         const lengths = values.map((value) => value.length);
         return { tokenClass: "opaque-id", minLength: Math.min(...lengths), maxLength: Math.max(...lengths) };
     }
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-    if (values.every((value) => /^[A-Za-z]+$/.test(value))) return { tokenClass: "word" };
+    if (values.every(isAlpha)) return { tokenClass: "word" };
     const skeletons = new Set(values.map((value) => maskSegment(value)));
     if (skeletons.size === 1) {
         const skeleton = [...skeletons][0];
@@ -297,12 +306,10 @@ export function commonAffixes(values: readonly string[]): { prefix: string; suff
  * member happened to share it.
  */
 export function maskAffix(affix: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the alphanumeric run tokenizer over the recovered affix.
     return affix.replace(/[A-Za-z0-9]{3,}/g, (run) => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-        const mixedCase = /[A-Z]/.test(run) && /[a-z]/.test(run);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the scanner's token grammar: a secret pattern has no builtin parser.
-        const alphanumeric = /[A-Za-z]/.test(run) && /[0-9]/.test(run);
+        const mixedCase = hasUpper(run) && hasLower(run);
+        const alphanumeric = hasLetter(run) && hasDigit(run);
         return mixedCase || alphanumeric ? `<x${run.length}>` : run;
     });
 }

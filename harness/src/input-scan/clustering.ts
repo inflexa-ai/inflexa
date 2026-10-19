@@ -124,9 +124,9 @@ function hasMask(skeleton: string): boolean {
  */
 function skeletonKin(a: string, b: string): boolean {
     if (a === b && hasMask(a)) return true;
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the layout grammar of the scanner: no builtin tokenizes these clusters.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the delimiter-set split on underscore, hyphen, and dot: the head before the first separator.
     const head = a.split(/[_\-.]/)[0];
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the layout grammar of the scanner: no builtin tokenizes these clusters.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the delimiter-set split on underscore, hyphen, and dot: the head before the first separator.
     return head === b.split(/[_\-.]/)[0] && hasMask(head);
 }
 

@@ -37,8 +37,10 @@ import type { InputRef } from "./types.js";
  */
 export function stripMountPrefix(mountRoot: string, absPath: string): string {
     const prefix = mountRoot.endsWith("/") ? mountRoot : `${mountRoot}/`;
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    return absPath.startsWith(prefix) ? absPath.slice(prefix.length).replace(/^\/+/, "") : absPath;
+    if (!absPath.startsWith(prefix)) return absPath;
+    let rel = absPath.slice(prefix.length);
+    while (rel.startsWith("/")) rel = rel.slice(1);
+    return rel;
 }
 
 export type FeedExecFrameArgs = {

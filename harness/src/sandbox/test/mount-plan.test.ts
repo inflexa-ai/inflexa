@@ -149,8 +149,7 @@ describe("buildSessionSubPaths", () => {
     test("rejects an empty, absolute, or traversing workspace subPath", () => {
         expect(() => buildSessionSubPaths(COORDS, "")).toThrow("non-empty");
         expect(() => buildSessionSubPaths(COORDS, "/abs/an-1")).toThrow("PVC-root-relative");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(() => buildSessionSubPaths(COORDS, "../escape/an-1")).toThrow(/'\.\.'/);
+        expect(() => buildSessionSubPaths(COORDS, "../escape/an-1")).toThrow("'..'");
     });
 
     test("rejects a crafted `..` runId/stepId in the RW subPath", () => {
@@ -221,8 +220,7 @@ describe("the declared write tail", () => {
 
     test("refuses a tail segment that carries a shell-hostile character", () => {
         expect(() => buildMountPlan({ ...COORDS, writableTail: "report-sessions/thread 1/derived" }, { libs: false, refs: false })).toThrow(
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            /Invalid writableTail/,
+            "Invalid writableTail",
         );
         expect(() => buildMountPlan({ ...COORDS, writableTail: "report-sessions/a\0b/derived" }, { libs: false, refs: false })).toThrow("Invalid writableTail");
     });

@@ -18,9 +18,9 @@ import { dataProfilerPrompt } from "../data-profiler.js";
 function flatten(text: string): string {
     return (
         text
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the blockquote strip per line: the Unicode \s class around the marker, per line.
             .replace(/^\s*>\s?/gm, "")
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s run collapse: a run rewrite no string method does in one call.
             .replace(/\s+/g, " ")
             .trim()
     );
@@ -91,8 +91,9 @@ describe("the no-forcing stance", () => {
     it("forbids applying every category", () => {
         expect(flat).toContain("Apply every category");
         expect(flat).toContain("never a checklist to fill");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(flat).not.toMatch(/dimension for (each|every) categor/i);
+        const lowered = flat.toLowerCase();
+        expect(lowered).not.toContain("dimension for each categor");
+        expect(lowered).not.toContain("dimension for every categor");
     });
 
     it("forbids exhaustive column hunts off the probe list", () => {
@@ -125,9 +126,9 @@ describe("reasons and orientation", () => {
     });
 
     it("carries no kinds-or-axes-era language", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the word-boundary match of "kinds": the boundary keeps a compound like "kindscape" out.
         expect(flat).not.toMatch(/\bkinds\b/);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the word-boundary match of "axes": the boundary keeps a compound like "axesis" out.
         expect(flat).not.toMatch(/\baxes\b/);
         expect(flat).not.toContain("qualityAssessment");
     });
@@ -160,7 +161,7 @@ describe("the prompt names the submission's fields as the schema spells them", (
     const fields = schemaFieldNames(z.toJSONSchema(ProfileSubmissionSchema));
 
     it("uses a real field name for every camelCase token it quotes", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the backtick-quoted camelCase identifier extraction: a lowercase head, a case flip, a letter tail.
         const quoted = [...new Set(dataProfilerPrompt.match(/`[a-z]+[A-Z][A-Za-z]*`/g) ?? [])].map((token) => token.slice(1, -1));
 
         expect(quoted.length).toBeGreaterThan(0);

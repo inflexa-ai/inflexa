@@ -62,8 +62,14 @@ import { isSqlIdentifier } from "./vector-store.js";
  * Empty is outside the shape too: it derives the bare table prefix, which is a
  * perfectly legal identifier and belongs to no analysis.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const PURGEABLE_ANALYSIS_ID = /^[a-z0-9_-]+$/;
+function isPurgeableAnalysisId(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const ch = value[i];
+        if (!((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "_" || ch === "-")) return false;
+    }
+    return true;
+}
 
 /**
  * The analysis-keyed deletes that follow the thread/message pair, in the order
@@ -248,7 +254,7 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
         );
 
     const purgeAnalysis = (analysisId: string): ResultAsync<AnalysisPurgeOutcome, DbError> => {
-        if (!PURGEABLE_ANALYSIS_ID.test(analysisId)) {
+        if (!isPurgeableAnalysisId(analysisId)) {
             return refuse("purgeAnalysis.analysisId", `purge-analysis: refusing unpurgeable analysis id "${analysisId}"`);
         }
         const indexName = searchIndexName(analysisId);

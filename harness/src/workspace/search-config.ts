@@ -13,8 +13,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 
 /** Derive the vector index name for an analysis. */
 export function searchIndexName(resourceId: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    return `search_${resourceId.replace(/-/g, "_")}`;
+    return `search_${resourceId.replaceAll("-", "_")}`;
 }
 
 const _ensuredIndexes = new Set<string>();

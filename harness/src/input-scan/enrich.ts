@@ -223,7 +223,7 @@ function describeExecFailure(result: ExecResult): string {
     if (result.timedOut) return `container decoder timed out after ${ENRICH_TIMEOUT_SECONDS}s`;
     if (result.syntheticFailure) return `container decoder did not complete: ${result.syntheticFailure.reason}`;
     if (result.exitCode !== 0) {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s run collapse of the stderr text: a run rewrite no string method does in one call.
         const stderr = result.stderr.replace(/\s+/g, " ").trim().slice(0, MAX_STDERR_CHARS);
         return `container decoder exited ${result.exitCode ?? "with no code"}${stderr ? `: ${stderr}` : ""}`;
     }

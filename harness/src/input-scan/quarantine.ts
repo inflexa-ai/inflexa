@@ -9,44 +9,42 @@
 
 import type { QuarantineReason, QuarantineSummary } from "./set-types.js";
 import type { ScannedFile } from "./types.js";
+import { isHex, isUuid } from "../lib/text.js";
 import { MAX_QUARANTINE_SAMPLE } from "./tuning.js";
 
 const EXACT_JUNK_NAMES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
 
-const NAME_RULES: readonly { readonly pattern: RegExp; readonly reason: QuarantineReason }[] = [
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /^\._/, reason: "os-junk" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /^~\$/, reason: "editor-temp" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /~$/, reason: "editor-temp" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /^\.~lock\..*#$/, reason: "editor-temp" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /\.swp$/, reason: "editor-temp" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /\.part$/, reason: "partial-download" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /\.filepart$/, reason: "partial-download" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /\.crdownload$/, reason: "partial-download" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /\.download$/, reason: "partial-download" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /\.tmp$/, reason: "atomic-write-temp" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /^\.nfs/, reason: "atomic-write-temp" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /\.tmp-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, reason: "atomic-write-temp" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /\.tmp-[0-9a-fA-F]{8,}$/, reason: "atomic-write-temp" },
+const NAME_RULES: readonly { readonly matches: (name: string) => boolean; readonly reason: QuarantineReason }[] = [
+    { matches: (name) => name.startsWith("._"), reason: "os-junk" },
+    { matches: (name) => name.startsWith("~$"), reason: "editor-temp" },
+    { matches: (name) => name.endsWith("~"), reason: "editor-temp" },
+    { matches: (name) => name.startsWith(".~lock.") && name.endsWith("#"), reason: "editor-temp" },
+    { matches: (name) => name.endsWith(".swp"), reason: "editor-temp" },
+    { matches: (name) => name.endsWith(".part"), reason: "partial-download" },
+    { matches: (name) => name.endsWith(".filepart"), reason: "partial-download" },
+    { matches: (name) => name.endsWith(".crdownload"), reason: "partial-download" },
+    { matches: (name) => name.endsWith(".download"), reason: "partial-download" },
+    { matches: (name) => name.endsWith(".tmp"), reason: "atomic-write-temp" },
+    { matches: (name) => name.startsWith(".nfs"), reason: "atomic-write-temp" },
+    {
+        matches: (name) => {
+            const marker = name.lastIndexOf(".tmp-");
+            return marker >= 0 && isUuid(name.slice(marker + 5));
+        },
+        reason: "atomic-write-temp",
+    },
+    {
+        matches: (name) => {
+            const marker = name.lastIndexOf(".tmp-");
+            return marker >= 0 && name.length - marker - 5 >= 8 && isHex(name.slice(marker + 5));
+        },
+        reason: "atomic-write-temp",
+    },
 ];
 
-const SEGMENT_RULES: readonly { readonly pattern: RegExp; readonly reason: QuarantineReason }[] = [
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /^__MACOSX$/, reason: "os-junk" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quarantine's token grammar: these patterns recognize credential shapes no builtin knows.
-    { pattern: /^\.Trash-/, reason: "os-junk" },
+const SEGMENT_RULES: readonly { readonly matches: (segment: string) => boolean; readonly reason: QuarantineReason }[] = [
+    { matches: (segment) => segment === "__MACOSX", reason: "os-junk" },
+    { matches: (segment) => segment.startsWith(".Trash-"), reason: "os-junk" },
 ];
 
 /** The rule a path trips, or `undefined` when it trips none. */
@@ -54,8 +52,8 @@ export function quarantineReason(path: string): QuarantineReason | undefined {
     const segments = path.split("/");
     const name = segments[segments.length - 1];
     if (EXACT_JUNK_NAMES.has(name)) return "os-junk";
-    for (const rule of NAME_RULES) if (rule.pattern.test(name)) return rule.reason;
-    for (const segment of segments) for (const rule of SEGMENT_RULES) if (rule.pattern.test(segment)) return rule.reason;
+    for (const rule of NAME_RULES) if (rule.matches(name)) return rule.reason;
+    for (const segment of segments) for (const rule of SEGMENT_RULES) if (rule.matches(segment)) return rule.reason;
     return undefined;
 }
 

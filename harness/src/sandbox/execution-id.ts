@@ -31,16 +31,19 @@ const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789");
  * - Consecutive hyphens collapsed
  * - Truncated to 40 characters
  */
+function isAgentNameChar(ch: string): boolean {
+    return (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "-";
+}
+
 export function sanitizeAgentName(name: string): string {
-    return name
-        .toLowerCase()
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the execution-ID grammar: its byte layout has no builtin parser.
-        .replace(/[^a-z0-9-]/g, "-")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the execution-ID grammar: its byte layout has no builtin parser.
-        .replace(/-{2,}/g, "-")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the execution-ID grammar: its byte layout has no builtin parser.
-        .replace(/^-+|-+$/g, "")
-        .slice(0, AGENT_NAME_MAX_LENGTH);
+    const lowered = name.toLowerCase();
+    let mapped = "";
+    for (let i = 0; i < lowered.length; i++) mapped += isAgentNameChar(lowered[i]) ? lowered[i] : "-";
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the hyphen-run collapse: a run of 2+ becomes one hyphen, a run rewrite no string method does in one call.
+    let stripped = mapped.replace(/-{2,}/g, "-");
+    while (stripped.startsWith("-")) stripped = stripped.slice(1);
+    while (stripped.endsWith("-")) stripped = stripped.slice(0, -1);
+    return stripped.slice(0, AGENT_NAME_MAX_LENGTH);
 }
 
 /**

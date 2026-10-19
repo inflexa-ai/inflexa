@@ -26,9 +26,19 @@ import type { MutateToolName, WorkspaceMutator, WriteRecord } from "./mutator.js
  * step that renders two scripts keeps both records.
  */
 export function decisionRecordPath(scriptFile: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the file-extension grammar of the script stem: a trailing run of alphanumerics after the last dot.
-    const stem = scriptFile.replace(/\.[A-Za-z0-9]+$/, "");
+    const dot = scriptFile.lastIndexOf(".");
+    const stem = dot >= 0 && isAlnumRun(scriptFile.slice(dot + 1)) ? scriptFile.slice(0, dot) : scriptFile;
     return `output/decision_record_${stem}.json`;
+}
+
+/** Every character is an ASCII letter or digit, and the value is not empty. */
+function isAlnumRun(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const ch = value[i];
+        if (!((ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9"))) return false;
+    }
+    return true;
 }
 
 /**

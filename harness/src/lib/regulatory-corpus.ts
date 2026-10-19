@@ -53,7 +53,7 @@ export function chunkText(text: string, opts: ChunkOptions = {}): RawChunk[] {
     // This ensures a heading at position 0 (no preceding newline) is caught
     // the same way as headings mid-document.
     const normalised = text.startsWith("##") ? `\n${text}` : text;
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the markdown section split: a newline, two hashes, and the flexible \s run after them.
     const parts = normalised.split(/\n##\s+/);
 
     // parts[0] is always the lead-in text before the first heading (may be
@@ -76,7 +76,7 @@ export function chunkText(text: string, opts: ChunkOptions = {}): RawChunk[] {
     let globalIdx = 0;
 
     for (const sec of sections) {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s run split of the body: a run rewrite no string method does in one call.
         const tokens = sec.body.split(/\s+/).filter(Boolean);
         if (tokens.length === 0) continue;
 

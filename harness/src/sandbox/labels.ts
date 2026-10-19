@@ -32,13 +32,21 @@ export const STEP_ID_LABEL = "cortex/step-id";
  */
 export const OWNER_WORKFLOW_KEY = "cortex/owner-workflow-id";
 
-/** A valid K8s label value: 1 to 63 characters, `[A-Za-z0-9._-]` only, a letter or a digit at each end. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const LABEL_VALUE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$/;
+function isAlnumCode(code: number): boolean {
+    return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
+}
 
-/** The harness never applies it to a host value. */
+/**
+ * A valid K8s label value: 1 to 63 characters, `[A-Za-z0-9._-]` only, a letter or a digit at each end.
+ */
 export function isLabelValue(value: string): boolean {
-    return LABEL_VALUE.test(value);
+    if (value.length === 0 || value.length > 63) return false;
+    if (!isAlnumCode(value.charCodeAt(0)) || !isAlnumCode(value.charCodeAt(value.length - 1))) return false;
+    for (let i = 1; i < value.length - 1; i++) {
+        const code = value.charCodeAt(i);
+        if (!isAlnumCode(code) && code !== 46 && code !== 45 && code !== 95) return false;
+    }
+    return true;
 }
 
 export function harnessLabels(session: SpawnSession, sandboxId: string): Record<string, string> {

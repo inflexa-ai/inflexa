@@ -16,7 +16,7 @@ function block(n: number): string {
 const HOST_CPUINFO = [0, 1, 2, 3].map((n) => `${block(n)}\n`).join("");
 
 function processorCount(cpuinfo: string): number {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the multiline word-boundary count: "processor" at each line start.
     return cpuinfo.match(/^processor\b/gm)?.length ?? 0;
 }
 
@@ -26,14 +26,14 @@ describe("cpuFiles", () => {
 
         expect(files.online).toBe("0-1\n");
         expect(files.cpuinfo).toBe(`${block(0)}\n${block(1)}\n`);
-        expect(processorCount(must(must(files, "files").cpuinfo, "must(files, \"files\").cpuinfo"))).toBe(2);
+        expect(processorCount(must(must(files, "files").cpuinfo, 'must(files, "files").cpuinfo'))).toBe(2);
     });
 
     test("one thread: online is `0`, as the kernel writes it for a single cpu", () => {
         const files = cpuFiles(1, HOST_CPUINFO);
 
         expect(files.online).toBe("0\n");
-        expect(processorCount(must(must(files, "files").cpuinfo, "must(files, \"files\").cpuinfo"))).toBe(1);
+        expect(processorCount(must(must(files, "files").cpuinfo, 'must(files, "files").cpuinfo'))).toBe(1);
         expect(files.cpuinfo).toStartWith("processor\t: 0\n");
     });
 
@@ -41,7 +41,7 @@ describe("cpuFiles", () => {
         const files = cpuFiles(8, HOST_CPUINFO);
 
         expect(files.online).toBe("0-7\n");
-        expect(processorCount(must(must(files, "files").cpuinfo, "must(files, \"files\").cpuinfo"))).toBe(4);
+        expect(processorCount(must(must(files, "files").cpuinfo, 'must(files, "files").cpuinfo'))).toBe(4);
     });
 
     test("a block with no processor line is not a processor", () => {
@@ -50,7 +50,7 @@ describe("cpuFiles", () => {
 
         const files = cpuFiles(8, arm);
 
-        expect(processorCount(must(must(files, "files").cpuinfo, "must(files, \"files\").cpuinfo"))).toBe(4);
+        expect(processorCount(must(must(files, "files").cpuinfo, 'must(files, "files").cpuinfo'))).toBe(4);
         expect(files.cpuinfo).not.toContain("Hardware");
     });
 

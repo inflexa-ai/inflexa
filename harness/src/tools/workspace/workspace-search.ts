@@ -31,13 +31,23 @@ function isUndefinedTable(cause: unknown): boolean {
 }
 
 function indexName(analysisId: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    const name = `search_${analysisId.replace(/-/g, "_")}`;
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+    const name = `search_${analysisId.replaceAll("-", "_")}`;
+    if (!isIdentifierShape(name)) {
         throw new Error(`workspaceSearch: unusable analysis id "${analysisId}"`);
     }
     return name;
+}
+
+function isIdentifierShape(name: string): boolean {
+    if (name.length === 0) return false;
+    const letter = (code: number): boolean => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+    const head = name.charCodeAt(0);
+    if (!letter(head) && head !== 95) return false;
+    for (let i = 1; i < name.length; i++) {
+        const code = name.charCodeAt(i);
+        if (!letter(code) && !(code >= 48 && code <= 57) && code !== 95) return false;
+    }
+    return true;
 }
 
 /** Entry types that address a pattern spanning many files, never a single one. */
@@ -56,8 +66,9 @@ export function fileTargetOf(id: string, metadata: unknown): string | undefined 
     if (type !== undefined && PATTERN_TYPES.has(type)) return undefined;
     if (type === "input" && meta.entity !== undefined) return undefined;
     if (typeof meta.path === "string") return meta.path;
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    return id.replace(/^\/[^/]+\//, "");
+    if (!id.startsWith("/")) return id;
+    const second = id.indexOf("/", 1);
+    return second <= 1 ? id : id.slice(second + 1);
 }
 
 type WorkspaceSearchResult = { id: string; score: number; path?: string; metadata: unknown };

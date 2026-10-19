@@ -28,8 +28,12 @@ const MAX_FILE_BYTES = 512 * 1024;
 const MAX_SNIPPET = 240;
 const DEFAULT_TOP_K = 10;
 const MAX_TOP_K = 25;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const TEXT_EXT = /\.(md|markdown|txt|py|r|R|json|ya?ml|csv|tsv)$/;
+const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "py", "r", "R", "json", "yml", "yaml", "csv", "tsv"]);
+
+function hasTextExtension(name: string): boolean {
+    const dot = name.lastIndexOf(".");
+    return dot >= 0 && TEXT_EXTENSIONS.has(name.slice(dot + 1));
+}
 
 export type SkillToolsDeps = {
     /** Absolute path to the skills tree (one subdirectory per skill). */
@@ -66,7 +70,7 @@ async function collectTextFiles(dir: string, acc: string[]): Promise<void> {
         const full = join(dir, e.name);
         if (e.isDirectory()) {
             await collectTextFiles(full, acc);
-        } else if (TEXT_EXT.test(e.name)) {
+        } else if (hasTextExtension(e.name)) {
             acc.push(full);
         }
     }
@@ -103,7 +107,7 @@ export function createSkillTools(deps: SkillToolsDeps): {
             if (allowed.size === 0) {
                 return ok({ status: "no_skills" as const });
             }
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s run split of the query: a run rewrite no string method does in one call.
             const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
             const matches: SkillMatch[] = [];
 

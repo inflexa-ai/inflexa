@@ -261,9 +261,9 @@ export type PackagesResult =
  */
 const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
     // `CLI_TITLE` — the conda-installed bioinformatics executables.
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the synonym match: the literal "system tools", or a caseless word-bounded "cli".
     cli: (t) => /system tools|\bcli\b/i.test(t),
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caseless "node" prefix with a word boundary after it.
     node: (t) => /^node\b/i.test(t),
 };
 

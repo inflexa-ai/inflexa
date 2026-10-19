@@ -162,7 +162,7 @@ function replaceRegex(
     | { kind: "count_mismatch"; expected: number; actual: number; lines: number[] } {
     let compiled: RegExp;
     try {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the dynamic pattern: the user-supplied pattern string, compiled at call time with the multiline flags.
         compiled = new RegExp(pattern, "gm");
     } catch (err) {
         return { kind: "invalid_pattern", error: errorMessage(err) };

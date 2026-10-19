@@ -29,9 +29,19 @@ import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
  * a name that matches it has one byte per character and `length` is the byte count
  * the limit is measured in.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const SQL_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const MAX_SQL_IDENTIFIER_BYTES = 63;
+
+function isSqlIdentifierShape(name: string): boolean {
+    if (name.length === 0) return false;
+    const lower = (code: number): boolean => code >= 97 && code <= 122;
+    const head = name.charCodeAt(0);
+    if (!lower(head) && head !== 95) return false;
+    for (let i = 1; i < name.length; i++) {
+        const code = name.charCodeAt(i);
+        if (!lower(code) && !(code >= 48 && code <= 57) && code !== 95) return false;
+    }
+    return true;
+}
 
 /**
  * Whether `name` may be interpolated into a statement as an identifier. Shared
@@ -39,7 +49,7 @@ const MAX_SQL_IDENTIFIER_BYTES = 63;
  * shape — one invariant, one place to read it.
  */
 export function isSqlIdentifier(name: string): boolean {
-    return SQL_IDENTIFIER.test(name) && name.length <= MAX_SQL_IDENTIFIER_BYTES;
+    return isSqlIdentifierShape(name) && name.length <= MAX_SQL_IDENTIFIER_BYTES;
 }
 
 export type CreateIndexInput = {

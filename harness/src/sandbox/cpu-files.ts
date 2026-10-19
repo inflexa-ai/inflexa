@@ -47,12 +47,14 @@ export type CpuFiles = {
  * trailer of an ARM kernel, is not a processor and is dropped.
  */
 function processorBlocks(cpuinfo: string): string[] {
-    return cpuinfo
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-        .split(/\n\s*\n/)
-        .map((block) => block.trim())
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-        .filter((block) => /^processor\b/m.test(block));
+    return (
+        cpuinfo
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the blank-block split: two newlines around a Unicode \s run.
+            .split(/\n\s*\n/)
+            .map((block) => block.trim())
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the multiline word boundary: "processor" at a line start.
+            .filter((block) => /^processor\b/m.test(block))
+    );
 }
 
 /**
