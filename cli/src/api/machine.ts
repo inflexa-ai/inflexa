@@ -37,10 +37,12 @@ export type PutAgentResponse = {
     status: "applied" | "scheduled";
 };
 
-/** One model of the connection, with the efforts that it takes. */
+/** One model of the connection, with the efforts that it takes and its release date. */
 export type ListedModelView = {
     id: string;
     efforts: AgentEffort[];
+    /** The release date as an ISO 8601 string, or `null` when the source of the listing gives no usable date. */
+    releasedAt: string | null;
 };
 
 /**

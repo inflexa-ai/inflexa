@@ -49,9 +49,11 @@ import {
     modelMatchesProvider,
     rankModelCandidates,
     readApiKey,
+    releaseTimeOf,
     resolveModelId,
     type ChatSetupError,
     type ModelAccess,
+    type ModelCandidate,
 } from "../proxy/models.ts";
 import type { EmbeddingSetupAnswers } from "../embedding/setup.ts";
 import type { ReferenceSelection } from "../refs/commands.ts";
@@ -1904,7 +1906,7 @@ export type CredentialProbeError = { readonly message: string };
  * model validation) reuse it instead of re-running the helper.
  */
 export type CredentialProbeResult =
-    | { readonly outcome: "pass"; readonly listedModels: string[] | null; readonly validatedModel: string | null; readonly cred: Credential }
+    | { readonly outcome: "pass"; readonly listedModels: ModelCandidate[] | null; readonly validatedModel: string | null; readonly cred: Credential }
     | { readonly outcome: "ambiguous"; readonly status: number; readonly excerpt: string; readonly cred: Credential };
 
 /** The wire headers a direct request sends under a resolved credential: the scheme's auth header, plus the version header the anthropic wire requires. */
@@ -1917,8 +1919,14 @@ function wireHeaders(cred: Credential, protocol: "anthropic" | "openai-compatibl
     return headers;
 }
 
-/** The `/models` ids of a 2xx listing body, or `null` when the body is not the shared `{ data: [{ id }] }` shape. */
-const probeModelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
+/** The `/models` entries of a 2xx listing body, or `null` when the body is not the shared `{ data: [{ id }] }` shape. */
+const probeModelsSchema = z.object({
+    data: z.array(z.object({ id: z.string(), created: z.number().nullish().catch(null), created_at: z.string().nullish().catch(null) })),
+});
+
+function listedCandidates(data: z.infer<typeof probeModelsSchema>["data"]): ModelCandidate[] {
+    return data.map((m) => ({ id: m.id, created: releaseTimeOf(m) }));
+}
 
 /**
  * How the authoritative message ping concluded. `model_not_found` is a PASS for a credential probe (the
@@ -2029,10 +2037,10 @@ export async function probeCredentialSource(
     if (response.status === 401 || response.status === 403) return err(rejected(response.status));
     if (response.ok) {
         // A listing that answers but does not parse still validated the credential — the ids are a bonus.
-        let listedModels: string[] | null;
+        let listedModels: ModelCandidate[] | null;
         try {
             const parsed = probeModelsSchema.safeParse(await response.json());
-            listedModels = parsed.success ? parsed.data.data.map((m) => m.id) : null;
+            listedModels = parsed.success ? listedCandidates(parsed.data.data) : null;
         } catch {
             listedModels = null;
         }
@@ -2273,18 +2281,18 @@ export async function collectDirectModel(deps: DirectModelDeps): Promise<void> {
  * answered → the provider-conventional default → "" (free text, no guess). Pure, so the precedence is
  * unit-testable without a prompt or a network.
  */
-export function directModelPrefill(listed: string[] | null, provider: string): string {
-    const ranked = listed !== null && listed.length > 0 ? rankModelCandidates(listed.map((id) => ({ id }))) : [];
+export function directModelPrefill(listed: ModelCandidate[] | null, provider: string): string {
+    const ranked = listed !== null && listed.length > 0 ? rankModelCandidates(listed) : [];
     return ranked[0] ?? conventionalDefaultModel(provider) ?? "";
 }
 
 /** One `/models` listing attempt for the static-key pre-fill; any failure (non-2xx, parse, network) degrades to null — never an error. */
-async function fetchDirectListing(baseURL: string, protocol: "anthropic" | "openai-compatible", cred: Credential): Promise<string[] | null> {
+async function fetchDirectListing(baseURL: string, protocol: "anthropic" | "openai-compatible", cred: Credential): Promise<ModelCandidate[] | null> {
     try {
         const response = await fetch(`${baseURL.replace(/\/+$/, "")}/models`, { method: "GET", headers: wireHeaders(cred, protocol) });
         if (!response.ok) return null;
         const parsed = probeModelsSchema.safeParse(await response.json());
-        return parsed.success ? parsed.data.data.map((m) => m.id) : null;
+        return parsed.success ? listedCandidates(parsed.data.data) : null;
     } catch {
         return null;
     }

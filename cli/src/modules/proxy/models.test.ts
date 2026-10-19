@@ -8,10 +8,13 @@ import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import {
     __resetModelCacheForTest,
     checkModelAccess,
+    byRecencyThenId,
     conventionalDefaultModel,
+    listModelCandidates,
     modelMatchesProvider,
     rankModelCandidates,
     readApiKey,
+    releaseTimeOf,
     resolveModelId,
     type ModelCandidate,
 } from "./models.ts";
@@ -114,6 +117,95 @@ describe("rankModelCandidates", () => {
         ];
         rankModelCandidates(input);
         expect(input.map((m) => m.id)).toEqual(["llama-b", "llama-a"]);
+    });
+});
+
+describe("releaseTimeOf", () => {
+    const SEPT_21_2026 = Date.UTC(2026, 8, 21) / 1000;
+
+    test("reads `created_at` as RFC 3339 and `created` as unix seconds", () => {
+        expect(releaseTimeOf({ created_at: "2026-09-21T00:00:00Z" })).toBe(SEPT_21_2026);
+        expect(releaseTimeOf({ created: 1_760_000_000 })).toBe(1_760_000_000);
+    });
+
+    test("`created_at` wins over `created`, and `created` is read when `created_at` gives no date", () => {
+        expect(releaseTimeOf({ created_at: "2026-09-21T00:00:00Z", created: 1_760_000_000 })).toBe(SEPT_21_2026);
+        expect(releaseTimeOf({ created_at: "1970-01-01T00:00:00Z", created: 1_760_000_000 })).toBe(1_760_000_000);
+        expect(releaseTimeOf({ created_at: "not a date", created: 1_760_000_000 })).toBe(1_760_000_000);
+    });
+
+    test("the epoch and a time before it give no date", () => {
+        expect(releaseTimeOf({ created_at: "1970-01-01T00:00:00Z" })).toBeUndefined();
+        expect(releaseTimeOf({ created: 0 })).toBeUndefined();
+        expect(releaseTimeOf({ created_at: "1969-12-31T23:59:59Z" })).toBeUndefined();
+        expect(releaseTimeOf({ created: -5 })).toBeUndefined();
+    });
+
+    test("an invalid string, a value of another type, and an absent field give no date", () => {
+        expect(releaseTimeOf({ created_at: "not a date" })).toBeUndefined();
+        expect(releaseTimeOf({ created_at: "" })).toBeUndefined();
+        expect(releaseTimeOf({ created: "1760000000" })).toBeUndefined();
+        expect(releaseTimeOf({ created_at: 1_760_000_000 })).toBeUndefined();
+        expect(releaseTimeOf({ created: null, created_at: null })).toBeUndefined();
+        expect(releaseTimeOf({ created: Number.NaN })).toBeUndefined();
+        expect(releaseTimeOf({ created: Number.POSITIVE_INFINITY })).toBeUndefined();
+        expect(releaseTimeOf({})).toBeUndefined();
+    });
+
+    test("a created_at that is no RFC 3339 date-time with a valid calendar date gives no date, and `created` is read", () => {
+        for (const created_at of ["0", "2026-02-30T00:00:00Z", "2025-02-29T00:00:00Z", "2026-09-21"]) {
+            expect(releaseTimeOf({ created_at })).toBeUndefined();
+            expect(releaseTimeOf({ created_at, created: 1_760_000_000 })).toBe(1_760_000_000);
+        }
+    });
+
+    test("a created_at with a fraction and an offset gives a date", () => {
+        expect(releaseTimeOf({ created_at: "2026-09-21T00:00:00.123+02:00" })).toBe(SEPT_21_2026 - 7200 + 0.123);
+    });
+
+    test("a finite time that a JavaScript Date cannot represent gives no date, so toISOString cannot throw", () => {
+        expect(releaseTimeOf({ created: 1e15 })).toBeUndefined();
+        expect(releaseTimeOf({ created: Number.MAX_VALUE })).toBeUndefined();
+        expect(releaseTimeOf({ created_at: "+275760-09-13T00:00:00.001Z" })).toBeUndefined();
+        expect(releaseTimeOf({ created: 8.64e12 })).toBe(8.64e12);
+        expect(() => new Date(8.64e12 * 1000).toISOString()).not.toThrow();
+    });
+});
+
+describe("byRecencyThenId", () => {
+    test("orders newest first, an undated entry last, and breaks a tie by id ascending", () => {
+        const sorted = [{ id: "b" }, { id: "a", created: 100 }, { id: "c", created: 200 }, { id: "d", created: 100 }].sort(byRecencyThenId);
+        expect(sorted.map((m) => m.id)).toEqual(["c", "a", "d", "b"]);
+    });
+});
+
+describe("listModelCandidates", () => {
+    const realFetch = globalThis.fetch;
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+    });
+
+    test("reads `created_at` and `created` of the /models answer, and an entry with a date of an unknown shape costs that date only", async () => {
+        globalThis.fetch = (async () =>
+            new Response(
+                JSON.stringify({
+                    data: [
+                        { id: "claude-new", created_at: "2026-09-21T00:00:00Z" },
+                        { id: "claude-mid", created: 1_760_000_000 },
+                        { id: "claude-epoch", created_at: "1970-01-01T00:00:00Z" },
+                        { id: "claude-odd", created_at: { when: "yesterday" }, created: "soon" },
+                    ],
+                }),
+            )) as unknown as typeof fetch;
+        const candidates = (await listModelCandidates("sk-test"))._unsafeUnwrap();
+        expect(candidates).toEqual([
+            { id: "claude-new", created: Date.UTC(2026, 8, 21) / 1000 },
+            { id: "claude-mid", created: 1_760_000_000 },
+            { id: "claude-epoch", created: undefined },
+            { id: "claude-odd", created: undefined },
+        ]);
+        expect(rankModelCandidates(candidates)).toEqual(["claude-new", "claude-mid", "claude-epoch", "claude-odd"]);
     });
 });
 
