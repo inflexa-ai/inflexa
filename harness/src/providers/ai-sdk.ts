@@ -337,6 +337,32 @@ interface InputTransformation {
     readonly reason?: string;
 }
 
+/**
+ * The model that answered after a server-side fallback hop, `""` when the hop is
+ * reported without one, and `undefined` when no hop happened.
+ *
+ * A model can refuse a request by category — a biology prompt is one such category —
+ * and the API then re-serves it on another model. It reports the hop TWICE: as a
+ * `fallback` content block inside the assistant turn, and on
+ * `providerMetadata.anthropic.iterations`. `@ai-sdk/anthropic` keeps only the second,
+ * because the AI SDK has no part for a model hop, and it drops the block from the
+ * content it returns (`anthropic-messages-language-model`, the `content_block_start`
+ * case). Thus the turn the harness holds is not the turn the API produced, and every
+ * signed thinking block of that turn is rejected from the next request on. This reader
+ * is what lets {@link withoutFallbackThinking} see the hop the content no longer shows.
+ */
+function fallbackModelOf(metadata: ProviderMetadata | undefined): string | undefined {
+    const entries = metadata?.["anthropic"]?.["iterations"];
+    if (!Array.isArray(entries)) return undefined;
+    for (const entry of entries as unknown[]) {
+        if (typeof entry !== "object" || entry === null) continue;
+        const fields = entry as Record<string, unknown>;
+        if (fields["type"] !== "fallback_message") continue;
+        return typeof fields["model"] === "string" ? fields["model"] : "";
+    }
+    return undefined;
+}
+
 /** Reads `providerMetadata.anthropic.inputTransformations`; empty for another vendor. */
 function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTransformation[] {
     const entries = metadata?.["anthropic"]?.["inputTransformations"];
@@ -808,6 +834,35 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
         }
     }
 
+    /**
+     * The reply with no thinking block, when a fallback model served it.
+     *
+     * A reply that carries a fallback hop ({@link fallbackModelOf}) reaches the harness
+     * already short of the `fallback` content block the API put in the turn. The API holds
+     * the whole turn against the signature of each of its thinking blocks, so echoing that
+     * turn earns `thinking ... blocks in the latest assistant message cannot be modified`,
+     * which is a 400 that no retry can pass. The conversation is then dead: the loop sends
+     * its history on every request, and nothing downstream can repair a turn.
+     *
+     * A thinking block is optional on the way back, thus the reply without them is a valid
+     * turn, and the next request continues. The cost is the reasoning of this one turn and
+     * the cache write that its new prefix pays for. A reply of nothing but thinking carries
+     * no part at all, and `sanitizeMessages` drops such a message from the next request.
+     */
+    function withoutFallbackThinking(session: AgentSession, response: ChatResponse, metadata: ProviderMetadata | undefined): ChatResponse {
+        const servedBy = fallbackModelOf(metadata);
+        if (servedBy === undefined) return response;
+        logger.warn("reply served by a fallback model, thus the harness drops the thinking of that turn", {
+            workload: workloadOf(session),
+            ...(servedBy === "" ? {} : { servedBy }),
+        });
+        const message = response.message;
+        if (typeof message.content === "string") return response;
+        const content = message.content.filter((part) => part.type !== "reasoning" && part.type !== "reasoning-file");
+        if (content.length === message.content.length) return response;
+        return { ...response, message: content.length === 0 ? { ...message, content: "" } : { ...message, content } };
+    }
+
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const reasoning = effortOf(req);
         const providerOptions = deps.providerOptionsFor?.({ session, reasoning });
@@ -885,14 +940,18 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 const { providerMetadata: metadata, ...reply } = collected;
                 logDroppedThinkingBlocks(session, metadata);
                 return ok(
-                    responseFromMessages({
-                        ...reply,
-                        requestedModelId,
-                        // Read after the drain: the metadata chunk that carries the
-                        // served id reaches the capture only as the stream is consumed.
-                        servedModelId: capture.servedModelId(),
-                        provider: providerId,
-                    }),
+                    withoutFallbackThinking(
+                        session,
+                        responseFromMessages({
+                            ...reply,
+                            requestedModelId,
+                            // Read after the drain: the metadata chunk that carries the
+                            // served id reaches the capture only as the stream is consumed.
+                            servedModelId: capture.servedModelId(),
+                            provider: providerId,
+                        }),
+                        metadata,
+                    ),
                 );
             } catch (e) {
                 if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
@@ -974,16 +1033,20 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
             if (opened.kind === "completed") {
                 logDroppedThinkingBlocks(session, opened.providerMetadata);
-                const response = responseFromMessages({
-                    messages: opened.messages,
-                    fallbackText: "",
-                    finishReason: opened.finishReason,
-                    rawFinishReason: opened.rawFinishReason,
-                    usage: opened.usage,
-                    requestedModelId,
-                    servedModelId: capture.servedModelId(),
-                    provider: providerId,
-                });
+                const response = withoutFallbackThinking(
+                    session,
+                    responseFromMessages({
+                        messages: opened.messages,
+                        fallbackText: "",
+                        finishReason: opened.finishReason,
+                        rawFinishReason: opened.rawFinishReason,
+                        usage: opened.usage,
+                        requestedModelId,
+                        servedModelId: capture.servedModelId(),
+                        provider: providerId,
+                    }),
+                    opened.providerMetadata,
+                );
                 yield { type: "done", response };
                 return;
             }
@@ -1002,19 +1065,24 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 text += pull.text;
                 yield { type: "text-delta", text: pull.text };
             }
-            const response = responseFromMessages({
-                messages: await result.responseMessages,
-                fallbackText: text,
-                finishReason: await result.finishReason,
-                rawFinishReason: await result.rawFinishReason,
-                usage: await result.usage,
-                requestedModelId,
-                // Read after the drain: the metadata chunk carrying the served id
-                // reaches the capture only as the stream is consumed.
-                servedModelId: capture.servedModelId(),
-                provider: providerId,
-            });
-            logDroppedThinkingBlocks(session, (await result.finalStep).providerMetadata);
+            const metadata = (await result.finalStep).providerMetadata;
+            const response = withoutFallbackThinking(
+                session,
+                responseFromMessages({
+                    messages: await result.responseMessages,
+                    fallbackText: text,
+                    finishReason: await result.finishReason,
+                    rawFinishReason: await result.rawFinishReason,
+                    usage: await result.usage,
+                    requestedModelId,
+                    // Read after the drain: the metadata chunk carrying the served id
+                    // reaches the capture only as the stream is consumed.
+                    servedModelId: capture.servedModelId(),
+                    provider: providerId,
+                }),
+                metadata,
+            );
+            logDroppedThinkingBlocks(session, metadata);
             yield { type: "done", response };
         } catch (e) {
             if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
