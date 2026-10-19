@@ -227,10 +227,11 @@ function makeFakePool(rowByText: Record<string, unknown[]> = {}): FakePool {
     const query = (mock as unknown as <T>(fn: (q: { text: string; values?: readonly unknown[] }) => Promise<T>) => unknown)(
         async (q: { text: string; values?: readonly unknown[] }) => {
             queries.push(q);
-            // Crude prefix match — returns the configured rows for the first
-            // prefix that hits, otherwise an empty rowset.
+            // Crude prefix match on the whitespace-normalized text — returns the configured
+            // rows for the first prefix that hits, otherwise an empty rowset.
+            const text = q.text.trim().replace(/\s+/g, " ");
             for (const prefix of Object.keys(rowByText)) {
-                if (q.text.trim().startsWith(prefix)) {
+                if (text.startsWith(prefix)) {
                     return {
                         rows: rowByText[prefix]!,
                         rowCount: rowByText[prefix]!.length,
@@ -1985,6 +1986,9 @@ describe("run and step outcome metrics", () => {
         child_workflow_id: status === "pending" ? null : `run-test-${stepId}`,
     });
 
+    /** Matches the `updateRunStatus` write only, not the synthesis-outcome write of the same table. */
+    const RUN_STATUS_WRITE = "UPDATE cortex_runs SET status = $1";
+
     // The one branch of `persist-final-status` a replay test cannot reach: which settled steps the
     // parent counts. A child that wrote its terminal row (completed_at set) already recorded itself.
     it("persist-final-status counts the run once, and only the settled steps whose child wrote no terminal row", async () => {
@@ -1994,6 +1998,7 @@ describe("run and step outcome metrics", () => {
             // terminal step, so their rows carry no completed_at. D never dispatched.
             const pool = makeFakePool({
                 SELECT: [ledgerRow("A", "2026-09-05T10:05:00.000Z"), ledgerRow("B", null), ledgerRow("C", null), ledgerRow("D", null, "pending")],
+                [RUN_STATUS_WRITE]: [{}],
             });
             const { deps } = makeDeps({
                 pool,
@@ -2014,6 +2019,34 @@ describe("run and step outcome metrics", () => {
             ]);
             // A residual step settled without a durable duration: counted, not timed.
             expect(await capture.histograms("cortex.step.duration")).toEqual([]);
+        } finally {
+            await capture.dispose();
+        }
+    });
+
+    it("persist-final-status records no outcome metric when the status write changes no row", async () => {
+        const capture = captureMetrics();
+        try {
+            // The canceler already wrote `canceled`, thus the status write matches no `running` row (the
+            // default answer of the fake pool is zero rows). B failed without a terminal row, so a recorded
+            // residue would show in the step metric.
+            const pool = makeFakePool({
+                SELECT: [ledgerRow("A", "2026-09-05T10:05:00.000Z"), ledgerRow("B", null)],
+            });
+            const { deps } = makeDeps({
+                pool,
+                childResults: new Map<string, SandboxStepResult | Error>([
+                    ["A", { status: "complete", durationMs: 5, finishReason: "stop", error: null }],
+                    ["B", new Error("sandbox create failed")],
+                ]),
+            });
+
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }]), deps);
+
+            expect(result.status).toBe("partial");
+            expect(pool.queries.some((q) => q.text.replace(/\s+/g, " ").startsWith(RUN_STATUS_WRITE))).toBe(true);
+            expect(await capture.sums("cortex.run.completed")).toEqual([]);
+            expect(await capture.sums("cortex.step.completed")).toEqual([]);
         } finally {
             await capture.dispose();
         }

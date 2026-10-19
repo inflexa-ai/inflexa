@@ -1773,8 +1773,11 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     await ledgerStep(logger.with({ status }), "persist-final-status", async () => {
         const written = await updateRunStatus(deps.pool, runId, status, failureReason ?? (status === "canceled" ? "external_cancel" : null));
         if (written.isErr()) return written;
-        // The outcome metrics ride inside the step that persists the terminal status: DBOS
-        // caches the step, so a recovered body records nothing again. A step's own terminal
+        // The outcome metrics ride the write that changed the row. A refused write means an earlier
+        // write already set a terminal status: the run canceler's, or an earlier run of this step
+        // before a crash. That writer owns the outcome of the run.
+        if (!written.value) return written;
+        // DBOS caches the step, so a recovered body records nothing again. A step's own terminal
         // row already carried its metric; the residue counted here is every settled step
         // without one — a child the cancel cut before `mark-canceled` (the cancel check runs
         // before a step body), or one that died before `failStep`. The ledger read is kept

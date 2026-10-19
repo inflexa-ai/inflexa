@@ -283,6 +283,65 @@ describe("runs: markRunCanceledIfActive", () => {
     });
 });
 
+describe("runs: updateRunStatus", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("runs_update_run_status");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("changes a running run, stamps completed_at and the error, and reports the change", async () => {
+        (await insertRun(pool, { runId: "run-running", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+
+        const changed = (await updateRunStatus(pool, "run-running", "suspended_insufficient_funds", "budget_exceeded"))._unsafeUnwrap();
+        expect(changed).toBe(true);
+
+        const row = (await queryRun(pool, "run-running"))._unsafeUnwrap();
+        expect(row?.status).toBe("suspended_insufficient_funds");
+        expect(row?.error).toBe("budget_exceeded");
+        expect(row?.completedAt).not.toBeNull();
+    });
+
+    it("keeps a canceled run canceled when a later write lands", async () => {
+        (await insertRun(pool, { runId: "run-canceled", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        expect((await markRunCanceledIfActive(pool, "run-canceled", "external_cancel"))._unsafeUnwrap()).toBe(true);
+        const before = (await queryRun(pool, "run-canceled"))._unsafeUnwrap();
+
+        const changed = (await updateRunStatus(pool, "run-canceled", "completed"))._unsafeUnwrap();
+        expect(changed).toBe(false);
+
+        const after = (await queryRun(pool, "run-canceled"))._unsafeUnwrap();
+        expect(after?.status).toBe("canceled");
+        expect(after?.error).toBe("external_cancel");
+        expect(after?.completedAt).toBe(before?.completedAt ?? null);
+    });
+
+    it("keeps a completed run completed when a failed write lands", async () => {
+        (await insertRun(pool, { runId: "run-completed", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        expect((await updateRunStatus(pool, "run-completed", "completed"))._unsafeUnwrap()).toBe(true);
+        const before = (await queryRun(pool, "run-completed"))._unsafeUnwrap();
+
+        const changed = (await updateRunStatus(pool, "run-completed", "failed", "workflow start failed"))._unsafeUnwrap();
+        expect(changed).toBe(false);
+
+        const after = (await queryRun(pool, "run-completed"))._unsafeUnwrap();
+        expect(after?.status).toBe("completed");
+        expect(after?.error).toBeNull();
+        expect(after?.completedAt).toBe(before?.completedAt ?? null);
+    });
+
+    it("reports no change for a run that does not exist", async () => {
+        expect((await updateRunStatus(pool, "run-nowhere", "completed"))._unsafeUnwrap()).toBe(false);
+    });
+});
+
 describe("runs: a suspended run is terminal", () => {
     let pool: Pool;
     let drop: () => Promise<void>;

@@ -80,6 +80,18 @@ The status write SHALL run inside a `DBOS.runStep` named `persist-final-status`,
 and a failure of that step SHALL be logged with the `runId` and status without
 masking the workflow error.
 
+The status write MUST change the run row only when the row is still `running`.
+The run canceler can write `canceled` after an engine cancel, while a
+`persist-final-status` step that started before the cancel still runs. In that
+case the row MUST keep `canceled`. Of these two terminal writes, the first wins.
+
+The `persist-final-status` step records the run outcome metric. It also records
+the outcome metric of each settled step whose child wrote no terminal row. The
+step MUST record these metrics only when its write changed the row. Thus the
+writer that wins the row records the outcome of the run one time. A refused
+write MUST NOT fail the step, and the body MUST continue with its next terminal
+step.
+
 #### Scenario: Some steps fail after others completed
 
 - **GIVEN** a run where step A completed and step B failed
@@ -103,6 +115,19 @@ masking the workflow error.
 - **WHEN** the `persist-final-status` step fails
 - **THEN** the error is logged with the `runId` and intended status
 - **AND** the underlying workflow error is preserved in the DBOS workflow record
+
+#### Scenario: A late status write keeps the cancel of the canceler
+
+- **GIVEN** a `persist-final-status` step that started before an engine cancel
+- **AND** the run canceler then changed the run row to `canceled`
+- **WHEN** the step writes the status `completed`
+- **THEN** the run row keeps the status `canceled` and the error `external_cancel`
+- **AND** the step records no run outcome metric and no step outcome metric
+
+#### Scenario: A won status write records the outcome one time
+
+- **WHEN** the `persist-final-status` step changes a `running` row to `partial`
+- **THEN** the step records one run outcome metric with the status `partial`
 
 ### Requirement: An insufficient-budget pause is suspended and made resumable
 
