@@ -46,7 +46,7 @@ runFixtureSuite("ClinVar golden fixtures", [
             expect(variants.length).toBe(5);
             for (const variant of variants) {
                 expect(variant.clinicalSignificance).not.toBe("");
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ClinVar accession tag: the VCV prefix of the esummary accession grammar.
                 expect(variant.accession).toMatch(/^VCV/);
                 // `variant_type` sits on `variation_set`, thus the fallback of a
                 // record with no molecular consequence carries data.

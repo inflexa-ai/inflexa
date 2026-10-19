@@ -35,6 +35,7 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError, type ApiError } from "./api-utils.js";
 import { AMASS_BASE } from "./amass-config.js";
 import { jsonParse } from "../../lib/json.js";
+import { isDigits } from "../../lib/text.js";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -177,10 +178,9 @@ const FDA_APPLICATION_PREFIXES = ["NDA", "BLA", "ANDA"] as const;
  * thus goes as all three prefixes, in one request at the price of one.
  */
 export function fdaApplicationForms(input: string): string[] {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class plus hyphen in one strip; no plain char list matches \s.
     const compact = input.replace(/[\s-]/g, "").toUpperCase();
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    if (/^\d+$/.test(compact)) return FDA_APPLICATION_PREFIXES.map((prefix) => `${prefix}${compact}`);
+    if (isDigits(compact)) return FDA_APPLICATION_PREFIXES.map((prefix) => `${prefix}${compact}`);
     return [compact];
 }
 
@@ -191,8 +191,7 @@ export function fdaApplicationForms(input: string): string[] {
 export function productNdcOf(input: string): string {
     const trimmed = input.trim();
     const segments = trimmed.split("-");
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    return segments.length === 3 && segments.every((segment) => /^\d+$/.test(segment)) ? `${segments[0]}-${segments[1]}` : trimmed;
+    return segments.length === 3 && segments.every((segment) => isDigits(segment)) ? `${segments[0]}-${segments[1]}` : trimmed;
 }
 
 // ---------------------------------------------------------------------------

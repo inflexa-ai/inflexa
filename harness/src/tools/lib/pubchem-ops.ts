@@ -12,6 +12,9 @@
 
 import { z } from "zod";
 
+import { isChemblId } from "../../data/safety-panel-schema.js";
+import { hasLetter, hasUpper, isDigits } from "../../lib/text.js";
+
 import { apiFetchValidated, describeApiError, parseWireNumber, zWireNumber } from "./api-utils.js";
 import { PUBCHEM_HEADERS as HEADERS, PUBCHEM_BASE } from "./pubchem-config.js";
 
@@ -104,43 +107,102 @@ export const PubChemXrefResponseSchema = z.object({
         .optional(),
 });
 
+/** A ChEBI id: `CHEBI:` plus digits, for example `CHEBI:15365`. */
+function isChebiId(value: string): boolean {
+    return value.startsWith("CHEBI:") && isDigits(value.slice(6));
+}
+
+/** A DrugBank id: `DB` plus exactly 5 digits. */
+function isDrugBankId(value: string): boolean {
+    return value.length === 7 && value.startsWith("DB") && isDigits(value.slice(2));
+}
+
+/** A KEGG compound or drug id: `C` or `D` plus exactly 5 digits. */
+function isKeggMoleculeId(value: string): boolean {
+    return value.length === 6 && (value[0] === "C" || value[0] === "D") && isDigits(value.slice(1));
+}
+
+/** An HMDB id: `HMDB` plus digits. */
+function isHmdbId(value: string): boolean {
+    return value.startsWith("HMDB") && isDigits(value.slice(4));
+}
+
+/** A CAS registry number: 2-7 digits, 2 digits, then 1 digit, joined by hyphens. */
+function isCasNumber(value: string): boolean {
+    const segments = value.split("-");
+    return (
+        segments.length === 3 &&
+        segments[0].length >= 2 &&
+        segments[0].length <= 7 &&
+        isDigits(segments[0]) &&
+        segments[1].length === 2 &&
+        isDigits(segments[1]) &&
+        segments[2].length === 1 &&
+        isDigits(segments[2])
+    );
+}
+
+/** A PDB id: 4 alphanumerics that start with a digit 1-9 and hold a letter as well. */
+function isPdbId(value: string): boolean {
+    return value.length === 4 && value[0] >= "1" && value[0] <= "9" && isAlphanumeric(value.slice(1)) && hasLetter(value);
+}
+
+/** A UNII: 10 uppercase alphanumerics that hold at least one letter. */
+function isUnii(value: string): boolean {
+    return value.length === 10 && isUpperAlphanumeric(value) && hasUpper(value);
+}
+
+function isAlphanumeric(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        const digit = code >= 48 && code <= 57;
+        const upper = code >= 65 && code <= 90;
+        const lower = code >= 97 && code <= 122;
+        if (!digit && !upper && !lower) return false;
+    }
+    return true;
+}
+
+function isUpperAlphanumeric(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        const upper = code >= 65 && code <= 90;
+        const digit = code >= 48 && code <= 57;
+        if (!upper && !digit) return false;
+    }
+    return true;
+}
+
 /**
- * The registry of each identifier pattern that PubChem serves in `RegistryID`.
+ * The registry of each identifier shape that PubChem serves in `RegistryID`.
  *
  * The `RegistryID` and `SourceName` lists of the endpoint are not parallel and
  * they hold a different number of entries, thus an index cannot pair them. The
- * identifier itself carries the registry, and the pattern reads it.
+ * identifier itself carries the registry, and the check reads it.
  *
- * A loose pattern runs last, thus a specific registry claims its own id first.
+ * A loose shape runs last, thus a specific registry claims its own id first.
  */
-const REGISTRY_PATTERNS: ReadonlyArray<readonly [source: string, pattern: RegExp]> = [
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
-    ["ChEMBL", /^CHEMBL\d+$/],
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
-    ["ChEBI", /^CHEBI:\d+$/],
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
-    ["DrugBank", /^DB\d{5}$/],
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
-    ["KEGG", /^[CD]\d{5}$/],
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
-    ["HMDB", /^HMDB\d+$/],
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
-    ["CAS", /^\d{2,7}-\d{2}-\d$/],
-    // A PDB id is four characters that start with a digit. The lookahead demands a
-    // letter as well, thus a plain registry number does not read as a structure.
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
-    ["PDB", /^[1-9](?=.*[A-Za-z])[0-9A-Za-z]{3}$/],
-    // A UNII is ten alphanumeric characters, and the lookahead demands a letter
-    // among them. A plain ten-digit registry number, such as `0000050782`, matches
-    // the pattern without it, and the row then names the wrong registry.
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubChem grammar: its PUG-REST operands have no builtin parser.
-    ["UNII", /^(?=.*[A-Z])[A-Z0-9]{10}$/],
+const REGISTRY_CHECKS: ReadonlyArray<readonly [source: string, holds: (id: string) => boolean]> = [
+    ["ChEMBL", isChemblId],
+    ["ChEBI", isChebiId],
+    ["DrugBank", isDrugBankId],
+    ["KEGG", isKeggMoleculeId],
+    ["HMDB", isHmdbId],
+    ["CAS", isCasNumber],
+    // A PDB id is four characters that start with a digit. The letter demand
+    // keeps a plain registry number from reading as a structure.
+    ["PDB", isPdbId],
+    // A UNII is ten alphanumeric characters, and the letter demand keeps a plain
+    // ten-digit registry number, such as `0000050782`, from naming the wrong registry.
+    ["UNII", isUnii],
 ];
 
-/** The registry of one identifier, or `null` when no pattern matches it. */
+/** The registry of one identifier, or `null` when no shape matches it. */
 export function classifyRegistryId(id: string): string | null {
-    for (const [source, pattern] of REGISTRY_PATTERNS) {
-        if (pattern.test(id)) return source;
+    for (const [source, holds] of REGISTRY_CHECKS) {
+        if (holds(id)) return source;
     }
     return null;
 }

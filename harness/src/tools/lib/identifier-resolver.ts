@@ -19,8 +19,10 @@
 
 import { z } from "zod";
 
+import { isChemblId, isEnsgId, isUniprotAccession } from "../../data/safety-panel-schema.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
+import { isDigits } from "../../lib/text.js";
 import { apiFetchValidated } from "./api-utils.js";
 import { resolveSymbolToEnsemblId } from "./ensembl-client.js";
 import { searchTargets as searchChemblTargets } from "./chembl-client.js";
@@ -32,14 +34,17 @@ const UNIPROT_BASE = "https://rest.uniprot.org/uniprotkb/search";
 const HGNC_HEADERS = { Accept: "application/json" };
 const UNIPROT_HEADERS = { Accept: "application/json" };
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
-const ENSG_RE = /^ENSG\d{11}$/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
-const UNIPROT_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9](-\d+)?$/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
-const CHEMBL_RE = /^CHEMBL\d+$/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
-const HGNC_RE = /^HGNC:\d+$/;
+/** An HGNC id: `HGNC:` plus digits, for example `HGNC:1100`. */
+export function isHgncId(value: string): boolean {
+    return value.startsWith("HGNC:") && isDigits(value.slice(5));
+}
+
+/** A UniProt accession with its optional isoform suffix: `P38398` or `P38398-2`. */
+export function isUniprotIsoform(value: string): boolean {
+    const dash = value.indexOf("-");
+    if (dash === -1) return isUniprotAccession(value);
+    return isUniprotAccession(value.slice(0, dash)) && isDigits(value.slice(dash + 1));
+}
 
 export type ResolvedTarget = {
     /** Canonical id used as the entity-resolution anchor — preferred order: HGNC, then Ensembl. */
@@ -196,13 +201,13 @@ export async function resolveTarget(input: string, logger?: Logger): Promise<Res
     let seedUniprot: string | null = null;
     let seedChembl: string | null = null;
 
-    if (ENSG_RE.test(trimmed)) {
+    if (isEnsgId(trimmed)) {
         seedEnsemblId = trimmed;
-    } else if (HGNC_RE.test(trimmed)) {
+    } else if (isHgncId(trimmed)) {
         seedHgncId = trimmed;
-    } else if (UNIPROT_RE.test(trimmed)) {
+    } else if (isUniprotIsoform(trimmed)) {
         seedUniprot = trimmed;
-    } else if (CHEMBL_RE.test(trimmed)) {
+    } else if (isChemblId(trimmed)) {
         seedChembl = trimmed;
     } else {
         seedSymbol = trimmed.toUpperCase();
@@ -223,7 +228,7 @@ export async function resolveTarget(input: string, logger?: Logger): Promise<Res
             hgncDoc = await fetchHgncBy("prev_symbol", seedSymbol);
         }
     } else if (seedHgncId) {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the identifier grammar: database accession tokens have no builtin parser.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the HGNC: namespace tag: a tag-grammar strip.
         hgncDoc = await fetchHgncBy("hgnc_id", seedHgncId.replace(/^HGNC:/, ""));
     } else if (seedEnsemblId) {
         hgncDoc = await fetchHgncBy("ensembl_gene_id", seedEnsemblId);

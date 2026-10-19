@@ -26,8 +26,7 @@ describe.skipIf(!KEY)("live Amass", () => {
 
         if (!("authorizations" in result)) throw new Error("expected a search answer");
         expect(result.authorizations).toHaveLength(1);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(result.authorizations[0].amassId).toMatch(/^AMRC_/);
+        expect(result.authorizations[0].amassId.startsWith("AMRC_")).toBe(true);
         expect(result.authorizations[0].matchedSectionCount).toBeGreaterThanOrEqual(0);
     }, 60_000);
 
@@ -49,8 +48,7 @@ describe.skipIf(!KEY)("live Amass", () => {
 
         if (!("patents" in result)) throw new Error("expected a search answer");
         expect(result.patents).toHaveLength(1);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(result.patents[0].amassId).toMatch(/^AMPC_/);
+        expect(result.patents[0].amassId.startsWith("AMPC_")).toBe(true);
         expect(result.patents[0]).not.toHaveProperty("claims");
     }, 60_000);
 });

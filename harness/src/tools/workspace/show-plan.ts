@@ -15,18 +15,16 @@ import { z } from "zod";
 
 import { buildPlanCardData } from "../../memory/card-builders.js";
 import { scopeResource } from "../../auth/types.js";
+import { isPlanId } from "../../contracts/ids.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 type ShowPlanOutput = { shown: false; reason: "plan_not_found" } | { shown: true; id: string };
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const PLAN_ID_REGEX = /^pln-[a-f0-9]{8}$/;
-
 const inputSchema = z.object({
     planId: z
         .string()
-        .regex(PLAN_ID_REGEX, "planId must match pln-<8hex>")
+        .refine(isPlanId, "planId must match pln-<8hex>")
         .describe("Plan ID (`pln-<8hex>`) from `generate_plan` (newly created) or `inspect_run` (each run carries the planId it ran)"),
     title: z.string().optional().describe("Optional card heading; defaults to the plan's own title"),
 });

@@ -13,9 +13,10 @@
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { isChemblId, isEnsgId } from "../../data/safety-panel-schema.js";
 import { defineTool } from "../define-tool.js";
 import { lookupGenes, type GeneInfo } from "../lib/ensembl-client.js";
-import { resolveTarget } from "../lib/identifier-resolver.js";
+import { isHgncId, isUniprotIsoform, resolveTarget } from "../lib/identifier-resolver.js";
 
 /**
  * How many identifiers a detail names before it switches to a count plus a
@@ -28,11 +29,10 @@ const IDENTIFIERS_LISTED_IN_FULL = 8;
  * The identifier spaces that Ensembl cannot key on. Anything that matches none
  * of them is treated as a symbol and goes straight to Ensembl.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const NON_SYMBOL_PATTERNS = [/^ENSG\d{11}$/, /^HGNC:\d+$/, /^CHEMBL\d+$/, /^[A-Z][0-9][A-Z0-9]{3}[0-9](-\d+)?$/];
+const NON_SYMBOL_CHECKS = [isEnsgId, isHgncId, isChemblId, isUniprotIsoform];
 
 function isSymbol(identifier: string): boolean {
-    return !NON_SYMBOL_PATTERNS.some((pattern) => pattern.test(identifier));
+    return !NON_SYMBOL_CHECKS.some((check) => check(identifier));
 }
 
 /** One input that was not a symbol, beside the approved symbol it became. */

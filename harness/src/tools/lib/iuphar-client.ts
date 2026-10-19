@@ -10,6 +10,7 @@
 
 import { z } from "zod";
 
+import { isUniprotAccession } from "../../data/safety-panel-schema.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 import { apiFetchValidated, describeApiError, isUnexpectedApiError, type ApiError } from "./api-utils.js";
@@ -51,9 +52,6 @@ export type IupharHeterodimer = {
     accessories: IupharTarget[];
 };
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const UNIPROT_ACCESSION_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9]$/;
-
 function stripHtml(name: string): string {
     // Strip tags to a fixpoint: a single pass can leave a `<…>` behind when
     // removing an inner tag lets the surrounding angle brackets form a new one,
@@ -62,7 +60,7 @@ function stripHtml(name: string): string {
     let prev: string;
     do {
         prev = out;
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the <tag> markup grammar of provider names; no plain twin strips tags exactly.
         out = out.replace(/<[^>]+>/g, "");
     } while (out !== prev);
     return out;
@@ -99,7 +97,7 @@ export async function findTargetByUniprot(accession: string): Promise<IupharTarg
 export async function resolveTarget(uniprotOrGeneSymbol: string): Promise<IupharTarget | null> {
     const input = uniprotOrGeneSymbol.trim();
     if (!input) return null;
-    if (UNIPROT_ACCESSION_RE.test(input)) {
+    if (isUniprotAccession(input)) {
         return (await findTargetByUniprot(input)) ?? (await findTargetByGeneSymbol(input));
     }
     return (await findTargetByGeneSymbol(input)) ?? (await findTargetByUniprot(input));

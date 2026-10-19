@@ -10,6 +10,7 @@
 
 import { z } from "zod";
 
+import { isDigits } from "../../lib/text.js";
 import { apiFetch, apiFetchValidated, parseTSV } from "./api-utils.js";
 
 const KEGG_BASE = "https://rest.kegg.jp";
@@ -28,10 +29,10 @@ export function stripHtmlAndCollapseWs(s: string): string {
     let prev: string;
     do {
         prev = out;
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the <tag> markup grammar of pathway names; no plain twin strips tags exactly.
         out = out.replace(/<[^>]+>/g, "");
     } while (out !== prev);
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the whitespace run tokenizer: Unicode \s runs collapse to one space.
     return out.replace(/\s+/g, " ").trim();
 }
 
@@ -258,16 +259,45 @@ export async function searchPathways(query: string, options: PathwaySearchOption
 }
 
 /** A Reactome stable identifier, for example `R-HSA-109581`. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
-const REACTOME_ID_RE = /^R-[A-Z]{3}-\d+(\.\d+)?$/;
+function isReactomeId(value: string): boolean {
+    const segments = value.split("-");
+    if (segments.length !== 3 || segments[0] !== "R") return false;
+    const species = segments[1];
+    if (species.length !== 3 || !isUpperAlpha(species)) return false;
+    const idSegments = segments[2].split(".");
+    if (idSegments.length > 2) return false;
+    if (!isDigits(idSegments[0])) return false;
+    return idSegments.length === 1 || isDigits(idSegments[1]);
+}
 
 /** A KEGG pathway identifier, for example `hsa04010` or `map04010`. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
-const KEGG_ID_RE = /^[a-z]{3,4}\d{5}$/;
+function isKeggId(value: string): boolean {
+    if (value.length !== 8 && value.length !== 9) return false;
+    const split = value.length - 5;
+    return isLowerAlpha(value.slice(0, split)) && isDigits(value.slice(split));
+}
+
+function isUpperAlpha(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        if (code < 65 || code > 90) return false;
+    }
+    return true;
+}
+
+function isLowerAlpha(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        if (code < 97 || code > 122) return false;
+    }
+    return true;
+}
 
 /** Read one field out of a KEGG flat-file record. */
 function keggField(record: string, field: string): string | null {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pathway grammar: its node syntax has no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the dynamic pattern: the KEGG field name builds the matcher at run time.
     const match = new RegExp(`^${field}\\s+(.*)$`, "m").exec(record);
     return match?.[1]?.trim() || null;
 }
@@ -313,8 +343,8 @@ async function getReactomePathway(id: string): Promise<Pathway | null> {
  */
 export async function getPathwayById(id: string): Promise<Pathway | null> {
     const trimmed = id.trim();
-    if (REACTOME_ID_RE.test(trimmed)) return getReactomePathway(trimmed);
-    if (KEGG_ID_RE.test(trimmed)) return getKeggPathway(trimmed);
+    if (isReactomeId(trimmed)) return getReactomePathway(trimmed);
+    if (isKeggId(trimmed)) return getKeggPathway(trimmed);
     return null;
 }
 

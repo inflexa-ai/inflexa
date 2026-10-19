@@ -1,3 +1,4 @@
+import { isLowerHex64 } from "../../lib/text.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
@@ -460,8 +461,7 @@ describe("computeInputSignature over a recovered legacy manifest", () => {
     it("still produces a comparand when an entry lacks mtimeMs", () => {
         const sig = computeInputSignature([stagedInput("file-aaa"), legacyStagedInput("file-legacy")]);
         expect(sig.count).toBe(2);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(sig.digest).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex64(sig.digest)).toBe(true);
     });
 
     it("differs from the same set with its mtimes intact, so the gap is not silently equal", () => {

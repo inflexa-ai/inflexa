@@ -17,7 +17,7 @@ import { z } from "zod";
 
 import { ORGAN_SYSTEMS, type OrganSystem } from "../../contracts/organ-system.js";
 import { SEVERITIES, type Severity } from "../../contracts/severity.js";
-import { CHEMBL_RE, SafetyPanelFileSchema, UNIPROT_RE, type SafetyTarget } from "../../data/safety-panel-schema.js";
+import { isChemblId, isEnsgId, isUniprotAccession, SafetyPanelFileSchema, type SafetyTarget } from "../../data/safety-panel-schema.js";
 import panelData from "../../data/safety-panel.json" with { type: "json" };
 import { defineTool } from "../define-tool.js";
 import { resolveSymbolToEnsemblId } from "../lib/ensembl-client.js";
@@ -29,9 +29,6 @@ const PANEL = SafetyPanelFileSchema.parse(panelData);
 const BY_CHEMBL: Map<string, SafetyTarget> = new Map(PANEL.targets.map((t) => [t.chembl_id, t]));
 const BY_GENE: Map<string, SafetyTarget> = new Map(PANEL.targets.map((t) => [t.gene_symbol, t]));
 const BY_UNIPROT: Map<string, SafetyTarget> = new Map(PANEL.targets.map((t) => [t.uniprot, t]));
-
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const ENSG_RE = /^ENSG\d{11}$/;
 
 /** Ordered weakest → strongest so `minSeverity` can be a numeric floor. */
 const SEVERITY_ORDER: Record<Severity, number> = { low: 0, medium: 1, high: 2 };
@@ -47,9 +44,9 @@ const DEFAULT_LIABILITY_LIMIT = 10;
 type ConcreteType = "chembl_id" | "gene_symbol" | "uniprot" | "ensembl_id";
 
 function detectType(id: string): ConcreteType {
-    if (CHEMBL_RE.test(id)) return "chembl_id";
-    if (ENSG_RE.test(id)) return "ensembl_id";
-    if (UNIPROT_RE.test(id)) return "uniprot";
+    if (isChemblId(id)) return "chembl_id";
+    if (isEnsgId(id)) return "ensembl_id";
+    if (isUniprotAccession(id)) return "uniprot";
     return "gene_symbol";
 }
 

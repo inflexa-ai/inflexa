@@ -1,3 +1,4 @@
+import { isGoId } from "../lookup-annotation.js";
 import { expect } from "bun:test";
 
 import { fixtureCase, runFixtureSuite } from "../../lib/__fixtures__/fixture-runner.js";
@@ -28,8 +29,7 @@ runFixtureSuite("QuickGO golden fixtures", [
             // The request names `goName`, thus each row carries the real label.
             for (const annotation of annotations) {
                 expect(annotation.goName).not.toBe("");
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-                expect(annotation.goId).toMatch(/^GO:\d{7}$/);
+                expect(isGoId(annotation.goId)).toBe(true);
             }
         },
     }),

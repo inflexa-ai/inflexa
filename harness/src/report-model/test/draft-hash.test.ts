@@ -6,6 +6,7 @@
  * sensitivity to a real change.
  */
 
+import { isLowerHex64 } from "../../lib/text.js";
 import { describe, expect, it } from "bun:test";
 
 import type { DraftDocument } from "../draft.js";
@@ -45,8 +46,7 @@ describe("computeDraftHash", () => {
         const draft: DraftDocument = { title: "", sections: [] };
         const hash = computeDraftHash(draft);
         // A sha256 digest is 64 hex characters. The hash is deterministic, thus a second call gives the same.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(hash).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex64(hash)).toBe(true);
         expect(computeDraftHash(draft)).toBe(hash);
     });
 });

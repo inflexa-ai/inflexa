@@ -76,12 +76,12 @@ const SIG_MAP: Record<ClinicalSignificance, string> = {
 };
 
 /** Filter out uninformative ClinVar entries (literal "not provided", placeholders). */
+const NOISE_SIGNIFICANCE = new Set(["not provided", "not specified", "reclassified"]);
+
 export function filterInformative(variants: ClinvarVariant[]): ClinvarVariant[] {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    const noise = /^(not provided|not specified|reclassified)$/i;
     return variants.filter((v) => {
-        const sig = (v.clinicalSignificance).trim();
-        if (!sig || noise.test(sig)) return false;
+        const sig = v.clinicalSignificance.trim();
+        if (!sig || NOISE_SIGNIFICANCE.has(sig.toLowerCase())) return false;
         return true;
     });
 }

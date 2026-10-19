@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { createCapturingLogger, type CapturedLog, type CapturingLogger } from "../../../__tests__/setup/logger.js";
 import { withSchema } from "../../../__tests__/setup/postgres.js";
 import { PLANNABLE_AGENT_IDS } from "../../../agents/sandbox-catalog.js";
+import { isPlanId } from "../../../contracts/ids.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../../../loop/__fixtures__/scripted-provider.js";
 import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
@@ -661,8 +662,7 @@ describe("generatePlan loop-driving tool", () => {
             const result = PlanningAgentOutputSchema.parse((await toolFor(provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            expect(result.planId).toMatch(/^pln-[a-f0-9]{8}$/);
+            expect(typeof result.planId === "string" && isPlanId(result.planId)).toBe(true);
         });
 
         it("plans without a profile: no data-context section, and the plan still lands", async () => {
@@ -677,8 +677,7 @@ describe("generatePlan loop-driving tool", () => {
             // Planning proceeds to a persisted plan — a missing profile costs grounding,
             // never the plan.
             expect(result.event).toBe("plan_complete");
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            expect(result.planId).toMatch(/^pln-[a-f0-9]{8}$/);
+            expect(typeof result.planId === "string" && isPlanId(result.planId)).toBe(true);
 
             const seed = plannerSeed(provider);
             expect(seed).not.toContain("## Data Context");

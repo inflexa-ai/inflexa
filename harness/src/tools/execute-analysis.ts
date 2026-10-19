@@ -14,6 +14,7 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
+import { isPlanId } from "../contracts/ids.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -35,8 +36,7 @@ import { queryPackages, readInventorySections, type ListAvailablePackagesDeps } 
 import { callExtendAnalysisFarm } from "./sandbox/link-packages.js";
 import { errorName } from "../lib/thrown.js";
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const planIdSchema = z.string().regex(/^pln-[a-f0-9]{8}$/, "planId must be a pln-<8hex> value");
+const planIdSchema = z.string().refine(isPlanId, "planId must be a pln-<8hex> value");
 const inputSchema = z
     .object({
         mode: z
@@ -321,7 +321,7 @@ function validateStoredPlan(raw: unknown, planId: string): AnalysisPlan {
 }
 
 function adHocTitle(request: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the whitespace run tokenizer: Unicode \s runs collapse to one space.
     const compact = request.trim().replace(/\s+/g, " ");
     return compact.length <= 80 ? compact : `${compact.slice(0, 77)}…`;
 }

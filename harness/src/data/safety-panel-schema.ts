@@ -2,26 +2,70 @@ import { z } from "zod";
 
 import { OrganSystemSchema } from "../contracts/organ-system.js";
 import { SeveritySchema } from "../contracts/severity.js";
+import { isDigits } from "../lib/text.js";
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
-export const CHEMBL_RE = /^CHEMBL\d+$/;
-// UniProt 6-char accession: letter (any A-Z, covering A-N, O, P, Q, R-Z sub-families),
-// followed by a digit, three alphanumerics, and a final digit.
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
-export const UNIPROT_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9]$/;
+function isUpperAlphanumeric(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        const upper = code >= 65 && code <= 90;
+        const digit = code >= 48 && code <= 57;
+        if (!upper && !digit) return false;
+    }
+    return true;
+}
 
-const ChemblIdSchema = z.string().regex(CHEMBL_RE, "must match CHEMBL\\d+");
+/** A ChEMBL target id: `CHEMBL` plus digits, for example `CHEMBL5619`. */
+export function isChemblId(value: string): boolean {
+    return value.startsWith("CHEMBL") && isDigits(value.slice(6));
+}
+
+/**
+ * UniProt 6-char accession: letter (any A-Z, covering A-N, O, P, Q, R-Z sub-families),
+ * followed by a digit, three alphanumerics, and a final digit.
+ */
+export function isUniprotAccession(value: string): boolean {
+    if (value.length !== 6) return false;
+    const first = value.charCodeAt(0);
+    if (first < 65 || first > 90) return false;
+    if (value[1] < "0" || value[1] > "9") return false;
+    if (!isUpperAlphanumeric(value.slice(2, 5))) return false;
+    const last = value.charCodeAt(5);
+    return last >= 48 && last <= 57;
+}
+
+/** An Ensembl gene id: `ENSG` plus 11 digits. */
+export function isEnsgId(value: string): boolean {
+    return value.length === 15 && value.startsWith("ENSG") && isDigits(value.slice(4));
+}
+
+/** Three dot-separated digit runs: `\d+.\d+.\d+`. It reads the segments only, with no range validation. */
+export function isSemver(value: string): boolean {
+    const segments = value.split(".");
+    return segments.length === 3 && segments.every((segment) => isDigits(segment));
+}
+
+function isHgncStyleSymbol(value: string): boolean {
+    const segments = value.split("-");
+    const first = segments[0].charCodeAt(0);
+    if (first < 65 || first > 90) return false;
+    return segments.every((segment) => segment.length > 0 && isUpperAlphanumeric(segment));
+}
+
+function isPmidOrDoi(value: string): boolean {
+    if (value.startsWith("PMID:")) return isDigits(value.slice(5));
+    return value.startsWith("DOI:") && value.length > 4;
+}
+
+const ChemblIdSchema = z.string().refine(isChemblId, "must match CHEMBL\\d+");
 const GeneSymbolSchema = z
     .string()
     .min(1)
     .max(20)
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
-    .regex(/^[A-Z][A-Z0-9]*(-[A-Z0-9]+)*$/, "must be HGNC-style uppercase");
-const UniprotSchema = z.string().regex(UNIPROT_RE, "must be a 6-char UniProt accession");
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
-const EnsemblGeneSchema = z.string().regex(/^ENSG\d{11}$/, "must match ENSG\\d{11}");
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
-const ReferenceSchema = z.string().regex(/^(PMID:\d+|DOI:.+)$/, "must be PMID:<digits> or DOI:<doi>");
+    .refine(isHgncStyleSymbol, "must be HGNC-style uppercase");
+const UniprotSchema = z.string().refine(isUniprotAccession, "must be a 6-char UniProt accession");
+const EnsemblGeneSchema = z.string().refine(isEnsgId, "must match ENSG\\d{11}");
+const ReferenceSchema = z.string().refine(isPmidOrDoi, "must be PMID:<digits> or DOI:<doi>");
 const IsoDateSchema = z.iso.date();
 
 export const SafetyTargetSchema = z.object({
@@ -40,8 +84,7 @@ export type SafetyTarget = z.infer<typeof SafetyTargetSchema>;
 
 export const SafetyPanelFileSchema = z.object({
     schema_version: z.literal(1),
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the safety-panel grammar: its variant tokens have no builtin parser.
-    panel_version: z.string().regex(/^\d+\.\d+\.\d+$/, "semver"),
+    panel_version: z.string().refine(isSemver, "semver"),
     curated_at: IsoDateSchema,
     targets: z.array(SafetyTargetSchema),
 });

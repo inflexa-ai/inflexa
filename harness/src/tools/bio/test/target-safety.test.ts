@@ -1,3 +1,4 @@
+import { isSemver } from "../../../data/safety-panel-schema.js";
 import { afterEach, describe, expect, it } from "bun:test";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
@@ -57,8 +58,7 @@ describe("targetSafety — curated panel", () => {
         expect(must(must(result, "result").targets[0].panelEntry, 'must(result, "result").targets[0].panelEntry').clinical_consequence).toContain(
             "valvulopathy",
         );
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(result.panelVersion).toMatch(/^\d+\.\d+\.\d+$/);
+        expect(isSemver(result.panelVersion)).toBe(true);
     });
 
     it("detects each identifier shape without being told", async () => {

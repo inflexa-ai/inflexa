@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { computeInputSignature } from "../input-signature.js";
+import { isLowerHex64 } from "../../lib/text.js";
 
 const inputs = [
     { fileId: "f-1", size: 100, mtimeMs: 1_700_000_000_000 },
@@ -12,8 +13,7 @@ describe("computeInputSignature", () => {
     it("counts the staged inputs and digests their identity", () => {
         const signature = computeInputSignature(inputs);
         expect(signature.count).toBe(3);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(signature.digest).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex64(signature.digest)).toBe(true);
     });
 
     it("is order-independent", () => {
@@ -90,7 +90,6 @@ describe("computeInputSignature", () => {
             { fileId: "f-2", size: 200 },
         ]);
         expect(legacy.count).toBe(2);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(legacy.digest).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex64(legacy.digest)).toBe(true);
     });
 });

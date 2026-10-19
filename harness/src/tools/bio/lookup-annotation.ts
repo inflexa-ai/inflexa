@@ -23,6 +23,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { guaranteed } from "../../lib/invariants.js";
+import { isDigits } from "../../lib/text.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { getPathwayById, searchPathways, type Pathway } from "../lib/pathway-client.js";
@@ -31,6 +32,11 @@ const QUICKGO_BASE = "https://www.ebi.ac.uk/QuickGO/services";
 const HEADERS = { Accept: "application/json" };
 
 const DEFAULT_LIMIT = 10;
+
+/** A GO term id: `GO:` plus 7 digits, for example `GO:0008150`. */
+export function isGoId(value: string): boolean {
+    return value.length === 10 && value.startsWith("GO:") && isDigits(value.slice(3));
+}
 
 /**
  * The fields that the annotation search must name.
@@ -140,12 +146,7 @@ const inputSchema = z
                 "Pathway vocabularies only. ONE pathway identifier, read back exactly as a search returned it — a Reactome stable ID ('R-HSA-109581') " +
                     "or a KEGG pathway ID ('hsa04010'). The prefix picks the database, so `vocabulary` and `organism` are ignored for it.",
             ),
-        goId: z
-            .string()
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-            .regex(/^GO:\d{7}$/)
-            .optional()
-            .describe("'go' only. A specific GO term ID, e.g. 'GO:0008150'."),
+        goId: z.string().refine(isGoId).optional().describe("'go' only. A specific GO term ID, e.g. 'GO:0008150'."),
         geneProductId: z.string().min(1).optional().describe("'go' only. A UniProt accession, e.g. 'P04637', for that protein's GO annotations."),
         taxonId: z.number().int().optional().describe("'go' only, with geneProductId. NCBI Taxon ID filter (9606 = human, 10090 = mouse)."),
         organism: z.string().optional().describe("Pathway vocabularies only. KEGG organism code — 'hsa' (human, default), 'mmu' (mouse); mapped for Reactome."),

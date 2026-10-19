@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 
+import { isPlanId } from "../ids.js";
 import { ToolCallOutcomeSchema } from "./chat-events.js";
 import { TokenUsageRollupSchema } from "./usage.js";
 
@@ -92,13 +93,8 @@ export const PresentationPartSchema = z.object({
 export const PlanPartSchema = z.object({
     type: z.literal("data-plan"),
     id: z.string(),
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    planId: z.string().regex(/^pln-[a-f0-9]{8}$/),
-    parentPlanId: z
-        .string()
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the plan-id grammar (pln- plus 8 hex digits) is a wire format the schema must refuse on drift
-        .regex(/^pln-[a-f0-9]{8}$/)
-        .optional(),
+    planId: z.string().refine(isPlanId),
+    parentPlanId: z.string().refine(isPlanId).optional(),
     title: z.string().optional(),
     steps: z.array(PlanStepSchema).optional(),
     analytical_narrative: z.string().optional(),
@@ -121,8 +117,7 @@ export const RunCardPartSchema = z.object({
 
 export const PlanApprovalPartSchema = z.object({
     type: z.literal("data-plan-approval"),
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the plan-id grammar (pln- plus 8 hex digits) is a wire format the schema must refuse on drift
-    planId: z.string().regex(/^pln-[a-f0-9]{8}$/),
+    planId: z.string().refine(isPlanId),
     runId: z.string(),
     approvedAt: z.iso.datetime(),
 });

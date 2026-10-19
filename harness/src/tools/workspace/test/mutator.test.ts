@@ -7,6 +7,7 @@
  * on the host filesystem under a per-test temp tree.
  */
 
+import { isSha256Hex } from "../../../lib/text.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
@@ -77,8 +78,7 @@ describe("WorkspaceMutator provenance recording", () => {
             expect(rec.producer.tool).toBe("write_file");
             expect(rec.producer.invocationId).toBe("inv-1");
         }
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(rec.outputHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+        expect(isSha256Hex(rec.outputHash)).toBe(true);
         expect(rec.outputHash).toBe(computeSha256(contentBytes));
         expect(rec.outputSize).toBe(contentBytes.length);
         expect(rec.inputs).toEqual([]);

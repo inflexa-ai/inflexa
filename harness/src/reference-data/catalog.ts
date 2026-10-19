@@ -2,18 +2,16 @@ import { posix as posixPath } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
+import { isLowerHex64 } from "../lib/text.js";
 import { maybeRecord } from "../lib/shape.js";
 
 /** Schema version for the checked-in reference-data catalog. */
 export const REFERENCE_DATA_CATALOG_VERSION = 1 as const;
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the dataset id grammar: charset runs joined by single . _ or - separators; no plain split accepts a separator set.
 const SAFE_ID = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the version grammar: the same charset-run + separator-set shape as SAFE_ID, in both cases.
 const SAFE_VERSION = /^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
-const SHA256 = /^[a-f0-9]{64}$/;
-
 function isSafeRelativePath(value: string): boolean {
     if (value.length === 0 || value.includes("\\") || value.startsWith("/")) return false;
     const segments = value.split("/");
@@ -24,7 +22,7 @@ function isSafeRelativePath(value: string): boolean {
 export const ReferenceArtifactPathSchema = z.string().refine(isSafeRelativePath, "Expected a safe dataset-relative path");
 
 /** Lowercase SHA-256 digest of one artifact's bytes. */
-export const ReferenceSha256Schema = z.string().regex(SHA256, "Expected a lowercase SHA-256 digest");
+export const ReferenceSha256Schema = z.string().refine(isLowerHex64, "Expected a lowercase SHA-256 digest");
 
 /**
  * Artifacts are fetched from the upstream that publishes them — this project
@@ -39,7 +37,7 @@ const ReferenceArtifactUrlSchema = z.url().refine((value) => value.startsWith("h
  * remain cheap to add, and an unrecognized format degrades to "unknown reader"
  * rather than failing catalog validation.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the format-token grammar: charset runs joined by single + or - separators.
 export const ReferenceArtifactFormatSchema = z.string().regex(/^[a-z0-9]+(?:[+-][a-z0-9]+)*$/, "Expected a lowercase format token");
 
 /**
@@ -70,7 +68,7 @@ export const ReferenceArtifactSchema = z.strictObject({
  * choice is most silently wrong on — human regulons over mouse counts still run —
  * so it is a first-class field rather than something inferred from the id suffix.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog grammar: its citation patterns have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the organism-name grammar: a leading letter, then charset runs over single space or hyphen separators.
 export const ReferenceOrganismSchema = z.string().regex(/^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/, "Expected a lowercase organism common name");
 
 /** Provenance and licensing information for one supported reference dataset. */

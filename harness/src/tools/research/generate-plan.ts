@@ -35,6 +35,7 @@ import { passthroughStep } from "../../loop/run-step.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition, LoopMessage } from "../../loop/types.js";
 import { forSubAgent, scopeResource } from "../../auth/types.js";
+import { isPlanId } from "../../contracts/ids.js";
 import { effectiveDeadlineMs, type ChatProvider } from "../../providers/types.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
@@ -430,7 +431,7 @@ async function persistPlan(
         return { ok: true, planId };
     } catch (err) {
         const raw = errorMessage(err);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the thrown-message grammar: a caseless ^prefix .* suffix scan over error text.
         const isParentValidation = /^parent plan .* (?:not found|belongs to a different analysis)$/i.test(raw);
         logger.error("plan persistence failed", {
             parentPlanId: ctx.parentPlanId,
@@ -1196,8 +1197,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 .describe("User-specified constraints: preferred methods, steps to " + "include/exclude, resource limits, modifications to a prior plan."),
             parentPlanId: z
                 .string()
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-                .regex(/^pln-[a-f0-9]{8}$/, "parentPlanId must be a pln-<8hex> value")
+                .refine(isPlanId, "parentPlanId must be a pln-<8hex> value")
                 .optional()
                 .describe("The planId of the prior plan being iterated on. Set only when " + "the user is asking for modifications to an existing plan."),
         }),

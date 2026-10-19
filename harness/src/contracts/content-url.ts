@@ -52,10 +52,10 @@ export function reportSessionResourceId(analysisId: string, threadId: string): s
  * @param token - Short-lived content token minted by the storage backend (required)
  */
 export function buildReportSessionUrl(contentBaseUrl: string, analysisId: string, threadId: string, pagePath: string, token: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    const base = contentBaseUrl.replace(/\/+$/, "");
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    const path = pagePath.replace(/^\/+/, "");
+    let base = contentBaseUrl;
+    while (base.endsWith("/")) base = base.slice(0, -1);
+    let path = pagePath;
+    while (path.startsWith("/")) path = path.slice(1);
     const res = reportSessionResourceId(analysisId, threadId);
     return `${base}/${res}/${path}?t=${encodeURIComponent(token)}`;
 }

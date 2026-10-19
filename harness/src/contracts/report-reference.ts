@@ -12,16 +12,31 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 import { parseJsonOrUndefined } from "../lib/json.js";
+import { isLowerHex } from "../lib/text.js";
 import { maybeRecord } from "../lib/shape.js";
 
 /**
  * The shape of a content hash, as lowercase `algorithm:hex`, for example `sha256:9f86d0...`. The
  * resolver compares this text against a fresh read with exact string equality, and the producer emits
- * lowercase only. Thus the pattern rejects an uppercase hex digit, which would pass a case-insensitive
+ * lowercase only. Thus the check rejects an uppercase hex digit, which would pass a case-insensitive
  * match here but never resolve against the lowercase producer.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const HASH_PATTERN = /^[a-z0-9]+:[0-9a-f]+$/;
+function isLowercaseContentHash(value: string): boolean {
+    const separator = value.indexOf(":");
+    if (separator === -1) return false;
+    return isLowercaseAlphanumeric(value.slice(0, separator)) && isLowerHex(value.slice(separator + 1));
+}
+
+function isLowercaseAlphanumeric(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        const lowercase = code >= 97 && code <= 122;
+        const digit = code >= 48 && code <= 57;
+        if (!lowercase && !digit) return false;
+    }
+    return true;
+}
 
 /**
  * The pin that ties an artifact reference to one immutable file. It names the analysis-relative path and
@@ -35,7 +50,7 @@ const HASH_PATTERN = /^[a-z0-9]+:[0-9a-f]+$/;
 const artifactPinShape = {
     run: z.string().min(1).optional().describe("The analysis run id that produced the artifact. It is absent for a staged input file, which no run produced."),
     path: z.string().min(1).describe("The analysis-relative path of the artifact, the key of `cortex_artifacts.path`."),
-    hash: z.string().regex(HASH_PATTERN).describe("The content hash as `algorithm:hex`, for example `sha256:...`."),
+    hash: z.string().refine(isLowercaseContentHash).describe("The content hash as `algorithm:hex`, for example `sha256:...`."),
     snapshot: z.string().optional().describe("An optional point-in-time snapshot id."),
 };
 
@@ -296,8 +311,17 @@ const REFERENCE_URI_PREFIX = "inflexa-ref:v1:";
  * Thus a corrupt payload would otherwise decode to mojibake and report as malformed JSON, which names
  * the wrong failure.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+function isBase64UrlPayload(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        const upper = code >= 65 && code <= 90;
+        const lower = code >= 97 && code <= 122;
+        const digit = code >= 48 && code <= 57;
+        if (!upper && !lower && !digit && code !== 45 && code !== 95) return false;
+    }
+    return true;
+}
 
 /**
  * Sort the keys of every object so that serialization is deterministic. An array keeps its order,
@@ -356,7 +380,7 @@ export function parseReference(uri: string): Result<Reference, ParseReferenceErr
         return err({ kind: "bad-prefix" });
     }
     const payload = uri.slice(REFERENCE_URI_PREFIX.length);
-    if (!BASE64URL_PATTERN.test(payload)) {
+    if (!isBase64UrlPayload(payload)) {
         return err({ kind: "invalid-payload" });
     }
     const json = Buffer.from(payload, "base64url").toString("utf8");

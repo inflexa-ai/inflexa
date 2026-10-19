@@ -1,3 +1,4 @@
+import { isSha256Hex } from "../../../lib/text.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -450,8 +451,7 @@ describe("the release pin of one plan", () => {
 
     it("the tool definition hash is stable and names the three tools", () => {
         const first = knowledgeToolDefinitionHash();
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the digest grammar of the snapshot pin (sha256: plus 64 hex digits).
-        expect(first).toMatch(/^sha256:[a-f0-9]{64}$/);
+        expect(isSha256Hex(first)).toBe(true);
         expect(knowledgeToolDefinitionHash()).toBe(first);
     });
 });
@@ -576,8 +576,7 @@ describe("knowledge_template", () => {
         const script = await readFile(join(workingDir, "scripts", "tpl-deseq2-two-group.R"), "utf8");
         expect(script).toBe('COUNTS <- "/analysis-001/data/inputs/f1/counts.csv"  # [adaptable: counts_path]\nmessage("hello")\n');
         expect(out.local_slots).toEqual(["counts_path"]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the digest grammar of the snapshot pin (sha256: plus 64 hex digits).
-        expect(out.written_sha256).toMatch(/^sha256:[a-f0-9]{64}$/);
+        expect(isSha256Hex(out.written_sha256)).toBe(true);
         const record = jsonParse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), DecisionRecordSchema);
         expect(record.template).toEqual({
             id: "tpl-deseq2-two-group",

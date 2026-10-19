@@ -1,13 +1,31 @@
 import { describe, expect, it } from "bun:test";
 
+import { isPlanId } from "../../contracts/ids.js";
+import { isLowerHex } from "../../lib/text.js";
 import { adHocPlanId, adHocRunId } from "../analysis-invocation.js";
+
+/** The ad-hoc run id: the UUID layout with the version nibble pinned to 5 and the RFC variant nibble. */
+function isVersion5Uuid(value: string): boolean {
+    return (
+        value.length === 36 &&
+        isLowerHex(value.slice(0, 8)) &&
+        value[8] === "-" &&
+        isLowerHex(value.slice(9, 13)) &&
+        value[13] === "-" &&
+        value[14] === "5" &&
+        isLowerHex(value.slice(15, 18)) &&
+        value[18] === "-" &&
+        (value[19] === "8" || value[19] === "9" || value[19] === "a" || value[19] === "b") &&
+        isLowerHex(value.slice(20, 23)) &&
+        value[23] === "-" &&
+        isLowerHex(value.slice(24))
+    );
+}
 
 describe("ad hoc invocation identities", () => {
     it("is stable and uses the persisted id shapes", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(adHocPlanId("analysis-1", "call-1")).toMatch(/^pln-[a-f0-9]{8}$/);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(adHocRunId("analysis-1", "call-1")).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+        expect(isPlanId(adHocPlanId("analysis-1", "call-1"))).toBe(true);
+        expect(isVersion5Uuid(adHocRunId("analysis-1", "call-1"))).toBe(true);
         expect(adHocRunId("analysis-1", "call-1")).toBe(adHocRunId("analysis-1", "call-1"));
     });
 

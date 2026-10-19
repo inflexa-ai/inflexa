@@ -82,10 +82,7 @@ describe("search_regulatory_approvals — the key", () => {
         const { ctx } = makeToolContext();
         // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
-        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow(
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            /AMASS_API_KEY/,
-        );
+        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow("AMASS_API_KEY");
         expect(seen).toHaveLength(0);
     });
 });
@@ -284,7 +281,7 @@ describe("search_regulatory_approvals — the status of an answer", () => {
 
     it("throws with the code and the message of an undocumented 4xx", async () => {
         stubFetch([["/regulatorycore/records?", () => envelope(402, "PAYMENT_REQUIRED", "No credits left")]]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the thrown-message grammar: code then .* then detail, an ordered scan that two includes cannot express.
         await expect(run({ query: "imatinib" })).rejects.toThrow(/PAYMENT_REQUIRED.*No credits left/);
     });
 

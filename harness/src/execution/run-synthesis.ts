@@ -32,6 +32,7 @@ import { z } from "zod";
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 import { tryFs } from "../lib/fs-result.js";
 import { parseJsonOrUndefined } from "../lib/json.js";
+import { isDigits } from "../lib/text.js";
 import { hintForZodIssue } from "../lib/zod-issues.js";
 
 import {
@@ -124,9 +125,6 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
     }));
 }
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const PMID_PATTERN = /^\d+$/;
-
 // ── Semantic checks ─────────────────────────────────────────────────
 //
 // Each check takes only the fields it reads, never the whole synthesis. That is
@@ -199,7 +197,7 @@ function checkFindingPmidFormat(findings: readonly SynthesizedFinding[]): Valida
     const issues: ValidationIssue[] = [];
     for (const [fi, f] of findings.entries()) {
         for (const [ri, r] of f.references.entries()) {
-            if (!PMID_PATTERN.test(r.pmid)) {
+            if (!isDigits(r.pmid)) {
                 issues.push({
                     path: `synthesis.findings[${fi}].references[${ri}].pmid`,
                     code: "semantic",
@@ -214,7 +212,7 @@ function checkFindingPmidFormat(findings: readonly SynthesizedFinding[]): Valida
 function checkKeyReferencePmidFormat(keyReferences: readonly KeyReference[]): ValidationIssue[] {
     const issues: ValidationIssue[] = [];
     for (const [i, r] of keyReferences.entries()) {
-        if (!PMID_PATTERN.test(r.pmid)) {
+        if (!isDigits(r.pmid)) {
             issues.push({
                 path: `synthesis.keyReferences[${i}].pmid`,
                 code: "semantic",

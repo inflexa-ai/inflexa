@@ -8,6 +8,7 @@ import { access, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
 import { errnoCode } from "./thrown.js";
+import { isHex } from "./text.js";
 
 /**
  * Compute SHA-256 hash of in-memory content.
@@ -40,8 +41,22 @@ export async function computeSha256File(filePath: string): Promise<string> {
  * an attestation invariant violation, not something to paper over.
  */
 export function hasValidContentHash(hash: string | undefined): boolean {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    return !!hash && /^[a-z0-9]+:[0-9a-f]+$/i.test(hash);
+    if (!hash) return false;
+    const separator = hash.indexOf(":");
+    if (separator === -1) return false;
+    return isAsciiAlphanumeric(hash.slice(0, separator)) && isHex(hash.slice(separator + 1));
+}
+
+function isAsciiAlphanumeric(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        const upper = code >= 65 && code <= 90;
+        const lower = code >= 97 && code <= 122;
+        const digit = code >= 48 && code <= 57;
+        if (!upper && !lower && !digit) return false;
+    }
+    return true;
 }
 
 /**

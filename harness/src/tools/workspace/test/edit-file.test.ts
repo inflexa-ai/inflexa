@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { jsonParse } from "../../../lib/json.js";
+import { isSha256Hex } from "../../../lib/text.js";
 import { createEditFileTool } from "../edit-file.js";
 import { createReadFileTool } from "../read-file.js";
 import { createWorkspaceMutator } from "../mutator.js";
@@ -104,10 +105,11 @@ describe("edit_file tool", () => {
             z.looseObject({ written_sha256: z.string(), unvetted_edits: z.array(z.json()) }),
         );
         expect(record.written_sha256).toBe("sha256:old");
-        expect(record.unvetted_edits).toEqual([
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax, typescript/no-unsafe-assignment -- the digest shape has no builtin matcher, and bun's stringMatching is an AsymmetricMatcher that bun-types names no type for.
-            { path: "scripts/de.R", note: "edit_file: 1 replacement(s)", sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) },
-        ]);
+        expect(record.unvetted_edits).toHaveLength(1);
+        const [edit] = z.array(z.strictObject({ path: z.string(), note: z.string(), sha256: z.string() })).parse(record.unvetted_edits);
+        expect(edit.path).toBe("scripts/de.R");
+        expect(edit.note).toBe("edit_file: 1 replacement(s)");
+        expect(isSha256Hex(edit.sha256)).toBe(true);
         const edited = await readHostFile(join(stepDir, "scripts", "de.R"), "utf8");
         expect(edited).toBe("ALPHA <- 0.1  # [adaptable: alpha]\n");
 

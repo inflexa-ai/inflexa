@@ -12,9 +12,9 @@
 
 import { z } from "zod";
 
+import { isIsoDate } from "../../../lib/text.js";
+
 /** `YYYY-MM-DD`. The manifest records the date of the capture, not a timestamp. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-const CAPTURED_AT_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The capture record of one fixture file. */
 export type FixtureManifestEntry = {
@@ -78,7 +78,7 @@ export const FixtureManifestEntrySchema = z.object({
     body: z.string().optional(),
     headers: z.record(z.string(), z.string()).optional(),
     replay: z.literal(false).optional(),
-    capturedAt: z.string().regex(CAPTURED_AT_PATTERN),
+    capturedAt: z.string().refine(isIsoDate),
     ignorePaths: z.array(z.string()).optional(),
     oracle: z.literal(true).optional(),
 });
