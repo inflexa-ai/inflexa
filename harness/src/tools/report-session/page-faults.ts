@@ -33,11 +33,11 @@ const MAX_FAULT_TEXT = 300;
 const MAX_FAULT_ENTRIES = 20;
 
 /** A data URI. A fault text quotes a URI in quotes or parentheses, thus those characters end the data. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- data-URI grammar: scheme, optional type over charset runs, semicolon parameter runs, and the payload, each with captures.
 const DATA_URI = /data:([a-z0-9.+-]+\/[a-z0-9.+-]+)?((?:;[^,;\s'"()<>]*)*),([^\s'"()<>]*)/gi;
 
 /** A base64 run of 100 characters or more. A content hash in hex is 64 characters, thus a hash stays. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer with a length floor: a base64 body of 100 or more characters, with up to two padding marks.
 const BASE64_RUN = /[A-Za-z0-9+/]{100,}={0,2}/g;
 
 /** Shorten one fault text: the inline data becomes placeholders, and the text stops at the cap. */

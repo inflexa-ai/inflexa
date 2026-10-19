@@ -127,6 +127,6 @@ export function isUuid(value: string): boolean {
 
 /** Split text into lines, accepting CRLF and LF endings. */
 export function splitLines(text: string): string[] {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of line endings: CRLF and LF, which no string-method split separates in one call.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- delimiter-set split: LF with an optional CR — no string method separates both endings in one call.
     return text.split(/\r?\n/);
 }

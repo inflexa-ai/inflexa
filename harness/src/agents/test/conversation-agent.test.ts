@@ -89,7 +89,7 @@ describe("createConversationAgent", () => {
         const { systemPrompt } = buildAgent();
 
         // The prompt wraps its lines, thus the match reads the prompt with one space between words.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the collapse of any whitespace run to one space reads the prose whitespace grammar, which no builtin replaces
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse over prose; String.trim's set differs (U+FEFF), so no plain method is exact.
         expect(systemPrompt.replace(/\s+/g, " ")).toContain(
             "A record in the thread that says that the person approved a plan means that the run of that plan started",
         );
@@ -143,7 +143,7 @@ describe("createConversationAgent", () => {
 
     test("the prompt names the structure card and keeps an artifact structure on show_file", () => {
         expect(conversationPrompt).toContain('show_user(kind: "structure")');
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- flexible content: an ordered `.pdb`/`show_file` pair with a same-line gap, in either order — no plain matcher spans the gap.
         expect(conversationPrompt).toMatch(/\.pdb[^\n]*show_file|show_file[^\n]*\.pdb/);
     });
 

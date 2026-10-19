@@ -10,6 +10,7 @@
 
 import { describe, expect, test } from "bun:test";
 
+import { isChemblId } from "../../../data/safety-panel-schema.js";
 import { searchCompounds } from "../../../tools/lib/chembl-client.js";
 
 const LIVE = process.env.CORTEX_LIVE_API_TESTS;
@@ -20,8 +21,7 @@ describe.skipIf(!LIVE)("live ChEMBL", () => {
 
         expect(compounds.length).toBeGreaterThan(0);
         const first = compounds[0];
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(first.chemblId).toMatch(/^CHEMBL\d+$/);
+        expect(isChemblId(first.chemblId)).toBe(true);
         expect(first).toHaveProperty("preferredCompoundName");
         expect(first).toHaveProperty("canonicalSmiles");
         expect(first).toHaveProperty("molecularWeight");

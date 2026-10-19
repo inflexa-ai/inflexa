@@ -58,7 +58,7 @@ const MAX_REPAIRABLE_STRING_LENGTH = 1_000_000;
 const HINT_SNIPPET_LENGTH = 40;
 
 /** A trailing `</parameter>`, optionally followed by `</invoke>`. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the zod issue-path grammar: no builtin extracts a field name from an issue path.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- tag grammar with flexible whitespace: the optional `</invoke>` close may carry whitespace runs before the end.
 const TRAILING_CALL_TAGS = /<\/parameter>\s*(?:<\/invoke>\s*)?$/;
 
 /**
@@ -224,13 +224,13 @@ function stripWrappers(raw: string): { readonly text: string; readonly removed: 
     }
 
     if (text.startsWith("```")) {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the zod issue-path grammar: no builtin extracts a field name from an issue path.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- flexible whitespace: the markdown fence opening — ``` with an optional `json` tag and a whitespace run to the line end.
         const open = /^```(?:json)?\s*\n/i.exec(text);
         if (open !== null) {
             removed.push(open[0].trim());
             text = text.slice(open[0].length);
         }
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the zod issue-path grammar: no builtin extracts a field name from an issue path.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- flexible whitespace: the markdown fence closing — a newline, ``` and a whitespace run to the end.
         const close = /\n```\s*$/.exec(text);
         if (close !== null) {
             removed.push("```");

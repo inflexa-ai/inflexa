@@ -11,6 +11,7 @@
 
 import { describe, expect, test } from "bun:test";
 
+import { isDigits } from "../../../lib/text.js";
 import { searchTrials } from "../../../tools/lib/clinical-trials-client.js";
 
 const LIVE = process.env.CORTEX_LIVE_API_TESTS;
@@ -23,8 +24,7 @@ describe.skipIf(!LIVE)("live ClinicalTrials.gov", () => {
         expect(result.totalFound).toBeGreaterThanOrEqual(result.trials.length);
 
         const trial = result.trials[0];
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(trial.nctId).toMatch(/^NCT\d{8}$/);
+        expect(trial.nctId.startsWith("NCT") && trial.nctId.length === 11 && isDigits(trial.nctId.slice(3))).toBe(true);
         expect(trial.title.length).toBeGreaterThan(0);
         expect(trial.status.length).toBeGreaterThan(0);
         expect(Array.isArray(trial.conditions)).toBe(true);

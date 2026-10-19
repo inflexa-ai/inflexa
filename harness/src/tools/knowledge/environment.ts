@@ -92,7 +92,7 @@ function tokens(text: string): string[] {
     return (
         text
             .toLowerCase()
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the token grammar of a collection term: non-alphanumeric runs delimit the tokens.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: non-alphanumeric runs delimit the collection-term tokens.
             .split(/[^a-z0-9]+/)
             .filter((token) => token.length > 1)
     );

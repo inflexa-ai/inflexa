@@ -87,8 +87,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
     /** A pool that answers the count and row queries used by list mode. */
     function poolReturning(rows: Array<Record<string, unknown>>): Pool {
         return poolDouble((query) => {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            if (/COUNT\(\*\)/i.test(query.text)) return { rows: [{ total: rows.length }], rowCount: 1 };
+            if (query.text.toLowerCase().includes("count(*)")) return { rows: [{ total: rows.length }], rowCount: 1 };
             const limit = Number(query.values?.[1] ?? rows.length);
             const offset = Number(query.values?.[2] ?? 0);
             const page = rows.slice(offset, offset + limit);
@@ -106,8 +105,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
 
     it("derives the analysis id from the Session and lists runs via the injected pool", async () => {
         const fakePool = poolDouble((query) =>
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            Promise.resolve(/COUNT\(\*\)/i.test(query.text) ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 }),
+            Promise.resolve(query.text.toLowerCase().includes("count(*)") ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 }),
         );
 
         const tool = createInspectRunTool(fakePool);
@@ -201,8 +199,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
     /** A pool that answers the run lookup and the step lookup separately, keyed by the target table. */
     function poolForRunDetail(run: Record<string, unknown>, steps: Array<Record<string, unknown>>): Pool {
         return poolDouble((q) => {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            if (/cortex_step_executions/i.test(q.text)) return { rows: steps, rowCount: steps.length };
+            if (q.text.toLowerCase().includes("cortex_step_executions")) return { rows: steps, rowCount: steps.length };
             return Promise.resolve({ rows: [run], rowCount: 1 });
         });
     }
@@ -279,8 +276,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
         let reads = 0;
         let now = 0;
         const pool = poolDouble((query) => {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            if (/cortex_step_executions/i.test(query.text)) return { rows: [], rowCount: 0 };
+            if (query.text.toLowerCase().includes("cortex_step_executions")) return { rows: [], rowCount: 0 };
             const row = rows[Math.min(reads++, rows.length - 1)];
             return Promise.resolve({ rows: [row], rowCount: 1 });
         });

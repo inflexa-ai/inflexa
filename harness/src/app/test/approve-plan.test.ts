@@ -163,7 +163,7 @@ describe("approvePlan", () => {
         expect(history).toHaveLength(1);
         expect(history[0].role).toBe("user");
         expect(JSON.stringify(history[0].content)).toContain(`The person approved plan ${PLAN_ID}. Run ${approval.runId} started.`);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion checks the absence of a date or time shape in the serialized transcript, a grammar with no builtin test
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- flexible content: the fixed date and clock layouts may sit at any offset of the serialized text; no plain matcher scans for a layout.
         expect(JSON.stringify(history[0].content)).not.toMatch(/\d{4}-\d{2}-\d{2}|\d{2}:\d{2}/);
     });
 

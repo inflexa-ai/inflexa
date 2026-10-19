@@ -30,6 +30,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
+import { isDigits } from "../../lib/text.js";
 import { typedMember } from "../../lib/shape.js";
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { decisionRecordPath, scriptSha256 } from "../workspace/decision-record.js";
@@ -129,9 +130,33 @@ export type KnowledgeTemplateOutput =
 /** The result of a `knowledge_template` call: each landed write rides as the call record, for the fold. */
 type KnowledgeTemplateResult = KnowledgeTemplateOutput | WithToolCallRecord<KnowledgeTemplateOutput, readonly WriteRecord[]>;
 
-// The template reference grammar the service serves (`tpl-…`, optional `@semver`).
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the template reference grammar of the service.
-const TEMPLATE_REF = /^tpl-[a-z0-9-]+(@\d+\.\d+\.\d+)?$/;
+// The template reference grammar the service serves: `tpl-` plus a name of lowercase letters, digits, and hyphens, then an optional `@` and a `1.2.3` version.
+function everyCharCode(value: string, holds: (code: number) => boolean): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        if (!holds(value.charCodeAt(i))) return false;
+    }
+    return true;
+}
+
+function isTemplateRef(value: string): boolean {
+    if (!value.startsWith("tpl-")) return false;
+    const at = value.indexOf("@");
+    const name = at === -1 ? value.slice(4) : value.slice(4, at);
+    const isName = everyCharCode(name, (code) => (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code === 45);
+    if (!isName) return false;
+    if (at === -1) return true;
+    const numbers = value.slice(at + 1).split(".");
+    return numbers.length === 3 && numbers.every(isDigits);
+}
+
+/** A script file name: letters, digits, underscore, dot, and hyphen — the `scripts/` entry charset. */
+function isScriptFileName(value: string): boolean {
+    return everyCharCode(
+        value,
+        (code) => (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || (code >= 48 && code <= 57) || code === 95 || code === 46 || code === 45,
+    );
+}
 
 /** A model value equals a bound value when the scalars are identical, or when two lists hold the same strings in order. */
 function sameValue(bound: TemplateBindingValue, value: unknown): boolean {
@@ -205,7 +230,7 @@ function splitSlots(slots: Readonly<Record<string, unknown>>, names: ReadonlySet
 const TemplateInputSchema = z.object({
     template: z
         .string()
-        .regex(TEMPLATE_REF, "a template id, optionally with @version")
+        .refine(isTemplateRef, "a template id, optionally with @version")
         .describe("The template id from the Grounding of the step, with its version, for example `tpl-deseq2-two-group@1.0.0`."),
     slots: z
         .record(z.string(), z.json())
@@ -223,8 +248,7 @@ const TemplateInputSchema = z.object({
         .describe("One entry per bound slot whose value you change from the plan value. Absent when you send every bound value as it is."),
     script_name: z
         .string()
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the script file-name grammar of the workspace (`scripts/` entries).
-        .regex(/^[A-Za-z0-9_.-]+$/)
+        .refine(isScriptFileName, "must hold only letters, digits, `_`, `.`, and `-`")
         .optional()
         .describe("The file name under `scripts/`. Defaults to `<template id>.R` or `<template id>.py` by the language of the template."),
 });

@@ -97,15 +97,10 @@ type RecipeEntry = {
 };
 
 function slug(value: string): string {
-    return (
-        value
-            .toLowerCase()
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-            .replace(/[^a-z0-9]+/g, "-")
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-            .replace(/^-|-$/g, "")
-            .slice(0, 60) || "group"
-    );
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: each non-slug run becomes one dash (the slugify collapse).
+    const dashed = value.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const unstarted = dashed.startsWith("-") ? dashed.slice(1) : dashed;
+    return (unstarted.endsWith("-") ? unstarted.slice(0, -1) : unstarted).slice(0, 60) || "group";
 }
 
 function fileCountOf(members: readonly MemberFile[]): number {

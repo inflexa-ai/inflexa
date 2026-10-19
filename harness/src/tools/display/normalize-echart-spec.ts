@@ -61,13 +61,13 @@ function axisEntries(axis: unknown): Record<string, unknown>[] {
 export function kebabFilename(source: string | undefined): string {
     const slug = (source ?? "")
         .normalize("NFKD")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- control-char range: the combining-diacritical marks block U+0300-U+036F, each mark dropped in place.
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: each non-slug run becomes one dash (the slugify collapse).
         .replace(/[^a-z0-9]+/g, "-")
         .slice(0, MAX_FILENAME_LEN)
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: the leading and trailing dash runs of the truncated slug collapse away at both edges.
         .replace(/^-+|-+$/g, "");
     return slug.length > 0 ? slug : DEFAULT_FILENAME;
 }

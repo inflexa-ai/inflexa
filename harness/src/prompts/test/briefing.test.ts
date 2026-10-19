@@ -60,8 +60,7 @@ function fullyPopulatedStep(): AnalysisStep {
 
 /** The rendered sections join with one blank line; a run of three or more newlines leaks a gap. */
 function expectNoBlankGap(text: string): void {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the whitespace-collapse grammar of the rendered output; no builtin matcher counts blank-line runs.
-    expect(text).not.toMatch(/\n{3,}/);
+    expect(text).not.toContain("\n\n\n");
 }
 
 function handoff(overrides: Partial<UpstreamHandoff> = {}): UpstreamHandoff {
@@ -145,7 +144,7 @@ describe("renderTask", () => {
         });
         expect(prompt).toContain("SENTINEL_QUESTION");
         // No heading should be emitted with an empty body.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- flexible whitespace: a heading line, then a whitespace run reaching the next blank line or the end — the empty-heading shape.
         expect(prompt).not.toMatch(/##[^\n]*\n\s*(\n|$)/);
     });
 
@@ -236,7 +235,7 @@ describe("renderTemplateContract", () => {
         for (let i = 0; i < MAX_TEMPLATE_SLOTS; i++) expect(rendered).toContain(`\`slot_${i}\``);
         expect(rendered).not.toContain(`\`slot_${MAX_TEMPLATE_SLOTS}\``);
         expect(rendered).toContain("+16 more");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the run-of-the-pad-character grammar the clamp measures; no builtin finds the longest run.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: the global `x+` matches give the pad runs, and the clamp measures the longest one.
         const longestRun = Math.max(...(rendered.match(/x+/g) ?? [""]).map((run) => run.length));
         expect(longestRun).toBeLessThan(TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS);
         expect(rendered.length).toBeLessThan(MAX_TEMPLATE_SLOTS * (TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS + 80) + 600);
@@ -302,7 +301,7 @@ describe("renderUpstream", () => {
 
     it("clamps each dependency's summary to the excerpt budget and points at the full document", () => {
         const rendered = renderUpstream([handoff({ summaryMarkdown: "M".repeat(5_000) })]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: the leading run of `M` with its optional ellipsis is the longest excerpt the render shows.
         const excerptLength = (rendered.match(/M+…?/)?.[0] ?? "").length;
         expect(excerptLength).toBeLessThanOrEqual(UPSTREAM_SUMMARY_MAX_CHARS);
         expect(rendered).toContain("/an-1/runs/run-1/T1S1/output/summary.md");
@@ -414,8 +413,7 @@ describe("composeStepBriefing", () => {
         expect(seed).toContain("SENTINEL_QUESTION");
         expect(seed).not.toContain("Upstream results");
         // Sections collapse out — no blank heading, no double-blank gap.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(seed).not.toMatch(/\n{3,}/);
+        expect(seed).not.toContain("\n\n\n");
     });
 
     it("includes the data orientation when a profile exists and omits it cleanly when it does not", () => {
@@ -423,8 +421,7 @@ describe("composeStepBriefing", () => {
         const without = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
         expect(withProfile).toContain("transcriptomics");
         expect(without).not.toContain("Data orientation");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(without).not.toMatch(/\n{3,}/);
+        expect(without).not.toContain("\n\n\n");
     });
 
     it("names the step's writable working directory and the read-only analysis root", () => {
@@ -443,8 +440,7 @@ describe("composeStepBriefing", () => {
         const step = { ...fullyPopulatedStep(), resources: undefined };
         const seed = composeStepBriefing({ step, workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
         expect(seed).not.toContain("Resources (hard limits)");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(seed).not.toMatch(/\n{3,}/);
+        expect(seed).not.toContain("\n\n\n");
     });
 
     it("carries the analysis memory apart from the constraints of the plan step", () => {
@@ -461,8 +457,7 @@ describe("composeStepBriefing", () => {
     it("omits the analysis-memory section cleanly when the memory is empty", () => {
         const seed = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
         expect(seed).not.toContain(ANALYSIS_MEMORY_HEADING);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(seed).not.toMatch(/\n{3,}/);
+        expect(seed).not.toContain("\n\n\n");
     });
 
     it("is byte-identical when recomposed from the same data (replay stability)", () => {

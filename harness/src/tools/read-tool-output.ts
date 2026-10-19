@@ -83,7 +83,7 @@ function page(ref: string, text: string, start: number, limit: number): ReadTool
 function search(ref: string, text: string, start: number, limit: number | undefined, pattern: string): ReadToolOutputResult {
     let regex: RegExp;
     try {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- dynamic pattern: the caller supplies the pattern text, compiled per call with the global flag.
         regex = new RegExp(pattern, "g");
     } catch (err) {
         return { status: "invalid_pattern", pattern, error: errorMessage(err) };

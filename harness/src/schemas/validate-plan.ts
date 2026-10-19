@@ -83,12 +83,10 @@ function describeParseError(stepId: string, entry: string, error: ParseQueryErro
 
 /** Derive a filesystem-safe output prefix from a step ID. */
 export function deriveOutputPrefix(stepId: string): string {
-    return stepId
-        .toLowerCase()
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-        .replace(/[^a-z0-9]+/g, "-")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-        .replace(/^-|-$/g, "");
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: each non-slug run becomes one dash (the slugify collapse).
+    const dashed = stepId.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const unstarted = dashed.startsWith("-") ? dashed.slice(1) : dashed;
+    return unstarted.endsWith("-") ? unstarted.slice(0, -1) : unstarted;
 }
 
 /**

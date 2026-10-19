@@ -234,7 +234,7 @@ describe("reference-data catalog", () => {
     it("gives every artifact a format and a non-restating description of its contents", () => {
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
             for (const artifact of dataset.artifacts) {
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- token repetition grammar: alnum runs joined by one `+` or `-`, any number of times, over the whole string.
                 expect(artifact.format).toMatch(/^[a-z0-9]+(?:[+-][a-z0-9]+)*$/);
                 expect(artifact.contents.length).toBeGreaterThan(40);
                 expect(artifact.contents).not.toBe(dataset.title);

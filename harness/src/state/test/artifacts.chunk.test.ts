@@ -68,7 +68,7 @@ describe("upsertArtifacts chunking", () => {
         for (const q of captured) {
             expect(q.text).toContain("($1, $2, $3");
             // The highest placeholder must match the statement's own value count.
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- extraction with captures: each `$n` placeholder number is lifted out to size the chunk.
             const max = Math.max(...[...q.text.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
             expect(max).toBe(q.values.length);
         }

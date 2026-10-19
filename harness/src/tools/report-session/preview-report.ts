@@ -150,7 +150,7 @@ export type PreviewReportToolDeps = {
  * collide on the staged name.
  */
 function assetFileName(file: ResolvedFile): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: each non-slug run becomes one dash (the slugify collapse, caseless).
     const slug = file.hash.replace(/[^a-z0-9]+/gi, "-");
     return slug + extname(file.path);
 }

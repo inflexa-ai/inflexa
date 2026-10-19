@@ -5,35 +5,39 @@ import { CitationInputSchema, type CitationInput, type NormalizedCitation, type 
 // The DOI suffix is deliberately permissive — the registry allows nearly any character in it, so
 // there is no delimiter to stop at, and `trimDoiPunctuation` walks back the sentence punctuation
 // and brackets a greedy match swallows. PMID and arXiv anchor instead, having fixed shapes.
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- extraction with captures: an optional doi.org or `doi:` prefix, then the `10.` registrant span and the DOI body in one capture.
 const DOI_PATTERN = /(?:https?:\/\/(?:dx\.)?doi\.org\/|doi\s*:\s*)?(10\.\d{4,9}\/[^\s<>"']+)/i;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- extraction with captures: an optional `pmid:` prefix, then the digit run in one capture.
 const PMID_PATTERN = /^(?:pmid\s*:\s*)?(\d{1,9})$/i;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- extraction with captures: an optional arxiv.org or `arxiv:` prefix, then the new-style or old-style id body in one capture.
 const ARXIV_PATTERN = /^(?:https?:\/\/arxiv\.org\/(?:abs|pdf)\/|arxiv\s*:\s*)?((?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z-]+)?\/\d{7})(?:v\d+)?)(?:\.pdf)?$/i;
 
 function collapseWhitespace(value: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse; String.trim's set differs (U+FEFF), so no plain method is exact.
     return value.normalize("NFKC").replace(/\s+/g, " ").trim();
 }
 
 export function normalizeComparable(value: string): string {
-    return collapseWhitespace(value)
-        .toLocaleLowerCase("en-US")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
-        .replace(/[\p{P}\p{S}]+/gu, " ")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
-        .replace(/\s+/g, " ")
-        .trim();
+    return (
+        collapseWhitespace(value)
+            .toLocaleLowerCase("en-US")
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \p{P}/\p{S} classes: each punctuation or symbol run becomes one space; no plain check reads the property classes.
+            .replace(/[\p{P}\p{S}]+/gu, " ")
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse; String.trim's set differs (U+FEFF), so no plain method is exact.
+            .replace(/\s+/g, " ")
+            .trim()
+    );
 }
 
 export function normalizeAuthor(value: string): string {
-    return normalizeComparable(value)
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
-        .replace(/\b(?:jr|sr|ii|iii|iv)\b/g, "")
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
-        .replace(/\s+/g, " ")
-        .trim();
+    return (
+        normalizeComparable(value)
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- word boundary: the suffix names must sit at word edges, not inside a longer name.
+            .replace(/\b(?:jr|sr|ii|iii|iv)\b/g, "")
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse; String.trim's set differs (U+FEFF), so no plain method is exact.
+            .replace(/\s+/g, " ")
+            .trim()
+    );
 }
 
 type AuthorEvidence = {
@@ -102,8 +106,8 @@ export function authorNamesMatch(left: string, right: string): boolean {
 }
 
 function trimDoiPunctuation(value: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
-    let result = value.replace(/[.,;]+$/g, "");
+    let result = value;
+    while (result.endsWith(".") || result.endsWith(",") || result.endsWith(";")) result = result.slice(0, -1);
     const pairs: ReadonlyArray<readonly [string, string]> = [
         ["(", ")"],
         ["[", "]"],
@@ -127,17 +131,27 @@ export function extractPmid(value: string): string | undefined {
 
 export function extractArxivId(value: string): string | undefined {
     const match = collapseWhitespace(value).match(ARXIV_PATTERN)?.[1];
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
-    return match?.toLocaleLowerCase("en-US").replace(/v\d+$/i, "");
+    if (match === undefined) return undefined;
+    return stripTrailingVersion(match.toLocaleLowerCase("en-US"));
+}
+
+function stripTrailingVersion(lowered: string): string {
+    let end = lowered.length;
+    while (end > 0) {
+        const code = lowered.charCodeAt(end - 1);
+        if (code < 48 || code > 57) break;
+        end--;
+    }
+    return end > 0 && end < lowered.length && lowered[end - 1] === "v" ? lowered.slice(0, end - 1) : lowered;
 }
 
 function classifyUnsupportedWork(value: string): UnsupportedWorkKind | undefined {
     const normalized = normalizeComparable(value);
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- word boundary: the phrase only counts as whole words, not inside a longer phrase.
     if (/\bpersonal communication\b/.test(normalized)) return "personal_communication";
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- word boundary: the synonym set (data, work, manuscript) must sit at word edges.
     if (/\bunpublished (?:data|work|manuscript)\b/.test(normalized)) return "unpublished";
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the citation grammar: DOI, PMID, and arXiv tokens have no builtin parser.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- word boundary: the synonym pair must sit at word edges.
     if (/\b(?:in press|forthcoming)\b/.test(normalized)) return "unregistered_in_press";
     return undefined;
 }

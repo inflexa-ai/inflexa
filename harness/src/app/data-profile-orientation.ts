@@ -116,13 +116,13 @@ function clamp(text: string, max: number): string {
  * keeps one record on one line.
  */
 function clip(text: string, max: number): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse of the profile text; String.trim's set differs (U+FEFF), so no plain method is exact.
     return clamp(text.replace(/\s+/g, " ").trim(), max);
 }
 
 /** Non-empty, whitespace-collapsed value, or `undefined` — nulls and blanks read the same. */
 function present(value: string | null | undefined): string | undefined {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse of the orientation value; String.trim's set differs (U+FEFF), so no plain method is exact.
     const flat = value?.replace(/\s+/g, " ").trim();
     return flat ? flat : undefined;
 }

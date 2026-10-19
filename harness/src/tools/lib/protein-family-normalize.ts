@@ -17,26 +17,26 @@ const FAMILIES: CanonicalFamily[] = [
     {
         canonical: "g protein-coupled receptor",
         patterns: [
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- synonym grammar with word boundaries: the spelled-out GPCR name with optional hyphen or space joins and flexible inner whitespace, caseless.
             /\bg[-\s]?protein[-\s]?coupled\s+receptor\b/i,
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- synonym grammar with word boundaries: the abbreviation must stand as a whole word, caseless.
             /\bgpcr\b/i,
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- synonym grammar with word boundaries: the `7tm` alias with flexible inner whitespace, caseless.
             /\b7tm\s+receptor\b/i,
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- synonym grammar with word boundaries: the rhodopsin-like receptor phrase with flexible inner whitespace, caseless.
             /\brhodopsin-like\s+receptor\b/i,
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- synonym grammar with word boundaries: the secretin-like receptor phrase with flexible inner whitespace, caseless.
             /\bsecretin-like\s+receptor\b/i,
         ],
     },
     {
         canonical: "serine/threonine-protein kinase",
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- synonym grammar with word boundaries: the kinase phrase with optional hyphen or space joins and flexible inner whitespace, caseless.
         patterns: [/\bserine\/threonine[-\s]?protein\s+kinase\b/i],
     },
     {
         canonical: "tyrosine-protein kinase",
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the protein-family grammar: its member syntax has no builtin parser.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- synonym grammar with word boundaries: the kinase phrase with optional hyphen or space joins and flexible inner whitespace, caseless.
         patterns: [/\btyrosine[-\s]?protein\s+kinase\b/i],
     },
     // Extend as additional hyphen-style mismatches surface. The default branch

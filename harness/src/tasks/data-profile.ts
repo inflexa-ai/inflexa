@@ -1216,7 +1216,7 @@ export function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfile
 const PROFILE_ERROR_MAX_LEN = 200;
 function profileFailureReason(err: unknown): string {
     const raw = errorMessage(err);
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse of the first line; String.trim's set differs (U+FEFF), so no plain method is exact.
     const firstLine = raw.split("\n", 1)[0].replace(/\s+/g, " ").trim();
     return firstLine.length > PROFILE_ERROR_MAX_LEN ? firstLine.slice(0, PROFILE_ERROR_MAX_LEN - 1) + "…" : firstLine || "Data profiling failed";
 }

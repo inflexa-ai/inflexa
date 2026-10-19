@@ -4,7 +4,12 @@ import { z } from "zod";
 import { maybeRecord, recordMember, typedMember } from "../../lib/shape.js";
 
 import { requestJson, requestText, type SourceHttpOptions, type SourceHttpResult } from "./http.js";
-import { splitLines } from "../../lib/text.js";
+import { isDigits, splitLines } from "../../lib/text.js";
+
+// The PMC id prefix is caseless in the wire data (`PMC123`, `pmc123`), and `PMC` carries no `k`, so a lowercase compare is the exact strip.
+function stripPmcPrefix(pmcId: string): string {
+    return pmcId.slice(0, 3).toLowerCase() === "pmc" ? pmcId.slice(3) : pmcId;
+}
 
 export const NCBI_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 export const NCBI_IDCONV = "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0";
@@ -298,7 +303,7 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
             signal,
         );
         if (result.status !== "ok") return result;
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubMed grammar: its markup has no builtin parser.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- tag grammar: the `PubmedArticleSet` element opening must open the document, with the word edge against names like `PubmedArticleSetX`.
         if (!/<PubmedArticleSet\b/.test(result.value)) return { status: "unavailable", detail: "response schema mismatch: missing PubmedArticleSet" };
         return { status: "ok", value: parseEfetch(result.value) };
     }
@@ -328,8 +333,7 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
             if (result.status !== "ok") return result;
             const pmids = splitLines(result.value.trim()).flatMap((line) => {
                 const value = line.split("|").at(-1)?.trim();
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubMed grammar: its markup has no builtin parser.
-                return value !== undefined && /^\d+$/.test(value) ? [value] : [];
+                return value !== undefined && isDigits(value) ? [value] : [];
             });
             return { status: "ok", value: pmids };
         },
@@ -349,8 +353,7 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
         },
         async fetchFullText(pmcId, signal) {
             const result = await requestText(
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubMed grammar: its markup has no builtin parser.
-                url(`${NCBI_BASE}/efetch.fcgi`, { db: "pmc", id: pmcId.replace(/^PMC/i, ""), rettype: "xml", retmode: "xml" }),
+                url(`${NCBI_BASE}/efetch.fcgi`, { db: "pmc", id: stripPmcPrefix(pmcId), rettype: "xml", retmode: "xml" }),
                 options,
                 signal,
             );

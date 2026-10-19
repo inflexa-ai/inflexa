@@ -97,7 +97,7 @@ export function normalizeDetail(raw: unknown): ToolCallDetail | undefined {
     // `normalizeUnicode` leaves tab, newline and carriage return in place (they
     // are legitimate whitespace in prose); the collapse below is what turns them
     // into the single line this contract promises.
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse of the tool detail; String.trim's set differs (U+FEFF), so no plain method is exact.
     const oneLine = normalizeUnicode(raw).replace(/\s+/g, " ").trim();
     if (oneLine.length === 0) return undefined;
 

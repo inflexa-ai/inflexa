@@ -114,7 +114,7 @@ export type BlockWalk = {
  * can be a real free-standing figure or a harmless part of a name. Thus a hit warns, and it never fails
  * the report.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- lookbehind: a numeral counts only when no letter or digit sits before it, so the walk skips identifiers.
 const NUMERAL_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?%?/g;
 
 /**
@@ -123,7 +123,7 @@ const NUMERAL_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?%?/g;
  * The left boundary is the one of the numeral scan, thus a token inside a name never matches. The exponent
  * itself carries an optional sign, because a written form gives one and a shown form never does.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- lookbehind: an exponent counts only when no letter or digit sits before it, so the walk skips identifiers.
 const EXPONENT_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?[eE][+-]?\d+/g;
 
 /** Warn for each free-standing numeral that the prose of one block carries. */

@@ -341,7 +341,7 @@ describe("the seed conjunct on every claim into running", () => {
     ] as const;
 
     for (const { name, status, claim } of claims) {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: each non-word run becomes one dash (the slugify collapse over the \W class).
         const slug = name.replace(/\W+/g, "-").toLowerCase();
 
         it(`${name}: refuses a NULL seed`, async () => {

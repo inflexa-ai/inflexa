@@ -101,7 +101,7 @@ export type KoPhenotypeProfile = {
 };
 
 function escapeSolrValue(value: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- per-char escape class: each Lucene metacharacter or whitespace member gets one backslash before it.
     return value.replace(/([+\-&|!(){}[\]^"~*?:\\/\s])/g, "\\$1");
 }
 

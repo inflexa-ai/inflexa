@@ -85,8 +85,7 @@ type OpenFdaLabel = z.infer<typeof OpenFdaLabelSchema>;
  * unescaped `"` past the quote escaping and break out of the phrase.
  */
 function escapeQueryPhrase(value: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
 /**

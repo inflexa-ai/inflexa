@@ -248,8 +248,8 @@ describe("createAiSdkProvider", () => {
         const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
         expect(failure).toMatchObject({ type: "suspend", status: 402, reason: "payment_required", retryable: false });
         expect(failure.message).toContain("HTTP 402");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(failure.message).not.toMatch(/budget|tenant|billing/i);
+        const loweredMessage = failure.message.toLowerCase();
+        expect(["budget", "tenant", "billing"].some((word) => loweredMessage.includes(word))).toBe(false);
     });
 
     it("gives an unmapped 403 as a non-retryable provider error", async () => {
@@ -658,6 +658,19 @@ describe("sessionKeyOf", () => {
 });
 
 describe("sessionKeyDigestOf", () => {
+    /** One base64url character: `A`-`Z`, `a`-`z`, `0`-`9`, `-`, `_`. */
+    function isBase64UrlChar(code: number): boolean {
+        return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code === 45 || code === 95;
+    }
+
+    function isBase64Url(value: string): boolean {
+        if (value.length === 0) return false;
+        for (let i = 0; i < value.length; i++) {
+            if (!isBase64UrlChar(value.charCodeAt(i))) return false;
+        }
+        return true;
+    }
+
     /** A step session with identifiers of production length: two UUIDs and a plan step id. */
     function stepSession(stepId: string): AgentSession {
         return {
@@ -671,8 +684,8 @@ describe("sessionKeyDigestOf", () => {
 
         // The identifier string alone passes the limit.
         expect(sessionKeyOf(session).length).toBeGreaterThan(64);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(sessionKeyDigestOf(session)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        const digest = sessionKeyDigestOf(session);
+        expect(digest.length === 43 && isBase64Url(digest)).toBe(true);
     });
 
     it("gives the base64url SHA-256 digest of the identifier string, the same each time", () => {

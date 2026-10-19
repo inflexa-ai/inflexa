@@ -31,6 +31,7 @@ import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { tryFs } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
+import { splitLines } from "../../lib/text.js";
 import { citationRecordOf, fileTypeHoldsNoCell } from "../../report-model/reference-resolver.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
@@ -165,8 +166,7 @@ async function readHeaderLine(absolute: string): Promise<HeaderRead | undefined>
     if (head === undefined) {
         return undefined;
     }
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-    const line = head.text.split(/\r?\n/, 1)[0];
+    const line = splitLines(head.text)[0];
     if (line.length === 0) {
         return undefined;
     }

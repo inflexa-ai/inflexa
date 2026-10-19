@@ -254,7 +254,7 @@ describe("generateStepSummary", () => {
                     if (found.output.type !== "text" && found.output.type !== "error-text") throw new Error("expected a text-carrying output");
                     const excerpt = found.output;
                     const ref = must(
-                        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+                        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- extraction with captures: the quoted `to_` token is lifted out of the summary for the id assertion.
                         must(/reference "(to_[0-9a-f]{20})"/, '/reference "(to_[0-9a-f]{20})"/').exec(excerpt.value),
                         'must(/reference "(to_[0-9a-f]{20})"/, "/referenc',
                     )[1];

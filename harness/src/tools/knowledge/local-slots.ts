@@ -48,7 +48,7 @@ export function localParameters(parameters: readonly TemplateParameter[]): Templ
 }
 
 // The design-formula grammar of the service renderer.
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the design-formula grammar of the service renderer.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- flexible whitespace: the design-formula grammar — a `~` lead, then one charset run that may carry whitespace inside.
 const FORMULA_PATTERN = /^~\s*[A-Za-z0-9_.+*:()\s-]+$/;
 
 /** Check one caller value against the contract of its slot, as the renderer of the service does. */
@@ -62,7 +62,7 @@ export function validateLocalSlot(parameter: TemplateParameter, value: unknown):
             if (parameter.type === "formula" && !FORMULA_PATTERN.test(value))
                 return { slot, reason: "a formula must start with ~ and hold only names, +, :, *, and parentheses" };
             if (permitted && !permitted.includes(value)) return { slot, reason: `the value "${value}" is not permitted`, permitted };
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pattern is the slot's own grammar, a contract field of the template.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- dynamic pattern: the pattern is the slot's own grammar, a contract field of the template, compiled per call.
             if (parameter.pattern && !new RegExp(parameter.pattern).test(value)) return { slot, reason: `the value must match ${parameter.pattern}` };
             return undefined;
         }
@@ -205,7 +205,7 @@ export function bindLocalSlots(
         }
     }
     if (issues.length > 0) return { ok: false, issues };
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the slot-marker grammar the service leaves in a marked render.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- extraction with captures: each `{{name}}` marker hands its captured slot name to the binder.
     const bound = script.replace(/\{\{([a-z][a-z0-9_]*)\}\}/g, (whole, name: string) => {
         const parameter = byName.get(name);
         if (!parameter) return whole;

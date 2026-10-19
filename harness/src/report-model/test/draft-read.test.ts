@@ -121,7 +121,7 @@ describe("buildOutline", () => {
         };
         const label = buildOutline(draft).find((entry) => entry.id === "t1")?.label ?? "";
         expect(label).toBe(`${"y".repeat(78)}\u{1F600}…`);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- lookaround: a high surrogate without a following low surrogate — the unpaired code-unit shape no plain check sees.
         expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(label)).toBe(false);
     });
 

@@ -6,6 +6,7 @@ import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { createReportSessionAgent, REPORT_SESSION_AGENT_ID } from "../report-session-agent.js";
 import { reportSessionPrompt } from "../../prompts/report-session.js";
 import { createRegistry } from "../../tools/registry.js";
+import { hasDigit } from "../../lib/text.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
 import type { ReportSessionStateStore } from "../../state/report-session-state.js";
 import type { ReportVersionStore } from "../../state/report-versions.js";
@@ -216,7 +217,7 @@ describe("createReportSessionAgent", () => {
         }
         // The block schema lists each chart type and each preset, thus the prompt keeps no list of its own that
         // can drift from the schema.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse over the prompt text; String.trim's set differs (U+FEFF), so no plain method is exact.
         expect(reportSessionPrompt.replace(/\s+/g, " ")).toContain("the block schema of `add_block` names each chart type and each preset");
         for (const plot of ["a volcano", "a dot plot", "an embedding", "a forest plot", "a radar"]) {
             expect(reportSessionPrompt).not.toContain(plot);
@@ -229,7 +230,7 @@ describe("createReportSessionAgent", () => {
     test("the prompt teaches the preset of a field plot, its statistics, its track, and its trees", () => {
         const rule = reportSessionPrompt.slice(reportSessionPrompt.indexOf("A plot of a field takes its preset"));
         expect(rule).toStartWith("A plot of a field takes its preset");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse of the rule paragraph; String.trim's set differs (U+FEFF), so no plain method is exact.
         const paragraph = rule.slice(0, rule.indexOf("\n\n")).replace(/\s+/g, " ");
         // A printed statistic is grounded, thus it binds one cell as a statistic of the chart block.
         expect(paragraph).toContain("binds as a statistic of the chart block");
@@ -238,8 +239,7 @@ describe("createReportSessionAgent", () => {
         // A clustered heatmap carries its dendrograms, thus the edge table of each clustered axis binds as a tree.
         expect(paragraph).toContain("binds as the tree of that axis");
         // The paragraph names the mechanism and no dataset, and it states no count.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(paragraph).not.toMatch(/\d/);
+        expect(hasDigit(paragraph)).toBe(false);
     });
 
     test("the prompt teaches the headline derivation", () => {

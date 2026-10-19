@@ -117,7 +117,7 @@ export async function getCompoundPropertiesByInChIKey(inchiKey: string): Promise
     return getCompoundPropertiesByCID(cid);
 }
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- domain motif grammar: the SMILES amide-bond fragment `C(=O)N`, counted at every occurrence.
 const AMIDE_BOND_RE = /C\(=O\)N/g;
 
 /**

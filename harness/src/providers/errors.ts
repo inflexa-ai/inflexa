@@ -214,7 +214,7 @@ const PROVIDER_BODY_EXCERPT_MAX_LEN = 120;
  * strings) and is safe on biological data, so a legitimate error body passes through intact.
  */
 function excerptResponseBody(body: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode \s class: the whitespace-run collapse; String.trim's set differs (U+FEFF), so no plain method is exact.
     const singleLine = redactSecrets(body).replace(/\s+/g, " ").trim();
     // Slice by CODE POINT, not UTF-16 unit: a raw byte body can carry astral characters, and a plain
     // `.slice` could bisect a surrogate pair into a lone half that renders as U+FFFD.
@@ -250,7 +250,7 @@ const CONNECTION_ERROR_CODES = new Set([
 ]);
 
 const CONNECTION_ERROR_PATTERN =
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- synonym grammar: the vendor connection-error vocabulary as alternation of message fragments over free text.
     /fetch failed|socket hang up|network error|connection (?:refused|reset|error|closed)|econnrefused|enotfound|etimedout|terminated/i;
 
 /**
@@ -351,8 +351,7 @@ function looksLikeConnectionError(err: unknown): boolean {
             const code = typedMember(rec, "code");
             if (typeof code === "string" && CONNECTION_ERROR_CODES.has(code)) return true;
             const name = typedMember(rec, "name");
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-            if (typeof name === "string" && /^APIConnection/.test(name)) return true;
+            if (typeof name === "string" && name.startsWith("APIConnection")) return true;
             const message = typedMember(rec, "message");
             if (typeof message === "string" && CONNECTION_ERROR_PATTERN.test(message)) return true;
             return undefined;

@@ -41,7 +41,7 @@ function cslRecord(doi: string, registrationAgency: string | undefined, metadata
         year: !(dateParts?.[0] === undefined) ? parseYear(dateParts[0]) : undefined,
         venue: !(venue === undefined) ? venue : undefined,
         volume: !(metadata?.volume === undefined) ? metadata.volume : undefined,
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- delimiter-set split: the page range breaks on the hyphen or the en dash, and the first page is the head.
         firstPage: !(metadata?.page === undefined) ? metadata.page.split(/[-–]/)[0] : undefined,
         registrationAgency: !(registrationAgency === undefined) ? registrationAgency : undefined,
         url: !(metadata?.URL === undefined) ? metadata.URL : undefined,

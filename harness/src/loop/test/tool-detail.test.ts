@@ -136,9 +136,9 @@ describe("normalizeDetail", () => {
         const detail = must(normalizeDetail("🧬".repeat(200)), "detail");
 
         expect(Array.from(detail)).toHaveLength(DETAIL_MAX_LENGTH);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- lookaround: a high surrogate without a following low surrogate — the unpaired code-unit shape no plain check sees.
         expect(detail).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- lookbehind: a low surrogate without a preceding high surrogate — the unpaired code-unit shape no plain check sees.
         expect(detail).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
     });
 });

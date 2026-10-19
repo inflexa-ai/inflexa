@@ -19,6 +19,28 @@ const LIVE = process.env.CORTEX_LIVE_API_TESTS;
 /** Aspirin. The fixture corpus captures the same identifier. */
 const ASPIRIN_CID = 2244;
 
+/** One upper-case ASCII letter run: `A`-`Z`, and the value is not empty. */
+function isUpperAlpha(value: string): boolean {
+    if (value.length === 0) return false;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        if (code < 65 || code > 90) return false;
+    }
+    return true;
+}
+
+/** The InChIKey layout: 14 upper-case letters, a hyphen, 10 upper-case letters, a hyphen, one upper-case letter. */
+function isInchiKeyLayout(value: string): boolean {
+    return (
+        value.length === 27 &&
+        isUpperAlpha(value.slice(0, 14)) &&
+        value[14] === "-" &&
+        isUpperAlpha(value.slice(15, 25)) &&
+        value[25] === "-" &&
+        isUpperAlpha(value.slice(26))
+    );
+}
+
 describe.skipIf(!LIVE)("live PubChem", () => {
     test("the property schema accepts the live payload for a canonical CID", async () => {
         const props = must(await getCompoundPropertiesByCID(ASPIRIN_CID), "props");
@@ -26,8 +48,7 @@ describe.skipIf(!LIVE)("live PubChem", () => {
         expect(props).not.toBe(null);
         expect(props.cid).toBe(ASPIRIN_CID);
         expect(typeof props.molecularWeight).toBe("number");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(props.inchiKey).toMatch(/^[A-Z]{14}-[A-Z]{10}-[A-Z]$/);
+        expect(typeof props.inchiKey === "string" && isInchiKeyLayout(props.inchiKey)).toBe(true);
         expect(props).toHaveProperty("canonicalSmiles");
     }, 60_000);
 });

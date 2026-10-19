@@ -11,6 +11,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { isDigits } from "../../lib/text.js";
 import type { CheckResponse, KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable } from "./client.js";
 import type { SnapshotPin } from "./pin.js";
 import { SituationFieldsSchema, toSituation } from "./situation.js";
@@ -25,6 +26,11 @@ export type KnowledgeCheckOutput = CheckResponse | KnowledgeUnavailable | Knowle
 
 /** The checks one plan generation may run. Two is a draft and one revision; the third is slack. */
 export const CHECK_CALL_LIMIT = 3;
+
+/** The method id of the knowledge catalog: `M-` plus four digits. */
+function isCatalogMethodId(value: string): boolean {
+    return value.startsWith("M-") && value.length === 6 && isDigits(value.slice(2));
+}
 
 const DraftedStepSchema = z.object({
     step_type: z
@@ -54,8 +60,7 @@ const DraftedStepSchema = z.object({
     method: z.string().min(1).describe("The method as the step names it, for example `DESeq2 Wald test` or `edgeR quasi-likelihood`."),
     method_id: z
         .string()
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the method-id grammar of the catalog (`M-dddd`).
-        .regex(/^M-\d{4}$/)
+        .refine(isCatalogMethodId, "must match M-dddd")
         .optional()
         .describe(
             "The `method.id` of the step in the `knowledge_recommend` answer (for example `M-0001`), copied when the step uses that method. With it the check matches the method exactly and ignores the wording.",

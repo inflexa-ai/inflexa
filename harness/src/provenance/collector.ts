@@ -37,7 +37,7 @@ export type ObservedWrite = {
 // ── Script path inference ───────────────────────────────────────────
 
 /** Known interpreter prefixes for script path extraction. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the provenance grammar: its source expressions have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- extraction with captures with flexible whitespace: each launcher prefix takes its argument text in one capture.
 const SCRIPT_PATTERNS = [/^python3?\s+(\S.*)$/, /^Rscript\s+(\S.*)$/, /^bash\s+(\S.*)$/, /^sh\s+(\S.*)$/];
 
 /**
@@ -51,7 +51,7 @@ function inferScriptPath(command: string, args?: string[]): string | null {
         const match = fullCommand.match(pattern);
         if (match?.[1]) {
             // Take the first token (the script path), ignoring further args
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the provenance grammar: its source expressions have no builtin parser.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- run tokenizer: the argument text splits on whitespace runs, and the head is the binary name.
             return match[1].split(/\s+/)[0];
         }
     }

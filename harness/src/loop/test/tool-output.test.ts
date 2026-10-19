@@ -4,6 +4,7 @@ import { errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
+import { isLowerHex } from "../../lib/text.js";
 import { maybeRecord } from "../../lib/shape.js";
 import type { AgentSession } from "../../auth/types.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
@@ -217,8 +218,7 @@ describe("runAgent — long tool results", () => {
         expect(store.puts).toHaveLength(1);
         const kept = store.puts[0];
         expect(kept).toMatchObject({ analysisId: "analysis-001", toolName: "big", toolCallId: "tu-1", totalLength: length });
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(kept.ref).toMatch(/^to_[0-9a-f]{20}$/);
+        expect(kept.ref.startsWith("to_") && kept.ref.length === 23 && isLowerHex(kept.ref.slice(3))).toBe(true);
         expect(kept.content).toBe(sizedText(length));
         expect(textOf(onlyResult(messages)).split("\n")[1]).toContain(`reference "${kept.ref}"`);
     });
@@ -410,7 +410,7 @@ describe("runAgent — long tool results", () => {
 
         const excerpt = textOf(onlyResult(messages));
         expect(excerpt.split("\n")[0]).toContain(`Shown: the first ${EXCERPT_HEAD_CHARS - 1} and the last ${EXCERPT_TAIL_CHARS - 1} characters.`);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- lookaround: the unpaired-surrogate shape in either direction (high without low, low without high), no plain check sees it.
         expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(excerpt)).toBe(false);
     });
 
@@ -421,7 +421,7 @@ describe("runAgent — long tool results", () => {
             if (i === 1) {
                 const excerpt = textOf(onlyResult(request.messages));
                 const ref = must(
-                    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+                    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- extraction with captures: the quoted `to_` token is lifted out of the excerpt for the id assertion.
                     must(/reference "(to_[0-9a-f]{20})"/, '/reference "(to_[0-9a-f]{20})"/').exec(excerpt),
                     'must(/reference "(to_[0-9a-f]{20})"/, "/referenc',
                 )[1];

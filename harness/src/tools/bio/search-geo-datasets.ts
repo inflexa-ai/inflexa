@@ -127,8 +127,7 @@ export const searchGeoDatasetsTool = defineTool({
         // Escape backslashes first, then quotes, so a `\` in the organism value
         // cannot smuggle an unescaped `"` past the escaping and break out of the
         // quoted Entrez phrase.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-        if (organism) searchQuery += ` AND "${organism.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"[Organism]`;
+        if (organism) searchQuery += ` AND "${organism.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"[Organism]`;
 
         const db = "gds";
         const typeFilter = datasetType === "gse" ? " AND gse[Entry Type]" : " AND gds[Entry Type]";
