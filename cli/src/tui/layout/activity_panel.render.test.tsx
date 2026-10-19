@@ -101,6 +101,7 @@ function panel(over: Partial<Parameters<typeof ActivityPanel>[0]> = {}) {
             position={1}
             nextKeyLabel="ctrl+n"
             dismissKeyLabel="ctrl+r"
+            abortKeyLabel="ctrl+x c"
             onNext={() => {}}
             {...over}
         />
@@ -157,7 +158,17 @@ describe("ActivityPanel content", () => {
         // Rendered directly rather than through `panel()`: Solid's prop merge treats an `undefined`
         // value in a spread as "not provided", so it cannot clear a prop an earlier source set.
         const frame = await settledFrame(
-            () => <ActivityPanel subject={undefined} activeCount={0} position={0} nextKeyLabel="ctrl+n" dismissKeyLabel="ctrl+r" onNext={() => {}} />,
+            () => (
+                <ActivityPanel
+                    subject={undefined}
+                    activeCount={0}
+                    position={0}
+                    nextKeyLabel="ctrl+n"
+                    dismissKeyLabel="ctrl+r"
+                    abortKeyLabel="ctrl+x c"
+                    onNext={() => {}}
+                />
+            ),
             WIDE,
         );
         expect(frame.trim()).toBe("");
@@ -220,6 +231,7 @@ describe("ActivityPanel repaint", () => {
                     position={1}
                     nextKeyLabel="ctrl+n"
                     dismissKeyLabel="ctrl+r"
+                    abortKeyLabel="ctrl+x c"
                     onNext={() => {}}
                 />
             ),
@@ -277,6 +289,7 @@ describe("ActivityPanel elapsed clock", () => {
                     position={1}
                     nextKeyLabel="ctrl+n"
                     dismissKeyLabel="ctrl+r"
+                    abortKeyLabel="ctrl+x c"
                     onNext={() => {}}
                 />
             ),
@@ -306,14 +319,14 @@ describe("ActivityPanel elapsed clock", () => {
 describe("ActivityPanel navigation", () => {
     test("a single active run names no position and offers no next-run chord", async () => {
         const frame = await settledFrame(panel({ activeCount: 1, position: 1 }), WIDE);
-        expect(frame).toContain("RUN · ctrl+r hide");
+        expect(frame).toContain("RUN · ctrl+r hide · ctrl+x c abort");
         expect(frame).not.toContain("1/1");
         expect(frame).not.toContain("next");
     });
 
     test("several active runs put the position and the next-run chord in the legend", async () => {
         const frame = await settledFrame(panel({ activeCount: 3, position: 2 }), WIDE);
-        expect(frame).toContain("RUN 2/3 · ctrl+n next · ctrl+r hide");
+        expect(frame).toContain("RUN 2/3 · ctrl+n next · ctrl+r hide · ctrl+x c abort");
     });
 
     test("the legend's chords come from the props, so a remapped chord is advertised correctly", async () => {
@@ -322,6 +335,26 @@ describe("ActivityPanel navigation", () => {
         const frame = await settledFrame(panel({ activeCount: 2, nextKeyLabel: "ctrl+9", dismissKeyLabel: "ctrl+0" }), WIDE);
         expect(frame).toContain("ctrl+9 next");
         expect(frame).toContain("ctrl+0 hide");
+    });
+
+    test("the abort chord comes from the prop, so a remapped final stroke is advertised correctly", async () => {
+        const frame = await settledFrame(panel({ abortKeyLabel: "ctrl+x z" }), WIDE);
+        expect(frame).toContain("ctrl+x z abort");
+        expect(frame).not.toContain("ctrl+x c");
+    });
+
+    test("the legend names the abort chord for a run only", async () => {
+        const runFrame = await settledFrame(panel({ activeCount: 2, position: 1 }), WIDE);
+        expect(runFrame).toContain("ctrl+x c abort");
+
+        const profileMulti = await settledFrame(panel({ subject: profileSubject(), activeCount: 2, position: 2 }), WIDE);
+        expect(profileMulti).toContain("PROFILE 2/2 · ctrl+n next · ctrl+r hide");
+        expect(profileMulti).not.toContain("abort");
+        expect(profileMulti).not.toContain("ctrl+x c");
+
+        const profileSingle = await settledFrame(panel({ subject: profileSubject(), activeCount: 1, position: 1 }), WIDE);
+        expect(profileSingle).toContain("PROFILE · ctrl+r hide");
+        expect(profileSingle).not.toContain("abort");
     });
 
     test("the run's own rows carry no view state — no position, no chord hints", async () => {
@@ -341,16 +374,21 @@ describe("ActivityPanel legend fits the panel's width", () => {
     // ladder, and the boundary is worth pinning: a 40-column tmux pane is a real case, and the
     // difference between "sheds its chords" and "renders an unlabelled rule" is invisible without it.
     const CASES = [
-        { width: 100, expect: "RUN 2/3 · ctrl+n next · ctrl+r hide", note: "roomy: the whole legend" },
-        { width: 41, expect: "RUN 2/3 · ctrl+n next · ctrl+r hide", note: "the exact width the full legend still fits" },
-        { width: 40, expect: "RUN 2/3", note: "one column short: chords shed, position survives" },
-        { width: 14, expect: "RUN", note: "narrow: the region's name alone" },
+        { width: 100, expect: "RUN 2/3 · ctrl+n next · ctrl+r hide · ctrl+x c abort", absent: null, note: "roomy: the whole legend" },
+        { width: 58, expect: "RUN 2/3 · ctrl+n next · ctrl+r hide · ctrl+x c abort", absent: null, note: "the exact width the full legend still fits" },
+        // The abort chord does not shed alone: the whole chord part goes together, so no rung shows
+        // `next` and `hide` without `abort`, and the position survives the shed.
+        { width: 57, expect: "RUN 2/3", absent: "hide", note: "one column short: every chord shed together, position survives" },
+        { width: 12, expect: "RUN", absent: "2/3", note: "narrow: the region's name alone" },
     ] as const;
 
     for (const c of CASES) {
         test(`${c.width} columns — ${c.note}`, async () => {
             const frame = await settledFrame(panel({ activeCount: 3, position: 2 }), { width: c.width, height: 12 });
-            expect(frame.split("\n")[0]).toContain(c.expect);
+            const rule = frame.split("\n")[0];
+            expect(rule).toContain(c.expect);
+            if (c.absent !== null) expect(rule).not.toContain(c.absent);
+            if (c.absent === "hide") expect(rule).not.toContain("abort");
         });
     }
 
@@ -543,6 +581,7 @@ describe("ActivityPanel chrome across terminal heights", () => {
                     position={1}
                     nextKeyLabel="ctrl+n"
                     dismissKeyLabel="ctrl+r"
+                    abortKeyLabel="ctrl+x c"
                     onNext={() => {}}
                 />
                 <box width="100%" flexShrink={0}>
@@ -605,7 +644,15 @@ describe("ActivityPanel chrome across terminal heights", () => {
                     <scrollbox flexGrow={1} minHeight={0}>
                         <text fg="#888888">STREAM</text>
                     </scrollbox>
-                    <ActivityPanel subject={undefined} activeCount={0} position={0} nextKeyLabel="ctrl+n" dismissKeyLabel="ctrl+r" onNext={() => {}} />
+                    <ActivityPanel
+                        subject={undefined}
+                        activeCount={0}
+                        position={0}
+                        nextKeyLabel="ctrl+n"
+                        dismissKeyLabel="ctrl+r"
+                        abortKeyLabel="ctrl+x c"
+                        onNext={() => {}}
+                    />
                     <box width="100%" flexShrink={0}>
                         <text fg="#888888">INPUTROW</text>
                     </box>

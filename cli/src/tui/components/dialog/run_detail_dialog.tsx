@@ -173,9 +173,6 @@ export function RunDetailDialog(props: RunDetailDialogProps): JSX.Element {
                                 done={loadedViews().filter((v) => v.state === "done").length}
                                 total={loadedViews().length}
                                 steps={loadedViews()}
-                                // esc closes the dialog here (not the run) and no abort chord is bound,
-                                // so the detach/abort footer would advertise keys this view does not own.
-                                hint={false}
                             />
                         </Match>
                     </Switch>

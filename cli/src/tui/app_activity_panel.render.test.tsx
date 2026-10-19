@@ -1,20 +1,25 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { okAsync } from "neverthrow";
+import { parseColor } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 
-import type { RunDetail, RunSummary } from "../api/runs.ts";
+import type { CancelRunResult, DataProfileState, RunDetail, RunSummary } from "../api/runs.ts";
+import { DEFAULT_CLIENT_OPTS } from "../client/api.ts";
 import { asStr256 } from "../lib/types.ts";
+import { fakeClient } from "../test_support/fake_client.ts";
 import { App } from "./app.tsx";
-import { dialogClear } from "./components/dialog/dialog_host.tsx";
+import { dialogClear, dialogIsOpen } from "./components/dialog/dialog_host.tsx";
 import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts";
 import { __resetNoticesForTest, currentNotice } from "./hooks/notice.ts";
 import { __resetActivityPanelForTest, focusedSubject, activityPanelVisible, toggleActivityPanel } from "./hooks/activity_panel.ts";
 import { __resetRunCompletionsForTest } from "./hooks/run_completion.ts";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from "./hooks/sidebar_live.ts";
 import { resetHotState } from "./hooks/conversation.ts";
+import { dispatchKey, leaderKeybind, reachableKeys, resolveKeybind, type KeyLike } from "./keymap.ts";
+import { theme } from "./theme.ts";
 import type { Analysis } from "../types/analysis.ts";
 
 // Every piece of the run-observability work is unit-tested in isolation; what nothing covered is
@@ -56,10 +61,10 @@ function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     };
 }
 
-function optsFor(runs: RunSummary[]): RefreshOpts {
+function optsFor(runs: RunSummary[], profile?: DataProfileState): RefreshOpts {
     return {
         ready: () => true,
-        loadProfile: () => okAsync({ status: null }),
+        loadProfile: () => okAsync(profile ?? { status: null }),
         loadRuns: () => okAsync(runs),
         loadActiveRuns: () => okAsync(runs.filter((r) => r.status === "running")),
         loadRun: (_analysisId, runId) => {
@@ -127,8 +132,9 @@ async function mountApp(size = { width: 100, height: 26 }) {
     };
     await settle();
     return {
-        seed: (runs: RunSummary[]) => refreshSidebarData(analysis.id, optsFor(runs)),
+        seed: (runs: RunSummary[], profile?: DataProfileState) => refreshSidebarData(analysis.id, optsFor(runs, profile)),
         frame: settle,
+        spans: () => setup.captureSpans().lines.flatMap((line) => line.spans),
         destroy: () => setup.renderer.destroy(),
     };
 }
@@ -226,6 +232,250 @@ describe("App composes the run-activity panel", () => {
             expect(currentNotice()).not.toBeNull();
             expect(currentNotice()!.text).toContain("completed");
         } finally {
+            app.destroy();
+        }
+    });
+});
+
+function key(name: string, mods: Partial<Pick<KeyLike, "ctrl" | "shift">> = {}): KeyLike & { preventDefault: () => void } {
+    return { name, ctrl: false, meta: false, option: false, shift: false, ...mods, preventDefault: () => {} };
+}
+
+/** Push each stroke of the abort chord through the central dispatch, the way the root key handler does. */
+function pushAbortChord(): void {
+    for (const stroke of leaderKeybind("app.activity-panel-abort")) {
+        dispatchKey(key(stroke.key, { ctrl: stroke.ctrl ?? false, shift: stroke.shift ?? false }));
+    }
+}
+
+/** Push the leader alone, so the which-key overlay and `reachableKeys` list the strokes that follow. */
+function pushLeader(): void {
+    const leader = resolveKeybind("app.leader");
+    dispatchKey(key(leader.key, { ctrl: leader.ctrl ?? false, shift: leader.shift ?? false }));
+}
+
+/** A running data-profile row, the one shape the refresh publishes as a panel subject. */
+const runningProfile: DataProfileState = {
+    status: "running",
+    error: null,
+    startedAt: "2026-07-28T10:00:00.000Z",
+    completedAt: null,
+    result: null,
+    workflowId: "wf-profile-panel",
+    seedInputFileIds: ["input-1"],
+};
+
+const ABORT_DESC = "Abort the active run";
+
+/**
+ * A server for the cancel of `run-a`: the real client of the abort (`cancelRun` on the default client
+ * opts) reaches this fake, and `cancels` lists the cancel requests it saw, in order. Every other route
+ * answers 404, as the app degrades without a server. `restore` puts the default client opts back.
+ */
+function stubCancelServer(): { cancels: () => { method: string; path: string }[]; restore: () => void } {
+    const canceled: CancelRunResult = {
+        runId: "run-a",
+        workflowId: "run-a",
+        outcome: "canceled",
+        finalStatus: "canceled",
+        converged: { steps: true, charge: true, mandate: true },
+    };
+    const client = fakeClient((req) => {
+        if (req.method === "POST" && req.path.endsWith("/cancel")) return { status: 200, body: canceled };
+        return { status: 404, body: { error: "not_found", message: `No route for ${req.method} ${req.path}.` } };
+    });
+    const discover = spyOn(DEFAULT_CLIENT_OPTS, "discover").mockImplementation(() => client.opts.discover());
+    const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation((url, init) => client.opts.fetch(url, init));
+    return {
+        cancels: () => client.requests.filter((req) => req.method === "POST" && req.path.endsWith("/cancel")).map(({ method, path }) => ({ method, path })),
+        restore: () => {
+            discover.mockRestore();
+            fetch.mockRestore();
+        },
+    };
+}
+
+/** Wait until `done` holds, so a flow that crosses the client and the stores has ended before the test reads its state. */
+async function until(done: () => boolean): Promise<void> {
+    for (let i = 0; i < 100 && !done(); i++) await new Promise((r) => setTimeout(r, 10));
+}
+
+describe("App binds the abort of the focused run", () => {
+    test("the chord opens the danger confirmation for the run, with keep running active", async () => {
+        const app = await mountApp();
+        try {
+            await app.seed([runRow({ runId: "run-a" })]);
+            __resetNoticesForTest();
+            expect(dialogIsOpen()).toBe(false);
+
+            pushAbortChord();
+            const frame = await app.frame();
+
+            expect(dialogIsOpen()).toBe(true);
+            // The message names the run; the panel row also carries the name, so the question is the needle.
+            expect(frame).toContain("Abort Differential expression?");
+            expect(frame).toContain("cannot resume");
+            expect(frame).toContain("keep running");
+
+            // A frame holds no color, so the tone is asserted on the resolved spans: the border glyph of
+            // the danger chrome is double-stroked and painted in the error color, the title too.
+            const colors = theme();
+            const spans = app.spans();
+            const corner = spans.find((span) => span.text.includes("\u2554"));
+            expect(corner).toBeDefined();
+            expect(parseColor(colors.error).equals(corner!.fg)).toBe(true);
+            const title = spans.find((span) => span.text.includes("Abort run"));
+            expect(title && parseColor(colors.error).equals(title.fg)).toBe(true);
+
+            // The active choice is the one painted onAccent; the other choice stays muted.
+            const keep = spans.find((span) => span.text === "keep running");
+            const confirm = spans.find((span) => span.text === "confirm");
+            expect(keep && parseColor(colors.onAccent).equals(keep.fg)).toBe(true);
+            expect(confirm && parseColor(colors.fgMuted).equals(confirm.fg)).toBe(true);
+        } finally {
+            dispatchKey(key("escape"));
+            app.destroy();
+        }
+    });
+
+    test("enter on the default choice keeps the run: the dialog closes and no notice shows", async () => {
+        const app = await mountApp();
+        try {
+            await app.seed([runRow({ runId: "run-a" })]);
+            __resetNoticesForTest();
+
+            pushAbortChord();
+            await app.frame();
+            expect(dialogIsOpen()).toBe(true);
+
+            dispatchKey(key("return"));
+            for (let i = 0; i < 6; i++) await Promise.resolve();
+
+            expect(dialogIsOpen()).toBe(false);
+            expect(currentNotice()).toBeNull();
+            const subject = focusedSubject();
+            expect(subject?.kind === "run" ? subject.run.runId : null).toBe("run-a");
+        } finally {
+            dispatchKey(key("escape"));
+            app.destroy();
+        }
+    });
+
+    test("confirming sends the cancel for the named run and closes the dialog", async () => {
+        const app = await mountApp();
+        const server = stubCancelServer();
+        try {
+            await app.seed([runRow({ runId: "run-a" })]);
+            pushAbortChord();
+            await app.frame();
+            expect(dialogIsOpen()).toBe(true);
+
+            // The active choice starts on keep running; right moves it to confirm, and Enter presses it.
+            dispatchKey(key("right"));
+            dispatchKey(key("return"));
+            await until(() => server.cancels().length > 0);
+            await app.frame();
+
+            expect(server.cancels()).toEqual([{ method: "POST", path: "/api/v1/analyses/analysis-panel/run/run-a/cancel" }]);
+            expect(dialogIsOpen()).toBe(false);
+        } finally {
+            server.restore();
+            dispatchKey(key("escape"));
+            app.destroy();
+        }
+    });
+
+    test("esc sends no cancel and closes the dialog", async () => {
+        const app = await mountApp();
+        const server = stubCancelServer();
+        try {
+            await app.seed([runRow({ runId: "run-a" })]);
+            pushAbortChord();
+            await app.frame();
+            expect(dialogIsOpen()).toBe(true);
+
+            dispatchKey(key("escape"));
+            await app.frame();
+
+            expect(dialogIsOpen()).toBe(false);
+            expect(server.cancels()).toEqual([]);
+            const subject = focusedSubject();
+            expect(subject?.kind === "run" ? subject.run.runId : null).toBe("run-a");
+        } finally {
+            server.restore();
+            app.destroy();
+        }
+    });
+
+    test("the chord under the open dialog opens no second dialog", async () => {
+        const app = await mountApp();
+        const server = stubCancelServer();
+        try {
+            await app.seed([runRow({ runId: "run-a" })]);
+            pushAbortChord();
+            await app.frame();
+            expect(dialogIsOpen()).toBe(true);
+
+            pushAbortChord();
+            await app.frame();
+
+            // One esc closes the one dialog. A second dialog on the stack would stay open.
+            dispatchKey(key("escape"));
+            await app.frame();
+            expect(dialogIsOpen()).toBe(false);
+            expect(server.cancels()).toEqual([]);
+        } finally {
+            server.restore();
+            dispatchKey(key("escape"));
+            app.destroy();
+        }
+    });
+
+    test("while a profile shows, the chord opens nothing", async () => {
+        const app = await mountApp();
+        try {
+            await app.seed([], runningProfile);
+            expect(focusedSubject()?.kind).toBe("profile");
+            expect(activityPanelVisible()).toBe(true);
+
+            pushAbortChord();
+            await app.frame();
+
+            expect(dialogIsOpen()).toBe(false);
+        } finally {
+            dispatchKey(key("escape"));
+            app.destroy();
+        }
+    });
+
+    test("the which-key overlay lists the binding only while a run shows", async () => {
+        const app = await mountApp();
+        try {
+            const abortKey = leaderKeybind("app.activity-panel-abort")[1]!.key;
+            const listed = () => reachableKeys().some((next) => next.stroke === abortKey && next.desc === ABORT_DESC);
+
+            await app.seed([runRow({ runId: "run-a" })]);
+            pushLeader();
+            expect(listed()).toBe(true);
+            expect(await app.frame()).toContain(ABORT_DESC);
+            dispatchKey(key("escape"));
+
+            // A hidden panel is not a panel that shows a run.
+            toggleActivityPanel();
+            pushLeader();
+            expect(listed()).toBe(false);
+            expect(await app.frame()).not.toContain(ABORT_DESC);
+            dispatchKey(key("escape"));
+            toggleActivityPanel();
+
+            // A profile shows next: the run ended and only the profile is active.
+            await app.seed([runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:01:00.000Z" })], runningProfile);
+            expect(focusedSubject()?.kind).toBe("profile");
+            pushLeader();
+            expect(listed()).toBe(false);
+            expect(await app.frame()).not.toContain(ABORT_DESC);
+        } finally {
+            dispatchKey(key("escape"));
             app.destroy();
         }
     });

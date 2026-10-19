@@ -40,6 +40,8 @@ export type ActivityPanelProps = {
     nextKeyLabel: string;
     /** Label for the chord that dismisses the panel. */
     dismissKeyLabel: string;
+    /** Label for the chord sequence that aborts the focused run. A profile has no abort, so its legend never shows it. */
+    abortKeyLabel: string;
     /** Advance to the next active subject. */
     onNext: () => void;
 };
@@ -96,14 +98,20 @@ const REGION_NAME: Record<PanelSubject["kind"], string> = { run: "RUN", profile:
 export function fitPanelLegend(opts: {
     readonly width: number;
     readonly region: string;
+    readonly kind: PanelSubject["kind"];
     readonly position: number;
     readonly activeCount: number;
     readonly nextKeyLabel: string;
     readonly dismissKeyLabel: string;
+    readonly abortKeyLabel: string;
 }): string {
     const multi = opts.activeCount > 1;
     const named = multi ? `${opts.region} ${opts.position}/${opts.activeCount}` : opts.region;
-    const chords = multi ? `${opts.nextKeyLabel} next ${GLYPHS.middot} ${opts.dismissKeyLabel} hide` : `${opts.dismissKeyLabel} hide`;
+    const hide = `${opts.dismissKeyLabel} hide`;
+    // Only a run can be aborted: the run canceler cancels analysis runs, and no canceler exists for the
+    // data profile, so its legend must not advertise a chord that the binding layer leaves disabled.
+    const abort = opts.kind === "run" ? ` ${GLYPHS.middot} ${opts.abortKeyLabel} abort` : "";
+    const chords = multi ? `${opts.nextKeyLabel} next ${GLYPHS.middot} ${hide}${abort}` : `${hide}${abort}`;
     const bare = ` ${opts.region} `;
     // Every rung is padded so the label breathes inside the rule rather than butting against its
     // glyphs. The last is the floor: the region's name is the one part never shed, because a rule
@@ -227,10 +235,12 @@ export function ActivityPanel(props: ActivityPanelProps) {
             // fallback is unreachable on screen — the box carrying the title only renders under a
             // subject — but this memo is eager, so it needs a value before the first one arrives.
             region: REGION_NAME[props.subject?.kind ?? "run"],
+            kind: props.subject?.kind ?? "run",
             position: props.position,
             activeCount: props.activeCount,
             nextKeyLabel: props.nextKeyLabel,
             dismissKeyLabel: props.dismissKeyLabel,
+            abortKeyLabel: props.abortKeyLabel,
         }),
     );
 

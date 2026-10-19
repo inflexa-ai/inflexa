@@ -71,13 +71,6 @@ export type RunBlockProps = {
     /** Ordered steps. */
     steps: RunStepView[];
     /**
-     * Whether to show the `esc detach · ctrl+c abort` footer. Defaults to `true` (the gallery + any
-     * live run view). Set `false` where those keys are NOT the block's to own — e.g. inside the runs
-     * dialog, where `esc` closes the dialog (not the run) and no abort chord is bound, so the footer
-     * would advertise an affordance that does not exist.
-     */
-    hint?: boolean;
-    /**
      * Whether to show the `● name tag` heading line. Defaults to `true`. Set `false` where the block
      * sits directly under a row that already names the run — the sidebar RUNS section renders the
      * progress embed beneath the run's own row, and repeating the name would read as a second run.
@@ -151,8 +144,7 @@ function stepMark(state: RunStepView["state"]): { glyph: string; role: "success"
 
 /**
  * The long-running run / task block: the `●` marker with the run name and tag, a
- * filled/empty progress meter, an indented step list (done / running / queued),
- * and the detach/abort affordance.
+ * filled/empty progress meter, and an indented step list (done / running / queued).
  */
 export function RunBlock(props: RunBlockProps) {
     // Read for its selection state alone, on the marker release path — the block renders nothing from it.
@@ -407,7 +399,6 @@ export function RunBlock(props: RunBlockProps) {
                     </text>
                 </Show>
             </box>
-            {(props.hint ?? true) ? <text fg={theme().fgMuted}>esc detach {GLYPHS.middot} ctrl+c abort</text> : null}
         </box>
     );
 }

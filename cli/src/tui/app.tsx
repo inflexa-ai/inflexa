@@ -20,6 +20,7 @@ import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/s
 import { usePromptRecall } from "./hooks/prompt_recall.ts";
 import { openThread, watchOpenThread, type ThreadSnapshot } from "./hooks/thread.ts";
 import {
+    abortFocusedRun,
     activeSubjectCount,
     focusedSubject,
     focusedSubjectActivity,
@@ -28,6 +29,7 @@ import {
     activityPanelVisible,
     toggleActivityPanel,
     watchActivityPanel,
+    type RunAbortTarget,
 } from "./hooks/activity_panel.ts";
 import { watchRunCompletions } from "./hooks/run_completion.ts";
 import { refreshTransferState, retryTerminalTransfers, storeFlightLines, watchTransfers } from "./hooks/sandbox_gate.tsx";
@@ -47,6 +49,7 @@ import {
     interruptHintLabel,
     leaderKeybind,
     leaderSeq,
+    sequenceLabel,
     KEYS,
     type LayerConfig,
 } from "./keymap.ts";
@@ -487,6 +490,39 @@ export function watchBootRecovery(dialogOf: (recovery: BootRecovery, message: st
             }
         }),
     );
+}
+
+/**
+ * Open the danger confirmation for the abort of `run`, and call `onAnswer` once: `true` for the
+ * confirm, `false` for the keep-running choice, esc, click-outside, or any sweep of the dialog.
+ *
+ * The dialog funnel calls `onCancel` again from its close listener when the cancel came from a click
+ * or from Enter on the active choice, because that path calls `dialogClose("cancel")` itself. The
+ * `answered` flag keeps the answer single in both orders.
+ */
+function confirmRunAbort(run: RunAbortTarget, onAnswer: (confirmed: boolean) => void): void {
+    let answered = false;
+    const answer = (confirmed: boolean): void => {
+        if (answered) return;
+        answered = true;
+        onAnswer(confirmed);
+    };
+    dialogPush(() => (
+        <ConfirmDialog
+            title="Abort run"
+            tone="danger"
+            message={`Abort ${run.name}? Its steps stop, and the run cannot resume.`}
+            cancelLabel="keep running"
+            onConfirm={() => {
+                dialogClose();
+                answer(true);
+            }}
+            onCancel={() => {
+                dialogClose("cancel");
+                answer(false);
+            }}
+        />
+    ));
 }
 
 /** The title, the question, and the button that Enter presses, of the dialog that offers the recovery of a failed boot. */
@@ -977,6 +1013,23 @@ export function App(props: AppProps) {
         ],
     }));
 
+    // The abort of the run the panel shows. A layer of its own, so that which-key lists the chord only
+    // while the panel shows a run (a disabled layer is absent from dispatch and from the overlay), and
+    // MODE_BASE suspends it while the confirmation is open. `leaderKeybind` keeps the final stroke
+    // remappable.
+    useBindings(() => ({
+        mode: MODE_BASE,
+        enabled: activityPanelVisible() && focusedSubject()?.kind === "run",
+        bindings: [
+            {
+                chord: leaderKeybind("app.activity-panel-abort"),
+                run: () => void abortFocusedRun(workspace.analysis?.id ?? null, { confirm: confirmRunAbort }),
+                desc: "Abort the active run",
+                group: "View",
+            },
+        ],
+    }));
+
     // A focus-`target` layer: clear-input (ctrl+u) is live only while the chat textarea is focused —
     // the fine-grained complement to `mode`, so it never fires when a dialog input owns focus. esc
     // FOCUSES the stream's ScrollPane (NORMAL mode) — never a bare blur, so focus always lands on a
@@ -1226,6 +1279,7 @@ export function App(props: AppProps) {
                                 position={focusedSubjectPosition()}
                                 nextKeyLabel={keybindLabel("app.activity-panel-next")}
                                 dismissKeyLabel={keybindLabel("app.activity-panel-toggle")}
+                                abortKeyLabel={sequenceLabel(leaderKeybind("app.activity-panel-abort"))}
                                 onNext={focusNextSubject}
                             />
                         </Show>

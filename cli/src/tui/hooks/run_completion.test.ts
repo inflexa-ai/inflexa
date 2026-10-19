@@ -5,7 +5,7 @@ import { okAsync } from "neverthrow";
 import type { DataProfileView, RunDetail, RunSummary } from "../../api/runs.ts";
 import { __resetNoticesForTest, __pendingNoticeCountForTest, currentNotice, notify } from "./notice.ts";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from "./sidebar_live.ts";
-import { __resetRunCompletionsForTest, completionNoticeText, watchRunCompletions } from "./run_completion.ts";
+import { __resetRunCompletionsForTest, completionNoticeText, markRunAnnounced, watchRunCompletions } from "./run_completion.ts";
 
 function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
@@ -199,6 +199,42 @@ describe("run completion announcement", () => {
 
             expect(currentNotice()).not.toBeNull();
             expect(__pendingNoticeCountForTest()).toBe(0); // exactly the one showing
+            dispose();
+        });
+    });
+
+    test("a run marked as announced raises no notice when a later snapshot shows it terminal", async () => {
+        await createRoot(async (dispose) => {
+            watchRunCompletions();
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+
+            // Another flow told the user already, then a later poll loads the run as canceled.
+            markRunAnnounced("run-a", "canceled");
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "canceled", completedAt: "2026-07-28T10:01:00.000Z" })]));
+            await settle();
+
+            expect(currentNotice()).toBeNull();
+            expect(__pendingNoticeCountForTest()).toBe(0);
+            dispose();
+        });
+    });
+
+    test("marking one run as announced leaves another run's announcement alone", async () => {
+        await createRoot(async (dispose) => {
+            watchRunCompletions();
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
+            markRunAnnounced("run-a", "canceled");
+            await refreshSidebarData(
+                "analysis-1",
+                optsFor([
+                    runRow({ runId: "run-a", status: "canceled", completedAt: "2026-07-28T10:01:00.000Z" }),
+                    runRow({ runId: "run-b", status: "completed", completedAt: "2026-07-28T10:01:00.000Z" }),
+                ]),
+            );
+            await settle();
+
+            expect(currentNotice()?.text).toContain("completed");
+            expect(__pendingNoticeCountForTest()).toBe(0);
             dispose();
         });
     });

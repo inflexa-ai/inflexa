@@ -306,7 +306,6 @@ const BLOCKS: BlockCase[] = [
                 total={mockLongRun.total}
                 steps={mockLongRun.steps}
                 maxSteps={size.railStepRows}
-                hint={false}
                 heading={false}
             />
         ),
@@ -384,6 +383,7 @@ const BLOCKS: BlockCase[] = [
                 position={2}
                 nextKeyLabel="ctrl+n"
                 dismissKeyLabel="ctrl+r"
+                abortKeyLabel="ctrl+x c"
                 onNext={noop}
             />
         ),
@@ -399,6 +399,7 @@ const BLOCKS: BlockCase[] = [
                 position={1}
                 nextKeyLabel="ctrl+n"
                 dismissKeyLabel="ctrl+r"
+                abortKeyLabel="ctrl+x c"
                 onNext={noop}
             />
         ),
@@ -417,6 +418,7 @@ const BLOCKS: BlockCase[] = [
                 position={2}
                 nextKeyLabel="ctrl+n"
                 dismissKeyLabel="ctrl+r"
+                abortKeyLabel="ctrl+x c"
                 onNext={noop}
             />
         ),

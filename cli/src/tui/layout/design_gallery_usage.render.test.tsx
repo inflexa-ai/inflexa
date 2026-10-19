@@ -161,7 +161,6 @@ const CASES: FigureCase[] = [
                 total={mockLongRun.total}
                 steps={mockLongRun.steps}
                 maxSteps={size.railStepRows}
-                hint={false}
                 heading={false}
             />
         ),

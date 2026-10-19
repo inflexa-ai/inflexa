@@ -171,6 +171,19 @@ function announce(run: RunSummary, known: LastKnownRun): void {
     notify({ kind: noticeKindFor(run.status), text: completionNoticeText(run, known) }, 4000, { queue: true });
 }
 
+/**
+ * Record that something else already told the user how `runId` ended with `status`, so the watcher
+ * raises no notice for it. Adds the `(runId, status)` reaction key and drops the run from the set of
+ * runs seen active, which makes a later snapshot that shows the run terminal a no-op for the watcher.
+ *
+ * The abort flow calls this when it raises its own "was canceled" notice, because that notice and the
+ * watcher's would otherwise both fire for one abort when a later poll loads the terminal run.
+ */
+export function markRunAnnounced(runId: string, status: RunStatus): void {
+    reacted.add(reactionKey(runId, status));
+    seenActive.delete(runId);
+}
+
 /** Test hook: forget every observed run and every reaction already taken. */
 export function __resetRunCompletionsForTest(): void {
     reacted.clear();

@@ -1,15 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
 import { createStore } from "solid-js/store";
-import { okAsync, errAsync } from "neverthrow";
+import { okAsync, errAsync, ResultAsync } from "neverthrow";
 import type { StepActivityPart } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { DataProfileState, DataProfileView, RunDetail, RunSummary } from "../../api/runs.ts";
-import type { ClientError } from "../../client/api.ts";
+import type { CancelRunResult, DataProfileState, DataProfileView, RunDetail, RunStatus, RunSummary } from "../../api/runs.ts";
+import { describeClientError, type ClientError } from "../../client/api.ts";
 import type { Workspace } from "../contexts/workspace.ts";
-import { __resetSidebarLiveForTest, refreshSidebarData, type ActiveRunProgress, type RefreshOpts } from "./sidebar_live.ts";
+import type { Notice } from "../theme.ts";
+import { __resetSidebarLiveForTest, refreshSidebarData, runsSnapshot, type ActiveRunProgress, type RefreshOpts, type RunsSnapshot } from "./sidebar_live.ts";
 import {
     __resetActivityPanelForTest,
+    abortFocusedRun,
     activeSubjectCount,
     focusedSubject,
     focusedSubjectActivity,
@@ -20,6 +22,8 @@ import {
     toggleActivityPanel,
     watchActivityPanel,
     type ActivityPanelOpts,
+    type RunAbortOpts,
+    type RunAbortTarget,
 } from "./activity_panel.ts";
 
 // The panel store owns three things: which SUBJECT is focused, whether the panel is dismissed, and the
@@ -731,5 +735,308 @@ describe("activity panel activity for a focused profile", () => {
             expect(focusedSubjectActivity()).toBe("Reading counts.csv");
             dispose();
         });
+    });
+});
+
+// The abort of the focused run. Every edge is injected, so each outcome is driven offline: the tests
+// read the state the recorder collected (who was asked, what was canceled, which notices showed, which
+// analyses were read again), never how many times a function ran.
+
+/** The result of a cancel, canceled by this request with every ledger settled unless the test says otherwise. */
+function cancelResult(runId: string, over: Partial<CancelRunResult> = {}): CancelRunResult {
+    return {
+        runId,
+        workflowId: runId,
+        outcome: "canceled",
+        finalStatus: "canceled",
+        converged: { steps: true, charge: true, mandate: true },
+        ...over,
+    };
+}
+
+/** What an abort did at its injected edges, in the order each edge was reached. */
+type AbortRecord = {
+    /** The runs the confirmation was opened for. */
+    asked: RunAbortTarget[];
+    /** The `(analysisId, runId)` pairs the cancel request went to. */
+    canceled: [string, string][];
+    notices: Notice[];
+    /** The notices raised with `queue: true`, which wait behind the showing one. */
+    queued: Notice[];
+    /** The analyses whose runs were read again. */
+    refreshed: string[];
+    /** The `(runId, status)` pairs marked as announced for the completion watcher. */
+    announced: [string, RunStatus][];
+};
+
+/**
+ * Abort options that record into `record`. `answer` decides each confirmation at once; a test that must
+ * answer later passes `onAsk` and calls the `onAnswer` it receives. `cancel` defaults to the canceled
+ * result of the asked run. `readRuns` defaults to the real runs snapshot, which the refresh edge does not
+ * change here, so it keeps the rows that the test seeded.
+ */
+function abortOpts(
+    record: AbortRecord,
+    cfg: {
+        answer?: boolean;
+        onAsk?: (run: RunAbortTarget, onAnswer: (confirmed: boolean) => void) => void;
+        cancel?: (runId: string) => ResultAsync<CancelRunResult, ClientError>;
+        readRuns?: () => RunsSnapshot;
+    } = {},
+): RunAbortOpts {
+    return {
+        confirm: (run, onAnswer) => {
+            record.asked.push(run);
+            if (cfg.onAsk) cfg.onAsk(run, onAnswer);
+            else onAnswer(cfg.answer ?? true);
+        },
+        cancel: (analysisId, runId) => {
+            record.canceled.push([analysisId, runId]);
+            return cfg.cancel ? cfg.cancel(runId) : okAsync(cancelResult(runId));
+        },
+        refresh: async (analysisId) => {
+            record.refreshed.push(analysisId);
+        },
+        notify: (notice, _durationMs, notifyOpts) => {
+            (notifyOpts?.queue ? record.queued : record.notices).push(notice);
+        },
+        readRuns: cfg.readRuns ?? runsSnapshot,
+        markAnnounced: (runId, status) => {
+            record.announced.push([runId, status]);
+        },
+    };
+}
+
+function newRecord(): AbortRecord {
+    return { asked: [], canceled: [], notices: [], queued: [], refreshed: [], announced: [] };
+}
+
+describe("activity panel abort", () => {
+    test("a confirmed abort cancels the run, reads the runs again, and shows no second notice", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        const record = newRecord();
+        await abortFocusedRun("analysis-1", abortOpts(record));
+
+        // The confirmation names the run by the label the panel shows.
+        expect(record.asked).toEqual([{ runId: "run-a", name: "Differential expression" }]);
+        expect(record.canceled).toEqual([["analysis-1", "run-a"]]);
+        expect(record.refreshed).toEqual(["analysis-1"]);
+        // The completion watcher announces the cancel; a notice here would say it twice.
+        expect(record.notices).toEqual([]);
+    });
+
+    test("a canceled run with a ledger that did not settle gets a warning that names the ledger", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        const record = newRecord();
+        await abortFocusedRun(
+            "analysis-1",
+            abortOpts(record, {
+                cancel: (runId) => okAsync(cancelResult(runId, { converged: { steps: false, charge: true, mandate: false } })),
+            }),
+        );
+
+        expect(record.canceled).toEqual([["analysis-1", "run-a"]]);
+        expect(record.refreshed).toEqual(["analysis-1"]);
+        expect(record.notices).toEqual([{ kind: "warn", text: "Differential expression was canceled, but the step rows and the mandate did not settle." }]);
+    });
+
+    test("the names of the unsettled ledgers read as prose for one, two, and three names", async () => {
+        const text = async (converged: CancelRunResult["converged"]): Promise<string | undefined> => {
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+            const record = newRecord();
+            await abortFocusedRun("analysis-1", abortOpts(record, { cancel: (runId) => okAsync(cancelResult(runId, { converged })) }));
+            return record.notices[0]?.text;
+        };
+
+        expect(await text({ steps: true, charge: false, mandate: true })).toBe("Differential expression was canceled, but the charge did not settle.");
+        expect(await text({ steps: false, charge: true, mandate: false })).toBe(
+            "Differential expression was canceled, but the step rows and the mandate did not settle.",
+        );
+        expect(await text({ steps: false, charge: false, mandate: false })).toBe(
+            "Differential expression was canceled, but the step rows, the charge, and the mandate did not settle.",
+        );
+    });
+
+    test("a cancel that stopped the workflow but left the run row running reports an unsettled row, not a finished run", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        const record = newRecord();
+        await abortFocusedRun(
+            "analysis-1",
+            abortOpts(record, { cancel: (runId) => okAsync(cancelResult(runId, { outcome: "canceled", finalStatus: "running" })) }),
+        );
+
+        expect(record.notices).toEqual([
+            { kind: "error", text: "Differential expression did not settle: the workflow stopped, but the run row still shows running." },
+        ]);
+        expect(record.notices.map((notice) => notice.text).join(" ")).not.toContain("already finished");
+        expect(record.queued).toEqual([]);
+        expect(record.refreshed).toEqual(["analysis-1"]);
+    });
+
+    test("a canceled run that the refreshed runs do not hold is announced by a queued notice", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+
+        const outside = newRecord();
+        await abortFocusedRun("analysis-1", abortOpts(outside, { readRuns: () => ({ kind: "loaded", runs: [runRow({ runId: "run-newer" })] }) }));
+        expect(outside.queued).toEqual([{ kind: "info", text: "Differential expression was canceled." }]);
+        expect(outside.notices).toEqual([]);
+        expect(outside.refreshed).toEqual(["analysis-1"]);
+        // The watcher must not announce the run again when a later poll loads it as terminal.
+        expect(outside.announced).toEqual([["run-a", "canceled"]]);
+
+        // A snapshot that is not loaded cannot show the watcher a transition either.
+        for (const snapshot of [{ kind: "unavailable" }, { kind: "not_ready" }] as const) {
+            const record = newRecord();
+            await abortFocusedRun("analysis-1", abortOpts(record, { readRuns: () => snapshot }));
+            expect(record.queued).toEqual([{ kind: "info", text: "Differential expression was canceled." }]);
+            expect(record.announced).toEqual([["run-a", "canceled"]]);
+        }
+
+        // A snapshot that holds the run leaves the announcement to the watcher.
+        const held = newRecord();
+        await abortFocusedRun("analysis-1", abortOpts(held));
+        expect(held.queued).toEqual([]);
+        expect(held.announced).toEqual([]);
+    });
+
+    test("a declined confirmation sends nothing and changes nothing", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+        const record = newRecord();
+        await abortFocusedRun("analysis-1", abortOpts(record, { answer: false }));
+
+        expect(record.asked.map((run) => run.runId)).toEqual(["run-a"]);
+        expect(record.canceled).toEqual([]);
+        expect(record.refreshed).toEqual([]);
+        expect(record.notices).toEqual([]);
+        expect(focusedRunSubject()?.runId).toBe("run-a");
+    });
+
+    test("a run that finished before the cancel is reported as finished with its status, not as aborted", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        const record = newRecord();
+        await abortFocusedRun(
+            "analysis-1",
+            abortOpts(record, {
+                cancel: (runId) =>
+                    okAsync(
+                        cancelResult(runId, {
+                            outcome: "already_terminal",
+                            finalStatus: "completed",
+                            converged: { steps: false, charge: false, mandate: false },
+                        }),
+                    ),
+            }),
+        );
+
+        expect(record.notices).toEqual([{ kind: "info", text: "Differential expression already finished (completed), so nothing was aborted." }]);
+        expect(record.refreshed).toEqual(["analysis-1"]);
+    });
+
+    test("a cancel that left the run in a status other than canceled is reported as finished with that status", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        const record = newRecord();
+        await abortFocusedRun(
+            "analysis-1",
+            abortOpts(record, { cancel: (runId) => okAsync(cancelResult(runId, { outcome: "canceled", finalStatus: "failed" })) }),
+        );
+
+        expect(record.notices).toEqual([{ kind: "info", text: "Differential expression already finished (failed), so nothing was aborted." }]);
+        expect(record.refreshed).toEqual(["analysis-1"]);
+    });
+
+    test("the abort goes to the run the confirmation named, also after the panel moved to another run", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
+        expect(focusedRunSubject()?.runId).toBe("run-a");
+
+        const record = newRecord();
+        const answers: ((confirmed: boolean) => void)[] = [];
+        const flow = abortFocusedRun(
+            "analysis-1",
+            abortOpts(record, {
+                onAsk: (_run, onAnswer) => {
+                    answers.push(onAnswer);
+                },
+            }),
+        );
+
+        // While the dialog is open run-a ends, and the panel advances to run-b.
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" }), runRow({ runId: "run-b" })]));
+        expect(focusedRunSubject()?.runId).toBe("run-b");
+
+        answers[0]?.(true);
+        await flow;
+
+        expect(record.asked.map((run) => run.runId)).toEqual(["run-a"]);
+        expect(record.canceled).toEqual([["analysis-1", "run-a"]]);
+    });
+
+    test("a failed request shows an error notice with the cause, then reads the runs again", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        const record = newRecord();
+        await abortFocusedRun("analysis-1", abortOpts(record, { cancel: () => errAsync(READ_FAILED) }));
+
+        expect(record.notices).toEqual([{ kind: "error", text: `Could not abort Differential expression: ${describeClientError(READ_FAILED)}` }]);
+        expect(record.refreshed).toEqual(["analysis-1"]);
+    });
+
+    test("a data profile has no abort: no confirmation opens and nothing is sent", async () => {
+        await refreshSidebarData("analysis-1", optsFor([], { profile: profileRow() }));
+        expect(focusedSubject()?.kind).toBe("profile");
+
+        const record = newRecord();
+        await abortFocusedRun("analysis-1", abortOpts(record));
+
+        expect(record).toEqual(newRecord());
+    });
+
+    test("with no subject, or no open analysis, nothing happens", async () => {
+        const record = newRecord();
+        await abortFocusedRun("analysis-1", abortOpts(record));
+        expect(record).toEqual(newRecord());
+
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+        await abortFocusedRun(null, abortOpts(record));
+        expect(record).toEqual(newRecord());
+    });
+
+    test("an open request for one run blocks a second confirmation for that run, not for a different run", async () => {
+        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
+
+        // The cancel of run-a stays open until the test releases it.
+        const held = Promise.withResolvers<void>();
+        const requestOpen = Promise.withResolvers<void>();
+        const record = newRecord();
+        const opts = abortOpts(record, {
+            cancel: (runId) => {
+                if (runId !== "run-a") return okAsync(cancelResult(runId));
+                requestOpen.resolve();
+                return ResultAsync.fromSafePromise(held.promise.then(() => cancelResult(runId)));
+            },
+        });
+
+        const first = abortFocusedRun("analysis-1", opts);
+        await requestOpen.promise;
+
+        // The same run again: no second confirmation.
+        await abortFocusedRun("analysis-1", opts);
+        expect(record.asked.map((run) => run.runId)).toEqual(["run-a"]);
+
+        // A different run is not blocked.
+        focusNextSubject();
+        expect(focusedRunSubject()?.runId).toBe("run-b");
+        await abortFocusedRun("analysis-1", opts);
+        expect(record.asked.map((run) => run.runId)).toEqual(["run-a", "run-b"]);
+        expect(record.canceled).toEqual([
+            ["analysis-1", "run-a"],
+            ["analysis-1", "run-b"],
+        ]);
+
+        // The guard goes when the request settles: run-a can be aborted again.
+        held.resolve();
+        await first;
+        focusNextSubject();
+        expect(focusedRunSubject()?.runId).toBe("run-a");
+        await abortFocusedRun("analysis-1", opts);
+        expect(record.asked.map((run) => run.runId)).toEqual(["run-a", "run-b", "run-a"]);
     });
 });
