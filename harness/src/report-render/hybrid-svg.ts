@@ -68,14 +68,13 @@ function layerNumber(value: number): number {
 
 /** One attribute value with each character that can close it written as an entity. */
 function attributeText(value: string): string {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the SVG grammar: path data has no builtin parser in the platform.
-    return value.replaceAll("&", "&amp;").replace(/"/g, "&quot;").replaceAll("<", "&lt;");
+    return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
 }
 
 /** The root tag of an SVG file, and the transparent background rectangle that the chart runtime writes first. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the SVG grammar: path data has no builtin parser in the platform.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the root tag grammar: `<svg`, a word boundary, an attribute run, and the close.
 const ROOT_TAG = /^<svg\b[^>]*>/;
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the SVG grammar: path data has no builtin parser in the platform.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the background rect grammar: leading whitespace, quoted width and height, `x="0" y="0"`, and the closed element.
 const BACKGROUND_RECT = /^\s*<rect width="[^"]*" height="[^"]*" x="0" y="0"[^>]*><\/rect>/;
 
 /**

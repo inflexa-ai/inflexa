@@ -8,6 +8,7 @@ import { describe, expect, it } from "bun:test";
 
 import { encodeTablePayload, tableDataAsset, TABLE_DATA_GLOBAL, type ColumnDisplay, type TablePayload } from "../table-data.js";
 import { jsonParse } from "../../lib/json.js";
+import { isLowerHex } from "../../lib/text.js";
 import { z } from "zod";
 import { runPageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 // An own key that names a prototype member must stay an own key: a zod record
@@ -124,7 +125,11 @@ describe("tableDataAsset", () => {
     function registryOf(bytes: string): Record<string, TablePayload> {
         const window: Record<string, unknown> = {};
         runPageScript(["window"], bytes, window);
-        return runPageScript<(window: Record<string, unknown>) => Record<string, TablePayload>>(["window"], `return window[${JSON.stringify(TABLE_DATA_GLOBAL)}]`, window);
+        return runPageScript<(window: Record<string, unknown>) => Record<string, TablePayload>>(
+            ["window"],
+            `return window[${JSON.stringify(TABLE_DATA_GLOBAL)}]`,
+            window,
+        );
     }
 
     it("registers the payload under the global map, keyed by the block id", () => {
@@ -151,8 +156,8 @@ describe("tableDataAsset", () => {
     it("names the file by the content hash of its bytes", () => {
         const asset = tableDataAsset(["tbl-1"], payload);
 
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(asset.name).toMatch(/^t-[0-9a-f]{12}\.data\.js$/);
+        const name = asset.name;
+        expect(name.startsWith("t-") && isLowerHex(name.slice(2, 14)) && name.slice(14) === ".data.js").toBe(true);
         // The name is the address of the bytes, thus one payload gives one name.
         expect(tableDataAsset(["tbl-1"], payload).name).toBe(asset.name);
     });

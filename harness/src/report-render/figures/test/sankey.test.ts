@@ -152,7 +152,7 @@ describe("the sankey labels over the flows", () => {
         expect(label.formatter).toBe("{box|{b}}");
         expect(label.rich).toEqual({ box: { backgroundColor: "#ffffff", padding: [0, 2] } });
         for (const svg of Object.values(chartSvgAssets(echarts, "flows", option)._unsafeUnwrap() ?? {})) {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the path and text tag grammar: the tag name, the attribute run, and the text content captured.
             const elements = [...svg.bytes.matchAll(/<(path|text)\b([^>]*)>([^<]*)/g)].map((match) => ({
                 tag: match[1],
                 attributes: match[2],
@@ -168,7 +168,7 @@ describe("the sankey labels over the flows", () => {
             expect(elements[m7 - 1].tag).toBe("path");
             expect(elements[m7 - 1].attributes).toContain('fill="#ffffff"');
             // The box fits the text, and never the wrap width of the label.
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the box path grammar: `M0 <width>l<height> 0` inside the `d` attribute, the width captured.
             const boxWidth = Number(/^M0 [-\d.]+l([\d.]+) 0/.exec(/d="([^"]*)"/.exec(elements[m7 - 1].attributes)?.[1] ?? "")?.[1]);
             expect(boxWidth).toBeGreaterThan(0);
             expect(boxWidth).toBeLessThan(30);

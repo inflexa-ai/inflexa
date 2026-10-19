@@ -17,6 +17,7 @@ import {
     FOCUS_CHART_COLOR,
 } from "../design.js";
 import { optionRecord } from "../option-lens.js";
+import { isHexColor } from "../../lib/text.js";
 
 /** The axis types of the chart runtime. A theme styles an axis by its type, and never by `xAxis` or `yAxis`. */
 const AXIS_TYPES = ["categoryAxis", "valueAxis", "logAxis", "timeAxis"] as const;
@@ -85,8 +86,7 @@ describe("the figure rules of the design source", () => {
         expect(CHART_WIDE_PALETTE).toHaveLength(24);
         expect(new Set(CHART_WIDE_PALETTE).size).toBe(24);
         expect(CHART_WIDE_PALETTE.slice(0, 8)).toEqual([...CHART_PALETTE]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        for (const color of CHART_WIDE_PALETTE) expect(color).toMatch(/^#[0-9a-f]{6}$/);
+        for (const color of CHART_WIDE_PALETTE) expect(isHexColor(color)).toBe(true);
     });
 });
 

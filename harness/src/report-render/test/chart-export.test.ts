@@ -7,6 +7,7 @@ import { chartSvgAssets, renderChartSvg } from "../chart-export.js";
 import { CHART_RENDERERS_SOURCE, exportOption, SIZED_SERIES_MEMBER } from "../chart-renderers.js";
 import { optionNumber, optionPercent, optionRecord, optionRecords } from "../option-lens.js";
 import { jsonClone } from "../../lib/json.js";
+import { isLowerHex, startsWithDigit } from "../../lib/text.js";
 import { captureOf } from "../../lib/test/captures.js";
 import {
     CHART_EXPORT_SIZES,
@@ -122,23 +123,23 @@ describe("the SVG export", () => {
     it("writes each start tag as a sequence of double-quoted attributes, thus the file parses as XML", () => {
         for (const option of [GRADIENT_OPTION, { ...GRADIENT_OPTION, legend: { bottom: 0, data: ["Level"] } }]) {
             const svg = svgOf(option);
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the start tag extraction: a letter head and the attribute run to the close.
             const tags = svg.match(/<[a-zA-Z][^>]*>/g) ?? [];
             expect(tags.length).toBeGreaterThan(10);
             // A double quote inside an attribute value ends the value early, and an XML reader then refuses the file.
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the whole-tag grammar checked against each extracted tag: a name, then attribute runs in double quotes, then the close.
             expect(tags.filter((tag) => !/^<[a-zA-Z][\w:-]*(\s+[\w:-]+="[^"]*")*\s*\/?>$/.test(tag))).toEqual([]);
         }
     });
 
     it("renumbers each instance token in order of first appearance, thus each reference still resolves", () => {
         const svg = svgOf(GRADIENT_OPTION);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the instance token grammar: `zr`, digits, a letter family, and an optional index.
         const tokens = [...new Set(svg.match(/zr\d+-[a-z]+-?\d+/g) ?? [])];
         expect(tokens.length).toBeGreaterThan(2);
         expect(tokens.every((token) => token.startsWith("zr0-"))).toBe(true);
         // A clip path and a gradient each carry an id, and an element names it in a `url(#...)`.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `id` attribute extraction: the value captured between the quotes.
         for (const id of svg.matchAll(/id="([^"]+)"/g)) {
             expect(svg).toContain(`url(#${id[1]})`);
         }
@@ -176,7 +177,7 @@ describe("the SVG export", () => {
         };
         const inline = deriveChartRender(block, rows, undefined, { key: "v1", columns: [] })._unsafeUnwrap().inline;
         const svg = svgOf(inline);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the count of `<polygon ` mark tags, read as a literal count.
         expect(svg.match(/<polygon /g)?.length).toBe(2);
         expect(svg).toContain("<circle");
     });
@@ -203,10 +204,10 @@ describe("the SVG assets of one chart", () => {
         const first = chartSvgAssets(echarts, "c1", GRADIENT_OPTION)._unsafeUnwrap();
         const second = chartSvgAssets(echarts, "c1", GRADIENT_OPTION)._unsafeUnwrap();
         expect(first).toBeDefined();
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(first?.single.name).toMatch(/^c-[0-9a-f]{12}-89mm\.svg$/);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(first?.double.name).toMatch(/^c-[0-9a-f]{12}-183mm\.svg$/);
+        const singleName = first?.single.name ?? "";
+        expect(singleName.startsWith("c-") && isLowerHex(singleName.slice(2, 14)) && singleName.slice(14) === "-89mm.svg").toBe(true);
+        const doubleName = first?.double.name ?? "";
+        expect(doubleName.startsWith("c-") && isLowerHex(doubleName.slice(2, 14)) && doubleName.slice(14) === "-183mm.svg").toBe(true);
         expect(second).toEqual(first);
     });
 
@@ -378,8 +379,7 @@ describe("the export option", () => {
         }
         expect(optionRecords(print.graphic).find((element) => element.bottom !== undefined)?.bottom).toBe(band);
         // The chart runtime draws the one line and the page count of the legend in the file.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(svgOf(CROWDED_LEGEND)).toMatch(/>1\/\d+<\/text>/);
+        expect(hasLegendPageCount(svgOf(CROWDED_LEGEND))).toBe(true);
         // The slide holds the twenty-eight names in lines that leave each panel its room, thus its legend wraps.
         expect(optionRecord(exportOption(CROWDED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080).legend).type).toBeUndefined();
     });
@@ -444,7 +444,7 @@ function barOption(encoding: NonNullable<ChartBlock["encoding"]>, rows: ChartRow
 function boxesOf(svg: string, fill: string): number[][] {
     const boxes: number[][] = [];
     const number = "(-?[\\d.]+)";
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the bar box grammar built with `new RegExp` from the expected move-and-line numbers.
     const bar = new RegExp(`<path d="M${number} ${number}l${number} ${number}l${number} ${number}l${number} ${number}Z"([^>]*)>`, "g");
     for (const match of svg.matchAll(bar)) {
         if (!match[9].includes(`fill="${fill}"`)) continue;
@@ -459,10 +459,22 @@ function boxesOf(svg: string, fill: string): number[][] {
     return boxes;
 }
 
+/** The legend page count line: `>1/`, the page number, then the close of the text element. */
+function hasLegendPageCount(svg: string): boolean {
+    let at = svg.indexOf(">1/");
+    while (at !== -1) {
+        let end = at + 3;
+        while (startsWithDigit(svg.slice(end))) end += 1;
+        if (end > at + 3 && svg.startsWith("</text>", end)) return true;
+        at = svg.indexOf(">1/", at + 1);
+    }
+    return false;
+}
+
 /** The vertical segments in the ink of the chart that a series draws, as `[x, top, bottom]`. The axis lines draw none. */
 function verticalInk(svg: string): number[][] {
     const segments: number[][] = [];
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the axis line grammar: `M<x> <y>L<x> <y>` with each coordinate and the attribute run captured.
     for (const match of svg.matchAll(/<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"([^>]*)>/g)) {
         if (!match[5].includes(`stroke="${CHART_INK}"`) || !match[5].includes("ecmeta_series_index") || match[1] !== match[3]) continue;
         segments.push([Number(match[1]), Math.min(Number(match[2]), Number(match[4])), Math.max(Number(match[2]), Number(match[4]))]);
@@ -480,8 +492,7 @@ describe("the bar of an interval through the server render", () => {
         const bars = boxesOf(svg, CHART_PALETTE[0]);
         expect(bars.length).toBe(2);
         // The value axis holds zero, thus both bars share one base, and the heights keep the ratio of the values.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(svg).toMatch(/>0<\/text>/);
+        expect(svg).toContain(">0</text>");
         expect(bars[0][3]).toBeCloseTo(bars[1][3], 0);
         expect((bars[1][3] - bars[1][1]) / (bars[0][3] - bars[0][1])).toBeCloseTo(0.75, 1);
     });
@@ -539,11 +550,11 @@ describe("the title of a category axis in an export", () => {
         };
         const svg = svgOf(deriveChartRender(block, rows, undefined, { key: "nes", columns: [] })._unsafeUnwrap().inline, "double");
         // The title turns 90 degrees, thus its transform names its x as the fifth member of the matrix.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the rotated title grammar: the matrix transform with the x offset captured, inside the text element.
         const title = /transform="matrix\(0,-1,1,0,(-?[\d.]+),[^)]*\)"[^>]*>GO biological process</.exec(svg);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the term label matcher built with `new RegExp` from the escaped term, inside its tag grammar.
         const label = new RegExp(
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the escaped term inside the attribute grammar of its label element.
             `text-anchor="end"[^>]*transform="translate\\((-?[\\d.]+) [^)]*\\)"[^>]*>${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}<`,
         ).exec(svg);
         expect(title).not.toBeNull();
@@ -616,7 +627,7 @@ describe("the export option at a column width", () => {
  */
 function textExtents(svg: string, lines: readonly string[]): number[][] {
     const extents: number[][] = [];
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the text tag grammar with an optional x attribute and a translate transform, each coordinate and the content captured.
     for (const match of svg.matchAll(/<text[^>]*?(?:\sx="(-?[\d.]+)")?[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*>([^<]*)<\/text>/g)) {
         if (!lines.includes(match[4])) continue;
         const center = Number(match[2]) + Number(captureOf(match, 1) ?? 0);
@@ -629,7 +640,7 @@ function textExtents(svg: string, lines: readonly string[]): number[][] {
 /** The right end of the rightmost x axis line of an SVG: the right edge of the plot. */
 function plotRightEdge(svg: string): number {
     let edge = 0;
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the axis line grammar: `M<x> <y>L<x> <y>` with the ink stroke and the line cap in the attribute run.
     for (const match of svg.matchAll(/<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"[^>]*stroke="#222222"[^>]*stroke-linecap/g)) {
         if (match[2] === match[4]) edge = Math.max(edge, Number(match[3]));
     }
@@ -641,10 +652,9 @@ describe("the title of a color scale in the column export", () => {
 
     /** Check that each line of the title stays inside the canvas and at the right of the plot. */
     function expectClear(svg: string): void {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `>text</text>` span of each text element, with the content captured.
         const lines = svg.match(/>([^<]*)<\/text>/g)?.map((text) => text.slice(1, -7)) ?? [];
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const titleLines = lines.filter((line) => TITLE.includes(line) && line.length > 1 && !/^\d/.test(line));
+        const titleLines = lines.filter((line) => TITLE.includes(line) && line.length > 1 && !startsWithDigit(line));
         expect(titleLines.join(" ")).toBe(TITLE);
         const edge = plotRightEdge(svg);
         expect(edge).toBeGreaterThan(0);
@@ -777,12 +787,12 @@ describe("the export of a faceted chart", () => {
         };
         const svg = svgOf(deriveChartRender(block, rows, undefined, { key: "f2", columns: [] })._unsafeUnwrap().inline, "double");
         // The top of each panel is the upper end of its y axis line.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the axis line grammar with the ink stroke and the line cap, each coordinate captured.
         const tops = [...svg.matchAll(/<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"[^>]*stroke="#222222"[^>]*stroke-linecap/g)]
             .filter((match) => match[1] === match[3])
             .map((match) => Math.min(Number(match[2]), Number(match[4])));
         const labels = [
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the paneled label grammar: a y attribute, a translate transform, the paint order, and the content captured.
             ...svg.matchAll(/<text[^>]*?y="(-?[\d.]+)"[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*paint-order="stroke"[^>]*>10<\/text>/g),
         ].map((match) => Number(match[3]) + Number(match[1]));
         expect(tops.length).toBeGreaterThan(0);
@@ -816,9 +826,7 @@ describe("the export bound of a violin", () => {
 
     it("keeps both SVG files of a violin chart under the point bound", () => {
         const assets = chartSvgAssets(echarts, "v1", violins(10))._unsafeUnwrap();
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(assets?.single.name).toMatch(/-89mm\.svg$/);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(assets?.double.name).toMatch(/-183mm\.svg$/);
+        expect(assets?.single.name.endsWith("-89mm.svg")).toBe(true);
+        expect(assets?.double.name.endsWith("-183mm.svg")).toBe(true);
     });
 });

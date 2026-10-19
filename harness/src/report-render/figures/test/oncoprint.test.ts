@@ -10,6 +10,7 @@ import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption 
 import { CHART_BODY_PX, CHART_SLOT_LIMIT } from "../../design.js";
 import { CELL_GLYPH_RENDERER } from "../../chart-renderers.js";
 import { ALTERATION_CLASS_COLORS, CELL_GROUND_COLOR, ONCOPRINT_ROW_PX } from "../oncoprint.js";
+import { isHexColor } from "../../../lib/text.js";
 import {
     optionArray,
     optionNullableNumbers,
@@ -109,8 +110,7 @@ describe("the oncoprint figure", () => {
         const payload = optionStrings(optionRecord(cellSeries(option).itemPayload).colors);
         const silent = payload[cellClass(option, "TCGA-AB-2802", "DNMT3A")];
         expect(Object.values(ALTERATION_CLASS_COLORS)).not.toContain(silent);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(silent).toMatch(/^#[0-9a-f]{6}$/);
+        expect(isHexColor(silent)).toBe(true);
         // The fixed map holds the common classes of the MAF standard.
         expect(Object.keys(ALTERATION_CLASS_COLORS)).toEqual([
             "Missense_Mutation",

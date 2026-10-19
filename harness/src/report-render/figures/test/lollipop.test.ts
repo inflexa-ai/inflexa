@@ -15,6 +15,11 @@ import { must } from "../../../lib/test/guards.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
+/** Any character that ends a text line: the feed, the return, and the two Unicode line separators. */
+function hasLineBreak(value: string): boolean {
+    return value.includes("\n") || value.includes("\r") || value.includes("\u2028") || value.includes("\u2029");
+}
+
 const HASH = `sha256:${"a".repeat(64)}`;
 
 const ENCODING: Encoding = { x: "aa_position", y: "count", group: "variant_classification", label: "protein_change" };
@@ -141,8 +146,8 @@ describe("the lollipop figure", () => {
         expect(lanes[0]).not.toBe(lanes[1]);
         expect(lanes[2]).toBe(lanes[0]);
         expect(areas[3][0].name).toBe("SAM-dependent MTase C5-type");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(optionRecord(areas[3][0].label).formatter).toMatch(/^SAM-dependent/);
+        const formatter = optionRecord(areas[3][0].label).formatter;
+        expect(typeof formatter === "string" && formatter.startsWith("SAM-dependent")).toBe(true);
         // The band axis carries the position title, and the stem axis above it carries no tick label.
         const [stemAxis, bandAxis] = axisList(option, "xAxis");
         expect(stemAxis.axisLabel).toEqual(expect.objectContaining({ show: false }));
@@ -159,8 +164,9 @@ describe("the lollipop figure", () => {
         const labels = bandAreas(option)
             .slice(1)
             .map(([from]) => optionRecord(from.label).formatter);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(labels[0]).toMatch(/^Interaction.*…$/);
+        // A narrow box truncates the name to its head and an ellipsis, with no line break inside.
+        const label = labels[0];
+        expect(typeof label === "string" && label.startsWith("Interaction") && label.endsWith("…") && !hasLineBreak(label)).toBe(true);
         expect(labels[1]).toBe("PWWP");
         const tiny = derive(lollipop(), { track: { rows: [{ start: 591, end: 597, name: "Juxtamembrane", protein_length: 993 }] } });
         expect(optionRecord(bandAreas(tiny)[1][0].label).show).toBe(false);

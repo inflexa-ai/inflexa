@@ -161,7 +161,7 @@ const GENE_CHARACTER_SHARE = 0.6;
 const GENE_GAP_CHARACTERS = 1;
 
 /** The trailing unit of a declared position label, which the megabase axis replaces. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the trailing unit in parentheses: flexible whitespace, an alternation of four unit words, caseless.
 const POSITION_UNIT = /\s*\((bp|base pairs|kb|Mb)\)\s*$/i;
 
 /** The columns of one locuszoom block. */
@@ -562,7 +562,7 @@ function positionTitle(context: FigureContext, column: string, chromosome: strin
     const declared = declaredForColumn(context.labels, column);
     if (declared !== undefined) return `${declared.replace(POSITION_UNIT, "")} (Mb)`;
     if (chromosome === undefined) return "Position (Mb)";
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caseless `chr` prefix of a chromosome name.
     const name = chromosome.replace(/^chr/i, "");
     return `Position on chr${name} (Mb)`;
 }

@@ -159,7 +159,7 @@ describe("a raw script sink stays hardened", () => {
 
         // The inline JSON parses whole over the first `</script>`, thus the escape kept the element intact.
         // The cell round-trips byte for byte, thus the escape is transparent to the reader.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the JSON script tag grammar: the body captured lazily to the first close tag.
         const match = /<script type="application\/json">([\s\S]*?)<\/script>/.exec(html);
         if (match === null) {
             throw new Error("The page holds no application/json script element.");

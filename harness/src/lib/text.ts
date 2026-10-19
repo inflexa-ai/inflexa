@@ -92,6 +92,11 @@ export function startsWithLetter(value: string): boolean {
     return isAsciiUpper(code) || isAsciiLower(code);
 }
 
+/** A CSS hex color: `#` plus six lowercase hex digits. */
+export function isHexColor(value: string): boolean {
+    return value.length === 7 && value[0] === "#" && isLowerHex(value.slice(1));
+}
+
 /** The `YYYY-MM-DD` character positions. This reads the layout only — it does not validate the calendar. */
 export function isIsoDate(value: string): boolean {
     return (

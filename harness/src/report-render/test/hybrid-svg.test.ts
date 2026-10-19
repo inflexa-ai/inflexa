@@ -55,7 +55,7 @@ const LAYER: PointLayerImage = { href: "data:image/png;base64,iVBORw0KGgo=", x: 
 /** The shared vector of the composition: each entry runs through both twins. */
 const COMPOSE_VECTOR: readonly { svg: string; layer: PointLayerImage; size: SvgRootSize }[] = [
     { svg: RUNTIME_SVG, layer: LAYER, size: SINGLE },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the background rect tag grammar stripped once, attributes and all.
     { svg: RUNTIME_SVG.replace(/<rect[^>]*><\/rect>\n/, ""), layer: LAYER, size: SINGLE },
     { svg: RUNTIME_SVG.replace('width="336" height="253"', 'width="1920" height="1080"'), layer: LAYER, size: SLIDE },
     { svg: RUNTIME_SVG, layer: { ...LAYER, href: 'data:x"><script>&' }, size: SINGLE },
@@ -78,8 +78,7 @@ const SERIES_VECTOR: readonly unknown[] = [
 describe("the composition of a hybrid SVG", () => {
     it("puts one image of the point layer after the background rectangle, under each vector mark", () => {
         const svg = composeHybridSvg(RUNTIME_SVG, LAYER, SINGLE);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(svg.match(/<image /g)?.length).toBe(1);
+        expect(svg.split("<image ").length - 1).toBe(1);
         const image = svg.indexOf("<image ");
         expect(image).toBeGreaterThan(svg.indexOf("<rect "));
         expect(image).toBeLessThan(svg.indexOf("<path "));
@@ -96,7 +95,7 @@ describe("the composition of a hybrid SVG", () => {
     });
 
     it("puts the image right after the root when the file holds no background rectangle", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the background rect tag grammar stripped once, attributes and all.
         const svg = composeHybridSvg(RUNTIME_SVG.replace(/<rect[^>]*><\/rect>\n/, ""), LAYER, SINGLE);
         expect(svg.indexOf("<image ")).toBe(svg.indexOf(">") + 2);
     });
@@ -446,20 +445,19 @@ describe("the page build of a hybrid SVG", () => {
         expect(svg).not.toBeNull();
         const text = svg ?? "";
         expect(text.startsWith('<svg width="89mm" height="67mm" ')).toBe(true);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(text.match(/<image /g)?.length).toBe(1);
+        expect(text.split("<image ").length - 1).toBe(1);
         expect(text).toContain('href="data:image/png;base64,AAAA"');
         // The axis names and the name of the labeled row stay vector text.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `<text>` tag grammar: the attribute run, then the whole content.
         expect(text).toMatch(/<text[^>]*>Chromosome<\/text>/);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `<text>` tag grammar: the attribute run, then the whole content.
         expect(text).toMatch(/<text[^>]*>rs2<\/text>/);
         // The raster draws at 300 DPI in the print theme, and the crop reads the grid rectangle at that ratio.
         expect(raster.init).toMatchObject({ theme: CHART_PRINT_THEME_NAME, renderer: "canvas", width: 336, height: 253, devicePixelRatio: 300 / 96 });
         if (raster.ratio === undefined) throw new Error("expected a raster ratio");
         expect(raster.ratio).toBe(300 / 96);
         const [sx, sy, sw, sh] = drawn[0];
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `<image>` attribute grammar with the box coordinates captured in order.
         const image = /<image [^>]*x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(text);
         expect(image).not.toBeNull();
         const [ix, iy, iw, ih] = (image ?? []).slice(1).map(Number);

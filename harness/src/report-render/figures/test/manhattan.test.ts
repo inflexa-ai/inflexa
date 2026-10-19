@@ -525,11 +525,11 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
     }
 
     /** A text that names chromosome 2, bare or with a `chr` prefix, alone or before a position. */
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the chromosome 2 token: optional leading whitespace, a caseless optional `chr` prefix, and a lookahead that keeps `20` or `2.` out.
     const CHROMOSOME_TWO = /^\s*(chr)?2(?![\d.,])/i;
 
     /** A text of a genome position on the x axis. */
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the position label grammar: `chr`, a `\\w` run, `: `, digits and points, then ` Mb`.
     const POSITION = /^chr\w+: [\d.]+ Mb$/;
 
     it("draws the chromosome names under the plot before a zoom", () => {
@@ -556,7 +556,7 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
         // Chromosome 2 starts at the last drawn position of chromosome 1, 248.9 Mb, and chromosome 3 starts at 491 Mb.
         const { under } = textsAfter([{ x: [100e6, 600e6], y: [0, 15] }]);
         expect(under.filter((text) => POSITION.test(text))).toEqual(["chr1: 200 Mb", "chr2: 51.1 Mb", "chr2: 151.1 Mb", "chr3: 9 Mb"]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the one-digit matcher of the matcher API, inside arrayContaining.
         expect(under).not.toEqual(expect.arrayContaining([expect.stringMatching(/^\d$/)]));
     });
 

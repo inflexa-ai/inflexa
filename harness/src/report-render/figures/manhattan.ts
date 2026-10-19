@@ -35,6 +35,7 @@ import { MANHATTAN_P_THRESHOLD } from "../chart-presets.js";
 import { GENOME_MEMBER, GENOME_POSITION_FUNCTION, type GenomeAxis } from "../chart-toolbox.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { CHART_INK, CHART_PALETTE, MUTED_CHART_COLOR } from "../design.js";
+import { isDigits } from "../../lib/text.js";
 import { formatNumberCell, typographicExponent } from "../number-format.js";
 import type { RenderProblem } from "../types.js";
 import { categoryName, transformColumn } from "./common.js";
@@ -207,7 +208,7 @@ type Chromosome = {
 const NAMED_CHROMOSOMES: Readonly<Record<string, number>> = { X: 0, Y: 1, MT: 2, M: 2 };
 
 /** The text prefix of a chromosome name that some tables carry, for example `chr1`. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caseless `chr` prefix of a chromosome name.
 const CHROMOSOME_PREFIX = /^chr/i;
 
 /**
@@ -217,8 +218,7 @@ const CHROMOSOME_PREFIX = /^chr/i;
 export function compareChromosomes(a: Cell, b: Cell): number {
     const rank = (cell: Cell): [number, number, string] => {
         const name = String(cell).trim().replace(CHROMOSOME_PREFIX, "");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
-        if (/^\d+$/.test(name)) return [0, Number(name), name];
+        if (isDigits(name)) return [0, Number(name), name];
         const named = typedMember(NAMED_CHROMOSOMES, name.toUpperCase());
         return named !== undefined ? [1, named, name] : [2, 0, name];
     };

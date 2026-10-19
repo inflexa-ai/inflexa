@@ -33,7 +33,7 @@ import { optionMemberOrUndefined } from "./option-lens.js";
 import { errorMessage } from "../lib/thrown.js";
 
 /** One instance token of the chart runtime: a class, a clip path, or a gradient, for example `zr1-cls-2`. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the instance token grammar: `zr`, digits, a letter family, and an optional index, global.
 const INSTANCE_TOKEN = /zr\d+-[a-z]+-?\d+/g;
 
 /**
@@ -41,7 +41,7 @@ const INSTANCE_TOKEN = /zr\d+-[a-z]+-?\d+/g;
  * a `url(#...)` reference, and the style block. A text node is none of them, thus a category name that
  * reads as a token keeps its text.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the token places: an `id` or `class` attribute value, a `url(#...)` reference, or a `<style>` block, each in one pass.
 const TOKEN_PLACES = /\s(?:id|class)="[^"]*"|url\(#[^)]*\)|<style[^>]*>[\s\S]*?<\/style>/g;
 
 /** The count of hash characters in an asset name. It matches the name of a table asset. */
@@ -160,7 +160,7 @@ function finishedSvg(svg: string, size: ChartExportSize): string {
     const renumber = (token: string): string => {
         let next = tokens.get(token);
         if (next === undefined) {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the grammar of this module's input: no builtin or parser knows it.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the family letters of an instance token, captured at its head.
             const family = /^zr\d+-([a-z]+)/.exec(token)?.[1] ?? "t";
             next = `zr0-${family}-${tokens.size}`;
             tokens.set(token, next);

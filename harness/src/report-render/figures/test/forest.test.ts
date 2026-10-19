@@ -124,7 +124,7 @@ describe("the forest figure", () => {
             { term: "b", hr: -20, lower: -40, upper: -15, pvalue: 0.02 },
         ];
         const svg = renderChartSvg(echarts, derive(forestBlock(), rows), CHART_EXPORT_SIZES.single)._unsafeUnwrap();
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `<text>` tag grammar: the attribute run and the text content captured.
         const texts = [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
         expect(texts).toContain("0");
     });
@@ -229,7 +229,7 @@ describe("the forest figure", () => {
 
     it("keeps the column titles of an export at its top edge, because an export has no toolbox", () => {
         const svg = renderChartSvg(echarts, derive(forestBlock()), CHART_EXPORT_SIZES.single)._unsafeUnwrap();
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the column title grammar: a translate transform with the y offset captured, inside the `<text>` tag.
         const title = /<text[^>]*transform="translate\([\d.]+ ([\d.]+)\)"[^>]*>pvalue<\/text>/.exec(svg);
         expect(title).not.toBeNull();
         expect(Number(title?.[1])).toBeLessThan(TOOLBOX_BAND_PX);

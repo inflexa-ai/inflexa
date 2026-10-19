@@ -48,6 +48,7 @@ import {
     TSPROV_GLOBAL,
 } from "../page.js";
 import { formatTableCell } from "../number-format.js";
+import { isAlpha, isDigits, isLowerHex, startsWithDigit, startsWithLetter } from "../../lib/text.js";
 import { REPORT_PROVENANCE_GLOBAL } from "../provenance-data.js";
 import { TABLE_DATA_GLOBAL } from "../table-data.js";
 import type { FigureMember, FigureModule } from "../figures/index.js";
@@ -92,8 +93,67 @@ const citation: CitationBlock["binding"] = { kind: "citation", idKind: "pmid", i
 const scalarRef: MetricBlock["value"] = { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
 
 /** The descriptor form of one `srcset` candidate: a pixel ratio such as `2x`, or a width such as `600w`. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-const SRCSET_DESCRIPTOR = /^\d+(?:\.\d+)?[wx]$/;
+function isSrcsetDescriptor(value: string): boolean {
+    const unit = value.slice(-1);
+    if (unit !== "w" && unit !== "x") return false;
+    const number = value.slice(0, -1);
+    const point = number.indexOf(".");
+    if (point === -1) return isDigits(number);
+    return isDigits(number.slice(0, point)) && isDigits(number.slice(point + 1)) && !number.slice(point + 1).includes(".");
+}
+
+/** A remote reference: an `http:` or an `https:` value, in any case. The gate reads the start of the value. */
+function isHttpRemote(value: string): boolean {
+    const lower = value.toLowerCase();
+    return lower.startsWith("http:") || lower.startsWith("https:");
+}
+
+/** A value that names a scheme: a letter head, then scheme characters, then the colon. */
+function namesScheme(value: string): boolean {
+    const colon = value.indexOf(":");
+    if (colon < 1) return false;
+    const scheme = value.slice(0, colon);
+    if (!startsWithLetter(scheme)) return false;
+    for (let i = 1; i < scheme.length; i += 1) {
+        const ch = scheme[i];
+        if (!isAlpha(ch) && !isDigits(ch) && ch !== "+" && ch !== "." && ch !== "-") return false;
+    }
+    return true;
+}
+
+/** The custom property with a pixel length: `--content-max:`, pattern whitespace, digits, then `px`. */
+function hasContentMaxPx(css: string): boolean {
+    let at = css.indexOf("--content-max:");
+    while (at !== -1) {
+        let end = at + "--content-max:".length;
+        while (isPatternSpace(css.charCodeAt(end))) end += 1;
+        let digits = 0;
+        while (startsWithDigit(css.slice(end))) {
+            end += 1;
+            digits += 1;
+        }
+        if (digits > 0 && css.startsWith("px", end)) return true;
+        at = css.indexOf("--content-max:", at + 1);
+    }
+    return false;
+}
+
+/** One character of the pattern whitespace class, whose set the trim methods do not share. */
+function isPatternSpace(code: number): boolean {
+    return (
+        code === 32 ||
+        (code >= 9 && code <= 13) ||
+        code === 0xa0 ||
+        code === 0x1680 ||
+        (code >= 0x2000 && code <= 0x200a) ||
+        code === 0x2028 ||
+        code === 0x2029 ||
+        code === 0x202f ||
+        code === 0x205f ||
+        code === 0x3000 ||
+        code === 0xfeff
+    );
+}
 
 /**
  * Each candidate URL of one `srcset` value.
@@ -104,11 +164,12 @@ const SRCSET_DESCRIPTOR = /^\d+(?:\.\d+)?[wx]$/;
  */
 function srcsetCandidates(list: string): string[] {
     const candidates: string[] = [];
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a split over runs of the Unicode whitespace class.
     for (const token of list.split(/\s+/)) {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const trimmed = token.replace(/^,+|,+$/g, "");
-        if (trimmed === "" || SRCSET_DESCRIPTOR.test(trimmed)) continue;
+        let trimmed = token;
+        while (trimmed.startsWith(",")) trimmed = trimmed.slice(1);
+        while (trimmed.endsWith(",")) trimmed = trimmed.slice(0, -1);
+        if (trimmed === "" || isSrcsetDescriptor(trimmed)) continue;
         if (trimmed.startsWith("data:")) {
             candidates.push(trimmed);
             continue;
@@ -129,7 +190,7 @@ function srcsetCandidates(list: string): string[] {
  */
 function attributeReferences(html: string): string[] {
     const references: string[] = [];
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the reference attribute grammar: `src`, `srcset`, or `href`, flexible whitespace, a value in either quote form, captured.
     for (const match of html.matchAll(/\b(srcset|src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
         const value = must(captureOf(match, 2) ?? captureOf(match, 3), "the quoted value of a src/href/srcset match");
         if (match[1] === "srcset") references.push(...srcsetCandidates(value));
@@ -168,21 +229,21 @@ function referenceSites(html: string, value: string): string[] {
  */
 function styleReferences(css: string): string[] {
     const references: string[] = [];
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `url()` grammar: flexible whitespace and a value in each of the three forms, captured.
     for (const match of css.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/g)) {
         references.push(match[1]);
     }
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `@import` grammar: flexible whitespace and a value in either quote form, captured.
     for (const match of css.matchAll(/@import\s+(?:"([^"]*)"|'([^']*)')/g)) {
         references.push(match[1]);
     }
     // One declaration ends at its semicolon, thus the scan of a list stops there. A comma divides the
     // candidates, and each candidate leads with its quoted source. Thus a `type(...)` hint inside a
     // candidate never reads as a source of its own.
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `image-set(` grammar: the candidate list up to the semicolon, captured.
     for (const list of css.matchAll(/image-set\(([^;]*)/g)) {
         for (const candidate of list[1].split(",")) {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a leading-whitespace quoted form: either quote style, captured.
             const quoted = /^\s*(?:"([^"]*)"|'([^']*)')/.exec(candidate);
             if (quoted !== null) references.push(quoted[1]);
         }
@@ -260,7 +321,7 @@ describe("renderReportPage text lists", () => {
     });
 
     it("fills the content column with the list, the same as with a paragraph", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `.report-list` rule grammar: flexible whitespace at the brace, the body captured.
         const listRules = [...DESIGN_CSS.matchAll(/\.report-list\s*\{([^}]*)\}/g)].map((match) => match[1]);
         expect(listRules.length).toBe(1);
         // A list reads at the measure of the prose around it, thus no inner width caps it.
@@ -548,10 +609,10 @@ describe("the provenance data assets", () => {
         const second = (await renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } }))._unsafeUnwrap();
 
         const [documentAsset, attestationAsset] = provenanceAssets(first.dataAssets);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(documentAsset.name).toMatch(/^prov-[0-9a-f]{12}\.data\.js$/);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(attestationAsset.name).toMatch(/^prov-[0-9a-f]{12}\.sig\.data\.js$/);
+        const documentName = documentAsset.name;
+        expect(documentName.startsWith("prov-") && isLowerHex(documentName.slice(5, 17)) && documentName.slice(17) === ".data.js").toBe(true);
+        const attestationName = attestationAsset.name;
+        expect(attestationName.startsWith("prov-") && isLowerHex(attestationName.slice(5, 17)) && attestationName.slice(17) === ".sig.data.js").toBe(true);
         expect(second.dataAssets).toEqual(first.dataAssets);
         expect(second.html).toBe(first.html);
     });
@@ -902,7 +963,7 @@ describe("the lineage stamp and the popover control", () => {
 
     it("holds no popover rule that no emitter writes", async () => {
         const html = await groundedPage(PROVENANCE);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `.report-lineage` class-name grammar: the suffix letters and hyphens captured.
         const classes = [...new Set([...DESIGN_CSS.matchAll(/\.(report-lineage[a-z-]*)/g)].map((match) => match[1]))];
 
         expect(classes.length).toBeGreaterThan(1);
@@ -939,7 +1000,7 @@ describe("the lineage stamp and the popover control", () => {
     });
 
     it("caps the body inside the viewport and holds the panel above the control where it does not fit", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `.report-lineage-body` rule grammar: flexible whitespace at the brace, the body captured.
         const bodyRule = /\.report-lineage-body\s*\{([^}]*)\}/.exec(DESIGN_CSS);
         if (bodyRule === null) {
             throw new Error("The design sheet holds no body rule for the lineage popover.");
@@ -999,7 +1060,7 @@ describe("the lineage stamp and the popover control", () => {
     });
 
     it("sizes the panel to its longest row up to a cap, and holds that width across the fit", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `.report-lineage-popover` rule grammar: the body captured.
         const rule = /\.report-lineage-popover \{([^}]*)\}/.exec(DESIGN_CSS);
         if (rule === null) {
             throw new Error("The design sheet holds no rule for the lineage popover.");
@@ -1132,8 +1193,7 @@ describe("the page stands alone", () => {
      * open, thus none of them admits one.
      */
     function remoteSitesOf(html: string): string[] {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const remote = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)].filter((value) => /^https?:/i.test(value));
+        const remote = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)].filter(isHttpRemote);
         return [...new Set(remote.flatMap((value) => referenceSites(html, value)))];
     }
 
@@ -1149,10 +1209,8 @@ describe("the page stands alone", () => {
      * start of the value, thus a namespace URI inside a data URI never reads as one.
      */
     function insideThePage(value: string): boolean {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            return value.startsWith("data:") || /^https?:/i.test(value);
+        if (namesScheme(value)) {
+            return value.startsWith("data:") || isHttpRemote(value);
         }
         return !value.startsWith("/") && !value.split("/").includes("..");
     }
@@ -1238,8 +1296,7 @@ describe("the page stands alone", () => {
 describe("the stands-alone extraction", () => {
     /** The remote references of a value list. The test reads the start of a value, as the gate does. */
     function remote(values: string[]): string[] {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        return values.filter((value) => /^https?:/i.test(value));
+        return values.filter(isHttpRemote);
     }
 
     it("reads a remote source out of each attribute form that HTML admits", () => {
@@ -1682,7 +1739,7 @@ describe("the one content column", () => {
     });
 
     it("caps no prose measure below the column width", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the CSS comment grammar, and the `.report-prose` rule with flexible whitespace and its body captured.
         const proseRules = [...DESIGN_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.report-prose\s*\{([^}]*)\}/g)].map((match) => match[1]);
         expect(proseRules.length).toBeGreaterThan(0);
         // An inner measure on the prose alone leaves a half-empty band beside a full-width table.
@@ -1690,10 +1747,9 @@ describe("the one content column", () => {
             expect(body).not.toContain("max-width");
         }
         // The width rides one token, thus each region reads the same value.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `.report-content` rule grammar: flexible whitespace, the body to the close brace, and the declaration's flexible whitespace.
         expect(DESIGN_CSS).toMatch(/\.report-content\s*\{[^}]*max-width:\s*var\(--content-max\)/);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(DESIGN_CSS).toMatch(/--content-max:\s*\d+px/);
+        expect(hasContentMaxPx(DESIGN_CSS)).toBe(true);
     });
 });
 
@@ -1780,8 +1836,7 @@ describe("the References appendix", () => {
         // Every marker of a page that holds each block kind reads as a bracket number.
         expect(markers.length).toBeGreaterThan(0);
         for (const marker of markers) {
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            expect(marker).toMatch(/^\[\d+\]$/);
+            expect(marker.startsWith("[") && marker.endsWith("]") && isDigits(marker.slice(1, -1))).toBe(true);
         }
         // The superscript notation retires, thus no element of the page carries it.
         expect(html).not.toContain("<sup");
@@ -1795,9 +1850,9 @@ describe("the References appendix", () => {
     });
 
     it("reads quieter than the body of the report", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `.report-ref-item` rule grammar: flexible whitespace at the brace, the body captured.
         const itemRules = [...DESIGN_CSS.matchAll(/\.report-ref-item\s*\{([^}]*)\}/g)].map((match) => match[1]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `font-size: <n>px` declaration grammar: flexible whitespace, the pixel count captured.
         const sizes = itemRules.flatMap((body) => [...body.matchAll(/font-size:\s*(\d+)px/g)].map((match) => Number(match[1])));
         expect(sizes.length).toBeGreaterThan(0);
         // The body reads at 16px. A reader consults one entry of the appendix from a marker, thus the
@@ -2121,12 +2176,27 @@ describe("the section scrollspy", () => {
         expect(run.active()).toEqual(["#sec-1"]);
     });
 
+    /** The observer margin of the spy: `0px 0px -`, a percent count, then `% 0px`. */
+    function hasNegativeBandMargin(margin: string): boolean {
+        let at = margin.indexOf("0px 0px -");
+        while (at !== -1) {
+            let end = at + 9;
+            let digits = 0;
+            while (startsWithDigit(margin.slice(end))) {
+                end += 1;
+                digits += 1;
+            }
+            if (digits > 0 && margin.startsWith("% 0px", end)) return true;
+            at = margin.indexOf("0px 0px -", at + 1);
+        }
+        return false;
+    }
+
     it("shrinks the observation box to the top band of the viewport", () => {
         const run = runSpy(["sec-1"]);
         run.intersect([true]);
         // The negative bottom margin is what keeps one section in the box at a time.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(run.rootMargin).toMatch(/0px 0px -\d+% 0px/);
+        expect(hasNegativeBandMargin(run.rootMargin)).toBe(true);
     });
 
     it("marks the first link when every section starts below the box", () => {
@@ -2168,7 +2238,7 @@ describe("the section scrollspy", () => {
     it("reads the end of the box from the margin that the observer takes", () => {
         const run = runSpy(["sec-1"]);
         run.intersect([true]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the negative bottom margin of the observer: the percent count captured before `% 0px`.
         const margin = /-(\d+)% 0px/.exec(run.rootMargin);
         expect(margin).not.toBeNull();
         // The script is browser source text, thus the test reads it as text. The fallback measures the same
@@ -3035,7 +3105,7 @@ describe("renderReportPage number format", () => {
 describe("the stat card value style rule", () => {
     /** The declaration body of each `.stat-card-value` rule of a style sheet, with each comment removed. */
     function statValueRules(css: string): string[] {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the CSS comment grammar, and the `.stat-card-value` rule with flexible whitespace and its body captured.
         return [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.stat-card-value\s*\{([^}]*)\}/g)].map((match) => match[1]);
     }
 
@@ -3045,7 +3115,7 @@ describe("the stat card value style rule", () => {
 
         // A value that the number format cannot shorten, for example a long identifier, would paint past
         // the card edge without the guard.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `overflow-wrap: anywhere` declaration grammar: the declaration start, flexible whitespace, and a word boundary.
         expect(rules.some((body) => /(?:^|;)\s*overflow-wrap\s*:\s*anywhere\b/.test(body))).toBe(true);
     });
 });
@@ -3251,7 +3321,7 @@ describe("the chart exports", () => {
         const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
         const svgs = rendered.dataAssets.filter((asset) => asset.name.endsWith(".svg"));
 
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `c-<12 hex>-` head of a chart asset name, replaced once for the snapshot.
         expect(svgs.map((asset) => asset.name.replace(/c-[0-9a-f]{12}-/, "c-HASH-"))).toEqual(["c-HASH-89mm.svg", "c-HASH-183mm.svg"]);
         const $ = load(rendered.html);
         for (const asset of svgs) {
@@ -3317,7 +3387,7 @@ describe("the chart exports", () => {
         expect(control.attr("data-chart-menu")).toBe("chart-bars");
         expect(control.attr("tabindex")).toBeUndefined();
         expect(control.text()).toBe(DOWNLOAD_CONTROL_LABEL);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the print media block grammar: the block span, the download rule, and flexible whitespace before `display: none;`.
         expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-download \{\s*display: none;/);
     });
 
@@ -3342,10 +3412,10 @@ describe("the chart exports", () => {
         const single = rendered.dataAssets.find((asset) => asset.name.endsWith("-89mm.svg"));
         // The export reads the inline option, thus each point of the table is in the file. A dense scatter
         // draws one path, and each point is one move of it.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the dense path grammar: the data attribute value captured from 1000 characters on.
         const cloud = /<path d="([^"]{1000,})"/.exec(single?.bytes ?? "");
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(cloud?.[1].match(/M/g)?.length).toBe(6000);
+        const moves = cloud === null ? undefined : cloud[1].split("M").length - 1;
+        expect(moves).toBe(6000);
     });
 
     it("stages no SVG for a scatter past the crowd row count, and the menu names the hybrid SVG that the page builds", async () => {
@@ -3370,7 +3440,7 @@ describe("the chart exports", () => {
         const fault = $(`#chart-crowd-menu .${MENU_FAULT_CLASS}`);
         expect(fault.text()).toBe(HYBRID_FAULT_NOTE);
         expect(fault.hasClass(MENU_FAULT_SHOWN_CLASS)).toBe(false);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the menu fault rule grammar: flexible whitespace before `display: none;`.
         expect(DESIGN_CSS).toMatch(/\.report-chart-menu-fault \{\s*display: none;/);
         expect(fault.attr("role")).toBe("menuitem");
         expect(fault.attr("aria-disabled")).toBe("true");
@@ -3415,8 +3485,9 @@ describe("the chart exports", () => {
         const pca: ChartBlock = { kind: "chart", id: "square", binding, chartType: "pca", encoding: { x: "PC1", y: "PC2", group: "condition" } };
         const page = chartPage(pca, rows);
         const $ = load((await renderReportPage(page.document, page.values))._unsafeUnwrap().html);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect($("[data-echarts-id='square']").attr("style")).toMatch(/^max-width: \d+px; margin-inline: auto$/);
+        const style = $("[data-echarts-id='square']").attr("style") ?? "";
+        const suffix = "px; margin-inline: auto";
+        expect(style.startsWith("max-width: ") && style.endsWith(suffix) && isDigits(style.slice("max-width: ".length, -suffix.length))).toBe(true);
         expect($("[data-echarts-id='square']").attr("class")).toBe("chart-container");
     });
 
@@ -3443,10 +3514,10 @@ describe("the chart exports", () => {
     });
 
     it("hides the download menu in print", () => {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the print media block grammar: the block span and the menu-open rule with flexible whitespace.
         expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-menu-open \{\s*display: none;/);
         // A menu that the page has not opened stands closed.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `.report-chart-menu` rule grammar: the body to the close brace, with `display: none;` inside.
         expect(DESIGN_CSS).toMatch(/\.report-chart-menu \{[^}]*display: none;/);
     });
 });

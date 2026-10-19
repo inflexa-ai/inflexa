@@ -23,6 +23,7 @@ import { POINT_NAMES } from "../figures/dense.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import { ReferenceLedger } from "../references.js";
 import { optionMemberOrUndefined, optionNumber, optionPercent, optionRecord, optionSource, optionText } from "../option-lens.js";
+import { isDigits, startsWithDigit } from "../../lib/text.js";
 import { evaluatePageScript } from "@inflexa-ai/harness/lib/test/page-script.js";
 import { optionArray } from "../../report-render/option-lens.js";
 
@@ -1634,7 +1635,7 @@ describe("renderChart", () => {
         // The bootstrap finds the container by `data-echarts-id`, and the style sheet sizes it by the
         // `chart-container` class. The two must sit on one element. A class on a different element, or no
         // class at all, gives the chart runtime a box of zero height and the chart draws into nothing.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the chart container tag grammar with the id and the class in either order between the attribute run.
         expect(html).toMatch(/<div[^>]*\bdata-echarts-id="b3"[^>]*\bclass="chart-container"[^>]*>/);
     });
 
@@ -1666,7 +1667,7 @@ describe("renderChart", () => {
     it("gives the card the square corners and no hover raise", () => {
         // The corner-accent card is the one geometry of a data card. A border radius on the chart, or a
         // transform under hover, brings the window costume back through the style sheet.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `.report-chart-card` rule grammar: the selector tail to the brace, the body captured.
         const cardRules = [...DESIGN_CSS.matchAll(/\.report-chart-card[^{]*\{([^}]*)\}/g)].map((match) => match[1]);
         expect(cardRules.length).toBeGreaterThan(0);
         for (const body of cardRules) {
@@ -1679,8 +1680,23 @@ describe("renderChart", () => {
 describe("the chart container style rule", () => {
     /** The declaration body of each `.chart-container` rule of a style sheet. */
     function chartContainerRules(css: string): string[] {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `.chart-container` rule grammar: flexible whitespace at the brace, the body captured.
         return [...css.matchAll(/\.chart-container\s*\{([^}]*)\}/g)].map((match) => match[1]);
+    }
+
+    /** One height value of a container rule: a digit 1-9, then digits and points, then a length unit. */
+    function isLengthValue(value: string): boolean {
+        if (!startsWithDigit(value) || value.startsWith("0")) return false;
+        const units = ["px", "rem", "em", "vh", "%"];
+        return units.some((unit) => {
+            if (!value.endsWith(unit)) return false;
+            const middle = value.slice(1, value.length - unit.length);
+            for (let i = 0; i < middle.length; i += 1) {
+                const ch = middle[i];
+                if (!isDigits(ch) && ch !== ".") return false;
+            }
+            return true;
+        });
     }
 
     it("declares a height on the chart container", () => {
@@ -1689,11 +1705,10 @@ describe("the chart container style rule", () => {
 
         // The chart runtime measures the container at initialization. A rule with no height, or a height of
         // zero, gives a box that shows no chart even though every other gate stays green.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `height` declaration grammar: the declaration start, flexible whitespace, the value captured.
         const heights = rules.flatMap((body) => [...body.matchAll(/(?:^|;)\s*height\s*:\s*([^;]+)/g)].map((match) => match[1].trim()));
         expect(heights.length).toBeGreaterThan(0);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(heights.some((height) => /^[1-9][\d.]*(?:px|rem|em|vh|%)$/.test(height))).toBe(true);
+        expect(heights.some(isLengthValue)).toBe(true);
     });
 });
 

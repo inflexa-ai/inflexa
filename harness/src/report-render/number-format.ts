@@ -29,6 +29,7 @@
  */
 
 import type { ColumnMeaning } from "../contracts/report-reference.js";
+import { isDigits } from "../lib/text.js";
 
 /** The five number kinds that the renderer shows. */
 export type NumberKind = "scientific" | "compact" | "compact-scientific" | "identifier" | "below-resolution";
@@ -78,23 +79,19 @@ const P_VALUE_TOKENS = new Set(["p", "pval", "pvalue", "padj", "fdr", "q", "qval
 const IDENTIFIER_TOKENS = new Set(["id", "pmid", "doi", "entrez", "taxid", "year", "accession"]);
 
 /** The boundary between a lowercase or numeric character and an uppercase character. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the case-boundary pair of a column name: a lowercase or digit character, then an uppercase one, captured for a space insert.
 const CASE_BOUNDARY = /([a-z0-9])([A-Z])/g;
 
 /** The separators of a column name: whitespace, an underscore, a point, and a hyphen. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a split over the separator runs of a column name: whitespace, an underscore, a point, or a hyphen.
 const SEPARATORS = /[\s_.-]+/;
 
-/** A text that holds decimal digits alone. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
-const DIGIT_RUN = /^[0-9]+$/;
-
 /** Each group comma of a compact form. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- each comma of the grouped form, read as one global literal.
 const GROUP_COMMAS = /,/g;
 
 /** The exponent of one written or shown form, for example the `-05` of `4.3e-05`. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the exponent tail of a written form: `e` or `E`, an optional sign, digits, at the end, captured.
 const EXPONENT_PART = /[eE]([+-]?\d+)$/;
 
 /**
@@ -116,7 +113,7 @@ const NAME_DELIMITER = "%";
 const NAME_SEGMENTS = 3;
 
 /** One whitespace character. A segment of an encoded name holds none. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Unicode whitespace class (`\\s`), whose set the trim methods do not share.
 const WHITESPACE = /\s/;
 
 /**
@@ -371,7 +368,7 @@ export function holdsADriftedExponent(text: string): boolean {
  * One scientific form inside a text: a coefficient with its sign, and an exponent. The coefficient stands
  * alone, thus a name such as `rs1e5` holds no scientific form.
  */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the number grammar: sign, exponent, and separator placement have no builtin parser.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a signed number and its exponent inside a text, with lookarounds that keep a name such as `rs1e5` out.
 const SCIENTIFIC_IN_TEXT = /(?<![\w.])([−-]?\d+(?:\.\d+)?)e([+-]?\d+)(?![\w.])/g;
 
 /** The superscript form of each decimal digit, in digit order. */
@@ -391,7 +388,9 @@ const SUPERSCRIPT_MINUS = "⁻";
 export function typographicExponent(text: string): string {
     return text.replace(SCIENTIFIC_IN_TEXT, (_form, coefficient: string, exponent: string) => {
         const power = Number(exponent);
-        const digits = Array.from(String(Math.abs(power))).map((digit) => SUPERSCRIPT_DIGITS[Number(digit)]).join("");
+        const digits = Array.from(String(Math.abs(power)))
+            .map((digit) => SUPERSCRIPT_DIGITS[Number(digit)])
+            .join("");
         return `${shownMinus(coefficient)} × 10${power < 0 ? SUPERSCRIPT_MINUS : ""}${digits}`;
     });
 }
@@ -492,7 +491,7 @@ function compactForm(value: number): string {
  * thus a magnitude that `toFixed` gives in the exponential form stays whole.
  */
 function groupDigits(digits: string): string {
-    if (!DIGIT_RUN.test(digits)) {
+    if (!isDigits(digits)) {
         return digits;
     }
     let grouped = "";

@@ -18,6 +18,7 @@ import { join, relative } from "node:path";
 
 import { ChartBlockSchema, type Block, type ChartBlock } from "../../../contracts/report-blocks.js";
 import { computeSha256 } from "../../../lib/fs-helpers.js";
+import { isDigits } from "../../../lib/text.js";
 import { createFixtureResolver } from "../../../report-model/fixture-resolver.js";
 import { parseDelimited } from "../../../report-model/production-resolver.js";
 import { walkBlocks } from "../../../report-model/block-walk.js";
@@ -213,17 +214,17 @@ function depthFirstLeaves(rows: readonly ChartRow[]): string[] {
  * the license of the data. A name that holds no form fails the gate, thus a new license joins this list.
  */
 const LICENSE_FORMS: readonly { readonly pattern: RegExp; readonly caption: string }[] = [
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the word-boundary match of `LGPL`.
     { pattern: /\bLGPL\b/, caption: "LGPL" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the word-boundary match of `GPL`, which keeps `LGPL` and `AGPL` out.
     { pattern: /\bGPL\b/, caption: "GPL" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the license name in two spellings: the word-bounded `CC BY 4.0`, or the full attribution phrase.
     { pattern: /\bCC BY 4\.0\b|Creative Commons Attribution 4\.0/, caption: "CC BY 4.0" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the word-boundary match of `MIT`.
     { pattern: /\bMIT\b/, caption: "MIT" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the literal phrase of the EBI terms.
     { pattern: /EBI Terms of Use/, caption: "EBI Terms of Use" },
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the license phrase `public domain` in either spelling, caseless.
     { pattern: /public[- ]domain/i, caption: "public domain" },
 ];
 
@@ -430,8 +431,14 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const up = countRows("bulk-volcano", (row) => significant(row) && Number(row.log2FoldChange) > 0);
         const names = seriesOf(option).map((series) => series.name);
         expect(names.slice(0, 2)).toEqual([`Down (${down})`, `Up (${up})`]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(optionText(names[2])).toMatch(/^Not significant \([\d,]+\)$/);
+        const label = optionText(names[2]);
+        const inner = label.slice("Not significant (".length, -1);
+        let innerIsCounts = inner.length > 0;
+        for (let i = 0; i < inner.length; i += 1) {
+            const ch = inner[i];
+            innerIsCounts &&= isDigits(ch) || ch === ",";
+        }
+        expect(label.startsWith("Not significant (") && label.endsWith(")") && innerIsCounts).toBe(true);
         expect(axisOf(option, "xAxis").min).toBe(-optionNumber(axisOf(option, "xAxis").max));
     });
 
@@ -538,8 +545,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         // A long term wraps to two lines and ends with an ellipsis, thus the first category reads the head of the term.
         // SAFETY: the option tree read here is the one this test built above; the cast names the member's shape inside it.
         const first = optionText(optionArray(axisOf(option, "yAxis").data)[0]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(String(largest.term).startsWith(first.replaceAll("\n", " ").replace(/…$/, ""))).toBe(true);
+        const head = first.replaceAll("\n", " ");
+        const stem = head.endsWith("…") ? head.slice(0, -1) : head;
+        expect(String(largest.term).startsWith(stem)).toBe(true);
         expect(option.visualMap).toBeDefined();
     });
 
