@@ -81,7 +81,11 @@ interface FakeDb {
 }
 
 /** Successive `queryStepsByRun` reads consume `stepBatches`; the last repeats. */
-function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails?: boolean; settleFails?: boolean; failStepReadsAfter?: number } = {}): FakeDb {
+function fakeDb(
+    run: Row | null,
+    stepBatches: Row[][] = [[]],
+    opts: { sweepFails?: boolean; settleFails?: boolean; failStepReadsAfter?: number; runWriteFails?: boolean } = {},
+): FakeDb {
     const state = { run, swept: 0, ledger: (stepBatches[stepBatches.length - 1] ?? []).map((row) => ({ ...row })) };
     let stepReads = 0;
     const pool = {
@@ -108,6 +112,7 @@ function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails
             }
             if (text.includes("FROM cortex_runs")) return { rows: state.run === null ? [] : [state.run], rowCount: state.run === null ? 0 : 1 };
             if (text.includes("SET status = 'canceled'")) {
+                if (opts.runWriteFails) throw new Error("run write exploded");
                 const active = state.run !== null && state.run.status === "running";
                 if (!active || state.run === null) return { rowCount: 0 };
                 state.run = { ...state.run, status: "canceled", completed_at: values?.[1], error: values?.[2] };
@@ -304,6 +309,44 @@ describe("createRunCanceler", () => {
         // The sweep is still safe: it touches only rows a completed run no longer has pending.
         expect(db.state.swept).toBe(1);
         expect(result.converged.steps).toBe(true);
+    });
+
+    it("closes no charge and revokes no mandate when the body won the row, and reports both converged", async () => {
+        const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[pendingRow("waiting")]]);
+        const { cancelWorkflows } = recordingCancel(() => {
+            db.state.run = { ...(db.state.run as Row), status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
+        });
+        const { charge, closes } = recordingCharge();
+        const { authorizer, revoked } = recordingAuthorizer();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result.finalStatus).toBe("completed");
+        expect(db.state.run?.status).toBe("completed");
+        expect(db.state.ledger.find((row) => row.step_id === "waiting")?.status).toBe("skipped");
+        expect(closes).toEqual([]);
+        expect(revoked).toEqual([]);
+        expect(result.converged).toEqual({ steps: true, charge: true, mandate: true });
+    });
+
+    it("closes no charge and revokes no mandate when the terminal write fails, and resolves with both flags false", async () => {
+        const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], { runWriteFails: true });
+        const { charge, closes } = recordingCharge();
+        const { authorizer, revoked } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result.outcome).toBe("canceled");
+        expect(result.finalStatus).toBe("running");
+        expect(db.state.run?.status).toBe("running");
+        expect(db.state.ledger.find((row) => row.step_id === "cut")?.status).toBe("canceled");
+        expect(db.state.ledger.find((row) => row.step_id === "waiting")?.status).toBe("skipped");
+        expect(closes).toEqual([]);
+        expect(revoked).toEqual([]);
+        expect(result.converged).toEqual({ steps: true, charge: false, mandate: false });
     });
 
     it("isolates a sweep failure from the phases after it", async () => {

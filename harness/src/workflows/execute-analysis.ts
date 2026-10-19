@@ -59,12 +59,14 @@
  *  5. `synthesizeFindings` (single sequential block, no sandbox)
  *  6. `collectAndComplete` (terminal — runs on ALL paths)
  *     - determine final status from completed/cancelled/failed counts
- *     - update `cortex_runs.status` + `error`, and inside that same step record
- *       the run outcome metric plus the outcome of every settled step whose
- *       child never wrote its own terminal row (a cancelled child, or one that
- *       died before `failStep`)
- *     - close running charge with matching reason
- *     - revoke run authorization via the injected `runAuthorizer` seam
+ *     - update `cortex_runs.status` + `error`. When the write changes the row,
+ *       the same step emits `run_completed` before the commit, records the run
+ *       outcome metric plus the outcome of every settled step whose child never
+ *       wrote its own terminal row (a cancelled child, or one that died before
+ *       `failStep`), closes the running charge with the matching outcome, and
+ *       revokes the run authorization through the injected `runAuthorizer`
+ *     - when the write is refused or fails, close and revoke in their own
+ *       steps, then emit `run_completed`
  *     - emit terminal stream part
  *     - WRITES NOTHING to the conversation thread (results are pull-only
  *       via `inspectRun`)
@@ -87,7 +89,7 @@ import { ATTR_INFLEXA_STEP_ID, stableSpan } from "../lib/otel-spans.js";
 import { recordRunCompleted, recordStepCompleted, stepOutcomeOf } from "../lib/metrics.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
-import { describeDbError, type DbError } from "../lib/db-result.js";
+import { describeDbError, withTransaction, type DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import {
     countArtifactsByRuns,
@@ -327,12 +329,15 @@ export interface ExecuteAnalysisDeps {
      * The provenance seam of the composition. The body reads its run emit member,
      * and it reads no other member.
      *
-     * The emit is deliberately invoked directly in the workflow body (NOT wrapped
-     * in `DBOS.runStep`) so that body re-execution on DBOS recovery re-fires it —
-     * a cached step would suppress the recovery re-emission, defeating the
-     * point. Idempotency is the consumer's job, achieved via the deterministic
-     * identifiers the events carry, not via step caching. Every call site is
-     * guarded so a throwing observer never fails the run.
+     * `run_started` and `step_completed` are emitted directly in the workflow body
+     * (NOT wrapped in `DBOS.runStep`) so that body re-execution on DBOS recovery
+     * re-fires them — a cached step would suppress the recovery re-emission.
+     * `run_completed` is emitted by the won `persist-final-status` step, or by the
+     * body after that step when the step did not emit in this execution (a refused
+     * or failed write, or a won step served from the DBOS cache), so a recovery
+     * replay still fires it. Idempotency is the consumer's job, achieved via the
+     * deterministic identifiers the events carry, not via step caching. Every call
+     * site is guarded so a throwing observer never fails the run.
      *
      * Events arrive with the run's `RunSession` from durable workflow input — a
      * persisting realization needs its credential, scope, and identity.
@@ -1746,52 +1751,104 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                 ? "workflow-suspended"
                 : "workflow-canceled";
 
-    // Terminal clock read + run-completion provenance, emitted BEFORE the `cortex_runs`
-    // status write below — and thus before any of the terminal cleanup steps. The CLI
-    // watches the run by POLLING that row (`run.ts` `waitForRunTerminal`) and shuts down
-    // the instant it leaves `running`, flushing provenance and then `process.exit()`ing;
-    // emitting the record only after the status write races that shutdown and can drop
-    // the run's terminal provenance entirely. Emitting first makes the record dirty
-    // (synchronously, via the bus) before the row can be observed terminal, so the CLI's
-    // flush always captures it. Not step-wrapped — a DBOS recovery replay must re-fire it;
-    // `DBOS.now()` is checkpointed, so the span stays replay-stable (see `RunProvenanceEvent`).
-    // The duration measures from the `run_started` read threaded in as `startedAtMs`.
     const terminalAtMs = await DBOS.now();
-    emitProvenanceGuarded(
-        deps,
-        {
-            type: "run_completed",
-            analysisId: input.analysisId,
-            runId,
-            status,
-            atMs: terminalAtMs,
-            durationMs: terminalAtMs - startedAtMs,
+    const emitRunEnd = (): void =>
+        emitProvenanceGuarded(
+            deps,
+            {
+                type: "run_completed",
+                analysisId: input.analysisId,
+                runId,
+                status,
+                atMs: terminalAtMs,
+                durationMs: terminalAtMs - startedAtMs,
+            },
+            input.runSession,
+        );
+
+    // Ownership defaults to true for inputs persisted before the field existed (a
+    // workflow recovered across this deploy) — those were always Cortex-owned.
+    const authorization: RunAuthorization = {
+        runSession: input.runSession,
+        ownsMandate: input.ownsMandate ?? true, // oss-core-managed-ok
+    };
+    const closeCharge = (): Promise<boolean> =>
+        deliverNotice(
+            logger.with({ chargeOutcome: chargeOutcome.kind }),
+            "RunCharge.close",
+            deps.runCharge.close({
+                analysisId: input.analysisId,
+                runId,
+                outcome: chargeOutcome,
+                session: input.runSession,
+            }),
+        );
+    const revokeAuthorization = (): Promise<boolean> =>
+        deliverNotice(logger.with({ revokeReason }), "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, revokeReason));
+
+    // The writer that wins the row owns the run end: the `run_completed` emit, the charge close,
+    // and the revoke. The step does all three when its write changes the row. An engine cancel
+    // cannot stop a step that started, so a won write is never cut before these acts.
+    //
+    // The emit rides inside the transaction of the write. The update holds the row lock until the
+    // commit, so the run canceler waits and then loses, and no reader sees the terminal row before
+    // the emit. The cli polls the row and flushes the provenance when it leaves `running`; an emit
+    // after the commit can miss that flush. `emitRunEvent` returns `void`, so the emit completes before the commit.
+    let emittedInStep = false;
+    const finalWrite = await DBOS.runStep(
+        async (): Promise<"won" | "refused" | "failed"> => {
+            const stepLog = logger.with({ status }).named("persist-final-status");
+            const written = await withTransaction(deps.pool, "runs.persistFinalStatus", (client) =>
+                updateRunStatus(client, runId, status, failureReason ?? (status === "canceled" ? "external_cancel" : null)).map((changed) => {
+                    if (changed) {
+                        emitRunEnd();
+                        emittedInStep = true;
+                    }
+                    return changed;
+                }),
+            );
+            if (written.isErr()) {
+                stepLog.error("ledger write failed", { error: describeDbError(written.error), ...stepLog.errorFields(written.error.cause) });
+                return "failed";
+            }
+            // A refused write means an earlier write already set a terminal status: the run
+            // canceler's, or an earlier run of this step before a crash. That writer owns the run end.
+            if (!written.value) return "refused";
+            // DBOS caches the step, so a recovered body records nothing again. A step's own terminal
+            // row already carried its metric; the residue counted here is every settled step
+            // without one — a child the cancel cut before `mark-canceled` (the cancel check runs
+            // before a step body), or one that died before `failStep`. The ledger read is kept
+            // apart from the status write: a failed read costs the metrics, never the write.
+            const stepRows = await queryStepsByRun(deps.pool, runId);
+            if (stepRows.isErr())
+                logger.warn("run metrics: step ledger read failed, residual step outcomes skipped", { error: describeDbError(stepRows.error) });
+            for (const row of stepRows.unwrapOr([])) {
+                if (row.completedAt !== null) continue;
+                if (canceled.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "canceled" });
+                else if (failed.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "failed" });
+            }
+            recordRunCompleted({ workflow: "analysis", status, durationMs: terminalAtMs - startedAtMs });
+            await closeCharge();
+            await revokeAuthorization();
+            return "won";
         },
-        input.runSession,
+        { name: "persist-final-status" },
     );
 
-    await ledgerStep(logger.with({ status }), "persist-final-status", async () => {
-        const written = await updateRunStatus(deps.pool, runId, status, failureReason ?? (status === "canceled" ? "external_cancel" : null));
-        if (written.isErr()) return written;
-        // The outcome metrics ride the write that changed the row. A refused write means an earlier
-        // write already set a terminal status: the run canceler's, or an earlier run of this step
-        // before a crash. That writer owns the outcome of the run.
-        if (!written.value) return written;
-        // DBOS caches the step, so a recovered body records nothing again. A step's own terminal
-        // row already carried its metric; the residue counted here is every settled step
-        // without one — a child the cancel cut before `mark-canceled` (the cancel check runs
-        // before a step body), or one that died before `failStep`. The ledger read is kept
-        // apart from the status write: a failed read costs the metrics, never the write.
-        const stepRows = await queryStepsByRun(deps.pool, runId);
-        if (stepRows.isErr()) logger.warn("run metrics: step ledger read failed, residual step outcomes skipped", { error: describeDbError(stepRows.error) });
-        for (const row of stepRows.unwrapOr([])) {
-            if (row.completedAt !== null) continue;
-            if (canceled.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "canceled" });
-            else if (failed.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "failed" });
-        }
-        recordRunCompleted({ workflow: "analysis", status, durationMs: terminalAtMs - startedAtMs });
-        return written;
-    });
+    // A refused write leaves two owners. When the canceler won, its engine cancel came before its
+    // write, so `close-running-charge` throws the cancel and the body does no act of the run end.
+    // When a recovery runs the status step again after its own write landed, no cancel occurred and
+    // the body completes the run end here. A failed write leaves the row `running`, and the body
+    // still closes and revokes.
+    if (finalWrite !== "won") {
+        await DBOS.runStep(closeCharge, { name: "close-running-charge" });
+        await DBOS.runStep(revokeAuthorization, { name: "revoke-run-auth" });
+    }
+
+    // The step emits only in the execution that ran it. A won step that DBOS gives from the cache
+    // did not run, and a refused or failed write did not emit; the body fires the run end here
+    // with the same checkpointed values. It is not step-wrapped, so a recovery replay fires it again.
+    if (!emittedInStep) emitRunEnd();
 
     // Record the run's synthesis outcome AFTER the status write — a reader that
     // sees a terminal status then also sees whether (and why) synthesis ran. A
@@ -1817,34 +1874,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         await ledgerStep(logger, "suspend-analysis", () => suspendAnalysisQuery(deps.pool, input.analysisId));
     }
 
-    await DBOS.runStep(
-        () =>
-            deliverNotice(
-                logger.with({ chargeOutcome: chargeOutcome.kind }),
-                "RunCharge.close",
-                deps.runCharge.close({
-                    analysisId: input.analysisId,
-                    runId,
-                    outcome: chargeOutcome,
-                    session: input.runSession,
-                }),
-            ),
-        { name: "close-running-charge" },
-    );
-
-    // Revoke the run authorization for the terminal run state. Ownership
-    // defaults to true for inputs persisted before the field existed (a
-    // workflow recovered across this deploy) — those were always Cortex-owned.
-    const authorization: RunAuthorization = {
-        runSession: input.runSession,
-        ownsMandate: input.ownsMandate ?? true, // oss-core-managed-ok
-    };
-    await DBOS.runStep(() => deliverNotice(logger.with({ revokeReason }), "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, revokeReason)), {
-        name: "revoke-run-auth",
-    });
-
-    // The `run_completed` provenance was already emitted above (before the status write, to
-    // beat the CLI's poll-and-shutdown). These branches only fan out the UI stream part, whose
+    // The run end was emitted above. These branches only fan out the UI stream part, whose
     // completed/failed shapes genuinely differ — the provenance record does not.
     if (status === "completed" || status === "partial") {
         const artifactCount = await DBOS.runStep(

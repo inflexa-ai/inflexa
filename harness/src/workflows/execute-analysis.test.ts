@@ -49,6 +49,7 @@ import type { AnalysisStep } from "../schemas/workflow-state.js";
 import type { KnowledgeClient } from "../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../tools/knowledge/__fixtures__/fake-client.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
+import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import { captureMetrics } from "../__tests__/setup/metrics.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 
@@ -220,28 +221,37 @@ beforeEach(async () => {
 interface FakePool {
     readonly queries: Array<{ text: string; values?: readonly unknown[] }>;
     query: Pool["query"];
+    connect: Pool["connect"];
 }
 
-function makeFakePool(rowByText: Record<string, unknown[]> = {}): FakePool {
+/** The status write of `persist-final-status`. The fake pool answers an unmatched query with no changed row, so a test of the won path answers this prefix with one row. */
+const RUN_STATUS_WRITE = "UPDATE cortex_runs SET status = $1";
+const WON_STATUS_WRITE = { [RUN_STATUS_WRITE]: [{}] };
+
+/** A configured `Error` makes the matching query throw, the way a failed driver call does. */
+function makeFakePool(rowByText: Record<string, unknown[] | Error> = {}): FakePool {
     const queries: FakePool["queries"] = [];
-    const query = (mock as unknown as <T>(fn: (q: { text: string; values?: readonly unknown[] }) => Promise<T>) => unknown)(
-        async (q: { text: string; values?: readonly unknown[] }) => {
-            queries.push(q);
-            // Crude prefix match on the whitespace-normalized text — returns the configured
-            // rows for the first prefix that hits, otherwise an empty rowset.
-            const text = q.text.trim().replace(/\s+/g, " ");
-            for (const prefix of Object.keys(rowByText)) {
-                if (text.startsWith(prefix)) {
-                    return {
-                        rows: rowByText[prefix]!,
-                        rowCount: rowByText[prefix]!.length,
-                    };
-                }
+    const answer = async (q: { text: string; values?: readonly unknown[] }) => {
+        queries.push(q);
+        // Crude prefix match on the whitespace-normalized text — returns the configured
+        // rows for the first prefix that hits, otherwise an empty rowset.
+        const text = q.text.trim().replace(/\s+/g, " ");
+        for (const prefix of Object.keys(rowByText)) {
+            if (text.startsWith(prefix)) {
+                const rows = rowByText[prefix]!;
+                if (rows instanceof Error) throw rows;
+                return { rows, rowCount: rows.length };
             }
-            return { rows: [], rowCount: 0 };
-        },
-    );
-    return { queries, query: query as unknown as Pool["query"] };
+        }
+        return { rows: [], rowCount: 0 };
+    };
+    const query = (mock as unknown as <T>(fn: (q: { text: string; values?: readonly unknown[] }) => Promise<T>) => unknown)(answer);
+    // A transaction client answers from the same map and records into the same timeline as the pool.
+    const connect = async () => ({
+        query: async (q: string | { text: string; values?: readonly unknown[] }) => answer(typeof q === "string" ? { text: q } : q),
+        release: () => undefined,
+    });
+    return { queries, query: query as unknown as Pool["query"], connect: connect as unknown as Pool["connect"] };
 }
 
 /**
@@ -315,7 +325,7 @@ function makeDeps(opts: {
 
     const deps: ExecuteAnalysisDeps = {
         citationResolver: unusedCitationResolver,
-        pool: opts.pool.query ? ({ query: opts.pool.query } as unknown as Pool) : ({} as Pool),
+        pool: opts.pool.query ? ({ query: opts.pool.query, connect: opts.pool.connect } as unknown as Pool) : ({} as Pool),
         provider: {} as unknown as ChatProvider,
         embedding: {} as unknown as EmbeddingProvider,
         sandboxStepCallable: async () => {
@@ -1382,9 +1392,7 @@ describe("executeAnalysis body", () => {
     // ── Pending seed + terminal sweep ──────────────────────────────────
 
     it("seeds every plan step as pending at run start", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1404,9 +1412,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("unreachable dependents are swept to skipped; an all-failed run closes charge=error", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }]]),
@@ -1425,9 +1431,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("a suspension preserves pending rows (no sweep), and dooms no dependent", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", suspendChild("A", 0, "payment_required")]]),
@@ -1484,7 +1488,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("the run emit collects run_started, step_completed, then run_completed on the success path with stub-sourced times", async () => {
-        const pool = makeFakePool();
+        const pool = makeFakePool(WON_STATUS_WRITE);
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
@@ -1521,7 +1525,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("the run emit gives step_completed(failed) and run_completed(failed) on the failed path", async () => {
-        const pool = makeFakePool();
+        const pool = makeFakePool(WON_STATUS_WRITE);
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
@@ -1615,7 +1619,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("a DBOS-recovery re-execution re-emits identical timestamps (values come from the checkpointed clock, not Date.now())", async () => {
-        const pool = makeFakePool();
+        const pool = makeFakePool(WON_STATUS_WRITE);
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
@@ -1647,7 +1651,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("every emit site delivers the workflow input's runSession alongside the event", async () => {
-        const pool = makeFakePool();
+        const pool = makeFakePool(WON_STATUS_WRITE);
         const events: RunProvenanceEvent[] = [];
         const sessions: AgentSession[] = [];
         const { deps } = makeDeps({
@@ -1688,13 +1692,162 @@ describe("executeAnalysis body", () => {
     });
 });
 
+describe("executeAnalysis run end ownership", () => {
+    const completeA = (): Map<string, SandboxStepResult | Error> =>
+        new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]);
+    const terminalAtMs = FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS;
+
+    /** Collects each run end into the timeline of the pool, so a test can place it between two queries. */
+    function recordRunEnds(pool: FakePool, events: RunProvenanceEvent[]): (event: RunProvenanceEvent) => void {
+        return (event) => {
+            if (event.type !== "run_completed") return;
+            events.push(event);
+            pool.queries.push({ text: "EMIT run_completed" });
+        };
+    }
+
+    const cancelError = (): Error => new DBOSErrors.DBOSWorkflowCancelledError("run-test");
+
+    it("a won status write emits one run end between the UPDATE and the COMMIT, then closes the charge and revokes inside the same step after the COMMIT", async () => {
+        const pool = makeFakePool(WON_STATUS_WRITE);
+        const events: RunProvenanceEvent[] = [];
+        const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+        const marked: ExecuteAnalysisDeps = {
+            ...deps,
+            runCharge: {
+                ...deps.runCharge,
+                close: (args) => {
+                    pool.queries.push({ text: "CLOSE charge" });
+                    return deps.runCharge.close(args);
+                },
+            },
+            runAuthorizer: {
+                ...deps.runAuthorizer,
+                revoke: (authorization, reason) => {
+                    pool.queries.push({ text: "REVOKE authorization" });
+                    return deps.runAuthorizer.revoke(authorization, reason);
+                },
+            },
+        };
+        // The separate steps cannot run: a close or a revoke that happens proves that the status step did it.
+        dbosState.throwErrorOnStep.set("close-running-charge", cancelError());
+        dbosState.throwErrorOnStep.set("revoke-run-auth", cancelError());
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), marked);
+
+        expect(result.status).toBe("completed");
+        expect(events).toEqual([
+            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 2 * FAKE_CLOCK_STEP_MS },
+        ]);
+        const timeline = pool.queries.map((q) => q.text.trim().replace(/\s+/g, " "));
+        const write = timeline.findIndex((text) => text.startsWith(RUN_STATUS_WRITE));
+        const emit = timeline.indexOf("EMIT run_completed");
+        const commit = timeline.indexOf("COMMIT");
+        expect(timeline[write - 1]).toBe("BEGIN");
+        expect(emit).toBe(write + 1);
+        expect(commit).toBeGreaterThan(emit);
+        expect(timeline.indexOf("CLOSE charge")).toBeGreaterThan(commit);
+        expect(timeline.indexOf("REVOKE authorization")).toBeGreaterThan(commit);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
+    });
+
+    it("a write that the canceler refused emits no run end and closes no charge, because close-running-charge throws the engine cancel", async () => {
+        const pool = makeFakePool();
+        const events: RunProvenanceEvent[] = [];
+        const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+        dbosState.throwErrorOnStep.set("close-running-charge", cancelError());
+
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+
+        expect(events).toEqual([]);
+        expect(record.chargeCloseCalls).toEqual([]);
+        expect(record.mandateRevokeCalls).toEqual([]);
+    });
+
+    it("a recovery after the own write landed closes, revokes, and then emits the run end with the clock read of the first execution", async () => {
+        const pool = makeFakePool();
+        const events: RunProvenanceEvent[] = [];
+        const order: string[] = [];
+        const { deps, record } = makeDeps({
+            pool,
+            emitRunEvent: (event) => {
+                if (event.type === "run_completed")
+                    order.push(`emit after ${record.chargeCloseCalls.length} close and ${record.mandateRevokeCalls.length} revoke`);
+                recordRunEnds(pool, events)(event);
+            },
+            childResults: completeA(),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+
+        expect(result.status).toBe("completed");
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
+        expect(order).toEqual(["emit after 1 close and 1 revoke"]);
+        expect(events).toEqual([
+            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 2 * FAKE_CLOCK_STEP_MS },
+        ]);
+    });
+
+    it("a replay of a won step from the cache emits the run end again and does not close or revoke again", async () => {
+        const pool = makeFakePool();
+        const events: RunProvenanceEvent[] = [];
+        const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+        dbosState.resultOnStep.set("persist-final-status", "won");
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+
+        expect(result.status).toBe("completed");
+        expect(events).toEqual([
+            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 2 * FAKE_CLOCK_STEP_MS },
+        ]);
+        expect(record.chargeCloseCalls).toEqual([]);
+        expect(record.mandateRevokeCalls).toEqual([]);
+    });
+
+    it("a failed status write logs the failure, closes the charge, revokes, and emits one run end", async () => {
+        const pool = makeFakePool({ [RUN_STATUS_WRITE]: new Error("connection reset") });
+        const events: RunProvenanceEvent[] = [];
+        const logger = createCapturingLogger();
+        const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), { ...deps, logger });
+
+        expect(result.status).toBe("completed");
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ type: "run_completed", status: "completed", atMs: terminalAtMs });
+        const failure = logger.records.find((r) => r.level === "error" && r.fields.runId === "run-test" && r.fields.status === "completed");
+        expect(failure).toBeDefined();
+    });
+
+    it("a COMMIT failure after the emit in the transaction logs the write failure, closes the charge and revokes in their own steps, and emits no second run end", async () => {
+        const pool = makeFakePool({ ...WON_STATUS_WRITE, COMMIT: new Error("commit failed") });
+        const events: RunProvenanceEvent[] = [];
+        const logger = createCapturingLogger();
+        const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), { ...deps, logger });
+
+        expect(result.status).toBe("completed");
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ type: "run_completed", status: "completed", atMs: terminalAtMs });
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
+        const timeline = pool.queries.map((q) => q.text.trim().replace(/\s+/g, " "));
+        expect(timeline.indexOf("EMIT run_completed")).toBeLessThan(timeline.indexOf("COMMIT"));
+        const failure = logger.records.find((r) => r.level === "error" && r.msg.endsWith("ledger write failed") && r.fields.status === "completed");
+        expect(failure).toBeDefined();
+    });
+});
+
 // ── Dispatch-time seed composition ───────────────────────────────────
 
 describe("executeAnalysis child seed", () => {
     it("dispatches each child with a seed composed from its plan step, not a prompt frozen in the workflow input", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1719,9 +1872,7 @@ describe("executeAnalysis child seed", () => {
     });
 
     it("fails the step dispatch when the plan data for a step is missing from the workflow input", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1737,9 +1888,7 @@ describe("executeAnalysis child input projection", () => {
         // The child seeds its lineage collector from this field, and lineage
         // classification admits a same-run sibling edge only on declaration —
         // so a dropped projection here silently deletes every upstream edge.
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -1756,9 +1905,7 @@ describe("executeAnalysis child input projection", () => {
     });
 
     it("carries the template binding composed beside the seed into the child input of a grounded step, and none into an ungrounded one", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             knowledge: fakeKnowledgeClient().client,
@@ -1809,9 +1956,7 @@ describe("executeAnalysis child input projection", () => {
     it("hands the child the seed of a checkpoint written as a bare string, with no binding", async () => {
         // A run recovered across the change of the seed shape replays the string
         // the old step returned; the dispatch must still hand the child a prompt.
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
