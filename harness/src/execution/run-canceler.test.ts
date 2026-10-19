@@ -1,7 +1,7 @@
 /**
  * Fakes only, no live DBOS: the engine cancel enters through the injected
  * `cancelWorkflows` seam, and the ledgers are an in-memory pool that answers
- * the canceler's four queries and applies the conditional-write rule the real
+ * the canceler's queries and applies the conditional-write rules the real
  * `markRunCanceledIfActive` enforces — so the race assertions exercise state,
  * not stubs of it.
  */
@@ -68,17 +68,42 @@ function stepRow(stepId: string, childWorkflowId: string | null, completedAt: st
     };
 }
 
+function pendingRow(stepId: string): Row {
+    return { ...stepRow(stepId, null), status: "pending", started_at: null };
+}
+
 interface FakeDb {
     pool: Pool;
-    state: { run: Row | null; swept: number };
+    /** `ledger` is the step table the two step writes act on; it starts as a copy of the last read batch. */
+    state: { run: Row | null; swept: number; ledger: Row[] };
 }
 
 /** Successive `queryStepsByRun` reads consume `stepBatches`; the last repeats. */
-function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails?: boolean } = {}): FakeDb {
-    const state = { run, swept: 0 };
+function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails?: boolean; settleFails?: boolean } = {}): FakeDb {
+    const state = { run, swept: 0, ledger: (stepBatches[stepBatches.length - 1] ?? []).map((row) => ({ ...row })) };
     let stepReads = 0;
     const pool = {
         query: async ({ text, values }: { text: string; values?: unknown[] }) => {
+            if (text.includes("UPDATE cortex_step_executions")) {
+                if (text.includes("SET status = 'skipped'")) {
+                    if (opts.sweepFails) throw new Error("sweep exploded");
+                    state.swept += 1;
+                    for (const row of state.ledger) if (row.status === "pending") Object.assign(row, { status: "skipped", completed_at: values?.[1] });
+                    return { rowCount: 0 };
+                }
+                if (text.includes("SET status = 'canceled'") && text.includes("status = 'running'")) {
+                    if (opts.settleFails) throw new Error("settle exploded");
+                    // The statement's guard: only a row that is still running changes.
+                    for (const row of state.ledger) {
+                        if (row.status !== "running") continue;
+                        const startedAt = row.started_at as string | null;
+                        const durationMs = startedAt === null ? null : Date.parse(values?.[1] as string) - Date.parse(startedAt);
+                        Object.assign(row, { status: "canceled", completed_at: values?.[1], duration_ms: durationMs, error: values?.[2] });
+                    }
+                    return { rowCount: 0 };
+                }
+                throw new Error(`unexpected step write: ${text}`);
+            }
             if (text.includes("FROM cortex_runs")) return { rows: state.run === null ? [] : [state.run], rowCount: state.run === null ? 0 : 1 };
             if (text.includes("SET status = 'canceled'")) {
                 const active = state.run !== null && state.run.status === "running";
@@ -90,11 +115,6 @@ function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails
                 const batch = stepBatches[Math.min(stepReads, stepBatches.length - 1)] ?? [];
                 stepReads += 1;
                 return { rows: batch };
-            }
-            if (text.includes("SET status = 'skipped'")) {
-                if (opts.sweepFails) throw new Error("sweep exploded");
-                state.swept += 1;
-                return { rowCount: 0 };
             }
             throw new Error(`unexpected query: ${text}`);
         },
@@ -292,6 +312,76 @@ describe("createRunCanceler", () => {
 
         const result = await canceler.cancel("run-1", session);
 
+        expect(result.converged).toEqual({ steps: false, charge: true, mandate: true });
+        expect(closes).toHaveLength(1);
+        expect(revoked).toHaveLength(1);
+    });
+
+    it("settles a step cut mid-flight as canceled and sweeps a pending step to skipped", async () => {
+        const steps = [stepRow("cut", "wf-child-1"), pendingRow("waiting")];
+        const db = fakeDb(runRow(), [steps]);
+        const { charge } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+        const result = await canceler.cancel("run-1", session);
+
+        const cut = db.state.ledger.find((row) => row.step_id === "cut");
+        expect(cut?.status).toBe("canceled");
+        expect(cut?.error).toBe("external_cancel");
+        expect(cut?.completed_at).not.toBeNull();
+        expect(cut?.duration_ms).toBeGreaterThan(0);
+        expect(db.state.ledger.find((row) => row.step_id === "waiting")?.status).toBe("skipped");
+        expect(result.converged.steps).toBe(true);
+    });
+
+    it("keeps the status of a step that a child settled after the engine cancel", async () => {
+        const steps = [stepRow("done-first", "wf-child-1"), stepRow("cut", "wf-child-2")];
+        const db = fakeDb(runRow(), [steps]);
+        const { charge } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel(() => {
+            const child = db.state.ledger.find((row) => row.step_id === "done-first");
+            Object.assign(child as Row, { status: "completed", completed_at: "2026-08-12T00:00:05.000Z", duration_ms: 4000 });
+        });
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+        const result = await canceler.cancel("run-1", session);
+
+        const first = db.state.ledger.find((row) => row.step_id === "done-first");
+        expect(first).toMatchObject({ status: "completed", completed_at: "2026-08-12T00:00:05.000Z", duration_ms: 4000, error: null });
+        expect(db.state.ledger.find((row) => row.step_id === "cut")?.status).toBe("canceled");
+        expect(result.converged.steps).toBe(true);
+    });
+
+    it("still settles the running steps when the pending sweep fails", async () => {
+        const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], { sweepFails: true });
+        const { charge, closes } = recordingCharge();
+        const { authorizer, revoked } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(db.state.ledger.find((row) => row.step_id === "cut")?.status).toBe("canceled");
+        expect(db.state.ledger.find((row) => row.step_id === "waiting")?.status).toBe("pending");
+        expect(result.converged).toEqual({ steps: false, charge: true, mandate: true });
+        expect(closes).toHaveLength(1);
+        expect(revoked).toHaveLength(1);
+    });
+
+    it("still sweeps the pending steps when the running settle fails", async () => {
+        const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], { settleFails: true });
+        const { charge, closes } = recordingCharge();
+        const { authorizer, revoked } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(db.state.ledger.find((row) => row.step_id === "waiting")?.status).toBe("skipped");
+        expect(db.state.ledger.find((row) => row.step_id === "cut")?.status).toBe("running");
         expect(result.converged).toEqual({ steps: false, charge: true, mandate: true });
         expect(closes).toHaveLength(1);
         expect(revoked).toHaveLength(1);

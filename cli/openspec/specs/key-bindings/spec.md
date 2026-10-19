@@ -426,19 +426,17 @@ completion the retract seed uses, so a multi-line prompt lands ready to append t
 
 ### Requirement: Run-activity panel actions are declarative bindings
 
-Panel navigation, dismissal, and restore SHALL be declared as bindings in a reactive layer
-and dispatched through the central keymap. No component SHALL install its own keyboard
-handler or test key names directly for these actions.
+The panel actions MUST be bindings in a reactive layer, and the central keymap MUST dispatch them. The panel actions are the navigation, the dismissal, the restore, and the abort of the focused run. A component MUST NOT install its own keyboard handler for these actions, and it MUST NOT compare key names directly for them.
 
-Their displayed labels SHALL be derived from their chords rather than hand-written beside them, so
-a remapped binding cannot advertise a key it no longer answers to.
+The displayed label of each action MUST come from its chord, not from text written beside it. Thus a remapped binding cannot show a key that it no longer answers.
 
-The panel's layer SHALL be suspended while a dialog is open, through the existing mode stack, so
-a panel chord cannot fire underneath an open prompt.
+The layer of the panel MUST be suspended while a dialog is open, through the existing mode stack. Thus a panel chord cannot fire under an open prompt, and that includes the confirmation of the abort.
+
+The abort binding MUST be a leader sequence whose final stroke is remappable. Its layer MUST be enabled only while the panel is visible and shows a run.
 
 #### Scenario: Panel actions dispatch centrally
 
-- **WHEN** the user presses the panel's navigation or dismiss chord
+- **WHEN** the user presses the panel's navigation, dismiss, or abort chord
 - **THEN** the action runs through the central keymap dispatch, with no component-level key handler involved
 
 #### Scenario: Labels follow their chords
@@ -450,6 +448,11 @@ a panel chord cannot fire underneath an open prompt.
 
 - **WHEN** any dialog is open over the chat screen
 - **THEN** the panel's own bindings are inert until it closes
+
+#### Scenario: The abort binding documents itself only where it acts
+
+- **WHEN** the user opens the which-key overlay with the leader pending
+- **THEN** the abort binding is listed while the panel shows a run, and it is absent while the panel shows a profile or is hidden
 
 ### Requirement: Panel chords stay terminal-deliverable and discoverable
 

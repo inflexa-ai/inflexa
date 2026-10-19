@@ -253,6 +253,9 @@ export const KEYBIND_DEFAULTS = {
     // enter, ctrl+j, and shift+enter, so neither of these can be swallowed while typing.
     "app.activity-panel-next": "ctrl+n",
     "app.activity-panel-toggle": "ctrl+r",
+    // Aborts the run the panel shows. The value is the FINAL stroke after the leader, never the whole
+    // sequence (see `session.open-parent`): the binding site composes `<leader> c` with `leaderKeybind`.
+    "app.activity-panel-abort": "c",
     // Opens the most recent openable artifact card. A bare printable, so it lives in the NORMAL-mode
     // (scroll-pane-focused) layer only — never active while the composer holds focus.
     "artifact.open-latest": "o",

@@ -6,7 +6,7 @@ import { err, ok, okAsync } from "neverthrow";
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import { formatTokenFigure } from "../../lib/usage_format.ts";
 import { theme } from "../theme.ts";
-import { KEYS, chordLabel, keybindLabel, interruptHintLabel } from "../keymap.ts";
+import { KEYS, chordLabel, interruptHintLabel, keybindLabel, leaderKeybind, sequenceLabel } from "../keymap.ts";
 import { useDialogBindings, useDialogCancel, useDialogEntry, DialogShowcase } from "../components/dialog/dialog_host.tsx";
 import { DialogPanel } from "../components/dialog/dialog_panel.tsx";
 import { PromptDialog } from "../components/dialog/prompt_dialog.tsx";
@@ -140,6 +140,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
     // Derived, exactly as the real mount derives them — the exhibits must advertise the live chords.
     const activityPanelNextKey = keybindLabel("app.activity-panel-next");
     const activityPanelToggleKey = keybindLabel("app.activity-panel-toggle");
+    const activityPanelAbortKey = sequenceLabel(leaderKeybind("app.activity-panel-abort"));
     return (
         <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
             <ScrollPane focusOnMount={false} onRef={(r) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={space.sm}>
@@ -687,7 +688,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                 <State n="18" label="sidebar RUNS progress embed — bounded step window, no heading">
                     {/* The sidebar RUNS section renders the newest non-terminal run's progress under
                         that run's own row: heading suppressed (the row above names the run), the same
-                        frontier-positioned step window (the rail step cap, hint=false) the section passes, while
+                        frontier-positioned step window (the rail step cap) the section passes, while
                         the bar and done/total reflect the full run. The elision markers above and below
                         the window name the hidden counts, so the rows on screen always reconcile against
                         done/total — and each one is a click target that slides the window a step its way.
@@ -704,7 +705,6 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         total={mockLongRun.total}
                         steps={longRunSteps}
                         maxSteps={size.railStepRows}
-                        hint={false}
                         heading={false}
                     />
                 </State>
@@ -885,6 +885,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={1}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -899,6 +900,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={2}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -915,6 +917,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={1}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -927,6 +930,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={1}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -941,6 +945,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={1}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -952,6 +957,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={0}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -975,6 +981,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={1}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -990,6 +997,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={2}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -1004,6 +1012,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={1}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -1018,6 +1027,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={1}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                     </box>
@@ -1041,6 +1051,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={1}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                         <ChatBar autoFocus={false} onTextareaRef={noop} onSubmit={noop} />
@@ -1061,6 +1072,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             position={1}
                             nextKeyLabel={activityPanelNextKey}
                             dismissKeyLabel={activityPanelToggleKey}
+                            abortKeyLabel={activityPanelAbortKey}
                             onNext={noop}
                         />
                         <AskPrompt

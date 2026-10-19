@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { insertStepExecution, queryStepsByRun, seedStepExecutions, updateStepExecution } from "./step-executions.js";
+import { cancelRunningStepExecutions, insertStepExecution, queryStepsByRun, seedStepExecutions, updateStepExecution } from "./step-executions.js";
 import { createBlockerHolder, createReportBlockerTool } from "../tools/sandbox/report-blocker.js";
 import type { ToolContext } from "../tools/define-tool.js";
 
@@ -170,6 +170,64 @@ describe("step-executions: pending seeding", () => {
         expect(synth?.status).toBe("running");
         expect(synth?.agentId).toBe("run-synthesizer");
         expect(synth?.startedAt).not.toBeNull();
+    });
+});
+
+describe("step-executions: running settle", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("step_exec_cancel_running");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("touches only running rows", async () => {
+        (
+            await seedStepExecutions(pool, [{ runId: "run-cut", stepId: "pending-step", analysisId: "analysis-1", wave: 1, agentId: "scientific-executor" }])
+        )._unsafeUnwrap();
+        await seedRunning(pool, "run-cut", "running-step");
+        await seedRunning(pool, "run-cut", "completed-step");
+        (await updateStepExecution(pool, "run-cut", "completed-step", { status: "completed", durationMs: 7 }))._unsafeUnwrap();
+        await seedRunning(pool, "run-other", "other-step");
+        const completedBefore = await readStep(pool, "run-cut", "completed-step");
+        const pendingBefore = await readStep(pool, "run-cut", "pending-step");
+
+        (await cancelRunningStepExecutions(pool, "run-cut", "external_cancel"))._unsafeUnwrap();
+
+        const cut = await readStep(pool, "run-cut", "running-step");
+        expect(cut?.status).toBe("canceled");
+        expect(cut?.error).toBe("external_cancel");
+        expect(cut?.completedAt).not.toBeNull();
+        expect(cut?.durationMs).toBeGreaterThanOrEqual(0);
+        expect(await readStep(pool, "run-cut", "completed-step")).toEqual(completedBefore);
+        expect(await readStep(pool, "run-cut", "pending-step")).toEqual(pendingBefore);
+        expect((await readStep(pool, "run-other", "other-step"))?.status).toBe("running");
+    });
+
+    it("computes the duration from started_at and leaves it null without started_at", async () => {
+        await seedRunning(pool, "run-timing", "timed");
+        await seedRunning(pool, "run-timing", "untimed");
+        await pool.query({
+            text: "UPDATE cortex_step_executions SET started_at = $2 WHERE run_id = $1 AND step_id = 'timed'",
+            values: ["run-timing", new Date(Date.now() - 60_000).toISOString()],
+        });
+        await pool.query({ text: "UPDATE cortex_step_executions SET started_at = NULL WHERE run_id = $1 AND step_id = 'untimed'", values: ["run-timing"] });
+
+        (await cancelRunningStepExecutions(pool, "run-timing", "external_cancel"))._unsafeUnwrap();
+
+        const timed = await readStep(pool, "run-timing", "timed");
+        expect(timed?.status).toBe("canceled");
+        expect(timed?.durationMs).toBeGreaterThanOrEqual(60_000);
+        expect(timed?.durationMs).toBeLessThan(120_000);
+        const untimed = await readStep(pool, "run-timing", "untimed");
+        expect(untimed?.status).toBe("canceled");
+        expect(untimed?.durationMs).toBeNull();
     });
 });
 

@@ -30,7 +30,7 @@ import { elapsedSinceIso, recordRunCompleted, recordStepCompleted } from "../lib
 import { unwrapOrThrow } from "../lib/result.js";
 import { markRunCanceledIfActive, queryRun } from "../state/runs.js";
 import type { RunStatus, StepExecutionRow } from "../state/schema.js";
-import { queryStepsByRun, sweepPendingStepExecutions } from "../state/step-executions.js";
+import { cancelRunningStepExecutions, queryStepsByRun, sweepPendingStepExecutions } from "../state/step-executions.js";
 import { createDbosWorkflowPurger } from "./dbos-workflow-purger.js";
 import type { RunAuthorizer } from "./run-authorizer.js";
 
@@ -160,13 +160,21 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
                 for (const step of cutSteps ?? []) recordStepCompleted({ agentId: step.agentId, status: "canceled" });
             }
 
-            let steps = false;
+            let pendingSwept = false;
             try {
                 unwrapOrThrow(await sweepPendingStepExecutions(pool, runId));
-                steps = true;
+                pendingSwept = true;
             } catch (err) {
                 logger.error("pending-step sweep failed", { runId, ...logger.errorFields(err) });
             }
+            let runningSettled = false;
+            try {
+                unwrapOrThrow(await cancelRunningStepExecutions(pool, runId, EXTERNAL_CANCEL_REASON));
+                runningSettled = true;
+            } catch (err) {
+                logger.error("running-step settle failed", { runId, ...logger.errorFields(err) });
+            }
+            const steps = pendingSwept && runningSettled;
 
             const charge = await deliverNotice(
                 logger.with({ runId }),

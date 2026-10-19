@@ -1,11 +1,17 @@
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import type { ResultAsync } from "neverthrow";
 import type { StepActivityPart, StepPhase } from "@inflexa-ai/harness/contracts/index.js";
 
-import { streamRun } from "../../client/runs.ts";
+import type { CancelRunResult, RunStatus } from "../../api/runs.ts";
+import { describeClientError, type ClientError } from "../../client/api.ts";
+import { cancelRun, streamRun } from "../../client/runs.ts";
 import { getLogger } from "../../lib/log.ts";
 import type { Workspace } from "../contexts/workspace.ts";
+import type { Notice } from "../theme.ts";
 import { bootState } from "./boot.ts";
-import { activeSubjects, type PanelSubject } from "./sidebar_live.ts";
+import { notify, type NotifyOptions } from "./notice.ts";
+import { markRunAnnounced } from "./run_completion.ts";
+import { activeSubjects, refreshSidebarData, RUN_STATUS_TERMINAL, runsSnapshot, type PanelSubject, type RunsSnapshot } from "./sidebar_live.ts";
 
 // Which subject the activity panel is showing, whether it is dismissed, and what that subject is
 // doing right now — held here (not inside `app.tsx`) so the state is decoupled from its renderer, the
@@ -332,9 +338,137 @@ export function watchActivityPanel(workspace: Workspace, opts: ActivityPanelOpts
     });
 }
 
-/** Test hook: clear focus, dismissal, and the activity map, and invalidate any live subscription. */
+/** The run an abort names: captured when the action starts, so the confirmation and the cancel use these values only. */
+export type RunAbortTarget = {
+    readonly runId: string;
+    /** The label the confirmation shows, taken from the focused run at the time of the action. */
+    readonly name: string;
+};
+
+/** The edges of {@link abortFocusedRun}, injectable so it is unit-testable offline (no server). */
+export type RunAbortOpts = {
+    /**
+     * Ask the user to confirm the abort of `run`, and call `onAnswer` once: `true` to abort, `false` for
+     * a decline or a dismissal. Has no default, because opening a dialog needs JSX and the dialog host
+     * of the chat screen (`app.tsx`).
+     */
+    readonly confirm: (run: RunAbortTarget, onAnswer: (confirmed: boolean) => void) => void;
+    /** Cancel the run and settle its ledgers. Real: `POST {A}/run/:runId/cancel`. */
+    readonly cancel: (analysisId: string, runId: string) => ResultAsync<CancelRunResult, ClientError>;
+    /** Read the runs of the analysis again at once. Real: {@link refreshSidebarData}. */
+    readonly refresh: (analysisId: string) => Promise<void>;
+    /** Raise a transient toast. Real: {@link notify}. */
+    readonly notify: (notice: Notice, durationMs?: number, opts?: NotifyOptions) => void;
+    /** Read the runs snapshot that the refresh published. Real: {@link runsSnapshot}. */
+    readonly readRuns: () => RunsSnapshot;
+    /** Tell the completion watcher that the user already has the final notice of a run. Real: {@link markRunAnnounced}. */
+    readonly markAnnounced: (runId: string, status: RunStatus) => void;
+};
+
+const DEFAULT_RUN_ABORT_OPTS: Omit<RunAbortOpts, "confirm"> = {
+    cancel: (analysisId, runId) => cancelRun(analysisId, runId),
+    refresh: (analysisId) => refreshSidebarData(analysisId),
+    notify,
+    readRuns: runsSnapshot,
+    markAnnounced: markRunAnnounced,
+};
+
+/**
+ * The runs whose cancel request is open. A set, not a single slot: a request for one run must not stop
+ * the abort of a different run, and a single slot would let the second request clear the first's guard.
+ */
+const pendingAborts = new Set<string>();
+
+/** The ledgers of a canceled run that did not settle, named for the user. */
+function unsettledLedgers(converged: CancelRunResult["converged"]): string[] {
+    const names: string[] = [];
+    if (!converged.steps) names.push("the step rows");
+    if (!converged.charge) names.push("the charge");
+    if (!converged.mandate) names.push("the mandate");
+    return names;
+}
+
+/** Join names as prose: "a", "a and b", "a, b, and c". */
+function joinNames(names: readonly string[]): string {
+    if (names.length <= 2) return names.join(" and ");
+    return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+/**
+ * Abort the run that the panel shows, behind a confirmation, and report what the cancel really did.
+ * Resolves when the flow ends: a decline, a skipped call, or the handled outcome.
+ *
+ * Returns at once when no analysis is open, when no subject shows, when the subject is a data profile
+ * (the run canceler cancels analysis runs only), or when the cancel request of that run is still open.
+ *
+ * The run id and the name are read ONE time, before the confirmation. The focus can move while the
+ * dialog is open (the run ends and the panel advances), and the abort must go to the run the user
+ * confirmed, not to the subject the panel shows later.
+ *
+ * Every replacing notice is raised BEFORE the refresh. The refresh makes the completion watcher announce
+ * a canceled run with a queued notice, and a replacing notice raised after it would destroy that
+ * announcement while it shows. The one notice raised after the refresh is queued itself, and it needs
+ * the refreshed snapshot to know that the watcher cannot announce the run.
+ */
+export async function abortFocusedRun(analysisId: string | null, opts: Pick<RunAbortOpts, "confirm"> & Partial<RunAbortOpts>): Promise<void> {
+    if (analysisId === null) return;
+    const subject = focusedSubject();
+    if (subject?.kind !== "run") return;
+    const target: RunAbortTarget = { runId: subject.run.runId, name: subject.run.name };
+    if (pendingAborts.has(target.runId)) return;
+    const edges: RunAbortOpts = { ...DEFAULT_RUN_ABORT_OPTS, ...opts };
+
+    const confirmed = await new Promise<boolean>((resolve) => edges.confirm(target, resolve));
+    if (!confirmed) return;
+
+    pendingAborts.add(target.runId);
+    // A `ResultAsync` carries every failure in its value and never rejects, so the guard cannot leak here.
+    const result = await edges.cancel(analysisId, target.runId);
+    pendingAborts.delete(target.runId);
+
+    if (result.isErr()) {
+        // The canceler can reject after the engine cancel took effect, and a transport failure leaves the
+        // outcome unknown. Only a fresh read gives the real status.
+        edges.notify({ kind: "error", text: `Could not abort ${target.name}: ${describeClientError(result.error)}` });
+        await edges.refresh(analysisId);
+        return;
+    }
+
+    const { outcome, finalStatus, converged } = result.value;
+    if (outcome === "canceled" && finalStatus === "canceled") {
+        // The completion watcher announces the cancel after the refresh, so no notice here says the same
+        // thing twice. A ledger that did not settle is the exception: the canceler logs the cause, and a
+        // second cancel gives `already_terminal`, so this notice is the only report the user gets.
+        const unsettled = unsettledLedgers(converged);
+        if (unsettled.length > 0) {
+            edges.notify({ kind: "warn", text: `${target.name} was canceled, but ${joinNames(unsettled)} did not settle.` });
+        }
+        await edges.refresh(analysisId);
+        // The snapshot holds the active runs and the newest runs only, so a canceled run that falls out of
+        // it is never seen as active-then-terminal, and the watcher cannot announce it. The notice is
+        // queued because it announces a result the user did not wait on, like the watcher's own notice.
+        // The watcher still holds the run as seen active, and a later poll can load it as terminal, so
+        // the run is marked as announced to keep that poll from raising a second notice.
+        const snapshot = edges.readRuns();
+        if (snapshot.kind !== "loaded" || !snapshot.runs.some((run) => run.runId === target.runId)) {
+            edges.markAnnounced(target.runId, "canceled");
+            edges.notify({ kind: "info", text: `${target.name} was canceled.` }, undefined, { queue: true });
+        }
+        return;
+    }
+    if (outcome === "canceled" && !RUN_STATUS_TERMINAL[finalStatus]) {
+        // The canceler stopped the workflow, but its write of the run row failed and the re-read gave the old status.
+        edges.notify({ kind: "error", text: `${target.name} did not settle: the workflow stopped, but the run row still shows ${finalStatus}.` });
+    } else {
+        edges.notify({ kind: "info", text: `${target.name} already finished (${finalStatus}), so nothing was aborted.` });
+    }
+    await edges.refresh(analysisId);
+}
+
+/** Test hook: clear focus, dismissal, the activity map, and the open abort requests, and invalidate any live subscription. */
 export function __resetActivityPanelForTest(): void {
     activityGeneration += 1;
+    pendingAborts.clear();
     setFocusedKey(null);
     setDismissed(false);
     setStepActivity(new Map());

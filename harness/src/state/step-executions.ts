@@ -190,6 +190,29 @@ export function sweepPendingStepExecutions(pool: Querier, runId: string): Result
     });
 }
 
+/**
+ * Settle a run's still-`running` rows to `canceled` after an engine cancel.
+ * A canceled child re-raises before it writes a terminal row, so this is the
+ * only writer for a step that the cancel cut. `canceled`, not `skipped`: these
+ * steps started. The `status = 'running'` guard keeps a terminal row that a
+ * child wrote first. `started_at` and `completed_at` are ISO 8601 `TEXT`, so
+ * the duration casts both; it is NULL when `started_at` is NULL.
+ */
+export function cancelRunningStepExecutions(pool: Querier, runId: string, reason: string): ResultAsync<void, DbError> {
+    const now = new Date().toISOString();
+    return tryMutation("stepExecutions.cancelRunningStepExecutions", async () => {
+        await pool.query({
+            text: `UPDATE cortex_step_executions
+          SET status = 'canceled',
+              completed_at = $2::text,
+              duration_ms = (EXTRACT(EPOCH FROM ($2::text::timestamptz - started_at::timestamptz)) * 1000)::bigint,
+              error = $3
+          WHERE run_id = $1 AND status = 'running'`,
+            values: [runId, now, reason],
+        });
+    });
+}
+
 export function queryStepsByRun(pool: Querier, runId: string): ResultAsync<StepExecutionRow[], DbError> {
     return tryQuery("stepExecutions.queryStepsByRun", async () => {
         const result = await pool.query({

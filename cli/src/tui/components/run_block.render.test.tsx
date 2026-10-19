@@ -22,11 +22,9 @@ function steps(total: number, done: number): RunStepView[] {
     }));
 }
 
-/** The rail mount the sidebar RUNS section uses: windowed, no heading, no detach/abort footer. */
+/** The rail mount the sidebar RUNS section uses: windowed, no heading. */
 function railBlock(total: number, done: number) {
-    return () => (
-        <RunBlock name="cohort-screen" tag="T9S2" done={done} total={total} steps={steps(total, done)} maxSteps={RAIL_WINDOW} hint={false} heading={false} />
-    );
+    return () => <RunBlock name="cohort-screen" tag="T9S2" done={done} total={total} steps={steps(total, done)} maxSteps={RAIL_WINDOW} heading={false} />;
 }
 
 /** Whether step `n` has a row on screen. Word-bounded, so `S1` never matches the `S10`/`S12` rows. */
@@ -75,7 +73,6 @@ async function withRail(
                 total={run().steps.length}
                 steps={run().steps}
                 maxSteps={RAIL_WINDOW}
-                hint={false}
                 heading={false}
             />
         ),
@@ -143,7 +140,7 @@ describe("RunBlock step window", () => {
     });
 
     test("without maxSteps the whole list renders — the runs dialog's full view", async () => {
-        const frame = await renderFrame(() => <RunBlock name="cohort-screen" tag="T9S2" done={7} total={12} steps={steps(12, 7)} hint={false} />, {
+        const frame = await renderFrame(() => <RunBlock name="cohort-screen" tag="T9S2" done={7} total={12} steps={steps(12, 7)} />, {
             width: 80,
             height: 24,
         });
@@ -269,7 +266,7 @@ describe("RunBlock parallel steps", () => {
         // Steps 8, 9 and 10 are in flight together. Centring on the earliest puts it on the middle row
         // with its siblings just below, so the whole wave is on screen at once.
         const frame = await renderFrame(
-            () => <RunBlock name="r" tag="T1" done={8} total={20} steps={parallel([8, 9, 10])} maxSteps={RAIL_WINDOW} hint={false} heading={false} />,
+            () => <RunBlock name="r" tag="T1" done={8} total={20} steps={parallel([8, 9, 10])} maxSteps={RAIL_WINDOW} heading={false} />,
             { width: 40, height: 24 },
         );
         const rows = frame.split("\n").filter((l) => /\bS\d+\b/.test(l));
@@ -319,7 +316,7 @@ describe("RunBlock marker click containment", () => {
         const setup = await testRender(
             () => (
                 <box onMouseUp={() => bubbled++}>
-                    <RunBlock name="cohort-screen" tag="T9S2" done={10} total={20} steps={steps(20, 10)} maxSteps={RAIL_WINDOW} hint={false} heading={false} />
+                    <RunBlock name="cohort-screen" tag="T9S2" done={10} total={20} steps={steps(20, 10)} maxSteps={RAIL_WINDOW} heading={false} />
                 </box>
             ),
             { width: 40, height: 24 },
@@ -412,7 +409,7 @@ describe("RunBlock running-step elapsed age", () => {
     }
 
     function block(steps: RunStepView[]) {
-        return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} hint={false} heading={false} />;
+        return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} heading={false} />;
     }
 
     test("a running step with a start time shows a compact age", async () => {
@@ -478,7 +475,7 @@ describe("RunBlock step usage figure", () => {
     }
 
     function block(steps: RunStepView[], maxSteps?: number) {
-        return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} maxSteps={maxSteps} hint={false} heading={false} />;
+        return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} maxSteps={maxSteps} heading={false} />;
     }
 
     test("on a WIDE mount the figure joins the row's middot-separated facts", async () => {
