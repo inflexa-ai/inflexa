@@ -14,8 +14,10 @@ const saved = new Map(TOUCHED.map((key) => [key, process.env[key]]));
 
 afterEach(() => {
     for (const [key, value] of saved) {
-        if (value === undefined) process.env[key] = undefined;
-        else process.env[key] = value;
+        if (value === undefined) {
+            // oxlint-disable-next-line typescript/no-dynamic-delete -- a key that was absent must return to absent: an undefined assignment stores the string "undefined".
+            delete process.env[key];
+        } else process.env[key] = value;
     }
 });
 

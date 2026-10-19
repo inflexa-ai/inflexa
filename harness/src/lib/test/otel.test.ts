@@ -70,7 +70,8 @@ beforeEach(() => {
     saved = {};
     for (const key of ENV_KEYS) {
         saved[key] = process.env[key];
-        process.env[key] = undefined;
+        // oxlint-disable-next-line typescript/no-dynamic-delete -- the key must leave the process environment: an undefined assignment stores the string "undefined" and the SDK reads it as an endpoint.
+        delete process.env[key];
     }
 });
 
@@ -78,8 +79,10 @@ afterEach(async () => {
     await __resetOtelForTest();
     for (const key of ENV_KEYS) {
         const value = saved[key];
-        if (value === undefined) process.env[key] = undefined;
-        else process.env[key] = value;
+        if (value === undefined) {
+            // oxlint-disable-next-line typescript/no-dynamic-delete -- a key that was absent must return to absent: an undefined assignment stores the string "undefined".
+            delete process.env[key];
+        } else process.env[key] = value;
     }
 });
 

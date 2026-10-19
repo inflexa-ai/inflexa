@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
 import { createRegistry } from "../registry.js";
+import { emittedInputSchema } from "../../lib/test/tool-schemas.js";
 
 const alpha = defineTool({
     id: "alpha",
@@ -36,8 +37,7 @@ describe("createRegistry", () => {
         expect(defs.alpha).toBeDefined();
         expect(defs.alpha.description).toBe("The alpha tool.");
         const schema = defs.alpha.inputSchema;
-        if (!("jsonSchema" in schema)) throw new Error("expected a json-schema definition");
-        const emitted = schema.jsonSchema;
+        const emitted = emittedInputSchema(schema);
         if (!("type" in emitted)) throw new Error("expected a typed JSON schema");
         expect(emitted.type).toBe("object");
     });

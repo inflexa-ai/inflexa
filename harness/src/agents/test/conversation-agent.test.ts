@@ -13,6 +13,7 @@ import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { poolDouble, stubChatProvider, stubEmbeddingProvider, stubRunAuthorizer, stubRunLauncher, stubWorkspaceFilesystem } from "../../lib/test/doubles.js";
+import { emittedInputSchema } from "../../lib/test/tool-schemas.js";
 
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice
@@ -161,9 +162,7 @@ describe("createConversationAgent", () => {
             expect(typeof name).toBe("string");
             expect(name.length).toBeGreaterThan(0);
             expect(typeof def.description).toBe("string");
-            const schema = def.inputSchema;
-            if (!("jsonSchema" in schema)) throw new Error("expected a json-schema definition");
-            const emitted = schema.jsonSchema;
+            const emitted = emittedInputSchema(def.inputSchema);
             if (!("type" in emitted)) throw new Error("expected a typed JSON schema");
             expect(emitted.type).toBe("object");
         }
