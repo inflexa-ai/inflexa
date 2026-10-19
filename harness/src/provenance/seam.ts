@@ -12,9 +12,10 @@
  * workflow body passes the `RunSession` of its durable input, and the run canceler passes the session of
  * the cancel. A session act carries no session, thus the session emit takes the event alone.
  *
- * Both emit members are fire-and-forget. Neither gives a result, and the harness reads none. A site emits
- * after its act lands, thus a refused act and a failed act each emit nothing and the record states what
- * happened.
+ * Both emit members are fire-and-forget. Neither gives a result, and the harness reads none. The writer
+ * that wins the conditional terminal write of the run row emits `run_completed`. The body emits it before
+ * its status write commits, or after a refused or failed write. The canceler emits it only when its write
+ * changes the row, thus a refused cancel emits nothing.
  */
 
 import type { AgentSession } from "../auth/types.js";
@@ -36,8 +37,9 @@ export type { ProvenanceExport } from "../report-render/provenance-data.js";
  * ledger without a value conflict. The body never sources these from a wall clock
  * (`Date.now()`) — that would diverge across replays and defeat the merge.
  *
- * The run canceler is the second emit site of `step_completed` and `run_completed`. It is not a
- * workflow, thus no replay fires its emits, and it reads the wall clock one time for all of them.
+ * The run canceler is the second emit site of `step_completed` and `run_completed`, and it emits only
+ * when its write of the run row changes the row. It is not a workflow, thus no replay fires its emits,
+ * and it reads the wall clock one time for all of them.
  *
  * In the body, `run_completed.durationMs` is the terminal `atMs` minus the `run_started`
  * `atMs` (both `DBOS.now()` reads) — the true workflow-observed run span. The canceler holds no

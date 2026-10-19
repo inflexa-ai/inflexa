@@ -12,7 +12,7 @@ and a suspension). Step bodies never call `updateRunStatus`; they let
 errors propagate, and the parent's `try`/`finally` structure guarantees
 `collectAndComplete` runs last. This keeps the run row, the running charge, the
 run authorization, and the terminal stream part consistent under DBOS recovery,
-because each finalisation side effect is its own named `DBOS.runStep` and
+because each finalisation side effect runs inside a named `DBOS.runStep` and
 replays from cache instead of repeating.
 
 A run is **not all-or-nothing**. `deriveFinalStatus` maps the completed / failed
@@ -282,11 +282,16 @@ the body:
 - a refused charge open (see "The run opens its charge through a gate before a step starts")
 - a suspension (see "An insufficient-budget pause is suspended and made resumable")
 
-Within it the status write, charge close, and run-authorization revoke SHALL each be their own named
-`DBOS.runStep`, and a failure of any one SHALL be logged without rolling back
-the side effects that did succeed. There SHALL be NO separate `onError`-style
-hook racing it; child step bodies SHALL NOT call `updateRunStatus` or any
-run-fail helper directly.
+Within it, the status write, the charge close, and the run-authorization revoke
+MUST each run inside a named `DBOS.runStep`. When the status write changes the
+row, the charge close and the revoke MUST run inside the same step as the write,
+`persist-final-status`. When the status write is refused or fails, the charge
+close and the revoke MUST each run in their own named step,
+`close-running-charge` and `revoke-run-auth`. The requirement "The body owns the
+end of the run only when its status write wins" gives the reason. The body MUST
+log a failure of one of these acts, and it MUST NOT roll back the side effects
+that did succeed. There SHALL be NO separate `onError`-style hook racing it; child
+step bodies SHALL NOT call `updateRunStatus` or any run-fail helper directly.
 
 `RunCharge.close` and `RunAuthorizer.revoke` are notices (see the `host-hooks`
 capability). If a notice gives an `err`, `collectAndComplete` MUST log the reason
@@ -343,6 +348,87 @@ non-rolling-back rule.
 - **GIVEN** a suspended run with unstarted steps seeded `pending`
 - **WHEN** `collectAndComplete` runs on the suspension branch
 - **THEN** the `pending` rows are left untouched for the resumed workflow to execute
+
+### Requirement: The body owns the end of the run only when its status write wins
+
+The run body and the run canceler race at the end of a run, and the first
+terminal write of the run row wins. The writer that wins the row owns each act
+of the run end: the `run_completed` emit, the charge close, and the
+run-authorization revoke. The body MUST do these acts only as the owner of the
+row.
+
+The body MUST NOT emit `run_completed` before its status write. When the write
+of `persist-final-status` changes the row, the same step MUST do these acts, in
+this order:
+
+1. It emits `run_completed` with the status of the body. The emit MUST occur
+   before another reader can see the terminal status of the row.
+2. It records the outcome metrics.
+3. It closes the running charge with the outcome of the status.
+4. It revokes the run authorization.
+
+These acts come before `persist-synthesis-outcome`, `sweep-pending-steps`, and
+`suspend-analysis`. The step list of the suspension branch in "An
+insufficient-budget pause is suspended and made resumable" gives no order.
+
+The emit order lets a host that exits when its poll sees a terminal row flush
+the run end first. An engine cancel cannot stop a step that started, thus a
+cancel cannot cut the body between its won write and these acts.
+
+When a recovery replays the body and gives the won step from the cache, the
+body MUST emit `run_completed` again, outside the step. The event MUST carry the
+same status, `atMs`, and `durationMs`. The body MUST NOT close the charge or
+revoke the authorization again.
+
+When the status write is refused or fails, the body MUST close the charge in
+the `close-running-charge` step, and then revoke the authorization in the
+`revoke-run-auth` step. Then it MUST emit `run_completed`. A refused write has
+two causes:
+
+- The run canceler won the row. The canceler cancels the engine before its
+  write, thus the `close-running-charge` step throws the engine cancel. The
+  body then stops, and it does no act of the run end.
+- A recovery runs the status step again after its own write landed and before
+  the step was recorded. The body owns the row, thus it completes the run end.
+
+#### Scenario: A won status write emits one run end before the row shows it
+
+- **WHEN** the status write of `persist-final-status` changes a `running` row to `completed`
+- **THEN** the run emit receives one `run_completed` event with the status `completed`
+- **AND** the emit occurs before another reader can see the status `completed` on the row
+- **AND** the same step closes the charge with `{ kind: "ok" }` and revokes the run authorization with `workflow-completed`
+
+#### Scenario: An engine cancel does not cut the acts of a won write
+
+- **GIVEN** a `persist-final-status` step whose write changed the row to `completed`
+- **WHEN** an engine cancel of the parent lands before the step ends
+- **THEN** the step still closes the charge with `{ kind: "ok" }` and revokes the run authorization
+
+#### Scenario: A write that the canceler refused leaves the run end to the canceler
+
+- **GIVEN** the run canceler canceled the engine and changed the row to `canceled`
+- **WHEN** the status write of the body changes nothing
+- **THEN** the body emits no `run_completed` event
+- **AND** the `close-running-charge` step throws the engine cancel, thus the body closes no charge and revokes no authorization
+
+#### Scenario: A recovery after the own write landed completes the run end
+
+- **GIVEN** a `persist-final-status` step whose write landed before a crash, and whose result DBOS did not record
+- **WHEN** the recovery runs the step again and the write changes nothing
+- **THEN** the body closes the charge in `close-running-charge` and revokes the authorization in `revoke-run-auth`
+- **AND** the body emits `run_completed` with the `atMs` of the terminal clock read of the first execution
+
+#### Scenario: A replay of a won step emits the run end again
+
+- **WHEN** a recovery replays the body and DBOS gives the won `persist-final-status` step from the cache
+- **THEN** the body emits `run_completed` again with the same status, `atMs`, and `durationMs`
+- **AND** the body does not close the charge or revoke the authorization again
+
+#### Scenario: A failed status write still closes the charge
+
+- **WHEN** the status write of `persist-final-status` fails
+- **THEN** the step logs the failure with the `runId` and the status
+- **AND** the body closes the charge in `close-running-charge`, revokes the authorization in `revoke-run-auth`, and then emits `run_completed`
 
 ### Requirement: Disabled synthesis is a successful terminal path
 

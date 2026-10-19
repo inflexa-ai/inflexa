@@ -2,14 +2,19 @@
  * RunCanceler — the encapsulated external-cancel path for an `executeAnalysis` run.
  *
  * A cancelled DBOS workflow can never start another step, so the body's own
- * terminal block (`collectAndComplete`) is unreachable once the cancel lands
+ * terminal block (`collectAndComplete`) can be unreachable once the cancel lands
  * and nothing converges: the run row stays `running` (blocking same-plan relaunch
- * through `queryActiveRun`'s active-status dedup), pending step rows never
- * sweep, the running charge never closes, and the run mandate is never
- * revoked. A terminal step that started before the cancel still runs to its
- * end, but its run status write is conditional on a `running` row. This module
- * is the host-side counterpart: cancel the engine's parent + children, then
- * converge each ledger the workflow would have.
+ * through `queryActiveRun`'s active-status dedup) and pending step rows never
+ * sweep. A step that started before the cancel still runs to its end, and its
+ * run status write is conditional on a `running` row. This module is the
+ * host-side counterpart: cancel the engine's parent + children, then converge
+ * the ledgers the workflow would have.
+ *
+ * The writer that wins the conditional terminal write of the run row owns the
+ * run end: the run emit, the charge close, and the mandate revoke. This module
+ * does those acts only when its write changed the row. A refused write means
+ * the body won the row and owns them; a failed write leaves the row `running`,
+ * so a second cancel converges the run. The step rows settle on every path.
  *
  * The engine capability stays internal — the production default is the
  * purger's `DBOSClient`-backed child-cascading cancel, which needs no launched
@@ -60,8 +65,10 @@ export interface CancelRunResult {
      * (the conditional write refuses to clobber it).
      */
     readonly finalStatus: RunStatus;
-    /** What actually converged. `mandate` is vacuously true for a row with no
-     * persisted jti — nothing to revoke, so hosts alert on any false flag. */
+    /** What actually converged. `charge` and `mandate` are vacuously true when
+     * there is nothing for this cancel to converge — a refused terminal write
+     * (the body owns them) and, for `mandate`, a row with no persisted jti — so
+     * hosts alert on any false flag. */
     readonly converged: {
         readonly steps: boolean;
         readonly charge: boolean;
@@ -159,17 +166,20 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             }
 
             // Convergence — each phase isolated so one failure skips nothing after it.
-            let transitioned = false;
+            // The terminal write has three outcomes: changed (this cancel won the row),
+            // refused (the body won it), failed (the row is unchanged).
+            let writeOutcome: "changed" | "refused" | "failed" = "failed";
             try {
-                transitioned = unwrapOrThrow(await markRunCanceledIfActive(pool, runId, EXTERNAL_CANCEL_REASON));
+                writeOutcome = unwrapOrThrow(await markRunCanceledIfActive(pool, runId, EXTERNAL_CANCEL_REASON)) ? "changed" : "refused";
             } catch (err) {
                 logger.error("markRunCanceledIfActive failed", { runId, ...logger.errorFields(err) });
             }
+            const transitioned = writeOutcome === "changed";
             // A terminal step of the workflow that started before the cancel can still
             // write, but its write is conditional on a `running` row too. The first
-            // write wins, and the outcome metrics ride behind the write that won: a
+            // write wins, and the run-end acts ride behind the write that won: a
             // refused write means the run settled on its own and its own terminal step
-            // recorded them. A cut child never reached its terminal row, so its step
+            // does them. A cut child never reached its terminal row, so its step
             // records here too.
             if (transitioned) {
                 recordRunCompleted({ workflow: "analysis", status: "canceled", durationMs: elapsedSinceIso(row.startedAt) });
@@ -222,19 +232,27 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             }
             const steps = pendingSwept && runningSettled;
 
-            const charge = await deliverNotice(
-                logger.with({ runId }),
-                "RunCharge.close",
-                runCharge.close({ analysisId: row.analysisId, runId, outcome: { kind: "canceled" }, session }),
-            );
+            // Only the writer that won the row closes the charge and revokes. A refused
+            // write left both to the body; a failed write left the row `running`, so a
+            // second cancel converges the run. The flags of a refused write are true
+            // because there is nothing for this cancel to converge.
+            let charge = writeOutcome === "refused";
+            let mandate = writeOutcome === "refused" || (writeOutcome === "failed" && row.mandateJti === null);
+            if (transitioned) {
+                charge = await deliverNotice(
+                    logger.with({ runId }),
+                    "RunCharge.close",
+                    runCharge.close({ analysisId: row.analysisId, runId, outcome: { kind: "canceled" }, session }),
+                );
 
-            const mandate =
-                row.mandateJti === null ||
-                (await deliverNotice(
-                    logger.with({ runId, jti: row.mandateJti }),
-                    "RunAuthorizer.revokeByJti",
-                    runAuthorizer.revokeByJti({ jti: row.mandateJti, auth: session.auth }, EXTERNAL_CANCEL_REASON),
-                ));
+                mandate =
+                    row.mandateJti === null ||
+                    (await deliverNotice(
+                        logger.with({ runId, jti: row.mandateJti }),
+                        "RunAuthorizer.revokeByJti",
+                        runAuthorizer.revokeByJti({ jti: row.mandateJti, auth: session.auth }, EXTERNAL_CANCEL_REASON),
+                    ));
+            }
 
             // No transition means the run reached a terminal state on its own (or the
             // write failed) — report the row as it stands rather than claiming `canceled`.
