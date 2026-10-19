@@ -87,6 +87,20 @@ function streamFromGenerate(
                             controller.enqueue({ type: "text-end", id });
                             continue;
                         }
+                        // The signature of a thinking block rides on the metadata of its
+                        // delta, which is where the Anthropic package puts it.
+                        if (content.type === "reasoning") {
+                            const id = `rsn-${(seq += 1)}`;
+                            controller.enqueue({ type: "reasoning-start", id });
+                            controller.enqueue({
+                                type: "reasoning-delta",
+                                id,
+                                delta: content.text,
+                                ...(content.providerMetadata !== undefined ? { providerMetadata: content.providerMetadata } : {}),
+                            });
+                            controller.enqueue({ type: "reasoning-end", id });
+                            continue;
+                        }
                         if (content.type === "tool-call") controller.enqueue(content);
                     }
                     controller.enqueue({
@@ -1629,5 +1643,92 @@ describe("dropped thinking blocks", () => {
         }
 
         expect(dropRecords(warnings)).toEqual([]);
+    });
+});
+
+describe("a reply that a fallback model served", () => {
+    /**
+     * A model can refuse a request by category, and the API then re-serves it on another
+     * model. The `fallback` content block that reports the hop inside the turn never reaches
+     * the harness, because the package drops it. Thus the harness cannot echo that turn as
+     * the API produced it, and each signed thinking block of the turn is refused from the
+     * next request on, with a 400 that no retry can pass.
+     */
+    const HOP = {
+        anthropic: {
+            iterations: [
+                { type: "message", model: "claude-opus-5-5" },
+                { type: "fallback_message", model: "claude-opus-4-8" },
+            ],
+        },
+    };
+    const NO_HOP = { anthropic: { iterations: [{ type: "message", model: "claude-opus-5-5" }] } };
+    const thinking = { type: "reasoning" as const, text: "weigh the two sets", providerMetadata: { anthropic: { signature: "signed-by-the-api" } } };
+
+    function recordingLogger(): { logger: Logger; warnings: { msg: string; fields?: LogFields }[] } {
+        const warnings: { msg: string; fields?: LogFields }[] = [];
+        const base = createNoopLogger();
+        const logger: Logger = {
+            ...base,
+            warn: (msg, fields) => {
+                warnings.push(fields === undefined ? { msg } : { msg, fields });
+            },
+            with: () => logger,
+            named: () => logger,
+        };
+        return { logger, warnings };
+    }
+
+    const hopRecords = (warnings: readonly { msg: string; fields?: LogFields }[]) =>
+        warnings.filter((w) => w.msg === "reply served by a fallback model, thus the harness drops the thinking of that turn");
+
+    function servedModel(content: LanguageModelV4GenerateResult["content"], providerMetadata: Record<string, Record<string, unknown>>): LanguageModelV4 {
+        return fakeModel(async () => ({ ...okResult(), content, providerMetadata }));
+    }
+
+    const partTypesOf = (content: unknown): string[] => (typeof content === "string" ? [] : (content as { type: string }[]).map((part) => part.type));
+
+    it("drops the thinking of the turn, keeps every other part, and names the model that answered", async () => {
+        const { logger, warnings } = recordingLogger();
+        const provider = createAiSdkProvider({ model: servedModel([thinking, { type: "text", text: "done" }], HOP), logger });
+
+        const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(partTypesOf(response.message.content)).toEqual(["text"]);
+        expect(hopRecords(warnings).map((w) => w.fields)).toEqual([{ workload: "analysis:analysis-001", servedBy: "claude-opus-4-8" }]);
+    });
+
+    it("keeps the thinking when no iteration reports a hop", async () => {
+        const { logger, warnings } = recordingLogger();
+        const provider = createAiSdkProvider({ model: servedModel([thinking, { type: "text", text: "done" }], NO_HOP), logger });
+
+        const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(partTypesOf(response.message.content)).toEqual(["reasoning", "text"]);
+        expect(hopRecords(warnings)).toEqual([]);
+    });
+
+    it("leaves no part at all on a reply of nothing but thinking, because no part of it can be echoed", async () => {
+        const provider = createAiSdkProvider({ model: servedModel([thinking], HOP) });
+
+        const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(response.message.content).toBe("");
+    });
+
+    it("drops the thinking on each terminal path of chatStream", async () => {
+        // A reply with text drains the live stream. A reply with no text ends inside the
+        // envelope, and the two paths build the done event apart.
+        for (const text of ["done", undefined]) {
+            const content = text === undefined ? [thinking] : [thinking, { type: "text" as const, text }];
+            const provider = createAiSdkProvider({ model: servedModel(content, HOP) });
+
+            let message: unknown;
+            for await (const event of provider.chatStream(request, makeSession())) {
+                if (event.type === "done") message = event.response.message.content;
+            }
+
+            expect(partTypesOf(message)).toEqual(text === undefined ? [] : ["text"]);
+        }
     });
 });
