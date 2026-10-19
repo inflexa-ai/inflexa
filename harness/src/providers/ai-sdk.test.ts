@@ -1682,7 +1682,10 @@ describe("a reply that a fallback model served", () => {
     const hopRecords = (warnings: readonly { msg: string; fields?: LogFields }[]) =>
         warnings.filter((w) => w.msg === "reply served by a fallback model, thus the harness drops the thinking of that turn");
 
-    function servedModel(content: LanguageModelV4GenerateResult["content"], providerMetadata: Record<string, Record<string, unknown>>): LanguageModelV4 {
+    function servedModel(
+        content: LanguageModelV4GenerateResult["content"],
+        providerMetadata: NonNullable<LanguageModelV4GenerateResult["providerMetadata"]>,
+    ): LanguageModelV4 {
         return fakeModel(async () => ({ ...okResult(), content, providerMetadata }));
     }
 
