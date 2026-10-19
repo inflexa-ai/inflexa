@@ -349,7 +349,7 @@ interface InputTransformation {
  * content it returns (`anthropic-messages-language-model`, the `content_block_start`
  * case). Thus the turn the harness holds is not the turn the API produced, and every
  * signed thinking block of that turn is rejected from the next request on. This reader
- * is what lets {@link withoutFallbackThinking} see the hop the content no longer shows.
+ * is what lets {@link settleFallbackReply} see the hop the content no longer shows.
  */
 function fallbackModelOf(metadata: ProviderMetadata | undefined): string | undefined {
     const entries = metadata?.["anthropic"]?.["iterations"];
@@ -361,6 +361,17 @@ function fallbackModelOf(metadata: ProviderMetadata | undefined): string | undef
         return typeof fields["model"] === "string" ? fields["model"] : "";
     }
     return undefined;
+}
+
+/**
+ * The assistant message with no thinking block, and with `""` for content when it held
+ * nothing else. An empty message reaches no wire: `sanitizeMessages` drops it.
+ */
+function withoutThinking(message: ChatResponse["message"]): ChatResponse["message"] {
+    if (typeof message.content === "string") return message;
+    const content = message.content.filter((part) => part.type !== "reasoning" && part.type !== "reasoning-file");
+    if (content.length === message.content.length) return message;
+    return content.length === 0 ? { ...message, content: "" } : { ...message, content };
 }
 
 /** Reads `providerMetadata.anthropic.inputTransformations`; empty for another vendor. */
@@ -835,7 +846,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     /**
-     * The reply with no thinking block, when a fallback model served it.
+     * The reply as the harness must hold it when a fallback model served it: with no
+     * thinking block, and with the model that answered named.
      *
      * A reply that carries a fallback hop ({@link fallbackModelOf}) reaches the harness
      * already short of the `fallback` content block the API put in the turn. The API holds
@@ -848,19 +860,27 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
      * turn, and the next request continues. The cost is the reasoning of this one turn and
      * the cache write that its new prefix pays for. A reply of nothing but thinking carries
      * no part at all, and `sanitizeMessages` drops such a message from the next request.
+     *
+     * `servedModelId` needs the same correction. {@link captureServedModelId} reads the id
+     * the response metadata of the package carries, which is `message_start.message.model`,
+     * and that field keeps the REQUESTED model across a hop. Published as it stands, it
+     * makes the usage ledger of an embedder attribute the tokens to the model that refused
+     * the work. The iteration names the model that answered, thus it wins. An iteration that
+     * names no model changes nothing: there is no better id to publish, and the record above
+     * is then the only account of the hop.
      */
-    function withoutFallbackThinking(session: AgentSession, response: ChatResponse, metadata: ProviderMetadata | undefined): ChatResponse {
+    function settleFallbackReply(session: AgentSession, response: ChatResponse, metadata: ProviderMetadata | undefined): ChatResponse {
         const servedBy = fallbackModelOf(metadata);
         if (servedBy === undefined) return response;
         logger.warn("reply served by a fallback model, thus the harness drops the thinking of that turn", {
             workload: workloadOf(session),
             ...(servedBy === "" ? {} : { servedBy }),
         });
-        const message = response.message;
-        if (typeof message.content === "string") return response;
-        const content = message.content.filter((part) => part.type !== "reasoning" && part.type !== "reasoning-file");
-        if (content.length === message.content.length) return response;
-        return { ...response, message: content.length === 0 ? { ...message, content: "" } : { ...message, content } };
+        return {
+            ...response,
+            message: withoutThinking(response.message),
+            ...(servedBy === "" ? {} : { servedModelId: servedBy }),
+        };
     }
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
@@ -940,7 +960,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 const { providerMetadata: metadata, ...reply } = collected;
                 logDroppedThinkingBlocks(session, metadata);
                 return ok(
-                    withoutFallbackThinking(
+                    settleFallbackReply(
                         session,
                         responseFromMessages({
                             ...reply,
@@ -1033,7 +1053,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
             if (opened.kind === "completed") {
                 logDroppedThinkingBlocks(session, opened.providerMetadata);
-                const response = withoutFallbackThinking(
+                const response = settleFallbackReply(
                     session,
                     responseFromMessages({
                         messages: opened.messages,
@@ -1066,7 +1086,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 yield { type: "text-delta", text: pull.text };
             }
             const metadata = (await result.finalStep).providerMetadata;
-            const response = withoutFallbackThinking(
+            const response = settleFallbackReply(
                 session,
                 responseFromMessages({
                     messages: await result.responseMessages,

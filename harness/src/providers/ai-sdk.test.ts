@@ -1682,11 +1682,21 @@ describe("a reply that a fallback model served", () => {
     const hopRecords = (warnings: readonly { msg: string; fields?: LogFields }[]) =>
         warnings.filter((w) => w.msg === "reply served by a fallback model, thus the harness drops the thinking of that turn");
 
+    /**
+     * The double reports `claude-opus-5-5` as its own served id, because that is what the
+     * API does across a hop: `message_start.message.model` keeps the requested model, and
+     * only the iteration names the model that answered.
+     */
     function servedModel(
         content: LanguageModelV4GenerateResult["content"],
         providerMetadata: NonNullable<LanguageModelV4GenerateResult["providerMetadata"]>,
     ): LanguageModelV4 {
-        return fakeModel(async () => ({ ...okResult(), content, providerMetadata }));
+        return fakeModel(async () => ({
+            ...okResult(),
+            content,
+            providerMetadata,
+            response: { id: "resp-1", timestamp: new Date(0), modelId: "claude-opus-5-5" },
+        }));
     }
 
     const partTypesOf = (content: unknown): string[] => (typeof content === "string" ? [] : (content as { type: string }[]).map((part) => part.type));
@@ -1698,6 +1708,9 @@ describe("a reply that a fallback model served", () => {
         const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
 
         expect(partTypesOf(response.message.content)).toEqual(["text"]);
+        // The ledger of an embedder reads this field, thus the hop must reach it.
+        expect(response.servedModelId).toBe("claude-opus-4-8");
+        expect(response.requestedModelId).toBe("fake-model");
         expect(hopRecords(warnings).map((w) => w.fields)).toEqual([{ workload: "analysis:analysis-001", servedBy: "claude-opus-4-8" }]);
     });
 
@@ -1708,6 +1721,7 @@ describe("a reply that a fallback model served", () => {
         const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
 
         expect(partTypesOf(response.message.content)).toEqual(["reasoning", "text"]);
+        expect(response.servedModelId).toBe("claude-opus-5-5");
         expect(hopRecords(warnings)).toEqual([]);
     });
 
@@ -1719,19 +1733,20 @@ describe("a reply that a fallback model served", () => {
         expect(response.message.content).toBe("");
     });
 
-    it("drops the thinking on each terminal path of chatStream", async () => {
+    it("drops the thinking and names the model that answered on each terminal path of chatStream", async () => {
         // A reply with text drains the live stream. A reply with no text ends inside the
         // envelope, and the two paths build the done event apart.
         for (const text of ["done", undefined]) {
             const content = text === undefined ? [thinking] : [thinking, { type: "text" as const, text }];
             const provider = createAiSdkProvider({ model: servedModel(content, HOP) });
 
-            let message: unknown;
+            let done: { message: { content: unknown }; servedModelId?: string } | undefined;
             for await (const event of provider.chatStream(request, makeSession())) {
-                if (event.type === "done") message = event.response.message.content;
+                if (event.type === "done") done = event.response;
             }
 
-            expect(partTypesOf(message)).toEqual(text === undefined ? [] : ["text"]);
+            expect(partTypesOf(done?.message.content)).toEqual(text === undefined ? [] : ["text"]);
+            expect(done?.servedModelId).toBe("claude-opus-4-8");
         }
     });
 });
