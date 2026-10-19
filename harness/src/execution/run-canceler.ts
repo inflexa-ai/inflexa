@@ -1,13 +1,15 @@
 /**
  * RunCanceler — the encapsulated external-cancel path for an `executeAnalysis` run.
  *
- * A cancelled DBOS workflow can never execute another step, so the body's own
- * terminal block (`collectAndComplete`) is unreachable on external cancel and
- * nothing converges: the run row stays `running` (blocking same-plan relaunch
+ * A cancelled DBOS workflow can never start another step, so the body's own
+ * terminal block (`collectAndComplete`) is unreachable once the cancel lands
+ * and nothing converges: the run row stays `running` (blocking same-plan relaunch
  * through `queryActiveRun`'s active-status dedup), pending step rows never
  * sweep, the running charge never closes, and the run mandate is never
- * revoked. This module is the host-side counterpart: cancel the engine's
- * parent + children, then converge each ledger the workflow would have.
+ * revoked. A terminal step that started before the cancel still runs to its
+ * end, but its run status write is conditional on a `running` row. This module
+ * is the host-side counterpart: cancel the engine's parent + children, then
+ * converge each ledger the workflow would have.
  *
  * The engine capability stays internal — the production default is the
  * purger's `DBOSClient`-backed child-cascading cancel, which needs no launched
@@ -163,11 +165,12 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             } catch (err) {
                 logger.error("markRunCanceledIfActive failed", { runId, ...logger.errorFields(err) });
             }
-            // The workflow's own terminal step never runs after a cancel, so this
-            // conditional write is the one terminal write of an external cancel, and
-            // the outcome metrics ride behind it: a refused write means the run
-            // settled on its own and its own terminal step recorded them. A cut
-            // child never reached its terminal row, so its step records here too.
+            // A terminal step of the workflow that started before the cancel can still
+            // write, but its write is conditional on a `running` row too. The first
+            // write wins, and the outcome metrics ride behind the write that won: a
+            // refused write means the run settled on its own and its own terminal step
+            // recorded them. A cut child never reached its terminal row, so its step
+            // records here too.
             if (transitioned) {
                 recordRunCompleted({ workflow: "analysis", status: "canceled", durationMs: elapsedSinceIso(row.startedAt) });
                 for (const step of cutSteps ?? []) recordStepCompleted({ agentId: step.agentId, status: "canceled" });

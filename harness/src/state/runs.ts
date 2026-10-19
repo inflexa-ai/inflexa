@@ -241,22 +241,27 @@ export function reconcileOrphanedRuns(pool: Querier, opts: { now?: number; grace
     });
 }
 
+/**
+ * Write a status to a run row that is still `running`, and report whether the row changed. The first terminal write
+ * of a run wins: a row that already holds a terminal status keeps its status, its `completed_at`, and its error.
+ */
 export function updateRunStatus(
     pool: Querier,
     runId: string,
     status: "running" | "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds",
     error?: string | null,
-): ResultAsync<void, DbError> {
+): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
     const isTerminal =
         status === "completed" || status === "partial" || status === "failed" || status === "canceled" || status === "suspended_insufficient_funds";
     return tryMutation("runs.updateRunStatus", async () => {
-        await pool.query({
+        const result = await pool.query({
             text: `UPDATE cortex_runs
             SET status = $1, completed_at = $2, error = $3
-            WHERE run_id = $4`,
+            WHERE run_id = $4 AND status = 'running'`,
             values: [status, isTerminal ? now : null, error ?? null, runId],
         });
+        return (result.rowCount ?? 0) > 0;
     });
 }
 
@@ -265,9 +270,8 @@ export function updateRunStatus(
  * and recording `reason` in `error` (the same column `collectAndComplete`
  * stamps `external_cancel` into). Reports whether a row transitioned — false
  * means the run was already terminal (e.g. it completed concurrently with an
- * external cancel), and the caller MUST NOT fall back to `updateRunStatus`,
- * which would clobber that terminal status. The guarded set is the active set
- * `queryActiveRun` deduplicates on.
+ * external cancel). The guarded set is the active set `queryActiveRun`
+ * deduplicates on.
  */
 export function markRunCanceledIfActive(pool: Querier, runId: string, reason: string): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();

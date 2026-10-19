@@ -125,7 +125,7 @@ function makeSeams(
         },
         updateRunStatus: (runId, status, error) => {
             rec.updateRunStatus.push({ runId, status, error });
-            return okAsync(undefined);
+            return okAsync(true);
         },
         runAuthorizer: {
             authorize: () => {

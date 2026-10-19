@@ -80,7 +80,7 @@ The state module SHALL export the following helpers, each taking a
 (absence rides the ok channel as `null`/`[]`):
 
 - `insertRun(pool, { runId, analysisId, threadId?, workflowName, planId?, mandateJti?, mandateExpiresAt? })`: inserts with `status='running'` and `started_at`. On the `idx_cortex_runs_active_plan` collision it SHALL throw `RunDedupCollisionError` verbatim ABOVE the Result boundary (a control-flow signal, not a `DbError`); the caller recovers via `queryActiveRun`. The input SHALL NOT accept `workflowId`.
-- `updateRunStatus(pool, runId, status, error?)`: updates status; sets `completed_at` for the terminal statuses `completed`/`partial`/`failed`/`canceled`/`suspended_insufficient_funds`.
+- `updateRunStatus(pool, runId, status, error?)`: changes the status and the error of the row only when the status of the row is `running`. It sets `completed_at` for the terminal statuses `completed`/`partial`/`failed`/`canceled`/`suspended_insufficient_funds`. It returns whether a row changed. A row that is not `running` keeps its status, its `completed_at`, and its error.
 - `promoteFailedToPartial(pool, runId)`: atomically flips `status` from `'failed'` to `'partial'` and returns whether a row changed.
 - `setRunMandate(pool, runId, jti, expiresAt)`: writes the run-mandate audit columns (no `token` parameter — the column does not exist).
 - `queryRun(pool, runId)`: returns one `CortexRunRow` or null.
@@ -115,8 +115,29 @@ with the resume-counter scaffolding.
 
 #### Scenario: A suspended status stamps completed_at
 
+- **GIVEN** a `running` run row
 - **WHEN** `updateRunStatus(pool, runId, "suspended_insufficient_funds", "budget_exceeded")` is called
 - **THEN** the row reads `suspended_insufficient_funds` with `error = "budget_exceeded"` and `completed_at` set
+- **AND** the call returns `true`
+
+#### Scenario: A status write does not overwrite a canceled run
+
+- **GIVEN** a run row that the run canceler changed to `canceled` with the error `external_cancel`
+- **WHEN** `updateRunStatus(pool, runId, "completed")` is called
+- **THEN** the row keeps the status `canceled`, its `completed_at`, and the error `external_cancel`
+- **AND** the call returns `false`
+
+#### Scenario: A status write does not overwrite a different terminal status
+
+- **GIVEN** a run row with the status `completed`
+- **WHEN** `updateRunStatus(pool, runId, "failed", "workflow start failed")` is called
+- **THEN** the row keeps the status `completed`, its `completed_at`, and its error
+- **AND** the call returns `false`
+
+#### Scenario: A status write for an unknown run changes nothing
+
+- **WHEN** `updateRunStatus` is called with a `runId` that has no row
+- **THEN** the call returns `false`
 
 #### Scenario: promoteFailedToPartial rescues a failed run
 
