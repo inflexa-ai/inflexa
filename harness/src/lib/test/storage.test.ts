@@ -14,6 +14,7 @@ import pg, { type Pool } from "pg";
 
 import { getTestPool } from "../../__tests__/setup/postgres.js";
 import { APP_POOL_ACQUIRE_TIMEOUT_MS } from "../../runtime/pools.js";
+import { errorMessage } from "../thrown.js";
 import { createPool } from "../storage.js";
 
 /** Stand-in for the shipped bound, small enough that the test finishes fast. */
@@ -66,8 +67,11 @@ describe("app pool acquisition under saturation", () => {
             const held = await pool.connect();
             try {
                 expect(pool.totalCount).toBe(1);
-                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-                await expect(pool.connect()).rejects.toThrow(/timeout/i);
+                const failure: unknown = await pool.connect().then(
+                    () => null,
+                    (error: unknown) => error,
+                );
+                expect(errorMessage(failure).toLowerCase().includes("timeout")).toBe(true);
             } finally {
                 held.release();
             }

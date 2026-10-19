@@ -160,7 +160,7 @@ describe("bootHarness", () => {
                     },
                 }),
             ),
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caseless message scan of the thrown skill-validation failure; toThrow's string argument is case-sensitive, so no plain argument is exact.
         ).rejects.toThrow(/skills/i);
 
         // Skill validation is step 2 — it throws before state-init (pool) and the

@@ -28,7 +28,7 @@ function stubOpenTargets(responder: (req: GqlRequest) => Response): GqlRequest[]
     globalThis.fetch = fetchDouble((_url, init) => {
         // SAFETY: the value is test-controlled — a fixture, a double answer, or the unit under test answering the input this test built — so the cast names a shape the test itself determines.
         const body = jsonParse(requestBodyText(init?.body ?? "{}"), z.object({ query: z.string(), variables: z.record(z.string(), z.json()) }));
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the GraphQL operation extraction: the word run after "query " feeds the request record through the capture group.
         const operation = /query (\w+)/.exec(body.query)?.[1] ?? "";
         const req: GqlRequest = { operation, variables: body.variables };
         seen.push(req);

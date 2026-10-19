@@ -21,6 +21,7 @@ import { computeDraftHash } from "../../../report-model/draft-hash.js";
 import { createFixtureResolver } from "../../../report-model/fixture-resolver.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
 import { DEPS_DIR, derivationScriptName, PAGE_ASSETS, tableSidecarName } from "../../../report-render/assets.js";
+import { isUuid } from "../../../lib/text.js";
 import type { DbError } from "../../../lib/db-result.js";
 import type { ThreadStore } from "../../../memory/thread-store.js";
 import type { DerivationRecord } from "../../../state/report-session-state.js";
@@ -38,6 +39,11 @@ import type { ProvenanceSeam, SessionProvenanceEvent } from "../../../provenance
 import { createPreviewReportTool, type PreviewReportResult } from "../preview-report.js";
 import { UnavailableSessionPagePublisher, type SessionPagePublisher } from "../session-page-publisher.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
+
+/** The lowercase UUID layout that the emission mints (crypto.randomUUID is lowercase). */
+function isLowerUuid(value: string): boolean {
+    return value === value.toLowerCase() && isUuid(value);
+}
 
 /** Each root that a test made. The cleanup removes them after the suite. */
 const roots: string[] = [];
@@ -368,8 +374,7 @@ describe("the pass path", () => {
         const data = z.looseObject({ id: z.string(), renderedAt: z.string(), title: z.string() }).parse(part.data);
         expect(data.title).toBe("Report");
         // The id is one UUID per emission, and the timestamp is a valid ISO instant.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(data.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+        expect(isLowerUuid(data.id)).toBe(true);
         expect(new Date(data.renderedAt).toISOString()).toBe(data.renderedAt);
     });
 
@@ -1110,8 +1115,7 @@ describe("the trees of a heatmap", () => {
             // The sample tree puts treated1 first, and the gene tree puts Treh first.
             expect(content).toContain('"data":["treated1","untreated2","untreated1"]');
             expect(content).toContain('"data":["Treh","Kal1"]');
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-            expect(content.match(/"type":"lines"/g)?.length).toBe(2);
+            expect(content.split('"type":"lines"').length - 1).toBe(2);
             // The appendix lists the binding and each tree.
             for (const path of [CHART_PATH, SAMPLE_TREE, GENE_TREE]) expect(content).toContain(path);
         }

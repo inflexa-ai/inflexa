@@ -111,13 +111,12 @@ describe("the data profile — a refused spawn", () => {
 
         await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL fragment (\s* around the equals sign, caseless) of the failed-status write.
         const failed = statements.filter((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text));
         expect(failed).toHaveLength(1);
         expect(failed[0].values).toContain("account_frozen");
         expect(revoked).toEqual(["data-profile-suspended"]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(statements.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(true);
+        expect(statements.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(true);
     });
 
     it("without the suspend flag, fails the row with the reason and does not mark the analysis", async () => {
@@ -130,13 +129,12 @@ describe("the data profile — a refused spawn", () => {
 
         await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL fragment (\s* around the equals sign, caseless) of the failed-status write.
         const failed = statements.filter((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text));
         expect(failed).toHaveLength(1);
         expect(failed[0].values.some((v) => typeof v === "string" && v.includes("labels_unavailable"))).toBe(true);
         expect(revoked).toEqual(["data-profile-failed"]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(statements.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(false);
+        expect(statements.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(false);
     });
 
     it("passes a cancel from DBOS through with no change, and runs no failure path", async () => {
@@ -154,7 +152,7 @@ describe("the data profile — a refused spawn", () => {
         );
 
         expect(outcome).toBe(cancel);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL fragment (\s* around the equals sign, caseless) of the failed-status write.
         expect(statements.some((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text))).toBe(false);
         expect(revoked).toEqual([]);
     });

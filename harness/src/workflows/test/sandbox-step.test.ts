@@ -28,6 +28,7 @@ import type { Pool } from "pg";
 import { z } from "zod";
 import { ChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 import { PART_REGISTRY, isReconciling } from "@inflexa-ai/harness/contracts/part-registry.js";
+import { isIsoDate } from "../../lib/text.js";
 
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
@@ -432,6 +433,17 @@ describe("sandbox-step data-step-usage part", () => {
 
 // ── the activity history: data-step-activity with a time, then data-activity-entry ──
 
+/** Any character that ends a text line: the feed, the return, and the two Unicode line separators. */
+function hasLineBreak(value: string): boolean {
+    return value.includes("\n") || value.includes("\r") || value.includes("\u2028") || value.includes("\u2029");
+}
+
+/** The emitted activity time: the ISO date layout, a T separator, and a Z tail, with no line break in the middle. */
+function isIsoTimestamp(value: unknown): boolean {
+    if (typeof value !== "string") return false;
+    return isIsoDate(value.slice(0, 10)) && value[10] === "T" && value.endsWith("Z") && !hasLineBreak(value.slice(11, -1));
+}
+
 describe("sandbox-step activity history", () => {
     const ENTRY_ID = `activity-entry-${USAGE_RUN_ID}-${USAGE_STEP_ID}`;
     const partsOf = (type: string) => dbosState.emittedParts.filter((part) => part.type === type);
@@ -442,8 +454,7 @@ describe("sandbox-step activity history", () => {
         const stream = dbosState.emittedParts.filter((part) => part.type === "data-step-activity" || part.type === "data-activity-entry");
         const activities = partsOf("data-step-activity");
         expect(activities.length).toBeGreaterThan(1);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion reads the ISO-8601 UTC timestamp grammar that toISOString owns
-        for (const activity of activities) expect(activity.at).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/));
+        expect(activities.every((activity) => isIsoTimestamp(activity.at))).toBe(true);
         // Pairs in write order: the activity part, then its entry.
         expect(stream.map((part) => part.type)).toEqual(activities.flatMap(() => ["data-step-activity", "data-activity-entry"]));
         for (const [index, part] of stream.entries()) {
@@ -630,7 +641,7 @@ describe("sandbox-step kept tool outputs", () => {
             .map((part) => (part.type === "tool-result" && part.output.type === "text" ? part.output.value : ""))
             .find((text) => text.startsWith("[Tool result cut: "));
         return must(
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the tool-result reference extraction: the quoted to_ token of 20 hex digits feeds the assertion through the capture group.
             must(/reference "(to_[0-9a-f]{20})"/, '/reference "(to_[0-9a-f]{20})"/').exec(excerpt ?? ""),
             'must(/reference "(to_[0-9a-f]{20})"/, "/referenc',
         )[1];
@@ -841,7 +852,7 @@ describe("sandbox-step suspension", () => {
     const CHILD_ID = `${USAGE_RUN_ID}-${USAGE_STEP_ID}`;
 
     function expectSuspended(statements: Array<{ text: string; values: readonly unknown[] }>, reason: string): void {
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ between the keywords) of the canceled step row.
         const marked = statements.filter((q) => /UPDATE\s+cortex_step_executions/i.test(q.text) && q.values.includes("canceled"));
         expect(marked).toHaveLength(1);
         // The error and the last error class of the row both carry the reason of the host.

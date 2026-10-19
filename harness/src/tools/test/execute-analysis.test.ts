@@ -447,8 +447,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("suspended_insufficient_funds") && q.values.includes("no_funds"))).toBe(
             true,
         );
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(queries.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(true);
+        expect(queries.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(true);
     });
 
     it("launches the run through the RunLauncher and returns the reserved runId", async () => {
@@ -1050,10 +1049,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
         });
 
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/igraph-0\.11\.9-aaaaaaaa/);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/igraph-2\.1\.4-bbbbbbbb/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("igraph-0.11.9-aaaaaaaa");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("igraph-2.1.4-bbbbbbbb");
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.toThrow("python:igraph");
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-4"))).rejects.toThrow("r:igraph");
         expect(launches).toHaveLength(0);

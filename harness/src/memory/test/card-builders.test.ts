@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 import { maybeRecord } from "../../lib/shape.js";
+import { isLowerHex } from "../../lib/text.js";
 
 import type { PlanRecord } from "../../state/index.js";
 import { buildPresentationCardData, planCardOf, planPartOf } from "../card-builders.js";
@@ -109,8 +110,7 @@ describe("buildPresentationCardData", () => {
         const b = must(buildPresentationCardData(structuredClone(input)), "card b");
 
         expect(a.id).toBe(b.id);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion reads the pres- id grammar (prefix plus 16 hex digits) that uuidv7 minting owns
-        expect(a.id).toMatch(/^pres-[0-9a-f]{16}$/);
+        expect(a.id.startsWith("pres-") && a.id.length === 21 && isLowerHex(a.id.slice(5))).toBe(true);
     });
 
     it("carries a non-echart kind through untouched", () => {
@@ -148,7 +148,6 @@ describe("buildPresentationCardData — structure", () => {
         const a = must(buildPresentationCardData(input), "card a");
         const b = must(buildPresentationCardData(structuredClone(input)), "card b");
         expect(a).toEqual(b);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion reads the pres- id grammar (prefix plus 16 hex digits) that uuidv7 minting owns
-        expect(a.id).toMatch(/^pres-[0-9a-f]{16}$/);
+        expect(a.id.startsWith("pres-") && a.id.length === 21 && isLowerHex(a.id.slice(5))).toBe(true);
     });
 });

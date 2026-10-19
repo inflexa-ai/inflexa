@@ -47,10 +47,8 @@ describe("the extraction script", () => {
     it("keeps a literal NA cell as text for each pandas text read", () => {
         // keep_default_na=False keeps a literal cell such as "NA" or an empty string as its text, thus a
         // text cell survives the extraction the same as the host parser keeps it. The two text reads each
-        // set the flag, thus the regex anchors on the closing paren of the read call.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const matches = EXTRACTION_SCRIPT.match(/keep_default_na=False\)/g);
-        expect(matches).toHaveLength(2);
+        // set the flag, thus the count anchors on the closing paren of the read call.
+        expect(EXTRACTION_SCRIPT.split("keep_default_na=False)").length - 1).toBe(2);
     });
 
     it("reads a JSON file by the strict host shape, and it infers no table", () => {

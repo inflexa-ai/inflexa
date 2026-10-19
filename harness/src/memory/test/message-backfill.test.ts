@@ -29,17 +29,14 @@ class FakeBackfillClient extends Client {
         const values = Array.isArray(args[1]) ? args[1] : undefined;
         this.queries.push(text);
         const done = (rows: unknown[]): Promise<QueryResult> => Promise.resolve({ rows, rowCount: rows.length, command: "", oid: 0, fields: [] });
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        if (/^UPDATE messages SET message_envelope/.test(text)) {
+        if (text.startsWith("UPDATE messages SET message_envelope")) {
             this.updates.push(values ?? []);
             return done([]);
         }
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        if (/LIMIT 1/.test(text)) {
+        if (text.includes("LIMIT 1")) {
             return done(this.remainingRows);
         }
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        if (/FROM messages/.test(text) && /message_envelope IS NULL/.test(text)) {
+        if (text.includes("FROM messages") && text.includes("message_envelope IS NULL")) {
             return done(this.legacyRows);
         }
         return Promise.reject(new Error(`unexpected query: ${text}`));
@@ -119,24 +116,22 @@ describe("legacyAnthropicToModelMessage", () => {
                         { type: "redacted_thinking", data: "signed-opaque-blob" },
                     ],
                 }),
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the failure message scan: the row identity, then any middle, then the redacted_thinking marker (the dot class spans the variable middle).
         ).toThrow(/thread-1\/5.*redacted_thinking/);
     });
 
     it("fails the row when a user turn mixes tool_result with other blocks", () => {
-        expect(
-            () =>
-                legacyAnthropicToModelMessage({
-                    threadId: "thread-1",
-                    seq: 6,
-                    role: "user",
-                    content: [
-                        { type: "tool_result", tool_use_id: "toolu-1", content: "ok" },
-                        { type: "text", text: "also this" },
-                    ],
-                }),
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        ).toThrow(/thread-1\/6/);
+        expect(() =>
+            legacyAnthropicToModelMessage({
+                threadId: "thread-1",
+                seq: 6,
+                role: "user",
+                content: [
+                    { type: "tool_result", tool_use_id: "toolu-1", content: "ok" },
+                    { type: "text", text: "also this" },
+                ],
+            }),
+        ).toThrow("thread-1/6");
     });
 });
 
@@ -174,8 +169,7 @@ describe("backfillAiSdkMessageEnvelopes", () => {
             },
         ]);
 
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        await expect(backfillAiSdkMessageEnvelopes(fake)).rejects.toThrow(/thread-bad\/7/);
+        await expect(backfillAiSdkMessageEnvelopes(fake)).rejects.toThrow("thread-bad/7");
     });
 
     it("does not query DBOS operation outputs while migrating conversation messages", async () => {

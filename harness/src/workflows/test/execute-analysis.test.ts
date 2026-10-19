@@ -297,7 +297,7 @@ function dagPartsOf(emittedParts: FakeDepsRecord["emittedParts"]) {
 }
 
 function suspendWrites(queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> {
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ between the keywords, \s* around the equals) of the suspension write.
     return queries.filter((q) => /UPDATE\s+cortex_analysis_state\s+SET\s+status\s*=\s*'suspended_insufficient_funds'/i.test(q.text));
 }
 
@@ -596,7 +596,7 @@ describe("executeAnalysis body", () => {
         expect(result.completedSteps).toEqual(["C"]);
         // Run-level failureReason is the first failure in settlement order; the
         // per-step detail lives on the step ledger and the dag snapshot.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (\s+ before SET status); the rest is a literal fragment.
         const statusWrite = queries.find((q) => /UPDATE cortex_runs\s+SET status/.test(q.text) && q.values?.[0] === "partial");
         expect(statusWrite?.values?.[2]).toBe("first boom");
     });
@@ -829,7 +829,7 @@ describe("executeAnalysis body", () => {
         expect(types).toContain("data-run-completed");
 
         // No UPDATE on cortex_runs.parts.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ between the keywords) of the parts write.
         const partsWrites = queries.filter((q) => /UPDATE\s+cortex_runs\s+SET\s+parts/i.test(q.text));
         expect(partsWrites).toEqual([]);
     });
@@ -1012,7 +1012,7 @@ describe("executeAnalysis body", () => {
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "payment_required" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
         expect(suspendWrites(queries).length).toBe(1);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ between the keywords) of the run status write.
         const statusWrite = queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
         expect(statusWrite?.values).toContain("suspended_insufficient_funds");
         expect(statusWrite?.values).toContain("payment_required");
@@ -1094,7 +1094,7 @@ describe("executeAnalysis body", () => {
 
         expect(result.status).toBe("failed");
         expect(dbosState.childInputs).toEqual([]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ between the keywords) of the run status write.
         const statusWrite = queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
         expect(statusWrite?.values).toContain("failed");
         expect(statusWrite?.values).toContain("charge_refused");
@@ -1113,7 +1113,7 @@ describe("executeAnalysis body", () => {
         expect(dbosState.childInputs).toEqual([]);
         expect(suspendWrites(queries).length).toBe(1);
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "no_funds" } }]);
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ between the keywords) of the run status write.
         const statusWrite = queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
         expect(statusWrite?.values).toContain("suspended_insufficient_funds");
         expect(statusWrite?.values).toContain("no_funds");
@@ -1130,7 +1130,7 @@ describe("executeAnalysis body", () => {
     // the write is absent when synthesis never ran.
 
     const synthesisWrites = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ between the keywords) of the synthesis_status write.
         queries.filter((q) => /UPDATE\s+cortex_runs\s+SET\s+synthesis_status/i.test(q.text));
 
     it("produced synthesis → records synthesis_status 'produced' with a null reason; run completed", async () => {
@@ -1218,27 +1218,29 @@ describe("executeAnalysis body", () => {
 
     /** The one seed insert (`ON CONFLICT … DO NOTHING`) — its VALUES are 5-wide row tuples. */
     const seedWrites = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO NOTHING/i.test(q.text));
+        queries.filter((q) => {
+            const lowered = q.text.toLowerCase();
+            return lowered.includes("insert into cortex_step_executions") && lowered.includes("do nothing");
+        });
 
     /** The mark-running upsert (`ON CONFLICT … DO UPDATE`) for the synthesis row. */
     const synthesisMarkRunning = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caseless SQL fragment pair (INSERT INTO cortex_step_executions, DO UPDATE) gating the synthesis upsert row.
         queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO UPDATE/i.test(q.text) && (q.values ?? []).includes("synthesis"));
 
     /** The synthesis row's terminal `updateStepExecution` write (`SET status = $1`). */
     const synthesisStepUpdates = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ before SET) with the $1 status placeholder of the step row.
         queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = \$1/i.test(q.text) && (q.values ?? []).includes("synthesis"));
 
     /** The terminal sweep (`pending` → `skipped`). */
     const sweepWrites = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ before SET) of the skipped sweep.
         queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = 'skipped'/i.test(q.text));
 
     /** The run row's status write (`updateRunStatus`). */
     const runStatusWrites = (queries: readonly PoolQuery[]): Array<{ text: string; values?: readonly unknown[] }> =>
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the flexible-whitespace SQL UPDATE grammar (caseless, \s+ before SET) with the $1 status placeholder of the run row.
         queries.filter((q) => /UPDATE cortex_runs\s+SET status = \$1/i.test(q.text));
 
     it("seeds the synthesis row with the DAG, last wave, when synthesis is enabled", async () => {
@@ -1479,8 +1481,7 @@ describe("executeAnalysis body", () => {
 
         await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }], undefined, false), deps);
 
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        const seeds = queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && q.text.includes("'pending'"));
+        const seeds = queries.filter((q) => q.text.toLowerCase().includes("insert into cortex_step_executions") && q.text.includes("'pending'"));
         expect(seeds.length).toBe(1);
         // One 5-value tuple per step (runId, stepId, analysisId, wave, agentId);
         // B's wave is 1 (depends on A) and both carry the shared agent fallback map.

@@ -17,9 +17,11 @@ import { poolDouble } from "../../lib/test/doubles.js";
 
 function fakePool(maxConnections: number): Pool {
     // SAFETY: a hand-built double of the seam under test — the test drives only the members this object declares, so the missing members are never read.
-    return poolDouble(() => Promise.resolve(({
+    return poolDouble(() =>
+        Promise.resolve({
             rows: [{ max: String(maxConnections) }],
-        })));
+        }),
+    );
 }
 
 const originalEnv = { ...process.env };
@@ -92,7 +94,6 @@ describe("assertConnectionBudget", () => {
                 logger: silentLogger,
                 config: { poolMax: process.env.DB_POOL_MAX },
             }),
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        ).rejects.toThrow(/FATAL: pg max_connections \(100\) cannot hold one pod's pool footprint \(210\)/);
+        ).rejects.toThrow("FATAL: pg max_connections (100) cannot hold one pod's pool footprint (210)");
     });
 });

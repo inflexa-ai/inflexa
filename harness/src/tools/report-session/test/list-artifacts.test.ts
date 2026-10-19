@@ -25,6 +25,7 @@ import type {
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ToolContext } from "../../define-tool.js";
 import { createListPinnedArtifactsTool, type ListPinnedArtifactsResult, type PinnedArtifact } from "../list-artifacts.js";
+import { isDigits } from "../../../lib/text.js";
 import { must } from "@inflexa-ai/harness/lib/test/guards.js";
 
 /** Each root that a test made. The cleanup removes them after the suite. */
@@ -252,8 +253,7 @@ describe("the columns", () => {
         const columns = artifact?.columns ?? [];
         expect(columns[0]).toBe("gene");
         // Each name that lands is whole, thus a locator that names one addresses a real column.
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
-        expect(columns.every((name) => name === "gene" || /^col\d{4}$/.test(name))).toBe(true);
+        expect(columns.every((name) => name === "gene" || (name.startsWith("col") && name.length === 7 && isDigits(name.slice(3))))).toBe(true);
         expect(columns.length).toBeLessThan(names.length);
     });
 

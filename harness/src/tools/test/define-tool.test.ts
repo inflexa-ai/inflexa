@@ -70,7 +70,7 @@ describe("defineTool", () => {
                     describeCall: "none",
                     execute: () => Promise.resolve(ok({})),
                 }),
-            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion's grammar: the expected output shape has no builtin matcher.
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the failure message scan: the tool id, then "type", then "object" in order, with the s-flag dot spanning lines.
         ).toThrow(/union-tool.*type.*object/s);
     });
 
