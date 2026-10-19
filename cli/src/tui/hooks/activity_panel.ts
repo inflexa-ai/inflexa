@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { ResultAsync } from "neverthrow";
 import type { StepActivityPart, StepPhase } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { CancelRunResult, RunStatus } from "../../api/runs.ts";
+import type { CancelRunResult } from "../../api/runs.ts";
 import { describeClientError, type ClientError } from "../../client/api.ts";
 import { cancelRun, streamRun } from "../../client/runs.ts";
 import { getLogger } from "../../lib/log.ts";
@@ -10,8 +10,7 @@ import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
 import { bootState } from "./boot.ts";
 import { notify, type NotifyOptions } from "./notice.ts";
-import { markRunAnnounced } from "./run_completion.ts";
-import { activeSubjects, refreshSidebarData, RUN_STATUS_TERMINAL, runsSnapshot, type PanelSubject, type RunsSnapshot } from "./sidebar_live.ts";
+import { activeSubjects, refreshSidebarData, RUN_STATUS_TERMINAL, type PanelSubject } from "./sidebar_live.ts";
 
 // Which subject the activity panel is showing, whether it is dismissed, and what that subject is
 // doing right now — held here (not inside `app.tsx`) so the state is decoupled from its renderer, the
@@ -359,18 +358,12 @@ export type RunAbortOpts = {
     readonly refresh: (analysisId: string) => Promise<void>;
     /** Raise a transient toast. Real: {@link notify}. */
     readonly notify: (notice: Notice, durationMs?: number, opts?: NotifyOptions) => void;
-    /** Read the runs snapshot that the refresh published. Real: {@link runsSnapshot}. */
-    readonly readRuns: () => RunsSnapshot;
-    /** Tell the completion watcher that the user already has the final notice of a run. Real: {@link markRunAnnounced}. */
-    readonly markAnnounced: (runId: string, status: RunStatus) => void;
 };
 
 const DEFAULT_RUN_ABORT_OPTS: Omit<RunAbortOpts, "confirm"> = {
     cancel: (analysisId, runId) => cancelRun(analysisId, runId),
     refresh: (analysisId) => refreshSidebarData(analysisId),
     notify,
-    readRuns: runsSnapshot,
-    markAnnounced: markRunAnnounced,
 };
 
 /**
@@ -407,8 +400,9 @@ function joinNames(names: readonly string[]): string {
  *
  * Every replacing notice is raised BEFORE the refresh. The refresh makes the completion watcher announce
  * a canceled run with a queued notice, and a replacing notice raised after it would destroy that
- * announcement while it shows. The one notice raised after the refresh is queued itself, and it needs
- * the refreshed snapshot to know that the watcher cannot announce the run.
+ * announcement while it shows. The abort raises no notice of its own for the cancel: the watcher
+ * announces the canceled run, also when the refreshed runs do not hold it, because it reads such a run
+ * by its id.
  */
 export async function abortFocusedRun(analysisId: string | null, opts: Pick<RunAbortOpts, "confirm"> & Partial<RunAbortOpts>): Promise<void> {
     if (analysisId === null) return;
@@ -444,16 +438,6 @@ export async function abortFocusedRun(analysisId: string | null, opts: Pick<RunA
             edges.notify({ kind: "warn", text: `${target.name} was canceled, but ${joinNames(unsettled)} did not settle.` });
         }
         await edges.refresh(analysisId);
-        // The snapshot holds the active runs and the newest runs only, so a canceled run that falls out of
-        // it is never seen as active-then-terminal, and the watcher cannot announce it. The notice is
-        // queued because it announces a result the user did not wait on, like the watcher's own notice.
-        // The watcher still holds the run as seen active, and a later poll can load it as terminal, so
-        // the run is marked as announced to keep that poll from raising a second notice.
-        const snapshot = edges.readRuns();
-        if (snapshot.kind !== "loaded" || !snapshot.runs.some((run) => run.runId === target.runId)) {
-            edges.markAnnounced(target.runId, "canceled");
-            edges.notify({ kind: "info", text: `${target.name} was canceled.` }, undefined, { queue: true });
-        }
         return;
     }
     if (outcome === "canceled" && !RUN_STATUS_TERMINAL[finalStatus]) {

@@ -16,6 +16,7 @@ import {
     type Pool,
     type PlanApproval,
     type PlanRecord,
+    type ProvenanceSeam,
     type RunArtifactCount,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
@@ -42,6 +43,7 @@ import { listAnalysisPage, listSeenRunIds } from "../../db/primary_query.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
+import { installProvenanceSeam, provenanceSeam } from "../../modules/harness/prov_bridge.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import { freshDb } from "../../test_support/db.ts";
@@ -49,7 +51,7 @@ import type { ServerBoot } from "../boot.ts";
 import type { ServerEnv } from "../http.ts";
 import { __resetProfileQueueForTest, profileWorkInFlight, serializeProfileWork, watchInputDrift } from "../profile_queue.ts";
 import { __resetTurnsForTest, refuseNewTurns, startTurn } from "../turns.ts";
-import { DEFAULT_RUN_ROUTES_OPTS, runRoutes, type RunRoutesOpts } from "./runs.ts";
+import { DEFAULT_RUN_ROUTES_OPTS, productionCancelerDeps, runRoutes, type RunRoutesOpts } from "./runs.ts";
 
 // The routes under the mount path of the app, with no bearer check and no analysis guard: `app.test.ts` covers
 // those. Each harness read is a fake, because each needs Postgres or DBOS. Each `as` cast of a body below reads
@@ -937,6 +939,26 @@ describe("POST {A}/run/:runId/cancel", () => {
         const response = await engine.request("/api/v1/analyses/mine/run/r1/cancel", { method: "POST" });
         expect(response.status).toBe(500);
         expect(await response.json()).toEqual({ error: "internal_error", message: "The server failed to handle the request." });
+    });
+});
+
+describe("productionCancelerDeps", () => {
+    let priorProvenance: ProvenanceSeam | undefined;
+    beforeEach(() => {
+        priorProvenance = provenanceSeam();
+    });
+    afterEach(() => {
+        installProvenanceSeam(priorProvenance ?? null);
+    });
+
+    test("carries the installed provenance binding, and none while none is installed", () => {
+        const provenance: ProvenanceSeam = { emitRunEvent: () => undefined };
+
+        installProvenanceSeam(provenance);
+        expect(productionCancelerDeps(pool).provenance).toBe(provenance);
+
+        installProvenanceSeam(null);
+        expect("provenance" in productionCancelerDeps(pool)).toBe(false);
     });
 });
 

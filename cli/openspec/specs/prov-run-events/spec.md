@@ -9,8 +9,10 @@ The execution events and the report events of the provenance bus, and how the re
 
 The `BusEvent` union SHALL carry six execution-level provenance events, each scoped
 by `analysisId` and stamped with a `ProvActor`. Timestamps in these payloads are
-epoch-milliseconds observed by the harness via its checkpointed clock — replay-stable
-by construction, never minted by the cli recorder:
+epoch-milliseconds observed by the harness, never minted by the cli recorder. A
+workflow body reads its checkpointed clock, thus a replay gives the same values. The
+run canceler reads the wall clock one time for the end events of a run that it
+cancels, because no replay fires them again:
 
 - `prov.run_started` — carries `run: ProvRunRef { runId, planSummary?, startedAtMs }`.
 - `prov.run_completed` — carries `outcome: ProvRunOutcome { runId, status,

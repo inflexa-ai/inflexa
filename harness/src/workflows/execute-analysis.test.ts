@@ -36,7 +36,7 @@ import { ChatPartSchema, RunSynthesisPartSchema } from "@inflexa-ai/harness/cont
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
-import type { RunSession } from "../auth/types.js";
+import type { AgentSession } from "../auth/types.js";
 import type { RunChargeOutcome } from "../billing/run-charge.js";
 
 import { runExecuteAnalysisBody, synthesisRowUpdate, synthesizeFindings } from "./execute-analysis.js";
@@ -296,7 +296,7 @@ interface FakeDepsRecord {
 function makeDeps(opts: {
     childResults: Map<string, SandboxStepResult | Error>;
     pool: FakePool;
-    emitRunEvent?: (event: RunProvenanceEvent, session: RunSession) => void;
+    emitRunEvent?: (event: RunProvenanceEvent, session: AgentSession) => void;
     observeRun?: (observation: RunObservation) => void;
     knowledge?: KnowledgeClient;
 }): {
@@ -1648,7 +1648,7 @@ describe("executeAnalysis body", () => {
     it("every emit site delivers the workflow input's runSession alongside the event", async () => {
         const pool = makeFakePool();
         const events: RunProvenanceEvent[] = [];
-        const sessions: RunSession[] = [];
+        const sessions: AgentSession[] = [];
         const { deps } = makeDeps({
             pool,
             emitRunEvent: (e, s) => {

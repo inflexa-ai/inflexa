@@ -4,11 +4,13 @@ import { createStore } from "solid-js/store";
 import { okAsync, errAsync, ResultAsync } from "neverthrow";
 import type { StepActivityPart } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { CancelRunResult, DataProfileState, DataProfileView, RunDetail, RunStatus, RunSummary } from "../../api/runs.ts";
+import type { CancelRunResult, DataProfileState, DataProfileView, RunDetail, RunSummary } from "../../api/runs.ts";
 import { describeClientError, type ClientError } from "../../client/api.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
-import { __resetSidebarLiveForTest, refreshSidebarData, runsSnapshot, type ActiveRunProgress, type RefreshOpts, type RunsSnapshot } from "./sidebar_live.ts";
+import { __pendingNoticeCountForTest, __resetNoticesForTest, currentNotice } from "./notice.ts";
+import { __resetRunCompletionsForTest, watchRunCompletions } from "./run_completion.ts";
+import { __resetSidebarLiveForTest, refreshSidebarData, type ActiveRunProgress, type RefreshOpts } from "./sidebar_live.ts";
 import {
     __resetActivityPanelForTest,
     abortFocusedRun,
@@ -238,6 +240,8 @@ function panelOpts(initial: string | null): FakePanelOpts {
 
 afterEach(() => {
     __resetSidebarLiveForTest();
+    __resetRunCompletionsForTest();
+    __resetNoticesForTest();
     __resetActivityPanelForTest();
 });
 
@@ -765,15 +769,13 @@ type AbortRecord = {
     queued: Notice[];
     /** The analyses whose runs were read again. */
     refreshed: string[];
-    /** The `(runId, status)` pairs marked as announced for the completion watcher. */
-    announced: [string, RunStatus][];
 };
 
 /**
  * Abort options that record into `record`. `answer` decides each confirmation at once; a test that must
  * answer later passes `onAsk` and calls the `onAnswer` it receives. `cancel` defaults to the canceled
- * result of the asked run. `readRuns` defaults to the real runs snapshot, which the refresh edge does not
- * change here, so it keeps the rows that the test seeded.
+ * result of the asked run. `refresh` defaults to a recorder that reads nothing, so the rows that the test
+ * seeded stay.
  */
 function abortOpts(
     record: AbortRecord,
@@ -781,7 +783,7 @@ function abortOpts(
         answer?: boolean;
         onAsk?: (run: RunAbortTarget, onAnswer: (confirmed: boolean) => void) => void;
         cancel?: (runId: string) => ResultAsync<CancelRunResult, ClientError>;
-        readRuns?: () => RunsSnapshot;
+        refresh?: (analysisId: string) => Promise<void>;
     } = {},
 ): RunAbortOpts {
     return {
@@ -796,19 +798,16 @@ function abortOpts(
         },
         refresh: async (analysisId) => {
             record.refreshed.push(analysisId);
+            await cfg.refresh?.(analysisId);
         },
         notify: (notice, _durationMs, notifyOpts) => {
             (notifyOpts?.queue ? record.queued : record.notices).push(notice);
-        },
-        readRuns: cfg.readRuns ?? runsSnapshot,
-        markAnnounced: (runId, status) => {
-            record.announced.push([runId, status]);
         },
     };
 }
 
 function newRecord(): AbortRecord {
-    return { asked: [], canceled: [], notices: [], queued: [], refreshed: [], announced: [] };
+    return { asked: [], canceled: [], notices: [], queued: [], refreshed: [] };
 }
 
 describe("activity panel abort", () => {
@@ -873,30 +872,50 @@ describe("activity panel abort", () => {
         expect(record.refreshed).toEqual(["analysis-1"]);
     });
 
-    test("a canceled run that the refreshed runs do not hold is announced by a queued notice", async () => {
+    test("a canceled run that the refreshed runs do not hold gets no notice from the abort", async () => {
         await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
 
-        const outside = newRecord();
-        await abortFocusedRun("analysis-1", abortOpts(outside, { readRuns: () => ({ kind: "loaded", runs: [runRow({ runId: "run-newer" })] }) }));
-        expect(outside.queued).toEqual([{ kind: "info", text: "Differential expression was canceled." }]);
-        expect(outside.notices).toEqual([]);
-        expect(outside.refreshed).toEqual(["analysis-1"]);
-        // The watcher must not announce the run again when a later poll loads it as terminal.
-        expect(outside.announced).toEqual([["run-a", "canceled"]]);
+        const record = newRecord();
+        await abortFocusedRun(
+            "analysis-1",
+            abortOpts(record, { refresh: (analysisId) => refreshSidebarData(analysisId, optsFor([runRow({ runId: "run-newer" })])) }),
+        );
 
-        // A snapshot that is not loaded cannot show the watcher a transition either.
-        for (const snapshot of [{ kind: "unavailable" }, { kind: "not_ready" }] as const) {
+        expect(record.refreshed).toEqual(["analysis-1"]);
+        expect(record.notices).toEqual([]);
+        expect(record.queued).toEqual([]);
+    });
+
+    test("a canceled run that the refreshed runs do not hold gets exactly one notice, from the watcher", async () => {
+        await createRoot(async (dispose) => {
+            const reads: [string, string][] = [];
+            watchRunCompletions({
+                loadRun: (analysisId, runId) => {
+                    reads.push([analysisId, runId]);
+                    return okAsync(
+                        runDetail(runRow({ runId, status: "canceled", completedAt: "2026-07-28T10:01:00.000Z", planTitle: "Differential expression" })),
+                    );
+                },
+            });
+            // The watcher sees the run active, as the panel does.
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+
             const record = newRecord();
-            await abortFocusedRun("analysis-1", abortOpts(record, { readRuns: () => snapshot }));
-            expect(record.queued).toEqual([{ kind: "info", text: "Differential expression was canceled." }]);
-            expect(record.announced).toEqual([["run-a", "canceled"]]);
-        }
+            await abortFocusedRun(
+                "analysis-1",
+                abortOpts(record, { refresh: (analysisId) => refreshSidebarData(analysisId, optsFor([runRow({ runId: "run-newer" })])) }),
+            );
+            // A later poll refreshes again and still misses the run.
+            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-newer" })]));
+            for (let i = 0; i < 8; i++) await Promise.resolve();
 
-        // A snapshot that holds the run leaves the announcement to the watcher.
-        const held = newRecord();
-        await abortFocusedRun("analysis-1", abortOpts(held));
-        expect(held.queued).toEqual([]);
-        expect(held.announced).toEqual([]);
+            expect(record.notices).toEqual([]);
+            expect(record.queued).toEqual([]);
+            expect(reads).toEqual([["analysis-1", "run-a"]]);
+            expect(currentNotice()).toEqual({ kind: "error", text: "Run Differential expression was canceled in 1m00s (0/1 steps)" });
+            expect(__pendingNoticeCountForTest()).toBe(0);
+            dispose();
+        });
     });
 
     test("a declined confirmation sends nothing and changes nothing", async () => {

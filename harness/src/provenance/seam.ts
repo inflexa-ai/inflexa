@@ -8,15 +8,16 @@
  *
  * One surface carries the three, and each member is optional alone. Thus a composition binds the members
  * that it records, and the harness reads an absent member as absence and never as an error. The run emit
- * takes the `RunSession` of the run, because a durable run carries one and a persisting realization needs
- * its credential. A session act carries no session, thus the session emit takes the event alone.
+ * takes an `AgentSession`, because a persisting realization needs the credential of the actor. The
+ * workflow body passes the `RunSession` of its durable input, and the run canceler passes the session of
+ * the cancel. A session act carries no session, thus the session emit takes the event alone.
  *
  * Both emit members are fire-and-forget. Neither gives a result, and the harness reads none. A site emits
  * after its act lands, thus a refused act and a failed act each emit nothing and the record states what
  * happened.
  */
 
-import type { RunSession } from "../auth/types.js";
+import type { AgentSession } from "../auth/types.js";
 import type { Logger } from "../lib/logger.js";
 import type { ProvenanceExport } from "../report-render/provenance-data.js";
 import type { AuthoringBlock } from "../report-model/authoring-grammar.js";
@@ -29,14 +30,18 @@ export type { ProvenanceExport } from "../report-render/provenance-data.js";
  * Harness-owned plain union — the harness stays tsprov-free and bus-free; the
  * host maps these execution facts onto its own ledger vocabulary.
  *
- * Every `atMs` is epoch milliseconds read via `await DBOS.now()`, a checkpointed
- * step: a body re-executed by DBOS recovery reads the recorded value, so a
+ * In the workflow body, every `atMs` is epoch milliseconds read via `await DBOS.now()`, a
+ * checkpointed step: a body re-executed by DBOS recovery reads the recorded value, so a
  * re-emitted event carries the identical timestamp and merges on the host's
- * ledger without a value conflict. Never source these from a wall clock
+ * ledger without a value conflict. The body never sources these from a wall clock
  * (`Date.now()`) — that would diverge across replays and defeat the merge.
  *
- * `run_completed.durationMs` is the terminal `atMs` minus the `run_started`
- * `atMs` (both `DBOS.now()` reads) — the true workflow-observed run span.
+ * The run canceler is the second emit site of `step_completed` and `run_completed`. It is not a
+ * workflow, thus no replay fires its emits, and it reads the wall clock one time for all of them.
+ *
+ * In the body, `run_completed.durationMs` is the terminal `atMs` minus the `run_started`
+ * `atMs` (both `DBOS.now()` reads) — the true workflow-observed run span. The canceler holds no
+ * `run_started` time, thus it measures from the `started_at` of the run row.
  *
  * `step_completed` fires once at EVERY scheduler-loop settlement — the only site
  * that observes every executed step (registration sees only artifact-producing
@@ -177,11 +182,12 @@ export type ProvenanceSeam = {
      * The run engine emits the facts of one run here.
      *
      * Synchronous by signature (`void`, never a promise): a host that needs input and output dispatches
-     * the work rather than making a workflow body wait behind it. The `RunSession` rides from the durable
-     * workflow input, because a persisting realization needs the credential, the scope, and the identity
-     * of the run. A realization can ignore the parameter.
+     * the work rather than making a workflow body wait behind it. The session rides beside the event,
+     * because a persisting realization needs the credential, the scope, and the identity of the actor.
+     * The body passes the `RunSession` of its durable workflow input. The run canceler passes the
+     * session of the cancel, because it holds no `RunSession`. A realization can ignore the parameter.
      */
-    readonly emitRunEvent?: (event: RunProvenanceEvent, session: RunSession) => void;
+    readonly emitRunEvent?: (event: RunProvenanceEvent, session: AgentSession) => void;
     /**
      * A session emits one act here. A session act runs under no authorized run, thus this member takes
      * the event alone. It is synchronous by signature for the same reason as the run emit.

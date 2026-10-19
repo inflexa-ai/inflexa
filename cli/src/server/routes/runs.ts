@@ -35,6 +35,7 @@ import {
     type PlanApproval,
     type PlanRecord,
     type RunCanceler,
+    type RunCancelerDeps,
     type RunArtifactCount,
     type RunEventSubscribeOptions,
     type StepExecutionRow,
@@ -84,6 +85,7 @@ import { getLogger } from "../../lib/log.ts";
 import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
 import { ensureProfileAtParity, forceReprofile, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
+import { provenanceSeam } from "../../modules/harness/prov_bridge.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { buildChatSession } from "../../modules/harness/turn.ts";
 import { analysisFarmPath, catalogFarmPath, composeFullFarm, describeFarmCompositionError } from "../../modules/libs/composition.ts";
@@ -155,6 +157,24 @@ export type RunRoutesOpts = {
 /** One canceler for each pool: a canceler makes its engine client at the first cancel, and the client registers handlers on the pool. */
 const cancelers = new WeakMap<Pool, RunCanceler>();
 
+/**
+ * The deps of the production run canceler for a pool: the noop run charge, the local run authorizer, and the
+ * provenance binding that the boot installed.
+ *
+ * The canceler emits the end of a run that it cancels through that binding, thus the signed document of the
+ * analysis records the abort. While no boot has installed one the deps carry none, and the cancel
+ * converges with no provenance.
+ */
+export function productionCancelerDeps(pool: Pool): RunCancelerDeps {
+    const provenance = provenanceSeam();
+    return {
+        pool,
+        runCharge: createNoopRunCharge(),
+        runAuthorizer: createLocalRunAuthorizer(),
+        ...(provenance ? { provenance } : {}),
+    };
+}
+
 /** The production {@link RunRoutesOpts}. */
 export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     listRuns: (pool, analysisId, page) =>
@@ -176,7 +196,7 @@ export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     loadProfile: loadDataProfileStatus,
     subscribeRun: (pool, options) => createRunEventStream({ pool }).subscribe(options),
     cancelRun: (pool, runId, session) => {
-        const canceler = cancelers.get(pool) ?? createRunCanceler({ pool, runCharge: createNoopRunCharge(), runAuthorizer: createLocalRunAuthorizer() });
+        const canceler = cancelers.get(pool) ?? createRunCanceler(productionCancelerDeps(pool));
         cancelers.set(pool, canceler);
         return canceler.cancel(runId, session);
     },

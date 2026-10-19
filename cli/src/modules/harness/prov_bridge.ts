@@ -352,10 +352,11 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
  *
  * The harness-supplied `analysisId` passes through unchanged — it equals the cli `analysisId` by the
  * trigger contract, and the recorder silently drops unknown ids. Every timestamp (`atMs`,
- * `durationMs`) passes THROUGH from the event — the harness read them from its checkpointed clock
- * (`DBOS.now()`), replay-stable — so this mapping NEVER reads a clock; doing so would diverge across
- * replays and defeat the merge. The mapping is fire-and-forget; the harness guards the call site so a
- * throw here never fails the run.
+ * `durationMs`) passes THROUGH from the event. The workflow emits read them from the harness
+ * checkpointed clock (`DBOS.now()`), which is replay-stable. The harness run canceler reads the wall
+ * clock one time for the end events of a run that it cancels, because no replay fires them again.
+ * This mapping NEVER reads a clock; doing so would diverge across replays and defeat the merge. The
+ * mapping is fire-and-forget; the harness guards the call site so a throw here never fails the run.
  */
 export function createRunProvenanceEmitter(model: ProvModelId): (event: RunProvenanceEvent) => void {
     return (event: RunProvenanceEvent): void => {
