@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { err, ok } from "neverthrow";
@@ -17,7 +17,7 @@ import {
     type ServerSettings,
 } from "../../api/machine.ts";
 import type { ApiError } from "../../api/common.ts";
-import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
+import { insertAnalysis, insertAnalysisInput, insertAnchor } from "../../db/primary_mutation.ts";
 import { env } from "../../lib/env.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { defaultOutputSubdir } from "../../modules/analysis/output.ts";
@@ -354,7 +354,7 @@ describe("GET /api/v1/sandbox", () => {
     });
 });
 
-describe("POST /api/v1/open", () => {
+describe("POST /api/v1/open-directory", () => {
     const homes: string[] = [];
 
     /** The routes with an opener that records each target, so no test starts a real opener. */
@@ -387,6 +387,16 @@ describe("POST /api/v1/open", () => {
         return { id: analysis.id, home };
     }
 
+    /** A second tracked folder, so an anchored input reference has a live anchor outside the analysis home. */
+    async function seedInputAnchor(): Promise<{ anchorId: string; home: string }> {
+        const home = mkdtempSync(join(tmpdir(), "inflexa-open-input-"));
+        homes.push(home);
+        const anchorId = randomUUIDv7();
+        (await writeMarker(home, anchorId))._unsafeUnwrap();
+        insertAnchor({ id: anchorId, createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        return { anchorId, home };
+    }
+
     beforeEach(() => {
         freshDb();
     });
@@ -394,11 +404,18 @@ describe("POST /api/v1/open", () => {
     afterEach(() => {
         for (const home of homes) rmSync(home, { recursive: true, force: true });
         homes.length = 0;
+        assertTestSandbox(env.refsDir);
+        assertTestSandbox(env.packageStoreDir);
+        assertTestSandbox(env.logDir);
+        rmSync(env.refsDir, { recursive: true, force: true });
+        rmSync(env.packageStoreDir, { recursive: true, force: true });
+        rmSync(env.logDir, { recursive: true, force: true });
+        mkdirSync(env.logDir, { recursive: true });
     });
 
     test("`data_dir` opens the data folder and answers `opened: true`", async () => {
         const { routes, opened } = opener();
-        const response = await routes.request("/open", json("POST", { target: "data_dir" }));
+        const response = await routes.request("/open-directory", json("POST", { target: "data_dir" }));
         expect(response.status).toBe(200);
         expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
         expect(opened).toEqual([env.dataDir]);
@@ -410,16 +427,29 @@ describe("POST /api/v1/open", () => {
         expect(existsSync(folder)).toBe(false);
 
         const { routes, opened } = opener();
-        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: id }));
+        const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: id }));
         expect(response.status).toBe(200);
         expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
         expect(existsSync(folder)).toBe(true);
         expect(opened).toEqual([folder]);
     });
 
+    test("a file at the output folder is 409 `conflict`, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        // `locateOrEnsureOutputDir` hands back a file at the path, thus only the directories-only guard refuses it.
+        const folder = join(home, defaultOutputSubdir("alpha"));
+        mkdirSync(dirname(folder), { recursive: true });
+        writeFileSync(folder, "not a folder");
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: id }));
+        expect(response.status).toBe(409);
+        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(opened).toEqual([]);
+    });
+
     test("`output_dir` with no `analysisId` is 400 `validation_error`, and opens nothing", async () => {
         const { routes, opened } = opener();
-        const response = await routes.request("/open", json("POST", { target: "output_dir" }));
+        const response = await routes.request("/open-directory", json("POST", { target: "output_dir" }));
         expect(response.status).toBe(400);
         expect(((await response.json()) as ApiError).error).toBe("validation_error");
         expect(opened).toEqual([]);
@@ -427,7 +457,7 @@ describe("POST /api/v1/open", () => {
 
     test("a path in place of a target is 400 `validation_error`, and opens nothing", async () => {
         const { routes, opened } = opener();
-        const response = await routes.request("/open", json("POST", { target: "/etc" }));
+        const response = await routes.request("/open-directory", json("POST", { target: "/etc" }));
         expect(response.status).toBe(400);
         expect(((await response.json()) as ApiError).error).toBe("validation_error");
         expect(opened).toEqual([]);
@@ -436,7 +466,7 @@ describe("POST /api/v1/open", () => {
     test("an unknown `analysisId` is 404 `not_found`, and opens nothing", async () => {
         await seedAnalysis();
         const { routes, opened } = opener();
-        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: "nope" }));
+        const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: "nope" }));
         expect(response.status).toBe(404);
         expect(((await response.json()) as ApiError).error).toBe("not_found");
         expect(opened).toEqual([]);
@@ -445,7 +475,7 @@ describe("POST /api/v1/open", () => {
     test("a name of an analysis in place of its id is 404 `not_found`, and opens nothing", async () => {
         await seedAnalysis();
         const { routes, opened } = opener();
-        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: "Alpha" }));
+        const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: "Alpha" }));
         expect(response.status).toBe(404);
         expect(((await response.json()) as ApiError).error).toBe("not_found");
         expect(opened).toEqual([]);
@@ -455,7 +485,7 @@ describe("POST /api/v1/open", () => {
         const { id, home } = await seedAnalysis();
         rmSync(home, { recursive: true, force: true });
         const { routes, opened } = opener();
-        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: id }));
+        const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: id }));
         expect(response.status).toBe(409);
         expect(((await response.json()) as ApiError).error).toBe("conflict");
         expect(opened).toEqual([]);
@@ -466,7 +496,7 @@ describe("POST /api/v1/open", () => {
         // A file where the `analyses` folder belongs makes the `mkdir -p` of the output folder fail.
         writeFileSync(join(home, ".inflexa", "analyses"), "not a folder");
         const { routes, opened } = opener();
-        const response = await routes.request("/open", json("POST", { target: "output_dir", analysisId: id }));
+        const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: id }));
         expect(response.status).toBe(500);
         expect(((await response.json()) as ApiError).error).toBe("internal_error");
         expect(opened).toEqual([]);
@@ -475,7 +505,7 @@ describe("POST /api/v1/open", () => {
     test("a path or a URL in the body is never read: the opener gets only the data folder", async () => {
         const { routes, opened } = opener();
         for (const extra of [{ path: "/etc" }, { url: "https://example.com" }]) {
-            const response = await routes.request("/open", json("POST", { target: "data_dir", ...extra }));
+            const response = await routes.request("/open-directory", json("POST", { target: "data_dir", ...extra }));
             expect(response.status).toBe(200);
         }
         expect(opened).toEqual([env.dataDir, env.dataDir]);
@@ -483,7 +513,7 @@ describe("POST /api/v1/open", () => {
 
     test("an opener that fails is 200 `opened: false`", async () => {
         const { routes, opened } = opener({ type: "open_failed", code: "ENOENT", cause: new Error("no opener") });
-        const response = await routes.request("/open", json("POST", { target: "data_dir" }));
+        const response = await routes.request("/open-directory", json("POST", { target: "data_dir" }));
         expect(response.status).toBe(200);
         expect((await response.json()) as OpenFolderResult).toEqual({ opened: false });
         expect(opened).toEqual([env.dataDir]);
@@ -491,9 +521,300 @@ describe("POST /api/v1/open", () => {
 
     test("a body that is not JSON is 400 `invalid_json`, and opens nothing", async () => {
         const { routes, opened } = opener();
-        const response = await routes.request("/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{" });
+        const response = await routes.request("/open-directory", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{" });
         expect(response.status).toBe(400);
         expect(((await response.json()) as ApiError).error).toBe("invalid_json");
+        expect(opened).toEqual([]);
+    });
+
+    test("`workspace` opens the folder of a run and answers `opened: true`", async () => {
+        const { id, home } = await seedAnalysis();
+        const wsRoot = join(home, defaultOutputSubdir("alpha"));
+        mkdirSync(join(wsRoot, "runs", "r1"), { recursive: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r1" }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(opened).toEqual([join(wsRoot, "runs", "r1")]);
+    });
+
+    test("a `workspace` path of `.` names the workspace root", async () => {
+        const { id, home } = await seedAnalysis();
+        const wsRoot = join(home, defaultOutputSubdir("alpha"));
+        mkdirSync(wsRoot, { recursive: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "." }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(opened).toEqual([wsRoot]);
+    });
+
+    test("a nested `workspace` path to the output folder of a step opens and answers `opened: true`", async () => {
+        const { id, home } = await seedAnalysis();
+        const stepOutput = join(home, defaultOutputSubdir("alpha"), "runs", "r1", "s1", "output");
+        mkdirSync(stepOutput, { recursive: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r1/s1/output" }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(opened).toEqual([stepOutput]);
+    });
+
+    test("a `workspace` path with a `..` segment is 400 `validation_error`, and opens nothing", async () => {
+        const { id } = await seedAnalysis();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "../elsewhere" }));
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+        expect(opened).toEqual([]);
+    });
+
+    test("a `workspace` path that escapes through a symbolic link is 404 `not_found`, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        const wsRoot = join(home, defaultOutputSubdir("alpha"));
+        mkdirSync(wsRoot, { recursive: true });
+        symlinkSync(tmpdir(), join(wsRoot, "escape"));
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "escape" }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
+    test("a `workspace` path that names nothing on disk is 404 `not_found`, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        const wsRoot = join(home, defaultOutputSubdir("alpha"));
+        mkdirSync(join(wsRoot, "runs"), { recursive: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r9" }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
+    test("a `workspace` path that names a file is 409 `conflict`, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        const wsRoot = join(home, defaultOutputSubdir("alpha"));
+        mkdirSync(join(wsRoot, "runs", "r1"), { recursive: true });
+        writeFileSync(join(wsRoot, "runs", "r1", "synthesis.json"), "{}");
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r1/synthesis.json" }));
+        expect(response.status).toBe(409);
+        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(opened).toEqual([]);
+    });
+
+    test("a `workspace` whose anchor folder is gone is 409 `conflict`, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        mkdirSync(join(home, "runs", "r1"), { recursive: true });
+        rmSync(home, { recursive: true, force: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r1" }));
+        expect(response.status).toBe(409);
+        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(opened).toEqual([]);
+    });
+
+    test("a `workspace` target with a name of an analysis in place of its id is 404 `not_found`", async () => {
+        const { home } = await seedAnalysis();
+        mkdirSync(join(home, defaultOutputSubdir("alpha"), "runs", "r1"), { recursive: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: "Alpha", path: "runs/r1" }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
+    test("a well-formed `analysisId` of no analysis is 404 `not_found` for `workspace` and for `input`, and opens nothing", async () => {
+        await seedAnalysis();
+        const unknownId = randomUUIDv7();
+        const { routes, opened } = opener();
+        for (const body of [
+            { target: "workspace", analysisId: unknownId, path: "runs/r1" },
+            { target: "input", analysisId: unknownId, path: "/datasets", anchorId: null },
+        ]) {
+            const response = await routes.request("/open-directory", json("POST", body));
+            expect(response.status).toBe(404);
+            expect(((await response.json()) as ApiError).error).toBe("not_found");
+        }
+        expect(opened).toEqual([]);
+    });
+
+    test("`input` opens the folder of a registered input and answers `opened: true`", async () => {
+        const { id } = await seedAnalysis();
+        const input = await seedInputAnchor();
+        mkdirSync(join(input.home, "data"));
+        insertAnalysisInput({ path: "data", isDir: true, analysisId: id, anchorId: input.anchorId })._unsafeUnwrap();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: input.anchorId }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(opened).toEqual([join(input.home, "data")]);
+    });
+
+    test("an unanchored registered directory input opens its absolute path and answers `opened: true`", async () => {
+        const { id, home } = await seedAnalysis();
+        const dataset = join(home, "datasets");
+        mkdirSync(dataset, { recursive: true });
+        insertAnalysisInput({ path: dataset, isDir: true, analysisId: id, anchorId: null })._unsafeUnwrap();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: dataset, anchorId: null }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(opened).toEqual([dataset]);
+    });
+
+    test("a registered input whose reference is a file is 409 `conflict` without a disk probe, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        // The reference names nothing on disk: a disk probe would answer 404, the record alone answers 409.
+        const ref = join(home, "never-on-disk");
+        insertAnalysisInput({ path: ref, isDir: false, analysisId: id, anchorId: null })._unsafeUnwrap();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: ref, anchorId: null }));
+        expect(response.status).toBe(409);
+        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(opened).toEqual([]);
+    });
+
+    test("a registered folder input whose path holds a file now is 409 `conflict`, and opens nothing", async () => {
+        const { id } = await seedAnalysis();
+        const input = await seedInputAnchor();
+        writeFileSync(join(input.home, "data"), "was a folder");
+        insertAnalysisInput({ path: "data", isDir: true, analysisId: id, anchorId: input.anchorId })._unsafeUnwrap();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: input.anchorId }));
+        expect(response.status).toBe(409);
+        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(opened).toEqual([]);
+    });
+
+    test("an input reference with a wrong anchor is 404 `not_found`, and opens nothing", async () => {
+        const { id } = await seedAnalysis();
+        const input = await seedInputAnchor();
+        mkdirSync(join(input.home, "data"));
+        insertAnalysisInput({ path: "data", isDir: true, analysisId: id, anchorId: input.anchorId })._unsafeUnwrap();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: randomUUIDv7() }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
+    test("an input reference that matches no registered input is 404 `not_found`, and opens nothing", async () => {
+        const { id } = await seedAnalysis();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "/not/registered", anchorId: null }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
+    test("a registered input whose anchor folder is gone is 409 `conflict`, and opens nothing", async () => {
+        const { id } = await seedAnalysis();
+        const input = await seedInputAnchor();
+        mkdirSync(join(input.home, "data"));
+        insertAnalysisInput({ path: "data", isDir: true, analysisId: id, anchorId: input.anchorId })._unsafeUnwrap();
+        rmSync(input.home, { recursive: true, force: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: input.anchorId }));
+        expect(response.status).toBe(409);
+        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(opened).toEqual([]);
+    });
+
+    test("a registered input whose folder is missing on disk is 404 `not_found`, and opens nothing", async () => {
+        const { id } = await seedAnalysis();
+        const input = await seedInputAnchor();
+        insertAnalysisInput({ path: "data", isDir: true, analysisId: id, anchorId: input.anchorId })._unsafeUnwrap();
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: input.anchorId }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
+    test("`logs_dir` opens the log folder and answers `opened: true`", async () => {
+        mkdirSync(env.logDir, { recursive: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "logs_dir" }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(opened).toEqual([env.logDir]);
+    });
+
+    test("an absent log folder is 404 `not_found`, and opens nothing", async () => {
+        rmSync(env.logDir, { recursive: true, force: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "logs_dir" }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
+    test("a file where the log folder belongs is 409 `conflict`, and opens nothing", async () => {
+        rmSync(env.logDir, { recursive: true, force: true });
+        writeFileSync(env.logDir, "not a folder");
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "logs_dir" }));
+        expect(response.status).toBe(409);
+        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(opened).toEqual([]);
+    });
+
+    test("`reference_store` makes the absent folder, opens it, and answers `opened: true`", async () => {
+        rmSync(env.refsDir, { recursive: true, force: true });
+        expect(existsSync(env.refsDir)).toBe(false);
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "reference_store" }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(existsSync(env.refsDir)).toBe(true);
+        expect(opened).toEqual([env.refsDir]);
+    });
+
+    test("`package_store` opens the store folder and answers `opened: true`", async () => {
+        mkdirSync(env.packageStoreDir, { recursive: true });
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "package_store" }));
+        expect(response.status).toBe(200);
+        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(opened).toEqual([env.packageStoreDir]);
+    });
+
+    test("a file where the package store belongs is 409 `conflict`, and opens nothing", async () => {
+        writeFileSync(env.packageStoreDir, "not a folder");
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "package_store" }));
+        expect(response.status).toBe(409);
+        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(opened).toEqual([]);
+    });
+
+    test("a make of the reference store that fails is 500 `internal_error`, and opens nothing", async () => {
+        // A dangling symlink where the folder belongs: `pathExists` reads it as absent, and the make fails.
+        symlinkSync(join(env.dataDir, "nowhere"), env.refsDir);
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "reference_store" }));
+        expect(response.status).toBe(500);
+        expect(((await response.json()) as ApiError).error).toBe("internal_error");
+        expect(opened).toEqual([]);
+    });
+
+    test("a stat of the folder that fails for a reason other than absence is 500 `internal_error`, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        const sealed = join(home, "sealed");
+        mkdirSync(join(sealed, "dataset"), { recursive: true });
+        insertAnalysisInput({ path: join(sealed, "dataset"), isDir: true, analysisId: id, anchorId: null })._unsafeUnwrap();
+        // No search permission on the parent: the `stat` of the folder fails with EACCES, not an absent code.
+        chmodSync(sealed, 0o000);
+        const { routes, opened } = opener();
+        try {
+            const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: join(sealed, "dataset"), anchorId: null }));
+            expect(response.status).toBe(500);
+            expect(((await response.json()) as ApiError).error).toBe("internal_error");
+        } finally {
+            chmodSync(sealed, 0o755);
+        }
         expect(opened).toEqual([]);
     });
 });
